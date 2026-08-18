@@ -1,0 +1,127 @@
+// The case corpus, run against wacc — in this process, from wac.
+//
+// The same files `compiler/wacCases.test.ts` holds the reference to, and the point of their being files
+// rather than TypeScript: two compilers read one corpus, and a third could. This is the third.
+//
+// Nothing here compares wacc to the reference. Each case says what it wants, so a disagreement is with
+// the *case*, and the case is four lines long — which is the whole reason it exists. Every other oracle
+// in this package needs the repository standing up to say that something is wrong somewhere; these say
+// what, in a program small enough to fix against.
+//
+// ## What the four expectations cost
+//
+//     refused   `dumpErrors` per file, then `dumpTypeErrorsFiles` — in process, free
+//     emits     the same two, silent, and `blockedFiles` empty — in process, free
+//     answers   emit, then **a process**: `wac <module.wasm> <fn>` prints what it returned
+//     traps     the same process, and the trap is what the run reports
+//
+// **The process is the part that could not be avoided, and it is cheap.** A wac test cannot instantiate
+// a module it has just emitted — there is no dynamic load — so the ~90 cases that ask for an answer cost
+// a spawn each, about 8ms. What that buys is the answer *in full*: `main`'s answer would be an exit
+// status, which is eight bits (`issues/system/0184`), and a case answering 255000 or -1073741824 would
+// come back as something else. No case in the corpus exports `main`, which is what makes the named-export
+// path reachable — a module with one takes the arguments as `main`'s and never runs the export.
+//
+// **`KNOWN_MISSES` was empty when this was converted**, so it is not here. Adding one means adding both
+// directions the TypeScript had: the case is allowed to fail, *and* it must still fail — a list of
+// tolerated misses with nothing checking whether they are still missed is how one becomes permanent.
+
+import { Change, Cli, Core } from "../../../platform/src/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { trimmed } from "../../../wactest/src/strings.wac";
+import { blockedFiles, dumpErrors, dumpTypeErrorsFiles,
+         emitFilesSelfDescribing } from "../../src/api.wac";
+import { CaseFile, loadCases } from "./cases.wac";
+import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
+
+export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
+  T t = T.create();
+  CaseFile[] cases = loadCases(cli);
+  // The floor is a canary: a walk that stopped resolving would leave every assertion below with nothing
+  // to disagree with, and 206 cases would read as 206 met.
+  t.isTrue(cases.len() >= 200,
+           "only " + itoa(cases.len()) + " cases read from spec/cases — did the walk resolve?");
+  if (cases.len() < 200) { return t.report(); }
+
+  // A directory of its own under `.cache`, removed at the end: ninety modules written straight into
+  // `.cache` is ninety files beside every other test's artefacts, and identifiable ones are worth more
+  // than tidy ones only while a failure is being read.
+  string dir = scratchDir(cli) + "/cases";
+  cli.mkdir(dir, true).wait();
+  i32 met = 0;
+  i32 missed = 0;
+  i32 unreadable = 0;
+  string detail = "";
+  for (i32 i = 0; i < cases.len(); i++) {
+    CaseFile c = cases[i];
+    // A case nobody can read is worse than none, which is why it is counted apart from a case that
+    // failed: one is a corpus problem and the other is a compiler problem.
+    if (c.error != "") {
+      unreadable = unreadable + 1;
+      if (unreadable <= 5) { detail = detail + "\n  " + c.error; }
+      continue;
+    }
+
+    bool refused = false;
+    for (i32 f = 0; f < c.sources.len(); f++) {
+      if (dumpErrors(c.sources[f].toBytes()).len() > 0) { refused = true; }
+    }
+    if (!refused && dumpTypeErrorsFiles(c.paths, c.sources, c.entry).len() > 0) { refused = true; }
+
+    bool ok = true;
+    string why = "";
+    if (c.expect.kind == "refused") {
+      ok = refused;
+      why = "accepted";
+    } else if (refused) {
+      ok = false;
+      why = "refused";
+    } else {
+      string blocked = blockedFiles(c.paths, c.sources, c.entry);
+      if (blocked != "") {
+        ok = false;
+        why = blocked;
+      } else if (c.expect.kind == "answers" || c.expect.kind == "traps") {
+        // **Self-describing, not `emitFiles`.** The binary finds an export through the manifest section,
+        // so a module emitted without one has an empty export list and every case answers nothing —
+        // which is what ninety of them did, in unison, when this was first written. The TypeScript this
+        // replaces needed no manifest because JavaScript instantiates the bytes and reads the export
+        // table itself.
+        u8[] wasm = emitFilesSelfDescribing(c.paths, c.sources, c.entry, "case.wasm", 0);
+        // Named per case rather than one well-known path: ninety modules through one filename works and
+        // names nothing when the ninetieth is the one that failed.
+        Ran r = runModule(cli, wasm, dir, "case" + itoa(i) + ".wasm", string[](c.expect.call));
+        if (!r.ok) {
+          ok = false;
+          why = "did not run — " + r.error;
+        } else if (c.expect.kind == "traps") {
+          ok = r.trapped;
+          why = "answered " + trimmed(r.stdout) + ", and the case says it must trap";
+        } else if (r.trapped) {
+          ok = false;
+          why = "trapped, and the case says it answers " + c.expect.value;
+        } else {
+          string got = trimmed(r.stdout);
+          ok = got == c.expect.value;
+          why = "answered " + got + ", wanted " + c.expect.value;
+        }
+      }
+    }
+
+    if (ok) {
+      met = met + 1;
+    } else {
+      missed = missed + 1;
+      if (missed <= 8) { detail = detail + "\n  " + c.name + ": " + why + " — " + c.why; }
+    }
+  }
+
+  Change gone = cli.remove(dir, true).wait();
+  if (!gone.ok()) { core.warn("cases: could not remove " + dir + " — " + gone.message); }
+
+  core.log("    cases: " + itoa(met) + " of " + itoa(cases.len()) + " met by wacc");
+  t.eqI32(unreadable, 0, itoa(unreadable) + " case(s) could not be read:" + detail);
+  t.eqI32(missed, 0, "wacc does not meet " + itoa(missed) + " case(s):" + detail);
+  return t.report();
+}

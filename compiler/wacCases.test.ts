@@ -5,7 +5,7 @@
 // meets them — which is what makes them worth handing to another compiler, since a case the
 // reference fails is a case whose expectation is in doubt.
 //
-// `packages/wacc/test/cases.test.ts` runs the same files against wacc and prints how many it meets.
+// `packages/wacc/test/wac/cases_test.wac` runs the same files against wacc and prints how many it meets.
 
 import { loadCases, parseCase } from "../spec/cases/cases.ts";
 import { wacCompile } from "./wacCompile.ts";

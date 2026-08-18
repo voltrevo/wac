@@ -1,18 +1,8 @@
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
-import { boundedInput, DEFAULT_SECONDS, loadNow } from "../../../harness/bounded.ts";
-import { testBounded } from "../../../harness/deadline.ts";
+import { boundedInput, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 
-/**
- * Which case the differential below is on, for the report if it stops there.
- *
- * Nothing bounds a `Deno.test` body, so a wedge here runs until `tools/push.sh` cuts the suite at 45
- * minutes and no agent's push lands — which is what this case and `fuzz.test.ts`'s did on
- * 2026-08-11, both of them passing alone in under a minute. The bound makes it one failing test that
- * says which script it was on.
- */
-let onCase = "(nothing yet)";
 // A sealed shell with the applets: sixty commands over a filesystem that is not the host's.
 //
 // This is the test wac-mono 0109 was filed for. An applet used to take a `Cli` and read the *host*
@@ -35,12 +25,24 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-Deno.test("the applets work on a filesystem that is not the host's", async () => {
+/**
+ * A program built with **no capabilities at all** cannot reach the host.
+ *
+ * This is the half of the sealed story that needs a process: the claim is about a *manifest*. There is
+ * no read grant to reach the host *with*, so a run that printed the real `/etc/passwd` could not have
+ * got there by accident — and `buildApp` writes the shebang from these grants, so the empty set is the
+ * program's own permission set rather than something this test arranges.
+ *
+ * **Everything else that was here is `test/wac/sealedapplets_test.wac` now.** It ran the applets over an
+ * in-memory filesystem by spawning this program once per invocation — 104 of them, 19s of every suite
+ * run — and `Shell.onFs` takes the filesystem as a value, so the same 104 run in one process against the
+ * same recorded answers. What is left is two scripts, because the manifest is what a second process is
+ * for.
+ */
+Deno.test("a program built with no grants cannot reach the host", async () => {
   const { buildApp } = await import("../../platform/build.ts");
   const built = await Deno.makeTempFile({ prefix: "box-sealed-" });
   try {
-    // No grants. `buildApp` writes the shebang from these, so this is not a claim about the program —
-    // it is the program's own permission set.
     await buildApp(SEALED, built, {});
 
     const run = async (script: string) => {
@@ -52,127 +54,22 @@ Deno.test("the applets work on a filesystem that is not the host's", async () =>
       return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
     };
 
-    // Applets, over the image: `seq` writes it, `sort` and `head` read it back.
-    const sorted = await run("seq 1 20 > n; sort -nr n | head -3");
-    assertEquals(sorted.out, "20\n19\n18\n", sorted.err);
-
-    // …and a pipeline of three, one of which counts what another produced.
-    const counted = await run(`printf 'a\\nb\\na\\n' > d; sort d | uniq -c`);
-    assertEquals(counted.out, "      2 a\n      1 b\n", counted.err);
-
-    // The world is its own: what the shell wrote is what an applet reads, and `ls` sees both mounts.
-    const listed = await run("echo hi > /f; cat /f; ls /");
-    assertEquals(listed.out, "hi\nbin\ndev\nf\nproc\ntmp\n", listed.err);
-
-    // **And the host is not there.** Not "refused" by a permission — absent, because the only
-    // filesystem this program has is the one it made.
+    // **The host is not there.** Not "refused" by a permission — absent, because the only filesystem
+    // this program has is the one it made.
     const host = await run("cat /etc/passwd; echo rc=$?");
     assertEquals(host.out, "rc=1\n", host.err);
     assertEquals(host.err.includes("No such file or directory"), true, host.err);
 
-    const home = await run("ls /home; echo rc=$?");
-    assertEquals(home.out, "rc=2\n", home.err);
+    // And the canary: a program that answered "absent" to everything would satisfy that on its own. The
+    // world it *does* have is its own — what the shell wrote is what an applet reads, and `ls` sees the
+    // mounts.
+    const listed = await run("echo hi > /f; cat /f; ls /");
+    assertEquals(listed.out, "hi\nbin\ndev\nf\nproc\ntmp\n", listed.err);
   } finally {
     await Deno.remove(built).catch(() => {});
   }
 });
 
-/**
- * The same applets, over memory, against the real tools.
- *
- * The test above proves the host is unreachable; this one proves the applets *work* on what is reachable
- * — and it is the guard for the class that made it necessary. Eight applets built their own
- * `Feed.fromStdin(cli)` after opening an operand, which was right when `openStream` redirected the
- * process's standard input and is wrong when it hands back a feed over bytes: `head f`, `uniq f`,
- * `cat -n f` and five more printed **nothing, and exited 0**, on a filesystem that had the file.
- *
- * Nothing on the host could see it. `packages/box/test/behaviour.test.ts` runs the same invocations
- * through a shell whose filesystem *is* the host's, where redirecting standard input is exactly what
- * happens — so every one of them passed there and passes there still.
- *
- * The fixtures are written by the shell itself, because in a sealed world there is no other way to put a
- * file anywhere.
- */
-testBounded({
-  name: "the applets answer the same on an in-memory filesystem as the real tools do on disk",
-  onTimeout: () => console.error(`sealed: the case did not finish (${loadNow()}). It was on ${onCase}`),
-}, async () => {
-  const { buildApp } = await import("../../platform/build.ts");
-  const built = await Deno.makeTempFile({ prefix: "box-sealed-applets-" });
-  const dir = await Deno.makeTempDir({ prefix: "box-sealed-applets-" });
-  try {
-    await buildApp(SEALED, built, {});
-
-    const FIXTURE = [
-  `printf '10\\n9\\n100\\n1\\n-5\\n2.5\\n0\\n' > nums.txt`,
-  `printf 'banana\\nApple\\ncherry\\napple\\nBanana\\n' > words.txt`,
-  `printf 'a\\na\\nb\\nB\\nb\\nc\\n' > dup.txt`,
-  `printf 'a\\tb\\tc\\nd\\te\\tf\\n' > tabs.txt`,
-  `printf '  leading\\ntrailing  \\n\\nblank above\\n' > mixed.txt`,
-  // No `sed` here — box does not have one, and a fixture that needs a tool the shell lacks tests the
-  // fixture rather than the applets. The shell's own `for` builds it.
-  `for i in $(seq 1 30); do echo "line $i"; done > long.txt`,
-  `printf 'no newline' > nonl.txt`,
-].join("; ");
-    const CASES = [
-  "sort -n nums.txt", "sort -r nums.txt", "sort -u dup.txt", "sort nums.txt", "sort words.txt",
-  "uniq -c dup.txt", "uniq -d dup.txt", "uniq -u dup.txt", "uniq dup.txt",
-  "wc -l words.txt", "wc -w mixed.txt", "wc -c nonl.txt", "wc mixed.txt", "wc -l nums.txt words.txt",
-  "head -3 long.txt", "head -c 12 long.txt", "tail -3 long.txt", "tail -c 12 long.txt",
-  "cat -n mixed.txt", "cat -b mixed.txt", "cat -s mixed.txt", "cat -A tabs.txt", "cat nonl.txt words.txt",
-  "nl mixed.txt", "tac long.txt", "tac nonl.txt", "rev words.txt", "rev nonl.txt",
-  "cut -f2 tabs.txt", "cut -f1,3 tabs.txt", "cut -f2-3 tabs.txt", "cut -c2-4 tabs.txt",
-  "fold -w 5 long.txt", "tr a-z A-Z < words.txt", "tr -d aeiou < words.txt", "tr -s a < dup.txt",
-  "grep -c a words.txt", "grep -n a words.txt", "grep -i APPLE words.txt", "grep -v a words.txt",
-  "grep -x apple words.txt", "grep -E 'a|b' words.txt", "sha256sum nonl.txt", "base64 nonl.txt",
-  "sort dup.txt | uniq -c", "cat long.txt | wc -l", "grep line long.txt | head -2",
-  "basename /a/b/c.txt .txt", "dirname /a/b/c.txt", "seq 5", "seq 2 6",
-  "cp words.txt copy.txt; cat copy.txt", "mkdir d; echo in > d/f; cat d/f; ls d",
-  "echo one > t; tee t2 < t; cat t2", "sort words.txt > s; head -2 s",
-];
-
-    const run = async (cmd: string, script: string, cwd: string) => {
-      const r = await new Deno.Command(cmd, {
-        args: ["-c", script], cwd, stdin: "null", stdout: "piped", stderr: "piped",
-        env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" }, clearEnv: true,
-      }).output();
-      const d = new TextDecoder();
-      return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
-    };
-
-    // The canary. Every assertion below is "these two agree", and a harness that ran nothing would
-    // agree with itself.
-    const one = await run("bash", "echo one", dir);
-    const two = await run("bash", "echo two", dir);
-    if (one.out === two.out || one.out === "") throw new Error("the harness is not comparing anything");
-
-    const bad: string[] = [];
-    for (const script of CASES) {
-      onCase = JSON.stringify(script);
-      // bash needs a fresh directory per case; the sealed shell starts from an empty world every time.
-      const caseDir = await Deno.makeTempDir({ prefix: "sealed-case-" });
-      try {
-        const want = await run("bash", `${FIXTURE}; ${script}`, caseDir);
-        const got = await run(built, `${FIXTURE}; ${script}`, dir);
-        if (want.out !== got.out || want.code !== got.code) {
-          bad.push(
-            `$ ${script}\n  bash ${JSON.stringify(want.out.slice(0, 160))} exit ${want.code}\n` +
-            `  ours ${JSON.stringify(got.out.slice(0, 160))} exit ${got.code}` +
-            (got.err.trim() === "" ? "" : `\n  err  ${got.err.trim().split("\n")[0]}`),
-          );
-        }
-      } finally {
-        await Deno.remove(caseDir, { recursive: true }).catch(() => {});
-      }
-    }
-    if (bad.length > 0) {
-      throw new Error(`${bad.length} of ${CASES.length} differ on an in-memory filesystem:\n\n${bad.join("\n\n")}`);
-    }
-  } finally {
-    await Deno.remove(built).catch(() => {});
-    await Deno.remove(dir, { recursive: true }).catch(() => {});
-  }
-});
 
 /**
  * The same hang, on the route a shell takes when it *cannot* spawn — wac-mono 0110's other half.

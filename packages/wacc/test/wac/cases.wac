@@ -1,0 +1,229 @@
+// The case corpus, read from `spec/cases` — the third reader of one corpus, which the corpus asked for.
+//
+// `spec/cases/cases.ts` reads it for `compiler/wacCases.test.ts`, which holds the *reference* to these
+// files, and read it for this file's own predecessor — packages/wacc/test/cases.test.ts, unbackticked
+// because it is gone and `tools/wac/links_test.wac` reads a backticked path as a citation rather than as
+// a disavowal. The corpus's own header says why the cases are files rather than TypeScript: "two
+// compilers read one corpus, and a third could." This is the third.
+//
+// The format, and every part of it is load-bearing:
+//
+//     // expect: refused | emits | traps <fn> | answers <fn> = <value>
+//     // why: what the case is about — a case that cannot say is a puzzle
+//     // from: optional provenance
+//     // only: wacc — optional, and the only value it takes
+//     // ---- name.wac ----  — optional file marks; the entry is `main.wac` when there are several
+//
+// **A case nobody can read is worse than none**, which is `cases.ts`'s rule and this keeps it: a file
+// that cannot be parsed comes back with `error` set rather than as a case that trivially passes.
+
+import { Cli, FileResult } from "../../../platform/src/platform.wac";
+
+/** What a case says must happen. `call` and `value` are empty where the kind does not use them. */
+export struct Expect {
+  /** `"emits"`, `"refused"`, `"traps"` or `"answers"`. */
+  string kind;
+  /** The export to call — `fn` is a keyword in wac, so the field cannot be called that. */
+  string call;
+  /** As written in the case, compared against what the program prints. */
+  string value;
+}
+
+/**
+ * **`CaseFile`, not `Case`.** `packages/wacc/src/ast.wac` exports a struct of that name and
+ * `diagnosticgap_test.wac` declares a private one, and the wac lane links every test file in a directory
+ * into one module (`issues/system/0192`) — so a *third* `Case` in that link produces a module whose
+ * manifest lists exports the module does not have. What goes missing is every export taking no
+ * arguments, exactly. What that looks like is *other* files failing: `typecheck_test.wac` and `warnings_test.wac`
+ * reporting "exported and not callable" for tests that pass when run alone. `issues/lang/0154`.
+ */
+export struct CaseFile {
+  string name;
+  string why;
+  bool onlyWacc;
+  string[] paths;
+  string[] sources;
+  string entry;
+  Expect expect;
+  /** Why this case could not be read. Empty when it was. */
+  string error;
+}
+
+/** Every case in `spec/cases`, in name order. */
+export CaseFile[] loadCases(Cli cli) {
+  string[] names = casesIn(cli, "spec/cases");
+  CaseFile[] out = CaseFile[names.len()](fill: none(""));
+  for (i32 i = 0; i < names.len(); i++) {
+    FileResult r = cli.readFile("spec/cases/" + names[i]).wait();
+    if (!r.ok) {
+      out[i] = none(names[i] + ": cannot read it");
+      continue;
+    }
+    out[i] = parseCase(names[i], string.fromBytes(r.bytes));
+  }
+  return out;
+}
+
+/** `*.wac` directly in `dir`, sorted, which is the order `cases.ts` reads them in. */
+string[] casesIn(Cli cli, string dir) {
+  string[]? entries = cli.readDir(dir).wait();
+  if (entries is null) { return string[0](fill: ""); }
+  string[] all = entries!;
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (endsWith(all[i], ".wac")) { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (endsWith(all[i], ".wac")) { out[k] = all[i]; k = k + 1; }
+  }
+  // Insertion sort: 206 names, and the order only has to be the same one twice.
+  for (i32 i = 1; i < out.len(); i++) {
+    string held = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > held) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = held;
+  }
+  return out;
+}
+
+CaseFile none(string why) {
+  return CaseFile("", "", false, string[0](fill: ""), string[0](fill: ""), "", Expect("", "", ""), why);
+}
+
+/** One case file. */
+export CaseFile parseCase(string name, string text) {
+  string[] lines = splitLines(text);
+  Expect expect = Expect("", "", "");
+  string why = "";
+  bool onlyWacc = false;
+  string[] paths = string[16](fill: "");
+  string[] sources = string[16](fill: "");
+  i32 nFiles = 0;
+  string current = "main.wac";
+  string body = "";
+  bool started = false;
+
+  for (i32 i = 0; i < lines.len(); i++) {
+    string line = lines[i];
+    string mark = fileMark(line);
+    if (mark != "") {
+      if (started) {
+        if (nFiles >= paths.len()) { return none(name + ": more than 16 files"); }
+        paths[nFiles] = current;
+        sources[nFiles] = body + "\n";
+        nFiles = nFiles + 1;
+        body = "";
+      }
+      current = mark;
+      started = true;
+      continue;
+    }
+    if (!started && startsWith(line, "// expect:")) {
+      Expect got = parseExpect(line.slice(10, line.len()));
+      if (got.kind == "") { return none(name + ": cannot read expectation " + line); }
+      expect = got;
+      continue;
+    }
+    if (!started && startsWith(line, "// why:")) { why = trim(line.slice(7, line.len())); continue; }
+    if (!started && startsWith(line, "// from:")) { continue; }
+    if (!started && startsWith(line, "// only:")) {
+      string who = trim(line.slice(8, line.len()));
+      if (who != "wacc") {
+        return none(name + ": \"only: " + who + "\" — the only value is \"wacc\"");
+      }
+      onlyWacc = true;
+      continue;
+    }
+    body = body == "" ? line : body + "\n" + line;
+  }
+  if (body != "" || started) {
+    if (nFiles >= paths.len()) { return none(name + ": more than 16 files"); }
+    paths[nFiles] = current;
+    sources[nFiles] = body + "\n";
+    nFiles = nFiles + 1;
+  }
+
+  if (expect.kind == "") { return none(name + ": no \"// expect:\" line"); }
+  if (why == "") {
+    return none(name + ": no \"// why:\" line — a case that cannot say what it is about is a puzzle");
+  }
+  if (nFiles == 0) { return none(name + ": no source"); }
+
+  string[] p = string[nFiles](fill: "");
+  string[] s = string[nFiles](fill: "");
+  for (i32 i = 0; i < nFiles; i++) { p[i] = paths[i]; s[i] = sources[i]; }
+  string entry = nFiles == 1 ? p[0] : "main.wac";
+  bool has = false;
+  for (i32 i = 0; i < nFiles; i++) { if (p[i] == entry) { has = true; } }
+  if (!has) { return none(name + ": no " + entry + " among its files"); }
+  return CaseFile(name, why, onlyWacc, p, s, entry, expect, "");
+}
+
+/** `// ---- name.wac ----` gives `name.wac`; anything else gives "". */
+string fileMark(string line) {
+  if (!startsWith(line, "// ---- ")) { return ""; }
+  string rest = line.slice(8, line.len());
+  i32 at = rest.indexOf(" ----");
+  if (at <= 0) { return ""; }
+  return rest.slice(0, at);
+}
+
+/** The text after `// expect:`, as an `Expect`. An empty `kind` means it could not be read. */
+Expect parseExpect(string spec) {
+  string s = trim(spec);
+  if (s == "emits") { return Expect("emits", "", ""); }
+  if (s == "refused") { return Expect("refused", "", ""); }
+  if (startsWith(s, "traps ")) {
+    string name = trim(s.slice(6, s.len()));
+    return name == "" ? Expect("", "", "") : Expect("traps", name, "");
+  }
+  if (startsWith(s, "answers ")) {
+    string rest = s.slice(8, s.len());
+    i32 eq = rest.indexOf("=");
+    if (eq < 0) { return Expect("", "", ""); }
+    string name = trim(rest.slice(0, eq));
+    string value = trim(rest.slice(eq + 1, rest.len()));
+    return name == "" || value == "" ? Expect("", "", "") : Expect("answers", name, value);
+  }
+  return Expect("", "", "");
+}
+
+bool startsWith(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+string trim(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && isBlank(s.slice(from, from + 1))) { from = from + 1; }
+  while (to > from && isBlank(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isBlank(string ch) { return ch == " " || ch == "\t" || ch == "\r" || ch == "\n"; }
+
+/** Lines, keeping empty ones: a program's blank lines are part of it. */
+string[] splitLines(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\n") { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    out[k] = s.slice(at, i);
+    k = k + 1;
+    at = i + 1;
+  }
+  string[] exact = string[k](fill: "");
+  for (i32 i = 0; i < k; i++) { exact[i] = out[i]; }
+  return exact;
+}

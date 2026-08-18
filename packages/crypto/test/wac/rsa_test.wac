@@ -658,3 +658,117 @@ u8[] wide(string h) {
   while (padded.len() < 64) { padded = "0" + padded; }
   return decoded(padded);
 }
+
+/**
+ * A 1024-bit key, so this file can sign as well as verify.
+ *
+ * **Every test above verifies; none of them signed**, because signing needs a private exponent and the
+ * openssl-driven tests generate their keys inside the oracle. So `rsaSignPss` — which is what
+ * `packages/tls/src/server.wac` and `packages/quic/src/server.wac` sign handshakes with — and the
+ * success path of `rsaRecoverPkcs1`, which `packages/tor/src/consensus.wac` reads router descriptors
+ * with, were reached by no test in the package that owns them. The coverage ledger named six lines and
+ * nothing else did.
+ *
+ * Generated once with `openssl genrsa 1024` and written here because a key is the one input these
+ * paths cannot be given any other way. 1024 bits rather than 2048 because the cost is a private-key
+ * `modPow` and this is a test of the encoding, not of the modulus.
+ */
+u8[] testModulus() {
+  return decoded(
+         "c8c1e3925ada6299cf3922834b00085ffcb65f6b0f0103750754f443ceaa" +
+         "ee6d390605b2090444e0f60fdb2ebcfc1720a432232bc76f10fc7604431a" +
+         "2b766b55ed758f2d13570a9fe989595207ff42753aa50fde2901e7721057" +
+         "b55c8063d2b4a6ae86d9a837acce40937a5e97ed8f4800c9ec6dc76b6872" +
+         "7009256e086b0223");
+}
+
+u8[] testPrivateExponent() {
+  return decoded(
+         "23c76a678b09a0c908c58601203cc1415a28a698cdf3c049fb2488e40cd1" +
+         "29ed0d5ca56735742d526a8828e80b866218cf2aa05a0d111e55e032a242" +
+         "e7bc1324cc08dc93939d47a9967c5708552fe79eb8f7b93d10fcc5fe3ebc" +
+         "0f6f6ae7ce7b05bd18c92e5b3aa4b40617aad01e4f8ca388b52fee4103d9" +
+         "2a192baf5316d101");
+}
+
+/** 65537, as every generator emits it. */
+u8[] testPublicExponent() { return decoded("010001"); }
+
+/**
+ * A key too small to hold the PSS encoding is refused rather than made to fit.
+ *
+ * RFC 8017 calls it an encoding error, and it is the one PSS failure that is a property of the *key*
+ * rather than of the signature: 32 bytes of hash, 32 of salt and two of framing need 66, so a 64-byte
+ * modulus cannot carry it however the caller pads. No `modPow` runs, which is why this needs no key.
+ */
+export string test_pss_refuses_a_key_too_small_for_the_encoding() {
+  T t = T.create();
+  u8[] small = u8[64]();
+  for (i32 i = 0; i < 64; i++) { small[i] = 0xFF; }
+  u8[] salt = u8[32]();
+  t.eqI32(rsaSignPss(small, small, "anything".toBytes(), 32, salt).len(), 0,
+          "a 64-byte modulus cannot hold 32 + 32 + 2 and the sign must refuse");
+  return t.report();
+}
+
+/**
+ * A PSS signature this package made, verified by this package.
+ *
+ * A round trip through one implementation cannot catch a mistake both halves share — the KAT against
+ * openssl above is what covers that — but it catches every *asymmetric* one, and it is the only thing
+ * here that runs the signing path at all. The salt is fixed rather than random so the signature is a
+ * function of its inputs.
+ */
+export string test_a_pss_signature_we_made_verifies_here() {
+  T t = T.create();
+  u8[] n = testModulus();
+  u8[] e = testPublicExponent();
+  u8[] d = testPrivateExponent();
+  u8[] msg = "the message that was signed".toBytes();
+  u8[] salt = u8[32]();
+  for (i32 i = 0; i < 32; i++) { salt[i] = (i * 7 + 3) & 0xFF; }
+
+  u8[] sig = rsaSignPss(n, d, msg, 32, salt);
+  t.eqI32(sig.len(), n.len(), "the signature is one modulus wide");
+  if (sig.len() != n.len()) { return t.report(); }
+  t.isTrue(rsaVerifyPss(n, e, msg, sig, 32, 32), "our own PSS signature did not verify");
+
+  // The canary: a signature that verifies for the wrong message would mean the hash never entered it.
+  t.isFalse(rsaVerifyPss(n, e, "a different message".toBytes(), sig, 32, 32),
+            "the signature verified against a message it was not made over");
+  sig[sig.len() - 1] = sig[sig.len() - 1] ^ 0x01;
+  t.isFalse(rsaVerifyPss(n, e, msg, sig, 32, 32), "a signature with one bit flipped still verified");
+  return t.report();
+}
+
+/**
+ * What `rsaRecoverPkcs1` recovers is what was signed — the path tor reads descriptors with.
+ *
+ * Every other test of this function hands it a malformed block and checks the refusal; this is the
+ * first that gives it a well-formed one, which is the whole reason the copy at the end of it was
+ * uncovered. The padding matters: a 128-byte modulus over a short payload leaves far more than the
+ * eight bytes of `0xFF` the format requires, which is the check just above the copy.
+ */
+export string test_a_pkcs1_signature_recovers_the_payload_it_carried() {
+  T t = T.create();
+  u8[] n = testModulus();
+  u8[] e = testPublicExponent();
+  u8[] d = testPrivateExponent();
+  u8[] payload = sha256("what tor puts in a descriptor".toBytes());
+
+  u8[] sig = rsaSignRawPkcs1(n, d, payload);
+  t.eqI32(sig.len(), n.len(), "the signature is one modulus wide");
+  if (sig.len() != n.len()) { return t.report(); }
+
+  u8[] back = rsaRecoverPkcs1(n, e, sig);
+  t.eqI32(back.len(), payload.len(), "the recovered payload is the length that went in");
+  if (back.len() != payload.len()) { return t.report(); }
+  bool same = true;
+  for (i32 i = 0; i < payload.len(); i++) { if (back[i] != payload[i]) { same = false; } }
+  t.isTrue(same, "the recovered payload is not the one that was signed");
+
+  // And a block that is not this key's answer recovers nothing rather than something.
+  sig[0] = sig[0] ^ 0x01;
+  t.eqI32(rsaRecoverPkcs1(n, e, sig).len(), 0, "a corrupted block recovered a payload");
+  return t.report();
+}

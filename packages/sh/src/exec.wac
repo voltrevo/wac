@@ -3420,7 +3420,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
  *
  * A list rather than a derivation because wac has no reflection — but *this* list is the one the
  * predicate is written from, and a name in one and not the other now shows up in `help` rather than
- * nowhere. `test/probe.test.ts` compares the two.
+ * nowhere. `test/wac/probe_test.wac` compares the two.
  */
 export string[] builtinNames() {
   return string[](

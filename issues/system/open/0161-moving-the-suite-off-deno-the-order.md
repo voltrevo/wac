@@ -1296,3 +1296,40 @@ Where the four remaining siblings stand, so nobody re-derives it:
   `packages/stream`.
 - **`manifest.test.ts` and `jsBindgen.test.ts`** were already rejected earlier for the same kind of
   reason — a cargo build and JS glue as the subject.
+
+### What is actually left, classified — 2026-08-18 (agent-c)
+
+The entries above are a record of what was converted. This is the other half: **why the rest has not
+been**, counted rather than sampled, over all 178 `*.test.ts` files outside `site/`.
+
+| files | what blocks them |
+| --- | --- |
+| **57** | **build an application** — `buildApp`/`buildNative`. Blocked on `issues/system/0204`. |
+| 38 | not matched by any pattern below — unread, and the queue to work through |
+| 32 | the host or a browser *is* the subject — these stay, and the issue already says so |
+| 20 | a JavaScript network API is the oracle (`Deno.listenDatagram`, `connectQuic`, `Deno.serve`) |
+| 18 | pure: `wacBind` and nothing else |
+| 13 | spawn a tool as their oracle — convertible through `Cli.exec` |
+
+**The 57 are the finding.** Every one of `packages/box`'s seventeen remaining files is in that row, and
+so is all of `packages/sh`'s four. Converting one costs 375 ms → 2.1 s today, because the test shells
+out to `wac build` and that has no cache while `buildApp` has had one for months — measured on
+`pipeUngranted.test.ts`, written, measured and reverted, with the numbers in `issues/system/0193`. So
+`0204` is not a 2% suite saving; it is the gate on a third of this issue.
+
+**And the 18 "pure" files are mostly not pure.** Only five have no TypeScript in the claim —
+`bindHelpers`, `bindgen`, `ctTrace`, `tools/deadexports`, `tools/wacProbesReached` — and two of those
+are repo tooling whose *subject* is the TypeScript tool. The other thirteen import `wac/wacCompile.ts`,
+`wac/wacParse.ts` or a corpus reader in TypeScript (`specCorpus.ts`, `specCases.ts`, `errorCodes.ts`):
+the reference is half the differential, which is the same reason `jsxBoundary` and `renderDiag`'s
+oracle stayed.
+
+Porting a corpus *reader* is its own trap, looked at and left: `specCorpus.ts` extracts `err(...)`
+programs from `compiler/wacSpec.test.ts` with regexes and unescapes `\uXXXX` including surrogate pairs.
+A wac reimplementation would be a second reader of one corpus whose disagreements arrive looking like
+compiler bugs, for two files of 5 ms each.
+
+So the remaining order is: `0204` first (57 files), then the 38 unclassified, then the 13 that spawn a
+tool. The `quic` files are a shape worth naming — each holds *both* pure tests and tests that need
+Deno's QUIC as a peer, so converting them splits a file rather than removing one, and the Deno lane
+keeps paying for the file either way.

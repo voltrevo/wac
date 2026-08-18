@@ -9,7 +9,8 @@
 // belongs there; what they do is make the answer to "why is the suite slow?" visible in one place, and
 // stop the reason being the empty string.
 
-import { declaredLaneFiles, exclusiveTests, heavyTests, laneSplit } from "../harness/testLane.ts";
+import { declaredLaneFiles, exclusiveTests, heavyTests, laneSplit, wacTestDirs } from "../harness/testLane.ts";
+import { wacTestRegistrations } from "../harness/testRegistrars.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -144,4 +145,58 @@ Deno.test("the jobs sweep ignores what the suite ignores, by asking rather than 
   for (const e of [...(await exclusiveTests()), ...(await heavyTests())]) {
     assertEquals(every.includes(e.file), true, `declaredLaneFiles missed ${e.file}`);
   }
+});
+
+Deno.test("the wac lane's directories each hold a test, and every declared one is among them", async () => {
+  // The lane is a queue of these, so a discovery that quietly returned fewer would be a suite that
+  // quietly ran less — and it would still print a green summary per directory it did run.
+  const dirs = await wacTestDirs("packages");
+
+  // Every directory returned really holds a test file. This reads the directory rather than the walk's
+  // own bookkeeping, so it can disagree with it.
+  const empty: string[] = [];
+  for (const dir of dirs) {
+    let found = false;
+    for await (const e of Deno.readDir(dir)) {
+      if (e.isFile && e.name.endsWith("_test.wac")) found = true;
+    }
+    if (!found) empty.push(dir);
+  }
+  assertEquals(empty.join(", "), "", "directories with no wac test in them");
+
+  // And every directory the *declarations* name is one of them — an independent source for the same
+  // fact, since a heavy file is a wac test file whose path nobody walked to find.
+  const declared = [...new Set(
+    (await heavyTests()).map((e) => e.file).filter((f) => f.endsWith("_test.wac"))
+      .map((f) => f.slice(0, f.lastIndexOf("/"))),
+  )];
+  const missing = declared.filter((d) => !dirs.includes(d));
+  assertEquals(missing.join(", "), "", "declared heavy wac tests in directories the lane never visits");
+
+  // The canary: a walk that found nothing would satisfy both checks above.
+  assertEquals(dirs.length > 20, true, `only ${dirs.length} directories of wac tests were found`);
+});
+
+Deno.test("the wac driver the suite skips registers nothing the wac lane does not run", async () => {
+  // `tools/runTests.ts` leaves `harness/wac/hostless.test.ts` out of the parallel pass because every
+  // test it registers runs natively in the `wac test` lane — 575 of them, twice, at 26s a time. That is
+  // a claim about a list, and this is the list: an entry registered under a path the lane never walks
+  // would be a test that stopped running anywhere, while both lanes still reported green.
+  const driver = "harness/wac/hostless.test.ts";
+  const source = await Deno.readTextFile(driver);
+  const reg = wacTestRegistrations(source);
+  assertEquals(reg.unresolved, 0, `${driver} has registrations this cannot read`);
+  assertEquals(reg.found.length > 20, true, `only ${reg.found.length} registrations found in ${driver}`);
+
+  const dirs = new Set(await wacTestDirs("packages"));
+  const orphans = reg.found
+    .map((r) => r.entry)
+    .filter((e) => !dirs.has(e.slice(0, e.lastIndexOf("/"))) || !e.endsWith("_test.wac"));
+  assertEquals(
+    orphans.join(", "),
+    "",
+    "entries registered here that the `wac test` lane does not walk — the suite skips this file, so " +
+      "these run nowhere. Either move them under a package's test/wac/, or take the exclusion out of " +
+      "`tools/runTests.ts`.",
+  );
 });

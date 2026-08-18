@@ -1,0 +1,116 @@
+// Every clause the specification *refers to* is a clause it *declares*.
+//
+// A tag is declared as `[§name]` at the start of the sentence that states the rule, and referred to as
+// `` `§name` `` from anywhere else — `spec/spec/jsx.md` says an optional attribute is a nullable field
+// *"left out and null when it is (`§wacc-struct-nullable-optional`)"*, which is a pointer at a rule
+// stated in `structs.md`.
+//
+// **A pointer at a rule nobody wrote reads exactly like a rule.** `jsx.md` referred to
+// `§wac-struct-nullable-optional` for months; the clause is `§wacc-struct-nullable-optional`, one letter
+// away, and the difference is not decorative — `§wac-*` is a rule both compilers hold and `§wacc-*` is
+// one only wacc has. A reader following the reference found nothing, and nothing said so:
+//
+//   - `compiler/wacSpec.test.ts` requires every clause to be *checked by something*, but it finds
+//     clauses by `/\[§(wac-[a-z0-9-]+)\]/` — square brackets — so a reference in backticks is invisible
+//     to it, declared or not;
+//   - `packages/wacc/test/wac/spectags_test.wac` holds the same rule for the wacc-only namespaces, the
+//     same way;
+//   - and a name that is never declared is never in either guard's list of things to check, so the
+//     stronger the coverage guards get, the more completely a typo like this hides. It was found by
+//     asking a different question — which clauses have *nothing* holding wacc to them — and being the
+//     one clause in 419 that no file outside `spec/spec` mentioned at all.
+//
+// **Prefix mentions are not references.** `funcrefs.md` and `structs.md` discuss tags beginning `§wac-`
+// and `§wacc-`, which are not names of anything; a reference ending in `-` is prose about the namespace
+// and is skipped. That distinction is the whole reason this cannot be a plain grep in a shell script.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../packages/platform/src/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+const string DIR = "spec/spec";
+
+bool isTagChar(string c) {
+  return (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "-";
+}
+
+/** The tag beginning just after a `§` at `at`, or "" if there is none. */
+string tagAt(u8[] b, i32 at) {
+  i32 end = at;
+  while (end < b.len()) {
+    string c = string.fromBytes(u8[](b[end]));
+    if (!isTagChar(c)) { break; }
+    end = end + 1;
+  }
+  if (end == at) { return ""; }
+  u8[] out = u8[end - at]();
+  for (i32 i = 0; i < end - at; i++) { out[i] = b[at + i]; }
+  return string.fromBytes(out);
+}
+
+bool endsWithDash(string s) { return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "-"; }
+
+export string test_every_clause_the_spec_refers_to_is_one_it_declares(Core core, Cli cli) {
+  T t = T.create();
+  string[]? entries = cli.readDir(DIR).wait();
+  t.isTrue(entries is not null, "could not read " + DIR);
+  if (entries is null) { return t.report(); }
+  string[] names = entries!;
+
+  // Two passes over the same files: what is declared, then what is pointed at. Declarations first,
+  // because a reference may precede its declaration in reading order and across files.
+  string declared = "";
+  i32 declaredCount = 0;
+  string referenced = "";
+  i32 danglingCount = 0;
+  string dangling = "";
+
+  for (i32 pass = 0; pass < 2; pass++) {
+    for (i32 i = 0; i < names.len(); i++) {
+      string name = names[i];
+      if (name.len() < 4 || name.slice(name.len() - 3, name.len()) != ".md") { continue; }
+      FileResult f = cli.readFile(DIR + "/" + name).wait();
+      if (!f.ok) { continue; }
+      u8[] b = f.bytes;
+      for (i32 k = 0; k + 1 < b.len(); k++) {
+        // `§` is two bytes in UTF-8: 0xC2 0xA7.
+        if (b[k] != 0xC2 || b[k + 1] != 0xA7) { continue; }
+        string tag = tagAt(b, k + 2);
+        if (tag == "" || endsWithDash(tag)) { continue; }
+        bool isDeclaration = k > 0 && b[k - 1] == '[';
+        if (pass == 0) {
+          if (isDeclaration && !contains(declared, "|" + tag + "|")) {
+            declared = declared + "|" + tag + "|";
+            declaredCount = declaredCount + 1;
+          }
+          continue;
+        }
+        if (isDeclaration || contains(declared, "|" + tag + "|")) { continue; }
+        if (contains(referenced, "|" + tag + "|")) { continue; }
+        referenced = referenced + "|" + tag + "|";
+        danglingCount = danglingCount + 1;
+        if (danglingCount <= 8) { dangling = dangling + "\n  §" + tag + " — referred to in " + name; }
+      }
+    }
+  }
+
+  // The floor is a canary: a walk that read nothing would find no dangling references either, and this
+  // file would pass by looking at an empty directory.
+  t.isTrue(declaredCount > 300,
+           "only " + itoa(declaredCount) + " clauses declared in " + DIR + " — did the walk resolve?");
+  t.eqI32(danglingCount, 0,
+          itoa(danglingCount) + " clause reference(s) name nothing the spec declares:" + dangling +
+          "\n  A tag is declared as `[§name]` beside the rule it states. A reference to a name that is " +
+          "not declared reads as a rule and is not one — check the `wac-` / `wacc-` prefix first, which " +
+          "is where the last one differed.");
+  return t.report();
+}
+
+/** `needle` anywhere in `haystack`. */
+bool contains(string haystack, string needle) {
+  if (needle.len() > haystack.len()) { return false; }
+  for (i32 i = 0; i + needle.len() <= haystack.len(); i++) {
+    if (haystack.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}

@@ -9,6 +9,10 @@
 // module this emitter produces validates, and a file it declines is declined **by name**. The count
 // is asserted only as a floor, so a slot that adds a feature cannot quietly lose one.
 //
+//
+// **6.4s: fifteen entries out of five hundred files, emitted.** Measured 2026-08-18. It already avoids
+// the obvious waste — `runModule` rather than `runEmitted`, so the graph is not type-checked fifteen
+// times to answer a question about the emitter — and what is left is the emitting, which is the test.
 // ## Host-side until 2026-08-17, `issues/system/0161`
 //
 // The TypeScript asked `WebAssembly.validate`. Nothing in wac validates bytes without running them,

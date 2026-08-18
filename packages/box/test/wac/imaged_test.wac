@@ -1,0 +1,151 @@
+// A session's writes survive a restart — design/0001 step 2, whose criterion is exactly this file.
+//
+// **This used to spawn.** The Deno test it replaces built `bin/imaged.wac` and ran it once per session,
+// four and five sessions to a test. `replay.wac`'s `runImaged` does what that program does — boot from the
+// path, run the script, save whatever happened — in this process, so the medium is still the file and
+// only the process is gone.
+//
+// **What "the next session reads" means here.** The bytes went to disk and came back: that is the claim,
+// and it does not need two processes to make. The claim that *does* — that an image outlives one, and a
+// sealed session does not — is `backingsprocess_test.wac`'s canary, which still spawns, and is what stops all of
+// this being three identical things agreeing with each other.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Ran, runImaged, show } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string workDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-imaged"; }
+
+/** A fresh directory with nothing in it, so "what appeared beside the image" is answerable. */
+bool freshDir(Cli cli, string dir) {
+  cli.remove(dir, true).wait();
+  return cli.mkdir(dir, true).wait().ok();
+}
+
+export string test_what_one_session_writes_the_next_one_reads(Core core, Cli cli) {
+  T t = T.create();
+  string dir = workDir(cli);
+  t.isTrue(freshDir(cli, dir), "cannot make " + dir);
+  string image = dir + "/session.wacimg";
+
+  Ran first = runImaged(core, cli, image, "mkdir /data; mkdir /data/deep; echo one > /data/notes");
+  t.eqI32(first.status, 0, "first run: " + first.err);
+
+  // A second session. Nothing carried over but the file.
+  Ran second = runImaged(core, cli, image, "ls /data; cat /data/notes");
+  t.eqI32(second.status, 0, "second run: " + second.err);
+  t.eqStr(second.out, "deep\nnotes\none\n", show(second.out));
+
+  // And a third, so that saving is not something that only works on a filesystem loaded from nothing.
+  Ran third = runImaged(core, cli, image, "echo two >> /data/notes; cat /data/notes");
+  t.eqI32(third.status, 0, "third run: " + third.err);
+  t.eqStr(runImaged(core, cli, image, "cat /data/notes").out, "one\ntwo\n", "the fourth session");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A redirection lands in the image and not on the host, pipeline or not.
+ *
+ * `sealed.wac` used to say the opposite — that a redirection on a pipeline's last stage still reached the
+ * host, because that path streams through `openOutput`. It does, but only in a world that can spawn, and
+ * neither shell is built with one.
+ */
+export string test_a_redirection_lands_in_the_image_and_not_on_the_host(Core core, Cli cli) {
+  T t = T.create();
+  string dir = workDir(cli);
+  t.isTrue(freshDir(cli, dir), "cannot make " + dir);
+  string image = dir + "/session.wacimg";
+
+  runImaged(core, cli, image, "mkdir /d");
+  Ran run = runImaged(core, cli, image, "echo hello | cat > /d/up; echo plain > /d/flat");
+  t.eqI32(run.status, 0, run.err);
+
+  Ran back = runImaged(core, cli, image, "cat /d/up; cat /d/flat");
+  t.eqStr(back.out, "hello\nplain\n", show(back.out));
+
+  // Nothing of the sort appeared beside the image on the real disk.
+  string[]? beside = cli.readDir(dir).wait();
+  t.eqStr(joined(beside), "session.wacimg", "something was written to the host");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_new_image_is_an_empty_world_not_an_error(Core core, Cli cli) {
+  T t = T.create();
+  string dir = workDir(cli);
+  t.isTrue(freshDir(cli, dir), "cannot make " + dir);
+  string image = dir + "/session.wacimg";
+
+  Ran run = runImaged(core, cli, image, "ls /");
+  t.eqI32(run.status, 0, run.err);
+  // `/dev`, `/proc` and `/bin` are there from the start — design/0001 steps 6 and 7 — and none of them
+  // holds anything that is saved, so an empty session is one with nothing *of its own* in it.
+  t.eqStr(run.out, "bin\ndev\nproc\n", "a fresh session was not empty: " + show(run.out));
+  // And it saved one, so the next run is a load rather than another empty start.
+  t.isTrue(cli.stat(image).wait().size > 0, "no image was written for an empty session");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A session that fails still saves what it did.
+ *
+ * The session whose work is most worth keeping is the one that ended badly. A shell that saved only on
+ * success would lose exactly that.
+ */
+export string test_a_session_that_fails_still_saves_what_it_did(Core core, Cli cli) {
+  T t = T.create();
+  string dir = workDir(cli);
+  t.isTrue(freshDir(cli, dir), "cannot make " + dir);
+  string image = dir + "/session.wacimg";
+
+  Ran run = runImaged(core, cli, image, "mkdir /kept; nosuchcommand");
+  t.isTrue(run.status != 0, "the failing script reported success");
+  t.eqStr(runImaged(core, cli, image, "ls /").out, "bin\ndev\nkept\nproc\n", "what the failed session kept");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * An unreadable image is refused rather than overwritten.
+ *
+ * Starting empty would be worse than stopping: the session would then *save over* the image it could not
+ * read, turning one unreadable file into no file at all.
+ */
+export string test_an_unreadable_image_is_refused_rather_than_overwritten(Core core, Cli cli) {
+  T t = T.create();
+  string dir = workDir(cli);
+  t.isTrue(freshDir(cli, dir), "cannot make " + dir);
+  string image = dir + "/session.wacimg";
+
+  runImaged(core, cli, image, "mkdir /precious");
+  u8[] good = cli.readFile(image).wait().bytes;
+  t.isTrue(good.len() > 0, "no image to damage");
+  if (good.len() == 0) { return t.report(); }
+
+  u8[] damaged = u8[good.len()]();
+  for (i32 i = 0; i < good.len(); i++) { damaged[i] = good[i]; }
+  i32 at = good.len() / 2;
+  damaged[at] = damaged[at] ^ 0xff;
+  t.isTrue(cli.writeFile(image, damaged).wait().ok(), "cannot write the damaged image");
+
+  Ran run = runImaged(core, cli, image, "ls /");
+  t.isTrue(run.status != 0, "a damaged image was accepted");
+  t.isTrue(run.err.indexOf("damaged") >= 0, run.err);
+  // And it did not save over it: the bytes on disk are still the ones that could not be read.
+  u8[] after = cli.readFile(image).wait().bytes;
+  t.eqI32(after.len(), damaged.len(), "the unreadable image was overwritten");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** A listing as one comparable string, and `"(absent)"` where there is no directory at all. */
+string joined(string[]? entries) {
+  if (entries is null) { return "(absent)"; }
+  string out = "";
+  for (i32 i = 0; i < entries!.len(); i++) { out = out + (i == 0 ? "" : " ") + entries![i]; }
+  return out;
+}

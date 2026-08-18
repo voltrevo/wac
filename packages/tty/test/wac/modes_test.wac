@@ -35,168 +35,112 @@
 //   - **`^R` stops reprinting and becomes a byte in the line.** Reprint is an echo feature: with
 //     nothing being drawn there is nothing to draw again, so the kernel delivers `\x12` instead.
 //
+// ## What the move changed
+//
+// **The pty is asked once.** This used to spawn `discipline.py` for every case in every mode and a
+// built `ttycat` beside it — 100 processes, 9.6s a suite run. `tools/wac/ttyvectors.wac` records those
+// answers, our side is `ttycatBytes` called in this process, and the drop-in check of assertion 1 moved
+// into the capture, which refuses to write a file whose two oracles disagree.
+//
+// The 9 shared cases are recorded **twice**, once from each oracle, so that check is still readable in
+// the file rather than only in the tool's exit status — which is what the first test below reads. One
+// live case per mode keeps it from being a claim about the past only.
+//
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, Stat } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { ttycatBytes } from "../../example/ttycat.wac";
+import { DEL, KILL, REPRINT, SHARED, j3, j4, k, modeCases, modeCaseNames, modes, sameBytes, show,
+         t } from "./cases.wac";
+import { Loaded, Vector, discipline, find, load, pty, vectorsPath } from "./replay.wac";
 
-const string TTYCAT = "packages/tty/example/ttycat.wac";
-const string DISCIPLINE = "packages/tty/tools/discipline.py";
-
-const i32 DEL = 0x7F;
-const i32 KILL = 0x15;      // ^U
-const i32 WERASE = 0x17;    // ^W
-const i32 REPRINT = 0x12;   // ^R
-const i32 LNEXT = 0x16;     // ^V
-
-string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
-
-string agentDir(Cli cli) {
-  string cwd = cli.cwd().wait();
-  u8[] b = cwd.toBytes();
-  for (i32 i = 0; i + 7 < b.len(); i++) {
-    if (b[i] != '/') { continue; }
-    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
-    i32 end = i + 7;
-    while (end < b.len() && b[end] != '/') { end = end + 1; }
-    return cwd.slice(i + 1, end);
-  }
-  return "";
-}
-
-string workDir(Cli cli) {
-  string who = agentDir(cli);
-  return "/tmp/wac-tty-modes" + (who == "" ? "" : "-" + who);
-}
-
-u8[] through(Core core, Cli cli, string program, string[] args, u8[] input) {
-  Exec r = cli.exec(program, args, input).wait();
-  if (!r.ran()) {
-    core.warn("tty modes: " + program + " would not start — " + r.error);
-    trap;
-  }
-  return r.stdout;
-}
-
-u8[] kernel(Core core, Cli cli, u8[] input) {
-  return through(core, cli, "script", string[]("-qec", "cat", "/dev/null"), input);
-}
-
-u8[] discipline(Core core, Cli cli, string mode, u8[] input) {
-  return through(core, cli, "python3", string[](DISCIPLINE, mode), input);
-}
-
-/** Bytes as a readable string: printable as themselves, everything else as `<n>`. */
-string show(u8[] b) {
-  string out = "\"";
-  for (i32 i = 0; i < b.len(); i++) {
-    if (b[i] >= 32 && b[i] < 127 && b[i] != '"') {
-      u8[] one = u8[1]();
-      one[0] = b[i];
-      out = out + string.fromBytes(one);
-    } else {
-      out = out + "<" + itoa(b[i]) + ">";
-    }
-  }
-  return out + "\"";
-}
-
-u8[] t(string s) { return s.toBytes(); }
-
-u8[] k(i32 c) {
-  u8[] one = u8[1]();
-  one[0] = c;
-  return one;
-}
-
-u8[] join(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
-  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
-  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
-  return out;
-}
-
-u8[] j3(u8[] a, u8[] b, u8[] c) { return join(join(a, b), c); }
-u8[] j4(u8[] a, u8[] b, u8[] c, u8[] d) { return join(j3(a, b, c), d); }
-
-/** The cases `line_test.wac` already compares, plus the two this module learned most recently. */
-u8[][] cases() {
-  u8[][] out = u8[][11](fill: u8[0]());
-  out[0] = t("abc\n");                                        // plain
-  out[1] = j3(t("ab"), k(DEL), t("c\n"));                     // erase one
-  out[2] = j3(t("abc"), k(KILL), t("xy\n"));                  // kill the line
-  out[3] = j3(t("one two"), k(WERASE), t("three\n"));         // word erase
-  out[4] = j3(t("a"), k(1), t("b\n"));                        // a caret pair
-  out[5] = j3(t("abc"), k(REPRINT), t("\n"));                 // reprint
-  out[6] = j4(t("ab"), k(LNEXT), k(DEL), t("\n"));            // a literal DEL
-  out[7] = j3(t("abc"), j4(k(DEL), k(DEL), k(DEL), k(DEL)), t("z\n"));
-  out[8] = j3(t("a"), u8[](0xC3, 0xA9), t("b\n"));            // a two-byte character
-  // Two the modes disagree about most sharply, because they are about the *difference*: `^U` is a
-  // kill in two modes and a byte in the third, and `^R` is a redraw in one, a byte in the other two.
-  out[9] = j3(t("abc"), k(KILL), t("xy\n"));
-  out[10] = j3(t("one two"), k(WERASE), t("z\n"));
-  return out;
-}
-
-string[] caseNames() {
-  return string[]("plain", "erase one", "kill the line", "word erase",
-                  "a control character is a caret pair", "reprint", "a literal DEL",
-                  "erase past the start", "a two-byte character",
-                  "kill in canonical, a byte in cbreak", "word erase, which cbreak does not do");
-}
-
-/** Only the nine `line_test.wac` shares; the last two are about the modes rather than the rules. */
-const i32 SHARED = 9;
-
+/**
+ * The two oracles agree, as recorded.
+ *
+ * `script` cannot hold a mode, so the mode cases go through `discipline.py` — a second oracle, worth
+ * exactly what its agreement with the first is worth. The capture writes the shared cases from both, so
+ * each of them has two canonical records and this compares them.
+ *
+ * The count is the canary: a capture that stopped recording both would leave this comparing nothing and
+ * passing, which is the shape of a green instrument reading zero.
+ */
 export string test_the_pty_harness_reproduces_the_oracle_line_test_trusts(Core core, Cli cli) {
   T t = T.create();
-  u8[][] all = cases();
-  string[] names = caseNames();
+  Loaded v = load(cli, vectorsPath());
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  u8[][] all = modeCases();
+  string[] names = modeCaseNames();
+  i32 pairs = 0;
   for (i32 i = 0; i < SHARED; i++) {
-    t.eqStr(show(discipline(core, cli, "canonical", all[i])), show(kernel(core, cli, all[i])),
-            names[i]);
+    u8[] first = u8[0]();
+    bool have = false;
+    i32 seen = 0;
+    for (i32 j = 0; j < v.n; j++) {
+      if (v.items[j].mode != "canonical") { continue; }
+      if (!sameBytes(v.items[j].input, all[i])) { continue; }
+      seen = seen + 1;
+      if (!have) {
+        first = v.items[j].out;
+        have = true;
+        continue;
+      }
+      t.eqStr(show(v.items[j].out), show(first),
+              "the two oracles disagree about " + names[i] + " — the capture should have refused");
+    }
+    if (seen >= 2) { pairs = pairs + 1; }
   }
-  // The canary: `script` really did answer something, so the comparison above is not two empties.
-  t.eqStr(show(kernel(core, cli, t("abc\n"))), show(t("abc\r\nabc\r\n")), "script said nothing");
+  t.eqI32(pairs, SHARED, itoa(pairs) + " of " + itoa(SHARED) + " shared cases were recorded from both " +
+                         "oracles — with one record each there is nothing here to compare");
+
+  // And one asked live, so this is not only a claim about the day of the capture: `discipline.py` in
+  // canonical mode is still what `script -qec cat` answers.
+  u8[] erase = j3(t("ab"), k(DEL), t("c\n"));
+  t.eqStr(show(discipline(core, cli, "canonical", erase)), show(pty(core, cli, "cat", erase)),
+          "discipline.py is no longer a drop-in for script");
   return t.report();
 }
 
 export string test_the_three_modes_differ_in_the_ways_that_were_measured(Core core, Cli cli) {
   T t = T.create();
+  Loaded v = load(cli, vectorsPath());
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
   u8[] erase = j3(t("ab"), k(DEL), t("c\n"));
   u8[] kill = j3(t("abc"), k(KILL), t("xy\n"));
   u8[] reprint = j3(t("abc"), k(REPRINT), t("\n"));
 
   // Canonical: edited and drawn. `\x08 \x08` is the terminal rubbing a column out.
-  t.eqStr(show(discipline(core, cli, "canonical", erase)),
+  t.eqStr(recorded(t, v, "canonical", erase),
           show(j4(t("ab"), k(8), t(" "), j3(k(8), t("c\r\n"), t("ac\r\n")))), "canonical erase");
   // **noecho still edits.** Nothing is drawn, and `ac` is still what the program reads — which is the
   // rule an implementation is most likely to get wrong, because the name suggests otherwise.
-  t.eqStr(show(discipline(core, cli, "noecho", erase)), show(t("ac\r\n")), "noecho erase");
+  t.eqStr(recorded(t, v, "noecho", erase), show(t("ac\r\n")), "noecho erase");
   // cbreak edits nothing: the DEL arrives as a byte.
-  t.eqStr(show(discipline(core, cli, "cbreak", erase)),
-          show(j3(t("ab"), k(DEL), t("c\r\n"))), "cbreak erase");
+  t.eqStr(recorded(t, v, "cbreak", erase), show(j3(t("ab"), k(DEL), t("c\r\n"))), "cbreak erase");
 
   // `^U` likewise: killed and undrawn, and delivered.
-  t.eqStr(show(discipline(core, cli, "noecho", kill)), show(t("xy\r\n")), "noecho kill");
-  t.eqStr(show(discipline(core, cli, "cbreak", kill)),
-          show(j3(t("abc"), k(KILL), t("xy\r\n"))), "cbreak kill");
+  t.eqStr(recorded(t, v, "noecho", kill), show(t("xy\r\n")), "noecho kill");
+  t.eqStr(recorded(t, v, "cbreak", kill), show(j3(t("abc"), k(KILL), t("xy\r\n"))), "cbreak kill");
 
   // **`^R` stops reprinting when there is no echo**, and becomes a byte in the line. Reprint is an
   // echo feature: with nothing drawn there is nothing to draw again.
-  t.eqStr(show(discipline(core, cli, "canonical", reprint)), show(t("abc^R\r\nabc\r\nabc\r\n")),
+  t.eqStr(recorded(t, v, "canonical", reprint), show(t("abc^R\r\nabc\r\nabc\r\n")),
           "canonical reprint");
-  t.eqStr(show(discipline(core, cli, "noecho", reprint)),
-          show(j3(t("abc"), k(REPRINT), t("\r\n"))), "noecho reprint");
+  t.eqStr(recorded(t, v, "noecho", reprint), show(j3(t("abc"), k(REPRINT), t("\r\n"))),
+          "noecho reprint");
 
-  // And the assertion that the harness has not silently lost its mode, which is exactly what it did
+  // And the assertion that the harness had not silently lost its mode, which is exactly what it did
   // when the mode was applied after the fork: three modes, three different answers to one input.
-  string a = show(discipline(core, cli, "canonical", erase));
-  string b = show(discipline(core, cli, "noecho", erase));
-  string c = show(discipline(core, cli, "cbreak", erase));
+  string a = recorded(t, v, "canonical", erase);
+  string b = recorded(t, v, "noecho", erase);
+  string c = recorded(t, v, "cbreak", erase);
   t.isTrue(a != b && b != c && a != c,
-           "the modes are not distinct — the harness is reading zero");
+           "the modes are not distinct — the harness was reading zero");
   return t.report();
 }
 
@@ -209,32 +153,67 @@ export string test_the_three_modes_differ_in_the_ways_that_were_measured(Core co
  */
 export string test_line_answers_what_the_kernel_answers_in_every_mode(Core core, Cli cli) {
   T t = T.create();
-  Stat bin = cli.stat(binary(cli)).wait();
-  t.isTrue(bin.exists, "the binary that builds ttycat is where the seed task writes it");
-  if (!bin.exists) { return t.report(); }
+  Loaded v = load(cli, vectorsPath());
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
 
-  string work = workDir(cli);
-  Change made = cli.mkdir(work, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
-  if (!made.ok()) { return t.report(); }
-  string stem = work + "/ttycat";
-  Exec built = cli.exec(binary(cli), string[]("build", TTYCAT, "-o", stem), u8[0]()).wait();
-  t.isTrue(built.ran() && built.status == 0,
-           "ttycat builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
-  if (!built.ran() || built.status != 0) { return t.report(); }
-
-  string[] modes = string[]("canonical", "noecho", "cbreak");
-  u8[][] all = cases();
-  string[] names = caseNames();
-  for (i32 m = 0; m < modes.len(); m++) {
+  string[] ms = modes();
+  u8[][] all = modeCases();
+  string[] names = modeCaseNames();
+  i32 compared = 0;
+  i32 missing = 0;
+  for (i32 m = 0; m < ms.len(); m++) {
     for (i32 i = 0; i < all.len(); i++) {
-      u8[] theirs = discipline(core, cli, modes[m], all[i]);
-      u8[] ours = through(core, cli, binary(cli), string[](stem, modes[m]), all[i]);
-      t.eqStr(show(ours), show(theirs), modes[m] + ": " + names[i]);
+      Vector? want = find(v, ms[m], all[i]);
+      if (want is null) {
+        missing = missing + 1;
+        continue;
+      }
+      compared = compared + 1;
+      t.eqStr(show(ttycatBytes(all[i], ms[m])), show(want!.out), ms[m] + ": " + names[i]);
     }
   }
-
-  Change gone = cli.remove(work, true).wait();
-  if (!gone.ok()) { core.warn("tty modes: could not remove " + work + " — " + gone.message); }
+  t.eqI32(missing, 0, itoa(missing) + " cases have no recorded answer — run `wac run --allow-read " +
+                      "--allow-write --allow-run tools/wac/ttyvectors.wac`");
+  t.eqI32(compared, ms.len() * all.len(),
+          itoa(compared) + " of " + itoa(ms.len() * all.len()) + " comparisons happened");
   return t.report();
+}
+
+/**
+ * The recorded answers are still the answers this machine gives — one case per mode.
+ *
+ * Three processes rather than a hundred, and they are the point of the differential rather than a
+ * stand-in for it: `^U` is a kill in two modes and a byte in the third, so one input in three modes is
+ * the case that catches a pty whose settings have moved.
+ */
+export string test_the_live_pty_still_answers_what_was_recorded_in_each_mode(Core core, Cli cli) {
+  T t = T.create();
+  Loaded v = load(cli, vectorsPath());
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  u8[] kill = j3(t("abc"), k(KILL), t("xy\n"));
+  string[] ms = modes();
+  i32 asked = 0;
+  for (i32 m = 0; m < ms.len(); m++) {
+    Vector? want = find(v, ms[m], kill);
+    if (want is null) { continue; }
+    asked = asked + 1;
+    t.eqStr(show(discipline(core, cli, ms[m], kill)), show(want!.out),
+            "the live pty in " + ms[m] + " no longer answers what " + v.oracle + " answered — re-run " +
+            "`wac run --allow-read --allow-write --allow-run tools/wac/ttyvectors.wac`");
+  }
+  t.eqI32(asked, ms.len(), "the canary asked the live pty " + itoa(asked) + " times");
+  return t.report();
+}
+
+/** What was recorded for one mode and input, shown; a named failure and `""` when nothing was. */
+string recorded(T t, Loaded v, string mode, u8[] input) {
+  Vector? got = find(v, mode, input);
+  if (got is null) {
+    t.isTrue(false, "no recorded " + mode + " answer for " + show(input));
+    return "";
+  }
+  return show(got!.out);
 }

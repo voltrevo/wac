@@ -1,0 +1,113 @@
+// The applets over a filesystem that is not the host's, against what the real tools answered.
+//
+// **This used to spawn once per case.** `sealed.test.ts` built `bin/sealedsh.wac` and ran it for each of
+// the 104 invocations — 19s of every suite run — to establish that an applet reading a file operand
+// answers the same when the file is in memory as coreutils does when it is on disk.
+//
+// The claim is worth keeping and does not need a process. `Shell.onFs` takes the filesystem as a value,
+// so a memory one is a value this test can make: `memory.wac` builds exactly what `sealedsh` builds.
+// The answers are `packages/box/test/behaviour-vectors.txt`, captured once by
+// `tools/wac/appletvectors.wac` and shared with `behaviour_test.wac`.
+//
+// **`behaviour_test.wac` is the same replay with the host's filesystem, and it cannot see this bug.**
+// Eight applets built their own `Feed.fromStdin(cli)` after opening an operand — right when `openStream`
+// redirected the process's standard input, wrong when it hands back a feed over bytes. `head f`,
+// `uniq f`, `cat -n f` and five more printed **nothing and exited 0** on a filesystem that had the file.
+// On a host filesystem, redirecting standard input is exactly what happens, so every one of them passed
+// there and passes there still. That is why the same cases are worth running twice.
+//
+// The fixtures are laid on the filesystem directly rather than written by a script, because here there
+// *is* another way to put a file somewhere — and the bytes are `cases.wac`'s, the same ones the host
+// replay uses, so the two cannot drift into testing different files.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Fixture, cases, fixtures } from "./cases.wac";
+import { Loaded, load, show } from "./replay.wac";
+import { Ran, memoryFs, runOn } from "./memory.wac";
+
+string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
+
+/** The fixtures, on a filesystem with nothing else in it. */
+bool layOn(Fs fs, Fixture[] fs_) {
+  for (i32 i = 0; i < fs_.len(); i++) {
+    if (fs_[i].isDir) {
+      if (!fs.mkdir("/" + fs_[i].name, true).ok()) { return false; }
+      continue;
+    }
+    if (!fs.writeFile("/" + fs_[i].name, fs_[i].bytes).ok()) { return false; }
+  }
+  return true;
+}
+
+export string test_the_applets_answer_the_same_over_memory_as_the_real_tools_did(Core core, Cli cli) {
+  T t = T.create();
+  Loaded v = load(cli, vectorsPath());
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  string[] list = cases();
+  i32 ran = 0;
+  i32 wrong = 0;
+  i32 unknown = 0;
+  string detail = "";
+  for (i32 i = 0; i < list.len() && i < v.n; i++) {
+    // Checked against the recorded case, not just the recorded answer — `behaviour_test.wac`'s reason.
+    if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
+    // A world per case, because a case that writes a file must not be visible to the next one.
+    Fs fs = memoryFs(core, "sealedsh");
+    if (!layOn(fs, fixtures())) {
+      t.isTrue(false, "cannot lay the fixtures on a memory filesystem");
+      return t.report();
+    }
+    Ran r = runOn(core, cli, fs, list[i]);
+    ran = ran + 1;
+    if (r.out != v.items[i].out || r.status != v.items[i].status) {
+      wrong = wrong + 1;
+      if (wrong <= 5) {
+        detail = detail + "\n  $ " + list[i] +
+                 "\n    want " + show(v.items[i].out) + " exit " + itoa(v.items[i].status) +
+                 "\n    ours " + show(r.out) + " exit " + itoa(r.status) +
+                 (r.err == "" ? "" : "\n    err  " + show(r.err));
+      }
+    }
+  }
+
+  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+                           " vectors");
+  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded script — `cases.wac` changed, so " +
+                      "`wac run --allow-read --allow-write --allow-run tools/wac/appletvectors.wac` is " +
+                      "what makes this file mean anything again");
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " invocations differ over memory from the " +
+                    "captured tools (" + v.oracle + ")" + detail);
+  return t.report();
+}
+
+/**
+ * And the host is not there at all — absent rather than refused.
+ *
+ * The only filesystem this shell has is the one it made, so a script that printed the real
+ * `/etc/passwd` could not have got there by accident. `sealed.test.ts` made this claim about a *program*
+ * built with no grants, which is a claim about a manifest and still spawns — that half stays there.
+ * This is the claim about the filesystem, which is the one every applet above depends on.
+ */
+export string test_nothing_of_the_host_is_reachable_over_memory(Core core, Cli cli) {
+  T t = T.create();
+  Fs fs = memoryFs(core, "sealedsh");
+
+  Ran passwd = runOn(core, cli, fs, "cat /etc/passwd; echo rc=$?");
+  t.eqStr(passwd.out, "rc=1\n", "the host's /etc/passwd was readable: " + show(passwd.out));
+  t.isTrue(passwd.err.indexOf("No such file or directory") >= 0, passwd.err);
+
+  Ran home = runOn(core, cli, fs, "ls /home; echo rc=$?");
+  t.eqStr(home.out, "rc=2\n", "the host's /home was listable: " + show(home.out));
+
+  // And the world it does have is its own: what the shell wrote is what an applet reads, and `ls` sees
+  // the mounts. This is the canary — a filesystem that answered "absent" to everything would satisfy
+  // both assertions above.
+  Ran own = runOn(core, cli, fs, "echo hi > /f; cat /f; ls /");
+  t.eqStr(own.out, "hi\nbin\ndev\nf\nproc\ntmp\n", "its own world: " + show(own.out) + own.err);
+  return t.report();
+}

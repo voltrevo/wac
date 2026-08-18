@@ -177,7 +177,7 @@ Deno.test("`ENOTDIR` reaches a `Stat` as a category, without making it unanswera
   // the category was thrown away before they could see it.
   assertEquals(statFault(Object.assign(new Error("ENOTDIR"), { code: "ENOTDIR" }), "/x/y"), FAULT_NOT_A_DIR);
   // The half that keeps `test` honest is `Stat.answered` in `platform.wac`, and it is asserted where it
-  // lives — `packages/box/test/notdir.test.ts` runs `test -e f/g` against bash.
+  // lives — `packages/box/test/wac/notdir_test.wac` runs `test -e f/g` against bash.
   assertEquals(wordsOf(FAULT_NOT_A_DIR), "Not a directory", "GNU's own phrase, which is what tools print");
 });
 

@@ -1,0 +1,260 @@
+// The clauses the spec states and **nothing else held wacc to**.
+//
+// `spec/spec/errors.md` does not merely ask for a span field — it names the width for particular
+// programs: *"The compiler must emit `span: 1`, `annotation: "expected bool, found i32"`,
+// `hint: "use a comparison…"`"* for `§wac-diag-bool-r8kn4wp`, and `span: 4` for
+// `§wac-diag-assign-j3qm7xf`, which is the width of `3.14`. Those are clauses, so they are the
+// contract rather than a preference.
+//
+// **`compiler/wacSpec.test.ts` checks both against the reference and nothing asked wacc.** Measured on
+// 2026-08-18: wacc had the message, the annotation and the help text right on both, and reported
+// `span: 0` — "nothing measured a width" — for both. A rendered diagnostic with no width puts the
+// caret under the first character of the offending expression instead of under the whole of it, which
+// is the difference between `^` and `^^^^` under `3.14`.
+//
+// The counting version of this lives in `diagnosticgap_test.wac`, which holds a floor under the *share*
+// of diagnostics carrying a span. A share cannot say which clause is unmet, so this names them.
+//
+// **It has grown past spans, which is why it is no longer called `diagspans`.** A measurement of all 419
+// clauses on 2026-08-18 asked which of them anything holds *wacc* to, rather than which are mentioned:
+// twelve were held only by the reference's own tests, and eight of those are `§wac-wapy-*`, a TypeScript
+// surface that is reference-only by design. The rest belong here, whether or not they are about a span —
+// what they have in common is that `compiler/wacSpec.test.ts` drives `wacCompile` and this drives wacc.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { diagnoseFiles } from "../../src/api.wac";
+import { wireField, wireLines, MESSAGE } from "./wire_probe.wac";
+
+const i32 ANNOTATION = 5;
+const i32 HINT = 6;
+const i32 SPAN = 7;
+
+/** The first diagnostic for `src`, as its nine wire fields — empty strings when there is none. */
+string[] firstDiagnostic(string src) {
+  string wire = diagnoseFiles(string[]("err.wac"), string[](src), "err.wac");
+  string[] lines = wireLines(wire);
+  if (lines.len() == 0) { return string[0](fill: ""); }
+  return string[](wireField(lines[0], MESSAGE()), wireField(lines[0], ANNOTATION),
+                  wireField(lines[0], HINT), wireField(lines[0], SPAN));
+}
+
+/**
+ * `§wac-diag-bool-r8kn4wp` — a condition that is not bool.
+ *
+ * The width is the condition's own: `x` is one character, so a caret of one is the truth here and a
+ * zero is the compiler saying it did not look.
+ */
+export string test_the_spec_required_span_for_a_non_bool_condition() {
+  T t = T.create();
+  string[] d = firstDiagnostic(
+      "export i32 bad(i32 x) {\n  if (x) { return 1; }\n  return 0;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for a non-bool condition");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "condition must be bool", "the message");
+  t.eqStr(d[1], "expected bool, found i32", "the annotation the spec names");
+  t.eqStr(d[3], "1", "the span the spec names — got " + (d[3] == "0" ? "0, which means nothing measured a width" : d[3]));
+  return t.report();
+}
+
+/**
+ * `§wac-diag-assign-j3qm7xf` — an initialiser of the wrong type.
+ *
+ * `span: 4` is the width of `3.14`: the caret covers the value that does not fit, not its first
+ * character. This is the largest spanless group in the corpus after `undefined type` was fixed.
+ */
+export string test_the_spec_required_span_for_a_mistyped_initialiser() {
+  T t = T.create();
+  string[] d = firstDiagnostic(
+      "export void test() {\n  i32 x = 1;\n  i32 y = 2;\n  i32 n = 3.14;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for a mistyped initialiser");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "initialiser does not match the declared type", "the message");
+  t.eqStr(d[1], "expected i32, found f64", "the annotation the spec names");
+  t.eqStr(d[3], "4", "the span the spec names — got " + (d[3] == "0" ? "0, which means nothing measured a width" : d[3]));
+  return t.report();
+}
+
+/**
+ * And the help text, which both clauses also state.
+ *
+ * Asserted here rather than left to the counting test, because a hint that says something the message
+ * already said is worse than none and the spec's wording is the check on that: *"use a comparison"*
+ * and *"use `as!` for a checked conversion"* both tell the reader what to write next.
+ */
+export string test_the_help_the_spec_states_for_both_clauses() {
+  T t = T.create();
+  string[] cond = firstDiagnostic(
+      "export i32 bad(i32 x) {\n  if (x) { return 1; }\n  return 0;\n}");
+  string[] init = firstDiagnostic(
+      "export void test() {\n  i32 n = 3.14;\n}");
+  t.isTrue(cond.len() == 4 && init.len() == 4, "one of the two reported nothing");
+  if (cond.len() != 4 || init.len() != 4) { return t.report(); }
+  t.isTrue(cond[2] != "", "the non-bool condition has no help text");
+  t.isTrue(init[2] != "", "the mistyped initialiser has no help text");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-lex-unterm-str-m9fk2wq` — the wording the spec and the reference both use.
+ *
+ * The spec's block shows `error: unterminated string literal` and an annotation *"string literal is
+ * never closed"*; `compiler/wacLex.ts` pushes `unterminated string literal`; the recorded corpus in
+ * `specCases.json` carries that same string as the case's expected message. wacc said **"unterminated
+ * string"** until 2026-08-18 — the one place in this chain that did not agree, and none of the
+ * differentials could see it because they compare parse and lex errors *by position*, not by text.
+ */
+export string test_the_unterminated_string_message_the_spec_states() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export string f() {\n  return \"hello;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for an unterminated string");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "unterminated string literal", "the message the spec and the reference both use");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-parse-bad-type-n7qm3xf` — the annotation is stated, so it is the contract.
+ *
+ * *"The compiler must emit `span: 3`, `annotation: "unknown type 'foo'"`"*. wacc had the span and said
+ * *"no type foo in scope"*, which is the same fact in different words — and the spec's sentence names
+ * the words. The reference attaches no annotation here at all, so there is no parity to lose.
+ */
+export string test_the_unknown_type_annotation_the_spec_states() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export i32 f() {\n  foo x = 1;\n  return 0;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for an unknown type");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[1], "unknown type 'foo'", "the annotation the spec names");
+  t.eqStr(d[3], "3", "the span the spec names");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-const-w2jm5xf` — `span: 3` over `p.x`, and `§wac-diag-wide-k4rn8wp` — `span: 7` over
+ * `sum > 0`.
+ *
+ * **These two need an expression's *extent*, not its first token**, which is what separates them from
+ * the literal and identifier cases above: `p.x` is a member and `sum > 0` a comparison, so the width
+ * runs from the first token of the whole thing to the last. The parser records no end position, but the
+ * shapes that matter carry their last token — `Member(obj, nameTok)` and `Binary(op, left, right)` —
+ * so the extent is recoverable for exactly the expressions these clauses are about.
+ *
+ * `cannot write through const reference` was also the largest spanless family in the corpus, at 22.
+ */
+export string test_the_spec_required_span_over_a_member_write() {
+  T t = T.create();
+  string[] d = firstDiagnostic(
+      "struct Point { i32 x; }\nexport void f(const Point p) {\n  p.x = 5;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for a write through a const reference");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[1], "p is const", "the annotation the spec names");
+  t.eqStr(d[3], "3", "the span the spec names over `p.x`");
+  return t.report();
+}
+
+export string test_the_spec_required_span_over_a_comparison_returned() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export i32 f(i32 sum) {\n  return sum > 0;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for returning a bool from an i32 function");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[1], "expected i32, found bool", "the annotation the spec names");
+  t.eqStr(d[3], "7", "the span the spec names over `sum > 0`");
+  return t.report();
+}
+
+/**
+ * A hint quotes the reader's own expression, which a per-code table cannot do.
+ *
+ * **Measured before the fix**: `if (flag)` was told *"use a comparison, such as `x != 0`"* — a variable
+ * the program does not have, in a sentence that reads as authoritative. `hintFor(code)` is a table, so
+ * every non-bool condition got the same words whatever it was called. `spec/spec/errors.md` states hints
+ * that quote the expression — `§wac-diag-bool-r8kn4wp`'s *"use a comparison: if (x != 0) { ... }"* is
+ * written for a program whose variable is `x` — so a per-instance hint is what the clause asks for.
+ *
+ * Both names are checked, because a hint that happens to be right for `x` is exactly how this survived.
+ */
+export string test_a_hint_names_the_condition_the_reader_wrote() {
+  T t = T.create();
+  string[] x = firstDiagnostic("export i32 f(i32 x) {\n  if (x) { return 1; }\n  return 0;\n}");
+  string[] flag = firstDiagnostic("export i32 f(i32 flag) {\n  if (flag) { return 1; }\n  return 0;\n}");
+  t.isTrue(x.len() == 4 && flag.len() == 4, "one of the two reported nothing");
+  if (x.len() != 4 || flag.len() != 4) { return t.report(); }
+  t.eqStr(x[2], "use a comparison, such as `x != 0`", "the hint for a condition called x");
+  t.eqStr(flag[2], "use a comparison, such as `flag != 0`",
+          "the hint for a condition called flag — a table cannot say this");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-wide-k4rn8wp`'s hint, which quotes the expression and names the type wanted.
+ *
+ * The spec writes it as *"use `(sum > 0) as i32` to convert"*. Only where the value is a `bool` used
+ * where a number is wanted — the case the clause is about — and where the expression's extent is
+ * knowable; anything else keeps the code's own hint about the three cast operators.
+ */
+export string test_the_cast_hint_the_spec_states_quotes_the_expression() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export i32 f(i32 sum) {\n  return sum > 0;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[2], "use `(sum > 0) as i32` to convert", "the hint the spec states");
+  return t.report();
+}
+
+/**
+ * `§enum-variant-name-collision` — two enums in one file cannot share a variant name.
+ *
+ * A variant is a file-scope name, which is what makes `Circle(2.0)` work without naming its enum — so a
+ * second enum claiming `Circle`, or a struct or function of that name, is a collision. The spec states
+ * it in `enums.md` and `generics.md` refers to it; `compiler/wacResolve.test.ts` held the reference to it
+ * and nothing asked wacc.
+ *
+ * All three shapes, because "two enums" is the one the spec's example shows and the other two are the
+ * same rule reached from a different side.
+ */
+export string test_a_variant_name_cannot_collide_at_file_scope() {
+  T t = T.create();
+  string[] two = firstDiagnostic(
+      "enum Shape { Circle(f64 r) }\nenum Hole { Circle(f64 r) }\nexport i32 f() { return 0; }");
+  string[] withStruct = firstDiagnostic(
+      "struct Circle { f64 r; }\nenum Shape { Circle(f64 r) }\nexport i32 f() { return 0; }");
+  string[] withFunc = firstDiagnostic(
+      "i32 Circle() { return 1; }\nenum Shape { Circle(f64 r) }\nexport i32 f() { return 0; }");
+  t.isTrue(two.len() == 4, "two enums sharing a variant name were accepted");
+  t.isTrue(withStruct.len() == 4, "a variant sharing a struct's name was accepted");
+  t.isTrue(withFunc.len() == 4, "a variant sharing a function's name was accepted");
+  if (two.len() != 4 || withStruct.len() != 4 || withFunc.len() != 4) { return t.report(); }
+  t.eqStr(two[0], "duplicate name at file scope", "the message for two enums");
+  t.eqStr(withStruct[0], "duplicate name at file scope", "the message for a struct");
+  t.eqStr(withFunc[0], "duplicate name at file scope", "the message for a function");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-null-h6kp9wn` — a nullable value assigned to a non-null type, and the help that unwraps it.
+ *
+ * The spec's block shows `= help: unwrap with `!`: Point p = q!;`. wacc's hint says the same thing in its
+ * own words, which is the part worth pinning: the clause is about the reader being told *what to write
+ * next*, and a hint that omitted the `!` would be the failure. Held only by the reference until now.
+ */
+export string test_the_nullable_assignment_clause() {
+  T t = T.create();
+  string[] d = firstDiagnostic(
+      "struct Point { i32 x; }\nexport i32 f(Point? q) {\n  Point p = q;\n  return p.x;\n}");
+  t.isTrue(d.len() == 4, "assigning a nullable to a non-null type was accepted");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "a nullable value cannot be assigned to a non-null type", "the message");
+  t.isTrue(contains(d[2], "!"), "the help does not say to unwrap with `!`: " + d[2]);
+  return t.report();
+}
+
+/** `needle` anywhere in `haystack`. */
+bool contains(string haystack, string needle) {
+  if (needle.len() > haystack.len()) { return false; }
+  for (i32 i = 0; i + needle.len() <= haystack.len(); i++) {
+    if (haystack.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}

@@ -11,7 +11,8 @@
 // command that cannot start is reported rather than returning a pid that is already dead.
 
 import { T } from "../../src/assert.wac";
-import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForPort } from "../../src/daemon.wac";
+import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForPort,
+         waitForPortWithin } from "../../src/daemon.wac";
 import { quoted } from "../../src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
@@ -79,5 +80,47 @@ export string test_quoting_keeps_a_value_whole() {
   t.eqStr(quoted("plain"), "'plain'", "a plain word");
   t.eqStr(quoted("two words"), "'two words'", "a space does not split it");
   t.eqStr(quoted("it's"), "'it'\\''s'", "a quote closes, escapes and reopens");
+  return t.report();
+}
+
+/**
+ * A bound in attempts is not a bound in time, which is what `waitForPortWithin` exists for.
+ *
+ * This is the shape of a live-test flake rather than a hypothetical: `packages/ssh` waited for a real
+ * `sshd` with `waitForPort(cli, host, port, 400)`, which reads as patience and is ten
+ * milliseconds of it — a refused connection comes back in microseconds. It passed while the machine was
+ * idle and failed the moment four `wac test` workers shared the box, reporting "sshd never accepted"
+ * about a server that was starting normally.
+ *
+ * So what is asserted is the difference: the same nothing, waited for both ways. The attempt-bounded
+ * call gives up in a small fraction of the deadline; the deadline-bounded one takes the deadline.
+ */
+export string test_a_deadline_wait_waits_for_the_deadline(Core core, Cli cli) {
+  T t = T.create();
+  Port got = freePortOr(cli);
+  i32 port = got.port;
+  t.isTrue(port > 0, "the kernel gave a free port — " + got.error);
+  if (port <= 0) { return t.report(); }
+
+  // Nothing will ever listen here, so both calls must answer false — and the interesting part is how
+  // long each takes to say it.
+  i64 beforeSpin = core.nowMillis().wait();
+  bool spun = waitForPort(cli, "127.0.0.1", port, 400);
+  i64 spinMillis = core.nowMillis().wait() - beforeSpin;
+
+  i64 beforeWait = core.nowMillis().wait();
+  bool waited = waitForPortWithin(core, cli, "127.0.0.1", port, 300);
+  i64 waitMillis = core.nowMillis().wait() - beforeWait;
+
+  t.isFalse(spun, "something answered on a port nothing is listening on");
+  t.isFalse(waited, "something answered on a port nothing is listening on");
+  t.isTrue(waitMillis >= 300,
+           "the deadline wait gave up after " + itoa(waitMillis as~ i32) + "ms of a 300ms deadline");
+  // Four hundred attempts against nothing, in well under the same 300ms — the assertion that the old
+  // bound was not a bound in time. Generous, because a loaded machine is exactly when it is slowest:
+  // the claim is only that attempts and milliseconds are different units.
+  t.isTrue(spinMillis < 250,
+           "400 attempts took " + itoa(spinMillis as~ i32) + "ms, so attempts and milliseconds are not " +
+           "as different as this test claims — check the connect path before trusting either bound");
   return t.report();
 }

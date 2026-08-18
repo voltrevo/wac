@@ -24,6 +24,11 @@
 // the capability list after a NUL, and a parser that split it on spaces would produce a ref named
 // `HEAD\0multi_ack…`. That shows up as a diff, so it does not need its own case.
 //
+// **It costs about four seconds, and the four seconds are the network.** Measured 2026-08-18: 3.9s,
+// the slowest test in `packages/git`. A TLS handshake, a proxy hop and a ref advertisement from a
+// repository on the other side of the internet is what the test *is* — there is no local server to
+// substitute without giving up the thing being checked, which is that a remote nobody here configured
+// answers what `git` says it answers. It is the price of a live oracle rather than a cost to remove.
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
 // `issues/system/0182` recorded this as needing `HTTP_PROXY` "for a reason nothing in the repository

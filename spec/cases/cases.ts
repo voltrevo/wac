@@ -1,7 +1,7 @@
 // Reading the case corpus. See README.md for the format.
 //
 // Deliberately not a test: `compiler/wacCases.test.ts` runs these against the reference and
-// `packages/wacc/test/cases.test.ts` runs the same files against wacc, and neither should own the
+// `packages/wacc/test/wac/cases_test.wac` runs the same files against wacc, and neither should own the
 // parsing. A third consumer — a compiler nobody has written yet — should need only this file.
 
 export type Expectation =

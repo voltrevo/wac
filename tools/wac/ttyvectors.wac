@@ -1,0 +1,109 @@
+// Ask Linux's line discipline what each of these keystrokes produces, once, and write it down.
+//
+//   wac run --allow-read --allow-write --allow-run tools/wac/ttyvectors.wac
+//
+// **Why a file rather than a differential.** `packages/tty` is measured against `n_tty` — the oracle is
+// the kernel on this machine rather than a table somebody wrote, which is the whole reason the module
+// found that `^H` is not erase and that `^W`'s idea of a word is letters and digits. But the kernel gives
+// the same answer every time, and asking it cost three processes a case: `script`, its `cat`, and a built
+// `ttycat`. Fifty-five cases and three modes came to 23 seconds of the suite.
+//
+// So it is asked here and replayed in process. Our side of the comparison is `ttycatBytes`, which needs no
+// capability at all — a line discipline is a fold over bytes — so what the spawned program added was
+// reading standard input.
+//
+// **The oracle check is here rather than in the tests.** `discipline.py` is trusted because it reproduces
+// `script -qec cat` byte for byte, and that is a property of the two oracles with our code nowhere in it.
+// It belongs at capture time: this refuses to write a file whose two oracles disagree, which is stronger
+// than a test that discovers it later.
+//
+// **What is lost, deliberately**: nothing notices `n_tty` changing under us on the day it happens. Each
+// test keeps a live case per mode as a canary — a wholesale change of environment trips those, and a
+// subtler one is caught when somebody re-runs this and reads the diff.
+
+import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wac";
+import { Buf } from "../../packages/bytes/src/buf.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { SHARED, modeCases, modes, show, typed } from "../../packages/tty/test/wac/cases.wac";
+// The same helpers the replay uses, so the file that writes the vectors and the file that reads them
+// cannot disagree about where they are or how the oracle is spawned.
+import { discipline, pty, vectorsPath } from "../../packages/tty/test/wac/replay.wac";
+
+export i32 main(Core core, Cli cli) {
+  Buf out = Buf.create();
+  out.pushAll("wac-tty-vectors 1\n".toBytes());
+  out.pushAll(("kernel: " + versionOf(cli, "uname", string[]("-sr")) + "\n").toBytes());
+  out.pushAll(("script: " + versionOf(cli, "script", string[]("--version")) + "\n").toBytes());
+  out.pushAll(("python3: " + versionOf(cli, "python3", string[]("--version")) + "\n").toBytes());
+
+  // **The oracles agree before anything is recorded.** `script` cannot hold an `stty`, which is why the
+  // mode cases go through `discipline.py`; that makes it a second oracle, and a second oracle is worth
+  // what its agreement with the first is worth. Nine cases, canonical, byte for byte.
+  u8[][] mc = modeCases();
+  i32 agreed = 0;
+  for (i32 i = 0; i < SHARED; i++) {
+    u8[] theirs = pty(core, cli, "cat", mc[i]);
+    u8[] ours = discipline(core, cli, "canonical", mc[i]);
+    if (show(theirs) == show(ours)) {
+      agreed = agreed + 1;
+      continue;
+    }
+    core.warn("ttyvectors: discipline.py is not a drop-in for script on case " + itoa(i) +
+              "\n  script       " + show(theirs) + "\n  discipline.py " + show(ours));
+    return 1;
+  }
+  // And that `script` answered at all, so the agreement above is not two silences.
+  if (show(pty(core, cli, "cat", "abc\n".toBytes())) != show("abc\r\nabc\r\n".toBytes())) {
+    core.warn("ttyvectors: script did not answer — there is no oracle here to capture");
+    return 1;
+  }
+  out.pushAll(("canonical-matches-script: " + itoa(agreed) + " of " + itoa(SHARED) + "\n").toBytes());
+
+  u8[][] rules = typed();
+  string[] ms = modes();
+  out.pushAll(("count: " + itoa(rules.len() + ms.len() * mc.len()) + "\n").toBytes());
+
+  // The editing rules, through the pty `line_test.wac` has always trusted.
+  for (i32 i = 0; i < rules.len(); i++) {
+    record(out, "canonical", rules[i], pty(core, cli, "cat", rules[i]));
+  }
+  // The modes, through the pty that can hold one. Canonical is recorded twice over the nine shared
+  // cases — once from each oracle — which is deliberate: it is the agreement above, kept in the file.
+  for (i32 m = 0; m < ms.len(); m++) {
+    for (i32 i = 0; i < mc.len(); i++) {
+      record(out, ms[m], mc[i], discipline(core, cli, ms[m], mc[i]));
+    }
+  }
+
+  Change wrote = cli.writeFile(vectorsPath(), out.bytes()).wait();
+  if (!wrote.ok()) {
+    core.warn("ttyvectors: cannot write " + vectorsPath() + " — " + wrote.message);
+    return 1;
+  }
+  core.log(vectorsPath() + ": " + itoa(rules.len() + ms.len() * mc.len()) + " vectors, " +
+           itoa(out.len / 1024) + " KB");
+  return 0;
+}
+
+/** `M <n>\n<mode>\nI <n>\n<bytes>\nO <n>\n<bytes>\n` — lengths, because every payload has newlines in it. */
+void record(Buf out, string mode, u8[] input, u8[] answer) {
+  field(out, "M", mode.toBytes());
+  field(out, "I", input);
+  field(out, "O", answer);
+}
+
+void field(Buf out, string tag, u8[] bytes) {
+  out.pushAll((tag + " " + itoa(bytes.len()) + "\n").toBytes());
+  out.pushAll(bytes);
+  out.pushAll("\n".toBytes());
+}
+
+/** A tool's first line of `--version`, or `"(absent)"`, so the file says what produced it. */
+string versionOf(Cli cli, string program, string[] args) {
+  Exec r = cli.exec(program, args, u8[0]()).wait();
+  if (!r.ran()) { return "(absent)"; }
+  u8[] said = r.stdout.len() > 0 ? r.stdout : r.stderr;
+  string all = string.fromBytes(said);
+  i32 nl = all.indexOf("\n");
+  return nl < 0 ? all : all.slice(0, nl);
+}

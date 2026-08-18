@@ -7,6 +7,11 @@
 // they compose**, and this does — one program, one URL, and a directory git is willing to call a
 // repository.
 //
+//
+// **Three seconds, spent on the wire.** Measured 2026-08-18: 3.3s. The clone is judged by `git` itself
+// calling the result correct, so both halves have to be real: a real remote to clone from and the real
+// `git` to inspect what arrived. Neither can be made cheaper without the test becoming about something
+// else.
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
 // The last of the six `issues/system/0182` recorded as blocked on an environment `Cli.exec` passes

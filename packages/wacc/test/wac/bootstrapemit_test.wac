@@ -14,6 +14,10 @@
 // not: `this.pos++` on a field emitted nothing, so the lexer never advanced, and every **character
 // literal** compiled to 0, so `isSpace(c)` asked whether the byte was NUL.
 //
+//
+// **3.8s, and it is a compiler built and then run.** Measured 2026-08-18. The rung below
+// `fixpointemit_test.wac`: that one compares emitted bytes, this one runs what was emitted and compares
+// answers, which needs the build plus a process.
 // ## Host-side until 2026-08-17, `issues/system/0161`
 //
 // The TypeScript instantiated both modules and called eight exports on each. From wac neither half
@@ -21,17 +25,23 @@
 //
 //   - **the reference prints it.** `wacx run <file> fold` compiles, instantiates and calls `fold`,
 //     printing the whole `i32`. One process, full width.
-//   - **`wac` exits with it**, and an exit status is eight bits. `123456789` comes back as 21, and
-//     `256` comes back as **0** — a wrong answer wearing the shape of success (`issues/system/0184`).
+//   - **`wac` exits with it** *when the module has a `main`*, and an exit status is eight bits.
+//     `123456789` comes back as 21, and `256` comes back as **0** — a wrong answer wearing the shape
+//     of success (`issues/system/0184`).
 //
-// So the eight answers are folded into one checksum, and the wac side reads it **a byte at a time**:
-// four modules differing only in a shift, four runs, reassembled. The reference's single answer is
-// compared against all thirty-two bits, so a difference anywhere in any of the eight is caught rather
-// than one time in 256.
+// So the eight answers are folded into one checksum, and the driver has **no `main`**: `wac
+// <module.wasm> fold` calls the named export and prints the whole word, which is the same contract
+// the reference side has. Both sides answer in full and are compared in full, so a difference
+// anywhere in any of the eight is caught rather than one time in 256.
 //
-// The driver cannot print its way out of this. `Cli.write` needs `packages/platform`, whose lambdas
-// the reference has never parsed, so a program used for a two-compiler differential cannot use a
-// capability at all.
+// It cost four compiles of wacc to learn that. The driver had a `main` returning one byte of the fold
+// and was compiled once per shift, because a module with a `main` never reaches the named-export path
+// — the arguments go to `main` instead. One export and one run is the same evidence for a quarter of
+// the work.
+//
+// The driver cannot print for itself. `Cli.write` needs `packages/platform`, whose lambdas the
+// reference has never parsed, so a program used for a two-compiler differential cannot use a
+// capability at all — which is why the printing has to be the *host's*, on both sides.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
@@ -54,12 +64,18 @@ const string SELFDRIVE = "packages/wacc/test/wac/selfdrive.wac";
 const string DRIVER = ".cache/_bootdrive.wac";
 
 /**
- * The driver, with `main` returning one byte of the fold.
+ * The driver: one export, folding the eight answers into one word.
  *
- * `fold` is what the reference is asked for directly. The multiplier only has to spread a change in
- * any one answer across the whole word — this is not a hash with properties.
+ * The multiplier only has to spread a change in any one answer across the whole word — this is not a
+ * hash with properties.
+ *
+ * **It has no `main`, which is what makes one run enough.** `wac <module.wasm> <export>` calls the
+ * named export and prints what it returned, in full — the same contract `harness/referenceRun.ts`
+ * has on the other side. A module *with* a `main` never reaches that path, because the arguments go
+ * to `main` instead, and `main`'s answer is an exit status: eight bits. That is why this used to be
+ * compiled four times, once per byte of the fold, and it is 3/4 of what the rung cost.
  */
-string driverSource(i32 shift) {
+string driverSource() {
   return "import { dumpSum, errorCount, badErrorCount, tokenCount, declCount,\n" +
          "         subjectLen, subjectBytes, literalBytes } from " +
          "\"../packages/wacc/test/wac/selfdrive.wac\";\n" +
@@ -74,25 +90,33 @@ string driverSource(i32 shift) {
          "  s = s * 31 + subjectBytes();\n" +
          "  s = s * 31 + literalBytes();\n" +
          "  return s;\n" +
-         "}\n" +
-         "export i32 main() { return (fold() >> " + itoa(shift) + ") & 255; }\n";
+         "}\n";
 }
 
 /**
- * `wacx run <file> <export>`, whose last line is the answer. `fn` is a keyword here.
+ * The reference's answers to a comma-separated list of exports, one line each, in one process.
  *
- * **The file matters as well as the name.** `wacx run` calls an export of the *entry* module, and
- * importing does not re-export — so the driver answers `fold` and nothing else, and the two
- * canaries have to be asked of `selfdrive.wac` itself.
+ * **The file matters as well as the name.** `referenceRun` calls an export of the *entry* module, and
+ * importing does not re-export — so the driver answers `fold` and nothing else, and the two canaries
+ * have to be asked of `selfdrive.wac` itself. That is two entries, so two processes; the several
+ * exports of each are one.
  */
-i32 referenceAnswers(Cli cli, string file, string export_, i32[] okOut) {
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", file, export_),
+i32[] referenceAnswers(Cli cli, string file, string exports, i32 want, i32[] okOut) {
+  okOut[0] = 0;
+  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", file, exports),
                     u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { okOut[0] = 0; return 0; }
+  if (!r.ran() || r.status != 0) { return i32[want](); }
   string[] lines = splitLines(string.fromBytes(r.stdout));
-  if (lines.len() == 0) { okOut[0] = 0; return 0; }
-  okOut[0] = 1;
-  return atoi(trimmed(lines[lines.len() - 1]));
+  i32[] out = i32[want]();
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len() && n < want; i++) {
+    if (trimmed(lines[i]).len() == 0) { continue; }
+    out[n] = atoi(trimmed(lines[i]));
+    n = n + 1;
+  }
+  // Fewer lines than exports means one of them trapped part way, which is not a run that answered.
+  if (n == want) { okOut[0] = 1; }
+  return out;
 }
 
 export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core core, Cli cli) {
@@ -113,11 +137,11 @@ export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core c
   paths[c.paths.len()] = DRIVER;
 
   scratchDir(cli);   // `.cache/` may not exist yet
-  Change wrote = cli.writeFile(DRIVER, driverSource(0).toBytes()).wait();
+  Change wrote = cli.writeFile(DRIVER, driverSource().toBytes()).wait();
   t.eqI32(wrote.fault, 0, "the driver was written to " + DRIVER);
   if (wrote.fault != 0) { return t.report(); }
 
-  sources[c.paths.len()] = driverSource(0);
+  sources[c.paths.len()] = driverSource();
   string why = blockedFiles(paths, sources, DRIVER);
   t.eqStr(why, "", "wacc declines the driver — and so declines part of itself");
 
@@ -125,37 +149,31 @@ export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core c
   // a driver that accepted the program it is supposed to reject proves nothing about either
   // compiler. Both are asked of the reference because it is the side that answers in full.
   i32[] ok = i32[1]();
-  i32 sum = referenceAnswers(cli, SELFDRIVE, "dumpSum", ok);
-  t.eqI32(ok[0], 1, "the reference ran the driver");
+  i32[] canaries = referenceAnswers(cli, SELFDRIVE, "dumpSum,badErrorCount", 2, ok);
+  t.eqI32(ok[0], 1, "the reference ran the driver and answered both canaries");
   if (ok[0] != 1) { return t.report(); }
-  t.isTrue(sum != 0, "the reference's own dump checksum is not 0 — the driver ran something");
-  t.isTrue(referenceAnswers(cli, SELFDRIVE, "badErrorCount", ok) != 0,
+  t.isTrue(canaries[0] != 0, "the reference's own dump checksum is not 0 — the driver ran something");
+  t.isTrue(canaries[1] != 0,
            "the program that must be rejected was rejected — the driver proves something");
 
-  i32 theirs = referenceAnswers(cli, DRIVER, "fold", ok);
+  i32[] fold = referenceAnswers(cli, DRIVER, "fold", 1, ok);
   t.eqI32(ok[0], 1, "the reference answered the fold");
+  i32 theirs = fold[0];
 
-  // Ours, a byte at a time.
+  // Ours: one compile, and the fold read back whole.
   string dir = scratchDir(cli);
-  i32[] shifts = i32[](0, 8, 16, 24);
-  i32 mine = 0;
-  bool ran = true;
-  for (i32 i = 0; i < shifts.len(); i++) {
-    sources[c.paths.len()] = driverSource(shifts[i]);
-    u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "bootdrive.wasm", 0);
-    Ran r = runModule(cli, wasm, dir, "bootdrive" + itoa(shifts[i]) + ".wasm", string[0](fill: ""));
-    if (!r.ok || wasRejected(r) || r.trapped) {
-      t.fail("wacc's module for shift " + itoa(shifts[i]) + " did not run — " +
-             (r.ok ? r.stderr : r.error));
-      ran = false;
-      continue;
-    }
-    mine = mine | (r.status << shifts[i]);
-  }
-
+  u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "bootdrive.wasm", 0);
+  Ran r = runModule(cli, wasm, dir, "bootdrive.wasm", string[]("fold"));
   cli.remove(DRIVER, false).wait();
-
-  if (!ran) { return t.report(); }
+  if (!r.ok || wasRejected(r) || r.trapped) {
+    t.fail("wacc's module did not run — " + (r.ok ? r.stderr : r.error));
+    return t.report();
+  }
+  // Said nothing is not answered zero: an empty stdout parses as 0, and 0 is a fold a broken driver
+  // could plausibly return.
+  t.isTrue(trimmed(r.stdout).len() > 0,
+           "wacc's module printed nothing — status " + itoa(r.status) + ", stderr " + r.stderr);
+  i32 mine = atoi(trimmed(r.stdout));
   t.eqI32(mine, theirs,
           "wacc compiled by wacc disagrees with wacc: ours=" + itoa(mine) + " reference=" +
           itoa(theirs) + ", folded over dumpSum, errorCount, badErrorCount, tokenCount, " +

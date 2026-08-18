@@ -247,6 +247,7 @@ u8[] padTo(u8[] b, i32 n) {
 export string test_fuzz_socks_requests() {
   T t = T.create();
   Rng r = rng(0x50C5);
+  i32 parsed = 0;
   for (i32 iter = 0; iter < 4000; iter++) {
     i32 n = next(r) % 40;
     u8[] req = u8[n]();
@@ -256,12 +257,21 @@ export string test_fuzz_socks_requests() {
     // called after a target comes back — so the pairing is what is being fuzzed, not the
     // function alone.
     if (out != "" && out != "!") {
+      parsed = parsed + 1;
       i32 len = requestLength(req);
       t.isTrue(len > 0 && len <= req.len(),
                "a parsed request must lie inside the bytes it was parsed from");
     }
   }
-  t.isTrue(true, "no trap on 4000 random requests");
+  // **How many reached the pairing, because most random bytes are not a request.** Nine of the four
+  // thousand parse as a target — measured — and the assertion inside the loop only runs for those. A
+  // `targetOf` that grew stricter would take that to zero and leave this test asserting nothing but "no
+  // trap", which it would still report as a pass. The floor is low because the number is small and the
+  // point is that it is not none.
+  t.isTrue(parsed > 0,
+           "none of the 4000 random requests parsed as a target, so `requestLength` was never asked " +
+           "anything — the fuzz is now only a no-trap check");
+  t.isTrue(true, "no trap on 4000 random requests, " + itoa64(parsed as i64) + " of them parsed");
   return t.report();
 }
 

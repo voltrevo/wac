@@ -313,6 +313,27 @@ const ENOSPC: i32 = 28;
 /// `packages/fs/test/wac/host_test.wac`, ran on the Deno host only until 2026-08-17; the first run
 /// of the wac port failed on exactly this line. `issues/system/0132` is the conformance table this
 /// belongs in.
+/// What the host says went wrong, **without the errno**.
+///
+/// `std::io::Error`'s own `Display` ends with ` (os error 21)`, and Deno's does not — so the same wac
+/// program, built once, said `cat: adir: Is a directory` under one host and
+/// `cat: adir: Is a directory (os error 21)` under the other. The applets were changed to stop printing
+/// the host's sentence at all (`FAULT_IS_DIR` and its neighbours are the categories that replaced it),
+/// and this is the other half: where a message does still reach a program, the two hosts hand over the
+/// same one.
+///
+/// Found by `packages/box/test/wac/operand_errors_test.wac`, which replays 29 invocations in process
+/// under the native host against expectations captured from GNU. Fourteen of them differed by exactly
+/// this suffix. Nothing had compared the two hosts' *message text* before, because the Deno test that
+/// covered these ran the artefact under Deno.
+fn message_of(e: &std::io::Error) -> String {
+    let text = e.to_string();
+    match text.rfind(" (os error ") {
+        Some(at) if text.ends_with(')') => text[..at].to_string(),
+        _ => text,
+    }
+}
+
 fn fault_of(e: &std::io::Error) -> i32 {
     match e.kind() {
         std::io::ErrorKind::NotFound => FAULT_NOT_FOUND,
@@ -618,6 +639,158 @@ fn collect_tests(dir: &std::path::Path, out: &mut Vec<String>) {
     }
 }
 
+/// The `test*` exports a file declares, as `(name, params)`.
+///
+/// A scan rather than a compile, because this runs *before* anything is built — it is what decides
+/// what the aggregate below imports. The shape it looks for is the one `run_tests` will accept:
+/// `export string test…(…)`. A parameter list may span lines, so it is read to the first `)`; that is
+/// safe because the only types a wac test signature ever carries are `Core` and `Cli`, measured
+/// across all 1 960 of them.
+fn test_exports_of(path: &str) -> Vec<(String, String)> {
+    let Ok(src) = std::fs::read_to_string(path) else { return Vec::new() };
+    let mut out = Vec::new();
+    for (at, _) in src.match_indices("export string test") {
+        // Only at the start of a line — the same words inside a comment or a doc block are prose.
+        if src[..at].chars().rev().take_while(|c| *c != '\n').any(|c| !c.is_whitespace()) {
+            continue;
+        }
+        let rest = &src[at + "export string ".len()..];
+        let Some(open) = rest.find('(') else { continue };
+        let name = rest[..open].trim();
+        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            continue;
+        }
+        let Some(close) = rest[open..].find(')') else { continue };
+        out.push((name.to_string(), rest[open + 1..open + close].to_string()));
+    }
+    out
+}
+
+/// One entry that imports every test file and re-exports its tests, for a single build.
+///
+/// **`issues/system/0192`.** A build per test file recompiles the same import graph once per file:
+/// `packages/box`'s sixteen files took 40.9s as sixteen builds and 11.1s as one, and the difference is
+/// entirely compilation — the assertions in them total under two seconds.
+///
+/// Three details each cost a wrong first attempt:
+///
+///   * **the alias must differ from the wrapper's name**, or the wrapper calls itself and the test
+///     recurses until the stack goes;
+///   * **the suffix goes on the end**, because `run_tests` recognises a test that wants a trap by
+///     `starts_with("test_traps_")` and `--filter` matches a substring of the name a person typed;
+///   * **`Core` and `Cli` have to be imported here**, since the wrappers name them in their own
+///     signatures. Nothing else appears in a test signature anywhere in the repository.
+///
+/// Sharing one module across files is safe because wac has no module-level variables: a trap unwinds
+/// the call and leaves nothing behind, which is the same reason `test_traps_*` has always been able to
+/// run beside its neighbours.
+fn write_aggregate(
+    files: &[String],
+    which: &[usize],
+    to: &std::path::Path,
+) -> Option<(String, Vec<usize>)> {
+    let up = "../".repeat(to.parent()?.components().count());
+    let mut imports = vec![format!(
+        "import {{ Cli, Core }} from \"{up}packages/platform/src/platform.wac\";"
+    )];
+    let mut wrappers = Vec::new();
+    // Which files ended up in it, by index into `files`: one with no tests contributes nothing, and
+    // the suffixes have to keep pointing at the right path.
+    let mut carried = Vec::new();
+    for &i in which {
+        let f = &files[i];
+        let tests = test_exports_of(f);
+        if tests.is_empty() {
+            continue;
+        }
+        let aliased: Vec<String> = tests
+            .iter()
+            .map(|(n, _)| format!("{n} as impl{i}_{n}"))
+            .collect();
+        imports.push(format!("import {{ {} }} from \"{up}{f}\";", aliased.join(", ")));
+        for (n, params) in &tests {
+            let ps = params.trim();
+            let args: Vec<&str> = if ps.is_empty() {
+                Vec::new()
+            } else {
+                ps.split(',').filter_map(|p| p.trim().split_whitespace().last()).collect()
+            };
+            wrappers.push(format!(
+                "export string {n}__f{i}({ps}) {{ return impl{i}_{n}({}); }}",
+                args.join(", ")
+            ));
+        }
+        carried.push(i);
+    }
+    if wrappers.is_empty() {
+        return None;
+    }
+    let source = format!("{}\n\n{}\n", imports.join("\n"), wrappers.join("\n"));
+    std::fs::create_dir_all(to.parent()?).ok()?;
+    std::fs::write(to, &source).ok()?;
+    Some((to.display().to_string(), carried))
+}
+
+/// Compile `entry` once, and hand back the module, its manifest text and the parsed manifest.
+///
+/// The build half of `build_and_call`, extracted so a caller can run one module more than once —
+/// `issues/system/0192`, where a directory of test files becomes one build and one instantiation per
+/// file rather than one build *and* one instantiation per file.
+///
+/// The coverage table comes back with it, because the counters live in the instance and the table is
+/// written beside the module: reading it after the run has returned finds nothing.
+fn build_module(
+    flags: &[String],
+    entry: &str,
+    coverage: bool,
+) -> Result<(Vec<u8>, String, Manifest, Option<String>), i32> {
+    sweep_stale_runs();
+    let dir = std::env::temp_dir().join(format!("wac-build-{}", std::process::id()));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("wac: cannot make a working directory — {e}");
+        return Err(1);
+    }
+    let stem = dir.join("prog");
+    let mut build = vec![
+        "build".to_string(),
+        entry.to_string(),
+        "-o".to_string(),
+        stem.display().to_string(),
+        "--quiet".to_string(),
+    ];
+    if coverage {
+        build.push("--coverage".to_string());
+    }
+    build.extend(flags.iter().cloned());
+    start_v8();
+    let built = run_seed(&build);
+    if built != 0 {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(built);
+    }
+    let out = match std::fs::read(dir.join("prog.wasm")) {
+        Err(e) => {
+            eprintln!("wac: the build wrote nothing to run — {e}");
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(1);
+        }
+        Ok(bytes) => bytes,
+    };
+    let Some(text) = manifest_in(&out) else {
+        eprintln!("wac: the module just built describes itself wrongly");
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(1);
+    };
+    let Ok(manifest) = serde_json::from_str::<Manifest>(&text) else {
+        eprintln!("wac: the module just built describes itself wrongly");
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(1);
+    };
+    let cov = if coverage { std::fs::read_to_string(dir.join("prog.cov")).ok() } else { None };
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok((out, text, manifest, cov))
+}
+
 fn test_command(rest: &[String]) -> i32 {
     // The flags are read here as well as in `build_and_call`, because discovery has to happen
     // before any build and the target may be absent entirely — `wac test` with no argument is the
@@ -749,11 +922,135 @@ fn test_command(rest: &[String]) -> i32 {
     if files.len() == 1 {
         let mut args = flags;
         args.push(files.remove(0));
-        return build_and_call(&args, Entry::Tests);
+        let code = build_and_call(&args, Entry::Tests);
+        // **A walk that found one file still says how many it found.** The summary below is printed for
+        // two files and was not printed for one — and a caller counting files across many walks then
+        // loses the single-file ones silently. `tools/runTests.ts` runs this lane as a queue of
+        // directories and adds the counts up; five of the thirty-eight hold one file, so its own total
+        // could say it was short without being able to say by how much.
+        //
+        // Reached only when the target was a *directory*: naming a file gets the plain run, one screen
+        // up, and no summary — which is what a person typing one file wants.
+        println!(
+            "1 file: {}",
+            match code {
+                0 => "1 ok",
+                3 => "0 ok, 1 with failures",
+                4 => "0 ok, 1 needing a host oracle",
+                5 => "0 ok, 1 passed over by --filter",
+                _ => "0 ok, 1 that did not run",
+            }
+        );
+        return code;
     }
 
-    // One build and one instantiation per file, which is what keeps a failing file from taking the
-    // rest of the run with it: a trap unwinds that module and nothing else.
+    // **One build for the whole walk, and one instantiation per file** — `issues/system/0192`.
+    //
+    // It used to be a build *and* an instantiation each, and the build is what costs: `packages/box`'s
+    // sixteen files took 40.9s that way and 11.1s as one build, with the assertions in them totalling
+    // under two seconds. Every file in a directory imports very nearly the same graph, so compiling
+    // once and instantiating per file pays for the graph once and keeps everything the per-file shape
+    // was for — a trap unwinds one instance, a failing file is named on its own line, and the summary
+    // still counts files.
+    //
+    // **Instantiating per file rather than running the lot in one instance** is deliberate: it is what
+    // keeps a file's tests from seeing anything an earlier file left behind, which is the property the
+    // old shape had for free and the one a reader assumes.
+    //
+    // `--coverage` keeps the old path. Its counters are per module and the table is written beside it,
+    // so one aggregate would report one file's worth of positions for all of them.
+    let mut grants: Vec<String> = Vec::new();
+    let mut coverage = false;
+    let mut loud = false;
+    let mut only: Option<String> = None;
+    let mut flag_iter = flags.iter();
+    while let Some(a) = flag_iter.next() {
+        match a.as_str() {
+            "--coverage" => coverage = true,
+            "--verbose" => loud = true,
+            // The value travels with it, and taking the flag without the value would leave the
+            // pattern looking like a grant.
+            "--filter" => only = flag_iter.next().cloned(),
+            _ => grants.push(a.clone()),
+        }
+    }
+    // **One aggregate per directory, not one for the walk.** The first version built a single module
+    // for everything `wac test packages/` found, and that is the wrong unit: the build is shared, but
+    // then every one of 294 files instantiates a module containing the whole repository. Measured, it
+    // took the lane from about ten minutes to 409s, where a directory-sized module takes `packages/box`
+    // from 40.9s to 11.3s — the same 3.6× the whole walk did not get. A module is cheap to instantiate
+    // in proportion to its size, so the group has to be small enough that its files share a graph.
+    let mut groups: Vec<(std::path::PathBuf, Vec<usize>)> = Vec::new();
+    for (i, f) in files.iter().enumerate() {
+        let dir = std::path::Path::new(f).parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+        match groups.iter_mut().find(|(d, _)| *d == dir) {
+            Some((_, members)) => members.push(i),
+            None => groups.push((dir, vec![i])),
+        }
+    }
+    // Which group each file belongs to, and the module for each group once it is built.
+    let mut group_of: Vec<usize> = vec![0; files.len()];
+    for (g, (_, members)) in groups.iter().enumerate() {
+        for &i in members {
+            group_of[i] = g;
+        }
+    }
+    let mut built: Vec<Option<((Vec<u8>, String, Manifest, Option<String>), Vec<usize>)>> = Vec::new();
+    for (g, (_, members)) in groups.iter().enumerate() {
+        if coverage || members.len() < 2 {
+            // A lone file has nothing to share a build with, and `--coverage` keeps the old path: its
+            // counters are per module and the table is written beside it, so one aggregate would
+            // report one file's positions for all of them.
+            built.push(None);
+            continue;
+        }
+        let at = std::path::Path::new(".cache")
+            .join(format!("wac-aggregate-{}-{g}_test.wac", std::process::id()));
+        let made = write_aggregate(&files, members, &at).and_then(|(agg, carried)| {
+            let m = build_module(&grants, &agg, false).ok();
+            // **A failed aggregate says so.** Falling back to a build per file is the right answer — the
+            // tests still run, and one directory's shared build is an optimisation rather than a
+            // promise — but doing it silently turns a broken aggregate into a directory that is
+            // mysteriously four times slower, with nothing naming the cause. That is the shape this
+            // whole area keeps producing: `issues/lang/0154` was found because its aggregate failed
+            // *loudly*, and `issues/lang/0155`'s fix turned the same defect into this quiet path.
+            if m.is_none() {
+                eprintln!(
+                    "wac: the shared build for {} did not build, so its {} files are being built one at \
+                     a time — slower, and the reason is above",
+                    members
+                        .first()
+                        .and_then(|&i| files[i].rsplit_once('/').map(|(d, _)| d.to_string()))
+                        .unwrap_or_else(|| "this group".to_string()),
+                    members.len()
+                );
+            }
+            // **`WAC_KEEP_AGGREGATE=1` keeps a copy**, because a bug in the aggregate is otherwise
+            // impossible to look at: the file the compiler saw is gone by the time anything fails, and
+            // reconstructing it by hand is a second implementation of `write_aggregate`.
+            // `issues/lang/0154` is the bug that wanted it — a struct name declared three times in one
+            // link makes the emit answer with the wasm header and nothing else, with nothing declined —
+            // and the next step on it is this file, which is the input that does it.
+            //
+            // The copy is `.kept.wac`, not `_test.wac`: the walk collects the latter, so a kept
+            // aggregate under `.cache` would otherwise be read as a test file of its own on the next
+            // run — which is what the removal below is for.
+            if matches!(std::env::var("WAC_KEEP_AGGREGATE").as_deref(), Ok("1")) {
+                let kept = std::path::Path::new(".cache")
+                    .join(format!("wac-aggregate-{}-{g}.kept.wac", std::process::id()));
+                match std::fs::copy(&at, &kept) {
+                    Ok(_) => eprintln!("wac: kept the generated aggregate at {}", kept.display()),
+                    Err(e) => eprintln!("wac: could not keep the aggregate — {}", message_of(&e)),
+                }
+            }
+            // **Removed whether or not it built.** A generated file left in `.cache` is read by the
+            // next `wac test packages/` as a test file of its own, and then imports every test under
+            // it into a run that asked for one directory.
+            let _ = std::fs::remove_file(&at);
+            m.map(|m| (m, carried))
+        });
+        built.push(made);
+    }
     let mut ok = 0;
     let mut bad = 0;
     let mut broken = 0;
@@ -763,11 +1060,38 @@ fn test_command(rest: &[String]) -> i32 {
     // before the summary, and "2 with failures" without saying which is a number you cannot act
     // on without running the whole thing again.
     let mut names: Vec<(String, &str)> = Vec::new();
-    for f in &files {
+    // **What each file cost to run, because "no slow tests" needs a ranking.** The aggregate is built
+    // before this loop, so these are run times with no compile in them — which is the number to act
+    // on: a file that is slow because the directory's graph is large is not the file's fault, and a
+    // file that is slow because it emits a thousand modules is.
+    let mut cost: Vec<(String, u128)> = Vec::new();
+    for (i, f) in files.iter().enumerate() {
         println!("── {f}");
-        let mut args = flags.clone();
-        args.push(f.clone());
-        match build_and_call(&args, Entry::Tests) {
+        let began = std::time::Instant::now();
+        let code = match &built[group_of[i]] {
+            Some(((bytes, text, manifest, _), carried)) if carried.contains(&i) => run_as_with(
+                manifest,
+                bytes,
+                text,
+                AsChild {
+                    entry: Entry::Tests,
+                    only: only.clone(),
+                    file_suffix: Some(format!("__f{i}")),
+                    loud,
+                    ..Default::default()
+                },
+            ),
+            // In the walk and contributing no test: the same answer the per-file path gave, which is
+            // "named like a test and exports none".
+            Some(_) => 1,
+            None => {
+                let mut args = flags.clone();
+                args.push(f.clone());
+                build_and_call(&args, Entry::Tests)
+            }
+        };
+        cost.push((f.clone(), began.elapsed().as_millis()));
+        match code {
             0 => ok += 1,
             3 => {
                 bad += 1;
@@ -826,6 +1150,27 @@ fn test_command(rest: &[String]) -> i32 {
         let wide = names.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
         for (n, why) in &names {
             println!("   {n:wide$}   {why}");
+        }
+    }
+    // **The slow ones, by name.** A walk that says `42 files: 42 ok` in ninety seconds says nothing
+    // about which of the forty-two spent it, and the whole of "no slow tests in the regular suite"
+    // is a question about individual files. One second is the floor because below it a ranking is
+    // noise, and the count under the floor is stated so this cannot read as "everything else is fast"
+    // when it means "nothing else reached the floor".
+    let mut slow: Vec<&(String, u128)> = cost.iter().filter(|(_, ms)| *ms >= 1000).collect();
+    if files.len() > 1 && !slow.is_empty() {
+        slow.sort_by(|a, b| b.1.cmp(&a.1));
+        let under = cost.len() - slow.len();
+        println!();
+        println!(
+            "   {} file(s) took a second or more to run — the other {under} did not:",
+            slow.len()
+        );
+        for (f, ms) in slow.iter().take(6) {
+            println!("     {:>6}  {f}", format!("{:.1}s", *ms as f64 / 1000.0));
+        }
+        if slow.len() > 6 {
+            println!("     ... and {} more above the floor", slow.len() - 6);
         }
     }
     if broken > 0 { 1 } else if bad > 0 { 3 } else { 0 }
@@ -1218,6 +1563,9 @@ struct AsChild {
     cwd: Option<String>,
     /// Run only the tests whose name contains this. `test --filter`, and nothing else reads it.
     only: Option<String>,
+    /// Run only the tests whose export name *ends* with this — one file's share of an aggregate
+    /// build. `issues/system/0192`; nothing else reads it.
+    file_suffix: Option<String>,
     /// Name every test as it passes, with what it took. `test --verbose`.
     loud: bool,
     /// Where this program's output goes, instead of the terminal.
@@ -1386,6 +1734,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let entry = as_child.entry;
     let cov = as_child.cov.clone();
     let only = as_child.only.clone();
+    let file_suffix = as_child.file_suffix.clone();
     // Kept because a module with no `main` names the export to call in its first argument, and
     // that decision is made below where the manifest is known — see `call_named`.
     let argv = as_child.argv.clone();
@@ -1619,7 +1968,8 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     }
 
     if entry == Entry::Tests {
-        return run_tests(scope, exports, m, cov.as_deref(), only.as_deref(), loud, core, cli);
+        return run_tests(scope, exports, m, cov.as_deref(), only.as_deref(),
+                         file_suffix.as_deref(), loud, core, cli);
     }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
@@ -1745,6 +2095,9 @@ fn run_tests(
     m: &Manifest,
     cov: Option<&str>,
     only: Option<&str>,
+    // One file's share of an aggregate build: only the exports whose name ends with this, and the
+    // suffix comes off before anything is printed. `issues/system/0192`.
+    file_suffix: Option<&str>,
     loud: bool,
     core: v8::Local<v8::Value>,
     cli: Option<v8::Local<v8::Value>>,
@@ -1774,16 +2127,29 @@ fn run_tests(
 
     let mut passed = 0;
     let mut failed = 0;
-    let mut skipped: Vec<&str> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     // Wants a capability this run was not granted — distinct from wanting an oracle, because the
     // remedy is a flag rather than a host.
-    let mut ungranted: Vec<&str> = Vec::new();
+    let mut ungranted: Vec<String> = Vec::new();
     // Counted apart from `skipped`, which means "this host cannot run it". A test the filter
     // excluded is one the person asked not to run, and saying "0 passed" without saying that
     // reads as a suite that has quietly emptied.
     let mut filtered = 0;
 
     for e in m.exports.iter().filter(|e| e.name.starts_with("test")) {
+        // One file's tests out of an aggregate. An *exact* suffix, not `contains`: `__f1` is a prefix
+        // of `__f10`, so a contains-match would run eleven files' tests under one file's heading.
+        if let Some(suffix) = file_suffix {
+            if !e.name.ends_with(suffix) {
+                continue;
+            }
+        }
+        // What the reader typed, and what the reader sees: the wrapper's suffix is this runner's
+        // bookkeeping and means nothing to anyone reading a failure.
+        let shown = file_suffix
+            .and_then(|s| e.name.strip_suffix(s))
+            .unwrap_or(&e.name)
+            .to_string();
         if let Some(pat) = only {
             if !e.name.contains(pat) {
                 filtered += 1;
@@ -1813,7 +2179,7 @@ fn run_tests(
                 match cli {
                     Some(c) if granted => vec![core, c],
                     _ => {
-                        ungranted.push(&e.name);
+                        ungranted.push(shown.clone());
                         continue;
                     }
                 }
@@ -1828,19 +2194,19 @@ fn run_tests(
             {
                 println!(
                     "FAIL {} — takes ({}); a test takes (), (Core) or (Core, Cli)",
-                    e.name,
+                    shown,
                     other.join(", ")
                 );
                 failed += 1;
                 continue;
             }
             _ => {
-                skipped.push(&e.name);
+                skipped.push(shown.clone());
                 continue;
             }
         };
         let Some(f) = get_export(scope, exports, &e.name) else {
-            println!("FAIL {} — exported and not callable", e.name);
+            println!("FAIL {shown} — exported and not callable");
             failed += 1;
             continue;
         };
@@ -1863,7 +2229,7 @@ fn run_tests(
                     }
                 }
             }
-            reached.push((e.name.clone(), mine));
+            reached.push((shown.clone(), mine));
         }
         // **`test_traps_*` expects the trap.** A trap unwinds this module and nothing else — the
         // tests after it run normally — so the runner has always survived one; what it could not do
@@ -1881,7 +2247,7 @@ fn run_tests(
                     let said = trap_said(scope, exports);
                     println!(
                         "ok   {} — trapped, as it says{} ({} ms)",
-                        e.name,
+                        shown,
                         said,
                         began.elapsed().as_millis()
                     );
@@ -1897,7 +2263,7 @@ fn run_tests(
                 //
                 // Empty for an engine trap — a bounds check, a null dereference — which writes
                 // nothing; a previous message reported for one of those would be worse than none.
-                println!("FAIL {} — trapped{}", e.name, trap_said(scope, exports));
+                println!("FAIL {shown} — trapped{}", trap_said(scope, exports));
                 failed += 1;
             }
             Some(v) if wants_trap => {
@@ -1906,18 +2272,18 @@ fn run_tests(
                 // an empty string from it would otherwise read as a pass.
                 let report = read_string(scope, v);
                 let tail = if report.is_empty() { String::new() } else { format!(" — {report}") };
-                println!("FAIL {} — returned instead of trapping{tail}", e.name);
+                println!("FAIL {shown} — returned instead of trapping{tail}");
                 failed += 1;
             }
             Some(v) => {
                 let report = read_string(scope, v);
                 if report.is_empty() {
                     if loud {
-                        println!("ok   {} ({} ms)", e.name, began.elapsed().as_millis());
+                        println!("ok   {shown} ({} ms)", began.elapsed().as_millis());
                     }
                     passed += 1;
                 } else {
-                    println!("FAIL {} — {report}", e.name);
+                    println!("FAIL {shown} — {report}");
                     failed += 1;
                 }
             }
@@ -2023,7 +2389,7 @@ fn write_profile(
     entry: &str,
     all: &[String],
     reached: &[(String, Vec<String>)],
-    skipped: &[&str],
+    skipped: &[String],
 ) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
@@ -2757,7 +3123,7 @@ fn dispatch(
             std::thread::spawn(move || {
                 let a = match std::fs::read(&path) {
                     Ok(bytes) => Answer::File(true, bytes, String::new(), FAULT_NONE),
-                    Err(e) => Answer::File(false, Vec::new(), e.to_string(), fault_of(&e)),
+                    Err(e) => Answer::File(false, Vec::new(), message_of(&e), fault_of(&e)),
                 };
                 worker.complete(id, a);
             });
@@ -2865,6 +3231,7 @@ fn dispatch(
                 entry: Entry::Main,
                 cov: None,
                 only: None,
+                file_suffix: None,
                 loud: false,
                 argv,
                 grants: Some(grants),
@@ -3006,6 +3373,7 @@ fn dispatch(
                 entry: Entry::Main,
                 cov: None,
                 only: None,
+                file_suffix: None,
                 loud: false,
                 argv,
                 grants: Some(grants),
@@ -3438,7 +3806,7 @@ fn dispatch(
                 let a = match stream.read(&mut buf) {
                     Ok(0) => Answer::Read(ReadAnswer::End),
                     Ok(n) => Answer::Read(ReadAnswer::Data(buf[..n].to_vec())),
-                    Err(e) => Answer::Read(ReadAnswer::Failed(e.to_string())),
+                    Err(e) => Answer::Read(ReadAnswer::Failed(message_of(&e))),
                 };
                 worker.complete(id, a);
             });
@@ -3651,7 +4019,7 @@ fn dispatch(
                 };
                 match r {
                     Ok(()) => Answer::Change(FAULT_NONE, String::new()),
-                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {
@@ -3668,7 +4036,7 @@ fn dispatch(
             } else {
                 match std::fs::write(&path, &data) {
                     Ok(()) => Answer::Change(FAULT_NONE, String::new()),
-                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {
@@ -3757,7 +4125,7 @@ fn dispatch(
                         });
                         Answer::Change(FAULT_NONE, String::new())
                     }
-                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {
@@ -3845,7 +4213,7 @@ fn dispatch(
             let built = match n {
                 Some(Ok(0)) | None => build_read_end(scope),
                 Some(Ok(n)) => build_read_data(scope, &buf[..n]),
-                Some(Err(e)) => build_read_failed(scope, &e.to_string()),
+                Some(Err(e)) => build_read_failed(scope, &message_of(&e)),
             };
             match built {
                 Some(v) => rv.set(v),
@@ -3882,7 +4250,7 @@ fn dispatch(
                         });
                         Answer::Change(FAULT_NONE, String::new())
                     }
-                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {

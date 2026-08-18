@@ -1,0 +1,196 @@
+// The corruption sweep, once, for the two files that run it at two sizes.
+//
+// **Why it spawns.** The contract is *either*: for any byte sequence, `gunzipBytes` produces the
+// original bytes or it fails — never a wrong answer quietly. A `test_traps_*` export asserts one half
+// and a returning test asserts the other, and neither can say "whichever happens, but not the third
+// thing" (`issues/system/0175`). `fuzzprobe.wac` is one case in a process of its own, where a trap is
+// an exit status the caller can read.
+//
+// **Why it is split.** 2,700 cases at about 8ms a process is 21s of every run, which is the largest
+// single thing in the `wac test` lane. 2,423 of those 2,700 trap, so batching cases into one process
+// does not help: a trap ends the process, and 90% of them trap. So the full sweep is declared heavy in
+// `fuzzcorruption_test.wac` and `fuzz_test.wac` keeps a sample of it — the same code at a size the
+// regular lane can afford, which catches a decompressor that has started answering wrongly without
+// pretending to be the sweep.
+//
+// The sizes are the *only* difference between the two callers. Everything a caller asserts is a field
+// below, so a sweep that quietly stopped running cases cannot pass either of them.
+
+import { Cli, Core, Change, Exec, Stat } from "../../../platform/src/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { gzipBest } from "../../src/gzip.wac";
+import { Case, Rng, makeRng, buildCorpus } from "./fuzzcorpus.wac";
+
+const string PROBE = "packages/gzip/test/wac/fuzzprobe.wac";
+
+/** What a sweep found. Every count a caller asserts on is here rather than asserted inside. */
+export struct Swept {
+  /** The probe built and the working directory was made. Nothing else below means anything if not. */
+  bool ok;
+  string error;
+  /** Corpus entries actually generated, so a caller can assert `cases == corpora * attempts`. */
+  i32 corpora;
+  i32 cases;
+  i32 trapped;
+  /** Decoded, and to the original bytes — some corruptions are genuinely benign. */
+  i32 decoded;
+  /** **The failure that matters**: decoded to something else without trapping. */
+  i32 wrong;
+  /** The probe could not read its inputs — a broken test rather than a broken decompressor. */
+  i32 unreadable;
+  /** The probe would not start at all. */
+  i32 notRan;
+  /** The first few wrong or unstartable cases, named. */
+  string detail;
+}
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+/**
+ * `corpora` streams, each corrupted `attempts` ways, each handed to the probe in a process of its own.
+ *
+ * `what` names the working directory, so two callers running at once do not corrupt each other's
+ * files — and `seed` is theirs to choose, so the sample is not simply the first cases of the sweep.
+ *
+ * **`stride` is how the sample is taken, and it is a stride rather than a count for a reason.**
+ * `buildCorpus`'s first argument is a floor, not a size: it always returns every generator crossed with
+ * every awkward length, 108 entries, so asking for six gives 108 and a sample built by asking for fewer
+ * is not smaller at all — which is how the first version of this ran 432 cases while claiming 24. The
+ * entries are ordered by generator, so taking the first twelve would be twelve lengths of one
+ * generator; every ninth is twelve generators.
+ */
+export Swept sweepCorruptions(Core core, Cli cli, i32 corpora, i32 stride, i32 attempts, string what,
+                             i32 seed) {
+  Stat bin = cli.stat(binary(cli)).wait();
+  if (!bin.exists) {
+    return none("the binary that builds the probe is not at " + binary(cli));
+  }
+  string who = agentDir(cli);
+  string work = "/tmp/wac-gzip-fuzz-" + what + (who == "" ? "" : "-" + who);
+  Change made = cli.mkdir(work, true).wait();
+  if (!made.ok()) { return none("a working directory: " + made.message); }
+  string probe = work + "/fuzzprobe";
+
+  Exec built = cli.exec(binary(cli), string[]("build", PROBE, "-o", probe, "--allow-read"),
+                        u8[0]()).wait();
+  if (!built.ran() || built.status != 0) {
+    return none("the probe builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
+  }
+
+  Case[] all = buildCorpus(corpora, seed);
+  i32 step = stride < 1 ? 1 : stride;
+  i32 kept = (all.len() + step - 1) / step;
+  Case[] base = Case[kept](fill: Case("", u8[0]()));
+  for (i32 i = 0; i < kept; i++) { base[i] = all[i * step]; }
+  Rng rng = makeRng(seed ^ 0xBADBEEF);
+  i32 trapped = 0;
+  i32 decoded = 0;
+  i32 cases = 0;
+  i32 wrong = 0;
+  i32 unreadable = 0;
+  i32 notRan = 0;
+  string detail = "";
+
+  string originalPath = work + "/original.bin";
+  string corruptPath = work + "/corrupt.gz";
+
+  for (i32 c = 0; c < base.len(); c++) {
+    u8[] data = base[c].data;
+    u8[] valid = gzipBest(data);
+    cli.writeFile(originalPath, data).wait();
+
+    for (i32 attempt = 0; attempt < attempts; attempt++) {
+      u8[] corrupt = u8[valid.len()]();
+      for (i32 i = 0; i < valid.len(); i++) { corrupt[i] = valid[i]; }
+      i32 kind = rng.upto(4);
+      i32 keep = corrupt.len();
+      if (kind == 0) {                                 // flip one bit
+        i32 at = rng.upto(corrupt.len());
+        corrupt[at] = corrupt[at] ^ (1 << rng.upto(8));
+      } else if (kind == 1) {                          // replace a byte
+        corrupt[rng.upto(corrupt.len())] = rng.next() & 0xFF;
+      } else if (kind == 2) {                          // scramble a short span
+        i32 at = rng.upto(corrupt.len());
+        i32 len = 1 + rng.upto(8);
+        i32 to = at + len < corrupt.len() ? at + len : corrupt.len();
+        for (i32 k = at; k < to; k++) { corrupt[k] = rng.next() & 0xFF; }
+      } else {                                         // truncate
+        keep = rng.upto(corrupt.len());
+      }
+      u8[] handed = u8[keep]();
+      for (i32 i = 0; i < keep; i++) { handed[i] = corrupt[i]; }
+      cli.writeFile(corruptPath, handed).wait();
+
+      Exec r = cli.exec(binary(cli), string[](probe, "--allow-read", originalPath, corruptPath),
+                        u8[0]()).wait();
+      cases = cases + 1;
+      if (!r.ran()) {
+        notRan = notRan + 1;
+        if (notRan <= 3) { detail = detail + "\n  " + base[c].name + ": the probe would not start — " + r.error; }
+        continue;
+      }
+      // Some corruptions are genuinely benign — MTIME, XFL and the OS byte are not covered by the
+      // CRC — so decoding is allowed, but only to the original bytes.
+      if (r.status == 7) {
+        wrong = wrong + 1;
+        if (wrong <= 5) {
+          detail = detail + "\n  " + base[c].name + " attempt " + itoa(attempt) +
+                   ": a corrupted stream decoded to the wrong bytes without trapping";
+        }
+      } else if (r.status == 8) {
+        unreadable = unreadable + 1;
+        if (unreadable <= 3) {
+          detail = detail + "\n  " + base[c].name + ": the probe could not read its inputs";
+        }
+      } else if (r.status == 0) {
+        decoded = decoded + 1;
+      } else {
+        trapped = trapped + 1;
+      }
+    }
+  }
+
+  Change cleaned = cli.remove(work, true).wait();
+  if (!cleaned.ok()) { core.warn("fuzz: could not remove " + work + " — " + cleaned.message); }
+  return Swept(true, "", base.len(), cases, trapped, decoded, wrong, unreadable, notRan, detail);
+}
+
+/**
+ * What both callers assert about a sweep, so the sample and the full run check the same things.
+ *
+ * `attempts` is passed rather than read back from the result, because `cases == corpora * attempts` is
+ * the assertion that a sweep which stopped part way cannot satisfy.
+ */
+export void assertSwept(T t, Core core, Swept s, i32 attempts, string what) {
+  t.isTrue(s.ok, s.error);
+  if (!s.ok) { return; }
+  t.eqI32(s.notRan, 0, itoa(s.notRan) + " cases never ran" + s.detail);
+  t.eqI32(s.unreadable, 0, itoa(s.unreadable) + " cases could not be read by the probe" + s.detail);
+  t.eqI32(s.wrong, 0, itoa(s.wrong) + " of " + itoa(s.cases) +
+                      " corrupted streams decoded to the wrong bytes without trapping" + s.detail);
+  t.eqI32(s.cases, s.corpora * attempts,
+          "the sweep ran " + itoa(s.cases) + " cases, not " + itoa(s.corpora) + " x " + itoa(attempts));
+  // If corruption never triggered a trap, the mutations were not reaching the compressed payload.
+  t.isTrue(s.trapped * 2 >= s.cases,
+           "only " + itoa(s.trapped) + "/" + itoa(s.cases) +
+           " corruptions trapped — corruption may not be effective");
+  core.log("  " + what + ": " + itoa(s.cases) + " cases, " + itoa(s.trapped) + " trapped, " +
+           itoa(s.decoded) + " benign");
+}
+
+Swept none(string why) { return Swept(false, why, 0, 0, 0, 0, 0, 0, 0, ""); }

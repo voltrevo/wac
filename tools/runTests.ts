@@ -82,7 +82,8 @@
 
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 import { killedLaneNote } from "./killedLane.ts";
-import { exclusiveTests, heavyTests, isWacTest, laneSplit } from "../harness/testLane.ts";
+import { exclusiveTests, heavyTests, isWacTest, laneSplit, wacTestDirs, wacTestFiles }
+  from "../harness/testLane.ts";
 import { clearWarnings, warningsSoFar } from "./docCheck.ts";
 import { takeSuiteSlot } from "./suiteGate.ts";
 
@@ -390,9 +391,18 @@ const PERMS = ["--allow-read", "--allow-write", "--allow-run", "--allow-net", "-
 const HEAVY_ONLY = Deno.args.includes("--heavy");
 const passthrough = Deno.args.filter((a) => a !== "--heavy");
 
-const run = async (args: string[], workers: number): Promise<number> => {
+/**
+ * One `deno test` pass. `withTargets` is for the lane that names its own files.
+ *
+ * A caller's *flags* always go through — `--filter` is theirs and applies to whatever runs — but a
+ * caller's *paths* are a question the exclusive lane has already answered by naming files explicitly.
+ * Appending them there ran the target's ordinary files a second time, in a pass whose whole point is
+ * that one file has the machine to itself.
+ */
+const run = async (args: string[], workers: number, withTargets = true): Promise<number> => {
+  const also = withTargets ? passthrough : passthrough.filter((a) => a.startsWith("-"));
   const r = await new Deno.Command(Deno.execPath(), {
-    args: ["test", ...args, ...PERMS, ...passthrough],
+    args: ["test", ...args, ...PERMS, ...also],
     env: { DENO_JOBS: String(workers), ...SUITE_ENV },
     stdout: "inherit",
     stderr: "inherit",
@@ -406,7 +416,12 @@ const run = async (args: string[], workers: number): Promise<number> => {
 // excluded further down, from the command that actually runs them. Before 2026-08-18 the lane module
 // could not see a wac test at all, so this filter had nothing to do and the wac declarations did
 // nothing either.
-const exclusive = laneSplit([], (await exclusiveTests()).map((e) => e.file)).alone
+const declaredExclusive = await exclusiveTests();
+// **Intersected with the target, which is what `laneSplit` takes targets for and was never given.**
+// Called with `[]` it answers "all of them", so `deno task test packages/tty/` ran the two `packages/tor`
+// live tests — 29s of relays and an authority on real ports — for a package with no Deno tests at all.
+// The heavy lane has honoured a named target since it was written; this is the same rule.
+const exclusive = laneSplit(passthrough.filter((a) => !a.startsWith("-")), declaredExclusive.map((e) => e.file)).alone
   .filter((f) => !isWacTest(f));
 
 // **The heavy lane, which a whole-suite run does not pay for.** Ten files hold about a gigabyte each
@@ -445,6 +460,21 @@ const heavy = skipHeavy
 const heavyWac = skipHeavy
   ? declaredHeavy.map((e) => e.file).filter(isWacTest)
   : [];
+/**
+ * The wac half of the *exclusive* lane, which the queue below must not run beside anything.
+ *
+ * **The serial lane honoured this for free and the queue silently stopped.** Four `packages/ssh` files
+ * declare it — "a real OpenSSH server per case, on a real port" — and while the lane was one
+ * `wac test packages/`, nothing ran at the same time as anything. Running them at four workers is the
+ * condition that produced "sshd never accepted on 34029" about a server that was starting normally.
+ *
+ * A spin masquerading as patience was the *cause* of that particular failure and is fixed
+ * (`waitForPortWithin`), but these tests are timing-sensitive in ways that fix does not cover: one still
+ * sleeps between a `^C` and the next line because a `^C` flushes the input queue, and another asserts an
+ * ordering. Two green runs at four workers is not evidence for deleting a declaration that says the test
+ * needs the machine. Honouring it costs the queue about 15s.
+ */
+const exclusiveWac = declaredExclusive.map((e) => e.file).filter(isWacTest);
 /**
  * When the heavy lane last passed, for the notice below.
  *
@@ -523,14 +553,55 @@ console.log(jobsLine);
 // Before anything runs, so a previous suite's warnings are not counted as this one's.
 clearWarnings();
 
+/**
+ * The one remaining registrar, and why this pass skips it.
+ *
+ * `harness/wac/hostless.test.ts` registers 56 wac test entries as `Deno.test`s. Every one of them is a
+ * file the `wac test` lane below already walks, so running it here runs those 575 tests **twice** — and
+ * the second time costs 26s, of which 0.9s is the tests: the rest is compiling 56 entries through the
+ * harness.
+ *
+ * It is not deleted, because it is not the suite's file. `tools/mutate/profile.ts` finds wrappers by
+ * walking for `.test.ts`, and takes their coverage natively when a binary is there and through
+ * `deno test` when one is not — so the file has to keep both its name and its registrations.
+ *
+ * `tools/lane.test.ts` holds the exclusion honest: every entry it registers must be a file the wac lane
+ * visits. Register one that is not and that test fails, which is the day this line has to come out.
+ */
+const WAC_DRIVER = "harness/wac/hostless.test.ts";
+
+/**
+ * What each lane cost, in the order they ran.
+ *
+ * **Because the suite reported one number and every decision needs three.** `tools/push.sh` prints
+ * "suite passed in 216s" and nothing says how that splits, so working out where to spend an hour meant
+ * re-deriving it from per-test durations in a saved log — which cannot see process startup, the
+ * exclusive lane's serial tail, or the wac lane at all. Two of those turned out to be the interesting
+ * parts. Measured here, once, where the lanes actually run.
+ */
+const spent: { lane: string; ms: number; note: string }[] = [];
+
+/**
+ * Seconds, with a decimal below ten.
+ *
+ * Three lines of `0s` say less than nothing on a targeted run, where a lane is a fraction of one.
+ */
+const secs = (ms: number) => ms < 10_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 1000)}s`;
+
+const parallelStarted = Date.now();
 const parallel = await run(
   // `site` is in `deno.json`'s `exclude`, but a `--ignore` on the command line *replaces* the
   // config's list rather than adding to it — so the moment this pass has an exclusive lane to
   // exclude, the website comes back into discovery and fails type-checking as vite-resolved
   // TypeScript does. It is named here as well, which is the only place both lists exist.
-  ["--parallel", `--ignore=${["site", ...exclusive, ...heavy].join(",")}`],
+  ["--parallel", `--ignore=${["site", WAC_DRIVER, ...exclusive, ...heavy].join(",")}`],
   jobs,
 );
+spent.push({
+  lane: "the Deno pass",
+  ms: Date.now() - parallelStarted,
+  note: `${jobs} workers`,
+});
 if (heavy.length > 0) {
   let ago = "never on this machine";
   try {
@@ -550,10 +621,16 @@ let lane = 0;
 if (exclusive.length > 0) {
   console.log(`\n${exclusive.length} file(s) run alone, by their own declaration (see tools/runTests.ts):`);
   for (const f of exclusive) console.log(`  ${f}`);
-  lane = await run(exclusive, 1);
+  const started = Date.now();
+  lane = await run(exclusive, 1, false);
+  spent.push({
+    lane: "run alone",
+    ms: Date.now() - started,
+    note: `${exclusive.length} file(s), one at a time`,
+  });
 }
 
-// **Doc warnings, in the footer.** A doc check prints where it runs, which on a four-to-eleven minute
+// **Doc warnings, in the footer.** A doc check prints where it runs, which even on a three-minute
 // suite is eight hundred lines above where anyone is looking when it finishes. Saying how many there
 // were — and how to make them fail — is what stops "warn instead of fail" becoming "nobody checks".
 // **And the same wac tests again, through `wac`.**
@@ -572,58 +649,227 @@ if (exclusive.length > 0) {
 // Skipped when the binary is absent, which is the ordinary state of a fresh checkout — it is built
 // by `cargo` from a seed that is gitignored. `tools/seedFresh.test.ts` is what says the seed is
 // current; this only says whether the tests pass through it.
+
 let native = 0;
+const wacStarted = Date.now();
 if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
-  console.log("\n── the same wac tests, through `wac test`");
-  const r = await new Deno.Command(WAC_BIN, {
-    // **`--allow-read`, so a test that declares a capability actually runs.** A wac test may name
-    // `(Core core, Cli cli)` and read its own fixtures — `issues/system/0161` step 4 — and without a
-    // grant `wac test` skips it by name. Skipped in this lane *and* ignored in Deno's, which cannot
-    // supply a `Cli` at all, would mean such a test never runs anywhere while looking accounted for.
-    //
-    // Read, write and run — and it is not a widening of what this suite already has: the Deno pass
-    // above runs with `-A`. It narrows the gap between the two lanes rather than opening anything.
-    //
-    // **Broader than read because a test cannot say which grant it wants.** The signature is
-    // `(Core core, Cli cli)` and `wac test` grants a `Cli` if *any* grant was asked for, so a test
-    // needing `--allow-write` is not skipped without it — it runs and fails at the first `mkdir`.
-    // `packages/wacc/test/wac/selfhost_test.wac` is the first that needs more than reading, and it
-    // found this. `issues/system/0172` is the granularity that would let a lane grant narrowly.
-    //
-    // **`--allow-env` was added on 2026-08-17 and the reason is worth keeping.** A differential
-    // against Foundry's `cast` has to find it, and this repository keeps it in `~/tools/foundry` —
-    // reachable only through `HOME`. `Deno.env.get` needed no permission, so the host-side version
-    // of that test never noticed; here, a lane without this flag found nothing on `PATH`, warned
-    // that the second oracle was not running, and passed. A differential comparing nothing, wearing
-    // a green tick. `packages/abi/test/wac/cast_test.wac` now separates "could not look" from "is
-    // not there" and fails on the first, which is what turned this from invisible into a red test.
-    // **`--allow-net`, added 2026-08-18, and the reason is the same one `--allow-env` has.** Six wac
-    // test files bind a socket — `freePort` in `packages/wactest/src/daemon.wac` asks the kernel for
-    // a port by binding zero — and `cli.listen` needs this grant. Without it the handle comes back
-    // negative and `freePort` answers -1, so the test reports **"no free port"**: a sentence about
-    // port exhaustion, on a machine with twenty-eight thousand of them free. Five tests failed that
-    // way on every run since they were written, and the message is convincing enough that I read it
-    // as contention on a shared box, re-ran them by hand *with the flag*, saw them pass, and
-    // credited the wrong variable. `deno test` runs with `-A`, so this narrows the gap between the
-    // lanes rather than opening anything. `issues/system/0173` is the granularity that would let a
-    // test say it needs this rather than a lane granting it to everyone.
-    args: [
-      "test",
-      "--allow-read",
-      "--allow-write",
-      "--allow-run",
-      "--allow-env",
-      "--allow-net",
-      ...(heavyWac.length > 0 ? ["--ignore", heavyWac.join(",")] : []),
-      "packages/",
-    ],
-    stdout: "inherit",
-    stderr: "inherit",
-  }).output();
+  // **This lane was one process walking every directory in turn, and that was 266s of a suite whose
+  // Deno half already runs four ways.** It is now a queue of directories at the same `jobs` workers,
+  // which is 94s measured on this box — the floor is the slowest single directory (`packages/wacc`,
+  // 56s), so there is a further split available inside a directory if that ever becomes the thing.
+  //
+  // A queue rather than four fixed shares: a share needs a cost per directory to be fair, and a table
+  // of measured costs is a table that rots. Longest-first would need the same table. What a queue
+  // needs is nothing, and its imbalance is bounded by one directory.
+  //
+  // **Each block is printed whole when its directory finishes**, rather than inherited, because four
+  // workers writing to one terminal interleave `── file` headers with the failures they belong to.
+  const all = await wacTestDirs("packages");
+  // **A target narrows this lane too, and it did not before.** `deno task test packages/tty/` ran
+  // every wac test in the repository — 266s of unrelated work behind a two-second target — because the
+  // lane's path was the literal string `packages/`. A target that names no wac directory says so rather
+  // than running everything or quietly running nothing.
+  const named = passthrough.filter((a) => !a.startsWith("-"));
+  const dirs = named.length === 0
+    ? all
+    : all.filter((d) => named.some((t) => d === t || d.startsWith(t.replace(/\/+$/, "") + "/") || t.startsWith(d)));
+  // **A large directory is split, because the queue's floor is its slowest item.**
+  // `packages/wacc/test/wac` holds 40 files and 56s of the lane's 94s; four chunks of it run in 26s. The
+  // cost is one aggregate build per chunk instead of one per directory (`issues/system/0192`) — about
+  // +57% CPU on that directory — which is worth paying at the tail, where workers would otherwise idle,
+  // and is why only the large ones are split.
+  //
+  // Round robin rather than in blocks: files in a directory are walked in sorted order and neighbours
+  // tend to cost alike, so blocks would put the expensive ones together.
+  const CHUNK = 12;
+  const skip = new Set([...heavyWac, ...exclusiveWac]);
+  const items: string[][] = [];
+  for (const dir of dirs) {
+    const files = (await wacTestFiles(dir)).filter((f) => !skip.has(f));
+    if (files.length === 0) continue;
+    if (files.length <= CHUNK) {
+      items.push([dir]);
+      continue;
+    }
+    const parts = Math.ceil(files.length / CHUNK);
+    for (let k = 0; k < parts; k++) items.push(files.filter((_, i) => i % parts === k));
+  }
+  // Biggest first, which is a weak proxy for cost and all the ordering a queue needs.
+  items.sort((a, b) => b.length - a.length);
+
+  const wacJobs = Math.max(1, Math.min(jobs, items.length));
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const split = items.length - dirs.length;
+  console.log(
+    `\n── the same wac tests, through \`wac test\` — ` +
+      `${count(dirs.length, "directory", "directories")}` +
+      (split > 0 ? ` in ${count(items.length, "chunk", "chunks")}` : "") +
+      `, ${count(wacJobs, "worker", "workers")}`,
+  );
+  if (dirs.length === 0) {
+    console.log(
+      `   nothing here: ${named.join(", ")} names no directory holding \`*_test.wac\`, so this lane ` +
+        `ran nothing. That is not the same as passing.`,
+    );
+  }
+  // **`--allow-read`, so a test that declares a capability actually runs.** A wac test may name
+  // `(Core core, Cli cli)` and read its own fixtures — `issues/system/0161` step 4 — and without a
+  // grant `wac test` skips it by name. Skipped in this lane *and* ignored in Deno's, which cannot
+  // supply a `Cli` at all, would mean such a test never runs anywhere while looking accounted for.
+  //
+  // Read, write and run — and it is not a widening of what this suite already has: the Deno pass
+  // above runs with `-A`. It narrows the gap between the two lanes rather than opening anything.
+  //
+  // **Broader than read because a test cannot say which grant it wants.** The signature is
+  // `(Core core, Cli cli)` and `wac test` grants a `Cli` if *any* grant was asked for, so a test
+  // needing `--allow-write` is not skipped without it — it runs and fails at the first `mkdir`.
+  // `packages/wacc/test/wac/selfhost_test.wac` is the first that needs more than reading, and it
+  // found this. `issues/system/0172` is the granularity that would let a lane grant narrowly.
+  //
+  // **`--allow-env` was added on 2026-08-17 and the reason is worth keeping.** A differential
+  // against Foundry's `cast` has to find it, and this repository keeps it in `~/tools/foundry` —
+  // reachable only through `HOME`. `Deno.env.get` needed no permission, so the host-side version
+  // of that test never noticed; here, a lane without this flag found nothing on `PATH`, warned
+  // that the second oracle was not running, and passed. A differential comparing nothing, wearing
+  // a green tick. `packages/abi/test/wac/cast_test.wac` now separates "could not look" from "is
+  // not there" and fails on the first, which is what turned this from invisible into a red test.
+  // **`--allow-net`, added 2026-08-18, and the reason is the same one `--allow-env` has.** Six wac
+  // test files bind a socket — `freePort` in `packages/wactest/src/daemon.wac` asks the kernel for
+  // a port by binding zero — and `cli.listen` needs this grant. Without it the handle comes back
+  // negative and `freePort` answers -1, so the test reports **"no free port"**: a sentence about
+  // port exhaustion, on a machine with twenty-eight thousand of them free. Five tests failed that
+  // way on every run since they were written, and the message is convincing enough that I read it
+  // as contention on a shared box, re-ran them by hand *with the flag*, saw them pass, and
+  // credited the wrong variable. `deno test` runs with `-A`, so this narrows the gap between the
+  // lanes rather than opening anything. `issues/system/0173` is the granularity that would let a
+  // test say it needs this rather than a lane granting it to everyone.
   // 4 is "every test in that file needs a host oracle", which is most of `tor` and `tls` and is
   // not a failure. `wac test` folds those into its own summary and exits 0; anything else here is
   // a real disagreement with the Deno path and should stop the suite.
-  native = r.code;
+  const flags = [
+    "test",
+    "--allow-read",
+    "--allow-write",
+    "--allow-run",
+    "--allow-env",
+    "--allow-net",
+  ];
+  // Heavy is not run at all; exclusive is run below, alone — so the queue ignores both, and the runs
+  // that follow take `flags` without them. Built as two lists rather than filtered back apart, because
+  // "drop the flag whose value has a comma in it" is the kind of cleverness that breaks on the next flag.
+  const queueFlags = [
+    ...flags,
+    ...(heavyWac.length + exclusiveWac.length > 0
+      ? ["--ignore", [...heavyWac, ...exclusiveWac].join(",")]
+      : []),
+  ];
+  // Which of the declared-exclusive files are under the directories this run queued.
+  const alone = exclusiveWac.filter((f) => dirs.some((d) => f.startsWith(d + "/")));
+  let next = 0;
+  const codes: number[] = [];
+  const blocks: string[] = [];
+  /**
+   * What each run in this lane cost.
+   *
+   * **Because this lane turned out to be the largest one**, at 104s of a 229s suite against the Deno
+   * pass's 89s — which was not what anyone assumed, and could not be read off a saved log at all: the
+   * per-test durations a log carries are Deno's, and nothing here goes through Deno. A queue's wall
+   * clock cannot beat its longest single item, so the useful thing to print is which item that is.
+   */
+  const took: { what: string; ms: number }[] = [];
+  /** A chunk names the directory it came from; a whole directory names itself. */
+  const label = (targets: string[]) =>
+    targets.length === 1 && !targets[0].endsWith("_test.wac")
+      ? targets[0]
+      : `${targets[0].slice(0, targets[0].lastIndexOf("/"))} — ${targets.length} of its files`;
+  const worker = async () => {
+    while (next < items.length) {
+      const targets = items[next++];
+      const started = Date.now();
+      const r = await new Deno.Command(WAC_BIN, {
+        args: [...queueFlags, ...targets],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      took.push({ what: label(targets), ms: Date.now() - started });
+      const text = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
+      blocks.push(text);
+      codes.push(r.code);
+      console.log(text.trimEnd());
+    }
+  };
+  await Promise.all(Array.from({ length: wacJobs }, () => worker()));
+
+  // **And the ones that said they need the machine, one at a time.** `--ignore` kept them out of the
+  // queue above; running them here is what makes the declaration true again. Sequential and after the
+  // queue has drained, so "alone" means alone.
+  if (alone.length > 0) {
+    console.log(`   ${count(alone.length, "file", "files")} run alone, by their own declaration:`);
+    for (const e of declaredExclusive.filter((d) => alone.includes(d.file))) {
+      console.log(`     ${e.file} — ${e.why}`);
+    }
+    for (const file of alone) {
+      const started = Date.now();
+      const r = await new Deno.Command(WAC_BIN, {
+        args: [...flags, file],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      took.push({ what: `${file} (alone)`, ms: Date.now() - started });
+      const text = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
+      blocks.push(text);
+      codes.push(r.code);
+      console.log(text.trimEnd());
+    }
+  }
+  if (took.length > 1) {
+    const work = took.reduce((n, t) => n + t.ms, 0);
+    // **Said apart, because it cannot be divided by the workers.** The declared-exclusive files run
+    // one at a time after the queue drains, so they are a floor of their own: four `packages/ssh`
+    // files are 17s of this lane and no number of workers touches them. Without this line the lane
+    // looks 20s worse packed than it is, which is an invitation to re-chunk something that is
+    // already near its limit.
+    const serial = took.filter((t) => t.what.endsWith("(alone)")).reduce((n, t) => n + t.ms, 0);
+    const floor = (work - serial) / wacJobs + serial;
+    const slowest = [...took].sort((a, b) => b.ms - a.ms).slice(0, 3);
+    console.log(
+      `\n   ${secs(work)} of work at ${wacJobs} workers` +
+        (serial > 0 ? `, of which ${secs(serial)} ran alone` : "") +
+        ` — so the floor is ${secs(floor)}, and the longest single runs are:`,
+    );
+    for (const t of slowest) console.log(`     ${secs(t.ms).padStart(6)}  ${t.what}`);
+  }
+
+  // **The lane's own count, because a summary per directory is not a summary.** Thirty-nine blocks
+  // each saying "6 files: 6 ok" is how a lane that stopped running half its directories would read as
+  // fine. If the arithmetic does not add up, that is said rather than papered over.
+  let files = 0;
+  let summaries = 0;
+  for (const block of blocks) {
+    // `files?`, because a walk that found one file says "1 file:" — and matching only the plural is
+    // how the count below first reported itself short.
+    for (const m of block.matchAll(/^(\d+) files?: /gm)) {
+      files += Number(m[1]);
+      summaries++;
+    }
+  }
+  // **The files run alone are counted here, not parsed.** Each of those runs *names a file*, and naming
+  // a file gets the plain run with no summary line — deliberately, since a person typing one file does
+  // not want one. So the queue's directories are the only blocks with a summary to parse, and the
+  // declared-exclusive files are added from the list that ran them.
+  files += alone.length;
+  console.log(
+    summaries === items.length
+      ? `   ${count(files, "wac test file", "wac test files")} across ` +
+        `${count(dirs.length, "directory", "directories")}`
+      : `   ${files} wac test files, but ${summaries} of ${items.length} runs reported a summary — ` +
+        `the count above is short by whatever the silent ones hold`,
+  );
+  // 4 is "every test in that file needs a host oracle", which is most of `tor` and `tls` and is not a
+  // failure — `wac test` folds those into its own summary and exits 0, so it should not reach here.
+  // The first non-zero is taken rather than the worst: with one directory per process there is no
+  // ranking between two different failures, and the blocks above say what each was.
+  native = codes.find((c) => c !== 0) ?? 0;
   // **Said here, because nothing else says it.** This lane's failures are not in either summary
   // above, so a run where it alone fails prints two `0 failed` lines and then exits non-zero — and
   // the reader goes looking in the wrong place. It cost exactly that once. `issues/system/0172`.
@@ -634,8 +880,28 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
         "   this is a third pass, and its failures are the `FAIL` lines printed just above.\n",
     );
   }
+  spent.push({
+    lane: "`wac test`",
+    ms: Date.now() - wacStarted,
+    note: `${jobs} workers`,
+  });
 } else {
   console.log("\n── `wac test` skipped: no binary at native/v8/target/release/wac");
+}
+
+if (spent.length > 1) {
+  const total = spent.reduce((n, s) => n + s.ms, 0);
+  console.log("\n── where the time went");
+  for (const s of spent) {
+    const share = Math.round((s.ms / total) * 100);
+    console.log(
+      `   ${s.lane.padEnd(15)} ${secs(s.ms).padStart(6)}  ${`${share}%`.padStart(4)}  ${s.note}`,
+    );
+  }
+  // Their sum rather than the wall clock: the lanes run one after another, and anything outside them —
+  // discovery, the temp sweep, the lane declarations — is the difference between this and what
+  // `tools/push.sh` reports.
+  console.log(`   ${"in the lanes".padEnd(15)} ${secs(total).padStart(6)}`);
 }
 
 // **A killed lane says so**, because nothing else does — see `killedLaneNote`.

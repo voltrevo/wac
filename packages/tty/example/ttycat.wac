@@ -21,6 +21,26 @@ export i32 main(Core core, Cli cli) {
   // Nothing but the constructor differs — which is the claim worth testing, since a mode that needed
   // its own loop would be a second implementation of the discipline rather than a setting on one.
   string mode = cli.argCount().wait() > 0 ? string.fromBytes(cli.arg(0).wait()) : "canonical";
+  cli.write(ttycatBytes(typed, mode));
+  return 0;
+}
+
+/**
+ * The whole of it, as a function of bytes: what this program answers when those bytes are typed at it.
+ *
+ * **It is a function so that the tests can be the same code rather than a copy of it.** Comparing the
+ * discipline with the kernel's used to mean building this file and spawning it once per case — three
+ * processes a case, and 55 cases between `line_test.wac` and `modes_test.wac`. The tests now call this,
+ * and the only thing the spawned program adds is reading standard input and writing the answer back.
+ *
+ * Nothing here needs a capability, which is what makes that possible: a line discipline is a fold over
+ * bytes.
+ *
+ * **What that leaves unrun**: `main`'s four lines. No test builds this program any more, so reading
+ * standard input, defaulting the mode and writing the answer are compile-checked — the tests import this
+ * file — and not executed. The two commands in the header are how to check them by hand.
+ */
+export u8[] ttycatBytes(u8[] typed, string mode) {
   Line l = mode == "cbreak" ? Line.cbreak() : (mode == "noecho" ? Line.noEcho() : Line.create());
   Buf out = Buf.create();
   for (i32 i = 0; i < typed.len(); i++) {
@@ -40,6 +60,5 @@ export i32 main(Core core, Cli cli) {
     if (t.interrupted()) { break; }
     if (t.eof) { break; }
   }
-  cli.write(out.take());
-  return 0;
+  return out.take();
 }

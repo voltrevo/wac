@@ -67,7 +67,7 @@ for attempt in 1 2 3; do
   # exactly like a hang if nothing says otherwise. Twice now that has cost time to diagnose, so
   # the numbers are printed rather than remembered.
   # **What is being tested, so that is what gets pushed.** The dirty-tree check at the top runs
-  # once; the suite then takes five to eleven minutes, and an agent working through it — which is
+  # once; the suite then takes three or four minutes, and an agent working through it — which is
   # what the operator asks for rather than watching — can land a commit in that window. `git push
   # origin master` would carry it, and the gate would report a pass for a commit the suite never
   # saw. That is the same failure as the one the header describes, from the other side: there it
@@ -167,7 +167,17 @@ for attempt in 1 2 3; do
     # Deciding by construction rather than by grepping the text, because the refusal is written to the
     # terminal and does not reach `$log` — which is also why the branch below cannot be reused: it
     # reads an empty log and concludes the run died.
-    if [ "$status" -eq 3 ]; then
+    # **The refusal has its own exit code, and it did not always.** `tools/suiteGate.ts` exits 75
+    # (`EX_TEMPFAIL`) when it will not start a suite. It used to exit 3 — which is also `wac test`'s
+    # code for a failing test and what `tools/runTests.ts` passes through — so a genuine red suite
+    # arrived in this branch, had its log deleted below, and was announced as "nothing ran, and the
+    # reason is printed above" while the reason was a `FAIL` line in the log that had just been removed.
+    #
+    # The first repair guessed from whether `$log` was empty. That is wrong too: the refusal reaches the
+    # log through `tee`, so a refusal leaves a short log rather than none, and the next gate run
+    # announced a cooldown refusal as a failing suite. Two wrong readings of the same overloaded code
+    # are what bought the code of its own.
+    if [ "$status" -eq 75 ]; then
       rm -f "$log"
       if [ "$attempt" -eq 1 ]; then
         echo "== the suite gate refused; going round once with WAC_SUITE_RETRY=1 =="
@@ -252,15 +262,72 @@ for attempt in 1 2 3; do
   fi
 
   echo "== suite passed in ${elapsed}s (load now $(cut -d' ' -f1-3 /proc/loadavg)) =="
-  if [ "$elapsed" -gt 180 ]; then
-    echo "   that is several times the usual ~50s. Usually the machine was busy rather than the"
-    echo "   suite — but check for a hung test too (issue 0036); the load above tells you which."
+  # **The threshold has to move when the suite does.** This said "several times the usual ~50s" above
+  # 180s, and the suite has been 205-230s since the wac lane became the largest one — so it fired on
+  # every green run, four times stale, which is a warning that cannot warn. Measured 2026-08-18:
+  # 208s, as 78s of Deno tests, 29s of the files that run alone, and 100s of `wac test`; the floor with
+  # the current set of checks is about 190s on five cores, and `deno task test` prints the split.
+  # 330s is where a run is genuinely out of the ordinary rather than merely slow.
+  if [ "$elapsed" -gt 330 ]; then
+    echo "   that is well above the ~210s this suite costs when nothing is wrong. Usually the machine"
+    echo "   was busy — three agents share five cores — but check for a hung test too (issue 0036);"
+    echo "   the load above tells you which, and the \`where the time went\` block says which lane."
     slow=$(grep -oE "'[^']+' has been running for over[^)]*.\)" "$log" | sort -u | head -5)
     [ -n "$slow" ] && { echo "-- tests that ran unusually long --"; echo "$slow"; }
   fi
 
+  # **The doc checks, which the suite does not run.** `deno task docs` is `wac test tools/` followed by
+  # two Deno files, and the wac half is ten test files nothing else reaches: the lane in `runTests.ts`
+  # walks `packages/` only. So `tools/wac/links_test.wac`, `map_test.wac`, `programs_test.wac`,
+  # `testIgnore_test.wac` and six more — every one of them a guard on this repository's own tooling —
+  # ran only when somebody typed the command. A whole suite log from 2026-08-18 mentions `tools/wac/`
+  # exactly zero times.
+  #
+  # Here rather than in the suite, because two of them read `git ls-files`: in a working tree with a new
+  # file not yet added, a link to it does not resolve and the check is right to say so — which is a
+  # sensible thing to fail a *push* on and a poor thing to fail a mid-edit `deno task test` on. The tree
+  # is clean by the time this runs; the script refuses a dirty one.
+  #
+  # 8s, measured, and it blocks: these are deterministic checks over files in the repository, so a red
+  # one is a red one for everybody rather than a machine having a bad day.
+  if ! deno task docs > "$log.docs" 2>&1; then
+    echo "== the doc checks are red — not pushing =="
+    echo "   \`deno task docs\` runs them. The failures:"
+    grep -E "FAIL|error:|failed" "$log.docs" | head -20
+    echo "-- full output: $log.docs --"
+    exit 1
+  fi
+  echo "== doc checks passed =="
+
+  # **The site, which the suite does not look at at all.** `site/` is in `deno.json`'s `exclude` and named
+  # again in the parallel pass's `--ignore`, for a real reason: its sources are vite-resolved TypeScript
+  # that Deno's resolver refuses. So `site/tools/site.test.ts` needs two flags, and its TypeScript needs
+  # the checker that agrees with the bundler — `npx tsc -b`, in `site/`. Neither ran anywhere automatic.
+  #
+  # **It was red when this was added.** The page said "372 of its claims carry a tag" and `spec/` had 375,
+  # in a section titled "A specification that cannot drift". Nothing had noticed because nothing looked,
+  # and the site deploys on every push — which is what `issues/system/0146` already cost once, when the
+  # published playground quietly compiled with the reference for a while.
+  #
+  # 6s for both.
+  if ! deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts > "$log.site" 2>&1; then
+    echo "== the site's own tests are red — not pushing =="
+    echo "   \`deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts\` runs them:"
+    grep -E "FAILED|error:" "$log.site" | head -10
+    echo "-- full output: $log.site --"
+    exit 1
+  fi
+  if ! (cd site && npx tsc -b) >> "$log.site" 2>&1; then
+    echo "== the site does not type-check — not pushing =="
+    echo "   \`cd site && npx tsc -b\` is the checker that agrees with the bundler:"
+    tail -20 "$log.site"
+    exit 1
+  fi
+  echo "== the site passes its own tests and type-checks =="
+
   # **The coverage ratchets, after the suite and before the push.** Nineteen packages, 38 seconds
-  # against the suite's four hundred, so the cost is a tenth of a run for the thing the suite cannot
+  # against the suite's two hundred — twelve now that they run four at a time — so the cost is small for
+  # the thing the suite cannot
   # see: an uncovered branch is not a failing test, it is code nothing asked about. issues/system 0101
   # is the whole argument — `coverage:crypto` had been red long enough for the reason to be forgotten,
   # and `rsa.wac` grew eighteen unmeasured branch points while the issue describing that was open,

@@ -21,15 +21,50 @@
 import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { bindgenDeclinedFiles, bindgenFiles, blockedFiles, covTableFiles, diagnoseGraph,
+import { bindTypesFiles, bindgenDeclinedFiles, bindgenWire, blockedFiles, buildFiles, covTableFiles,
+         describeSeparator, diagnoseGraph, exportSigsFiles,
          wireHasErrors,
-         emitFiles, emitFilesCovered, manifestFiles } from "../src/api.wac";
+         emitFilesCovered, manifestWire } from "../src/api.wac";
+import { Built } from "../src/emit.wac";
 import { withManifestSection } from "../src/manifest.wac";
 import { renderDiagnostics } from "../src/render.wac";
 import { importSpecs, normalisePath, resolveFrom } from "../src/files.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
+
+/** The three answers `Built.described` folds together. */
+struct Described {
+  /** Why the emitter gave up, empty when it did not. */
+  string blocked;
+  /** `name\tret\tparams` per exported function — `exportSigsFiles`'s format. */
+  string sigs;
+  /** The bind-type wire — `bindTypesFiles`'s format. */
+  string types;
+}
+
+/**
+ * `blocked`, `sigs` and `types`, split on `describeSeparator()`.
+ *
+ * Two separators, three parts, and a part may be empty — a graph with nothing blocked and nothing
+ * exported produces `sep + sep`. The separator is a whole line that neither half can emit, which is
+ * what makes splitting on it safe: signature lines are `name\tret\tparams` and bind-type lines start
+ * with a one-letter tag, so neither can contain it.
+ *
+ * A string that does not carry two separators is not one of these, and the honest answer to that is
+ * the empty parts rather than a guess: `blockedOf` said nothing, so nothing is blocked, and a
+ * manifest built from no signatures is a manifest a host will refuse loudly.
+ */
+Described describedParts(string described) {
+  string sep = describeSeparator();
+  i32 first = described.indexOf(sep);
+  if (first < 0) { return Described(described, "", ""); }
+  string blocked = described.slice(0, first);
+  string rest = described.slice(first + sep.len(), described.len());
+  i32 second = rest.indexOf(sep);
+  if (second < 0) { return Described(blocked, rest, ""); }
+  return Described(blocked, rest.slice(0, second), rest.slice(second + sep.len(), rest.len()));
+}
 
 /** A program's whole source: every path it reaches, and what is in each. */
 struct Sources {
@@ -287,18 +322,66 @@ export i32 main(Core core, Cli cli) {
     return 0;
   }
 
+  // **One front end for the whole build**, which is what `buildFiles` exists for — `issues/lang/0129`
+  // made that call and this was the caller still not using it.
+  //
+  // What this used to do was ask four separate questions of four separate front ends: `blockedFiles`
+  // for what the emitter declines, `emitFiles` for the module, and — inside `manifestFiles` below —
+  // `bindTypesLinked` and `exportSigsLinked` for the boundary. Each takes `(paths, sources, entry)`
+  // and builds its own, because this compiler does no I/O and holds nothing between calls. With
+  // `diagnoseGraph` above that is **five whole-graph walks to produce one module**, and it is why
+  // `wac build` on this compiler took 4.7 s while the same emit under a host that calls the library
+  // directly took 0.5 s. The browser's bootstrap page has always shown the honest number.
+  //
+  // `Built.described` carries all three of the answers the walks were for, separated by
+  // `describeSeparator()`, in the order `describeFiles` documents: blocked, signatures, bind types.
+  //
+  // **An instrumented module is a different module**, and asking for one is the build's decision:
+  // `emitFilesCovered` writes a counter per branch point, and `covTableFiles` says what each counter
+  // is. Both or neither — a table without the counters describes a module that does not exist. That
+  // path keeps the separate calls, because there is no folded form of it and a coverage build is
+  // something a person waits for on purpose.
+  bool covered = hasFlag(cli, argc, "--coverage");
+  string blocked = "";
+  string sigs = "";
+  string types = "";
+  u8[] wasm = u8[0]();
+  if (covered) {
+    blocked = blockedFiles(paths, texts, entry);
+    wasm = emitFilesCovered(paths, texts, entry);
+    sigs = exportSigsFiles(paths, texts, entry);
+    types = bindTypesFiles(paths, texts, entry);
+  } else {
+    Built built = buildFiles(paths, texts, entry);
+    Described parts = describedParts(built.described);
+    blocked = parts.blocked;
+    sigs = parts.sigs;
+    types = parts.types;
+    wasm = built.wasm;
+  }
   // **What the emitter declines is not a diagnostic**, and saying so is the difference between a
-  // module that is missing a function and a message about which one.
-  string blocked = blockedFiles(paths, texts, entry);
+  // module that is missing a function and a message about which one. Answered from the shared front
+  // end rather than from one of its own; the module beside it is discarded unread when this fires,
+  // which is the one case where folding the walks does work that used to be skipped.
   if (blocked != "") {
     core.warn("wacc: cannot emit " + entry + " — " + blocked);
     return 1;
   }
-  // **An instrumented module is a different module**, and asking for one is the build's decision:
-  // `emitFilesCovered` writes a counter per branch point, and `covTableFiles` says what each counter
-  // is. Both or neither — a table without the counters describes a module that does not exist.
-  bool covered = hasFlag(cli, argc, "--coverage");
-  u8[] wasm = covered ? emitFilesCovered(paths, texts, entry) : emitFiles(paths, texts, entry);
+
+  // **A module with no sections is not a module.** `blocked` above is the emitter *declining*, with a
+  // reason in words. This is the emitter answering with the eight-byte header and nothing after it, which
+  // has happened: `issues/lang/0154` reaches it, and the build reported `73846 bytes from 72 file(s)` and
+  // exited 0, because the manifest section appended to a bare header makes the file look substantial. The
+  // size line is the one number a person checks, and it agreed with the failure.
+  //
+  // So: nothing written, and a non-zero exit. `issues/lang/0155`.
+  if (wasm.len() <= 8) {
+    core.warn("wacc: the emitter produced no code for " + entry + " — " + itoa(wasm.len()) +
+              " bytes is the wasm header and no sections at all, so nothing was written. Nothing was " +
+              "declined either, which is what makes this a defect in the emitter rather than in the " +
+              "program: issues/lang/0154 is the one known way to reach it.");
+    return 1;
+  }
 
   // **`bindgen` writes the glue a host calls the module through**, beside the entry — `main.gen.ts`,
   // or `main.gen.js` with `--js`, since a browser cannot import TypeScript. What it cannot bind is
@@ -310,7 +393,9 @@ export i32 main(Core core, Cli cli) {
     if (declined != "") {
       core.warn("wacc bindgen: not bound yet — " + oneLine(declined));
     }
-    string glue = bindgenFiles(wasm, paths, texts, entry, js ? "js" : "ts");
+    // From the metadata already in hand: `bindgenFiles` would build two more front ends to derive
+    // exactly these two strings.
+    string glue = bindgenWire(wasm, sigs, types, js ? "js" : "ts");
     string out = stem(entry) + (js ? ".gen.js" : ".gen.ts");
     Change wroteGlue = fs.writeFile(out, glue.toBytes());
     if (!wroteGlue.ok()) {
@@ -339,7 +424,9 @@ export i32 main(Core core, Cli cli) {
       return 2;
     }
     string wasmName = baseName(stem) + ".wasm";
-    string manifest = manifestFiles(wasm, paths, texts, entry, wasmName, grantsIn(cli, argc));
+    // Two more front ends, if this were `manifestFiles`: it derives `bindTypes` and `exportSigs`
+    // from the sources, and both are already here.
+    string manifest = manifestWire(wasm, types, sigs, entry, wasmName, grantsIn(cli, argc));
     u8[] whole = withManifestSection(wasm, manifest);
     Change wroteWasm = fs.writeFile(stem + ".wasm", whole);
     if (!wroteWasm.ok()) {

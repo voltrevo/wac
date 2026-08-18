@@ -1,7 +1,8 @@
 // Whether the machine can afford a full suite right now, and whether you have just had one.
 //
-// Three agents share five cores and 11.9 GB. A suite peaks over 3 GB and takes five to eleven
-// minutes, so two at once is tight and three is not survivable: the kernel's `oom_kill` counter moved
+// Three agents share five cores and 11.9 GB. A suite peaks over 3 GB and takes about three and a half
+// minutes — 208s measured 2026-08-18, down from five to eleven, and `deno task test` prints the split by
+// lane — so two at once is tight and three is not survivable: the kernel's `oom_kill` counter moved
 // from 20 to 22 in a single evening, and three of those kills were suite runs that had reached about
 // 70% and reported no failure at all — `EXIT=137`, no summary, nothing to debug.
 //
@@ -161,7 +162,7 @@ function advice(): string {
     "     deno test -A path/to/one.test.ts         one file",
     "     deno task docs                           the doc checks, strictly",
     "",
-    "   The suite is 5-11 minutes and three agents share five cores and 11.9 GB.",
+    "   The suite is about three and a half minutes and three agents share five cores and 11.9 GB.",
     "   Two at once is tight; three get killed at about 70% with no failure reported.",
     "   `WAC_SUITE_ANYWAY=1 deno task test` goes through anyway, and says that it did.",
   ].join("\n");
@@ -260,9 +261,23 @@ export function takeSuiteSlot(): () => void {
   // skips is only the "you have just had one" rule, which is about an agent reaching for the suite
   // by reflex rather than about a script finishing a job it started.
   const retry = Deno.env.get("WAC_SUITE_RETRY") === "1";
+  /**
+   * Refusing exits **75**, which is `EX_TEMPFAIL` — *"temporary failure; the user is invited to retry"*.
+   *
+   * **It exited 3, and 3 already meant something else.** `wac test` uses 3 for "a test failed" and
+   * `tools/runTests.ts` passes that through, so a red `wac test` lane and a gate refusal left the same
+   * exit status behind. `tools/push.sh` read one as the other on 2026-08-18: it announced *"the suite
+   * gate refused; nothing ran"* about a suite that had run twice and failed, and deleted the log that
+   * said so. The first repair guessed from whether the log was empty, which is also wrong — the refusal
+   * reaches the log through `tee`, so an empty log is not the signal either.
+   *
+   * A code of its own is what makes the two answerable without guessing. 75 rather than 4, because 4
+   * is the binary's "every test here needs a host oracle" and can reach the suite's exit the same way 3
+   * does.
+   */
   const refuse = (why: string): never => {
     console.error(`\n== not running the suite: ${why} ==\n${advice()}\n`);
-    Deno.exit(3);
+    Deno.exit(75);
   };
 
   if (!forced) {

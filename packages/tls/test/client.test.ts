@@ -270,19 +270,51 @@ Deno.test("client: completes a handshake when only P-256 key exchange is offered
   await againstOpenSslServer("ec", ["-groups", "P-256"]);
 });
 
-/** Run openssl s_server with the named key pair and complete one handshake. */
+/**
+ * Run openssl s_server with the named key pair and complete one handshake.
+ *
+ * **A bind race is retried, and only that.** The port is chosen by opening a listener and closing it, so
+ * between the close and openssl's bind another test in a parallel suite can take it — and then `listening`
+ * connects to *that* stranger, `s_server` exits with the port in use, and the request is refused. This
+ * failed a gate once as a bare `ConnectionRefused: Connection refused (os error 111)`, which names neither
+ * the port nor the reason. `packages/ssh/test/wac/wacsshd.wac` makes the same argument for the same race:
+ * retrying a bind failure is right, retrying anything else turns one clear error into three slow ones.
+ *
+ * What is checked is whether the child is *still there* after something answered on the port. That is the
+ * one question `listening` cannot answer: it proves a listener exists, not whose.
+ */
 async function againstOpenSslServer(kind: "ec" | "rsa", extra: string[] = []): Promise<void> {
-  const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (probe.addr as Deno.NetAddr).port;
-  probe.close();
-
   const dir = new URL("./data/", import.meta.url).pathname;
-  const proc = new Deno.Command("openssl", {
-    args: ["s_server", "-accept", String(port), "-cert", `${dir}${kind}_leaf.pem`,
-           "-key", `${dir}${kind}_leaf.key`, "-tls1_3", "-www", "-quiet", ...extra],
-    stdout: "null", stderr: "null",
-  }).spawn();
-  await listening(port);
+  let proc: Deno.ChildProcess | null = null;
+  let port = 0;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    port = (probe.addr as Deno.NetAddr).port;
+    probe.close();
+
+    const started = new Deno.Command("openssl", {
+      args: ["s_server", "-accept", String(port), "-cert", `${dir}${kind}_leaf.pem`,
+             "-key", `${dir}${kind}_leaf.key`, "-tls1_3", "-www", "-quiet", ...extra],
+      stdout: "null", stderr: "null",
+    }).spawn();
+    await listening(port);
+    // Already exited means it never got the port — somebody else answered `listening`'s probe.
+    const gone = await Promise.race([
+      started.status.then((st) => st.code),
+      new Promise<null>((r) => setTimeout(() => r(null), 0)),
+    ]);
+    if (gone === null) {
+      proc = started;
+      break;
+    }
+    if (attempt === 3) {
+      throw new Error(
+        `openssl s_server exited (code ${gone}) before serving on ${port}, three times — the port was ` +
+          `taken between choosing it and binding it, or the fixture cannot start at all`,
+      );
+    }
+  }
+  if (proc === null) throw new Error("unreachable: no server and no error");
 
   try {
     const ca = pemToDer(await Deno.readTextFile(new URL(`./data/${kind}_ca.pem`, import.meta.url)));

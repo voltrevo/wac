@@ -74,18 +74,53 @@ const denoArgs = (f: string) =>
   ["test", "--no-check", "--allow-all", "--unstable-net", "--quiet", f];
 
 /**
- * The driver's Deno-side profile, taken once.
+ * The Deno-side profile of the three subjects, taken once.
  *
  * `--filter` was tried first and does not do what it looks like it does here: `--filter varint`
- * matched one of that entry's three cases and `--filter "varint:"` matched none. Profiling the whole
- * driver once and selecting from the result is both correct and cheaper — it is one run rather than
- * three, and `all` is then unambiguously the whole module's table, which is the asymmetry this file
- * measures.
+ * matched one of that entry's three cases and `--filter "varint:"` matched none. So the subjects are
+ * registered in a wrapper of their own and it is profiled whole — one run, and every case in it is one
+ * this file compares.
+ *
+ * **It used to profile `harness/wac/hostless.test.ts`, which registers fifty-six entries to read
+ * three.** That is 21s of a 48s file, the largest in the suite's parallel pass, spent compiling
+ * fifty-three entries nothing here looks at.
+ *
+ * The wrapper is written to a **temp directory**, not into the repository, and two things had to be
+ * true for that. `deno test` will not run a file under `.cache` even when it is named on the command
+ * line — that directory is in `deno.json`'s `exclude`, and exclusion beats an explicit path, which
+ * reads as "No test modules found" — so the fixture technique the cases at the bottom of this file use
+ * does not work here. And a file dropped into `harness/` would be a `*.test.ts` in a directory the
+ * suite discovers. Outside the tree it is neither: the harness is imported by absolute path and the
+ * entries resolve from `ROOT`, because that is the cwd `profileWith` runs in.
+ *
+ * `all` is narrower for it — three entries' import closures rather than fifty-six — and that makes the
+ * subset assertion below *sharper*, not weaker: the native table has to fit inside a smaller superset.
+ * That the real driver still qualifies to be taken natively is checked separately, and statically.
  */
 let driverProfile: Profiled | undefined;
 async function denoSide(): Promise<Profiled> {
   if (driverProfile === undefined) {
-    driverProfile = (await profileWith(Deno.execPath(), denoArgs(DRIVER)))[0];
+    const lines = [`import { wacTestRun } from "${ROOT}/harness/wacTestRun.ts";`];
+    for (const [entry, prefix] of SUBJECTS) {
+      lines.push(`await wacTestRun("${entry}", "${prefix}");`);
+    }
+    const dir = await Deno.makeTempDir({ prefix: "wac-subjects-" });
+    const wrapper = `${dir}/subjects.driver.ts`;
+    await Deno.writeTextFile(wrapper, lines.join("\n") + "\n");
+    try {
+      driverProfile = (await profileWith(Deno.execPath(), denoArgs(wrapper)))[0];
+    } finally {
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+    // A wrapper that registered nothing readable would leave every comparison below with nothing to
+    // compare, and `bothSides` would report agreement about it.
+    if (driverProfile === undefined || Object.keys(driverProfile.tests ?? {}).length === 0) {
+      throw new Error(
+        `the subjects wrapper produced no Deno-side profile — the subjects are ` +
+          `${SUBJECTS.map(([e]) => e).join(", ")}, and one of them registering nothing makes every ` +
+          `assertion here vacuous`,
+      );
+    }
   }
   return driverProfile;
 }
@@ -117,7 +152,7 @@ async function bothSides(
   for (const [k, v] of Object.entries(whole?.tests ?? {})) {
     if (k.startsWith(`${prefix}: `)) mine[k] = v;
   }
-  const d: Profiled = { entry: DRIVER, tests: mine, all: whole?.all };
+  const d: Profiled = { entry: "the subjects wrapper", tests: mine, all: whole?.all };
   const n = (await profileWith(`${ROOT}/${WAC_BIN}`, ["test", "--coverage", entry]))[0];
   const native: Tests = {};
   for (const [k, v] of Object.entries(n?.tests ?? {})) native[denoTestName(entry, prefix, k)] = v;
@@ -236,22 +271,81 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
         `The binary is at ${ROOT}/${WAC_BIN}; the runner is looking somewhere else.`,
     );
   }
-  // The driver, which is now the only file registering wac tests without also declaring host ones.
-  // It carries fifty-six registrations rather than one, and `nativeShare` has always looped — what
-  // it needs is to be able to *read* them, which is why they are literal calls there.
-  const share = await nativeShare(ROOT, DRIVER, binary);
-  if (share === null) {
+
+  // **The real driver still qualifies — asked statically, which is what the decision is.** This used
+  // to take `nativeShare` of the driver itself, and that is a native coverage run over all fifty-six
+  // of its registrations: 33s, the second-largest test in the suite, to answer a question about a
+  // file's *shape*. Qualifying means every registration is readable and the file declares no host
+  // tests of its own, and both are properties of the text.
+  //
+  // It is worth keeping in some form, because it is the one thing here that watches production: a
+  // `Deno.test` added to the driver would send every profile back to the Deno path with no message,
+  // and a synthetic fixture would never notice.
+  const driverSource = await Deno.readTextFile(`${ROOT}/${DRIVER}`);
+  const driverReg = wacTestRegistrations(driverSource);
+  if (driverReg.found.length < 2 || driverReg.unresolved > 0) {
     throw new Error(
-      "a pure single-registration wrapper was not taken natively. Either the binary is not where " +
-        "`buildProfile` looks, or the file stopped qualifying — both leave the whole profile on " +
-        "the Deno path with no message.",
+      `${DRIVER} has ${driverReg.found.length} readable registration(s) and ${driverReg.unresolved} ` +
+        `it cannot read. An unreadable one is a wac test whose lines nobody profiles natively, and ` +
+        `fewer than two means the loop below is not being exercised at all.`,
     );
   }
-  if (Object.keys(share.tests).length === 0) throw new Error("taken natively but with no tests");
-  // Names must already be in the spelling the wrapper registers, because execution is still Deno's.
-  const first = Object.keys(share.tests)[0];
-  if (first.indexOf(": ") < 0) {
-    throw new Error(`native share named a test "${first}"; expected the registered spelling`);
+  if (countTestsDeclaredHere(driverSource) !== 0) {
+    throw new Error(
+      `${DRIVER} declares host-side tests now, so \`nativeShare\` refuses it and every profile goes ` +
+        `back to \`deno test\` — correctly, and silently. Move them to a file of their own.`,
+    );
+  }
+
+  // **And the taking itself, on two registrations rather than fifty-six.** Same fixture technique and
+  // same `.cache` placement as the refusal case below, for the same reason: the entries have to
+  // resolve from `ROOT` or the run fails and `nativeShare` returns null for the wrong reason.
+  const FIXTURE = [
+    `import { wacTestRun } from "../harness/wacTestRun.ts";`,
+    `await wacTestRun("packages/quic/test/wac/varint_test.wac", "quic");`,
+    `await wacTestRun("packages/std/test/wac/option_test.wac", "option");`,
+    ``,
+  ].join("\n");
+  const reg = wacTestRegistrations(FIXTURE);
+  if (reg.found.length !== 2 || reg.unresolved > 0) {
+    throw new Error(
+      `the fixture has ${reg.found.length} readable registration(s) and ${reg.unresolved} it cannot ` +
+        `read; it must be a file that would be taken, or what follows answers a different question`,
+    );
+  }
+  if (countTestsDeclaredHere(FIXTURE) !== 0) {
+    throw new Error("the fixture declares host-side tests, which is the case the file below covers");
+  }
+
+  const rel = ".cache/nativeShare_pure_subject.test.ts";
+  await Deno.mkdir(`${ROOT}/.cache`, { recursive: true });
+  try {
+    await Deno.writeTextFile(`${ROOT}/${rel}`, FIXTURE);
+    const share = await nativeShare(ROOT, rel, binary);
+    if (share === null) {
+      throw new Error(
+        "a pure wrapper was not taken natively. Either the binary is not where `buildProfile` looks, " +
+          "or the file stopped qualifying — both leave the whole profile on the Deno path with no " +
+          "message.",
+      );
+    }
+    if (Object.keys(share.tests).length === 0) throw new Error("taken natively but with no tests");
+    // Both registrations, because `nativeShare` loops and a version that took the first and stopped
+    // would leave every later entry's lines unprofiled.
+    const prefixes = new Set(Object.keys(share.tests).map((k) => k.slice(0, k.indexOf(": "))));
+    if (!prefixes.has("quic") || !prefixes.has("option")) {
+      throw new Error(
+        `the native share covers ${[...prefixes].join(", ") || "nothing"}; it must cover both ` +
+          `registrations, or the entries after the first go unprofiled`,
+      );
+    }
+    // Names must already be in the spelling the wrapper registers, because execution is still Deno's.
+    const first = Object.keys(share.tests)[0];
+    if (first.indexOf(": ") < 0) {
+      throw new Error(`native share named a test "${first}"; expected the registered spelling`);
+    }
+  } finally {
+    await Deno.remove(`${ROOT}/${rel}`).catch(() => {});
   }
 });
 

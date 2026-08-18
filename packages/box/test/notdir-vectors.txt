@@ -1,0 +1,237 @@
+wac-applet-vectors 1
+bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
+coreutils: cp (GNU coreutils) 9.4
+locale: LC_ALL=C
+count: 29
+S 7
+cat f/g
+X 1
+O 0
+
+E 26
+cat: f/g: Not a directory
+
+S 6
+ls f/g
+X 2
+O 0
+
+E 41
+ls: cannot access 'f/g': Not a directory
+
+S 9
+wc -c f/g
+X 1
+O 0
+
+E 25
+wc: f/g: Not a directory
+
+S 11
+head -1 f/g
+X 1
+O 0
+
+E 53
+head: cannot open 'f/g' for reading: Not a directory
+
+S 6
+rm f/g
+X 1
+O 0
+
+E 41
+rm: cannot remove 'f/g': Not a directory
+
+S 9
+rmdir f/g
+X 1
+O 0
+
+E 47
+rmdir: failed to remove 'f/g': Not a directory
+
+S 9
+mkdir f/g
+X 1
+O 0
+
+E 54
+mkdir: cannot create directory 'f/g': Not a directory
+
+S 9
+touch f/g
+X 1
+O 0
+
+E 43
+touch: cannot touch 'f/g': Not a directory
+
+S 8
+stat f/g
+X 1
+O 0
+
+E 42
+stat: cannot statx 'f/g': Not a directory
+
+S 6
+du f/g
+X 1
+O 0
+
+E 41
+du: cannot access 'f/g': Not a directory
+
+S 8
+find f/g
+X 1
+O 0
+
+E 29
+find: 'f/g': Not a directory
+
+S 10
+cat nosuch
+X 1
+O 0
+
+E 39
+cat: nosuch: No such file or directory
+
+S 9
+ls nosuch
+X 2
+O 0
+
+E 54
+ls: cannot access 'nosuch': No such file or directory
+
+S 9
+rm nosuch
+X 1
+O 0
+
+E 54
+rm: cannot remove 'nosuch': No such file or directory
+
+S 12
+rmdir nosuch
+X 1
+O 0
+
+E 60
+rmdir: failed to remove 'nosuch': No such file or directory
+
+S 14
+mkdir nosuch/x
+X 1
+O 0
+
+E 69
+mkdir: cannot create directory 'nosuch/x': No such file or directory
+
+S 14
+touch nosuch/x
+X 1
+O 0
+
+E 58
+touch: cannot touch 'nosuch/x': No such file or directory
+
+S 11
+stat nosuch
+X 1
+O 0
+
+E 55
+stat: cannot statx 'nosuch': No such file or directory
+
+S 9
+du nosuch
+X 1
+O 0
+
+E 54
+du: cannot access 'nosuch': No such file or directory
+
+S 11
+find nosuch
+X 1
+O 0
+
+E 42
+find: 'nosuch': No such file or directory
+
+S 21
+rm -f f/g; echo st=$?
+X 0
+O 5
+st=0
+
+E 0
+
+S 24
+rm -f nosuch; echo st=$?
+X 0
+O 5
+st=0
+
+E 0
+
+S 23
+test -e f/g; echo st=$?
+X 0
+O 5
+st=1
+
+E 0
+
+S 23
+test -f f/g; echo st=$?
+X 0
+O 5
+st=1
+
+E 0
+
+S 23
+test -d f/g; echo st=$?
+X 0
+O 5
+st=1
+
+E 0
+
+S 12
+echo y > f/g
+X 1
+O 0
+
+E 35
+bash: line 1: f/g: Not a directory
+
+S 6
+cd f/g
+X 1
+O 0
+
+E 39
+bash: line 1: cd: f/g: Not a directory
+
+S 9
+cd nosuch
+X 1
+O 0
+
+E 52
+bash: line 1: cd: nosuch: No such file or directory
+
+S 17
+echo y > nosuch/x
+X 1
+O 0
+
+E 50
+bash: line 1: nosuch/x: No such file or directory
+

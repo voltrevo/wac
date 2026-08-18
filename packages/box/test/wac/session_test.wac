@@ -1,0 +1,62 @@
+// A session whose filesystem is its own.
+//
+// **This used to spawn.** The Deno test it replaces built `bin/sealedsh.wac` and ran it once per script
+// from inside a host directory it then inspected. Both claims here are about the *session's* filesystem,
+// so `replay.wac`'s `runSealed` builds the same one in this process.
+//
+// **What the move costs, said plainly.** Spawned, a sealed session cannot reach the host because the
+// binary was built with no filesystem grants and the host enforces that. Here, it cannot reach the host
+// because its `Fs` is `Fs.inMemory` and has no path to one — a property of the wiring rather than of a
+// permission. That is a real difference in strength, and it is why the *grant* claim stays where it is:
+// `session.test.ts` keeps the one test that reads the built shebang, `sealing.test.ts` and
+// `sealed.test.ts` keep the ones that run a program with a stated grant set, and `issues/system/0193`
+// lists the boundary. What is still worth asserting here is that the session's world is its own.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Ran, runSealed, show } from "./replay.wac";
+
+export string test_a_sealed_shell_has_a_filesystem_and_it_is_not_the_hosts(Core core, Cli cli) {
+  T t = T.create();
+  // It has a working filesystem: directories, files, reads, listings.
+  t.eqStr(runSealed(core, cli, "mkdir d; echo hi > d/f; cat d/f").out, "hi\n", "make and read");
+  t.eqStr(runSealed(core, cli, "mkdir a; mkdir a/b; ls a").out, "b\n", "nested directories");
+  t.eqStr(runSealed(core, cli, "echo x > f; wc -c f").out, "2 f\n", "a size");
+  t.eqStr(runSealed(core, cli, "echo one > f; echo two > f; cat f").out, "two\n", "truncating rewrite");
+  t.eqStr(runSealed(core, cli, "mkdir w; cd w; echo x > f; rm f; ls; echo status=$?").out, "status=0\n",
+          "remove leaves an empty directory");
+
+  // And the root holds `/dev` and `/proc` and nothing else — a *system*, not the host's root with a
+  // filter over it. design/0001 step 6; before it, this was empty.
+  t.eqStr(runSealed(core, cli, "ls /").out, "bin\ndev\nproc\ntmp\n", "the root of a session");
+  // Which a sealed session gets without any grant at all, because `randomBytes` is a host function
+  // rather than a permission. This is the one that would be surprising if it stopped being true.
+  t.eqStr(runSealed(core, cli, "head -c 8 /dev/urandom | wc -c").out, "8\n", "/dev/urandom");
+  t.eqStr(runSealed(core, cli, "cat /dev/null; echo [$?]").out, "[0]\n", "/dev/null");
+
+  // The host's files are not there. A sealed session's cwd is its own, so `.` is not where the process
+  // stands and an absolute host path names nothing.
+  Ran passwd = runSealed(core, cli, "cat /etc/passwd");
+  t.isTrue(passwd.err.indexOf("No such file or directory") >= 0, passwd.err);
+  t.eqI32(passwd.status, 1, "cat /etc/passwd");
+  // This file, which certainly exists on the host and must not exist in here.
+  Ran ours = runSealed(core, cli, "cat packages/box/test/wac/session_test.wac; echo status=$?");
+  t.eqStr(ours.out, "status=1\n", "it read a file from the host: " + show(ours.out));
+  return t.report();
+}
+
+/**
+ * Two sealed sessions share nothing.
+ *
+ * Each run is a fresh filesystem, which is what "in the process" means. A test that wants state across
+ * commands puts them in one script — and an image is what changes that (design/0001 step 2), which
+ * `backings_test.wac` and `imaged_test.wac` are about.
+ */
+export string test_two_sealed_sessions_share_nothing(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(runSealed(core, cli, "echo remembered > f; cat f").out, "remembered\n", "the first session");
+  Ran second = runSealed(core, cli, "cat f; echo status=$?");
+  t.eqStr(second.out, "status=1\n", "the second session saw the first's file: " + show(second.out));
+  return t.report();
+}

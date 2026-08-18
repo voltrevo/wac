@@ -144,6 +144,100 @@ void namedByCase(string text, Strs into) {
   }
 }
 
+/**
+ * And the sharper question: is anything holding **wacc** to each clause?
+ *
+ * The test below asks whether a claim is checked *at all*, and counts `compiler/` as an answer — which is
+ * right for that question and wrong for this one. `compiler/wacSpec.test.ts` drives `wacCompile`, the
+ * reference; a clause whose only checker lives there is one wacc could break without anything noticing.
+ *
+ * **Measured on 2026-08-18: twelve clauses were in that position.** All fifteen diagnostic clauses in
+ * `errors.md` were among them until that day — wacc had the message, the annotation and the help right on
+ * most and reported `span: 0` on four, which is what being unchecked looks like. Three more —
+ * `§enum-variant-name-collision`, `§wac-bind-bulk-70zh5tg` and `§wac-diag-null-h6kp9wn` — turned out to be
+ * *met* and merely unasserted, which is the same risk one lucky commit away.
+ *
+ * **`§wac-wapy-*` is the exception, and it is a rule rather than a list.** wapy is a Python-shaped surface
+ * written in TypeScript in `compiler/`; wacc does not implement it, so the reference's tests are the only
+ * place those clauses could be held. Everything else must be named by something outside `compiler/`.
+ */
+/** This file, whose prose names tags it must not be read as covering. */
+string SELF() { return "packages/wacc/test/wac/spectags_test.wac"; }
+
+export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(Core core, Cli cli) {
+  T t = T.create();
+
+  Strs claimed = Strs.create();
+  Strs wheres = Strs.create();
+  string[] specFiles = filesIn(cli, "spec/spec", ".md");
+  for (i32 i = 0; i < specFiles.len(); i++) {
+    FileResult f = cli.readFile(specFiles[i]).wait();
+    if (!f.ok) { t.fail("cannot read " + specFiles[i] + " — " + f.error); continue; }
+    claimedIn(f.bytes, specFiles[i], claimed, wheres);
+  }
+  t.isTrue(claimed.len() >= 300,
+           "only " + itoa(claimed.len()) + " clauses found — did the walk resolve? (cwd is the repo root)");
+  if (claimed.len() < 300) { return t.report(); }
+
+  // Everything on our side of the line: the cases both compilers run, and the tests that drive wacc.
+  Strs ours = Strs.create();
+  string[] cases = filesIn(cli, "spec/cases", ".wac");
+  for (i32 i = 0; i < cases.len(); i++) {
+    FileResult f = cli.readFile(cases[i]).wait();
+    if (f.ok) { namedByCase(string.fromBytes(f.bytes), ours); }
+  }
+  // **And the recorded corpus, which is where most of the coverage actually is.** `specCases.json` holds
+  // the spec's own programs with their tags, and `specSingle.test.ts` and `specMulti.test.ts` run every
+  // one of them *against wacc* — 671 single-file and 56 multi-file. Leaving it out made this read 365
+  // unheld clauses where the number is 9, which is the difference between a guard and an alarm.
+  FileResult corpus = cli.readFile("packages/wacc/test/specCases.json").wait();
+  t.isTrue(corpus.ok, "cannot read the recorded corpus — " + corpus.error);
+  if (corpus.ok) { mentionedIn(corpus.bytes, ours); }
+
+  string[] dirs = string[]("packages/wacc/test", "packages/wacc/test/wac", "tools/wac");
+  string[] suffixes = string[](".test.ts", "_test.wac", "_test.wac");
+  for (i32 d = 0; d < dirs.len(); d++) {
+    string[] tests = filesIn(cli, dirs[d], suffixes[d]);
+    i32 before = ours.len();
+    for (i32 i = 0; i < tests.len(); i++) {
+      // **This file does not count as coverage of the tags it discusses.** The comment above names
+      // `§enum-variant-name-collision`, `§wac-bind-bulk-70zh5tg` and `§wac-diag-null-h6kp9wn` as the
+      // three that were unheld — and with that prose in the walk, this guard reported them as held by
+      // itself. Two canaries in a row came back green before the reason surfaced, which is the same
+      // shape `flaky_test.wac` records with its own `SELF()`: a guard that reads its own explanation
+      // is a guard that cannot fail.
+      if (tests[i] == SELF()) { continue; }
+      FileResult f = cli.readFile(tests[i]).wait();
+      if (f.ok) { mentionedIn(f.bytes, ours); }
+    }
+    t.isTrue(ours.len() >= before,
+             dirs[d] + "/*" + suffixes[d] + " could not be read at all");
+  }
+
+  string missing = "";
+  i32 n = 0;
+  i32 wapy = 0;
+  for (i32 i = 0; i < claimed.len(); i++) {
+    string tag = claimed.get(i);
+    // wapy is the reference's surface and has no wacc side to hold.
+    if (startsWith(tag, "wac-wapy-")) { wapy = wapy + 1; continue; }
+    if (ours.has(tag)) { continue; }
+    if (n < 8) { missing = missing + "\n  §" + tag + " — stated in " + wheres.get(i); }
+    n = n + 1;
+  }
+  // **The wapy ones are excluded from the count, not counted as held.** Reporting them inside the total
+  // would be this guard flattering itself by nine.
+  core.log("    clauses held outside the reference: " + itoa(claimed.len() - wapy - n) + " of " +
+           itoa(claimed.len() - wapy) + " (" + itoa(wapy) + " §wac-wapy-* skipped — the reference is " +
+           "their only home)");
+  t.eqI32(n, 0,
+          itoa(n) + " clause(s) are checked only by the reference's own tests, so wacc could break them " +
+          "with nothing noticing:" + missing +
+          "\n  Name the tag in a wac test, or add a `// spec:` line to the case that holds it. " +
+          "`packages/wacc/test/wac/specclauses_test.wac` is where the ones with no other home live.");
+  return t.report();
+}
+
 export string test_every_wacc_only_clause_in_spec_is_named_by_a_case_or_a_test(
     Core core, Cli cli) {
   T t = T.create();

@@ -74,6 +74,44 @@ export type Exclusive = { file: string; why: string };
 export const isWacTest = (file: string): boolean => file.endsWith("_test.wac");
 
 /**
+ * The directories that hold wac tests, which is the unit `wac test` builds for.
+ *
+ * `issues/system/0192` made a directory's test files share one build — one aggregate module,
+ * instantiated per file — so a directory is the smallest piece that can be handed to a worker without
+ * paying for that build twice. `tools/runTests.ts` runs the lane as a queue of these.
+ *
+ * A directory is included when it holds a test file directly. A directory that only *contains* such
+ * directories is not: handing `packages/` to one worker is what this replaced.
+ */
+export async function wacTestDirs(root: string): Promise<string[]> {
+  const dirs = new Set<string>();
+  const here: string[] = [];
+  for await (const e of Deno.readDir(root)) {
+    if (e.isFile && isWacTest(e.name)) dirs.add(root);
+    if (e.isDirectory) here.push(`${root}/${e.name}`);
+  }
+  for (const sub of here) {
+    for (const found of await wacTestDirs(sub)) dirs.add(found);
+  }
+  return [...dirs].sort();
+}
+
+/**
+ * The wac test files directly in one directory, sorted as the walk sorts them.
+ *
+ * `tools/runTests.ts` splits a large directory into chunks of files, and the chunks have to be lists the
+ * runner assembled rather than a range it guessed: `wac test` sorts what it collects, so a caller that
+ * wants half of a directory has to name which half.
+ */
+export async function wacTestFiles(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for await (const e of Deno.readDir(dir)) {
+    if (e.isFile && isWacTest(e.name)) out.push(`${dir}/${e.name}`);
+  }
+  return out.sort();
+}
+
+/**
  * Every file that declares *any* lane — what the suite's parallel pass does not run by default.
  *
  * `tools/jobsSweep.sh` and anything else that has to reproduce the suite's own `--ignore` should ask

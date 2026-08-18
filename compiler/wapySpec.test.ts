@@ -306,6 +306,30 @@ Deno.test("[§wac-wapy-matchexpr-3jx8rvc] a match expression drops the parenthes
   if (!out.includes("match e {")) throw new Error(out);
 });
 
+/**
+ * The `else` arm of a match *expression*, which takes no `case` — in either language.
+ *
+ * The printer wrote `case else:` until 2026-08-18, which is text neither parser accepts, so a match
+ * expression with an else arm could not round-trip. It survived because **nothing in `packages/` used
+ * the construct**: all three occurrences were inside comments, and `wapyRoundTrip.test.ts` only meets
+ * what the corpus contains. The first real use — `tokenOfExpr` in `packages/wacc/src/check.wac` — failed
+ * that test immediately.
+ *
+ * Pinned here as well as there, because the round-trip's coverage of it is an accident of one function
+ * in another package keeping this shape.
+ */
+Deno.test("a match expression's else arm round-trips, and takes no `case`", () => {
+  const src = "enum E { A, B }\ni32 f(E e) { return match (e) { case A: 1, else: 2 }; }";
+  const out = wapy(src);
+  if (out.includes("case else")) throw new Error(`the else arm was printed as a case:\n${out}`);
+  if (!/(^|\s)else:/.test(out)) throw new Error(`no else arm in the output:\n${out}`);
+  const before = strip(wacParse(wacLex(src).tokens, "t.wac").program);
+  const after = strip(wapyParse(out, "t.wapy").program);
+  if (JSON.stringify(before) !== JSON.stringify(after)) {
+    throw new Error(`the tree changed:\n${JSON.stringify(before)}\n${JSON.stringify(after)}`);
+  }
+});
+
 // ── §wac-wapy-roundtrip-5vd2qnw — asserted in full by wapyRoundTrip.test.ts ─
 //
 // That file converts `spec/tour.wac` and every wac source in the repository — 220 files — and

@@ -52,7 +52,7 @@ export string test_the_ssh_program_runs_a_command_on_a_real_server_end_to_end(Co
   if (!haveSshd(cli)) { return t.report(); }
   string client = buildClient(t, cli, false);
   if (client == "") { return t.report(); }
-  Sshd s = startSshd(t, cli, "ssh-cli-run");
+  Sshd s = startSshd(t, core, cli, "ssh-cli-run");
   if (!s.ok) { t.fail("sshd did not come up — " + s.error); stopSshd(cli, s); return t.report(); }
   string home = makeHome(t, cli, s, true);
   string[] p = target(s);
@@ -94,7 +94,7 @@ export string test_the_ssh_program_refuses_an_unknown_host_and_reports_a_changed
   string plain = buildClient(t, cli, false);
   string writable = buildClient(t, cli, true);
   if (plain == "" || writable == "") { return t.report(); }
-  Sshd s = startSshd(t, cli, "ssh-cli-hosts");
+  Sshd s = startSshd(t, core, cli, "ssh-cli-hosts");
   if (!s.ok) { t.fail("sshd did not come up — " + s.error); stopSshd(cli, s); return t.report(); }
   string home = makeHome(t, cli, s, false);          // no known_hosts at all
   string[] p = target(s);
@@ -144,7 +144,7 @@ export string test_the_ssh_program_reports_bad_arguments_and_unreadable_keys(Cor
   if (!haveSshd(cli)) { return t.report(); }
   string client = buildClient(t, cli, false);
   if (client == "") { return t.report(); }
-  Sshd s = startSshd(t, cli, "ssh-cli-args");
+  Sshd s = startSshd(t, core, cli, "ssh-cli-args");
   if (!s.ok) { t.fail("sshd did not come up — " + s.error); stopSshd(cli, s); return t.report(); }
   string home = makeHome(t, cli, s, true);
   string[] p = target(s);
@@ -179,7 +179,7 @@ export string test_the_ssh_program_reads_an_encrypted_key_with_ssh_passphrase(Co
   if (!haveSshd(cli)) { return t.report(); }
   string client = buildClient(t, cli, false);
   if (client == "") { return t.report(); }
-  Sshd s = startSshd(t, cli, "ssh-cli-passphrase");
+  Sshd s = startSshd(t, core, cli, "ssh-cli-passphrase");
   if (!s.ok) { t.fail("sshd did not come up — " + s.error); stopSshd(cli, s); return t.report(); }
   string home = makeHome(t, cli, s, true);
 

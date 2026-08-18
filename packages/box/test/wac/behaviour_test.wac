@@ -1,0 +1,117 @@
+// The flags these applets implement, replayed against what the real tools answered when it was captured.
+//
+// **This used to spawn 213 processes.** `behaviour.test.ts` built a shell, then ran bash and that shell
+// once each for all 104 cases, every suite run, to establish what `cut -f1,3` prints. The answer does not
+// change between runs, so `tools/wac/appletvectors.wac` asks once and this replays in process — through
+// `Shell` with `sh.external = boxRun`, which is the route `example/boxsh.wac` wires up and
+// `routes.test.ts` holds to the spawned one.
+//
+// The cases and the fixtures are `cases.wac`, shared with the capture tool: one list, two readers. The
+// reading and running are `replay.wac`, shared with the other sweeps.
+//
+// Ten cases stay live at the bottom. A frozen expectation cannot see coreutils move under it, and the
+// answer to that is a canary rather than 104 of them.
+
+import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { cases, fixtures } from "./cases.wac";
+import { Loaded, Ran, layFixtures, load, runCase, show } from "./replay.wac";
+
+string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-behaviour"; }
+
+export string test_every_implemented_flag_still_answers_what_the_real_tool_answered(Core core, Cli cli) {
+  T t = T.create();
+  Loaded v = load(cli, vectorsPath());
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  string[] list = cases();
+  string dir = caseDir(cli);
+  i32 ran = 0;
+  i32 wrong = 0;
+  i32 unknown = 0;
+  string detail = "";
+  for (i32 i = 0; i < list.len() && i < v.n; i++) {
+    // **Checked against the recorded case, not just the recorded answer.** An edit to `cases.wac` that
+    // adds or reorders one would otherwise compare every later case against its neighbour's expectation
+    // and report a hundred applet bugs.
+    if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
+    if (!layFixtures(cli, dir, fixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Ran r = runCase(core, cli, dir, list[i]);
+    ran = ran + 1;
+    if (r.out != v.items[i].out || r.status != v.items[i].status) {
+      wrong = wrong + 1;
+      if (wrong <= 5) {
+        detail = detail + "\n  $ " + list[i] +
+                 "\n    want " + show(v.items[i].out) + " exit " + itoa(v.items[i].status) +
+                 "\n    ours " + show(r.out) + " exit " + itoa(r.status) +
+                 (r.err == "" ? "" : "\n    err  " + show(r.err));
+      }
+    }
+  }
+  cli.remove(dir, true).wait();
+
+  // **Every case, and it was not always.** `split` was skipped by name until `issues/system/0166` was
+  // fixed — a frame kept the bytes an applet redirected to a file, so `split` wrote its pieces to standard
+  // output and left them empty. The count is what announced the fix: it had to be raised here before this
+  // file would pass again.
+  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+                           " vectors");
+  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded script — `cases.wac` changed, so " +
+                      "`wac run --allow-read --allow-write --allow-run tools/wac/appletvectors.wac` is " +
+                      "what makes this file mean anything again");
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " invocations differ from the captured tools (" +
+                    v.oracle + ")" + detail);
+  return t.report();
+}
+
+/**
+ * The canary: ten cases asked of the *live* tools.
+ *
+ * Frozen expectations cannot see the environment move. These can, and they are the cases themselves
+ * rather than a hand-written stand-in, so what is checked is the thing the vectors are about.
+ */
+export string test_the_live_tools_still_agree_on_a_handful(Core core, Cli cli) {
+  T t = T.create();
+  string[] list = cases();
+  string dir = caseDir(cli);
+  i32 checked = 0;
+  // Spread across the list rather than the first ten, which are all `sort`.
+  for (i32 k = 0; k < 10; k++) {
+    i32 i = (k * list.len()) / 10;
+    if (!layFixtures(cli, dir, fixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Exec want = cli.exec("env",
+                         string[]("-i",
+                                  "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                                  "LC_ALL=C", "HOME=" + dir,
+                                  "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
+                                  "bash", dir, list[i]),
+                         u8[0]()).wait();
+    if (!want.ran()) {
+      // No bash here is not a failure of the applets: say so and stop, rather than passing quietly.
+      t.isTrue(checked > 0, "bash would not start: " + want.error);
+      return t.report();
+    }
+    if (!layFixtures(cli, dir, fixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Ran ours = runCase(core, cli, dir, list[i]);
+    checked = checked + 1;
+    t.eqStr(ours.out, string.fromBytes(want.stdout), "the live tools disagree: $ " + list[i]);
+    t.eqI32(ours.status, want.status, "the live tools' status disagrees: $ " + list[i]);
+  }
+  cli.remove(dir, true).wait();
+  t.isTrue(checked >= 9, "not every canary ran: " + itoa(checked));
+  return t.report();
+}

@@ -22,17 +22,22 @@
 // ## Typing at it
 //
 // `Cli.spawn` takes a wac worker bundle, so it cannot drive OpenSSH's `ssh` — and several of these
-// tests have to type into an interactive session over time. None of them, though, decides *what* to
-// type from what came back: every one writes a fixed sequence with fixed pauses. So the producer is
-// a shell line piped into `ssh`, which `Cli.exec` runs to completion — `typedInto` below. A test
-// that needed to read before writing could not be written this way, and there is not one.
+// tests have to type into an interactive session over time. So the producer is a shell line piped
+// into `ssh`, which `Cli.exec` runs to completion — `typedInto` below.
+//
+// **Some of them do decide when to type from what came back**, which the fixed-pause version could
+// not express: the pauses were `sleep`s long enough to be safe on a loaded machine, and three of them
+// were 9.7s of every run. `typedIntoWatching` tees the session's output to a file and gives the
+// producer a `seen <pattern> [count]` function, so a pause ends when its evidence arrives. What a
+// producer still cannot do is decide *what* to type from what came back — the text is fixed, only its
+// timing is not.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
 import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wac";
 import { onlyEnv, onlyEnvLine, quoted } from "../../../wactest/src/childenv.wac";
-import { contains, splitLines } from "../../../wactest/src/strings.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
+import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
+import { atoi, itoa } from "../../../fmt/src/itoa.wac";
 import { copyPreserving, keygen, restrict, scratch } from "./fixture.wac";
 
 /** Our server, running, with a host key and one authorized client key. */
@@ -112,10 +117,10 @@ export string reapSelectsServers(Cli cli) {
  * the first attempt, because retrying those turns one clear error into three slow ones. `Held` makes
  * the window as small as it can be; it cannot close it, because the server binds in another process.
  */
-export Wacsshd startWacsshd(T t, Cli cli, string name, string[] extra, string binary) {
+export Wacsshd startWacsshd(T t, Core core, Cli cli, string name, string[] extra, string binary) {
   reapAbandoned(cli);
   for (i32 attempt = 1; attempt <= 3; attempt++) {
-    Wacsshd s = startOnce(t, cli, name, extra, binary);
+    Wacsshd s = startOnce(t, core, cli, name, extra, binary);
     if (s.ok) { return s; }
     if (!contains(s.error, "Address already in use") && !contains(s.error, "already in use")) {
       return s;
@@ -125,7 +130,7 @@ export Wacsshd startWacsshd(T t, Cli cli, string name, string[] extra, string bi
   return Wacsshd(false, "the port was taken on all three attempts", "", -1, Daemon(-1, "", ""));
 }
 
-Wacsshd startOnce(T t, Cli cli, string name, string[] extra, string binary) {
+Wacsshd startOnce(T t, Core core, Cli cli, string name, string[] extra, string binary) {
   string dir = scratch(cli, name);
   cli.mkdir(dir + "/.ssh", true).wait();
   if (!keygen(t, cli, dir + "/.ssh/ssh_host_ed25519_key")) {
@@ -158,18 +163,27 @@ Wacsshd startOnce(T t, Cli cli, string name, string[] extra, string binary) {
   // stderr could otherwise kill the server before it had been flushed — about one parallel run in
   // ten, always in the one test that reads it. `issues/system/0026`.
   //
-  // And it stops the moment the process dies: a server that refused its host key or could not bind
-  // says exactly why and exits in milliseconds, and waiting the full bound for something that has
-  // stopped happening reports the wrong failure twice over — the second time by hiding the message
-  // that explains the first.
+  // **A deadline, and it used to be 2000 iterations.** Neither half of that loop cost what it looked
+  // like: reading the log is a syscall, so the "bound" was a few hundred milliseconds of patience that
+  // shrank as the box got busier, and the liveness check spawned `/bin/sh -c 'kill -0'` *per
+  // iteration* — a readiness check that was itself one of the heaviest things in this file. Now it
+  // sleeps between looks, so five seconds is five seconds, and asks whether the server is still there
+  // every fifth look rather than every one.
   Wacsshd s = Wacsshd(true, "", dir, port, d);
-  for (i32 i = 0; i < 2000; i++) {
+  i64 deadline = core.nowMillis().wait() + 5000;
+  for (i32 i = 0; i < 100000; i++) {
     string said = s.said(cli);
     if (contains(said, "listening on port")) { return s; }
-    if (!alive(cli, d)) {
+    // And it stops the moment the process dies: a server that refused its host key or could not bind
+    // says exactly why and exits in milliseconds, and waiting the full bound for something that has
+    // stopped happening reports the wrong failure twice over — the second time by hiding the message
+    // that explains the first.
+    if (i % 5 == 0 && !alive(cli, d)) {
       return Wacsshd(false, "the server exited before it announced anything. It said: " +
                             (said == "" ? "nothing" : said), dir, port, d);
     }
+    if (core.nowMillis().wait() >= deadline) { break; }
+    core.sleepMillis(5).wait();
   }
   return Wacsshd(false, "the server never announced a port. It said: " +
                         (s.said(cli) == "" ? "nothing" : s.said(cli)), dir, port, d);
@@ -297,7 +311,11 @@ string wacBinaryPath(Cli cli) { return wacBinary(cli); }
  * `producer` is a shell line whose standard output becomes the client's standard input — a sequence
  * of `printf` and `sleep`. Written as shell rather than driven from here because `Cli.spawn` takes a
  * wac worker bundle and OpenSSH's client is not one, so there is no way to hold its stdin open from
- * this side. Nothing here needs one: no case decides what to type from what came back.
+ * this side.
+ *
+ * **Prefer `typedIntoWatching` when a pause is waiting for something.** A `sleep` long enough to be
+ * safe on a loaded machine is a cost paid on every run — three of them here came to 9.7s — and it is
+ * the wrong shape besides: it asserts a duration where the case is about an event.
  */
 export Said typedInto(Cli cli, Wacsshd s, string[] extra, string producer) {
   string[] args = withTail(sshArgs(s, s.dir + "/clientkey", extra), string[]("claude@127.0.0.1"));
@@ -306,6 +324,63 @@ export Said typedInto(Cli cli, Wacsshd s, string[] extra, string producer) {
                             "ssh", args);
   Exec r = cli.exec("/bin/sh", string[]("-c", "{ " + producer + " ; } | " + line), u8[0]()).wait();
   return said(r);
+}
+
+/**
+ * The same, and the producer can **watch what the session has said so far**.
+ *
+ * The session's output is `tee`d to a file, and the producer gets one shell function:
+ *
+ *     seen <pattern> [count]     wait until the output matches at least `count` times, or give up
+ *
+ * So `sleep 6` — long enough for a command to finish on a loaded machine — becomes `seen done=200000`,
+ * which is that command's own answer arriving. The wait is bounded at 10s and returns non-zero when
+ * it expires rather than hanging: a case whose evidence never appears then fails on its own
+ * assertion, with the output in the message, instead of on a timeout with none.
+ *
+ * The count matters where a marker can arrive early for another reason. A line typed at a terminal in
+ * raw mode is echoed as it is typed, so `typed-ahead` appears once while the command is still running
+ * and again when it runs — and `seen typed-ahead` alone would fire on the echo, which is the pause
+ * ending exactly where the case needs it not to.
+ */
+export Said typedIntoWatching(Cli cli, Wacsshd s, string[] extra, string producer) {
+  string[] args = withTail(sshArgs(s, s.dir + "/clientkey", extra), string[]("claude@127.0.0.1"));
+  string line = onlyEnvLine(string[]("LANG", "LC_ALL", "HOME", "PATH"),
+                            string[]("C.UTF-8", "C.UTF-8", s.dir, "/usr/bin:/bin:/usr/local/bin"),
+                            "ssh", args);
+  // `grep -c` prints 0 and exits 1 when nothing matches, so the count is read and defaulted rather
+  // than taken from the exit status.
+  string prelude =
+    "O=" + s.dir + "/watched.out; : > \"$O\"; " +
+    "seen() { p=\"$1\"; c=\"${2:-1}\"; n=0; " +
+    "while [ $n -lt 200 ]; do " +
+    "got=$(grep -c -e \"$p\" \"$O\" 2>/dev/null); [ -z \"$got\" ] && got=0; " +
+    "if [ \"$got\" -ge \"$c\" ]; then return 0; fi; " +
+    "sleep 0.05; n=$((n+1)); done; " +
+    // **An expired wait says so.** It is the failure mode of this whole helper: the producer carries
+    // on regardless, the case's own assertion may still pass, and all that is visible is a test that
+    // took ten seconds. Two of these were expiring when they were first written and the only symptom
+    // was the file getting slower.
+    "echo \"seen: gave up waiting for [$p] x$c after 10s\" >&2; return 1; }; ";
+  // **Redirected rather than `tee`d, because `tee` buffers.** The first version piped the client
+  // through `tee` so the bytes went to the file *and* to this process's stdout — and every wait for a
+  // short output expired, because `tee` holds a partial block back. Nothing said so: the producer
+  // carried on, the assertions passed on the session's final transcript, and the only symptom was the
+  // file getting slower than the `sleep`s it replaced. `ssh` writes to fd 1 itself, with no stdio
+  // layer in the way, so the redirection is visible to `grep` as it happens.
+  //
+  // The status comes from a file for the same reason it would have with `tee`: a pipeline reports its
+  // last command, and `sh` here is `dash`, which has no `pipefail`.
+  Exec r = cli.exec("/bin/sh",
+                    string[]("-c", prelude + "{ " + producer + " ; } | { " + line +
+                                   " > \"$O\" ; echo $? > \"$O.rc\" ; }"),
+                    u8[0]()).wait();
+  Said out = said(r);
+  FileResult got = cli.readFile(s.dir + "/watched.out").wait();
+  string text = got.ok ? string.fromBytes(got.bytes) : out.stdout;
+  FileResult rc = cli.readFile(s.dir + "/watched.out.rc").wait();
+  i32 status = rc.ok ? atoi(trimmed(string.fromBytes(rc.bytes))) : out.status;
+  return Said(status, text, out.stderr);
 }
 
 Said said(Exec r) {

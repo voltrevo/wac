@@ -42,33 +42,14 @@ import { Vec } from "../../../std/src/vec.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../src/shrun.wac";
+// **The memory filesystem and the in-process shell are `memory.wac`**, shared with
+// `sealedapplets_test.wac`: one definition of what `sealedsh` builds, two files measuring different
+// things on it.
+import { Ran, memoryFs, runOn } from "./memory.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
 
-struct Ran {
-  string out;
-  string err;
-  i32 status;
-}
-
-/**
- * One script through a shell whose filesystem is `fs`, inside this process.
- *
- * `shellMain`'s `first` is an index into the arguments and a frame's `argv` starts with the child's own
- * name, so the shell's own arguments start at 1.
- */
-Ran runOn(Core core, Cli cli, Fs fs, string script) {
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), "/", false);
-  Core c = childCore(f, core);
-  Cli l = childCli(f, cli);
-  Shell sh = Shell.onFs(c, l, fs);
-  sh.cwd = "/";
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
-  i32 status = shellMain(c, l, sh, 1);
-  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
-}
 
 /** The same, on the real disk: `Shell.create` builds `Fs.onHost`, and the frame's cwd is where it lands. */
 Ran runHost(Core core, Cli cli, string cwd, string script) {
@@ -82,15 +63,6 @@ Ran runHost(Core core, Cli cli, string cwd, string script) {
   return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
 }
 
-/** A memory filesystem wired the way `bin/sealedsh.wac` wires one, `/tmp` and `/dev` included. */
-Fs memoryFs(Core core) {
-  Fs fs = Fs.inMemory(0);
-  fs.mkdir("/tmp", true);
-  Vec<string> argv = Vec.create();
-  argv.push("sealedsh");
-  mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
-  return fs;
-}
 
 /**
  * An image backing, read from `path`.
@@ -135,7 +107,7 @@ export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mou
     string work = root + "/host" + itoa(i);
     cli.mkdir(work, true).wait();
 
-    Ran memory = runOn(core, cli, memoryFs(core), script);
+    Ran memory = runOn(core, cli, memoryFs(core, "sealedsh"), script);
     Fs image = imageFs(core, cli, seed);
     Ran onImage = runOn(core, cli, image, script);
     // And written back, because a session that ran and could not be saved is a session lost: the write
@@ -195,7 +167,7 @@ export string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Co
   string root = workRoot(cli);
   cli.mkdir(root, true).wait();
 
-  Ran memory = runOn(core, cli, memoryFs(core), script);
+  Ran memory = runOn(core, cli, memoryFs(core, "sealedsh"), script);
   t.eqStr(memory.out, "hello\n1\n", "memory: " + shape(memory));
 
   string image = root + "/alive.wacimg";

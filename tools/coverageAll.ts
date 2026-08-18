@@ -44,6 +44,7 @@ const doneHeavy = announceHeavy("coverage:all");
 globalThis.addEventListener("unload", () => doneHeavy());
 
 const verbose = Deno.args.includes("--verbose");
+const startedAll = performance.now();
 
 const PACKAGES = [
   "bignum", "bytes", "codec", "crypto", "datetime", "fmt", "fs", "gzip", "http", "json",
@@ -52,24 +53,76 @@ const PACKAGES = [
 
 type Result = { pkg: string; code: number; ms: number; output: string };
 
+/**
+ * Four at a time, because nineteen packages one after another is 38s of every push.
+ *
+ * `tools/push.sh` runs this after the suite and before the push, so nothing else is on the machine —
+ * and each of these is one `deno run` over one package's probes, not the gigabyte-scale builds the
+ * heavy lane holds back. Four is the width measured for the suite's own passes; the same number here
+ * needs no separate argument.
+ *
+ * **Each line is printed when its package finishes, so they arrive out of order.** That is why the
+ * package name was already on every line: the order was never what identified them. The summary and the
+ * failure reports below read `results`, which is sorted back into `PACKAGES` order, so what a reader
+ * scans for a red is stable even though the log is not.
+ */
+const WORKERS = 4;
 const results: Result[] = [];
-for (const pkg of PACKAGES) {
-  const started = performance.now();
-  const cmd = new Deno.Command("deno", {
-    args: ["task", `coverage:${pkg}`],
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const { code, stdout, stderr } = await cmd.output();
-  const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
-  const ms = performance.now() - started;
-  results.push({ pkg, code, ms, output });
-  console.log(`${code === 0 ? "ok  " : "FAIL"}  coverage:${pkg}  ${(ms / 1000).toFixed(1)}s`);
-}
+let next = 0;
+const worker = async () => {
+  while (next < PACKAGES.length) {
+    const pkg = PACKAGES[next++];
+    const started = performance.now();
+    const cmd = new Deno.Command("deno", {
+      args: ["task", `coverage:${pkg}`],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { code, stdout, stderr } = await cmd.output();
+    const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+    const ms = performance.now() - started;
+    results.push({ pkg, code, ms, output });
+    console.log(`${code === 0 ? "ok  " : "FAIL"}  coverage:${pkg}  ${(ms / 1000).toFixed(1)}s`);
+  }
+};
+await Promise.all(Array.from({ length: Math.min(WORKERS, PACKAGES.length) }, () => worker()));
+results.sort((a, b) => PACKAGES.indexOf(a.pkg) - PACKAGES.indexOf(b.pkg));
 
 const failed = results.filter((r) => r.code !== 0);
+// **Summed, not elapsed, and it says so.** These overlap now, so the sum is the work done rather than
+// the time taken — reporting it as elapsed would make a 4x speedup look like no change at all.
 const total = results.reduce((n, r) => n + r.ms, 0) / 1000;
-console.log(`\n${results.length - failed.length}/${results.length} passed in ${total.toFixed(0)}s`);
+const elapsed = (performance.now() - startedAll) / 1000;
+/**
+ * How many of these can actually fail — and it is four of twenty-one.
+ *
+ * **The line below used to read `19/19 passed`, which is not what happened.** Only `crypto`, `fs`,
+ * `gzip` and `zstd` end their driver with a failure path; the other seventeen finish with `report(...)`
+ * and exit 0 whatever they measured. So a run where a package lost half its coverage says `passed`
+ * about it, and the paragraph `tools/push.sh` prints underneath — "a package above is below its
+ * recorded coverage" — is true of four of them.
+ *
+ * Counted by looking for a failure path in each driver rather than hardcoded, so the number follows the
+ * drivers instead of aging into another wrong figure. Whether the other seventeen *should* assert a
+ * floor is a decision about each package, not something to infer here; naming the count is what stops
+ * the summary from claiming it either way.
+ */
+const kinds = await Promise.all(results.map(async (r) => {
+  const src = await Deno.readTextFile(`packages/${r.pkg}/cov.ts`).catch(() => "");
+  if (!/Deno\.exit\(1\)/.test(src)) return "reports";
+  // The two shapes differ in what they hold you to. One fails when a point nothing reaches has no
+  // entry — a coverage floor. The others fail only when an entry they already carry has drifted onto
+  // the wrong line, which is rot-proofing for the ledger and says nothing about whether coverage fell.
+  return /branch point\(s\) uncovered/.test(src) ? "floor" : "entries";
+}));
+const count = (k: string) => kinds.filter((x) => x === k).length;
+
+console.log(
+  `\n${results.length - failed.length}/${results.length} ran in ${elapsed.toFixed(0)}s ` +
+    `(${total.toFixed(0)}s of work at ${WORKERS} workers) — ${count("floor")} hold a coverage floor, ` +
+    `${count("entries")} only check their own exemptions have not drifted, ${count("reports")} report ` +
+    `and cannot fail`,
+);
 
 for (const r of failed) {
   // The reason, not just the fact: a bare "FAIL" is the same silence this file exists to end. Each of

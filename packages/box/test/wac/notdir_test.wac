@@ -1,0 +1,208 @@
+// `f/g` where `f` is a file — against the real tools, and against ourselves on a second backing.
+//
+// `ENOTDIR` is the failure every path can reach, because any path with a `/` in it walks components and a
+// component that turns out to be a file fails this way. It had **no fault category at all**, so it fell to
+// `FAULT_OTHER`, so the host's own sentence was the only information a program had:
+//
+//     cat f/g      ->  cat: f/g: Not a directory (os error 20)
+//     mkdir f/g    ->  mkdir: cannot create directory 'f/g': Not a directory (os error 20): mkdir '/tmp/…'
+//     ls f/g       ->  ls: cannot access 'f/g': No such file or directory
+//
+// An errno GNU does not print, an absolute *host* path in a world whose first claim is that a session
+// cannot see the machine it runs on, and — for the three that go through `stat` — the wrong absence
+// entirely. `FAULT_NOT_A_DIR` is the category; this file is what says it arrived.
+//
+// **This used to spawn 105 processes**: bash and a built shell for each of twenty cases, then a second
+// built shell for the image half. The GNU answers are captured once now, and both of *our* backings run
+// in this process — which is also what makes the second half honest, since the two are now literally the
+// same code above the boundary rather than two builds of it.
+//
+// ## Why the cases are run twice
+//
+// Once on a **host mount**, where the fault comes from the operating system through the host's own
+// classification, and once in an **image**, where it comes from `packages/fs`'s own tree. Those are two
+// entirely separate classifications of the same fact, and they disagreed: the memory backing had three
+// answers for it — `FAULT_OTHER` in `writeFile`, `FAULT_DENIED` in `mkdir`, `FAULT_DENIED` in `rename` —
+// none of them the operating system's. That is design/0001's arrival test in miniature.
+//
+// The host-mount half is the one comparable with GNU, so that half compares against the capture; the
+// image half compares against the host-mount half, which is the only oracle it can have.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { notDirCases, notDirFixtures } from "./cases.wac";
+import { Loaded, Ran, layFixtures, load, runCase, runSealed, show, trimmed, unprefixed }
+  from "./replay.wac";
+
+string vectorsPath() { return "packages/box/test/notdir-vectors.txt"; }
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-notdir"; }
+
+export string test_f_slash_g_where_f_is_a_file_says_what_the_real_tool_says(Core core, Cli cli) {
+  T t = T.create();
+  Loaded v = load(cli, vectorsPath());
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  string[] list = notDirCases();
+  string dir = caseDir(cli);
+  i32 ran = 0;
+  i32 wrong = 0;
+  i32 unknown = 0;
+  string detail = "";
+  for (i32 i = 0; i < list.len() && i < v.n; i++) {
+    if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
+    if (!layFixtures(cli, dir, notDirFixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Ran r = runCase(core, cli, dir, list[i]);
+    ran = ran + 1;
+    // **Whole lines, not just the reason after the last colon.** The point of the exercise was that ours
+    // were *invented* — `rmdir: f/g:` where GNU says `rmdir: failed to remove 'f/g':`, and `ls: f/g:
+    // cannot list`, a phrase no tool prints. Comparing only the reason would have passed all of those.
+    if (trimmed(unprefixed(r.err)) != trimmed(unprefixed(v.items[i].err)) || r.out != v.items[i].out ||
+        r.status != v.items[i].status) {
+      wrong = wrong + 1;
+      if (wrong <= 5) {
+        detail = detail + "\n  $ " + list[i] +
+                 "\n    GNU  " + show(trimmed(unprefixed(v.items[i].err))) + " out " + show(v.items[i].out) +
+                 " exit " + itoa(v.items[i].status) +
+                 "\n    ours " + show(trimmed(unprefixed(r.err))) + " out " + show(r.out) +
+                 " exit " + itoa(r.status);
+      }
+    }
+    // And no absolute host path anywhere in it. This is the part that is not about GNU: `> f/g` reported
+    // the *resolved* path, so a session sealed in an image named a directory on the machine it is not
+    // supposed to be able to see.
+    if (r.err.indexOf(dir) >= 0) {
+      wrong = wrong + 1;
+      if (wrong <= 5) { detail = detail + "\n  $ " + list[i] + "\n    leaked a host path: " + show(r.err); }
+    }
+  }
+  cli.remove(dir, true).wait();
+
+  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+                           " vectors");
+  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded invocation — `cases.wac` " +
+                      "changed, so `wac run --allow-read --allow-write --allow-run " +
+                      "tools/wac/appletvectors.wac` is what makes this file mean anything again");
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " differ from the captured tools (" + v.oracle +
+                    ")" + detail);
+  return t.report();
+}
+
+/**
+ * An image answers exactly as a host mount does.
+ *
+ * The arrival-test half, and the one that found the three disagreeing categories in `packages/fs`. The
+ * oracle is the host-mounted shell rather than GNU, because an image has no GNU to compare with — and
+ * that is enough, since the case above holds the host-mounted shell to GNU.
+ *
+ * The paths differ by a leading `/` (the image case works at the root), so what is compared is the
+ * sentence with the operand stripped, which is where the category shows.
+ */
+export string test_an_image_answers_exactly_as_a_host_mount_does(Core core, Cli cli) {
+  T t = T.create();
+  string[] list = notDirCases();
+  string dir = caseDir(cli);
+  i32 differ = 0;
+  string detail = "";
+  for (i32 i = 0; i < list.len(); i++) {
+    if (!layFixtures(cli, dir, notDirFixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Ran host = runCase(core, cli, dir, list[i]);
+    Ran image = runSealed(core, cli, "printf 'hi\\n' > /f; mkdir /d; cd /; " + list[i]);
+    if (reason(image.err) != reason(host.err) || image.status != host.status) {
+      differ = differ + 1;
+      if (differ <= 5) {
+        detail = detail + "\n  $ " + list[i] +
+                 "\n    host  " + show(host.err) + " exit " + itoa(host.status) +
+                 "\n    image " + show(image.err) + " exit " + itoa(image.status);
+      }
+    }
+  }
+  cli.remove(dir, true).wait();
+  t.eqI32(differ, 0, itoa(differ) + " of " + itoa(list.len()) +
+                     " answer differently on an image than on a host mount" + detail);
+  return t.report();
+}
+
+
+/**
+ * A diagnostic with its operand stripped: everything after the first `": "` on each line.
+ *
+ * The two halves name the same file by different paths — `f/g` on a host mount and `/f/g` in an image —
+ * so the operand is the one part that cannot match. The category is in what follows it.
+ */
+string reason(string text) {
+  string out = "";
+  i32 at = 0;
+  for (i32 guard = 0; guard < 64 && at < text.len(); guard++) {
+    i32 nl = text.slice(at, text.len()).indexOf("\n");
+    i32 end = nl < 0 ? text.len() : at + nl;
+    string line = text.slice(at, end);
+    i32 colon = line.indexOf(": ");
+    out = out + (colon < 0 ? line : line.slice(colon + 2, line.len())) + "\n";
+    at = end + 1;
+    if (nl < 0) { break; }
+  }
+  return out;
+}
+
+/**
+ * An image does not answer `Permission denied` for a path nothing refused.
+ *
+ * The single worst of the three categories `packages/fs` had for this: `mkdir f/g` in an image was
+ * `FAULT_DENIED`, so a person was told they were not allowed to do something that had nothing to do with
+ * permission. It is the same mistake `FAULT_UNSUPPORTED` was added for — the nearest available category
+ * blaming the file. No oracle needed: what is asserted is which sentence is *not* said.
+ */
+export string test_an_image_does_not_answer_permission_denied_for_a_path_nothing_refused(Core core,
+                                                                                         Cli cli) {
+  T t = T.create();
+  string[] scripts = string[]("mkdir /f/g", "echo y > /f/g", "mv /d /f/g");
+  for (i32 i = 0; i < scripts.len(); i++) {
+    Ran r = runSealed(core, cli, "printf 'hi\\n' > /f; mkdir /d; cd /; " + scripts[i]);
+    t.isTrue(r.err.indexOf("Permission denied") < 0, scripts[i] + ": " + show(r.err));
+    t.isTrue(r.err.indexOf("Not a directory") >= 0, scripts[i] + ": " + show(r.err));
+  }
+  return t.report();
+}
+
+/**
+ * `cp` and `mv` name the operand at fault, and where they still differ it is sequencing.
+ *
+ * `mv f f/g` reported `mv: f: Not a directory` — the **source**, which is a perfectly good file, for a
+ * failure that is the destination's. GNU names both ends because a `rename` can fail from either.
+ *
+ * **A difference that stays, said plainly rather than tested around.** GNU's `cp f f/g` says
+ * `cannot stat 'f/g'`, because coreutils stats the destination first — it has to, to know whether `f/g`
+ * is a directory to copy *into*. Ours has no copy-into-a-directory behaviour, so it has no reason to stat
+ * first, and printing "cannot stat" about something never stat'd would be a worse kind of wrong than a
+ * different prefix. So the *reason* is compared and the frame is not, which is why this case is not in
+ * the swept list: a captured expectation it is meant to differ from is not an expectation.
+ */
+export string test_cp_and_mv_name_the_operand_at_fault(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  if (!layFixtures(cli, dir, notDirFixtures())) {
+    t.isTrue(false, "cannot lay the fixtures in " + dir);
+    return t.report();
+  }
+  Ran moved = runCase(core, cli, dir, "mv f f/g");
+  t.isTrue(moved.err.indexOf("'f' to 'f/g'") >= 0, "mv names one end only: " + show(moved.err));
+  t.isTrue(trimmed(moved.err).len() > 0 &&
+           trimmed(moved.err).slice(trimmed(moved.err).len() - 15, trimmed(moved.err).len()) ==
+             "Not a directory",
+           "mv: " + show(moved.err));
+
+  Ran copied = runCase(core, cli, dir, "cp f f/g");
+  t.isTrue(copied.err.indexOf("cannot create regular file") >= 0, "cp: " + show(copied.err));
+  cli.remove(dir, true).wait();
+  return t.report();
+}

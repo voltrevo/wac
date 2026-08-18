@@ -2916,11 +2916,70 @@ export Built buildLinked(string[] paths, string[] sources, string entry) {
     return Built(bareModule(),
                  linkFailure(paths, sources, entry) + describeSep() + describeSep());
   }
-  string blocked = blockedOf(f!);
   string sigs = exportSigsOf(f!);
   string types = bindTypesOf(f!);
-  return Built(emitModuleOfFront(f!, false, false),
-               blocked + describeSep() + sigs + describeSep() + types);
+  // **An ambiguous name is a refusal, and it was a silent one.** `emitModuleOfFront` returns a bare
+  // module for `env.ambiguous` by design — a module built on a guessed name is worse than none, and
+  // the guess shows up as `expected (ref null 1), got (ref null 7)` in a third file that mentions
+  // neither declaration. But nothing said so: `blocked` came back empty, so `wac build` wrote an
+  // eight-byte module and reported success, and `wac test` failed every test in the shared build with
+  // a message about callability. `issues/lang/0154`.
+  //
+  // Settling has already walked every function by here, so an ambiguous name is known — and `keyAt`
+  // records which one, so the message can name it rather than leaving a graph to bisect.
+  if (f!.env.ambiguous) {
+    // `blockedOf` already has the words, and `linkEmit.test.ts` pins them — "the name `enc`, which more
+    // than one file declares". Writing a second sentence for the same fact here is how two messages for
+    // one condition start, so this asks it. The fallback names the recorded name, because a decline with
+    // no reason is the thing being fixed.
+    string said = blockedOf(f!);
+    return Built(bareModule(),
+                 (said == "" ? "the name " + f!.env.ambiguousName + ", which more than one file declares"
+                             : said) + describeSep() + sigs + describeSep() + types);
+  }
+  // **The dry run only happens when the real one failed.** `blockedOf` asks `canEmit` of every
+  // function and every method — a walk of every body, which is why it costs about what emitting
+  // costs and, on a program that compiles, returns the empty string. `packages/box`'s shell measured
+  // **1 480 ms of it against 712 ms for the emit itself**, to be told nothing was wrong.
+  //
+  // Nothing has to be asked in advance, because emitting records the same fact: `declineFor` sets
+  // `env.full` and `env.fullWhy`, which is exactly what `emitDeclineLinked` reads. So the module is
+  // emitted, and the speculative walk runs only if a decline happened — where its *message* is worth
+  // the second front end it needs, since `fullWhy` names the seventh call in a chain and `blockedOf`
+  // names the declaration (`issues/lang/0106`).
+  //
+  // A front that arrived already full is refused before emitting, as it was before: `frontOf` runs
+  // `settleEmittable`, so a table that overflowed during collection is known here.
+  if (f!.env.full) {
+    return Built(bareModule(),
+                 blockedAgain(paths, sources, entry, f!.env) + describeSep() + sigs +
+                 describeSep() + types);
+  }
+  u8[] wasm = emitModuleOfFront(f!, false, false);
+  if (f!.env.full) {
+    return Built(bareModule(),
+                 blockedAgain(paths, sources, entry, f!.env) + describeSep() + sigs +
+                 describeSep() + types);
+  }
+  return Built(wasm, "" + describeSep() + sigs + describeSep() + types);
+}
+
+/**
+ * The blocked report, from a front end of its own.
+ *
+ * Emitting mutates the `Env` heavily, so the one that just emitted cannot answer this — and a caller
+ * that has reached here is failing the build anyway, which is the one place a second whole-graph walk
+ * is worth its cost. `fullWhy` is the fallback when the fresh walk finds nothing, which happens when
+ * the decline is one only the emit path can see (`emitDeclineLinked`'s whole reason for existing).
+ */
+string blockedAgain(string[] paths, string[] sources, string entry, Env spent) {
+  Front? again = frontOf(paths, sources, entry);
+  if (again is not null) {
+    string said = blockedOf(again!);
+    if (said != "") { return said; }
+  }
+  if (spent.fullWhy != "") { return spent.fullWhy; }
+  return "declined with no reason recorded";
 }
 
 string exportSigsOf(Front f) {
@@ -11912,6 +11971,14 @@ i32 noteCallbackSig(Env env, i32 n, string t) {
  * `call_ref` for it. So a returned funcref crosses as a closure over one helper per signature: the
  * mirror of the trampolines that bring one in. `issues/lang/0089`'s last row.
  */
+/** `t` added to `out` unless it is already there, answering the new count. */
+i32 addOutSig(string[] out, i32 n, string t) {
+  for (i32 k = 0; k < n; k++) { if (out[k] == t) { return n; } }
+  if (n >= out.len()) { return n; }
+  out[n] = t;
+  return n + 1;
+}
+
 i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
   i32 n = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -11919,12 +11986,24 @@ i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(env, src, lexed, returnType);
-        if (!isFuncrefType(rt)) { continue; }
-        bool seen = false;
-        for (i32 k = 0; k < n; k++) { if (out[k] == rt) { seen = true; } }
-        if (seen || n >= out.len()) { continue; }
-        out[n] = rt;
-        n = n + 1;
+        if (isFuncrefType(rt)) { n = addOutSig(out, n, rt); }
+        // **And a funcref *inside* an exported function's parameter.** A callback that itself takes a
+        // wac function — `higher(fn[i32(fn[i32(i32)])] h)` — hands that function to the host, which
+        // can only call it through `$bind$callref_<j>`. So the inner signature is handed out just as
+        // surely as one in return position, and until 2026-08-18 no helper was emitted for it: the
+        // module carried `$bind$fnref_0` for the outer signature and nothing to call the inner one
+        // with, which is why the generators declined the case rather than writing glue that could not
+        // work. The reference has always emitted it.
+        for (i32 i = 0; i < params.len(); i++) {
+          string pt = typeOfTyName(env, src, lexed, params[i].type);
+          if (!isFuncrefType(pt)) { continue; }
+          string ir = sigReturn(pt);
+          if (isFuncrefType(ir)) { n = addOutSig(out, n, ir); }
+          for (i32 k = 0; k < sigParamCount(pt); k++) {
+            string ip = sigParamAt(pt, k);
+            if (isFuncrefType(ip)) { n = addOutSig(out, n, ip); }
+          }
+        }
       }
       else: { }
     }

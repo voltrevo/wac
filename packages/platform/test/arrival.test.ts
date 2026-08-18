@@ -42,6 +42,9 @@ import { buildNative } from "../native.ts";
 import { type Bounded, boundedAgain, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
+// Memoised, and answered by `stat` when the crate has not moved — a bare `cargo build` is 2.6s even
+// with nothing to do, and this file asks more than once.
+import { nativeBinary } from "../../../harness/nativeHost.ts";
 
 const ENTRY = "packages/box/src/bin/imaged.wac";
 const CRATE = "native";
@@ -69,27 +72,6 @@ function session(cmd: string, extra: string[], image: string, script: string): B
   return boundedAgain(DEFAULT_SECONDS, cmd, [...extra, image, "-c", script], { cwd: tmp });
 }
 
-/** The native binary, built if cargo is here, or null with the reason said out loud. */
-async function nativeBinary(): Promise<string | null> {
-  try {
-    const built = await new Deno.Command("cargo", {
-      args: ["build", "--release", "--quiet"],
-      cwd: CRATE,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    if (built.code !== 0) throw new Error(new TextDecoder().decode(built.stderr));
-  } catch (e) {
-    console.warn(
-      `SKIPPING the arrival test's second host: cargo did not build ${CRATE}.\n` +
-        `  ${e instanceof Error ? e.message.split("\n")[0] : e}\n` +
-        `  The one-host half below still runs. See issues/closed/0087.`,
-    );
-    return null;
-  }
-  // Absolute: every session sets `cwd` to the scratch directory.
-  return `${Deno.cwd()}/${CRATE}/target/release/wacland`;
-}
 
 const deno = `${tmp}/imaged-deno`;
 await buildApp(ENTRY, deno, { read: true, write: true });

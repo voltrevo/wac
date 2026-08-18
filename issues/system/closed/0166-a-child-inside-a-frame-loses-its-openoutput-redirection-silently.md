@@ -1,6 +1,7 @@
 # 0166 — a child inside a frame loses its `openOutput` redirection, and is told it worked
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
@@ -130,3 +131,94 @@ I am not treating that as decided — it is still a decision about a silent-data
 to land in both hosts and in `packages/platform/src/frame.wac` together, with `frame.test.ts`'s
 differential updated in the same commit or it will enforce the old behaviour. But the 50/50 framing in the
 section above was mine and it was wrong: one of the two answers prints file contents to a terminal.
+
+## A victim, found by moving a test in process — 2026-08-18
+
+`split` is the one applet that redirects its own standard output: `cli.openOutput(name)` per piece, then
+ordinary writes, which the host lands in the file. Inside a frame those writes are kept by the capture, so
+
+    split -l 10 long.txt part
+
+writes `partaa`, `partab`, `partac` **and** prints all thirty lines to standard output. Spawned, the same
+applet prints nothing, which is GNU's behaviour and what `packages/box/test/behaviour-vectors.txt` records.
+
+Reproduced with no test harness in the way:
+
+    wac sh --allow-read --allow-write -c 'split -l 10 long.txt part'   # 30 lines
+    ./built-box-sh                     -c 'split -l 10 long.txt part'  # nothing
+
+**This is the first time it has cost anything**, because until now every sweep that covered `split`
+spawned. `packages/box/test/wac/behaviour_test.wac` replays 104 applet invocations in process and skips
+this one by name, with `blockedByFrame` pointing here — when this is fixed that function empties and the
+replay's count assertion rises by one, which is how the fix announces itself.
+
+It also makes the case for fixing rather than documenting: the more of the suite moves to pure wac
+in-process testing, the more this gap costs, and it is invisible from the spawned side by construction.
+
+## It is four applets, it is silent, and it reaches the browser — 2026-08-18
+
+`split` was the first victim found. It is not the only one. Everything that writes through
+`lib/safe.wac`'s streaming form takes the same path — `cp`, `sponge`, `split`, `wget` — and on the
+in-process route each of them **writes an empty file and exits 0**:
+
+    $ wac sh --allow-read --allow-write -c 'cp src copy; echo status=$?; wc -c copy'
+    some bytes to copy      <- the contents, on standard output
+    status=0                <- reported success
+    0 copy                  <- and an empty file
+
+    $ … 'cat src | sponge s1; wc -c s1'   ->  0 s1
+    $ … 'split -l 1 src p;   wc -c paa'   ->  0 paa
+
+The shell's *own* redirection is unaffected — `echo x > r1` writes its eleven bytes — so this is the
+applets' `openOutput`, not redirection in general.
+
+**The route this breaks is the one the website runs.** `packages/box/example/boxsh.wac` is the shell with
+spawning turned off, `site/tools/site.test.ts` drives the front page's commands through it, and
+`routes.test.ts` exists to say that route and the spawned one are one program. For these four applets they
+are not, and the difference is a copy that silently produces nothing.
+
+**And the sentence in `frame.wac` is wrong.** It reads:
+
+> **`openOutput` does not escape the capture**, which is the host's behaviour too
+
+The host's behaviour is to write the file. Measured above: spawned, `cp` copies; in process, it does not.
+Whatever is decided about the fix, that clause should go, because it is the reason this was filed rather
+than changed.
+
+## What a fix has to decide
+
+A `Frame` would need output-redirection state: `openOutput(p)` sends subsequent writes to `p` instead of
+the capture, `openOutput("")` puts the capture back, and something has to flush a redirect the child never
+closed. `lib/safe.wac` does close its own (`openOutput("")` on both the success and failure paths), so the
+common case is covered, but "the child exited mid-redirect" needs an answer rather than an assumption.
+
+That is a change to a platform contract, so it is written down here rather than made in passing.
+
+## Fixed — 2026-08-18
+
+A `Frame` carries the redirection now: `outPath` is where the child said its output goes, `held` is what
+has been written since, and `openOutput("")` writes the file and puts the capture back. `childCli` wires
+`openOutput` to `Frame.redirectOutput` rather than passing it to the parent, and opening a second
+redirection closes the first — which is what a program writing one file per piece expects.
+
+**Buffered rather than streamed, and that is the decision this issue was waiting on.** `openOutput` on the
+host *is* the streaming form, and the only writing capability a frame's parent has is `writeFile`, which
+truncates — there is no append. So the bytes are held until the child closes the stream. That costs the
+memory the applet was avoiding, bounded by the same thing that bounds every other in-process child: a
+frame holds its child's output anyway.
+
+**A child that never closes its redirection loses what it held**, and that is stated rather than silent:
+`Frame.flushOutput` is there for a caller that wants to be sure, and `lib/safe.wac` closes on both its
+success and failure paths, `split` after its last piece. What is not acceptable is what this issue was
+about, where a child that closed *correctly* still lost the file.
+
+Verified by `packages/platform/test/wac/frameoutput_test.wac`, written first and watched fail in both
+shapes — the file empty, and the redirected bytes arriving as the child's output — then again for the
+bytes either side of a redirection still being the child's own. And by the applets: `cp`, `sponge` and
+`split` write their files in process now, which is three skips removed from
+`packages/box/test/wac/behaviour_test.wac` and `applets_test.wac`, each of which asserted a count that had
+to be raised before it would pass again.
+
+And the clause that kept this filed rather than fixed is gone from `frame.wac`. The host's behaviour is to
+write the file.
+

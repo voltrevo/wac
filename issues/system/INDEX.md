@@ -5,6 +5,11 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0205](open/0205-fifteen-of-nineteen-coverage-tasks-cannot-fail.md) | fifteen of nineteen coverage drivers end with `report(...)` and cannot fail, while the summary read "19/19 passed" — two hold a floor, two only check their own exemptions | missing feature | no error |
+| [0204](open/0204-wac-test-recompiles-every-directory-on-every-run.md) | `wac test` has no build cache, so every run recompiles every test directory — measured at 9% of the lane's biggest chunks, so worth ~8s of wall rather than the 104s it looked like | performance | no error |
+| [0203](open/0203-the-gate-fails-one-run-in-six-and-never-on-the-same-test.md) | the gate failed 5 of 28 runs in one day on five different files — two were real breakage arriving through the merge, two were fixed-wait races, one is unexplained | bug | no error |
+| [0202](open/0202-two-simultaneously-due-timers-have-no-tie-break-so-continuations-run-in-either-order.md) | two simultaneously due timers have no tie-break, so a scheduler dispatches their continuations in either order | missing feature | wrong answer |
+| [0201](open/0201-a-shell-builtin-shadows-a-box-applet-and-answers-differently.md) | a shell builtin shadows a box applet and refuses in fewer words than the applet does | bug | wrong answer |
 | [0200](open/0200-coverage-crypto-is-red-mlkem-and-keccak-lost-their-driver.md) | `coverage:crypto` is red: 127 points uncovered, 48 of them in `mlkem.wac` | bug | wrong answer |
 | [0199](open/0199-the-native-host-ignores-a-pushed-childs-cwd-so-the-two-hosts-disagree.md) | the native host ignores a pushed child's `cwd`, so the same program answers differently on the two hosts | bug | wrong answer |
 | [0198](open/0198-allow-run-also-grants-allow-env-because-exec-inherits-the-whole-environment.md) | `--allow-run` also grants `--allow-env`: `Cli.exec` inherits the host's whole environment, 37 variables including the proxy | bug | no error |
@@ -25,7 +30,6 @@ record of what has been fixed and why.
 | [0176](open/0176-the-native-profiling-lane-takes-none-of-the-twenty-three-wrappers-it-could.md) | the native profiling lane takes 0 of 23 eligible wrappers, because 100 wac tests take arguments it cannot supply | bug | no error |
 | [0175](open/0175-a-trap-test-can-observe-nothing-about-the-trap-except-that-it-happened.md) | a `test_traps_*` case can observe nothing about the trap except that it happened | missing feature | not implemented |
 | [0173](open/0173-a-wac-test-cannot-say-which-grant-it-needs.md) | a wac test cannot say which grant it needs, so a lane must grant everything | missing feature | wrong answer |
-| [0166](open/0166-a-child-inside-a-frame-loses-its-openoutput-redirection-silently.md) | a child inside a frame loses its `openOutput` redirection, and is told it worked | bug | wrong answer |
 | [0165](open/0165-wac-cannot-run-a-host-program-and-the-best-oracles-are-host-programs.md) | wac cannot run a host program, and the strongest oracles this repository has are host programs | missing feature | not implemented |
 | [0164](open/0164-a-trap-case-cannot-take-an-argument-so-a-table-of-lengths-is-a-page-of-exports.md) | a `test_traps_*` case cannot take an argument, so a table of lengths is a page of exports | missing feature | not implemented |
 | [0162](open/0162-a-multi-part-answer-is-truncated-under-load.md) | a multi-part answer comes back truncated under load — the improved report says truncated, not crossed | bug | wrong answer |
@@ -57,7 +61,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-206 issues, 161 closed.
+211 issues, 162 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

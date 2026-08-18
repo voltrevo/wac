@@ -256,3 +256,30 @@ way if a shape is wanted.
 **Partial output cannot substitute for it**, and that is why this script was chosen: `head -n -0`
 must read to the end of its input before writing anything, so an empty stdout is what both a parked
 run and a working one produce. The `native ""` in the report above is not evidence either way.
+
+## A second symptom in the same family — 2026-08-18, agent-c
+
+One gate run in about fifteen failed `native_examples` with a *compile* error rather than a bound:
+
+```
+the capability examples answer the same on both hosts => packages/platform/test/native_examples.test.ts
+error: Error: packages/platform/example/inside.wac did not compile:
+  packages/platform/src/platform.wac:287:34 expected ')', found 'id'
+  … eight more, all at 287
+```
+
+Line 287 is `Pending<T>.then`'s lambda. Reading it as "the reference was asked to compile the app" is the
+obvious guess and it is not supported: `WAC_APP_FROM` was not set, `wac build` of that same example
+succeeds (259 KB), and the message comes from `harness/waccBuild.ts`'s `api.diagnoseGraph` — where `api`
+is wacc, bound through `waccApi()`. So a **wacc** reported parse errors on a file wacc parses.
+
+Passed on retry, in 13s, and has not recurred. Recorded rather than filed on its own because it is this
+test family and this issue is what a reader reaches for when one of them fails. Two things worth knowing
+if it comes back:
+
+- `waccApi()` builds wacc with the reference and pins `from: "reference"` **as arguments**, because the
+  env-var version was read by every other bind in the same process; its comment records that afternoon.
+  A leak of that shape would produce exactly this message, so it is where to look first.
+- The run happened minutes after `deno task seed`, so every content-keyed artefact cache — `waccApi`'s
+  included — was cold and several workers were filling it at once. A cold cache with parallel writers is
+  the other candidate, and the cheap experiment is to reseed and gate immediately, twice.

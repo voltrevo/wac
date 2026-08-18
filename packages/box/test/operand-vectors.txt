@@ -1,0 +1,283 @@
+wac-applet-vectors 1
+bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
+coreutils: cp (GNU coreutils) 9.4
+locale: LC_ALL=C
+count: 31
+S 8
+basename
+X 1
+O 0
+
+E 70
+basename: missing operand
+Try 'basename --help' for more information.
+
+S 14
+basename a b c
+X 1
+O 0
+
+E 72
+basename: extra operand 'c'
+Try 'basename --help' for more information.
+
+S 7
+dirname
+X 1
+O 0
+
+E 68
+dirname: missing operand
+Try 'dirname --help' for more information.
+
+S 13
+dirname a b c
+X 0
+O 6
+.
+.
+.
+
+E 0
+
+S 2
+cp
+X 1
+O 0
+
+E 63
+cp: missing file operand
+Try 'cp --help' for more information.
+
+S 8
+cp a.txt
+X 1
+O 0
+
+E 89
+cp: missing destination file operand after 'a.txt'
+Try 'cp --help' for more information.
+
+S 2
+mv
+X 1
+O 0
+
+E 63
+mv: missing file operand
+Try 'mv --help' for more information.
+
+S 8
+mv a.txt
+X 1
+O 0
+
+E 89
+mv: missing destination file operand after 'a.txt'
+Try 'mv --help' for more information.
+
+S 5
+mkdir
+X 1
+O 0
+
+E 64
+mkdir: missing operand
+Try 'mkdir --help' for more information.
+
+S 5
+rmdir
+X 1
+O 0
+
+E 64
+rmdir: missing operand
+Try 'rmdir --help' for more information.
+
+S 2
+rm
+X 1
+O 0
+
+E 58
+rm: missing operand
+Try 'rm --help' for more information.
+
+S 4
+grep
+X 2
+O 0
+
+E 83
+Usage: grep [OPTION]... PATTERNS [FILE]...
+Try 'grep --help' for more information.
+
+S 9
+cut a.txt
+X 1
+O 0
+
+E 100
+cut: you must specify a list of bytes, characters, or fields
+Try 'cut --help' for more information.
+
+S 5
+paste
+X 0
+O 0
+
+E 0
+
+S 4
+diff
+X 2
+O 0
+
+E 81
+diff: missing operand after 'diff'
+diff: Try 'diff --help' for more information.
+
+S 10
+diff a.txt
+X 2
+O 0
+
+E 82
+diff: missing operand after 'a.txt'
+diff: Try 'diff --help' for more information.
+
+S 22
+uniq a.txt b.txt c.txt
+X 1
+O 0
+
+E 68
+uniq: extra operand 'c.txt'
+Try 'uniq --help' for more information.
+
+S 16
+shuf a.txt b.txt
+X 1
+O 0
+
+E 68
+shuf: extra operand 'b.txt'
+Try 'shuf --help' for more information.
+
+S 18
+base64 a.txt b.txt
+X 1
+O 0
+
+E 72
+base64: extra operand 'b.txt'
+Try 'base64 --help' for more information.
+
+S 18
+base32 a.txt b.txt
+X 1
+O 0
+
+E 72
+base32: extra operand 'b.txt'
+Try 'base32 --help' for more information.
+
+S 2
+tr
+X 1
+O 0
+
+E 58
+tr: missing operand
+Try 'tr --help' for more information.
+
+S 4
+tr a
+X 1
+O 0
+
+E 112
+tr: missing operand after 'a'
+Two strings must be given when translating.
+Try 'tr --help' for more information.
+
+S 8
+tr a b c
+X 1
+O 0
+
+E 60
+tr: extra operand 'c'
+Try 'tr --help' for more information.
+
+S 3
+seq
+X 1
+O 0
+
+E 60
+seq: missing operand
+Try 'seq --help' for more information.
+
+S 11
+seq 1 2 3 4
+X 1
+O 0
+
+E 62
+seq: extra operand '4'
+Try 'seq --help' for more information.
+
+S 7
+head -n
+X 1
+O 0
+
+E 81
+head: option requires an argument -- 'n'
+Try 'head --help' for more information.
+
+S 15
+split a.txt b c
+X 1
+O 0
+
+E 66
+split: extra operand 'c'
+Try 'split --help' for more information.
+
+S 7
+fold -w
+X 1
+O 0
+
+E 81
+fold: option requires an argument -- 'w'
+Try 'fold --help' for more information.
+
+S 5
+touch
+X 1
+O 0
+
+E 69
+touch: missing file operand
+Try 'touch --help' for more information.
+
+S 4
+stat
+X 1
+O 0
+
+E 62
+stat: missing operand
+Try 'stat --help' for more information.
+
+S 5
+wc --
+X 0
+O 24
+      0       0       0
+
+E 0
+

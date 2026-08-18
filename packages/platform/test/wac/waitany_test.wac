@@ -22,7 +22,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForLog }
+import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForLogWithin }
   from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 
@@ -93,8 +93,11 @@ export string test_waitany_parks_until_whichever_socket_speaks_first(Core core, 
   // **Not `waitForPort`.** These listeners accept exactly once, so a readiness probe that dials
   // them spends the connection the test is about and the client gets a reset. The fixtures say
   // when they are listening instead.
-  bool up = waitForLog(cli, quick, "listening", 400000) &&
-            waitForLog(cli, slow, "listening", 400000);
+  // **A deadline rather than 400,000 looks.** Reading a log is a syscall, so a bound in *looks* is a
+  // bound whose patience shrinks as the machine gets busier — which is exactly when a fixture takes
+  // longer to announce itself. Five seconds each, and it sleeps between looks instead of spinning.
+  bool up = waitForLogWithin(core, cli, quick, "listening", 5000) &&
+            waitForLogWithin(core, cli, slow, "listening", 5000);
   t.isTrue(up, "both listeners are accepting — quick said: " + logOf(cli, quick) +
                " slow said: " + logOf(cli, slow));
   if (!up) { stop(cli, quick); stop(cli, slow); return t.report(); }

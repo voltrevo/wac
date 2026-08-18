@@ -1,0 +1,177 @@
+// The inputs the discipline is measured on, and the byte helpers for writing them.
+//
+// **One list, two readers.** `tools/wac/ttyvectors.wac` asks the kernel what each of these produces and
+// records the answer; `line_test.wac` and `modes_test.wac` replay it. A case list that lived in the test
+// would leave the capture tool with a copy of it, and the two would drift into a differential comparing
+// a case against its neighbour's expectation.
+//
+// The inputs are byte arrays rather than string literals with `\x01` in them, which is what they always
+// were: a line discipline edits bytes, and several of the cases exist because a character is not one.
+
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+export const i32 DEL = 0x7F;
+export const i32 KILL = 0x15;      // ^U
+export const i32 WERASE = 0x17;    // ^W
+export const i32 REPRINT = 0x12;   // ^R
+export const i32 LNEXT = 0x16;     // ^V
+export const i32 INTR = 0x03;      // ^C
+export const i32 QUIT = 0x1C;      // ^\
+export const i32 EOF = 0x04;       // ^D
+
+/** ASCII text as bytes, for the cases that have no control characters in them. */
+export u8[] t(string s) { return s.toBytes(); }
+
+/** One byte, as a sequence, so a case reads as text with the key in the middle of it. */
+export u8[] k(i32 c) {
+  u8[] one = u8[1]();
+  one[0] = c;
+  return one;
+}
+
+/** `a` then `b`, so a case can be written as text around the byte it is about. */
+export u8[] join(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+export u8[] j3(u8[] a, u8[] b, u8[] c) { return join(join(a, b), c); }
+export u8[] j4(u8[] a, u8[] b, u8[] c, u8[] d) { return join(j3(a, b, c), d); }
+export u8[] j5(u8[] a, u8[] b, u8[] c, u8[] d, u8[] e) { return join(j4(a, b, c, d), e); }
+
+/** Bytes as a readable string: printable as themselves, everything else as `<n>`. */
+export string show(u8[] b) {
+  string out = "\"";
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] >= 32 && b[i] < 127 && b[i] != '"') {
+      u8[] one = u8[1]();
+      one[0] = b[i];
+      out = out + string.fromBytes(one);
+    } else {
+      out = out + "<" + itoa(b[i]) + ">";
+    }
+  }
+  return out + "\"";
+}
+
+export bool sameBytes(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return false; }
+  }
+  return true;
+}
+
+/** Every editing rule this module claims, as a byte sequence somebody could type. */
+export u8[][] typed() {
+  u8[][] out = u8[][44](fill: u8[0]());
+  out[0] = t("abc\n");
+  out[1] = t("\n");
+  out[2] = t("abc\r");                                            // carriage return is a newline
+  out[3] = j3(t("ab"), k(DEL), t("c\n"));                         // erase one
+  out[4] = join(k(DEL), t("a\n"));                                // erase nothing
+  out[5] = j3(t("abc"), j4(k(DEL), k(DEL), k(DEL), k(DEL)), t("z\n"));
+  out[6] = j5(t("a"), k(1), k(DEL), k(DEL), t("z\n"));            // erase a control character
+  out[7] = j3(t("abc"), k(KILL), t("xy\n"));                      // kill the line
+  out[8] = join(k(KILL), t("x\n"));                               // kill nothing
+  out[9] = j5(t("a"), k(1), t("b"), k(KILL), t("z\n"));
+  out[10] = j3(t("one two"), k(WERASE), t("three\n"));            // word erase
+  out[11] = j3(t("one two   "), k(WERASE), t("x\n"));             // ...eats the spaces behind it
+  out[12] = j4(t("a b c"), k(WERASE), k(WERASE), t("z\n"));       // word erase twice
+  out[13] = j4(t("abc def"), k(WERASE), k(WERASE), t("z\n"));     // over a whole line
+  out[14] = join(k(WERASE), t("x\n"));                            // word erase nothing
+  out[15] = j3(t("a b.c"), k(WERASE), t("z\n"));                  // a dot ends a word
+  out[16] = j3(t("a b-c"), k(WERASE), t("z\n"));                  // a dash ends a word
+  out[17] = j3(t("a b12"), k(WERASE), t("z\n"));                  // digits are part of one
+  out[18] = j3(t("ls /usr/bin"), k(WERASE), t("z\n"));            // a slash ends a word
+  out[19] = j3(t("a b\tc"), k(WERASE), t("z\n"));                 // a tab ends a word
+  out[20] = j5(t("ab"), k(1), t("cd"), k(WERASE), t("z\n"));      // a control character ends one
+  out[21] = j4(t("ab"), k(1), k(WERASE), t("z\n"));               // a trailing one is skipped first
+  out[22] = j4(k(1), k(2), k(WERASE), t("z\n"));                  // over only control characters
+  out[23] = t("a\tb\n");                                          // a tab is echoed as itself
+  out[24] = j3(t("a"), k(1), t("b\n"));                           // a caret pair
+  out[25] = j3(t("ab"), k(8), t("c\n"));                          // control-h is not erase
+  out[26] = j3(t("a"), k(0x1B), t("b\n"));                        // escape is a control character
+  out[27] = j3(t("a"), k(0), t("b\n"));                           // so is NUL
+  out[28] = j3(t("a"), u8[](0xC3, 0xA9), t("b\n"));               // bytes over 127 pass through
+  out[29] = j4(t("a"), k(LNEXT), k(3), t("b\n"));                 // literal next
+  // A character is not a byte, and erase works on bytes: `é` is two of them, and one DEL leaves the
+  // first behind — on the screen *and* in the line. That is what this pty does, in both `iutf8`
+  // modes, measured rather than assumed, and it is why `columns` is a function of a byte.
+  out[30] = j4(t("a"), u8[](0xC3, 0xA9), k(DEL), t("z\n"));
+  out[31] = j4(t("a"), u8[](0xE2, 0x82, 0xAC), k(DEL), t("z\n"));
+  out[32] = j4(t("a"), u8[](0xF0, 0x9F, 0x92, 0xA9), k(DEL), t("z\n"));
+  out[33] = j5(t("a"), u8[](0xC3, 0xA9), t("b"), k(KILL), t("z\n"));
+  out[34] = j5(t("x a"), u8[](0xC3, 0xA9), t("b"), k(WERASE), t("z\n"));
+  // **`^R` reprints the line**, and it was being delivered as a `\x12` in the middle of one. It is
+  // what you reach for when a program's output has scribbled over what you were editing, and no case
+  // here had asked about it — which is how a rule the kernel has and this module did not went unseen.
+  out[35] = j3(t("abc"), k(REPRINT), t("\n"));
+  out[36] = j5(t("ab"), k(DEL), t("c"), k(REPRINT), t("\n"));
+  out[37] = join(k(REPRINT), t("\n"));
+  // **DEL renders as `^?`.** `columns` has always answered 2 for it and `render` answered a bare DEL
+  // byte, so the two halves of one module disagreed about one character: the echo drew one column and
+  // the erase arithmetic rubbed out two. The second case is the one that shows it — erasing a literal
+  // DEL has to take both columns back.
+  out[38] = j4(t("ab"), k(LNEXT), k(DEL), t("\n"));
+  out[39] = j5(t("ab"), k(LNEXT), k(DEL), k(DEL), t("z\n"));
+  // The three the host-side table spelled out and `line_test.wac` keeps by name below its loop.
+  out[40] = t("ab\n");
+  out[41] = j3(t("a"), k(1), t("\n"));
+  out[42] = t("abc def\n");
+  out[43] = t("  leading spaces\n");
+  return out;
+}
+
+export string[] typedNames() {
+  return string[](
+    "plain", "empty", "carriage return is a newline", "erase one", "erase nothing",
+    "erase past the start", "erase a control character", "kill the line", "kill nothing",
+    "kill a line with a control character in it", "word erase",
+    "word erase eats the spaces behind it", "word erase twice", "word erase over a whole line",
+    "word erase nothing", "a dot ends a word", "a dash ends a word", "digits are part of one",
+    "a slash ends a word", "a tab ends a word", "a control character ends a word",
+    "a trailing control character is skipped first", "word erase over only control characters",
+    "a tab is echoed as itself", "a control character is echoed as a caret pair",
+    "control-h is not erase", "escape is a control character", "so is NUL",
+    "bytes over 127 pass through", "literal next", "erase half of a two-byte character",
+    "erase half of a three-byte one", "erase half of a four-byte one",
+    "kill a line with a multi-byte character in it", "word erase over one", "reprint",
+    "reprint an edited line", "reprint an empty line", "a literal DEL is a caret pair",
+    "erasing a literal DEL takes two columns", "two plain letters", "a lone control character",
+    "two words", "leading spaces");
+}
+
+/** The cases each *mode* is measured on: nine `typed()` also has, plus two about the modes. */
+export u8[][] modeCases() {
+  u8[][] out = u8[][11](fill: u8[0]());
+  out[0] = t("abc\n");                                        // plain
+  out[1] = j3(t("ab"), k(DEL), t("c\n"));                     // erase one
+  out[2] = j3(t("abc"), k(KILL), t("xy\n"));                  // kill the line
+  out[3] = j3(t("one two"), k(WERASE), t("three\n"));         // word erase
+  out[4] = j3(t("a"), k(1), t("b\n"));                        // a caret pair
+  out[5] = j3(t("abc"), k(REPRINT), t("\n"));                 // reprint
+  out[6] = j4(t("ab"), k(LNEXT), k(DEL), t("\n"));            // a literal DEL
+  out[7] = j3(t("abc"), j4(k(DEL), k(DEL), k(DEL), k(DEL)), t("z\n"));
+  out[8] = j3(t("a"), u8[](0xC3, 0xA9), t("b\n"));            // a two-byte character
+  // Two the modes disagree about most sharply, because they are about the *difference*: `^U` is a
+  // kill in two modes and a byte in the third, and `^R` is a redraw in one, a byte in the other two.
+  out[9] = j3(t("abc"), k(KILL), t("xy\n"));
+  out[10] = j3(t("one two"), k(WERASE), t("z\n"));
+  return out;
+}
+
+export string[] modeCaseNames() {
+  return string[]("plain", "erase one", "kill the line", "word erase",
+                  "a control character is a caret pair", "reprint", "a literal DEL",
+                  "erase past the start", "a two-byte character",
+                  "kill in canonical, a byte in cbreak", "word erase, which cbreak does not do");
+}
+
+/** Only the nine `typed()` shares; the last two are about the modes rather than the rules. */
+export const i32 SHARED = 9;
+
+/** The modes, in the order the vectors record them. */
+export string[] modes() { return string[]("canonical", "noecho", "cbreak"); }

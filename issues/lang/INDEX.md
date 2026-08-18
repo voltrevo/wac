@@ -5,6 +5,12 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0158](open/0158-the-checker-is-superlinear-in-one-files-import-count.md) | one file importing 600 others type-checks in 19.7s where the emitter takes 86ms — the cost is import edges in a single file, not files (1200 files with 10 imports: 8ms) | performance | no error |
+| [0157](open/0157-an-import-of-a-file-nobody-supplied-is-caught-by-the-emitter-not-the-checker.md) | importing a file nobody supplied is refused by the emitter with no position and no name, and the checker — even given the whole file map — reports nothing | diagnostic | no error |
+| [0156](open/0156-the-specs-parse-messages-match-neither-compiler.md) | the spec quotes `expected ';'` as a parse message, wacc says `unexpected token` with it in the annotation, the reference says a third thing — and the differentials compare positions, not text | diagnostic | wrong answer |
+| [0155](open/0155-a-build-that-emitted-no-code-reports-success.md) | a build whose emit produced no code writes a manifest-only module and exits 0 | diagnostic | no error |
+| [0154](open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md) | an exported struct name that collides in a link produces a module whose manifest lists exports it does not have, and *other* files fail | bug | invalid wasm |
+| [0153](open/0153-a-build-cost-two-emits-and-five-front-ends-and-what-is-left.md) | a build cost two emits and five front ends; what is left after fixing that | performance | no error |
 | [0152](open/0152-wacc-warns-that-a-downcast-out-of-anyref-always-traps-and-it-does-not.md) | wacc warns that a downcast out of `anyref` always traps, and it does not | diagnostic | wrong answer |
 | [0151](open/0151-the-reference-refuses-an-identity-test-the-spec-allows.md) | the reference refuses an identity test the spec allows, so a sweep row cannot be closed | bug | compile error |
 | [0146](open/0146-a-leading-brace-is-a-literal-here-and-an-error-in-javascript.md) | a leading `{2}` is a literal in `packages/regex` and an error in JavaScript | bug | wrong answer |
@@ -25,7 +31,7 @@ has been fixed and why.
 
 ## Closed
 
-152 issues, 135 closed.
+158 issues, 135 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

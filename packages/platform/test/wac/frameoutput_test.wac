@@ -1,0 +1,65 @@
+// A child inside a frame that redirects its own standard output — `issues/system/0166`.
+//
+// `openOutput(path)` is how a program says "my standard output is this file from now on". On the host it
+// is a real redirection: the bytes land in the file. Inside a `Frame` they were kept by the capture, so a
+// child that redirected itself wrote **nothing** to the file and its bytes came back as the child's output.
+//
+// The applets that do this are the ones that must not hold their output in memory — `cp`, `sponge`,
+// `split`, `wget`, all through `packages/box/src/lib/safe.wac`. On the in-process route each of them wrote
+// an empty file and exited 0. That route is the one `packages/box/example/boxsh.wac` uses, which is the
+// website's terminal.
+//
+// This is the smallest case: a child that opens a file, writes, and closes the redirection.
+
+import { Cli, Core } from "../../src/platform.wac";
+import { Frame, childCli } from "../../src/frame.wac";
+import { T } from "../../../wactest/src/assert.wac";
+
+string workDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-frameoutput"; }
+
+/** What a child does when it redirects itself: open, write, and put the stream back. */
+void writeThroughRedirect(Cli child, string path, string text) {
+  child.openOutput(path).wait();
+  child.write(text.toBytes());
+  child.openOutput("").wait();
+}
+
+export string test_a_child_that_redirects_its_output_writes_the_file(Core core, Cli cli) {
+  T t = T.create();
+  string dir = workDir(cli);
+  cli.remove(dir, true).wait();
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string path = dir + "/out.txt";
+
+  Frame f = Frame.of(string[]("child"), u8[0](), dir, false);
+  Cli child = childCli(f, cli);
+  writeThroughRedirect(child, path, "redirected\n");
+
+  t.eqStr(string.fromBytes(cli.readFile(path).wait().bytes), "redirected\n",
+          "the file a child redirected itself to");
+  // And the bytes are *not* also the child's output, which is the other half of the same fact: a
+  // redirection moves them rather than copying them.
+  t.eqStr(string.fromBytes(f.out.bytes()), "", "the redirected bytes were captured as well");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** What the child wrote before and after the redirection is still the child's own output. */
+export string test_output_either_side_of_a_redirect_is_still_captured(Core core, Cli cli) {
+  T t = T.create();
+  string dir = workDir(cli);
+  cli.remove(dir, true).wait();
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  string path = dir + "/middle.txt";
+
+  Frame f = Frame.of(string[]("child"), u8[0](), dir, false);
+  Cli child = childCli(f, cli);
+  child.write("before\n".toBytes());
+  writeThroughRedirect(child, path, "inside\n");
+  child.write("after\n".toBytes());
+
+  t.eqStr(string.fromBytes(f.out.bytes()), "before\nafter\n", "the capture kept the wrong bytes");
+  t.eqStr(string.fromBytes(cli.readFile(path).wait().bytes), "inside\n", "the redirected file");
+  cli.remove(dir, true).wait();
+  return t.report();
+}

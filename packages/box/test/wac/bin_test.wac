@@ -1,0 +1,157 @@
+// `/bin`: a directory of the programs this build actually has.
+//
+// **This used to spawn.** The Deno test it replaces built `bin/sealedsh.wac` and ran it once per script,
+// and reached into `packages/fs` through `wacBind` for the two questions a shell cannot ask. Both are
+// ordinary calls here — `Fs.inMemory` and `mountBin` are wac, and this is wac.
+//
+// The one thing that changed subject in the move is where the expected list comes from. The Deno test
+// read `appletNames()` out of `box.wac` **with a regular expression**, so that `/bin` was compared with
+// something other than the function that fills it. Here it is `boxNames()` directly: the same value
+// `runSealed` mounts, so what this asserts is that the mount lists what it was given rather than that the
+// dispatcher and the list agree. That second property has its own test — "the README states the applet
+// count the dispatcher actually has" — and a regex over source is a poor oracle for it either way.
+//
+// **What did not come across**, and the reason is worth having: "it is the same program down every route a
+// command can take" drives the *spawned* stage — `cmd &`, a streaming pipeline, a `/bin` path — which
+// `bin/sealedsh.wac` turns on and which works by re-entering the program's own `main` with the applet's
+// name first. A test file can be given such a `main`, and then `yes | /bin/head -2` never returns: the
+// stage spawns the test binary, which is not a shell that will stop. That test stays in `bin.test.ts`,
+// which builds a real program and runs it — the "one build-and-spawn per area" of `issues/system/0193`.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { boxNames } from "../../src/shrun.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Ran, runSealed, show } from "./replay.wac";
+
+export string test_bin_lists_exactly_the_programs_this_build_has(Core core, Cli cli) {
+  T t = T.create();
+  Ran listing = runSealed(core, cli, "ls /bin");
+  t.eqI32(listing.status, 0, listing.err);
+  // **Sorted**, because a listing is: `boxNames()` is in dispatcher order and `ls` is in the order a
+  // person reads. Comparing the two without this reports every name as wrong from the first that moves.
+  string[] names = sorted(boxNames());
+  string want = "";
+  for (i32 i = 0; i < names.len(); i++) { want = want + names[i] + "\n"; }
+  t.eqStr(listing.out, want, "/bin is not the program list");
+  // The canary: a `/bin` of nothing would also be "exactly the programs" if the list were empty, and
+  // this file would pass while the machine had no programs at all.
+  t.isTrue(names.len() > 50, "only " + itoa(names.len()) + " names — is the list being read?");
+  return t.report();
+}
+
+export string test_a_program_in_bin_is_a_file_with_a_mode_and_a_size(Core core, Cli cli) {
+  T t = T.create();
+  Ran one = runSealed(core, cli, "stat /bin/wc");
+  t.eqI32(one.status, 0, one.err);
+  // `<path> file <size> <when>` — a file, not a directory, with a real length.
+  t.isTrue(one.out.len() > 13 && one.out.slice(0, 13) == "/bin/wc file ", show(one.out));
+
+  Ran said = runSealed(core, cli, "cat /bin/wc");
+  t.eqStr(said.out, "wc is built into this program; there is no file here to copy elsewhere.\n",
+          "what /bin/wc says");
+  // `stat` and `cat` agree about the length, which is the pair that would drift apart unnoticed.
+  Ran counted = runSealed(core, cli, "cat /bin/wc | wc -c");
+  t.isTrue(one.out.indexOf(" " + trimmedOf(counted.out) + " ") >= 0,
+           "stat and cat disagree about the length: " + show(one.out) + " vs " + show(counted.out));
+
+  // And a name that is not a program is absent rather than empty — the two are different answers.
+  Ran missing = runSealed(core, cli, "cat /bin/nosuch");
+  t.eqI32(missing.status, 1, "cat /bin/nosuch");
+  t.isTrue(missing.err.indexOf("No such file") >= 0, missing.err);
+  return t.report();
+}
+
+export string test_a_path_into_bin_runs_the_program_however_it_is_spelled(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(runSealed(core, cli, "echo a b c | /bin/wc -w").out, "3\n", "the plain path");
+  // Relative, from inside `/bin` — the same program by another spelling, which a shell that matched on
+  // the text of the word rather than the resolved path would get wrong.
+  t.eqStr(runSealed(core, cli, "cd /bin; echo x y | ./wc -w").out, "2\n", "relative from inside /bin");
+  // A name that is not one of the programs. **`command not found` is what a shell says about a *name***
+  // — bash says `No such file or directory` about a path, and 127 either way.
+  Ran nope = runSealed(core, cli, "/bin/nosuch; echo status=$?");
+  t.eqStr(nope.out, "status=127\n", nope.err);
+  t.isTrue(nope.err.indexOf("No such file or directory") >= 0, nope.err);
+  // A directory that merely looks like it: `/binary/wc` must not be treated as `/bin`'s.
+  Ran near = runSealed(core, cli, "mkdir /binary; /binary/wc; echo status=$?");
+  t.isTrue(near.out.indexOf("status=127") >= 0, show(near.out) + " / " + show(near.err));
+  return t.report();
+}
+
+/**
+ * A build with no programs has no `/bin` at all.
+ *
+ * `packages/ssh`'s server wires no applets, and an **empty** `/bin` would claim more than an absent one:
+ * `ls /` would show a directory of programs with no programs in it. So `mountBin` of nothing mounts
+ * nothing. Asked of `packages/fs` directly rather than by building a second shell: the rule is the
+ * filesystem's, and a shell with no applets is not a thing this package builds.
+ */
+export string test_a_build_with_no_programs_has_no_bin_at_all(Core core, Cli cli) {
+  T t = T.create();
+  Fs empty = Fs.inMemory(0);
+  // `randomBytes` is what `/dev` would need; `mountBin` takes it because the two are mounted by
+  // one call in a session. Passing the real one keeps this about the program list and nothing else.
+  empty.mountBin(Vec.create(), core.randomBytes);
+  t.eqStr(joined(empty.readDir("/")), "", "an empty /bin was mounted anyway");
+
+  Fs one = Fs.inMemory(0);
+  Vec<string> names = Vec.create();
+  names.push("wc");
+  one.mountBin(names, core.randomBytes);
+  t.eqStr(joined(one.readDir("/")), "bin", "a build with a program has a /bin");
+  t.eqStr(joined(one.readDir("/bin")), "wc", "/bin lists its one program");
+  return t.report();
+}
+
+export string test_bin_is_read_only_like_every_other_synthesised_mount(Core core, Cli cli) {
+  T t = T.create();
+  string[] refused = string[]("echo x > /bin/wc", "rm /bin/wc", "mkdir /bin/d");
+  for (i32 i = 0; i < refused.len(); i++) {
+    t.isTrue(runSealed(core, cli, refused[i]).status != 0, refused[i] + " was allowed");
+  }
+  // A program cannot be added by writing one either, which is the same statement from the other side:
+  // what is in `/bin` is what this build has.
+  Ran added = runSealed(core, cli, "echo x > /bin/newthing; ls /bin | wc -l");
+  t.eqStr(trimmedOf(added.out), itoa(boxNames().len()), added.err);
+  return t.report();
+}
+
+/**
+ * A listing as one comparable string, and `"(absent)"` where there is no directory at all.
+ *
+ * The absent case has to be *distinguishable* rather than merely falsy: "there is no `/bin`" and "`/bin`
+ * is empty" are the two answers this test exists to tell apart, and both would render as an empty list.
+ */
+string joined(string[]? entries) {
+  if (entries is null) { return "(absent)"; }
+  string out = "";
+  for (i32 i = 0; i < entries!.len(); i++) { out = out + (i == 0 ? "" : " ") + entries![i]; }
+  return out;
+}
+
+/** A copy in order, which is how a directory lists. */
+string[] sorted(string[] xs) {
+  string[] out = string[xs.len()](fill: "");
+  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string held = out[i];
+    i32 k = i - 1;
+    while (k >= 0 && out[k] > held) { out[k + 1] = out[k]; k = k - 1; }
+    out[k + 1] = held;
+  }
+  return out;
+}
+
+/** Whitespace off both ends, for the counts that arrive padded. */
+string trimmedOf(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && isBlank(s.slice(from, from + 1))) { from = from + 1; }
+  while (to > from && isBlank(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isBlank(string ch) { return ch == " " || ch == "\n" || ch == "\t" || ch == "\r"; }

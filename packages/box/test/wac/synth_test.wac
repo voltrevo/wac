@@ -1,0 +1,179 @@
+// `/dev` and `/proc`: files that do not exist until they are read.
+//
+// design/0001 step 6, and its own criterion — "`cat /proc/self/cmdline` answers and
+// `head -c 16 /dev/urandom | hex` works" — is the last test here.
+//
+// **This used to spawn.** The Deno test it replaces built `bin/sealedsh.wac` and ran it once per script,
+// and gave its reason: "a synthesised mount takes a capability — the funcref `Core.randomBytes` — and a
+// capability is what a built program has". That reason has expired. A wac test *is* handed a `Core`, so
+// `mountSystem(fs, core.randomBytes, …)` is available here directly, and `replay.wac`'s `runSealed`
+// builds exactly the session `bin/sealedsh.wac` builds, in this process.
+//
+// What is not claimed here any more is the *grant* half — "a session built with no filesystem grants at
+// all" — because this process has grants of its own and asserting against a world you are standing in is
+// not an assertion. That claim lives in `sealing.test.ts` and `sealed.test.ts`, which build a program with
+// a stated grant set and run it; see `issues/system/0193` for the list of what stays out of pure wac and
+// why. What is still true here, and is the interesting half, is that the session's filesystem is
+// `Fs.inMemory`: nothing it can name reaches the host, whatever this process may hold.
+
+import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Ran, runSealed, show } from "./replay.wac";
+
+export string test_a_mount_is_visible_from_the_directory_it_is_mounted_in(Core core, Cli cli) {
+  T t = T.create();
+  // Without this a mount is invisible from above: the root's own tree has no entry for `/dev`, and only
+  // the mount table knows. A listing that omits a directory you can `cd` into is worse than a wrong one,
+  // because nothing about it looks wrong.
+  t.eqStr(runSealed(core, cli, "ls /").out, "bin\ndev\nproc\ntmp\n", "ls /");
+  t.eqStr(runSealed(core, cli, "mkdir /home; ls /").out, "bin\ndev\nhome\nproc\ntmp\n",
+          "a new directory sorts in with the mounts");
+  // The pids are the process table — design/0001 step 3. `1` is the session, `2` is the `ls` doing the
+  // looking, and `self` is a name for whichever is asking. What makes this assertable is that the pids
+  // are allocated in order and never reused.
+  t.eqStr(runSealed(core, cli, "ls /proc").out, "1\n2\nself\n", "ls /proc");
+  t.eqStr(runSealed(core, cli, "ls /proc/self").out, "cmdline\ncomm\nstatus\n", "ls /proc/self");
+  t.eqStr(runSealed(core, cli, "ls /dev").out, "null\nrandom\nurandom\nzero\n", "ls /dev");
+  return t.report();
+}
+
+export string test_dev_null_takes_anything_and_keeps_none_of_it(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(runSealed(core, cli, "cat /dev/null; echo [$?]").out, "[0]\n", "cat /dev/null");
+  Ran wrote = runSealed(core, cli, "echo discarded > /dev/null; echo [$?]");
+  t.eqStr(wrote.out, "[0]\n", wrote.err);
+  // And it is still empty afterwards, which is the whole of what it is for.
+  t.eqStr(runSealed(core, cli, "echo discarded > /dev/null; cat /dev/null; echo [end]").out, "[end]\n",
+          "something was kept");
+  return t.report();
+}
+
+export string test_the_endless_devices_give_exactly_what_is_asked_of_them(Core core, Cli cli) {
+  T t = T.create();
+  Ran zeros = runSealed(core, cli, "head -c 8 /dev/zero");
+  t.eqI32(zeros.outBytes.len(), 8, zeros.err);
+  bool allZero = true;
+  for (i32 i = 0; i < zeros.outBytes.len(); i++) { if (zeros.outBytes[i] != 0) { allZero = false; } }
+  t.isTrue(allZero, "/dev/zero should be zeros");
+
+  Ran some = runSealed(core, cli, "head -c 32 /dev/urandom");
+  t.eqI32(some.outBytes.len(), 32, some.err);
+  // **Two reads differ.** A `/dev/urandom` that repeated itself would pass every length check above and
+  // be the most dangerous file in the tree, so this is the assertion that matters.
+  Ran again = runSealed(core, cli, "head -c 32 /dev/urandom");
+  bool identical = some.outBytes.len() == again.outBytes.len();
+  for (i32 i = 0; i < some.outBytes.len() && identical; i++) {
+    if (some.outBytes[i] != again.outBytes[i]) { identical = false; }
+  }
+  t.isTrue(!identical, "two reads of /dev/urandom were identical");
+  // And not all one byte, which a stub returning a fill would also pass the check above with.
+  i32 distinct = 0;
+  for (i32 i = 0; i < some.outBytes.len(); i++) {
+    bool seen = false;
+    for (i32 k = 0; k < i; k++) { if (some.outBytes[k] == some.outBytes[i]) { seen = true; } }
+    if (!seen) { distinct = distinct + 1; }
+  }
+  t.isTrue(distinct > 4, "too few distinct bytes: " + itoa(distinct));
+  return t.report();
+}
+
+export string test_a_file_with_no_end_says_so_rather_than_hanging_or_inventing_a_length(Core core,
+                                                                                        Cli cli) {
+  T t = T.create();
+  // GNU's `cat /dev/zero` runs until something stops it, which one `u8[]` cannot express. Refusing is
+  // the honest third answer, and it names the read that does work.
+  Ran whole = runSealed(core, cli, "cat /dev/zero");
+  t.eqI32(whole.status, 1, "reading an endless device whole should fail");
+  t.isTrue(whole.err.indexOf("no end") >= 0, whole.err);
+  t.eqStr(whole.out, "", "nothing should have been printed");
+  t.eqI32(runSealed(core, cli, "cat /dev/urandom").status, 1, "cat /dev/urandom");
+  // `wc` reads whole too, so it gets the same refusal rather than a plausible number.
+  t.eqI32(runSealed(core, cli, "wc -c /dev/zero").status, 1, "wc -c /dev/zero");
+  return t.report();
+}
+
+export string test_everything_but_dev_null_is_read_only_and_says_which(Core core, Cli cli) {
+  T t = T.create();
+  string[] paths = string[]("/dev/zero", "/dev/urandom", "/proc/self/cmdline");
+  for (i32 i = 0; i < paths.len(); i++) {
+    Ran r = runSealed(core, cli, "echo x > " + paths[i]);
+    t.isTrue(r.status != 0, paths[i] + " accepted a write");
+    // `strerror(EROFS)`, capitalised as GNU and bash print it. This asserted a lower-case `read-only`
+    // that `packages/fs` used to put in the *message*, because there was no category for `EROFS`. That
+    // worked until `reasonOf` started preferring the category's phrase — which is the point of having
+    // categories — and a write to `/dev/zero` began answering `Permission denied`, sending a reader to
+    // `chmod` for something no mode can change. `FAULT_READ_ONLY` is the category; this is its words.
+    t.isTrue(r.err.indexOf("Read-only file system") >= 0, paths[i] + ": " + show(r.err));
+  }
+  string[] refused = string[]("mkdir /dev/d", "rm /dev/null", "rmdir /proc/self");
+  for (i32 i = 0; i < refused.len(); i++) {
+    t.isTrue(runSealed(core, cli, refused[i]).status != 0, refused[i] + " was allowed");
+  }
+  // A name that is not there is absent, not read-only: the two are different answers.
+  Ran missing = runSealed(core, cli, "cat /dev/sda");
+  t.eqI32(missing.status, 1, "cat /dev/sda");
+  t.isTrue(missing.err.indexOf("No such file") >= 0, missing.err);
+  return t.report();
+}
+
+export string test_a_mount_point_is_a_directory_and_every_question_had_a_different_wrong_answer(
+    Core core, Cli cli) {
+  T t = T.create();
+  // `/dev` is a mount point, so its **parent lives in the mount above** and the lookup inside `writeFile`
+  // and `mkdir` searched the mounted tree for it. It found nothing, and each backing invented its own
+  // reason: a memory mount said "no such file or directory" and a synthesised one said "read-only file
+  // system". Neither is what `/dev` is, which is a directory. The right answers are GNU's, measured:
+  //
+  //     echo x > /dev     ->  Is a directory,  status 1
+  //     mkdir /dev        ->  File exists,     status 1
+  //     mkdir -p /dev     ->                   status 0
+  Ran wrote = runSealed(core, cli, "echo x > /dev; echo status=$?");
+  t.eqStr(wrote.out, "status=1\n", "echo x > /dev");
+  t.isTrue(wrote.err.indexOf("Is a directory") >= 0, wrote.err);
+
+  Ran made = runSealed(core, cli, "mkdir /dev; echo status=$?");
+  t.eqStr(made.out, "status=1\n", "mkdir /dev");
+  t.isTrue(made.err.indexOf("File exists") >= 0, made.err);
+
+  // `-p` means "and say nothing if it is already there", which is the whole of that flag.
+  t.eqStr(runSealed(core, cli, "mkdir -p /dev; echo status=$?").out, "status=0\n", "mkdir -p /dev");
+  // And an ordinary directory answers the same way, so this is about being a directory rather than
+  // about being a mount.
+  t.eqStr(runSealed(core, cli, "mkdir /d; mkdir /d; echo status=$?").out, "status=1\n", "mkdir /d twice");
+  t.eqStr(runSealed(core, cli, "mkdir /d; mkdir -p /d; echo status=$?").out, "status=0\n", "mkdir -p /d");
+  return t.report();
+}
+
+/**
+ * design/0001 step 6's own criterion, in a session whose filesystem reaches nothing.
+ *
+ * The one live oracle in this file, and it earns its process: `/proc/self` is **the process doing the
+ * reading**, which is `cat` and not the shell that started it. This asserted `-c` until the process table
+ * existed, because `/proc/self` was the program's own argv and there was nothing else it could be. It was
+ * wrong, and bash says so — `bash -c 'cat /proc/self/cmdline'` prints `cat\0/proc/self/cmdline\0`. A test
+ * written from what the code did rather than from what the system does will agree with the code forever.
+ */
+export string test_step_sixs_own_criterion(Core core, Cli cli) {
+  T t = T.create();
+  Ran cmdline = runSealed(core, cli, "cat /proc/self/cmdline");
+  t.eqI32(cmdline.status, 0, cmdline.err);
+  // NUL-separated, as Linux's is — a caller joining with spaces would produce something that reads the
+  // same and parses differently.
+  bool hasNul = false;
+  for (i32 i = 0; i < cmdline.outBytes.len(); i++) { if (cmdline.outBytes[i] == 0) { hasNul = true; } }
+  t.isTrue(hasNul, "not NUL-separated: " + show(cmdline.out));
+
+  Exec theirs = cli.exec("bash", string[]("-c", "cat /proc/self/cmdline"), u8[0]()).wait();
+  if (theirs.ran()) {
+    t.eqStr(cmdline.out, string.fromBytes(theirs.stdout), "bash disagrees about /proc/self/cmdline");
+  } else {
+    t.isTrue(false, "bash would not start: " + theirs.error);
+  }
+
+  // …and `head -c 16 /dev/urandom` works. The design writes `| hex`, which is a `packages/box` applet
+  // and not one of this shell's twelve programs; `wc -c` asks the same question of the same bytes.
+  Ran sixteen = runSealed(core, cli, "head -c 16 /dev/urandom | wc -c");
+  t.eqStr(sixteen.out, "16\n", sixteen.err);
+  return t.report();
+}

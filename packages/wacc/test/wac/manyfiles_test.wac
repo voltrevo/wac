@@ -26,8 +26,8 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, has } from "../../../wactest/src/strings.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
-import { blockedFiles, covTableFiles } from "../../src/api.wac";
-import { Ran, runEmitted, scratchDir } from "./artifacts_probe.wac";
+import { blockedFiles, covTableFiles, emitFilesSelfDescribing } from "../../src/api.wac";
+import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
 
 const i32 N = 560;   // past 512, and cheap enough to compile in a test
 const string ENTRY = "/many/main.wac";
@@ -80,9 +80,22 @@ export string test_more_files_than_the_linkers_tables_used_to_hold(Core core, Cl
   t.eqStr(blockedFiles(paths, sources, ENTRY), "",
           "declined a " + itoa(N + 1) + "-file program");
 
-  // The module is correct either way — that is the point, and why this went unnoticed.
-  Ran r = runEmitted(cli, paths, sources, ENTRY, scratchDir(cli), "manyfiles.wasm", 0,
-                     string[0](fill: ""));
+  // **Emitted and run directly, because the type check of this program costs eight seconds.**
+  // `runEmitted` calls `diagnoseGraph` first, which is the right default — a caller wants to be told
+  // *why* a program did not compile rather than watching an emit produce nothing. Measured here on
+  // 2026-08-18: `blockedFiles` 167ms, `diagnoseGraph` **8135ms**, the emit 200ms, the run 15ms.
+  //
+  // The cost is the entry's **import count**, not the file count: 560 files whose entry imports ten of
+  // them check in 5ms, and twelve hundred files with ten imports in 8ms, while 560 imports in one file
+  // is 6.4 seconds and 600 is nineteen. `issues/lang/0158` carries the curve. No real program is near
+  // it — the largest import list in this repository is `packages/box/src/box.wac` at 65 — so this test
+  // is the only thing that reaches the wall, and it reaches it to ask a question about the *linker*.
+  //
+  // `blockedFiles` above already answers "does it compile", at 167ms, and a program that emitted
+  // nothing fails `r.ok` below. So nothing is unchecked; what is skipped is being told the same thing
+  // twice, the second time slowly.
+  u8[] wasm = emitFilesSelfDescribing(paths, sources, ENTRY, "manyfiles.wasm", 0);
+  Ran r = runModule(cli, wasm, scratchDir(cli), "manyfiles.wasm", string[0](fill: ""));
   t.isTrue(r.ok, "it built and ran — " + r.error);
   if (!r.ok) { return t.report(); }
   t.eqI32(r.status, 7, "total() is not " + itoa(want) + " — stderr: " + r.stderr);

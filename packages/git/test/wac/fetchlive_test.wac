@@ -11,6 +11,12 @@
 // report that, and a shallow pack may hold few. Delta resolution is covered where it can be
 // counted — against this repository's own pack, 18,209 objects, in `pack_test.wac`.
 //
+//
+// **Its three seconds are the network, and that is the point.** Measured 2026-08-18: 3.3s. A pack from
+// a server nobody here configured cannot be had faster than the internet gives it, and the local
+// alternatives — a fixture pack, a local daemon — are already covered by `pack_test.wac` against this
+// repository's own 18,209-object pack. What only a live server can say is that the whole chain works
+// against something we did not write.
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
 // It needed `HTTP_PROXY`, which `Cli.exec` turns out to pass along with the rest of the host's

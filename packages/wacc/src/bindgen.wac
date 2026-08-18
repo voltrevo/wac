@@ -374,11 +374,28 @@ string[] paramsOf(string cellText) {
 
 // ── What can be bound ─────────────────────────────────────────────────────────────────────────
 
-/** Whether a callback's own parameters and result are things a host can hand over. */
-bool usableSig(string ret, string params) {
+/**
+ * Whether a callback's own parameters and result are things a host can hand over.
+ *
+ * **`nestedOk` is the funcref-parameter case, and it is only true for callbacks.** A callback that
+ * takes a wac function is called by wac with that function's *slot*, and `fromWasm` turns the slot
+ * into something JavaScript can call by closing over `$bind$callref_<j>` — a handle and a call back
+ * into the module, never a WasmGC reference. It needs the signature to be one the module hands out,
+ * which since 2026-08-18 the emitter arranges: `collectOutSigs` in `emit.wac` collects funcrefs
+ * nested in an exported function's parameters as well as those in return position.
+ *
+ * The *other* direction stays declined, which is why this takes a flag rather than always widening: a
+ * funcref in return position is JavaScript handing wac a function it built, and that needs a
+ * registration this generator does not write for a nested signature. `packages/wacc/test/bindgen.test.ts`
+ * pins both — the case that crosses is called, and the case that does not is named.
+ */
+bool usableSig(G g, string ret, string params, bool nestedOk) {
   if (startsWith(ret, "fn[")) { return false; }
   string[] ps = paramsOf(params);
-  for (i32 i = 0; i < ps.len(); i++) { if (startsWith(ps[i], "fn[")) { return false; } }
+  for (i32 i = 0; i < ps.len(); i++) {
+    if (!startsWith(ps[i], "fn[")) { continue; }
+    if (!nestedOk || outRefIndex(g, ps[i]) < 0) { return false; }
+  }
   return true;
 }
 
@@ -401,12 +418,12 @@ bool okType(G g, string t0) {
 bool supported(G g, i32 s) {
   string ret = g.sRet[s];
   i32 o = outRefIndex(g, ret);
-  bool retOk = okType(g, ret) || (o >= 0 && usableSig(g.oRet[o], g.oParams[o]));
+  bool retOk = okType(g, ret) || (o >= 0 && usableSig(g, g.oRet[o], g.oParams[o], false));
   if (!retOk) { return false; }
   string[] ps = paramsOf(g.sParams[s]);
   for (i32 i = 0; i < ps.len(); i++) {
     i32 c = callbackIndex(g, ps[i]);
-    bool callable = c >= 0 && usableSig(g.cRet[c], g.cParams[c]);
+    bool callable = c >= 0 && usableSig(g, g.cRet[c], g.cParams[c], true);
     if (!okType(g, ps[i]) && !callable) { return false; }
   }
   return true;
@@ -619,7 +636,7 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
     line(o, "// funcref, so the module defines one trampoline per slot and imports a dispatcher");
     line(o, "// that this file supplies. `$fnrefN` registers a function and answers the funcref.");
     for (i32 c = 0; c < g.cCount; c++) {
-      if (!usableSig(g.cRet[c], g.cParams[c])) {
+      if (!usableSig(g, g.cRet[c], g.cParams[c], true)) {
         // The import must be satisfied or the module will not instantiate, and this can only ever
         // be reached by wac calling a callback no host could have registered.
         line(o, "const $cbd" + itoa(c) + " = () => {");

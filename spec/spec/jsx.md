@@ -140,7 +140,7 @@ it is not a component, and a tag naming it says so with the signature it needs. 
 
 `[§jsx-component-sets-every-attribute]` The attributes are a named construction, so each field is
 written exactly once — and an **optional** attribute is a nullable field, left out and null when it
-is (`§wac-struct-nullable-optional`). A field whose type has no null must be written, and a name the
+is (`§wacc-struct-nullable-optional`). A field whose type has no null must be written, and a name the
 struct does not have is refused. `spec/cases/0133`.
 
 A component is a *type*, and wac writes types capitalised, so the JSX rule that a capital letter

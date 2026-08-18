@@ -1,0 +1,23 @@
+// The whole corruption sweep: 2,700 corrupted streams, each in a process of its own.
+//
+// test-lane: heavy — 22s, 2,700 corrupted streams at about 8ms a process
+//
+// `fuzz_test.wac` keeps a 24-case sample of this in the regular lane. The split is the only thing that
+// makes the sweep affordable: it was the largest single item in the `wac test` lane, and the reason it
+// cannot be made cheaper is that **2,423 of the 2,700 cases trap** — a trap ends the process, so
+// putting many cases in one process buys nothing. `issues/system/0175` is the missing surface that
+// would: a way for wac code to call something and observe a trap without dying.
+//
+// The sweep itself is `corruption.wac`, shared with the sample, so this is a size rather than a second
+// implementation of the same test.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Swept, assertSwept, sweepCorruptions } from "./corruption.wac";
+
+export string test_every_corrupted_stream_decodes_correctly_or_traps(Core core, Cli cli) {
+  T t = T.create();
+  Swept s = sweepCorruptions(core, cli, 40, 1, 25, "full", 20260731 ^ 0xC0FFEE);
+  assertSwept(t, core, s, 25, "corruption fuzz");
+  return t.report();
+}

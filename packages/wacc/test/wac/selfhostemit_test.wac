@@ -15,19 +15,31 @@
 // produces must equal the bytes the *test* gets from `emitFiles` directly, which is the number
 // `test/wac/selfemit_test.wac` and the corpus test are measuring all along.
 //
+//
+// **9.6s, and it is two compilers.** Measured 2026-08-18, the most expensive single test in the
+// `wac test` lane. Stage A builds `wacc` with the reference and stage B builds it with stage A's
+// output; comparing the two means both exist, and each is the whole compiler. There is nothing to
+// amortise across the ladder's other rungs either: they run in the same process but wac has no
+// module-level state to hold a built stage in, and writing one to disk to be reused is the cache
+// `issues/system/0204` is about, with the staleness question that comes with it.
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
-// The reference answers through `wacx run <driver> <export>`, which prints a whole `i32`; ours
-// answers through an exit status, which is eight bits (`issues/system/0184`). So the three answers
-// fold into one checksum read a byte at a time, and the two canaries — that stage A declines nothing
-// and emits something substantial — are asked of the reference directly, where they come back whole.
+// The reference answers through `referenceRun.ts <driver> <export…>`, which prints a whole `i32`;
+// ours answers through `wac <module.wasm> fold`, which prints one too. The three answers still fold
+// into one checksum, and the two canaries — that stage A declines nothing and emits something
+// substantial — ride along in the same reference process.
 //
 // **The driver's own closure, not the whole corpus.** The reference parses *every* file it is given,
 // so handing it the repository meant every corpus file had to be parseable by it, and a wacc-only
 // feature anywhere in the tree failed this while naming a file the driver never imports.
 // `issues/lang/0139`.
 //
-// test-lane: heavy — 26s, the compiler embedded in a driver, compiled by both stages
+// **It is back in the regular lane, and that is what the one-compile change bought.** It was declared
+// heavy at 26s because the driver was compiled four times, once per byte of the fold, and the reference
+// was asked three separate questions about a module that embeds the whole compiler as string literals.
+// One compile and one reference process is 10s, measured — and a self-host differential that runs on
+// every push is worth more than a fuzz sweep that does, which is the trade: `packages/gzip`'s 2,700
+// corrupted streams took the heavy slot this gave up, and kept a 24-case sample in the regular lane.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
@@ -50,13 +62,18 @@ i32 checksum(u8[] b) {
 }
 
 /**
- * A driver carrying every source in wacc's closure, with `main` returning one byte of the fold.
+ * A driver carrying every source in wacc's closure, folded into one export and with **no `main`**.
+ *
+ * No `main` is what makes one compile enough: `wac <module.wasm> fold` calls the named export and
+ * prints the whole word, and a module with a `main` never reaches that path — the arguments go to
+ * `main`, whose answer is an eight-bit exit status (`issues/system/0184`). This used to be compiled
+ * once per byte of the fold: four compiles of the whole compiler, for what one gives.
  *
  * The closure is embedded rather than imported because the point is that *stage B* builds the file
  * table and calls `emitFiles` on it — a driver that imported these would be asking the linker the
  * question instead.
  */
-string driverFor(string[] paths, string[] sources, i32 shift) {
+string driverFor(string[] paths, string[] sources) {
   Buf out = Buf.create();
   out.pushAll("import { emitFiles, blockedFiles } from \"../packages/wacc/src/api.wac\";\n\n".toBytes());
   for (i32 i = 0; i < paths.len(); i++) {
@@ -91,20 +108,34 @@ string driverFor(string[] paths, string[] sources, i32 shift) {
                "  s = s * 31 + wholeSum();\n" +
                "  s = s * 31 + blockedLen();\n" +
                "  return s;\n" +
-               "}\n" +
-               "export i32 main() { return (fold() >> " + itoa(shift) + ") & 255; }\n").toBytes());
+               "}\n").toBytes());
   return string.fromBytes(out.take());
 }
 
-/** `wacx run <DRIVER> <export>`, whose last line is the answer. */
-i32 referenceAnswers(Cli cli, string export_, i32[] okOut) {
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", DRIVER, export_),
+/**
+ * Stage A's answers to several exports, one line each, in **one** process.
+ *
+ * The driver carries the whole compiler as string literals, so the reference compiles it once per
+ * process — and this test asks it three things. Asking for them together is the difference between
+ * one of those compiles and three.
+ */
+i32[] referenceAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
+  okOut[0] = 0;
+  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", DRIVER, exports),
                     u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { okOut[0] = 0; return 0; }
+  if (!r.ran() || r.status != 0) { return i32[want](); }
   string[] lines = splitLines(string.fromBytes(r.stdout));
-  if (lines.len() == 0) { okOut[0] = 0; return 0; }
-  okOut[0] = 1;
-  return atoi(trimmed(lines[lines.len() - 1]));
+  i32[] out = i32[want]();
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len() && n < want; i++) {
+    if (trimmed(lines[i]).len() == 0) { continue; }
+    out[n] = atoi(trimmed(lines[i]));
+    n = n + 1;
+  }
+  // Fewer lines than exports means one of them trapped part way, which is not the same as a run that
+  // answered — the caller checks this before reading the values.
+  if (n == want) { okOut[0] = 1; }
+  return out;
 }
 
 export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
@@ -141,42 +172,36 @@ export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
   paths[near.len()] = DRIVER;
 
   string dir = scratchDir(cli);
-  Change wrote = cli.writeFile(DRIVER, driverFor(cp, cs, 0).toBytes()).wait();
+  Change wrote = cli.writeFile(DRIVER, driverFor(cp, cs).toBytes()).wait();
   t.eqI32(wrote.fault, 0, "the driver was written to " + DRIVER);
   if (wrote.fault != 0) { return t.report(); }
 
   // **The canaries, before the comparison.** A stage that declined the whole compiler would emit an
   // eight-byte header, and two eight-byte headers agree about nothing at all.
   i32[] ok = i32[1]();
-  i32 blocked = referenceAnswers(cli, "blockedLen", ok);
-  t.eqI32(ok[0], 1, "the reference ran the driver");
+  i32[] said = referenceAnswers(cli, "blockedLen,wholeLen,fold", 3, ok);
+  t.eqI32(ok[0], 1, "the reference ran the driver and answered all three");
   if (ok[0] != 1) { cli.remove(DRIVER, false).wait(); return t.report(); }
+  i32 blocked = said[0];
   t.eqI32(blocked, 0,
           "stage A declines wacc itself (" + itoa(blocked) + " characters of reason), so both " +
           "stages would be compared on an empty module");
-  i32 lenA = referenceAnswers(cli, "wholeLen", ok);
-  t.isTrue(lenA >= 100000, "stage A emitted only " + itoa(lenA) + " bytes for the whole compiler");
+  t.isTrue(said[1] >= 100000,
+           "stage A emitted only " + itoa(said[1]) + " bytes for the whole compiler");
+  i32 theirs = said[2];
 
-  i32 theirs = referenceAnswers(cli, "fold", ok);
-  t.eqI32(ok[0], 1, "the reference answered the fold");
-
-  i32 mine = 0;
-  bool ran = true;
-  i32[] shifts = i32[](0, 8, 16, 24);
-  for (i32 i = 0; i < shifts.len(); i++) {
-    sources[near.len()] = driverFor(cp, cs, shifts[i]);
-    u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "selfhost.wasm", 0);
-    Ran r = runModule(cli, wasm, dir, "selfhost" + itoa(shifts[i]) + ".wasm", string[0](fill: ""));
-    if (!r.ok || wasRejected(r) || r.trapped) {
-      t.fail("stage B at shift " + itoa(shifts[i]) + " did not run — " +
-             (r.ok ? r.stderr : r.error));
-      ran = false;
-      continue;
-    }
-    mine = mine | (r.status << shifts[i]);
-  }
+  sources[near.len()] = driverFor(cp, cs);
+  u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "selfhost.wasm", 0);
+  Ran r = runModule(cli, wasm, dir, "selfhost.wasm", string[]("fold"));
   cli.remove(DRIVER, false).wait();
-  if (!ran) { return t.report(); }
+  if (!r.ok || wasRejected(r) || r.trapped) {
+    t.fail("stage B did not run — " + (r.ok ? r.stderr : r.error));
+    return t.report();
+  }
+  // Said nothing is not answered zero: an empty stdout parses as 0, which is a fold a broken driver
+  // could plausibly return.
+  t.isTrue(trimmed(r.stdout).len() > 0, "stage B printed nothing — stderr " + r.stderr);
+  i32 mine = atoi(trimmed(r.stdout));
 
   t.eqI32(mine, theirs,
           "wacc compiled by wacc does not reproduce wacc: stage B=" + itoa(mine) + ", stage A=" +

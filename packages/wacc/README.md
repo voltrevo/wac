@@ -164,11 +164,11 @@ have never appeared in a status line: they are invisible to every rung.
 | emit wasm | **every file it is given** — 356 of 359 whole, 0 invalid; the three left import a file the fixture deliberately does not supply |
 | self-host | done, and the reference cannot |
 | diagnostics: message | done, and the wording agrees where both speak |
-| diagnostics: annotation, hint, span | operands on 79%, help on 42%, a real span on 60% — ratcheted, so they cannot fall back |
+| diagnostics: annotation, hint, span | operands on 81%, help on 43%, a real span on **73%** — ratcheted, so they cannot fall back. The spec states particular widths as clauses — `span: 1` for `if (x)`, `4` for `3.14`, `3` for `p.x`, `7` for `sum > 0` — and `test/wac/specclauses_test.wac` names them, along with the two wordings it quotes; the reference attaches no hint or span at all on that corpus |
 | CLI: `check`, `compile`, `run` | done — this *is* the `wac` command's compiler |
 | CLI: `bindgen` | done — `wac bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
-| bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, structs and enums as classes, a callback handed *in* and a wac function handed *out*; a funcref **nested** in another signature is what is left, and is named rather than skipped |
+| bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, structs and enums as classes, a callback handed *in*, a wac function handed *out*, and since 2026-08-18 a funcref **nested inside a callback's parameters** — what is left is one in a callback's *return* position, and is named rather than skipped |
 | host imports (an import section) | done — `wac.cb<j>` per callback signature |
 | coverage instrumentation | done — a counter per branch point, `__cov_init/_len/_get`, and a table saying what each counter is |
 | constant folding | **not needed** — the same programs work by another route; see below |
@@ -376,7 +376,7 @@ bug produced.
 `spec/cases` is a corpus of whole programs, each four to ten lines, each carrying its own
 expectation — `emits`, `refused`, or `answers f = 42`. No reference compiler to agree with, no
 package graph, no corpus to load, no timing. `compiler/wacCases.test.ts` holds the reference to them
-and `test/cases.test.ts` holds wacc to the same files.
+and `test/wac/cases_test.wac` holds wacc to the same files.
 
 It exists because every defect found here so far came from an expensive oracle — the 342-file
 corpus, a package's own suite, a differential against the reference — and every one of them, once

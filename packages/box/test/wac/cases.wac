@@ -1,0 +1,327 @@
+// The applet invocations `behaviour.test.ts` swept, as wac data — and the fixtures they read.
+//
+// Two sweeps came before this one and both were about refusals: `flags` asks what an applet says about a
+// flag it does not have, `operands` what it says about the wrong number of operands. Neither can see the
+// case that matters most — **a flag that is accepted, acted on, and answers something else**. This is
+// that sweep, and on its first run it found three, two of the worst kind where the output *looks* right:
+//
+//   - `cut -f2,3` printed field 2 alone. The list was read with `atoi`, which stops at the comma, so
+//     `2-4`, `3-` and `-3` were all silently one field or a refusal.
+//   - `basename x/c.txt .txt` answered `c.txt`: the suffix operand was ignored.
+//   - `tac` on a file with no final newline added one, which is the line that comes *first* in its output.
+//
+// The list lives here rather than in the test because two things read it: `tools/wac/appletvectors.wac`,
+// which asks the real tools what each one should answer, and `test/wac/behaviour_test.wac`, which replays
+// those answers in process. Data two languages hold twice is data that drifts.
+
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** Every invocation, run through a shell so that redirection and pipelines are available. */
+export string[] cases() {
+  return string[](
+    "sort -n nums.txt", "sort -r nums.txt", "sort -u dup.txt",
+    "sort -nr nums.txt", "sort nums.txt", "sort words.txt",
+    "sort -u words.txt", "uniq -c dup.txt", "uniq -d dup.txt",
+    "uniq -u dup.txt", "uniq dup.txt", "wc -l words.txt",
+    "wc -w mixed.txt", "wc -c nonl.txt", "wc mixed.txt",
+    "head -3 long.txt", "head -c 12 long.txt", "head -n -25 long.txt",
+    "tail -3 long.txt", "tail -c 12 long.txt", "tail -n +28 long.txt",
+    "cat -n mixed.txt", "cat -b mixed.txt", "cat -s mixed.txt",
+    "cat -A tabs.txt", "cat -e mixed.txt", "cat -t tabs.txt",
+    "cat -v bin.txt", "cat nonl.txt words.txt", "cut -f2 tabs.txt",
+    "cut -f1,3 tabs.txt", "cut -d, -f1 words.txt", "fold -w 5 long.txt",
+    "fold -w 3 words.txt", "tr a-z A-Z < words.txt", "tr -d aeiou < words.txt",
+    "tr -s a < dup.txt", "grep -c a words.txt", "grep -n a words.txt",
+    "grep -i APPLE words.txt", "grep -v a words.txt", "grep -x apple words.txt",
+    "grep -E 'a|b' words.txt", "rev words.txt", "rev nonl.txt",
+    "basename /a/b/c.txt .txt", "dirname /a/b/c.txt", "seq 5",
+    "seq 2 6", "seq 1 3 10", "seq -1 1",
+    "seq 5 1", "sha256sum nonl.txt", "base64 nonl.txt",
+    "base32 nonl.txt", "wc -w bin.txt", "wc bin.txt",
+    "wc -w ctrl.txt", "wc -w hi.txt", "base64 long.txt",
+    "base64 -w 10 words.txt", "base64 -w 0 long.txt", "base64 empty.txt",
+    "base32 long.txt", "base32 -w 0 words.txt", "base32 empty.txt",
+    "base64 bin.txt", "base64 hi.txt", "cat hi.txt",
+    "sha256sum hi.txt", "sha256sum empty.txt", "head -1 hi.txt",
+    "tail -1 hi.txt", "tac hi.txt", "sort hi.txt",
+    "cut -c1-2 hi.txt", "tr a-z A-Z < hi.txt", "nl hi.txt",
+    "fold -w3 hi.txt", "uniq hi.txt", "grep c bin.txt",
+    "grep -a c bin.txt", "grep -I c bin.txt", "grep -c . bin.txt",
+    "grep -q c bin.txt; echo st=$?", "grep z bin.txt; echo st=$?", "grep c clean.txt bin.txt",
+    "grep -I c bin.txt clean.txt", "grep . hi.txt", "grep -n c bin.txt",
+    "grep -c . nulsplit.bin", "grep -ac . nulsplit.bin", "grep -l a words.txt dup.txt",
+    "grep -L a words.txt dup.txt", "grep -l zzz words.txt; echo st=$?", "grep -L zzz words.txt dup.txt; echo st=$?",
+    "grep -lc a words.txt", "grep -ln a words.txt", "grep -l c bin.txt",
+    "grep -l a < words.txt", "grep -L zzz < words.txt; echo st=$?", "split -l 10 long.txt part; ls part*; rm -f part*",
+    "shuf -n 0 long.txt", "strings -n 2 bin.txt"
+  );
+}
+
+/** One fixture file: a name and the bytes in it. */
+export struct Fixture {
+  string name;
+  u8[] bytes;
+  /** A directory rather than a file — `bytes` is ignored. One sweep needs an operand that is one. */
+  bool isDir;
+}
+
+/**
+ * The files the cases read.
+ *
+ * **Three of them are not text**, and that is the point rather than an edge: feeding the applets NUL
+ * bytes, invalid UTF-8 and no trailing newline is what found `wc -w` counting a run of unprintable bytes
+ * as a word where GNU counts none, and `base64` writing one long line where GNU wraps at 76 columns.
+ * They are written as bytes for the same reason — a text encoder would not survive them.
+ */
+export Fixture[] fixtures() {
+  string longLines = "";
+  for (i32 i = 1; i <= 30; i++) { longLines = longLines + "line " + itoa(i) + "\n"; }
+  return Fixture[](
+    Fixture("nums.txt", "10\n9\n100\n1\n-5\n2.5\n0\n".toBytes(), false),
+    Fixture("words.txt", "banana\nApple\ncherry\napple\nBanana\n".toBytes(), false),
+    Fixture("dup.txt", "a\na\nb\nB\nb\nc\n".toBytes(), false),
+    Fixture("tabs.txt", "a\tb\tc\nd\te\tf\n".toBytes(), false),
+    Fixture("mixed.txt", "  leading\ntrailing  \n\nblank above\n".toBytes(), false),
+    Fixture("long.txt", longLines.toBytes(), false),
+    Fixture("bin.txt", u8[](0x61, 0x00, 0x62, 0x01, 0x63, 0x0a), false),
+    Fixture("nonl.txt", "no newline".toBytes(), false),
+    Fixture("empty.txt", u8[0](), false),
+    Fixture("hi.txt", u8[](0x80, 0x81, 0xff, 0x0a, 0x61, 0xff, 0x62, 0x0a), false),
+    Fixture("ctrl.txt", u8[](0x01, 0x02, 0x0a, 0x01, 0x61, 0x0a), false),
+    Fixture("nulsplit.bin", u8[](0x61, 0x00, 0x62, 0x0a), false),
+    Fixture("clean.txt", "clean c\n".toBytes(), false)
+  );
+}
+
+/**
+ * Invocations with the wrong operands, against the tool each imitates.
+ *
+ * Twelve of them answered with a `usage:` line of their own invention and a status of 2, where every one
+ * of their counterparts says something else, in two lines, and exits 1. Both refuse, so this was never the
+ * silent-gap class — but the invented line is *less* informative (`usage: cut -f<n>` does not say which of
+ * the several things `cut` needs was missing, and GNU's sentence does), and a script testing for status 1
+ * got 2.
+ *
+ * The sentences differ more than they look: coreutils says "missing operand", `cp`/`mv`/`touch` say
+ * "missing **file** operand", `cp` and `mv` name the operand they did get, `cut` names the flag it wanted,
+ * `grep` prints a usage summary and exits **2**, and `diff` — not coreutils — puts its own name on the
+ * "Try" line as well. Deriving any of that from the majority would be wrong for half of them, which is why
+ * this compares rather than asserts.
+ */
+export string[] operandCases() {
+  return string[](
+    "basename", "basename a b c", "dirname", "dirname a b c",
+    "cp", "cp a.txt", "mv", "mv a.txt",
+    "mkdir", "rmdir", "rm", "grep",
+    "cut a.txt", "paste", "diff", "diff a.txt",
+    "uniq a.txt b.txt c.txt", "shuf a.txt b.txt", "base64 a.txt b.txt", "base32 a.txt b.txt",
+    "tr", "tr a", "tr a b c", "seq",
+    "seq 1 2 3 4", "head -n", "split a.txt b c", "fold -w",
+    "touch", "stat", "wc --"
+  );
+}
+
+/** Two files, which is all these cases need: the argument counts are the subject, not the contents. */
+export Fixture[] operandFixtures() {
+  return Fixture[](
+    Fixture("a.txt", "x\ny\n".toBytes(), false),
+    Fixture("b.txt", "z\n".toBytes(), false)
+  );
+}
+
+/**
+ * One operand-error case, with how much of the answer is comparable.
+ *
+ * `interleaves` is false where the *merged* order of the two streams is a libc artefact rather than a
+ * behaviour: `rev` is util-linux, and its `error()` does not flush standard output first, so its ordering
+ * depends on whether stdout is a pipe or a terminal and ours does not. There the streams are compared
+ * separately, which still keeps the thing this sweep exists for — that `f2` is printed at all.
+ *
+ * `wording` is false for the one case where GNU's sentence describes nothing: `tac adir` says
+ * `read error: Invalid argument`, which is neither its open-failure wording nor the reason any other tool
+ * gives for the same file. There what is asserted is that we said *something* and that the status matches
+ * — a sentence we would have to copy without agreeing with is not an oracle.
+ */
+export struct ErrCase {
+  string script;
+  bool interleaves;
+  bool wording;
+}
+
+/**
+ * Invocations naming three files, the middle of which cannot be opened.
+ *
+ * The applets stopped. `cat a missing b` printed `a`, complained, and never printed `b` — and the exit
+ * status was 1 either way, so nothing in the status said that a file had been skipped rather than a run
+ * abandoned. The cost is not the status, it is `b`, silently absent.
+ *
+ * Nothing found it for months because every operand case anyone wrote names **one** file, or names two
+ * that both exist. GNU's rule, measured rather than remembered: report it, skip it, carry on, and exit
+ * non-zero at the end. `sort` is the exception and refuses the whole run with 2, because it cannot answer
+ * about an ordering it has not seen all of.
+ *
+ * **Two kinds of operand, and both are here.** *Missing* — the file is not there and the open fails.
+ * *A directory* — the open succeeds and the read is what refuses, which is a different code path and a
+ * different message in every tool. The directory cases found the worse half of the same bug: `head -1
+ * somedir` printed nothing and exited 0, because `Line.ok` false means "no more lines" whether the input
+ * ended or the read failed.
+ */
+export ErrCase[] operandErrorCases() {
+  return ErrCase[](
+    ErrCase("cat f1 nothing f2", true, true),
+    ErrCase("cat -n f1 nothing f2", true, true),
+    ErrCase("cat f1 bad worse f2", true, true),
+    ErrCase("head -1 f1 nothing f2", true, true),
+    ErrCase("sha256sum f1 nothing f2", true, true),
+    ErrCase("wc -l f1 nothing f2", true, true),
+    ErrCase("wc f1 nothing f2", true, true),
+    ErrCase("cut -c1 f1 nothing f2", true, true),
+    ErrCase("nl f1 nothing f2", true, true),
+    ErrCase("fold f1 nothing f2", true, true),
+    ErrCase("tac f1 nothing f2", true, true),
+    ErrCase("sort f1 nothing f2", true, true),
+    ErrCase("rev f1 nothing f2", false, true),
+    ErrCase("cat adir", true, true),
+    ErrCase("cat f1 adir f2", true, true),
+    ErrCase("wc -l adir", true, true),
+    ErrCase("wc -l f1 adir f2", true, true),
+    ErrCase("wc f1 adir", true, true),
+    ErrCase("head -1 adir", true, true),
+    ErrCase("head -c 3 adir", true, true),
+    ErrCase("head -1 f1 adir f2", true, true),
+    ErrCase("cut -c1 adir", true, true),
+    ErrCase("cut -c1 f1 adir f2", true, true),
+    ErrCase("nl f1 adir f2", true, true),
+    ErrCase("fold f1 adir f2", true, true),
+    ErrCase("sha256sum adir", true, true),
+    ErrCase("sha256sum f1 adir f2", true, true),
+    ErrCase("sort adir", true, true),
+    ErrCase("tac adir", false, false)
+  );
+}
+
+/** Two files and a directory: `adir` is the operand whose *read* refuses rather than whose open fails. */
+export Fixture[] operandErrorFixtures() {
+  return Fixture[](
+    Fixture("f1", "a\n".toBytes(), false),
+    Fixture("f2", "b\n".toBytes(), false),
+    Fixture("adir", u8[0](), true)
+  );
+}
+
+/**
+ * `f/g` where `f` is a file — the failure every path can reach.
+ *
+ * Any path with a `/` in it walks components, and a component that turns out to be a file fails this way.
+ * It had **no fault category at all**, so it fell to `FAULT_OTHER`, so the host's own sentence was the
+ * only information a program had: an errno GNU does not print, an absolute *host* path in a world whose
+ * first claim is that a session cannot see the machine it runs on, and — for the three tools that go
+ * through `stat` — the wrong absence entirely. `FAULT_NOT_A_DIR` is the category; these cases are what
+ * say it arrived.
+ *
+ * The second half names a path that is simply **absent**, so the two absences sit side by side. Every one
+ * of these printed the *same* sentence as its `f/g` neighbour before there was a category, which is the
+ * whole defect: `ls nosuch` and `ls f/g` are different mistakes.
+ */
+export string[] notDirCases() {
+  return string[](
+    "cat f/g", "ls f/g", "wc -c f/g", "head -1 f/g",
+    "rm f/g", "rmdir f/g", "mkdir f/g", "touch f/g",
+    "stat f/g", "du f/g", "find f/g", "cat nosuch",
+    "ls nosuch", "rm nosuch", "rmdir nosuch", "mkdir nosuch/x",
+    "touch nosuch/x", "stat nosuch", "du nosuch", "find nosuch",
+    // `rm -f` is for exactly this: `rm -rf build/x/y` where `build/x` turned out to be a file should be
+    // silent and successful, the same as when it is simply missing. Ours failed with a diagnostic — first
+    // because `ENOTDIR` had no category, then because `Change.absent` still named only `ENOENT`.
+    "rm -f f/g; echo st=$?", "rm -f nosuch; echo st=$?",
+    // The half that keeps the category safe to carry. `Stat` reports a *fault* for this, and every caller
+    // of `Stat.answered` treats a fault as "the question could not be reached" — so without the exception
+    // in `answered`, `test` would exit 2 with a diagnostic where bash says plain false.
+    "test -e f/g; echo st=$?", "test -f f/g; echo st=$?", "test -d f/g; echo st=$?",
+    // The shell's own two, which report through a different path again: `> f/g` named the *resolved* host
+    // path, so a session sealed in an image printed a directory on the machine it cannot see.
+    "echo y > f/g", "cd f/g", "cd nosuch", "echo y > nosuch/x"
+  );
+}
+
+/** A file and a directory: `f` is the component that is not a directory, `d` the one that is. */
+export Fixture[] notDirFixtures() {
+  return Fixture[](
+    Fixture("f", "hi\n".toBytes(), false),
+    Fixture("d", u8[0](), true)
+  );
+}
+
+/**
+ * Invocations lifted from `box.test.ts` as it moves in process, against the tools they imitate.
+ *
+ * Grows as that file is converted test by test. Each is a shell script over `appletFixtures()`, so the
+ * capture and the replay run the same words — which is what `cases.wac` is for.
+ */
+export string[] appletCases() {
+  return string[](
+    // `seq 1 5` used to print `1`: the first argument was taken as a count and the second dropped, which
+    // is the worst shape a divergence can take — a plausible answer, silently. It was found by running
+    // the same command in a browser and in a terminal side by side.
+    "seq 5", "seq 1 5", "seq 3 7", "seq 1 2 9",
+    // Counting down, an empty range (nothing, and not an error), and across zero.
+    "seq 10 -3 1", "seq 5 1", "seq 0", "seq -3 3",
+    // The ends of the range, where the counter used to wrap and print for ever and the formatter used to
+    // answer with a bare "-". GitHub wac-mono#7 and #6.
+    "seq 2147483647 2147483647", "seq -- -2147483648 -2147483648",
+
+    // `cut`, on a file with a short row and an empty first field. `-f9` names a field no row has.
+    "cut -d, -f1 fields.txt", "cut -d, -f2 fields.txt", "cut -d, -f3 fields.txt",
+    "cut -d, -f9 fields.txt",
+    // The default delimiter is a tab, and the two spellings of a value are the same command.
+    "cut -f2 fields.txt", "cut -d , -f 2 fields.txt",
+    // `tr`, against prose rather than against `README.md` as this did when it lived in `box.test.ts`.
+    // A captured expectation whose input is a file people edit is an expectation that churns.
+    "tr a-z A-Z < prose.txt", "tr aeiou . < prose.txt", "tr abc x < prose.txt",
+    "tr A-Za-z N-ZA-Mn-za-m < prose.txt",
+    // `fold`'s width in the short spelling, which is a *number* flag rather than a letter.
+    "fold -10 fields.txt", "fold -20 fields.txt", "fold -80 prose.txt",
+    // `strings` on a binary: the one applet whose input is deliberately not text.
+    "strings -4 /bin/true", "strings -8 /bin/true",
+
+    // **A flag's value, attached and detached.** Every one of these is the same command spelled two ways,
+    // and coreutils is what says which answer is right. `-f2` always worked; `-f 2` did not, and the
+    // failure was a plausible answer rather than an error.
+    // attached, which always worked
+    "printf 'a,b,c\\nd,e,f\\n' | cut -f2 -d,",
+    // and detached, which did not
+    "printf 'a,b,c\\nd,e,f\\n' | cut -f 2 -d ,",
+    // one of each
+    "printf 'a,b,c\\nd,e,f\\n' | cut -f 2 -d,",
+    "printf 'a,b,c\\nd,e,f\\n' | cut -d , -f 1",
+    // a field that is not there
+    "printf 'a,b,c\\nd,e,f\\n' | cut -d , -f 9",
+    "printf 'a,b,c\\nd,e,f\\n' | fold -w 3",
+    "printf 'a,b,c\\nd,e,f\\n' | fold -w3",
+    "printf 'a,b,c\\nd,e,f\\n' | head -n 1",
+    "printf 'a,b,c\\nd,e,f\\n' | head -1",
+    "printf 'a,b,c\\nd,e,f\\n' | tail -n 1",
+    // `-n` is a *boolean* here, and must not swallow an operand
+    "printf 'a,b,c\\nd,e,f\\n' | sort -n",
+    "printf 'a,b,c\\nd,e,f\\n' | sort -r",
+    // nor here, where swallowing it would search for the pattern
+    "printf 'a,b,c\\nd,e,f\\n' | grep -n a",
+    "printf 'a,b,c\\nd,e,f\\n' | grep -c a"
+  );
+}
+
+/** What `appletCases()` reads. */
+export Fixture[] appletFixtures() {
+  // Rows of differing width, a row with no delimiter at all, and one whose first and last fields are
+  // empty — the three shapes a field-splitter gets wrong separately.
+  string fields = "a,b,c\nd,e,f\nnodelim\n,leading,\n";
+  // Long enough to fold at 80, with letters in both cases and every vowel, so `tr`'s four sets each have
+  // something to do. **Fixed**, rather than a file in the repository: the expectations are captured, and
+  // an input people edit is an expectation that churns.
+  string prose = "The quick brown fox jumps over the lazy dog, and does it again and again until " +
+                 "the line is comfortably longer than eighty columns.\nAEIOU aeiou\nMixed Case Words\n";
+  return Fixture[](
+    Fixture("fields.txt", fields.toBytes(), false),
+    Fixture("prose.txt", prose.toBytes(), false)
+  );
+}

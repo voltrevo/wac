@@ -10,7 +10,7 @@ import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHint
 import { P, parseProgram } from "./parse.wac";
 import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
-import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, warningsOf, widthsOf,
+import { C, checkModule, checkProgram, declareModule, errorsOf, hintsOf, notesOf, warningsOf, widthsOf,
          errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -202,6 +202,23 @@ export string manifestFiles(u8[] wasm, string[] paths, string[] sources, string 
                             string wasmName, i32 grants) {
   return manifestOf(wasm, bindTypesLinked(paths, sources, entry),
                     exportSigsLinked(paths, sources, entry), entry, wasmName, grants);
+}
+
+/**
+ * The same manifest, given the metadata directly rather than a program to derive it from.
+ *
+ * **`manifestFiles` above builds two more front ends** — `bindTypesLinked` and `exportSigsLinked` —
+ * and a caller that has just run `buildFiles` already holds both answers, from a front end it has
+ * already paid for. That caller was `wacc build`, which walked the graph five times to produce one
+ * module: diagnose, blocked, emit, bind types, export sigs.
+ *
+ * `bindgenWire` is the same idea for the other consumer of that metadata, and this is its twin —
+ * `wire` is `bindTypesFiles`'s format and `sigs` is `exportSigsFiles`'s, in that order, as
+ * `describeFiles` hands them over.
+ */
+export string manifestWire(u8[] wasm, string wire, string sigs, string entry,
+                           string wasmName, i32 grants) {
+  return manifestOf(wasm, wire, sigs, entry, wasmName, grants);
 }
 
 /**
@@ -562,11 +579,17 @@ string diagnoseFilesWith(string[] paths, string[] sources, string entry, i32[] c
   // token. The renderer reads a zero as one; a *measurement* of how many diagnostics carry a real
   // span must be able to tell the two apart.
   i32[] widths = widthsOf(c);
+  // **A hint written for this diagnostic wins over the code's own.** `hintFor` cannot quote the
+  // reader's expression, and two clauses in `spec/spec/errors.md` state hints that do — so a site with
+  // the text in hand records one and everything else falls through to the table exactly as before.
+  string[] hints = hintsOf(c);
   for (i32 e = 0; e + 2 < terrs.len(); e = e + 3) {
     string note = e / 3 < notes.len() ? notes[e / 3] : "";
     i32 w = e / 3 < widths.len() ? widths[e / 3] : 0;
+    string own = e / 3 < hints.len() ? hints[e / 3] : "";
     out = out + entry + "\t" + numText(terrs[e + 1]) + "\t" + numText(terrs[e + 2])
-        + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note + "\t" + hintFor(terrs[e])
+        + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note
+        + "\t" + (own == "" ? hintFor(terrs[e]) : own)
         + "\t" + numText(w) + "\n";
   }
   // **Warnings after the errors, with a severity in a field of its own.**
@@ -877,9 +900,16 @@ C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32
   sources[callerSources.len()] = coreSource();
 
   u8[] esrc = sourceOf(paths, sources, entry).toBytes();
-  Lexed elexed = lex(esrc);
-  P ep = P.create(esrc, elexed.tokens, elexed.tokenCount);
-  Program eprog = parseProgram(ep);
+  // **The entry, too.** `issues/lang/0133` stopped the loop below re-reading each *imported* file
+  // once per importer and left the entry parsing itself on every call — which nothing notices for one
+  // build and costs a whole second parse of the graph in `diagnoseGraph`, where every file takes a
+  // turn as the entry. 180 files re-lexed and re-parsed to produce what `declCountsInto` already put
+  // in these tables. Falls back when a caller supplied nothing, exactly as the import loop does.
+  i32 eat = indexOfPath(paths, entry);
+  Lexed elexed = eat >= 0 && eat < lexes.len() && (lexes[eat] is not null) ? lexes[eat]! : lex(esrc);
+  Program eprog = eat >= 0 && eat < progs.len() && (progs[eat] is not null)
+    ? progs[eat]!
+    : parseProgram(P.create(esrc, elexed.tokens, elexed.tokenCount));
   // **Sized for what will go in it, and in the unit it goes in.** The tables here hold two kinds of
   // thing: the name table is per *function* and `clearScope` empties it between them, while structs,
   // fields, methods, variants and functions accumulate across every file the entry imports. So the
@@ -890,7 +920,11 @@ C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32
   // room silently and answered *no such field* about correct code (`issues/lang/0098`). Sizing both
   // by the closure's *tokens* fixed that and cost 230 MB of peak resident set, because a token is
   // the wrong unit for a table of declarations (`issues/lang/0099`).
-  i32 declCap = declarationsIn(esrc, elexed, eprog);
+  // Counted already, by whoever filled `counts` — `declarationsIn` walks every declaration and this
+  // is the same file it just walked. A caller that supplied nothing still gets the count computed.
+  i32 declCap = eat >= 0 && eat < counts.len() && counts[eat] > 0
+    ? counts[eat]
+    : declarationsIn(esrc, elexed, eprog);
   // Summed, not parsed. The count has to stay exact — `C.create` allocates from it, and a loose
   // cap costs far more in allocation than any parse it saves (`issues/lang/0098`, `0099`, and a
   // measurement in `0133`: a fixed cap makes `diagnoseGraph` six times slower).

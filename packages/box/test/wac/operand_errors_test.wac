@@ -1,0 +1,139 @@
+// An operand that cannot be opened is skipped, not the end of the run — replayed against the real tools.
+//
+// **This used to spawn 60 processes.** The Deno test this replaces built a shell and ran bash beside it
+// once per case, every suite run. What GNU does with a middle operand it cannot open does not change
+// between runs, so `tools/wac/appletvectors.wac` asks once and this replays in process.
+//
+// The applets stopped. `cat a missing b` printed `a`, complained, and never printed `b` — and the exit
+// status was 1 either way, so nothing in the status said that a file had been skipped rather than a run
+// abandoned. The cost is not the status, it is `b`, silently absent.
+//
+// Nothing found it for months because every operand case anyone wrote names **one** file, or names two
+// that both exist. It turned up when `backingsprocess_test.wac` moved into this package carrying one script —
+// `cat f1 nothing f2` — out of forty.
+//
+// ## What is comparable, per case
+//
+// `cases.wac`'s `ErrCase` carries it, because it is not uniform: the status always; both streams where
+// the merged order is a behaviour rather than a libc artefact; and for one case only that we said
+// *something*, since GNU's sentence there describes neither the fault nor its own convention.
+
+import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { ErrCase, operandErrorCases, operandErrorFixtures } from "./cases.wac";
+import { Loaded, Ran, Vector, layFixtures, load, runCase, show } from "./replay.wac";
+
+string vectorsPath() { return "packages/box/test/operand-error-vectors.txt"; }
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-operanderrors"; }
+
+export string test_an_operand_that_cannot_be_opened_is_skipped_not_the_end_of_the_run(Core core, Cli cli) {
+  T t = T.create();
+  Loaded v = load(cli, vectorsPath());
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  ErrCase[] list = operandErrorCases();
+  string dir = caseDir(cli);
+  i32 ran = 0;
+  i32 wrong = 0;
+  i32 unknown = 0;
+  string detail = "";
+  for (i32 i = 0; i < list.len() && i < v.n; i++) {
+    if (v.items[i].script != list[i].script) { unknown = unknown + 1; continue; }
+    if (!layFixtures(cli, dir, operandErrorFixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Ran r = runCase(core, cli, dir, list[i].script);
+    ran = ran + 1;
+    string why = complaint(r, v.items[i], list[i]);
+    if (why != "") {
+      wrong = wrong + 1;
+      if (wrong <= 5) { detail = detail + "\n  $ " + list[i].script + why; }
+    }
+  }
+  cli.remove(dir, true).wait();
+
+  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+                           " vectors");
+  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded invocation — `cases.wac` " +
+                      "changed, so `wac run --allow-read --allow-write --allow-run " +
+                      "tools/wac/appletvectors.wac` is what makes this file mean anything again");
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " differ from the captured tools (" + v.oracle +
+                    ")" + detail);
+  return t.report();
+}
+
+/**
+ * Why this case differs, or the empty string.
+ *
+ * The three rules in one place, so the loop above reads as a loop. **The status is compared first and
+ * alone**: a run that ended differently has nothing further worth saying about its streams, and reporting
+ * both makes the second look like a second defect.
+ */
+string complaint(Ran ours, Vector want, ErrCase rule) {
+  if (ours.status != want.status) {
+    return "\n    exit " + itoa(ours.status) + ", the real tool " + itoa(want.status);
+  }
+  if (rule.interleaves) {
+    if (ours.out == want.out && ours.err == want.err) { return ""; }
+    return "\n    real " + show(want.out) + " / " + show(want.err) +
+           "\n    ours " + show(ours.out) + " / " + show(ours.err);
+  }
+  // Where the merged order is not comparable, the same bytes on each stream still are — including `f2`,
+  // which is what this sweep exists to keep.
+  if (ours.out != want.out) {
+    return "\n    output " + show(ours.out) + " vs " + show(want.out);
+  }
+  if (rule.wording) {
+    if (ours.err == want.err) { return ""; }
+    return "\n    stderr " + show(ours.err) + " vs " + show(want.err);
+  }
+  // The third kind: not the order, the *sentence*. What is still asserted is that we said something.
+  if (ours.err == "") {
+    return "\n    said nothing, where the real tool said " + show(want.err);
+  }
+  return "";
+}
+
+/** The canary: five of these asked of the *live* tools, so a changed environment is noticed. */
+export string test_the_live_tools_still_skip_the_same_way(Core core, Cli cli) {
+  T t = T.create();
+  ErrCase[] list = operandErrorCases();
+  string dir = caseDir(cli);
+  i32 checked = 0;
+  for (i32 k = 0; k < 5; k++) {
+    i32 i = (k * list.len()) / 5;
+    if (!layFixtures(cli, dir, operandErrorFixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Exec want = cli.exec("env",
+                         string[]("-i",
+                                  "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                                  "LC_ALL=C", "HOME=" + dir,
+                                  "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
+                                  "bash", dir, list[i].script),
+                         u8[0]()).wait();
+    if (!want.ran()) {
+      t.isTrue(checked > 0, "bash would not start: " + want.error);
+      return t.report();
+    }
+    if (!layFixtures(cli, dir, operandErrorFixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Ran ours = runCase(core, cli, dir, list[i].script);
+    checked = checked + 1;
+    t.eqI32(ours.status, want.status, "the live tool's status differs: $ " + list[i].script);
+    if (list[i].interleaves) {
+      t.eqStr(ours.out, string.fromBytes(want.stdout), "the live tool disagrees: $ " + list[i].script);
+    }
+  }
+  cli.remove(dir, true).wait();
+  t.eqI32(checked, 5, "not every canary ran");
+  return t.report();
+}

@@ -441,7 +441,7 @@ Deno.test({
         `a spawned \`ls\` saw ${JSON.stringify(bin)} programs in /bin, not ${APPLETS}`,
       );
       // `/proc/self` is the process asking, which in a pipeline is the spawned stage rather than the
-      // page's shell — the same rule `packages/box/test/synth.test.ts` checks against bash.
+      // page's shell — the same rule `packages/box/test/wac/synth_test.wac` checks against bash.
       const self = await command("cat /proc/self/cmdline | tr '\\0' ' '");
       assertEquals(
         self.includes("cat /proc/self/cmdline"),

@@ -15,6 +15,10 @@
 // `emit.wac` writes its `else` arm first and this emitter used to emit an arm's body where the arm
 // stood — so the default ran unconditionally and no `case` was ever reached.
 //
+//
+// **4.2s, one source file through two stages.** Measured 2026-08-18. The cheaper half of the pair:
+// `selfhostemit_test.wac` puts the *compiler* through the same two stages for 9.6s, and this one
+// exists because a single file failing the fixed point is a much smaller thing to debug.
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
 // The two stages were instantiated and asked four questions each. From wac the reference answers
@@ -48,12 +52,16 @@ string[] targets() { return string[]("packages/wacc/src/kinds.wac", "packages/wa
 const string DRIVER = ".cache/_fixdrive.wac";
 
 /**
- * The driver, with `main` returning one byte of the fold over all four answers.
+ * The driver: one export folding all four answers, and **no `main`**, which is what makes one compile
+ * enough. `wac <module.wasm> fold` calls the named export and prints the whole word; a module with a
+ * `main` never reaches that path, because the arguments go to `main` and its answer is eight bits
+ * (`issues/system/0184`). This was compiled once per byte of the fold — four compiles of wacc per
+ * target, for the same evidence one gives.
  *
  * Chunked at 3,000 characters: a literal is one `array.new_fixed` and an engine caps how many
  * elements that may have; concatenation has no such limit.
  */
-string driverFor(string text, i32 shift) {
+string driverFor(string text) {
   Buf out = Buf.create();
   out.pushAll("import { emit, blocked } from \"../packages/wacc/src/api.wac\";\n\nstring target() { return ".toBytes());
   out.pushAll(chunkedLiteral(text).toBytes());
@@ -74,23 +82,32 @@ string driverFor(string text, i32 shift) {
     "  s = s * 31 + emitLen();\n" +
     "  s = s * 31 + emitSum();\n" +
     "  return s;\n" +
-    "}\n" +
-    "export i32 main() { return (fold() >> " + itoa(shift) + ") & 255; }\n").toBytes());
+    "}\n").toBytes());
   return string.fromBytes(out.take());
 }
 
-/** `wacx run <DRIVER> <export>`, whose last line is the answer. */
-i32 referenceAnswers(Cli cli, string export_, i32[] okOut) {
-  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", DRIVER, export_),
+/**
+ * Stage A's answers to several exports, one line each, in **one** process.
+ *
+ * The driver carries the target file as a string literal and imports the compiler, so the reference
+ * compiles all of that once per process. Three questions asked separately were three of those.
+ */
+i32[] referenceAnswers(Cli cli, string exports, i32 want, i32[] okOut) {
+  okOut[0] = 0;
+  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", DRIVER, exports),
                     u8[0]()).wait();
-  if (!r.ran() || r.status != 0) {
-    okOut[0] = 0;
-    return 0;
-  }
+  if (!r.ran() || r.status != 0) { return i32[want](); }
   string[] lines = splitLines(string.fromBytes(r.stdout));
-  if (lines.len() == 0) { okOut[0] = 0; return 0; }
-  okOut[0] = 1;
-  return atoi(trimmed(lines[lines.len() - 1]));
+  i32[] out = i32[want]();
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len() && n < want; i++) {
+    if (trimmed(lines[i]).len() == 0) { continue; }
+    out[n] = atoi(trimmed(lines[i]));
+    n = n + 1;
+  }
+  // Fewer lines than exports means one of them trapped part way, which is not a run that answered.
+  if (n == want) { okOut[0] = 1; }
+  return out;
 }
 
 export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core core, Cli cli) {
@@ -101,7 +118,6 @@ export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core c
 
   string dir = scratchDir(cli);
   string[] want = targets();
-  i32[] shifts = i32[](0, 8, 16, 24);
   i32[] ok = i32[1]();
 
   for (i32 k = 0; k < want.len(); k++) {
@@ -116,37 +132,35 @@ export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core c
     for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
     paths[c.paths.len()] = DRIVER;
 
-    Change wrote = cli.writeFile(DRIVER, driverFor(c.sources[at], 0).toBytes()).wait();
+    Change wrote = cli.writeFile(DRIVER, driverFor(c.sources[at]).toBytes()).wait();
     t.eqI32(wrote.fault, 0, "the driver for " + want[k] + " was written");
     if (wrote.fault != 0) { continue; }
 
     // **The canaries, per target, from the side that answers in full.** A stage that declined the
     // whole file would emit an empty module and agree with the other about nothing in particular.
-    t.eqI32(referenceAnswers(cli, "blockedLen", ok), 0,
-            want[k] + " is no longer emitted whole, so this compares two partial modules");
-    t.eqI32(ok[0], 1, "the reference ran the driver for " + want[k]);
+    i32[] said = referenceAnswers(cli, "blockedLen,emitLen,fold", 3, ok);
+    t.eqI32(ok[0], 1, "the reference ran the driver for " + want[k] + " and answered all three");
     if (ok[0] != 1) { continue; }
-    i32 len = referenceAnswers(cli, "emitLen", ok);
-    t.isTrue(len >= 200, want[k] + " emitted only " + itoa(len) + " bytes — nothing was compiled");
+    t.eqI32(said[0], 0,
+            want[k] + " is no longer emitted whole, so this compares two partial modules");
+    t.isTrue(said[1] >= 200,
+             want[k] + " emitted only " + itoa(said[1]) + " bytes — nothing was compiled");
+    i32 theirs = said[2];
 
-    i32 theirs = referenceAnswers(cli, "fold", ok);
-    t.eqI32(ok[0], 1, "the reference answered the fold for " + want[k]);
-
-    i32 mine = 0;
-    bool ran = true;
-    for (i32 i = 0; i < shifts.len(); i++) {
-      sources[c.paths.len()] = driverFor(c.sources[at], shifts[i]);
-      u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "fix.wasm", 0);
-      Ran r = runModule(cli, wasm, dir, "fixdrive" + itoa(shifts[i]) + ".wasm", string[0](fill: ""));
-      if (!r.ok || wasRejected(r) || r.trapped) {
-        t.fail("stage B for " + want[k] + " shift " + itoa(shifts[i]) + " did not run — " +
-               (r.ok ? r.stderr : r.error));
-        ran = false;
-        continue;
-      }
-      mine = mine | (r.status << shifts[i]);
+    sources[c.paths.len()] = driverFor(c.sources[at]);
+    u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "fix.wasm", 0);
+    Ran r = runModule(cli, wasm, dir, "fixdrive.wasm", string[]("fold"));
+    if (!r.ok || wasRejected(r) || r.trapped) {
+      t.fail("stage B for " + want[k] + " did not run — " + (r.ok ? r.stderr : r.error));
+      continue;
     }
-    if (!ran) { continue; }
+    // Said nothing is not answered zero: an empty stdout parses as 0, which is a fold a broken
+    // driver could plausibly return.
+    if (trimmed(r.stdout).len() == 0) {
+      t.fail("stage B for " + want[k] + " printed nothing — stderr " + r.stderr);
+      continue;
+    }
+    i32 mine = atoi(trimmed(r.stdout));
 
     t.eqI32(mine, theirs,
             "the two stages emit different bytes for " + want[k] + ": stage B=" + itoa(mine) +

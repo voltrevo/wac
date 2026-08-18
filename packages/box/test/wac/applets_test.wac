@@ -1,0 +1,192 @@
+// `box`'s applets, asked in this process rather than built and spawned.
+//
+// The tests here came out of `box.test.ts`, which builds a program and runs it — 554 processes on a suite
+// run, most of them the *oracle* side. What each of these asserts is either our own behaviour, which needs
+// no oracle at all, or an expectation captured once by `tools/wac/appletvectors.wac`.
+//
+// What stays in `box.test.ts` is what genuinely needs a process: real TCP, a real TLS server, GNU `tar`
+// reading what we wrote, `httpd`, `nc`, the grants a *built* applet asks for, and the memory a streaming
+// applet holds. `issues/system/0193` has the list and the reasons.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Fixture, appletCases, appletFixtures } from "./cases.wac";
+import { Loaded, Ran, layFixtures, load, runCase, show } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-applets"; }
+
+/**
+ * Three wac programs in a row, which is the thing a file-to-file tool could never do.
+ *
+ * Through the shell rather than by handing each one the last one's bytes: a pipeline is what is under
+ * test, and running the stages separately would assert that three applets work and say nothing about the
+ * thing between them.
+ */
+export string test_boxs_applets_compose_in_a_pipeline(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.eqStr(runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u").out, "a\nb\nc\n", "sort -u");
+  t.eqStr(runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u | wc -l").out, "3\n",
+          "and counted");
+  t.eqStr(runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u | tac").out, "c\nb\na\n",
+          "and reversed");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A count that cannot make progress is refused, not looped on.
+ *
+ * `fold -w0` emitted an empty line for ever: `end = start + 0` leaves `start` where it was. Through a pipe
+ * that is an out-of-memory kill rather than a hang, which is how it was found — by hand, since nothing in
+ * the suite passes a zero. GNU refuses it and so does this.
+ */
+export string test_a_count_that_cannot_make_progress_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[](Fixture("a.txt", "alpha\nbeta\n".toBytes(), false))),
+           "cannot make " + dir);
+
+  string[] refused = string[]("fold -w0 a.txt", "split -0 a.txt part-");
+  for (i32 i = 0; i < refused.len(); i++) {
+    Ran got = runCase(core, cli, dir, refused[i]);
+    t.eqI32(got.status, 1, refused[i] + ": expected a refusal");
+    t.isTrue(got.err.indexOf("invalid number") >= 0, refused[i] + ": " + show(got.err));
+  }
+  // And the ordinary case still works, or the refusal above is just a broken applet.
+  t.eqStr(runCase(core, cli, dir, "fold -w4 a.txt").out, "alph\na\nbeta\n", "fold -w4");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * Every invocation lifted from `box.test.ts` so far, against what the real tool answered.
+ *
+ * One test rather than one per applet, because the assertion is the same for all of them and the list is
+ * `cases.wac`'s. What a particular case is *for* is written beside it there.
+ */
+export string test_the_lifted_invocations_still_answer_what_the_real_tool_answered(Core core, Cli cli) {
+  T t = T.create();
+  Loaded v = load(cli, "packages/box/test/applet-vectors.txt");
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  string[] list = appletCases();
+  string dir = caseDir(cli);
+  i32 ran = 0;
+  i32 wrong = 0;
+  i32 unknown = 0;
+  string detail = "";
+  for (i32 i = 0; i < list.len() && i < v.n; i++) {
+    if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
+    t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make " + dir);
+    Ran r = runCase(core, cli, dir, list[i]);
+    ran = ran + 1;
+    if (r.out != v.items[i].out || r.status != v.items[i].status) {
+      wrong = wrong + 1;
+      if (wrong <= 5) {
+        detail = detail + "\n  $ " + list[i] +
+                 "\n    real " + show(v.items[i].out) + " exit " + itoa(v.items[i].status) +
+                 "\n    ours " + show(r.out) + " exit " + itoa(r.status) +
+                 (r.err == "" ? "" : "\n    err  " + show(r.err));
+      }
+    }
+  }
+  cli.remove(dir, true).wait();
+  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+                           " vectors");
+  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded invocation — recapture with " +
+                      "`wac run --allow-read --allow-write --allow-run tools/wac/appletvectors.wac`");
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " differ from the captured tools (" + v.oracle +
+                    ")" + detail);
+  return t.report();
+}
+
+/** A zero step loops forever if nobody checks, so it is refused rather than attempted. */
+export string test_seq_refuses_a_zero_step(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  Ran zero = runCase(core, cli, dir, "seq 1 0 9");
+  t.eqI32(zero.status, 1, "seq 1 0 9");
+  t.isTrue(zero.err.indexOf("must not be zero") >= 0, zero.err);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `mkdir`, `rm`, `rmdir`, `mv`, `touch` — the mutation tier.
+ *
+ * `writeFile` was the only mutation the world had, which meant an application could create a file but
+ * never remove or move one — so it could not write safely either. These are what `cp` needs in order to
+ * write beside its target and rename into place.
+ *
+ * **What stayed in `box.test.ts`** is the paragraph at the end of the test this came from: that none of it
+ * happens without the write grant, whatever the arguments say. That is a claim about a *built* program's
+ * manifest and the host that enforces it, and this process holds grants of its own.
+ */
+export string test_boxs_mutation_tier(Core core, Cli cli) {
+  T t = T.create();
+  string root = caseDir(cli);
+  t.isTrue(layFixtures(cli, root, Fixture[0]()), "cannot make " + root);
+
+  t.eqI32(runCase(core, cli, root, "mkdir -p a/b/c").status, 0, "mkdir -p");
+  t.isTrue(cli.stat(root + "/a/b/c").wait().isDir, "mkdir -p made the parents");
+  // Without -p a missing parent is an error, which is the difference between them.
+  t.eqI32(runCase(core, cli, root, "mkdir x/y").status, 1, "mkdir without -p needs the parent");
+
+  t.eqI32(runCase(core, cli, root, "touch a/b/c/f").status, 0, "touch");
+  t.isTrue(cli.stat(root + "/a/b/c/f").wait().size == 0, "touch made it empty");
+  t.isTrue(cli.writeFile(root + "/a/b/c/f", "kept".toBytes()).wait().ok(), "cannot write the fixture");
+  t.eqI32(runCase(core, cli, root, "touch a/b/c/f").status, 0, "touch again");
+  t.eqStr(string.fromBytes(cli.readFile(root + "/a/b/c/f").wait().bytes), "kept",
+          "touch left an existing file alone");
+
+  t.eqI32(runCase(core, cli, root, "mv a/b/c/f moved").status, 0, "mv");
+  t.isTrue(!cli.stat(root + "/a/b/c/f").wait().exists, "mv left nothing behind");
+  t.eqStr(string.fromBytes(cli.readFile(root + "/moved").wait().bytes), "kept", "mv kept the contents");
+
+  // `rmdir` is never recursive; that distinction is the reason it is its own command.
+  t.isTrue(cli.writeFile(root + "/a/b/c/g", "x".toBytes()).wait().ok(), "cannot write the fixture");
+  t.eqI32(runCase(core, cli, root, "rmdir a/b/c").status, 1, "rmdir refuses a non-empty directory");
+  t.eqI32(runCase(core, cli, root, "rm a/b/c/g").status, 0, "rm");
+  t.eqI32(runCase(core, cli, root, "rmdir a/b/c").status, 0, "rmdir takes an empty one");
+
+  // Absence is an error unless you say it is not, as `rm -f` says.
+  t.eqI32(runCase(core, cli, root, "rm never").status, 1, "rm of what is not there");
+  t.eqI32(runCase(core, cli, root, "rm -f never").status, 0, "rm -f of what is not there");
+  t.eqI32(runCase(core, cli, root, "rm a").status, 1, "rm needs -r for a directory");
+  t.eqI32(runCase(core, cli, root, "rm -r a").status, 0, "rm -r");
+  t.isTrue(!cli.stat(root + "/a").wait().exists, "rm -r took the tree");
+
+  // The point of the tier: `cp` writes beside its target and renames, so the destination is never seen
+  // half-written and no temporary name survives a successful copy. **This could not be asserted in
+  // process until `issues/system/0166`** — a frame kept the bytes `cp` redirected to its temporary, so the
+  // copy printed itself and wrote nothing.
+  t.isTrue(cli.writeFile(root + "/src", "some bytes to copy\n".toBytes()).wait().ok(), "fixture");
+  t.eqI32(runCase(core, cli, root, "cp src copy").status, 0, "cp");
+  t.eqStr(string.fromBytes(cli.readFile(root + "/copy").wait().bytes), "some bytes to copy\n",
+          "cp copied it");
+  t.eqStr(sortedJoin(cli.readDir(root).wait()), "copy moved src", "a temporary file survived");
+  cli.remove(root, true).wait();
+  return t.report();
+}
+
+/** A listing, in order, as one string — so "what is left in the directory" reads as one assertion. */
+string sortedJoin(string[]? entries) {
+  if (entries is null) { return "(absent)"; }
+  string[] names = string[entries!.len()](fill: "");
+  for (i32 i = 0; i < entries!.len(); i++) { names[i] = entries![i]; }
+  for (i32 i = 1; i < names.len(); i++) {
+    string held = names[i];
+    i32 k = i - 1;
+    while (k >= 0 && names[k] > held) { names[k + 1] = names[k]; k = k - 1; }
+    names[k + 1] = held;
+  }
+  string out = "";
+  for (i32 i = 0; i < names.len(); i++) { out = out + (i == 0 ? "" : " ") + names[i]; }
+  return out;
+}
