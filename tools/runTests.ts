@@ -523,12 +523,29 @@ console.log(jobsLine);
 // Before anything runs, so a previous suite's warnings are not counted as this one's.
 clearWarnings();
 
+/**
+ * The one remaining registrar, and why this pass skips it.
+ *
+ * `harness/wac/hostless.test.ts` registers 56 wac test entries as `Deno.test`s. Every one of them is a
+ * file the `wac test` lane below already walks, so running it here runs those 575 tests **twice** — and
+ * the second time costs 26s, of which 0.9s is the tests: the rest is compiling 56 entries through the
+ * harness.
+ *
+ * It is not deleted, because it is not the suite's file. `tools/mutate/profile.ts` finds wrappers by
+ * walking for `.test.ts`, and takes their coverage natively when a binary is there and through
+ * `deno test` when one is not — so the file has to keep both its name and its registrations.
+ *
+ * `tools/lane.test.ts` holds the exclusion honest: every entry it registers must be a file the wac lane
+ * visits. Register one that is not and that test fails, which is the day this line has to come out.
+ */
+const WAC_DRIVER = "harness/wac/hostless.test.ts";
+
 const parallel = await run(
   // `site` is in `deno.json`'s `exclude`, but a `--ignore` on the command line *replaces* the
   // config's list rather than adding to it — so the moment this pass has an exclusive lane to
   // exclude, the website comes back into discovery and fails type-checking as vite-resolved
   // TypeScript does. It is named here as well, which is the only place both lists exist.
-  ["--parallel", `--ignore=${["site", ...exclusive, ...heavy].join(",")}`],
+  ["--parallel", `--ignore=${["site", WAC_DRIVER, ...exclusive, ...heavy].join(",")}`],
   jobs,
 );
 if (heavy.length > 0) {
