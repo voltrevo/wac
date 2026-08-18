@@ -130,3 +130,27 @@ I am not treating that as decided — it is still a decision about a silent-data
 to land in both hosts and in `packages/platform/src/frame.wac` together, with `frame.test.ts`'s
 differential updated in the same commit or it will enforce the old behaviour. But the 50/50 framing in the
 section above was mine and it was wrong: one of the two answers prints file contents to a terminal.
+
+## A victim, found by moving a test in process — 2026-08-18
+
+`split` is the one applet that redirects its own standard output: `cli.openOutput(name)` per piece, then
+ordinary writes, which the host lands in the file. Inside a frame those writes are kept by the capture, so
+
+    split -l 10 long.txt part
+
+writes `partaa`, `partab`, `partac` **and** prints all thirty lines to standard output. Spawned, the same
+applet prints nothing, which is GNU's behaviour and what `packages/box/test/behaviour-vectors.txt` records.
+
+Reproduced with no test harness in the way:
+
+    wac sh --allow-read --allow-write -c 'split -l 10 long.txt part'   # 30 lines
+    ./built-box-sh                     -c 'split -l 10 long.txt part'  # nothing
+
+**This is the first time it has cost anything**, because until now every sweep that covered `split`
+spawned. `packages/box/test/wac/behaviour_test.wac` replays 104 applet invocations in process and skips
+this one by name, with `blockedByFrame` pointing here — when this is fixed that function empties and the
+replay's count assertion rises by one, which is how the fix announces itself.
+
+It also makes the case for fixing rather than documenting: the more of the suite moves to pure wac
+in-process testing, the more this gap costs, and it is invisible from the spawned side by construction.
+

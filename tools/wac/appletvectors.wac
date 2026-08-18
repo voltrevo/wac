@@ -1,0 +1,123 @@
+// Ask the real tools what each applet invocation should answer, once, and write it down.
+//
+//   wac run --allow-read --allow-write --allow-run tools/wac/appletvectors.wac
+//
+// **Why a file rather than a differential.** The Deno test this replaces ran bash once per case
+// and a built shell beside it — 104 cases, 213 processes, on every suite run — to establish what
+// `cut -f1,3` prints. What that asserts is *what this container's coreutils did today*; what anyone wants
+// asserted is what the tools should answer, and that does not change between runs. So it is captured here
+// and replayed in process by `packages/box/test/wac/behaviour_test.wac`.
+//
+// The cases and the fixtures they read are `packages/box/test/wac/cases.wac`, so the capture and the
+// replay cannot drift: there is one list and two readers.
+//
+// **What is lost, deliberately**: nothing notices coreutils changing under us on the day it happens. The
+// replay keeps a handful of cases live as a canary, which is what a wholesale change of environment would
+// trip; a subtler one is caught when somebody re-runs this and reads the diff.
+
+import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wac";
+import { Buf } from "../../packages/bytes/src/buf.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { Fixture, cases, fixtures } from "../../packages/box/test/wac/cases.wac";
+
+export string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
+
+/** Outputs longer than this are recorded as a length and a marker, not as bytes. */
+i32 maxBytes() { return 8192; }
+
+/**
+ * Every fixture written fresh into `dir`.
+ *
+ * Fresh per case, because several of these mutate — `split` writes files and `rm -f part*` takes them
+ * away again — and a case measured against a world the previous one changed is a difference that
+ * reproduces for a reason that has nothing to do with the applet.
+ */
+export bool layFixtures(Cli cli, string dir) {
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) { return false; }
+  Fixture[] fs = fixtures();
+  for (i32 i = 0; i < fs.len(); i++) {
+    if (!cli.writeFile(dir + "/" + fs[i].name, fs[i].bytes).wait().ok()) { return false; }
+  }
+  return true;
+}
+
+/**
+ * One case through bash, in a directory of its own with no inherited environment.
+ *
+ * `env` rather than arguments to `exec`, because **`Cli.exec` passes no environment and takes no working
+ * directory** — `issues/system/0182`. The inner `bash -c` is what gives a diagnostic the plain `bash: `
+ * prefix; through `env` alone argv[0] is `/usr/bin/bash` and the prefix carries the path.
+ */
+export Exec askBash(Cli cli, string dir, string script) {
+  return cli.exec("env",
+                  string[]("-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                           "LC_ALL=C", "HOME=" + dir,
+                           "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
+                           "bash", dir, script),
+                  u8[0]()).wait();
+}
+
+string versionOf(Cli cli, string program, string flag) {
+  Exec r = cli.exec(program, string[](flag), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return "(absent)"; }
+  string all = string.fromBytes(r.stdout);
+  i32 nl = all.indexOf("\n");
+  return nl < 0 ? all : all.slice(0, nl);
+}
+
+/** `<tag> <n>\n<bytes>\n`, or `<tag># <n> <marker>` when the bytes are over the cap. */
+void field(Buf out, string tag, u8[] bytes) {
+  if (bytes.len() > maxBytes()) {
+    out.pushAll((tag + "# " + itoa(bytes.len()) + " " + overCapMarker() + "\n").toBytes());
+    return;
+  }
+  out.pushAll((tag + " " + itoa(bytes.len()) + "\n").toBytes());
+  out.pushAll(bytes);
+  out.pushAll("\n".toBytes());
+}
+
+export i32 main(Core core, Cli cli) {
+  string[] list = cases();
+  string dir = ".cache/wac-appletvectors";
+
+  Buf out = Buf.create();
+  out.pushAll("wac-applet-vectors 1\n".toBytes());
+  out.pushAll(("bash: " + versionOf(cli, "bash", "--version") + "\n").toBytes());
+  out.pushAll(("coreutils: " + versionOf(cli, "cp", "--version") + "\n").toBytes());
+  out.pushAll("locale: LC_ALL=C\n".toBytes());
+  out.pushAll(("count: " + itoa(list.len()) + "\n").toBytes());
+
+  for (i32 i = 0; i < list.len(); i++) {
+    cli.remove(dir, true).wait();
+    if (!layFixtures(cli, dir)) {
+      core.warn("appletvectors: cannot lay the fixtures in " + dir);
+      return 1;
+    }
+    Exec got = askBash(cli, dir, list[i]);
+    if (!got.ran()) {
+      core.warn("appletvectors: bash would not start: " + got.error);
+      return 1;
+    }
+    field(out, "S", list[i].toBytes());
+    out.pushAll(("X " + itoa(got.status) + "\n").toBytes());
+    field(out, "O", got.stdout);
+  }
+  cli.remove(dir, true).wait();
+
+  Change wrote = cli.writeFile(vectorsPath(), out.bytes()).wait();
+  if (!wrote.ok()) {
+    core.warn("appletvectors: cannot write " + vectorsPath() + " — " + wrote.message);
+    return 1;
+  }
+  core.log(vectorsPath() + ": " + itoa(list.len()) + " cases, " + itoa(out.len / 1024) + " KB");
+  return 0;
+}
+
+/**
+ * What stands in for the bytes of an output over the cap.
+ *
+ * **Not a hash, and named so it cannot be mistaken for one.** A case that reached the cap would replay
+ * against its recorded *length* and this marker, which fails loudly and says why.
+ */
+export string overCapMarker() { return "no-bytes-recorded"; }

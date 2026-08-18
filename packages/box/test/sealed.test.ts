@@ -86,7 +86,7 @@ Deno.test("the applets work on a filesystem that is not the host's", async () =>
  * process's standard input and is wrong when it hands back a feed over bytes: `head f`, `uniq f`,
  * `cat -n f` and five more printed **nothing, and exited 0**, on a filesystem that had the file.
  *
- * Nothing on the host could see it. `packages/box/test/behaviour.test.ts` runs the same invocations
+ * Nothing on the host could see it. `packages/box/test/wac/behaviour_test.wac` runs the same invocations
  * through a shell whose filesystem *is* the host's, where redirecting standard input is exactly what
  * happens — so every one of them passed there and passes there still.
  *

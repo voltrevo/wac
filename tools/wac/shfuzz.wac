@@ -5,7 +5,7 @@
 //   … --seed 7 --count 200                                                        a wider sweep
 //
 // Every sweep this shell has enumerates one construct at a time — the corpus, `gaps.test.ts`,
-// `behaviour.test.ts` — and each was written just after the construct it covers. The bugs that survive
+// `test/wac/behaviour_test.wac` — and each was written just after the construct it covers. The bugs that survive
 // those live at *intersections*, which is what a generator reaches and a matrix somebody typed does not.
 //
 // It has earned its place four times: **wac-mono 0113** (a pipeline whose first stage produces no bytes
