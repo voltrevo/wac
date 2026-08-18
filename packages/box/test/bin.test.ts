@@ -16,7 +16,12 @@
 // file — and what is in `/bin` is a *sentence* about the program, so the same command answered "not a wac
 // worker bundle" behind an `&` and worked without one. Now one function decides what a path into `/bin`
 // means and every route asks it.
-// test-lane: heavy — 1s: builds a sealed shell and spawns eight sessions
+// **Not heavy, and it said so itself.** This declared `test-lane: heavy — 1s`, which excluded it from
+// every push for a second of work. The lane's criterion is residency rather than duration — "heavy means
+// resident, not slow", `docs/development.md` — and the files that belong there say how many megabytes
+// they hold. This one holds a shell and eight sessions, measured again at 1s on 2026-08-18, so it runs
+// with everything else. `tools/lane.test.ts` caps the lane at twelve exclusions, and a slot spent on a
+// second of work is a slot not available to something that needs one.
 
 import { buildApp } from "../../platform/build.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.

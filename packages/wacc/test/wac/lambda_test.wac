@@ -21,7 +21,10 @@
 // The cases that only ask whether the checker objects need no module at all: `diagnoseGraph` answers
 // in this process.
 //
-// test-lane: heavy — 10s, sixty-odd small programs, most of them emitted and run
+// **Not heavy either, and 7s rather than the 10s it claimed.** Same argument as `packages/box/test/
+// bin.test.ts`: the lane is for what is *resident* — the files in it hold about a gigabyte each and say
+// so — and sixty small programs emitted and run is seven seconds of ordinary work. Excluding it meant
+// the lambda cases ran on no push at all, which is a poor trade for 3% of a suite.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

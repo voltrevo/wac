@@ -36,11 +36,17 @@ A wait that is a *spin* is what makes that parallelism unsafe, and there were tw
 workers turned "sshd never accepted" from a rare flake into a reliable one, which is how they were
 found.
 
-**A third declaration takes a file out of the whole-suite run entirely.** Twelve files declare
-`// test-lane: heavy`, and `deno task test` skips them — they are 4m24s of work on their own, and each
-holds around a gigabyte, against a suite that already peaks at 7.5 GB on a machine with 11.9. The run
+**A third declaration takes a file out of the whole-suite run entirely.** Ten files declare
+`// test-lane: heavy`, and `deno task test` skips them — about 9 minutes of work on their own, most of it
+in three `packages/wacc` files that put the whole repository through the emitter, and the rest holding
+around a gigabyte each against a suite that already peaks at 7.5 GB on a machine with 11.9. The run
 prints how many it skipped and when the lane last passed, because a saving nobody is told about is
 indistinguishable from a suite that quietly stopped testing something.
+
+Two declarations came out on 2026-08-18 after being measured: `packages/box/test/bin.test.ts` at 1s and
+`packages/wacc/test/wac/lambda_test.wac` at 7s. Both claimed a duration and neither claimed memory, and
+the criterion here is residency — so between them they were excluding two areas from every push for eight
+seconds of work, while holding two of the twelve slots the lane is capped at.
 
 They still run in three cases: `deno task test:heavy`, `deno task test <path>` naming one (so
 `test:changed` covers a heavy file whenever its package changed), and `WAC_HEAVY=1 deno task test`
