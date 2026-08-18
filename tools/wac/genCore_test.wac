@@ -1,0 +1,69 @@
+// `core`'s two embeddings are the ones `core/` generates.
+//
+// `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac` are written by `deno task gen:core`
+// from `core/read.wac` and `core/jsx.wac` — the reference gets the first, wacc gets both, and which
+// compiler gets a declaration is said by which file it is in. `core/README.md` is the argument.
+//
+// **This is here because nothing else runs the check.** `deno task gen:core --check` answers it,
+// and `deno task docs` is not the gate — `tools/push.sh` runs the suite. A generated file whose
+// generator nobody runs is two files drifting apart with a comment claiming they cannot, which is
+// the state this replaced: two hand-maintained embeddings of the same declarations.
+//
+// It spawns `deno` rather than recomputing the answer, because recomputing it here would be a
+// second implementation of the generator and the two could then disagree about what "in step"
+// means.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { Core, Cli, Exec, FileResult } from "../../packages/platform/src/platform.wac";
+
+export string test_the_embeddings_are_in_step_with_the_core_tree(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.exec("deno", string[]("task", "gen:core", "--check"), u8[0]()).wait();
+  t.isTrue(r.ran(), "deno ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.eqI32(r.status, 0,
+          "`deno task gen:core --check` — run `deno task gen:core`:\n" + said);
+  // The message on success, so a check that started answering nothing at all is not read as a pass.
+  if (r.status == 0) {
+    t.isTrue(contains(said, "in step"), "and it says so — got \"" + said + "\"");
+  }
+  return t.report();
+}
+
+export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) {
+  T t = T.create();
+  // The canary for the test above: `--check` compares two files it generates from `core/`, and if
+  // `core/` were empty it would compare two empty embeddings and agree. So the inputs are asserted
+  // to exist and to hold the declarations they are the source of.
+  string[] files = string[]("core/read.wac", "core/jsx.wac", "core/README.md");
+  string[] holds = string[]("export enum Read", "export enum Node", "which file a");
+  for (i32 i = 0; i < files.len(); i++) {
+    FileResult f = cli.readFile(files[i]).wait();
+    t.isTrue(f.ok, files[i] + " is there");
+    if (f.ok) {
+      t.isTrue(contains(string.fromBytes(f.bytes), holds[i]),
+               files[i] + " holds " + holds[i]);
+    }
+  }
+
+  // **The omission is the point of the directory.** `jsx.wac` goes to wacc and not to the
+  // reference, so the reference's embedding must not contain `Node` — a generator that wrote one
+  // text into both would pass every check above and delete a documented difference.
+  FileResult ref = cli.readFile("compiler/wacCore.ts").wait();
+  t.isTrue(ref.ok, "the reference embedding is there");
+  if (ref.ok) {
+    string text = string.fromBytes(ref.bytes);
+    t.isTrue(contains(text, "export enum Read"), "and it carries Read");
+    t.isFalse(contains(text, "export enum Node"), "and not Node — the reference has no JSX frontend");
+  }
+  FileResult wacc = cli.readFile("packages/wacc/src/coretext.wac").wait();
+  t.isTrue(wacc.ok, "wacc's embedding is there");
+  if (wacc.ok) {
+    string text = string.fromBytes(wacc.bytes);
+    t.isTrue(contains(text, "export enum Read"), "and it carries Read");
+    t.isTrue(contains(text, "export enum Node"), "and Node as well");
+  }
+  return t.report();
+}

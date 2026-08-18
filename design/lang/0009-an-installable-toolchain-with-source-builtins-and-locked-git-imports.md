@@ -168,7 +168,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | step | state |
 | --- | --- |
 | 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
-| 2. de-duplicate `core` (D3) | not started, and **it is not a copy-paste job** — the two embeddings differ *by design* and neither compiler can read a file at runtime. See below |
+| 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `deno task gen:core` writes `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
 | 3. `core` and `std` as embedded trees (D3, D4) | not started — `packages/std` is `hash, map, option, result, vec` and moves whole |
 | 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
 | 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
@@ -203,6 +203,20 @@ rather than by two people maintaining two files.
 That makes step 2 larger than it reads and couples it to how omissions are represented, which is
 `compiler/README.md`'s table today. Worth settling that before writing the generator, because the
 generator is where the answer gets encoded.
+
+*(2026-08-18: settled and built. **The file is the unit of omission** — `core/read.wac` goes to both
+compilers, `core/jsx.wac` to wacc alone, and `tools/genCore.ts` holds the two lists. The alternative
+was a marker inside one shared file, which is a third thing to invent, to parse and to keep true for
+a distinction a directory already draws; and D3 makes `core` a source tree regardless, so this is on
+that path rather than beside it.*
+
+*Two things worth knowing before step 3 does the same for `std`. The reference's embedded text is
+**byte-identical** to what it replaced, which is the check worth having — the reference sees exactly
+the source it saw before. And wacc's copy gains the comments it had deliberately been written
+without: the seed went 777,000 to 782,937 bytes, **5.9 KB rather than the ~800 bytes the text alone
+would suggest**, because the generated file spends code on a per-line concatenation as well as the
+strings. It is still a fixed point after one round. If step 3 multiplies that by the whole of
+`packages/std`, the concatenation is the thing to reconsider, not the comments.)*
 
 ## Two things that make a byte comparison lie, found building step 1
 

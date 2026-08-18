@@ -12,6 +12,7 @@
 // added is measured by running it rather than by reading it.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
+import { coreSource } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import { resolveFrom } from "./path.wac";
@@ -2368,30 +2369,6 @@ string joinDir(string dir, string r) {
  * Kept to the declarations. The comments in `compiler/wacCore.ts` are the argument for the type
  * existing, and are not what a compiler needs.
  */
-export string coreSource() {
-  return "export enum Read {\n" +
-         "  Data(u8[] bytes),\n" +
-         "  End,\n" +
-         "  Failed(string why)\n" +
-         "}\n" +
-         // **The tree JSX builds**, which is why it is here rather than in a package: the compiler
-         // emits the constructor calls, so a tree built in one repository and a renderer in another
-         // must name one type or nothing composes — and no author chose the name to be able to fix
-         // it. `design/lang/0004`. wacc-only for now; `compiler/README.md` records the omission.
-         "export struct Attr {\n" +
-         "  string name;\n" +
-         "  string value;\n" +
-         "}\n" +
-         // **`Fragment` is a variant rather than an element with an empty tag**, so that a renderer
-         // is *told*: `match` is exhaustive, and a walk written before fragments existed stops
-         // compiling with the arm it is missing named. An empty tag would have rendered as `<>`
-         // in every renderer that had not heard of them. `design/lang/0006`.
-         "export enum Node {\n" +
-         "  Element(string tag, Attr[] attrs, Node[] kids),\n" +
-         "  Text(string text),\n" +
-         "  Fragment(Node[] kids)\n" +
-         "}\n";
-}
 
 /** A file's text from the table the caller supplied, or `""` when it was not supplied. */
 export string sourceOf(string[] paths, string[] sources, string path) {

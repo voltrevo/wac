@@ -1,0 +1,26 @@
+// The tree JSX builds.
+//
+// It is here rather than in a package because the compiler emits the constructor calls: a tree
+// built in one repository and a renderer in another must name one type or nothing composes, and no
+// author chose the name to be able to fix it. `design/lang/0004`.
+//
+// **wacc-only.** The reference compiler has no JSX frontend, so its embedding of `core` does not
+// include this file — `compiler/README.md` carries the row. That omission is the reason `core` is a
+// directory rather than one file: which compiler gets a declaration is expressed by which file it
+// is in, and `tools/genCore.ts` lists them. A marker inside a shared file would have been a third
+// thing to invent and to keep true.
+
+export struct Attr {
+  string name;
+  string value;
+}
+
+// **`Fragment` is a variant rather than an element with an empty tag**, so that a renderer is
+// *told*: `match` is exhaustive, and a walk written before fragments existed stops compiling with
+// the arm it is missing named. An empty tag would have rendered as `<>` in every renderer that had
+// not heard of them. `design/lang/0006`.
+export enum Node {
+  Element(string tag, Attr[] attrs, Node[] kids),
+  Text(string text),
+  Fragment(Node[] kids)
+}
