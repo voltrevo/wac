@@ -26,6 +26,8 @@ import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../src/shrun.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { Fs, mountSystem } from "../../../fs/src/fs.wac";
+import { Vec } from "../../../std/src/vec.wac";
 import { Fixture } from "./cases.wac";
 
 /** What one shell said. */
@@ -33,6 +35,13 @@ export struct Ran {
   string out;
   string err;
   i32 status;
+  /**
+   * The same standard output, unconverted.
+   *
+   * `/dev/zero` and `/dev/urandom` are read as bytes and a string is the wrong shape for them: a NUL is
+   * not a terminator here but it is easy to treat as one, and random bytes are not text at all.
+   */
+  u8[] outBytes;
 }
 
 /** One captured case: what it was, and what the real tools answered. */
@@ -66,7 +75,33 @@ export Ran runCase(Core core, Cli cli, string dir, string script) {
   sh.external = boxRun;
   sh.externalNames = boxNames;
   i32 status = shellMain(c, l, sh, 1);
-  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
+}
+
+/**
+ * A sealed session: an in-memory filesystem with `/tmp`, `/dev` and `/proc` mounted over it.
+ *
+ * Wired the way `bin/sealedsh.wac` wires one, including `/bin` from the applet names, so what differs
+ * from a host run is the backing and nothing else. `mountSystem` takes `core.randomBytes` — a host
+ * function rather than a permission, which is why a session with no filesystem grants still has a
+ * working `/dev/urandom`, and why a wac test can build one of these at all.
+ */
+export Ran runSealed(Core core, Cli cli, string script) {
+  Fs fs = Fs.inMemory(0);
+  fs.mkdir("/tmp", true);
+  Vec<string> argv = Vec.create();
+  argv.push("sealedsh");
+  mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
+
+  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), "/", false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Shell sh = Shell.onFs(c, l, fs);
+  sh.cwd = "/";
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
 }
 
 /**

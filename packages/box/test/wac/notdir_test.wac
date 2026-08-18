@@ -29,16 +29,11 @@
 // image half compares against the host-mount half, which is the only oracle it can have.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
-import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
-import { Fs, mountSystem } from "../../../fs/src/fs.wac";
-import { Vec } from "../../../std/src/vec.wac";
-import { Shell } from "../../../sh/src/exec.wac";
-import { shellMain } from "../../../sh/src/entry.wac";
-import { boxNames, boxRun } from "../../src/shrun.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { notDirCases, notDirFixtures } from "./cases.wac";
-import { Loaded, Ran, layFixtures, load, runCase, show, trimmed, unprefixed } from "./replay.wac";
+import { Loaded, Ran, layFixtures, load, runCase, runSealed, show, trimmed, unprefixed }
+  from "./replay.wac";
 
 string vectorsPath() { return "packages/box/test/notdir-vectors.txt"; }
 
@@ -121,7 +116,7 @@ export string test_an_image_answers_exactly_as_a_host_mount_does(Core core, Cli 
       return t.report();
     }
     Ran host = runCase(core, cli, dir, list[i]);
-    Ran image = runInImage(core, cli, "printf 'hi\\n' > /f; mkdir /d; cd /; " + list[i]);
+    Ran image = runSealed(core, cli, "printf 'hi\\n' > /f; mkdir /d; cd /; " + list[i]);
     if (reason(image.err) != reason(host.err) || image.status != host.status) {
       differ = differ + 1;
       if (differ <= 5) {
@@ -137,29 +132,6 @@ export string test_an_image_answers_exactly_as_a_host_mount_does(Core core, Cli 
   return t.report();
 }
 
-/**
- * The same script on a memory filesystem, which is what an image is once it is booted.
- *
- * Wired the way `bin/sealedsh.wac` wires one — `/tmp`, `/dev` and `/proc` mounted, `/bin` from the
- * applet names — so what differs from the host run is the backing and nothing else.
- */
-Ran runInImage(Core core, Cli cli, string script) {
-  Fs fs = Fs.inMemory(0);
-  fs.mkdir("/tmp", true);
-  Vec<string> argv = Vec.create();
-  argv.push("sealedsh");
-  mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
-
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), "/", false);
-  Core c = childCore(f, core);
-  Cli l = childCli(f, cli);
-  Shell sh = Shell.onFs(c, l, fs);
-  sh.cwd = "/";
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
-  i32 status = shellMain(c, l, sh, 1);
-  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
-}
 
 /**
  * A diagnostic with its operand stripped: everything after the first `": "` on each line.
@@ -195,7 +167,7 @@ export string test_an_image_does_not_answer_permission_denied_for_a_path_nothing
   T t = T.create();
   string[] scripts = string[]("mkdir /f/g", "echo y > /f/g", "mv /d /f/g");
   for (i32 i = 0; i < scripts.len(); i++) {
-    Ran r = runInImage(core, cli, "printf 'hi\\n' > /f; mkdir /d; cd /; " + scripts[i]);
+    Ran r = runSealed(core, cli, "printf 'hi\\n' > /f; mkdir /d; cd /; " + scripts[i]);
     t.isTrue(r.err.indexOf("Permission denied") < 0, scripts[i] + ": " + show(r.err));
     t.isTrue(r.err.indexOf("Not a directory") >= 0, scripts[i] + ": " + show(r.err));
   }
