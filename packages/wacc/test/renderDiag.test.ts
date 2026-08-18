@@ -11,7 +11,7 @@
 // would still look like a diagnostic and would still be wrong.
 
 import { waccApi } from "../../../harness/waccBuild.ts";
-import { parseDiagnostics } from "../tools/waccx.ts";
+import { parseDiagnostics } from "../tools/wireDiagnostics.ts";
 import { wacDiag } from "wac/wacDiag.ts";
 
 type Api = {

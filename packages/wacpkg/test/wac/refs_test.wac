@@ -1,0 +1,212 @@
+// Which commit a `ref` names, against real `git`.
+//
+// `test/vendor/refs.json` is a repository `packages/wacpkg/tools/vendorRefs.ts` built with `git`: a
+// branch, a second branch with a slash in it, a lightweight tag, an annotated tag, and one name
+// that is both a branch and a tag. The advertisement is `git ls-remote .`; the expected answers are
+// `git rev-parse <ref>^{commit}`, which is the question a fetcher is really asking — plain
+// `rev-parse` answers an annotated tag with the tag object, and a checkout needs the commit.
+//
+// Built rather than typed out, because the rows that matter are the ones where what I believe
+// `ls-remote` prints is wrong: `refs/tags/v1` and `refs/tags/v1^{}` are two advertised lines for
+// one tag, and nothing but a real repository would have told me the object names differ.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { FileResult } from "../../../platform/src/platform.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Resolved, resolveRef, R_OK, R_NOT_FOUND, R_AMBIGUOUS, R_MALFORMED }
+  from "../../src/refs.wac";
+
+string CORPUS_PATH() { return "packages/wacpkg/test/vendor/refs.json"; }
+
+struct Corpus {
+  bool ok;
+  string error;
+  string source;
+  string[] names;
+  string[] commits;
+  JsonArray queries;
+}
+
+Corpus load(Cli cli) {
+  FileResult r = cli.readFile(CORPUS_PATH()).wait();
+  if (!r.ok) {
+    return Corpus(false, CORPUS_PATH() + " is not readable — `deno run -A "
+                  + "packages/wacpkg/tools/vendorRefs.ts` rebuilds it", "",
+                  string[0](), string[0](), JsonArray.create());
+  }
+  JsonValue? doc = parse(r.bytes);
+  if (doc is null) {
+    return Corpus(false, CORPUS_PATH() + " is not valid JSON", "",
+                  string[0](), string[0](), JsonArray.create());
+  }
+  JsonArray? ad = memberArray(doc!, "advertised");
+  JsonArray? qs = memberArray(doc!, "queries");
+  if ((ad is null) || (qs is null)) {
+    return Corpus(false, CORPUS_PATH() + " has no `advertised`/`queries` array", "",
+                  string[0](), string[0](), JsonArray.create());
+  }
+  JsonArray rows = ad!;
+  string[] names = string[rows.n](fill: "");
+  string[] commits = string[rows.n](fill: "");
+  for (i32 i = 0; i < rows.n; i++) {
+    JsonValue? row = rows.items[i];
+    if (row is null) { continue; }
+    names[i] = memberText(row!, "name");
+    commits[i] = memberText(row!, "commit");
+  }
+  return Corpus(true, "", memberText(doc!, "source"), names, commits, qs!);
+}
+
+export string test_each_code_has_the_number_it_has_always_had() {
+  T t = T.create();
+  // Literals on one side — see the same test in `manifest_test.wac`. Asserting a code by calling
+  // the constant it is compared against cannot fail, and a sweep found these three could all be
+  // set to 0 with the suite green.
+  t.eqI32(R_OK(), 0, "R_OK");
+  t.eqI32(R_NOT_FOUND(), 1, "R_NOT_FOUND");
+  t.eqI32(R_AMBIGUOUS(), 2, "R_AMBIGUOUS");
+  t.eqI32(R_MALFORMED(), 3, "R_MALFORMED");
+  return t.report();
+}
+
+i32 indexOfName(string[] names, string want) {
+  for (i32 i = 0; i < names.len(); i++) { if (names[i] == want) { return i; } }
+  return -1;
+}
+
+export string test_every_query_agrees_with_git_or_is_a_listed_refusal(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = load(cli);
+  t.isTrue(c.ok, c.error);
+  if (!c.ok) { return t.report(); }
+  // The corpus being empty would make every assertion below vacuous, and a differential that
+  // compares nothing reports perfect agreement.
+  t.isTrue(c.queries.n >= 10, "the corpus has queries in it (" + itoa(c.queries.n) + ")");
+  t.isTrue(c.names.len() >= 5, "and an advertisement (" + itoa(c.names.len()) + " rows)");
+
+  // Where this deliberately answers differently from `git`, and why. Asserted to *still* differ,
+  // so the entry cannot outlive the reason: a list of excuses that have quietly become true is
+  // worse than no list.
+  //
+  //   `dup` is a name that is both a branch and a tag. `git rev-parse` picks the tag and warns;
+  //   this refuses with R_AMBIGUOUS, because a lockfile silently choosing between two things a
+  //   human named the same is how a dependency moves without anybody deciding. `refs/tags/dup`
+  //   says which and is one word longer.
+  string[] known = string[]("dup");
+  bool[] diverged = bool[known.len()](fill: false);
+
+  for (i32 i = 0; i < c.queries.n; i++) {
+    JsonValue? q = c.queries.items[i];
+    if (q is null) { continue; }
+    string ref = memberText(q!, "ref");
+    // A null `git` is git refusing; no real commit is the empty string, so the two cannot collide.
+    string want = memberText(q!, "git");
+    Resolved got = resolveRef(c.names, c.commits, ref);
+    bool agrees = want == "" ? !got.ok : (got.ok && got.commit == want);
+    if (agrees) { continue; }
+    i32 k = indexOfName(known, ref);
+    if (k >= 0) { diverged[k] = true; continue; }
+    t.fail("\"" + ref + "\": git says " + (want == "" ? "a refusal" : want)
+           + ", we say " + (got.ok ? got.commit : "refused (code " + itoa(got.code) + ")"));
+  }
+  for (i32 i = 0; i < known.len(); i++) {
+    t.isTrue(diverged[i], "\"" + known[i] + "\" is listed as a known refusal but now agrees "
+             + "— delete the entry");
+  }
+  return t.report();
+}
+
+export string test_an_annotated_tag_resolves_to_the_commit_not_the_tag_object(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = load(cli);
+  t.isTrue(c.ok, c.error);
+  if (!c.ok) { return t.report(); }
+  // The row the corpus exists for. `refs/tags/v1` and `refs/tags/v1^{}` are both advertised and
+  // name *different objects*; a resolver that took the first match would hand a fetcher a tag
+  // object and the checkout would fail somewhere else entirely.
+  i32 at = indexOfName(c.names, "refs/tags/v1");
+  i32 peel = indexOfName(c.names, "refs/tags/v1^{}");
+  t.isTrue((at >= 0) && (peel >= 0), "the fixture advertises the annotated tag and its peel");
+  if ((at < 0) || (peel < 0)) { return t.report(); }
+  string tagObject = c.commits[at];
+  string peeled = c.commits[peel];
+  t.isTrue(tagObject != peeled,
+           "the fixture no longer has an annotated tag — regenerate it with vendorRefs.ts");
+  if (tagObject == peeled) { return t.report(); }
+
+  string[] spellings = string[]("v1", "refs/tags/v1");
+  for (i32 i = 0; i < spellings.len(); i++) {
+    Resolved got = resolveRef(c.names, c.commits, spellings[i]);
+    t.isTrue(got.ok, spellings[i] + " resolves");
+    if (got.ok) {
+      t.eqStr(got.commit, peeled, spellings[i] + " gives the peeled commit");
+      t.eqStr(got.via, "refs/tags/v1^{}", spellings[i] + " says which line it came from");
+    }
+  }
+  // Asking for the peel by name is the same answer, and says so.
+  t.eqStr(resolveRef(c.names, c.commits, "refs/tags/v1^{}").commit, peeled,
+          "the peel by name gives the same commit");
+  return t.report();
+}
+
+export string test_a_lightweight_tag_has_no_peel_and_is_not_treated_as_if_it_did(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = load(cli);
+  t.isTrue(c.ok, c.error);
+  if (!c.ok) { return t.report(); }
+  i32 at = indexOfName(c.names, "refs/tags/light");
+  t.isTrue(at >= 0, "the fixture advertises a lightweight tag");
+  if (at < 0) { return t.report(); }
+  Resolved got = resolveRef(c.names, c.commits, "light");
+  t.isTrue(got.ok, "light resolves");
+  if (got.ok) {
+    t.eqStr(got.commit, c.commits[at], "to the object the tag itself names");
+    t.eqStr(got.via, "refs/tags/light", "via the tag, with no peel invented for it");
+  }
+  return t.report();
+}
+
+export string test_an_object_name_resolves_to_itself_advertised_or_not(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = load(cli);
+  t.isTrue(c.ok, c.error);
+  if (!c.ok) { return t.report(); }
+  // A manifest may pin a commit the server does not advertise — which is what every lockfile entry
+  // becomes if it is pasted back as a `ref`. Refusing that would make the two files disagree about
+  // what a commit is.
+  string unadvertised = "0000000000000000000000000000000000000000";
+  t.eqI32(indexOfName(c.commits, unadvertised), -1, "the fixture does not advertise it");
+  Resolved got = resolveRef(c.names, c.commits, unadvertised);
+  t.isTrue(got.ok, "it resolves anyway");
+  if (got.ok) {
+    t.eqStr(got.commit, unadvertised, "to itself");
+    t.eqStr(got.via, "", "and via nothing — it came from no ref");
+  }
+  return t.report();
+}
+
+export string test_what_is_not_there_and_what_is_not_a_corpus(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = load(cli);
+  t.isTrue(c.ok, c.error);
+  if (!c.ok) { return t.report(); }
+  string[] missing = string[]("nope", "refs/heads/nope", "", "refs/tags/v1^{}x");
+  for (i32 i = 0; i < missing.len(); i++) {
+    Resolved got = resolveRef(c.names, c.commits, missing[i]);
+    t.isFalse(got.ok, "\"" + missing[i] + "\" does not resolve");
+    if (!got.ok) { t.eqI32(got.code, R_NOT_FOUND(), "\"" + missing[i] + "\" is NOT_FOUND"); }
+  }
+  // A malformed advertisement is its own answer, not "not found" — the caller's parse is what is
+  // wrong, and telling it "no such ref" would send it looking in the wrong place.
+  Resolved short = resolveRef(string[]("refs/heads/main"), string[0](), "main");
+  t.eqI32(short.code, R_MALFORMED(), "unpaired arrays are MALFORMED");
+  Resolved notSha = resolveRef(string[]("refs/heads/main"), string[]("nope"), "main");
+  t.eqI32(notSha.code, R_MALFORMED(), "a non-sha object name is MALFORMED");
+  Resolved ambiguous = resolveRef(c.names, c.commits, "dup");
+  t.eqI32(ambiguous.code, R_AMBIGUOUS(), "a name that is both a branch and a tag is AMBIGUOUS");
+  return t.report();
+}

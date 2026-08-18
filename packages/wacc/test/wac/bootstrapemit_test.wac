@@ -86,7 +86,7 @@ string driverSource(i32 shift) {
  * canaries have to be asked of `selfdrive.wac` itself.
  */
 i32 referenceAnswers(Cli cli, string file, string export_, i32[] okOut) {
-  Exec r = cli.exec("deno", string[]("run", "-A", "compiler/wacxMain.ts", "run", file, export_),
+  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", file, export_),
                     u8[0]()).wait();
   if (!r.ran() || r.status != 0) { okOut[0] = 0; return 0; }
   string[] lines = splitLines(string.fromBytes(r.stdout));

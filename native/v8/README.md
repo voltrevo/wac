@@ -220,11 +220,11 @@ Everything above is a *runtime*: it is handed a program. With `seed/wacc.wasm` p
 time, `build.rs` embeds it and the same binary is a **command**. In one step:
 
 ```
-deno task app:wacbin packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
+deno task app:native-binary packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
 ./wac compile main.wac main.wasm
 ```
 
-and that works for *any* wac program, not only the compiler — `app:wacbin` is `app:binary` on this
+and that works for *any* wac program, not only the compiler — `app:native-binary` is `app:binary` on this
 host, 64 MB against 105 MB because a V8 comes along without the rest of a runtime. Or by hand, which
 is what that command does:
 
@@ -423,7 +423,7 @@ profile under-attributing by 40%.
 | 4 | one file, and every test in it needs an oracle this host cannot supply |
 | 5 | one file, and `--filter` matched nothing in it (a skip during discovery, an error when you named the file) |
 
-3 is separate from 1 for the reason `spec/cli/main.md` gives about traps: a script needs to tell
+3 is separate from 1 for the reason `spec/cli/wac.md` gives about traps: a script needs to tell
 *did not compile* from *ran and did something wrong*. 4 is separate from both because 31 of the 83
 files here are entirely host-oracle tests, and counting those as failures would mean `wac test
 packages/` could never be green — which would make the exit code useless for the one thing an exit

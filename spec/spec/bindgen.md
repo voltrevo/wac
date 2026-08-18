@@ -1,6 +1,6 @@
 ## Bindgen
 
-`wacx bindgen` generates a self-contained `.ts` file with the wasm binary
+`wac bindgen` generates a self-contained `.ts` file with the wasm binary
 base64-encoded inline and typed wrapper functions. No separate `.wasm` asset
 needed.
 

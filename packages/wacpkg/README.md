@@ -281,22 +281,51 @@ without saying which two is a message that sends you back to read the file yours
 are ordered so a later one cannot be reached with an earlier one outstanding, so a list would be a
 list of consequences.
 
-The codes are in `src/manifest.wac`; `test/manifest.test.ts` reads them out of the source and
-fails if its own copy has drifted, the way `packages/json` does.
+The codes are in `src/manifest.wac`, and `test/wac/manifest_test.wac` imports them. It used to be
+two hand-copied tables in TypeScript with a test comparing them against the source for drift; a wac
+test needs neither, which is most of why these moved.
 
 ## Tests
 
-**28 planted faults, counted by re-running them rather than remembered**: ten in `manifest.wac`,
-ten in `root.wac`, eight in `lock.wac`. Twenty-seven fail the tests. The twenty-eighth — deleting
-the walk's only exit in `candidateRoots` — makes them **hang** instead, exit 124 with no verdict,
-which a timeout catches and no assertion does. Worth the distinction: an earlier version of this
-paragraph said "thirty, none survives", which was a number I had not counted and a claim the hang
-does not support.
+**The tests are in wac** — `test/wac/*_test.wac`, run by `wac test`. They replaced eight
+`.test.ts` files that drove the package through `wacpkg.wac`'s byte-taking boundary from a
+TypeScript host; the wac tests call the modules directly, the way `example/plan.wac` does.
+Migrating also deleted two hand-copied tables of the `M_*` and action codes and the test that
+compared them against the source for drift, which is not a tidier way to catch drift but the same
+guarantee with nothing to maintain.
 
-Two of the twenty-seven only fell to cases a canary found —
-`matchSpecifier` given exactly `std/`, which every other case in the list was one byte too short
-to reach, and the writer's escape branches, which nothing exercised until a mapping name contained
-a tab.
+**Fault detection is measured, not remembered.** `deno task mutate --package wacpkg --operators`
+plants every `guard` and `extreme` mutant in the package — a removed validity check and a gutted
+function, the two operators worth reading when they survive.
+
+**68 of 77 killed.** Of the nine left, eight are in `example/` — `plan.wac` and `fetch.wac` have no
+tests, which is a real gap and not this section's claim. The ninth is `actionUse`'s body replaced by
+`return 0`, and `USE()` is 0: an equivalent mutant, not a hole.
+
+The first run after the migration is why `test/wac/entry_test.wac` exists. Seventeen mutants
+survived, one per entry point in `wacpkg.wac`: every wrapper in that module could be gutted to
+`return ""` with the suite still green, because the TypeScript tests had been the only thing
+calling them and the wac tests that replaced them go underneath. **Coverage did not show it** —
+`cov.ts` drives the module from its own workload, so the lines ran and nothing checked what came
+back. A covered line and an asserted one are different claims, and this is the gap between them.
+
+The sweep also found something the migration itself broke, and it is the more useful finding.
+Checking an error code by calling the constant it is compared against **cannot fail**: set
+`M_SUBDIR_ESCAPE()` to 0 and both halves of the assertion move together. Five codes were like that.
+The TypeScript tests had caught it only by accident — their hand-copied table of the numbers was a
+second opinion nobody had described as one, and importing the constants looked like the same
+guarantee for free. `test_each_code_has_the_number_it_has_always_had` is that opinion written down:
+the numbers as literals, once, in the file that uses them.
+
+`root.wac`'s `startsWith` survived for a different reason and predates the migration. It is the
+second arm of `dir == ".." || startsWith(dir, "../")`, and the only climb in the case list was
+`../a.wac` — answered by the first arm, leaving the second free to return `false` for ever.
+`../../a.wac` and `../x/a.wac` reach it.
+
+An earlier version of this section counted 28 hand-planted faults against the TypeScript tests.
+Two of those only fell to cases a canary found — `matchSpecifier` given exactly `std/`, which every
+other case in the list was one byte too short to reach, and the writer's escape branches, which
+nothing exercised until a mapping name contained a tab. Both cases are in the wac tests.
 
 `root.wac` also started with a `withinOrEqual` guard *and* a walk, and the canary is what showed
 that was wrong: a fault planted in the guard left the tests green because the walk still refused,

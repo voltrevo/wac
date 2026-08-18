@@ -363,12 +363,17 @@ for identical input, which `tools/seed.sh` relies on. The work is that `wasmHash
 currently created later. One `stageProject` call moved earlier is the whole of it.
 
 
-### Twenty-two, not twenty — 2026-08-18
+### Twenty-three, not twenty — 2026-08-18
 
 `packages/json` joined the set: `test/json5.test.ts` and the `test/util.ts` it was the only importer
-of are gone, and its six cases are `test/wac/json5_test.wac`. `packages/wactest` joined it in the
-same push. Counted the same way — a package directory with no `.test.ts` tracked under it — it is now
-**22 of 39**.
+of are gone, and its six cases are `test/wac/json5_test.wac`. `packages/wacpkg` and
+`packages/wactest` joined it the same day, from another agent's work and mine. Counted the same
+way — a package directory with no `.test.ts` tracked under it — it is now **23 of 39**, against 244
+`*_test.wac` files and 169 `.test.ts` ones under `packages/`.
+
+That figure was 22 when this section was first written an hour earlier, and merging made it 23
+before it was pushed. The number moves several times a day right now; what does not move is that the
+unit mutation scoring executes keeps disappearing.
 
 The title's number is a snapshot and this file is not being renamed for it: `issues/system/0176` was
 renumbered once already because renaming breaks the references a closing commit made, and a count in

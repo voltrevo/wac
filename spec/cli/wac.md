@@ -1,9 +1,15 @@
-## wac — the binary
+## wac — the command
 
-`wacx` above is the reference toolchain, run through Deno. `wac` is the one a person types: a single
-executable with V8 inside it, the compiler carried as a prebuilt module, and no JavaScript host in the
-path. It is built from `native/v8/`; `native/README.md` and `native/v8/README.md` describe how, and
-this section is what it promises.
+`wac` is the one a person types: a single executable with V8 inside it, the compiler carried as a
+prebuilt module, and no JavaScript host in the path. It is built from `native/v8/`;
+`native/README.md` and `native/v8/README.md` describe how, `deno task wac:install` is the supported
+way to have it, and this section is what it promises.
+
+**There is one command.** This page used to describe two more — `wacx`, the reference toolchain run
+through Deno, and `waccx`, the same commands over the wac-written compiler. Both were development
+scaffolding: a way to drive a compiler before there was a binary to put it in, and a way to compare
+the two. Neither is something to tell a reader to type, and describing three toolchains made the
+first question about this page which one you were reading.
 
 There is a second host with no JavaScript at all — `wacland`, `native/src/main.rs`, on wasmtime. It
 runs a built program and does not compile, so the commands below are this binary's.
@@ -58,6 +64,71 @@ The module is instantiated with no imports and `main` is called if it is exporte
 `__cov_init` is an error rather than an empty report, because a module built without coverage and one
 whose counters all read zero are different facts.
 
+### check, compile, bindgen
+
+These three are handed to the compiler inside the binary. Each takes the entry file, walks its
+import graph, and differs only in what it writes.
+
+`[§wac-cli-check-4mkq8wp]` `check` writes nothing and reports. A file with no diagnostics still
+prints a line — `math.wac: 1 file(s), no diagnostics` — because how many files were read is the
+part you cannot otherwise see, and silence does not distinguish *checked and clean* from *did not
+look*. A broken file exits 1 and names the file and the line. **The file named is the one the error
+is in**, which for an error in an imported module is not the entry: that is the whole evidence the
+import graph was walked rather than the entry parsed alone.
+
+`[§wac-cli-compile-9wkn3pq]` `compile` writes a module — `main.wasm` beside the source unless an
+output path is given — and prints what it wrote and how big it was. It is a plain module with no
+manifest; `build` is the one that writes a program that can carry its own grants.
+
+`[§wac-cli-bindgen-5tqm7wn]` `bindgen` writes the glue a host calls the module through, as
+`main.gen.ts`, with `--js` for the JavaScript flavour. The exported functions appear as typed
+wrappers, so a host calls `gcd(48, 18)` rather than marshalling by hand.
+
+`[§wac-cli-usage-3nkq8wj]` **Warnings print and do not change the exit code.** A warning nobody sees
+is not a warning, so they are not held back for `check` or suppressed on a command that also writes
+a file — and a file whose only diagnostics are warnings exits 0, because a warning that failed a
+build would be an error under a softer name.
+
+`[§wac-cli-usage-3nkq8wj]` An unknown command is named, with the ones that exist — `unknown command
+'chekc' — check, compile, build or bindgen` — and is a usage error, exit 2. **The command is checked
+before the entry is read**, which is the difference between that message and *cannot read chekc.wac*
+on a line where both were mistyped: reading first diagnoses the typo you did not make.
+
+### run: a program, or one exported function
+
+`[§wac-cli-run-7jnq2mv]` `wac run main.wac [args…]` compiles the entry into a temporary file and
+runs it. **A module that exports `main` is a program** and everything after the entry is its
+`argv`. A module that does *not* is a library, and the first argument names the export to call:
+
+```sh
+wac run math.wac gcd 48 18
+# 6
+```
+
+`main` winning where it exists is what makes this unambiguous — a module with both is a program,
+and `wac run prog.wac gcd` passes `gcd` to it rather than calling it.
+
+**Arguments are coerced by the declared parameter type**, not guessed from the text. The shell has
+no types, so the signature is the only thing that can supply them: `1` is an `i32` where one is
+declared and the string `"1"` where a `string` is, and a `string` parameter takes the argument
+exactly as written. An `i64` keeps its width — it crosses as a BigInt, so `9007199254740993` is
+that number and not the nearest double. A list is comma-separated, brackets are accepted because
+people type them, and an empty list is empty rather than one empty element.
+
+`i32`, `i64`, `f64`, `bool`, `string` and arrays of `u8`, `i32`, `i64` and `f64` can be written on
+a command line. Anything else is refused **by name** — a struct is not something a shell can hand
+over, and saying which type it was beats a message about the call.
+
+What comes back is printed by its declared return type: a `string` as itself, an array as its
+space-separated elements, a `bool` as `true` or `false` — the same vocabulary it accepts — and a
+`void` function prints nothing at all.
+
+A wrong name lists what the module *does* export, with signatures, because that is the next thing
+anybody asks. A wrong argument count shows the signature. A bad element in a list names **the
+element**, since a message about `1,x,3` sends you looking at the wrong thing. All of those are
+usage mistakes and exit 2; so does a trap, which repeats what `trap "…"` said. A file that does not
+compile is exit 1, because it never ran.
+
 ### Grants, and which side of the entry they go
 
 A grant is a promise made when the program is *packaged*: `--allow-read` and its four siblings are
@@ -95,9 +166,9 @@ what the toolchain says before the program starts, and what `test` says about a 
 | 2 | a usage error — an unknown flag, a missing entry, a grant in the wrong place |
 | 3 | it ran and something was wrong: a test failed |
 
-`[§wac-cli-status-8kz4rp6]` 3 rather than 1 for a failing test, for the reason `wacx` distinguishes a
-trap from a compile failure: a script needs to tell "did not compile" from "ran and did something
-wrong", and one code for both makes a red suite indistinguishable from a typo.
+`[§wac-cli-status-8kz4rp6]` 3 rather than 1 for a failing test, for the same reason a trap is
+distinguished from a compile failure: a script needs to tell "did not compile" from "ran and did
+something wrong", and one code for both makes a red suite indistinguishable from a typo.
 
 `test` has two more it uses per file and folds into the summary rather than the exit status: a file
 where nothing could run because every test wants a capability this run was not granted, or an oracle

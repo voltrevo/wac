@@ -100,17 +100,34 @@ export async function instrument(entry: string): Promise<Instrumented> {
  * filtered to `prefix` so a package's report does not claim coverage of its
  * dependencies — `bytes` is measured by its own run, not incidentally by json's.
  */
+/**
+ * A coverage report is about the package, so the tests themselves are not in it.
+ *
+ * Running a `test/wac/*_test.wac` as an entry point — which is how a migrated package covers the
+ * lines only its wac tests reach — also instruments that file, and a report that counted it would
+ * mix two different things under one number. A test's uncovered branches are its *assertions that
+ * did not fire*, which is the outcome you want: `packages/url` read 95.7% with 15 such branches in
+ * its missed list, each one a passing check being reported as a gap. Excluded rather than merely
+ * sorted to the bottom, and the count is printed, so this cannot quietly drop a real file.
+ */
+const isTest = (file: string) => file.includes("/test/") || file.endsWith("_test.wac");
+
 export function report(
   runs: Instrumented[],
   prefix: string,
-  opts: { verbose?: boolean } = {},
+  opts: { verbose?: boolean; includeTests?: boolean } = {},
 ): { total: number; covered: number; missed: Point[] } {
   const all = new Map<string, Point>();
   const hit = new Set<string>();
+  const skipped = new Set<string>();
   for (const run of runs) {
     const counts = run.counts();
     for (const p of run.points) {
       if (!p.file.startsWith(prefix)) continue;
+      if (!opts.includeTests && isTest(p.file)) {
+        skipped.add(p.file);
+        continue;
+      }
       const key = `${p.file}:${p.line}:${p.col}:${p.kind}`;
       all.set(key, p);
       if (counts[p.index] > 0) hit.add(key);
@@ -136,6 +153,9 @@ export function report(
   }
   const pct = total === 0 ? 100 : covered / total * 100;
   console.log(`| **${prefix}** | **${total}** | **${covered}** | **${pct.toFixed(1)}** |`);
+  if (skipped.size > 0) {
+    console.log(`\n${skipped.size} test file(s) not counted: ${[...skipped].sort().join(", ")}`);
+  }
 
   const missed = [...all.entries()].filter(([k]) => !hit.has(k)).map(([, p]) => p);
   if (missed.length > 0) {

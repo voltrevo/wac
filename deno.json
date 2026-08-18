@@ -10,8 +10,6 @@
     "wac/": "./compiler/"
   },
   "tasks": {
-    "wacx": "deno run -A compiler/wacxMain.ts",
-    "waccx": "deno run -A packages/wacc/tools/waccxMain.ts",
     "bench": "deno run -A tools/bench.ts",
     "bench:hash": "deno run -A packages/crypto/bench/hash.ts",
     "bench:compile": "deno run -A tools/benchCompile.ts",
@@ -65,7 +63,7 @@
     "wac:install": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts install",
     "wac:uninstall": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts uninstall",
     "wac:build": "deno run --allow-read --allow-write --allow-run --allow-env tools/install.ts build",
-    "app:wacbin": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/nativeBinary.ts",
+    "app:native-binary": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/nativeBinary.ts",
     "app": "deno run --allow-read --allow-write --allow-env --allow-run packages/platform/app.ts",
     "check": "deno run -A tools/checkTypes.ts",
     "test": "deno run --allow-read --allow-write --allow-env --allow-run tools/runTests.ts",

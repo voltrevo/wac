@@ -49,7 +49,7 @@ what that changes about how a claim here is checked.
 
 ## CLI
 
-- [cli/main.md](cli/main.md) — wacx: unified CLI (check, run, compile, bindgen)
+- [cli/wac.md](cli/wac.md) — the `wac` command (check, compile, build, bindgen, run, test, sh)
 
 ## Verification
 

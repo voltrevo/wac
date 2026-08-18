@@ -166,6 +166,28 @@ export struct T {
     }
   }
 
+  /**
+   * Same, for string arrays.
+   *
+   * The message quotes both elements, because the differences that reach here are usually a
+   * trailing slash or an empty string against `"."` — a report that prints them bare says the two
+   * are different and leaves you unable to see how.
+   */
+  void eqStrArray(this, string[] got, string[] want, string what) {
+    if (got.len() != want.len()) {
+      this.fail(what + ": length " + itoa(got.len()) + ", want " + itoa(want.len())
+        + " (" + joinq(got) + " vs " + joinq(want) + ")");
+      return;
+    }
+    for (i32 i = 0; i < got.len(); i++) {
+      if (got[i] != want[i]) {
+        this.fail(what + ": element " + itoa(i) + " is \"" + got[i]
+          + "\", want \"" + want[i] + "\"");
+        return;
+      }
+    }
+  }
+
   /** Same, for byte arrays. Reads are zero-extended, so these compare as 0..255. */
   void eqBytes(this, u8[] got, u8[] want, string what) {
     if (got.len() != want.len()) {
@@ -191,4 +213,13 @@ export struct T {
     string tail = this.failed > 8 ? " (and " + itoa(this.failed - 8) + " more)" : "";
     return itoa(this.failed) + " failed: " + this.messages + tail;
   }
+}
+
+/** `["a", ""]` — a whole string array, quoted, for a message about its length. */
+string joinq(string[] xs) {
+  string out = "[";
+  for (i32 i = 0; i < xs.len(); i++) {
+    out = out + (i == 0 ? "" : ", ") + "\"" + xs[i] + "\"";
+  }
+  return out + "]";
 }

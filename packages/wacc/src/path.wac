@@ -10,7 +10,7 @@
 // lexer, a parser or an emitter — it is string arithmetic over paths — so both ends can have it.
 //
 // **There were seven copies** across `files.wac`, `emit.wac`, `compiler/wacResolve.ts`,
-// `harness/wacFiles.ts`, `compiler/wacx.ts`, `packages/wacc/test/corpus.ts` and
+// `harness/wacFiles.ts`, the reference CLI's (since retired), `packages/wacc/test/corpus.ts` and
 // `site/src/editor/file-store.ts`. This removes the one that was reachably wrong; the rest are
 // 0150's remaining work, and `design/lang/0009` is why it matters — a manifest lookup, a provider
 // table and a mapping table are not two lines, and seven copies of *those* will not agree.
