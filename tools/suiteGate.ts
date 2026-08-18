@@ -261,9 +261,23 @@ export function takeSuiteSlot(): () => void {
   // skips is only the "you have just had one" rule, which is about an agent reaching for the suite
   // by reflex rather than about a script finishing a job it started.
   const retry = Deno.env.get("WAC_SUITE_RETRY") === "1";
+  /**
+   * Refusing exits **75**, which is `EX_TEMPFAIL` — *"temporary failure; the user is invited to retry"*.
+   *
+   * **It exited 3, and 3 already meant something else.** `wac test` uses 3 for "a test failed" and
+   * `tools/runTests.ts` passes that through, so a red `wac test` lane and a gate refusal left the same
+   * exit status behind. `tools/push.sh` read one as the other on 2026-08-18: it announced *"the suite
+   * gate refused; nothing ran"* about a suite that had run twice and failed, and deleted the log that
+   * said so. The first repair guessed from whether the log was empty, which is also wrong — the refusal
+   * reaches the log through `tee`, so an empty log is not the signal either.
+   *
+   * A code of its own is what makes the two answerable without guessing. 75 rather than 4, because 4
+   * is the binary's "every test here needs a host oracle" and can reach the suite's exit the same way 3
+   * does.
+   */
   const refuse = (why: string): never => {
     console.error(`\n== not running the suite: ${why} ==\n${advice()}\n`);
-    Deno.exit(3);
+    Deno.exit(75);
   };
 
   if (!forced) {

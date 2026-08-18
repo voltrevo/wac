@@ -167,25 +167,17 @@ for attempt in 1 2 3; do
     # Deciding by construction rather than by grepping the text, because the refusal is written to the
     # terminal and does not reach `$log` — which is also why the branch below cannot be reused: it
     # reads an empty log and concludes the run died.
-    # **Exit 3 says two different things, and this branch used to assume the first.**
-    # `tools/suiteGate.ts` refuses with 3 *before starting anything*; `tools/runTests.ts` also exits 3
-    # when the `wac test` lane fails, because that is `wac test`'s own code for "tests failed". So a
-    # genuine red suite arrived here, had its log deleted by the line below, and was announced as
-    # "nothing ran, and the reason is printed above" — with the reason being a `FAIL` line in the log
-    # that had just been removed. It cost a real failure being read as a scheduling refusal on
-    # 2026-08-18; the FAIL lines survived only because `tee` had also put them on the terminal.
+    # **The refusal has its own exit code, and it did not always.** `tools/suiteGate.ts` exits 75
+    # (`EX_TEMPFAIL`) when it will not start a suite. It used to exit 3 — which is also `wac test`'s
+    # code for a failing test and what `tools/runTests.ts` passes through — so a genuine red suite
+    # arrived in this branch, had its log deleted below, and was announced as "nothing ran, and the
+    # reason is printed above" while the reason was a `FAIL` line in the log that had just been removed.
     #
-    # Told apart by what the run produced rather than by the code: a refusal writes nothing to `$log`,
-    # a suite that ran writes thousands of lines to it. That is the same "decide by construction"
-    # argument as before — the construction is just the log's existence rather than the exit status.
-    if [ "$status" -eq 3 ] && [ -s "$log" ]; then
-      echo "== the suite ran and failed (exit 3) — not a gate refusal =="
-      echo "   Exit 3 is also \`wac test\`'s code for a failing test, and the suite passes it through."
-      grep -aE "^FAIL |with failures" "$log" | head -5
-      echo "-- full output: $log --"
-      exit 1
-    fi
-    if [ "$status" -eq 3 ]; then
+    # The first repair guessed from whether `$log` was empty. That is wrong too: the refusal reaches the
+    # log through `tee`, so a refusal leaves a short log rather than none, and the next gate run
+    # announced a cooldown refusal as a failing suite. Two wrong readings of the same overloaded code
+    # are what bought the code of its own.
+    if [ "$status" -eq 75 ]; then
       rm -f "$log"
       if [ "$attempt" -eq 1 ]; then
         echo "== the suite gate refused; going round once with WAC_SUITE_RETRY=1 =="
