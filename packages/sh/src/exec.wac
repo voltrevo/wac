@@ -189,7 +189,7 @@ export struct Shell {
    * written in between, which is a wrong answer about *when* something happened.
    *
    * That is not hypothetical and it is not one mistake: on 2026-08-12 `callFunction` and
-   * `runCompound` both did it, found by `tools/shellFuzz.ts` at seeds 31337 and 3. A function's
+   * `runCompound` both did it, found by `tools/wac/shfuzz.wac` at seeds 31337 and 3. A function's
    * complaint came after the next command's, and a subshell's line came after a diagnostic from a
    * loop that ran later. Both now take the pair. If you set this flag, take both buffers, and
    * place them — `runSimple`'s redirection plan is what "place" means.
@@ -608,7 +608,7 @@ export struct Shell {
     // an empty line and `sh: local: can only be used in a function` while bash prints `in`, and
     // `g() { ( return 3 ); echo $?; }; g` answered 2 rather than 3 — a wrong answer rather than a
     // stray diagnostic. Outside a function the depth is 0 in both shells, so the refusal that is
-    // *correct* stays correct. Found by `tools/shellFuzz.ts` at seed 77: every hand-written `local`
+    // *correct* stays correct. Found by `tools/wac/shfuzz.wac` at seed 77: every hand-written `local`
     // case runs it straight in a function body, and this is the intersection of two constructs.
     out.depth = this.depth;
     // **The external commands come too.** They did not, so a command substitution ran in a shell with
@@ -2094,7 +2094,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
       // **`$?` is not cleared before an arm runs.** `false; case f in *) echo $?;; esac` prints 1 in
       // bash and printed 0 here, because the status was set to zero on the way in — so the first
       // command of an arm could not see what the command before the `case` answered. Same defect
-      // the `for` body had, one construct along; found by `tools/shellFuzz.ts` at seed 8, once the
+      // the `for` body had, one construct along; found by `tools/wac/shfuzz.wac` at seed 8, once the
       // generator could emit `case` at all.
       //
       // Where the zero belongs is the two places bash puts it: no arm matched, or the matched arm
@@ -3798,7 +3798,7 @@ Output callFunction(Shell sh, Vec<string> argv) {
   // `errOut` whenever the shell is capturing, and turning capture on here for the *stdout* took
   // stderr with it — into a buffer nothing drained until the end of the script. So a function's
   // diagnostics arrived after everything written later: `g() { echo inner >&2; }; g; echo LATER >&2`
-  // printed `LATER` first, where bash prints `inner` first. Found by `tools/shellFuzz.ts` at seed
+  // printed `LATER` first, where bash prints `inner` first. Found by `tools/wac/shfuzz.wac` at seed
   // 31337; the README's rule — "standard error arrives when it happened", a capturing shell keeps
   // the bytes *for whoever asked for the capture* — was right, and this was the caller that asked
   // and then did not take them.

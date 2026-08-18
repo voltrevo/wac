@@ -5,6 +5,8 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0196](open/0196-the-caret-blink-precondition-still-reds-under-load.md) | the caret-blink test's precondition still reds under load, which is the half `0159` left in front of the guard | bug | wrong answer |
+| [0195](open/0195-a-frame-cannot-express-an-open-and-silent-standard-input.md) | a `Frame`'s standard input cannot be open and silent, which is the shape a terminal has | missing feature | a case that cannot be written in process |
 | [0194](open/0194-a-relative-frame-cwd-does-not-resolve.md) | a `Frame`'s `cwd` works when it is absolute and silently does not when it is relative | bug | wrong answer |
 | [0193](open/0193-boxs-tests-build-and-spawn-a-world-per-assertion.md) | box's tests build and spawn a world per assertion, and the differentials re-derive their oracle every run | performance | no error |
 | [0192](open/0192-wac-test-compiles-the-same-import-graph-once-per-test-file.md) | `wac test` compiles the same import graph once per test file, so a package pays for it N times | performance | no error |
@@ -51,7 +53,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-200 issues, 161 closed.
+202 issues, 161 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

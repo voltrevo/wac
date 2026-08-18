@@ -100,3 +100,26 @@ Two things the move found:
 The corpus is thin on filesystem work either way — 43 of 946 scripts redirect anywhere — so a differential
 about filesystems is mostly running scripts that never open one. Worth a corpus of its own; not filed yet.
 
+## Done: the fuzz differential is captured vectors, and the generator is in wac — 2026-08-18
+
+`fuzz.test.ts` ran four seeds × thirty scripts × two stdin shapes × two shells: **480 processes, 38 s**,
+every suite run, to ask what bash does about scripts that are fixed by their seed.
+
+* `tools/shellFuzz.ts` is `tools/wac/shfuzz.wac`. The port is exact and was **checked rather than
+  assumed**: both grew a `--print` mode and were diffed byte for byte over **1,400 scripts and seven
+  seeds**. The first attempt drifted — a `r.pick` inside an array literal is evaluated before the pick
+  that chooses between its elements — and seed 1 agreed for ten scripts before it showed.
+* `packages/box/test/fuzz-vectors.txt` is bash's answer to all 120, **11 KB**, captured by
+  `--capture`. `packages/box/test/wac/fuzz_test.wac` replays them in process (**7.7 s, ~6 s of it the
+  compile**) and keeps eight of them live against bash as the drift canary.
+* `fuzz.test.ts` keeps the one shape a `Frame` cannot express — standard input open and silent, which is
+  what wac-mono 0113 needed — and spawns 120 times for it: **19 s**, down from 38 s. That gap is
+  `issues/system/0195`, and it is the only reason the file still exists.
+
+One answer per script rather than one per stdin shape, and that is measured: bash answers **identically
+for all 120** under both, checked by running both ways and diffing. The two shapes were never about bash.
+
+**Found in passing** (`issues/system/0196`): the caret-blink browser test went red twice in full box runs
+and green alone, on the *precondition* that 0159's fix left in front of its sampling guard. Its message
+says a sample cost 1 ms, so the guard let it through — what was starved was the renderer, not the sampler.
+
