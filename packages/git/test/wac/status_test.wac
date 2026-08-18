@@ -10,16 +10,22 @@
 // and runs in one step, which removes `buildApp`, the temporary executable and the `chmod` with it.
 // A whole `gitst` run is about 1.2s.
 //
-// **`core.excludesFile` stays host-side**, and is the one test of the three that does. It needs
-// `HOME` pointing at a fixture holding `~/.gitignore_global`, and `Cli.exec` passes no environment —
-// a deliberate limit, since an inherited environment is a capability nobody declared. That is the
-// same wall `configchain.test.ts` is behind.
+// **`core.excludesFile` came over on 2026-08-18**, and the paragraph that used to be here was wrong
+// about why it had not. It said `Cli.exec` "passes no environment — a deliberate limit, since an
+// inherited environment is a capability nobody declared", and concluded that with no environment
+// "there is nothing to leak in". Measured: `exec` hands the child the host's **whole** environment,
+// 37 variables. That is `issues/system/0198`, and `issues/system/0182` — which recorded six tests as
+// blocked on the limit — is corrected there.
 //
-// The other direction is worth noting: not passing an environment made the two tests here *stricter*
-// than they were. Both used to run the built program with the ambient environment, so `gitst` read
-// the developer's own `~/.gitconfig` and their global ignore rules could quietly change the answer.
-// The mode-change test had already been bitten by that and worked around it with a temporary `HOME`.
-// With no environment at all there is nothing to leak in.
+// So the leak the old paragraph said could not happen is exactly the one that can: run `gitst` with
+// no `HOME` of its own and it reads the agent's real `~/.gitconfig` and global ignore rules, and the
+// developer's machine decides the answer. Nothing on this container has either file, so these tests
+// were never wrong — only unprotected.
+//
+// The last test below therefore **declares** `HOME` on a `/bin/sh -c` line rather than letting one
+// arrive. That is what `Cli.exec`'s own documentation points a caller at — "a caller who wants a
+// shell asks for one by name" — it overrides the inherited value today, and it is the spelling that
+// still works on the day `exec` stops inheriting.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
@@ -264,5 +270,132 @@ export string test_a_mode_change_with_no_content_change_is_reported_both_directi
   t.eqStr(gitst(t, cli, d), " M exec.sh", "and so do we");
 
   cli.remove(d, true).wait();
+  return t.report();
+}
+
+// ── `core.excludesFile`, which came over on 2026-08-18 ──────────────────────────────────────────
+//
+// This was the last test in packages/git/test/status.test.ts, and it stayed host-side because it
+// needs `HOME` pointing at a fixture holding `~/.gitignore_global`. See the correction at the top of
+// this file: the environment is declared on a `/bin/sh -c` line rather than inherited, which is what
+// `Cli.exec`'s own documentation points a caller at and what keeps working after
+// `issues/system/0198` is fixed.
+
+/** A value as one shell word, so a path is never re-split and a `~` is never expanded here. */
+string shQuoted(string s) {
+  string out = "'";
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    out = out + (c == "'" ? "'\\''" : c);
+  }
+  return out + "'";
+}
+
+/**
+ * `prog args…` with `HOME` set, and nothing else changed.
+ *
+ * **Declared, not inherited.** `Cli.exec` hands the child the host's whole environment today, so
+ * `HOME` would arrive on its own and point at the agent's real home — which is the developer's
+ * `~/.gitconfig` deciding a test's answer. Setting it on the command line overrides that, and is
+ * the only spelling that still works once `exec` stops inheriting.
+ */
+Exec withHome(Cli cli, string home, string prog, string[] args) {
+  string line = "HOME=" + shQuoted(home) + " exec " + shQuoted(prog);
+  for (i32 i = 0; i < args.len(); i++) { line = line + " " + shQuoted(args[i]); }
+  return cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+}
+
+/** `git -C dir` with an identity and a `HOME`, since a commit needs one and the fixture needs both. */
+Exec gitAt(Cli cli, string home, string dir, string[] args) {
+  string[] full = string[args.len() + 6](fill: "");
+  full[0] = "-C";
+  full[1] = dir;
+  full[2] = "-c";
+  full[3] = "user.name=T";
+  full[4] = "-c";
+  full[5] = "user.email=t@e";
+  for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+  return withHome(cli, home, "git", full);
+}
+
+/**
+ * **`core.excludesFile`, and the two places its precedence is visible.**
+ *
+ * It is the lowest of git's four ignore sources, and a matcher that read it at the *wrong* level — or
+ * never read it at all — agrees with git on every path where the sources agree. So this fixture is
+ * built so that all three disagree, and asserts in git's own answer that each disagreement was
+ * resolved before comparing ours to it:
+ *
+ *   - `drop.txt` is named only by the excludes file                    -> ignored, proving it was read
+ *   - `kept.txt` is `!kept.txt` there and `kept.txt` in `.gitignore`   -> ignored, the .gitignore wins
+ *   - `both.txt` is `both.txt` there and `!both.txt` in `info/exclude` -> listed, info/exclude wins
+ *
+ * The order was measured with `git check-ignore -v`, which names the deciding file and line, rather
+ * than taken from the documentation. `~/` is used rather than an absolute path on purpose: it is what
+ * people actually write, and expanding it needs `HOME`.
+ */
+export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_info_exclude(
+    Core core, Cli cli) {
+  T t = T.create();
+  string who = agentDir(cli);
+  string suffix = who == "" ? "" : "-" + who;
+  string d = "/tmp/wac-git-ex" + suffix;
+  string home = "/tmp/wac-git-home" + suffix;
+  cli.remove(d, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(d, true).wait();
+  cli.mkdir(home, true).wait();
+
+  Exec init = gitAt(cli, home, d, string[]("init", "-q", "-b", "main", "."));
+  t.eqI32(init.status, 0, "git init — " + string.fromBytes(init.stderr));
+  if (init.status != 0) { return t.report(); }
+
+  cli.writeFile(home + "/.gitignore_global", "drop.txt\n!kept.txt\nboth.txt\n".toBytes()).wait();
+  // In the repository's own config, so ours and git's read the setting from the same file. Quoted so
+  // the shell leaves the `~` for git to expand.
+  gitAt(cli, home, d, string[]("config", "core.excludesFile", "~/.gitignore_global"));
+  cli.writeFile(d + "/.git/info/exclude", "!both.txt\n".toBytes()).wait();
+  cli.writeFile(d + "/.gitignore", "kept.txt\n".toBytes()).wait();
+  string[] files = string[]("drop.txt", "kept.txt", "both.txt", "plain.txt");
+  for (i32 i = 0; i < files.len(); i++) {
+    cli.writeFile(d + "/" + files[i], "x\n".toBytes()).wait();
+  }
+  cli.writeFile(d + "/tracked.txt", "x\n".toBytes()).wait();
+  gitAt(cli, home, d, string[]("add", "tracked.txt"));
+  Exec made = gitAt(cli, home, d, string[]("commit", "-qm", "one"));
+  t.eqI32(made.status, 0, "git commit — " + string.fromBytes(made.stderr));
+
+  string theirsText = withoutTrailingNewline(
+    string.fromBytes(gitAt(cli, home, d, string[]("status", "--porcelain")).stdout));
+  string[] theirs = splitLines(theirsText);
+
+  // **The shape, asserted before the comparison.** Each of these is the fixture doing its job; a
+  // fixture where the excludes file never mattered would pass against a matcher that ignored it.
+  t.isTrue(!anyEndsWith(theirs, " drop.txt"),
+           "the excludes file was not read by git: " + theirsText);
+  t.isTrue(!anyEndsWith(theirs, " kept.txt"),
+           "a .gitignore did not override the excludes file's negation");
+  t.isTrue(anyEndsWith(theirs, " both.txt"), "info/exclude did not override the excludes file");
+  t.isTrue(anyEndsWith(theirs, " plain.txt"), "the fixture has no plainly-untracked file left");
+
+  // And the deciding lines themselves, which is the measurement rather than an inference from the
+  // list. `check-ignore` exits non-zero when some path is not ignored, which `both.txt` is not, so
+  // only its output is read.
+  string verdicts = string.fromBytes(
+    gitAt(cli, home, d, string[]("check-ignore", "-v", "kept.txt", "both.txt")).stdout);
+  t.isTrue(verdicts.indexOf(".gitignore:1:kept.txt") >= 0,
+           ".gitignore did not decide kept.txt: " + verdicts);
+
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec ours = withHome(cli, home, wac,
+                       string[]("run", "--allow-read", "--allow-write", "--allow-env",
+                                "packages/git/example/gitst.wac", "--", d));
+  t.eqStr(ours.error, "", "the wac binary could be started");
+  t.eqI32(ours.status, 0, "gitst exited zero: " + string.fromBytes(ours.stderr));
+  t.eqStr(withoutTrailingNewline(string.fromBytes(ours.stdout)), theirsText,
+          "gitst and git disagree about the same directory");
+
+  cli.remove(d, true).wait();
+  cli.remove(home, true).wait();
   return t.report();
 }

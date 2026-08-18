@@ -654,7 +654,7 @@ export Vec<string> statusOf(Repo r, u8[] excludes) {
             // The same test lives in `worktreeStatus` above, which answers this column on its own for a
             // caller with no `HEAD` to compare against. Two copies rather than one because the loops
             // differ in what else they carry, and a helper taking six arguments to save four lines was
-            // the worse trade — but they must agree, and `test/status.test.ts` drives both.
+            // the worse trade — but they must agree, and `test/wac/status_test.wac` drives both.
             y = "M";
           }
         }
