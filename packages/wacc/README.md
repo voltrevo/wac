@@ -376,7 +376,7 @@ bug produced.
 `spec/cases` is a corpus of whole programs, each four to ten lines, each carrying its own
 expectation — `emits`, `refused`, or `answers f = 42`. No reference compiler to agree with, no
 package graph, no corpus to load, no timing. `compiler/wacCases.test.ts` holds the reference to them
-and `test/cases.test.ts` holds wacc to the same files.
+and `test/wac/cases_test.wac` holds wacc to the same files.
 
 It exists because every defect found here so far came from an expensive oracle — the 342-file
 corpus, a package's own suite, a differential against the reference — and every one of them, once

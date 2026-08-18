@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0154](open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md) | an exported struct name that collides in a link produces a module whose manifest lists exports it does not have, and *other* files fail | bug | invalid wasm |
 | [0153](open/0153-a-build-cost-two-emits-and-five-front-ends-and-what-is-left.md) | a build cost two emits and five front ends; what is left after fixing that | performance | no error |
 | [0152](open/0152-wacc-warns-that-a-downcast-out-of-anyref-always-traps-and-it-does-not.md) | wacc warns that a downcast out of `anyref` always traps, and it does not | diagnostic | wrong answer |
 | [0151](open/0151-the-reference-refuses-an-identity-test-the-spec-allows.md) | the reference refuses an identity test the spec allows, so a sweep row cannot be closed | bug | compile error |
@@ -26,7 +27,7 @@ has been fixed and why.
 
 ## Closed
 
-153 issues, 135 closed.
+154 issues, 135 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
