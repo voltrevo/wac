@@ -1,10 +1,12 @@
-# 0203 — the gate fails one run in six, and never on the same test twice
+# 0203 — the gate fails one run in six, and mostly it is right to
 
 - **Status:** open
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** bug
 - **Symptom:** no error
+- **Note:** filed as "a wide, load-sensitive tail" and corrected twice as the failures were read. Two of
+  the five were real defects. Read the table before quoting the rate.
 
 ## The measurement
 
@@ -33,13 +35,20 @@ all:
 | `reqbuf.test.ts` | a race: a fixed 200ms before stopping a responder. Fixed — it waits for the handler. |
 | `tls/test/client.test.ts` | a race: the port was taken between choosing it and binding it, so `listening` answered about a stranger and the request was refused. Fixed — a bind failure is retried, and only that. |
 | `wacc/test/bindgenWac.test.ts` | **a true red.** The two bindgen generators disagreed about one line, because `ab1f97f8` changed the TypeScript one; `34af4346` brought the wac one back in line and `4dc5aed7` a third. Nothing to do with load. |
-| `raster/test/live.test.ts` | `NotCapable: Requires sys access to "homedir"` — playwright wants `--allow-sys` and `deno task test` withholds it. A permission condition, not a race. |
+| `raster/test/live.test.ts` | **a true red too.** `193e9aca` added the test at 13:46 without the permission guard playwright needs at import time; my gate ran at 13:53 and failed; `8293cf70` — "the live test must ask for the permission it needs" — added the guard at 13:58. |
 | `platform/test/native_examples.test.ts` | unexplained; recorded in `issues/system/0128` with its two candidates. |
 
-So the *rate* stands — five of twenty-eight runs failed, and re-running until green is the same as having no
-gate with worse bookkeeping. The *diagnosis* does not: one of the five was a genuine defect that a flake
-story would have taught people to re-run past. That is the sharper hazard here, and it is why "the gate is
-flaky" is a claim worth refusing until each failure has been read.
+So the *rate* stands — five of twenty-eight runs failed — and the *diagnosis* is now the opposite of what
+this issue was filed to say. **Two of the five were genuine breakage**, both from commits that arrived while
+I was working and both fixed by their authors within minutes: `push.sh` merges before it runs the suite, so
+another agent's in-flight red becomes my failed push. Two were races and are fixed. One is unexplained.
+
+That leaves a false-red rate of two or three in twenty-eight, not five — and a gate that caught two real
+defects in a day. **"The gate is flaky" was wrong twice over**, and both times the only evidence for it was
+that I had not read the failures. The rate is worth watching; the story it invites is worth refusing.
+
+What survives of the original point is narrower and still true: a fixed wait standing in for an event is a
+false red waiting to happen, and this repository has three good remedies for it already.
 
 ## The shape, where it has been diagnosed
 
