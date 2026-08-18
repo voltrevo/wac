@@ -137,7 +137,7 @@ The literal-path half is fixed too, which is what makes the conditional rule saf
 return skipped everything inside a compound literal, so `i32 n = p is null ? 1 : 0;` lost the warning
 about `is null` on a non-null reference the moment `cond ? 1 : 2` counted as one. Both callers walk the
 expression either way now, the `Return` gate uses `litFamily` like the declaration one beside it, and
-`reach.test.ts` and `warnings.test.ts` — the two that caught it — are green.
+`reach.test.ts` and `test/wac/warnings_test.wac` — the two that caught it — are green.
 
 What is left in the sweep's missed list is not this: two cases need template bodies instantiated, which is
 a difference from the reference by design, and the rest are single corners.
