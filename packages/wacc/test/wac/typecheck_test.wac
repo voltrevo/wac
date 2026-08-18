@@ -986,3 +986,110 @@ export string test_rung3_every_conversion_against_every_cast_operator(Core core,
            " rejected, all caught");
   return t.report();
 }
+
+/**
+ * Two things the method rules had wrong, both found by re-tallying what the corpus still misses.
+ *
+ * **Statics are not inherited.** `Sub.make()` is an error even when `Base` declares `make` and `Sub`
+ * extends it — *"struct 'Sub' has no static method 'make'"*. That is the opposite of instance
+ * methods, which are inherited, and a single lookup with a flag would have got one of them wrong.
+ *
+ * **Constness travels through field access.** `this.inner.mutate()` inside a `const this` method is
+ * refused, and seeing that means following the receiver rather than looking only at a plain name.
+ *
+ * What is still uncaught, on purpose: `Counter c = this; c.mutate();`, which the reference also
+ * refuses. Knowing that needs to track where `c` came from — flow analysis rather than a walk — and
+ * uncaught is the safe direction.
+ */
+export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiver(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    "struct Base { i32 b; Base make() { return Base(1); } } struct Sub : Base { i32 e2; } " +
+    "export void bad() { Sub s = Sub.make(); }",
+    "struct Inner { i32 v; void mutate(this) { this.v = 1; } } " +
+    "struct Outer { Inner inner; void tryMutate(const this) { this.inner.mutate(); } }"),
+  string[](
+    // An instance method *is* inherited.
+    "struct Base { i32 b; i32 get(const this) { return this.b; } } struct Sub : Base { i32 e2; } " +
+    "export i32 ok(Sub s) { return s.get(); }",
+    // A static on the struct that declares it.
+    "struct Base { i32 b; Base make() { return Base(1); } } " +
+    "export void ok2() { Base b = Base.make(); }",
+    // Non-const receiver, deep.
+    "struct Inner { i32 v; void mutate(this) { this.v = 1; } } " +
+    "struct Outer { Inner inner; void ok3(this) { this.inner.mutate(); } }"),
+  "statics and const receivers");
+  return t.report();
+}
+
+// Three families that share nothing but the slot they were found in: an array literal's elements, a
+// parameter list read for its own sake, and a scope wider than a function. The last is why the other
+// two arrived late — nothing before this walked a declaration that was not a body.
+export string test_rung3_array_elements_duplicate_parameters_and_module_level_consts(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    // Elements and fills carry the element type, not their own.
+    "export void f() { i8[] b = i8[](1.5); }",
+    "export void f() { i32[] b = i32[](, 1); }",
+    "struct E { i32 v; } export void f() { E[] e = E[2](fill: 5); }",
+    // A parameter list is checked without looking at a single use.
+    "export void f(i32 a, i32 a) { }",
+    "struct S { i32 v; void m(this, i32 a, f64 a) { } }",
+    // A module-level const is const everywhere, including through a field.
+    "const i32 K = 1; export void f() { K = 2; }",
+    "struct P { i32 v; } const P S = P(1); export void f() { S.v = 9; }"),
+  string[](
+    // The element type accepts a literal the same way an initialiser does.
+    "export void f() { i8[] b = i8[](1); }",
+    // An integer literal widens to `i64` but not to `f64` — an element is no more permissive than an
+    // initialiser, and `f64[2](fill: 1)` is a mismatch for the same reason `f64 x = 1` is.
+    "export void f() { i64[] b = i64[](1); }",
+    "export void f() { f64[] b = f64[2](fill: 1.0); }",
+    "struct E { i32 v; } export void f() { E[] e = E[2](fill: E(1)); }",
+    // Two names that only look alike, and a shadow in an inner scope rather than a repeat.
+    "export void f(i32 a, i32 b) { }",
+    "struct S { i32 v; void m(this, i32 a) { } void n(this, i32 a) { } }",
+    // Reading a module-level const, and a local of the same name in a body.
+    "const i32 K = 1; export i32 f() { return K; }",
+    "struct P { i32 v; } const P S = P(1); export i32 f() { return S.v; }"),
+  "elements, parameters and module consts");
+  return t.report();
+}
+
+// The builtin surface on primitive types, which no signature in a file describes. This was the
+// largest single uncaught cluster: a receiver that is a type name but not a struct was silently
+// skipped by every rule, so `f64.nope()` and `string.fromBytes(5)` both passed unremarked.
+export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    // Arity, at the call.
+    "export string bad() { return string.fromCodepoint(); }",
+    "export string bad() { return string.fromBytes(); }",
+    "export u64 bad() { return f64.toBits(); }",
+    "export i32 bad() { return \"hi\".toBytes(1).len(); }",
+    // Argument type, at the argument. Exact, not assignable: an f32 widens to an f64 everywhere else,
+    // and still cannot be the argument of `f32.toBits`.
+    "export string bad() { return string.fromCodepoint(1.5); }",
+    "export f64 bad() { return f64.fromBits(1.0); }",
+    "export u32 bad(f64 x) { return f32.toBits(x); }",
+    "export f32 bad(u64 b) { return f32.fromBits(b); }",
+    "export string bad() { return string.fromBytes(5); }",
+    "export string bad(i8[] b) { return string.fromBytes(b); }",
+    // A name that is not on the surface at all.
+    "export void bad() { f64.nope(1.0); }",
+    "export void bad() { string.nosuch(1); }"),
+  string[](
+    "export string ok() { return string.fromCodepoint(65); }",
+    "export string ok(u8[] b) { return string.fromBytes(b); }",
+    "export u64 ok(f64 x) { return f64.toBits(x); }",
+    "export f64 ok(u64 b) { return f64.fromBits(b); }",
+    "export u32 ok(f32 x) { return f32.toBits(x); }",
+    "export f32 ok(u32 b) { return f32.fromBits(b); }",
+    "export i32 ok() { return \"hi\".toBytes().len(); }",
+    // A local of that name is a variable, not a type: the scope is consulted before the surface.
+    "export i32 ok(i32 f64) { return f64; }"),
+  "the builtin surface");
+  return t.report();
+}
