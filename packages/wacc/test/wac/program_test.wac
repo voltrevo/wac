@@ -24,7 +24,7 @@
 // generator that dropped a cast it needed would still read like JavaScript.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, Stat } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles } from "../../src/api.wac";
 import { importSpecs, resolveFrom } from "../../src/files.wac";
@@ -42,19 +42,55 @@ string scratch(Cli cli, string name) {
 string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
 /**
- * `example/wacc.wac` built into a module, once per test that needs it.
+ * The newest modification time among everything the built program is made of.
  *
- * About five seconds. Cached under `.cache` and reused when it is already there, so a file that runs
- * three of these pays for one — and a stale one cannot survive, because `wac build` rewrites it.
+ * The program's own import graph, walked the way the program walks it — and the binary that compiles
+ * it, which is the input a source walk cannot see: `wac` carries a prebuilt seed, so a rebuilt binary
+ * can turn the same sources into a different module. `issues/system/0160` is what missing that costs.
  */
-string buildProgram(T t, Cli cli, string dir) {
+i64 newestInput(Cli cli) {
+  i64 newest = 0 as i64;
+  Stat bin = cli.stat(wacBinary(cli)).wait();
+  if (bin.exists) { newest = bin.modifiedMillis; }
+  Graph g = graphOf(cli, SOURCE);
+  for (i32 i = 0; i < g.paths.len(); i++) {
+    Stat s = cli.stat(g.paths[i]).wait();
+    if (s.exists && s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+  }
+  return newest;
+}
+
+/**
+ * `example/wacc.wac` built into a module — **once for the file, and once per change after that.**
+ *
+ * The docstring here used to say it was cached and reused, and it was not: each of the four tests
+ * below called this with its own `scratch` directory, which `scratch` had just emptied, so the file
+ * built the same program four times. About two seconds each, which was most of the 9.6s this file
+ * cost and made it the second-largest test in the `wac` lane.
+ *
+ * Now it really is cached, in a directory of its own that nothing empties, and the freshness rule is
+ * the one `tools/seedFresh.test.ts` uses for the seed: mtimes. Older than any of its inputs — the
+ * import graph or the binary that compiles it — and it is built again. It does **not** cover a
+ * `.cache` entry corrupted by something else writing there, which is why the build writes to a name
+ * of its own rather than sharing one with any other test file.
+ */
+string buildProgram(T t, Cli cli) {
+  // **Not `scratch("waccprog")`, and the name is the whole reason.** The first test below asks for a
+  // scratch directory by that name and `scratch` empties what it is given, so a cache that lived
+  // there was deleted by the first test and rebuilt by it every run — which is what the first
+  // version of this did, silently and at full price.
+  string dir = cli.cwd().wait() + "/.cache/waccprog-built";
+  cli.mkdir(dir, true).wait();
   string stem = dir + "/wacc";
+  string wasm = stem + ".wasm";
+  Stat have = cli.stat(wasm).wait();
+  if (have.exists && have.modifiedMillis > newestInput(cli)) { return wasm; }
   Exec r = cli.exec(wacBinary(cli),
                     string[]("build", SOURCE, "-o", stem, "--allow-read", "--allow-write",
                              "--quiet"), u8[0]()).wait();
   t.isTrue(r.ran(), "the wac binary ran — " + r.error);
   t.eqI32(r.status, 0, "building " + SOURCE + " — " + string.fromBytes(r.stderr));
-  return r.ran() && r.status == 0 ? stem + ".wasm" : "";
+  return r.ran() && r.status == 0 ? wasm : "";
 }
 
 /** Run the built program with `args`. */
@@ -103,7 +139,7 @@ export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(
     Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "waccprog");
-  string program = buildProgram(t, cli, dir);
+  string program = buildProgram(t, cli);
   if (program == "") { return t.report(); }
 
   string entry = "packages/json/src/json.wac";
@@ -143,7 +179,7 @@ export string test_it_names_the_file_it_cannot_read(Core core, Cli cli) {
   // left, which points at the file that *imported* it. The walk stops and says which path.
   T t = T.create();
   string dir = scratch(cli, "waccprog-missing");
-  string program = buildProgram(t, cli, dir);
+  string program = buildProgram(t, cli);
   if (program == "") { return t.report(); }
 
   cli.writeFile(dir + "/main.wac",
@@ -160,7 +196,7 @@ export string test_it_names_the_file_it_cannot_read(Core core, Cli cli) {
 export string test_check_refuses_a_program_the_checker_refuses_and_says_where(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "waccprog-bad");
-  string program = buildProgram(t, cli, dir);
+  string program = buildProgram(t, cli);
   if (program == "") { return t.report(); }
 
   cli.writeFile(dir + "/bad.wac", "export i32 f() { return \"no\"; }\n".toBytes()).wait();
@@ -183,7 +219,7 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   // reason the JavaScript mode exists at all.
   T t = T.create();
   string dir = scratch(cli, "waccprog-glue");
-  string program = buildProgram(t, cli, dir);
+  string program = buildProgram(t, cli);
   if (program == "") { return t.report(); }
 
   cli.writeFile(dir + "/m.wac",
