@@ -294,6 +294,30 @@ is.
 Worth writing down because the facade reading is the intuitive one, and taking it would have made
 step 3 block on `issues/lang/0073` for no gain.
 
+### The move list, counted
+
+`packages/std` is five files, and they are not equal work — importers, counted 2026-08-18:
+
+| file | importers | note |
+|---|---:|---|
+| `result.wac` | 0 | imports `option.wac`, so it cannot move alone |
+| `option.wac` | 2 | `json/src/value.wac`, `sh/src/exec.wac` |
+| `map.wac` | 6 | |
+| `hash.wac` | 9 | |
+| `vec.wac` | 64 | the one that makes this a sweep |
+
+So `option` + `result` are the pair to move first — eight files touched including the four
+`packages/std/test/wac/*_test.wac` that name them, `compiler/wapyPrint.ts` and `packages/std/cov.ts`
+— and they exercise the interesting case on the way: `result.wac` imports `./option.wac`, so a
+sibling resolving a sibling inside the tree is proved by the first move rather than the last.
+
+**One decision that move forces: where a built-in tree's tests live.** `option_test.wac` is under
+`packages/std/test/wac/` and its subject would be `core/option.wac`. Either the tests move with the
+source — `core/test/` — or a package keeps tests for code it no longer contains. The first is
+tidier and makes `core/` a package like any other, which is what D3 says it becomes; the second
+avoids inventing a test root inside a tree whose whole point is to be embedded. Not settled here,
+because it is cheap to settle when somebody is holding the files.
+
 ### Ordering
 
 The note's stated reason for 3 before 4 is that the migration is mechanical only once the trees are
