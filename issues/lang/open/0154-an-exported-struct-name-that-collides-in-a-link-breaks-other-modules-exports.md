@@ -85,6 +85,24 @@ and the other chunks do not: the same defect reports 60 failures from a whole-di
 quarter of that from the lane. Nothing is masked, but a count that moves with an unrelated file being
 added is worth knowing about before it is read as flakiness.
 
+## Built on its own, the module has no code at all
+
+Kept with `WAC_KEEP_AGGREGATE=1` and built with `wac build`, the aggregate that exhibits this produces a
+73,846-byte file whose only section is `wac.manifest` — no type, function, code or export section. The
+manifest inside it is complete and valid JSON listing all 50 exports. The control, the aggregate from
+`packages/tty` built the same way, has the normal sections: type 21,322 bytes, import, function, table,
+global, export 30,873.
+
+So the emit does not merely drop exports; on this path it produces nothing. Running an export the manifest
+lists answers `wac: test_zz_trivial__f0 is not callable`.
+
+**`wac build` exits 0 for that** and prints `73,846 bytes from 72 file(s)`, which is
+`issues/lang/0155` — the reason nothing has ever noticed this.
+
+The two paths degrade differently, and that is a clue worth keeping: `wac test` builds the same source in
+memory and gets a module where most tests run and only the no-argument ones are missing, while `wac build`
+gets no code at all.
+
 ## How to look at the module
 
 `WAC_KEEP_AGGREGATE=1 wac test packages/wacc/` keeps the generated file as
