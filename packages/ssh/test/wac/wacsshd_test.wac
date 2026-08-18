@@ -23,12 +23,12 @@ import { copyPreserving, haveSshd, keygen, publicBlobText, restrict, scratch, wo
   from "./fixture.wac";
 
 /** The ordinary read-only server, or `ok` false with `t` already told why. */
-Wacsshd server(T t, Cli cli, string name, string[] extra, bool writable) {
+Wacsshd server(T t, Core core, Cli cli, string name, string[] extra, bool writable) {
   string binary = buildServer(t, cli, writable);
   if (binary == "") {
     return Wacsshd(false, "the server did not build", "", -1, Daemon(-1, "", ""));
   }
-  Wacsshd s = startWacsshd(t, cli, name, extra, binary);
+  Wacsshd s = startWacsshd(t, core, cli, name, extra, binary);
   if (!s.ok) { t.fail("our sshd did not come up — " + s.error); }
   return s;
 }
@@ -36,7 +36,7 @@ Wacsshd server(T t, Cli cli, string name, string[] extra, bool writable) {
 export string test_openssh_client_connects_authenticates_and_runs_a_command(Core core, Cli cli) {
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-basic", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-basic", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
   string key = s.dir + "/clientkey";
 
@@ -119,7 +119,7 @@ export string test_with_a_pty_the_server_does_the_line_editing(Core core, Cli cl
   // start where the last one ended.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-pty", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-pty", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   // `echo hX<DEL>i` — typed wrong and corrected, which only works if this end is editing.
@@ -154,7 +154,7 @@ export string test_control_c_ends_a_running_command_and_the_session_carries_on(C
   // `$?` is **130**, which is what every shell reports for a command an interrupt ended.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-interrupt", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-interrupt", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   // **A loop that cannot end on its own and cannot print its way out.** Two earlier versions of
@@ -211,7 +211,7 @@ export string test_a_client_that_closes_its_stdin_does_not_interrupt_the_command
   // is why 0133 was one failure in a full suite and 0/10 alone.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-eof", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-eof", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   // No pause before the `^D`: it must land microseconds after the line, while the loop runs.
@@ -238,7 +238,7 @@ export string test_a_line_typed_while_a_command_is_running_is_still_a_command(Co
   // comment claimed they were kept.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-typeahead", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-typeahead", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   // **The command this used to type was `yes | wc -l`, and it stopped working without failing.** It
@@ -283,7 +283,7 @@ export string test_a_line_typed_while_a_command_is_running_is_still_a_command(Co
 export string test_an_interactive_session_keeps_its_shell_between_lines(Core core, Cli cli) {
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-session", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-session", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   // `ssh -T` asks for a shell and no pty, which is the case this server serves. Lines go in over
@@ -355,7 +355,7 @@ export string test_a_client_that_sends_environment_requests_first_still_runs(Cor
   // It is invisible without this test, because the rest of them pass `-F /dev/null`.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-sendenv", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-sendenv", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
   string key = s.dir + "/clientkey";
   string[] sendEnv = string[]("-o", "SendEnv=LANG LC_*");
@@ -384,7 +384,7 @@ export string test_a_refused_subsystem_is_answered_because_it_wanted_a_reply(Cor
   // want_reply set, and there is no subsystem here.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-subsystem", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-subsystem", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   Said r = realSsh(cli, s, "sftp", s.dir + "/clientkey", string[]("-s"));
@@ -405,7 +405,7 @@ export string test_the_server_announces_the_port_it_is_actually_listening_on(Cor
   // that is merely present but wrong fails too.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-announce", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-announce", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   string said = s.said(cli);
@@ -449,7 +449,7 @@ export string test_our_own_client_talks_to_our_own_server_both_ends_in_wac(Core 
   if (!haveSshd(cli)) { return t.report(); }
   string client = buildClient(t, cli, false);
   if (client == "") { return t.report(); }
-  Wacsshd s = server(t, cli, "wacsshd-bothends", string[0](fill: ""), false);
+  Wacsshd s = server(t, core, cli, "wacsshd-bothends", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   // A HOME for the client, with the server's host key recorded so it will proceed.

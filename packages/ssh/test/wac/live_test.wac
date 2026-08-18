@@ -58,7 +58,7 @@ export string test_connect_to_a_real_openssh_server_and_authenticate_with_a_publ
     Core core, Cli cli) {
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Sshd s = startSshd(t, cli, "ssh-live-connect");
+  Sshd s = startSshd(t, core, cli, "ssh-live-connect");
   if (!s.ok) {
     t.fail("sshd did not come up — " + s.error);
     stopSshd(cli, s);
@@ -145,7 +145,7 @@ export string test_run_a_command_on_a_real_openssh_server_and_read_its_output(Co
   // into the handshake, under the parallel suite only, passing alone immediately afterwards.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Sshd s = startSshd(t, cli, "ssh-live-exec");
+  Sshd s = startSshd(t, core, cli, "ssh-live-exec");
   if (!s.ok) {
     t.fail("sshd did not come up — " + s.error);
     stopSshd(cli, s);
@@ -248,7 +248,7 @@ export string test_a_known_hosts_written_by_the_real_ssh_client_is_read_correctl
   // shows as a first connection rather than as a bug.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  Sshd s = startSshd(t, cli, "ssh-live-knownhosts");
+  Sshd s = startSshd(t, core, cli, "ssh-live-knownhosts");
   if (!s.ok) {
     t.fail("sshd did not come up — " + s.error);
     stopSshd(cli, s);

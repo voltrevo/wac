@@ -30,7 +30,7 @@
 // **A caller must check `waitForPort`'s answer.** A server that never came up leaves every later
 // assertion measuring a refused connection, which is a different failure wearing the same clothes.
 
-import { Cli, Exec, Socket } from "../../platform/src/platform.wac";
+import { Cli, Core, Exec, Socket } from "../../platform/src/platform.wac";
 import { quoted } from "./childenv.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
@@ -144,14 +144,18 @@ export Daemon start(Cli cli, string line, string logPath) {
 /**
  * Poll until something accepts on `host:port`.
  *
- * `tries` bounds it. A refused connection returns immediately, so this spins rather than sleeps — see
- * the header. False means nothing ever answered, and the caller must say so rather than carry on.
+ * `tries` bounds it **in attempts, which is not a bound in time** — a refused connection returns in
+ * microseconds, so 400 tries is ten milliseconds of patience — measured — and a loaded machine walks
+ * past it. `waitForPortWithin` takes a deadline and sleeps between attempts; reach for that unless the
+ * point is specifically to dial a fixed number of times. False means nothing ever answered, and the
+ * caller must say so rather than carry on.
  *
  * **Not for a server that accepts once.** This *connects*, which is a real client as far as the
  * server is concerned: a fixture written `accept()` and then serve it has already spent its one
  * connection by the time the test dials, and what the test sees is a reset rather than an answer.
  * That cost an afternoon in `packages/platform/test/wac/waitany_test.wac`, whose listeners answer
- * exactly one client each. Use `waitForLog` for those and have the fixture say when it is listening.
+ * exactly one client each. Use `waitForLogWithin` for those and have the fixture say when it is
+ * listening.
  */
 export bool waitForPort(Cli cli, string host, i32 port, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
@@ -164,28 +168,61 @@ export bool waitForPort(Cli cli, string host, i32 port, i32 tries) {
   return false;
 }
 
-/** Whatever the daemon wrote, for a message about why it did not come up. */
-export string logOf(Cli cli, Daemon d) {
-  return string.fromBytes(cli.readFile(d.log).wait().bytes);
+/**
+ * Poll until something accepts on `host:port`, or `millis` have passed. **Prefer this to `waitForPort`.**
+ *
+ * A bound in attempts is not a bound in time, and the difference is the whole point: a refused
+ * connection returns in microseconds, so `waitForPort(cli, host, port, 400)` reads as patience and is
+ * ten milliseconds of it, measured. That is enough while the machine is idle and the server binds in one,
+ * and it is why `packages/ssh`'s live tests fail under load — the server takes longer to start and the
+ * wait does not take longer to wait. Four `wac test` workers on this box was enough to do it.
+ *
+ * So the bound is a deadline, and between attempts this *sleeps* rather than spinning — which also
+ * stops a readiness check from being the thing loading the machine.
+ */
+export bool waitForPortWithin(Core core, Cli cli, string host, i32 port, i32 millis) {
+  i64 deadline = core.nowMillis().wait() + (millis as i64);
+  for (i32 guard = 0; guard < 100000; guard++) {
+    Socket s = cli.connect(host, port).wait();
+    if (s.handle >= 0) {
+      cli.closeSocket(s.handle);
+      return true;
+    }
+    if (core.nowMillis().wait() >= deadline) { return false; }
+    core.sleepMillis(5).wait();
+  }
+  return false;
 }
 
 /**
- * Poll until the daemon's log contains `text`.
+ * Poll until the daemon's log contains `text`, or `millis` have passed.
  *
- * The readiness check for a server that cannot be dialled speculatively — see `waitForPort`. The
+ * The readiness check for a server that cannot be dialled speculatively — see `waitForPortWithin`. The
  * fixture says when it is listening and this waits for it to say so, which costs the fixture one
  * `print` and costs the server nothing.
  *
  * A fixture that buffers its output will never appear ready, so whatever prints the marker has to
  * flush. That is not a detail this can paper over: the alternative is a readiness check that answers
  * yes before the socket exists.
+ *
+ * There was an attempt-bounded `waitForLog` beside this; it is gone, because reading a log is a syscall
+ * and so its bound was a duration nobody chose and nobody could read off the call.
  */
-export bool waitForLog(Cli cli, Daemon d, string text, i32 tries) {
-  for (i32 i = 0; i < tries; i++) {
+export bool waitForLogWithin(Core core, Cli cli, Daemon d, string text, i32 millis) {
+  i64 deadline = core.nowMillis().wait() + (millis as i64);
+  for (i32 guard = 0; guard < 100000; guard++) {
     if (logOf(cli, d).indexOf(text) >= 0) { return true; }
+    if (core.nowMillis().wait() >= deadline) { return false; }
+    core.sleepMillis(5).wait();
   }
   return false;
 }
+
+/** Whatever the daemon wrote, for a message about why it did not come up. */
+export string logOf(Cli cli, Daemon d) {
+  return string.fromBytes(cli.readFile(d.log).wait().bytes);
+}
+
 
 /**
  * Stop it, and do not care whether it was already gone.

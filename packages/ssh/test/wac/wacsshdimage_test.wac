@@ -26,12 +26,12 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Said, Wacsshd, buildServer, realSsh, startWacsshd, stopWacsshd } from "./wacsshd.wac";
 import { haveSshd, keygen, publicBlobText, restrict, scratch } from "./fixture.wac";
 
-Wacsshd imageServer(T t, Cli cli, string name, string image) {
+Wacsshd imageServer(T t, Core core, Cli cli, string name, string image) {
   string binary = buildServer(t, cli, true);
   if (binary == "") {
     return Wacsshd(false, "the writable server did not build", "", -1, Daemon(-1, "", ""));
   }
-  Wacsshd s = startWacsshd(t, cli, name, string[]("-i", image), binary);
+  Wacsshd s = startWacsshd(t, core, cli, name, string[]("-i", image), binary);
   if (!s.ok) { t.fail("the image server did not come up — " + s.error); }
   return s;
 }
@@ -41,7 +41,7 @@ export string test_a_server_booted_on_an_image_serves_every_session_from_it(Core
   if (!haveSshd(cli)) { return t.report(); }
   string holder = scratch(cli, "wacsshd-image-holder");
   string image = holder + "/home.wacimg";
-  Wacsshd s = imageServer(t, cli, "wacsshd-image", image);
+  Wacsshd s = imageServer(t, core, cli, "wacsshd-image", image);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
   string key = s.dir + "/clientkey";
   string[] none = string[0](fill: "");
@@ -72,7 +72,7 @@ export string test_a_server_booted_on_an_image_serves_every_session_from_it(Core
 
   // A different server process, the same file. The image outlived the program that wrote it, which
   // is the difference between saving state and having it.
-  Wacsshd again = imageServer(t, cli, "wacsshd-image-again", image);
+  Wacsshd again = imageServer(t, core, cli, "wacsshd-image-again", image);
   if (again.ok) {
     t.eqStr(realSsh(cli, again, "cat /data/notes; ls /", again.dir + "/clientkey", none).stdout,
             "hello\nbin\ndata\ndev\nproc\n", "the image did not outlive the server that wrote it");
@@ -96,7 +96,7 @@ export string test_a_session_on_an_image_shows_its_own_pipeline_in_ps(Core core,
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
   string holder = scratch(cli, "wacsshd-ps-holder");
-  Wacsshd s = imageServer(t, cli, "wacsshd-ps", holder + "/ps.wacimg");
+  Wacsshd s = imageServer(t, core, cli, "wacsshd-ps", holder + "/ps.wacimg");
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
   string key = s.dir + "/clientkey";
   string[] none = string[0](fill: "");
@@ -177,7 +177,7 @@ export string test_a_server_that_cannot_write_its_image_says_so(Core core, Cli c
   string holder = scratch(cli, "wacsshd-nowrite-holder");
   string image = holder + "/home.wacimg";
 
-  Wacsshd s = startWacsshd(t, cli, "wacsshd-nowrite", string[]("-i", image), binary);
+  Wacsshd s = startWacsshd(t, core, cli, "wacsshd-nowrite", string[]("-i", image), binary);
   t.isTrue(s.ok, "the read-only server did not come up — " + s.error);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
@@ -207,7 +207,7 @@ export string test_a_session_on_an_image_has_its_own_environment(Core core, Cli 
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
   string holder = scratch(cli, "wacsshd-env-holder");
-  Wacsshd s = imageServer(t, cli, "wacsshd-env", holder + "/env.wacimg");
+  Wacsshd s = imageServer(t, core, cli, "wacsshd-env", holder + "/env.wacimg");
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
   Said said = realSsh(cli, s, "echo HOME=[$HOME] PATHLEN=${#PATH} TERM=[$TERM]",
@@ -253,7 +253,7 @@ export string test_two_keys_land_in_two_homes_and_neither_reads_the_others_file(
   t.isTrue(adaPub != "" && gracePub != "", "a generated public key could not be read");
 
   // ── The first server writes the world ──────────────────────────────────────
-  Wacsshd s = imageServer(t, cli, "wacsshd-users-build", image);
+  Wacsshd s = imageServer(t, core, cli, "wacsshd-users-build", image);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
   string build =
     "mkdir /etc; " +
@@ -295,7 +295,7 @@ export string test_two_keys_land_in_two_homes_and_neither_reads_the_others_file(
            "the image the stopped server left behind has no users in it");
 
   // ── …and a second server serves it, to two people ──────────────────────────
-  Wacsshd live = imageServer(t, cli, "wacsshd-users-live", image);
+  Wacsshd live = imageServer(t, core, cli, "wacsshd-users-live", image);
   if (!live.ok) { stopWacsshd(cli, live); cli.remove(keys, true).wait(); return t.report(); }
 
   // Each key lands in its own home, with its own name, without the server being told either.

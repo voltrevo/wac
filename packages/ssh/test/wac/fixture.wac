@@ -27,8 +27,8 @@
 // already written down.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
-import { Daemon, Held, start, stop, waitForPort } from "../../../wactest/src/daemon.wac";
+import { Cli, Core, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Daemon, Held, start, stop, waitForPortWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -181,7 +181,7 @@ export bool wouldReap(Cli cli, string line) {
  * A caller must check `ok`: a server that never came up leaves every later assertion measuring a
  * refused connection, which is a different failure wearing the same clothes.
  */
-export Sshd startSshd(T t, Cli cli, string name) {
+export Sshd startSshd(T t, Core core, Cli cli, string name) {
   reapAbandoned(cli);
   string dir = scratch(cli, name);
 
@@ -217,9 +217,14 @@ export Sshd startSshd(T t, Cli cli, string name) {
   Daemon d = start(cli, "/usr/sbin/sshd -D -f " + quoted(dir + "/sshd_config"), dir + "/sshd.log");
   if (!d.ok()) { return Sshd(false, "sshd did not start — " + d.error, dir, held.port, d); }
 
-  // `waitForPort` connects, which is a real client as far as sshd is concerned — harmless here,
+  // `waitForPortWithin` connects, which is a real client as far as sshd is concerned — harmless here,
   // because sshd accepts many and simply logs a connection that says nothing.
-  if (!waitForPort(cli, "127.0.0.1", held.port, 400)) {
+  //
+  // **Five seconds, and the old bound was 400 *attempts*.** A refused connection returns in
+  // microseconds, so that was ten milliseconds of patience: fine on an idle box, and it reported "sshd
+  // never accepted" on a normally-starting server the moment four `wac test` workers shared the
+  // machine. A deadline costs nothing when the server is quick.
+  if (!waitForPortWithin(core, cli, "127.0.0.1", held.port, 5000)) {
     return Sshd(false, "sshd never accepted on " + itoa(held.port), dir, held.port, d);
   }
   return Sshd(true, "", dir, held.port, d);
