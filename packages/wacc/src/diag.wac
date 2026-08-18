@@ -18,7 +18,12 @@
  */
 export string lexMessage(i32 code) {
   if (code == 1) { return "unexpected character"; }
-  if (code == 2) { return "unterminated string"; }
+  // **"literal", because three other places say so.** `spec/spec/errors.md`'s
+  // `§wac-diag-lex-unterm-str-m9fk2wq` block shows `unterminated string literal`, `compiler/wacLex.ts`
+  // pushes that string, and `packages/wacc/test/specCases.json` records it as the case's expected
+  // message. This said "unterminated string" until 2026-08-18 and nothing caught it: the differentials
+  // compare lex and parse errors by *position*, not by text.
+  if (code == 2) { return "unterminated string literal"; }
   if (code == 3) { return "unknown escape"; }
   if (code == 4) { return "unterminated block comment"; }
   if (code == 5) { return "unterminated character literal"; }

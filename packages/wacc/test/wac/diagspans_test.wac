@@ -89,3 +89,38 @@ export string test_the_help_the_spec_states_for_both_clauses() {
   t.isTrue(init[2] != "", "the mistyped initialiser has no help text");
   return t.report();
 }
+
+/**
+ * `§wac-diag-lex-unterm-str-m9fk2wq` — the wording the spec and the reference both use.
+ *
+ * The spec's block shows `error: unterminated string literal` and an annotation *"string literal is
+ * never closed"*; `compiler/wacLex.ts` pushes `unterminated string literal`; the recorded corpus in
+ * `specCases.json` carries that same string as the case's expected message. wacc said **"unterminated
+ * string"** until 2026-08-18 — the one place in this chain that did not agree, and none of the
+ * differentials could see it because they compare parse and lex errors *by position*, not by text.
+ */
+export string test_the_unterminated_string_message_the_spec_states() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export string f() {\n  return \"hello;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for an unterminated string");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "unterminated string literal", "the message the spec and the reference both use");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-parse-bad-type-n7qm3xf` — the annotation is stated, so it is the contract.
+ *
+ * *"The compiler must emit `span: 3`, `annotation: "unknown type 'foo'"`"*. wacc had the span and said
+ * *"no type foo in scope"*, which is the same fact in different words — and the spec's sentence names
+ * the words. The reference attaches no annotation here at all, so there is no parity to lose.
+ */
+export string test_the_unknown_type_annotation_the_spec_states() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export i32 f() {\n  foo x = 1;\n  return 0;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for an unknown type");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[1], "unknown type 'foo'", "the annotation the spec names");
+  t.eqStr(d[3], "3", "the span the spec names");
+  return t.report();
+}

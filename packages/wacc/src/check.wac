@@ -1986,7 +1986,12 @@ export string typeOfTy(C c, Ty t) {
         }
       }
       if (c.scopeTypes && !knownTypeName(c, base)) {
-        c.reportTok(errUndefinedType(), tok, "no type " + base + " in scope");
+        // **The spec names these words.** `§wac-diag-parse-bad-type-n7qm3xf`: *"The compiler must emit
+        // `span: 3`, `annotation: "unknown type 'foo'"`"*. This said "no type foo in scope", which is
+        // the same fact in different words — and where the spec quotes an annotation, the quote is the
+        // contract. The reference attaches no annotation here at all, so nothing is lost by agreeing
+        // with the spec instead of with it.
+        c.reportTok(errUndefinedType(), tok, "unknown type '" + base + "'");
         return typeNone();
       }
       // **A template is not a type.** `Box b = Box(1)` writes the name of a thing that takes an

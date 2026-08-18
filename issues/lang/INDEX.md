@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0156](open/0156-the-specs-parse-messages-match-neither-compiler.md) | the spec quotes `expected ';'` as a parse message, wacc says `unexpected token` with it in the annotation, the reference says a third thing — and the differentials compare positions, not text | diagnostic | wrong answer |
 | [0155](open/0155-a-build-that-emitted-no-code-reports-success.md) | a build whose emit produced no code writes a manifest-only module and exits 0 | diagnostic | no error |
 | [0154](open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md) | an exported struct name that collides in a link produces a module whose manifest lists exports it does not have, and *other* files fail | bug | invalid wasm |
 | [0153](open/0153-a-build-cost-two-emits-and-five-front-ends-and-what-is-left.md) | a build cost two emits and five front ends; what is left after fixing that | performance | no error |
@@ -28,7 +29,7 @@ has been fixed and why.
 
 ## Closed
 
-155 issues, 135 closed.
+156 issues, 135 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
