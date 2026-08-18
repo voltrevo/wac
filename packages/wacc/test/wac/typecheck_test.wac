@@ -623,3 +623,165 @@ export string test_rung3_arrays_and_nullables(Core core, Cli cli) {
   "arrays and nullables");
   return t.report();
 }
+
+/**
+ * Member access, typed from the struct's field declarations.
+ *
+ * The largest widening of what an expression can be typed from since names arrived: `p.x` has a type
+ * now, so every rule already built reaches field reads without knowing anything about fields. The
+ * receiver is typed by the same function, so `a.b.c` works by recursion for as long as every step is
+ * nameable.
+ *
+ * Inheritance is one hop per lookup up the `parentTok` chain, bounded by the number of structs so a
+ * cycle — which the reference rejects separately — terminates rather than hangs.
+ */
+export string test_rung3_member_access_and_fields_inherited_from_a_parent(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export string a(P p) { return p.x; }",
+    d + "export void c(P p) { string t = p.x; }",
+    d + "export f64 d(C q) { return q.b; }",
+    d + "export void f(P p) { i32 n = p.s; }",
+    d + "export void g(P p, i32 n) { i32 r = p.s + n; }",
+    // An unknown field used to sit in the quiet list as "the reference's own diagnostic and not this
+    // rule's". It is this checker's now — and what it asserts here is that the two rules do not
+    // fight: a field that is missing is reported once, and not also as a type mismatch against the
+    // unknown type a missing field has.
+    d + "export i32 j(P p) { return p.nope; }"),
+  string[](
+    d + "export i32 b(P p) { return p.x; }",
+    d + "export i32 e2(C q) { return q.b; }",
+    d + "export f64 h(C q) { return q.c; }",
+    d + "export string i(P p) { return p.s; }"),
+  "member access");
+  return t.report();
+}
+
+/**
+ * Method bodies, which were not walked at all.
+ *
+ * Every rule this checker has stopped at the edge of a struct: `checkProgram` descended into `Func`
+ * declarations and nothing else, so a method's returns, initialisers, operands and conditions went
+ * entirely unchecked. That is a bigger hole than any single rule, and it was invisible because every
+ * hand-written case in this file is a free function.
+ *
+ * `this` is an ordinary `Ident` whose text is `this`, so typing it is one entry in the scope — the
+ * struct's own name — and `this.x` then resolves through the field table that already existed. A
+ * method without `this` is static, and `this` means nothing in it.
+ *
+ * Missing return is reported at the **return type**. A `Method` carries no position of its own, and
+ * the return type is the first thing it has that does, which is also where the reference puts it.
+ */
+export string test_rung3_method_bodies_and_this(Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    "struct P { i32 x; string bad(this) { return this.x; } }",
+    "struct P { i32 x; void v(this, string s) { i32 n = s; } }",
+    "struct P { i32 x; i32 sh(this, bool c) { if (c) { return 1; } } }",
+    "struct P { i32 x; string s; void w(this) { i32 n = this.s; } }",
+    "struct P { i32 x; bool cmp(this, P other) { return this == other; } }"),
+  string[](
+    "struct P { i32 x; i32 ok(this) { return this.x; } }",
+    "struct P { i32 x; i32 st() { return 1; } }",
+    "struct P { i32 x; void nov(this) { } }",
+    "struct P { i32 x; i32 arg(this, i32 n) { return n; } }",
+    // `this` in a static method is not the struct — it is nothing, and must not resolve.
+    "struct P { i32 x; i32 stat(i32 this2) { return this2; } }"),
+  "method bodies");
+  return t.report();
+}
+
+/**
+ * Assignment, which no rule reached.
+ *
+ * The initialiser question with the declared type coming from the *target* rather than from a `Ty`
+ * node — so it needed an lvalue walk, which is its own node family: a name, a field of one, an
+ * element of one, or an unwrapped nullable. `LIndex` is the one place a type gets narrower going down
+ * the tree (`i32[]` to `i32`), and `LUnwrap` the other (`T?` to `T`).
+ *
+ * Only plain `=`. A compound assignment is the operator's rule rather than this one — the reference
+ * accepts `n += 1` for an `i32` exactly as it accepts `n + 1` — and folding the two would report the
+ * literal cases that rule deliberately skips.
+ */
+export string test_rung3_assignment_through_names_fields_and_elements(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; string s; } ";
+  caughtAndQuiet(t, cli, string[](
+    "export void a(i32 n, string t) { n = t; }",
+    "export void c(i32 n) { n = 1.5; }",
+    "export void f(i32 n, i64 m) { n = m; }",
+    d + "export void d(P p, string t) { p.x = t; }",
+    "export void e2(i32[] a, string t) { a[0] = t; }",
+    d + "export void h(P p, i32 n) { p.s = n; }"),
+  string[](
+    "export void j(i32 n, i32 m) { n = m; }",
+    d + "export void k(P p) { p.x = 1; }",
+    "export void l(i32[] a) { a[0] = 1; }",
+    // Compound assignment belongs to the operator rule, which skips literals on purpose.
+    "export void g(i32 n) { n += 1; }",
+    "export void m(i32 n, i32 o) { n += o; }"),
+  "assignment");
+  return t.report();
+}
+
+/**
+ * Every expression form, in every return slot, with the reference deciding each cell.
+ *
+ * `typeOfExpr` answered *unknown* for everything except a name and a member, so casts, `is`, unary,
+ * index, ternary, calls and constructions all evaporated and every rule downstream went quiet on
+ * them. This is the grid for the rest of them, built the same way as the literal and parameter grids:
+ * the reference decides, and our job is to agree or be silent.
+ *
+ * Each expression is placed in a `return` whose declared type varies, which turns "what type is this
+ * expression" into a question the reference already answers — *"return: expected T, found U"* — with
+ * no need for it to expose a typer.
+ */
+export string test_rung3_every_expression_form_against_every_return_type(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; } i32 fi() { return 1; } string fs() { return \"a\"; } ";
+  string params = "i32 n, i64 m, bool b, P p, i32[] arr, i32? opt";
+  string[] labels = string[](
+    "cast as", "cast as!", "cast as~", "is", "unary minus", "unary not", "index", "ternary",
+    "call", "call string", "construct", "unwrap", "member");
+  string[] forms = string[](
+    "n as i64", "m as! i32", "m as~ i32", "p is P", "-n", "!b", "arr[0]", "b ? n : n",
+    "fi()", "fs()", "P(1)", "opt!", "p.x");
+  string[] returns = string[]("i32", "i64", "bool", "string", "f64", "P");
+  t.eqI32(labels.len(), forms.len(), "a form per label");
+
+  string[] sources = string[forms.len() * returns.len()](fill: "");
+  string[] where = string[forms.len() * returns.len()](fill: "");
+  i32 n = 0;
+  for (i32 f = 0; f < forms.len(); f++) {
+    for (i32 r = 0; r < returns.len(); r++) {
+      sources[n] = d + "export " + returns[r] + " probe(" + params + ") { return " + forms[f] + "; }";
+      where[n] = labels[f] + " into " + returns[r];
+      n = n + 1;
+    }
+  }
+  Ref ref = referenceFor(t, cli, sources);
+  if (!ref.ok) { return t.report(); }
+
+  i32 rejected = 0;
+  i32 caught = 0;
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (ref.count(i) == 0) { assertQuiet(t, ref, i, where[i]); continue; }
+    rejected = rejected + 1;
+    assertSound(t, ref, i, where[i]);
+    if (ours(sources[i]).len() > 0) { caught = caught + 1; }
+  }
+  t.eqI32(sources.len(), forms.len() * 6, "the grid did not run");
+  t.isTrue(rejected >= 60, "only " + itoa(rejected) + " rejected cells — the grid is too easy");
+  // **Asserted, not reported.** Every form in the list above is typed, so every rejection in this
+  // grid is one this slice owns and every one must be caught. Reporting the number instead was the
+  // first version, and untyping casts moved it from 65 to 50 without failing anything — a recall
+  // regression that printed itself and passed. If a form is ever deliberately left untyped, it comes
+  // out of the list and the removal is the decision, rather than a count quietly dropping.
+  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " of " +
+                            itoa(sources.len()) + " cells and we catch " + itoa(caught) +
+                            "; every form is meant to be typed");
+  core.log("    expression grid: " + itoa(sources.len()) + " cells, " + itoa(rejected) +
+           " rejected, all caught");
+  return t.report();
+}
