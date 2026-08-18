@@ -13,8 +13,11 @@
 // a child to completion and a node has to outlive the call.
 
 import { Cli, Exec, Stat } from "../../../platform/src/platform.wac";
-import { Daemon, freePort, logOf, quoted, start, stop, waitForPort }
-  from "../../../wactest/src/daemon.wac";
+import { Daemon, freePort, logOf, start, stop, waitForPort } from "../../../wactest/src/daemon.wac";
+// **From the file that declares it.** `quoted` moved to `childenv.wac` when it got its third caller, and
+// `daemon.wac` imports it without re-exporting — so asking `daemon.wac` for it compiled until the move and
+// not after. Importing does not re-export, which is what the diagnostic says.
+import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** A running node, or `port <= 0` with `why` saying what stopped it. */
