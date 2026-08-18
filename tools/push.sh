@@ -259,8 +259,32 @@ for attempt in 1 2 3; do
     [ -n "$slow" ] && { echo "-- tests that ran unusually long --"; echo "$slow"; }
   fi
 
+  # **The doc checks, which the suite does not run.** `deno task docs` is `wac test tools/` followed by
+  # two Deno files, and the wac half is ten test files nothing else reaches: the lane in `runTests.ts`
+  # walks `packages/` only. So `tools/wac/links_test.wac`, `map_test.wac`, `programs_test.wac`,
+  # `testIgnore_test.wac` and six more — every one of them a guard on this repository's own tooling —
+  # ran only when somebody typed the command. A whole suite log from 2026-08-18 mentions `tools/wac/`
+  # exactly zero times.
+  #
+  # Here rather than in the suite, because two of them read `git ls-files`: in a working tree with a new
+  # file not yet added, a link to it does not resolve and the check is right to say so — which is a
+  # sensible thing to fail a *push* on and a poor thing to fail a mid-edit `deno task test` on. The tree
+  # is clean by the time this runs; the script refuses a dirty one.
+  #
+  # 8s, measured, and it blocks: these are deterministic checks over files in the repository, so a red
+  # one is a red one for everybody rather than a machine having a bad day.
+  if ! deno task docs > "$log.docs" 2>&1; then
+    echo "== the doc checks are red — not pushing =="
+    echo "   \`deno task docs\` runs them. The failures:"
+    grep -E "FAIL|error:|failed" "$log.docs" | head -20
+    echo "-- full output: $log.docs --"
+    exit 1
+  fi
+  echo "== doc checks passed =="
+
   # **The coverage ratchets, after the suite and before the push.** Nineteen packages, 38 seconds
-  # against the suite's four hundred, so the cost is a tenth of a run for the thing the suite cannot
+  # against the suite's two hundred — twelve now that they run four at a time — so the cost is small for
+  # the thing the suite cannot
   # see: an uncovered branch is not a failing test, it is code nothing asked about. issues/system 0101
   # is the whole argument — `coverage:crypto` had been red long enough for the reason to be forgotten,
   # and `rsa.wac` grew eighteen unmeasured branch points while the issue describing that was open,
