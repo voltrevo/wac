@@ -1,0 +1,194 @@
+// `wac check`, `wac compile`, `wac bindgen` — the three the compiler inside the binary handles.
+//
+// These claims had their own spec section and were tested against `wacx` — the reference toolchain
+// run through Deno — over an in-memory filesystem with no process involved. `wacx` is retired, so
+// they move onto the command people type and are driven by spawning it against real files. That is
+// not the same test written twice: the binary's answers differ from `wacx`'s in three places, and
+// each difference was found by running it rather than by reading the old test.
+//
+//   - `check` on a clean file prints a summary. `wacx` printed nothing.
+//   - `bindgen` writes `<stem>.gen.ts`. `wacx` wrote `<name>.wac.ts`.
+//   - A usage error is exit 2. `wacx` used 1 for both usage and compile failures.
+//
+// The old wording survived a copy-paste review of the same page twice, which is the argument for
+// making the spec's examples spawn something.
+//
+// The hash in each name is the spec claim it checks, in `spec/cli/wac.md` — `[§wac-cli-check-4mkq8wp]`,
+// `[§wac-cli-compile-9wkn3pq]`, `[§wac-cli-bindgen-5tqm7wn]` and `[§wac-cli-usage-3nkq8wj]`. A wac
+// export cannot hold the bracketed spelling, so the suffix carries it.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { Core, Cli, Exec, Change, FileResult, Stat } from "../../packages/platform/src/platform.wac";
+
+string MATH() { return "export i32 gcd(i32 a, i32 b) { return b == 0 ? a : gcd(b, a % b); }\n"; }
+string BAD()  { return "export i32 f() { return \"x\"; }\n"; }
+string MAIN() { return "import { f } from \"./lib.wac\";\nexport i32 g() { return f(); }\n"; }
+// Two structs that share no ancestor, so `a is B` is always false — a warning and not an error.
+string WARN() {
+  return "struct A { i32 x; }\nstruct B { i32 y; }\n"
+       + "export i32 f(A a) { return a is B ? 1 : 0; }\n";
+}
+
+struct Dir {
+  bool ok;
+  string path;
+  string what;
+}
+
+Dir workspace(Cli cli, string name) {
+  string dir = scratch(cli, "cli-" + name);
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) { return Dir(false, "", "a working directory: " + made.message); }
+  string[] names = string[]("math.wac", "bad.wac", "main.wac", "lib.wac", "warn.wac");
+  string[] texts = string[](MATH(), BAD(), MAIN(), BAD(), WARN());
+  for (i32 i = 0; i < names.len(); i++) {
+    Change w = cli.writeFile(dir + "/" + names[i], texts[i].toBytes()).wait();
+    if (!w.ok()) { return Dir(false, "", names[i] + ": " + w.message); }
+  }
+  return Dir(true, dir, "");
+}
+
+struct Ran {
+  bool started;
+  i32 status;
+  string out;
+}
+
+/** Run the binary in `dir`, with output joined the way a terminal shows it. */
+Ran wac(Cli cli, string dir, string[] args) {
+  string[] argv = string[args.len()](fill: "");
+  for (i32 i = 0; i < args.len(); i++) {
+    // Entries are named relative to the workspace, so the messages quote a short path and the
+    // assertions below are about the name rather than about where the test happens to write.
+    argv[i] = endsWithWac(args[i]) ? dir + "/" + args[i] : args[i];
+  }
+  Exec r = cli.exec(binaryPath(cli), argv, u8[0]()).wait();
+  if (!r.ran()) { return Ran(false, -1, r.error); }
+  return Ran(true, r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
+}
+
+bool endsWithWac(string s) { return s.len() > 4 && s.slice(s.len() - 4, s.len()) == ".wac"; }
+
+string joined(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : " ") + xs[i]; }
+  return out;
+}
+
+export string test_check_reports_and_writes_nothing_4mkq8wp(Core core, Cli cli) {
+  T t = T.create();
+  Dir d = workspace(cli, "check");
+  t.isTrue(d.ok, d.what);
+  if (!d.ok) { return t.report(); }
+
+  Ran clean = wac(cli, d.path, string[]("check", "math.wac"));
+  t.isTrue(clean.started, "the binary started");
+  if (!clean.started) { return t.report(); }
+  t.eqI32(clean.status, 0, "a valid file exits 0 — " + clean.out);
+  // **It says something.** How many files were read is the part you cannot otherwise see, and
+  // silence does not distinguish "checked and clean" from "did not look".
+  t.isTrue(contains(clean.out, "no diagnostics"), "and says so — got \"" + clean.out + "\"");
+  t.isTrue(contains(clean.out, "math.wac"), "naming the entry");
+  // Nothing written: `check` is the command you run when you do not want an artefact.
+  Stat wasm = cli.stat(d.path + "/math.wasm").wait();
+  t.isFalse(wasm.exists, "check wrote no module");
+
+  Ran broken = wac(cli, d.path, string[]("check", "bad.wac"));
+  t.eqI32(broken.status, 1, "a broken file exits 1");
+  t.isTrue(contains(broken.out, "bad.wac"), "and names the file — got \"" + broken.out + "\"");
+
+  // The error is in the *imported* file, which is only reached by walking the graph. Naming
+  // `main.wac` here would be an entry parsed alone and reported as if it were the whole program.
+  Ran graph = wac(cli, d.path, string[]("check", "main.wac"));
+  t.eqI32(graph.status, 1, "an error in an import exits 1");
+  t.isTrue(contains(graph.out, "lib.wac"),
+           "and names the imported file, not the entry — got \"" + graph.out + "\"");
+
+  Ran missing = wac(cli, d.path, string[]("check", "nope.wac"));
+  t.eqI32(missing.status, 1, "a missing file exits 1");
+  t.isTrue(contains(missing.out, "nope.wac"), "and names the path — got \"" + missing.out + "\"");
+  return t.report();
+}
+
+export string test_compile_writes_a_module_and_bindgen_writes_the_glue_9wkn3pq_5tqm7wn(Core core, Cli cli) {
+  T t = T.create();
+  Dir d = workspace(cli, "compile");
+  t.isTrue(d.ok, d.what);
+  if (!d.ok) { return t.report(); }
+
+  Ran c = wac(cli, d.path, string[]("compile", "math.wac"));
+  t.eqI32(c.status, 0, "compile exits 0 — " + c.out);
+  t.isTrue(contains(c.out, "math.wasm"), "and prints what it wrote — got \"" + c.out + "\"");
+  FileResult wasm = cli.readFile(d.path + "/math.wasm").wait();
+  t.isTrue(wasm.ok, "the module is there");
+  if (wasm.ok) {
+    // The magic number, so this is a real module rather than a stray string with the right name.
+    t.isTrue(wasm.bytes.len() > 4, "and is not empty");
+    if (wasm.bytes.len() > 4) {
+      t.eqI32(wasm.bytes[0], 0, "\\0");
+      t.eqI32(wasm.bytes[1], 'a', "a");
+      t.eqI32(wasm.bytes[2], 's', "s");
+      t.eqI32(wasm.bytes[3], 'm', "m");
+    }
+  }
+
+  Ran b = wac(cli, d.path, string[]("bindgen", "math.wac"));
+  t.eqI32(b.status, 0, "bindgen exits 0 — " + b.out);
+  // `<stem>.gen.ts`, which is not what the reference toolchain wrote.
+  t.isTrue(contains(b.out, "math.gen.ts"), "and prints the path — got \"" + b.out + "\"");
+  FileResult glue = cli.readFile(d.path + "/math.gen.ts").wait();
+  t.isTrue(glue.ok, "the glue is there");
+  if (glue.ok) {
+    t.isTrue(contains(string.fromBytes(glue.bytes), "gcd"),
+             "and wraps the exported function by name");
+  }
+  return t.report();
+}
+
+export string test_warnings_are_shown_and_do_not_change_the_exit_code_3nkq8wj(Core core, Cli cli) {
+  T t = T.create();
+  Dir d = workspace(cli, "warn");
+  t.isTrue(d.ok, d.what);
+  if (!d.ok) { return t.report(); }
+
+  // A warning nobody sees is not a warning, so they are not held back for `check` — and a warning
+  // that failed a build would be an error under a softer name.
+  Ran r = wac(cli, d.path, string[]("check", "warn.wac"));
+  t.eqI32(r.status, 0, "a warning still exits 0 — " + r.out);
+  t.isTrue(contains(r.out, "warning"), "and is printed — got \"" + r.out + "\"");
+  return t.report();
+}
+
+export string test_usage_and_unknown_commands_3nkq8wj(Core core, Cli cli) {
+  T t = T.create();
+  Dir d = workspace(cli, "usage");
+  t.isTrue(d.ok, d.what);
+  if (!d.ok) { return t.report(); }
+
+  Ran none = wac(cli, d.path, string[0]());
+  t.eqI32(none.status, 2, "no arguments is a usage error");
+  t.isTrue(contains(none.out, "usage:"), "and prints usage");
+
+  Ran help = wac(cli, d.path, string[]("--help"));
+  t.eqI32(help.status, 0, "--help is not an error");
+
+  Ran noEntry = wac(cli, d.path, string[]("check"));
+  t.eqI32(noEntry.status, 2, "a command with no entry is a usage error");
+
+  Ran unknown = wac(cli, d.path, string[]("frobnicate", "math.wac"));
+  t.eqI32(unknown.status, 2, "an unknown command is a usage error");
+  t.isTrue(contains(unknown.out, "frobnicate"), "and names it — got \"" + unknown.out + "\"");
+
+  // **The command is validated before the entry is read.** Mistype both and the old order told you
+  // about the file: `wac chekc nope.wac` answered *cannot read nope.wac* at exit 1, diagnosing the
+  // typo you did not make and giving a compile-failure code for a usage mistake. Reading the entry
+  // first is what made a usage error depend on whether an unrelated path happened to exist.
+  Ran both = wac(cli, d.path, string[]("chekc", "nope.wac"));
+  t.eqI32(both.status, 2, "a mistyped command with a missing entry is still a usage error");
+  t.isTrue(contains(both.out, "chekc"),
+           "and names the command rather than the path — got \"" + both.out + "\"");
+  return t.report();
+}

@@ -6,7 +6,7 @@
 //     building a `Pending` from TypeScript — three funcrefs and an id — where building it here is four
 //     lines and deterministic, which is what a coverage run wants;
 //   * a **host** mount takes a whole `Cli`, which only a built program has. Those branches are driven by
-//     `test/host.test.ts` and `test/backings.test.ts` against the real filesystem, and are recorded as
+//     `test/host.test.ts` and `test/backingsprocess_test.wac` against the real filesystem, and are recorded as
 //     unreached here with that as the reason.
 //
 // Each function builds its own filesystem and returns a transcript, because wac has no mutable

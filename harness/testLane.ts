@@ -61,6 +61,19 @@ const LANES = [LANE, HEAVY];
 export type Exclusive = { file: string; why: string };
 
 /**
+ * Which runner owns a declared file — the two lanes are handed to different commands.
+ *
+ * **This module read `.test.ts` and nothing else until 2026-08-18**, which made every lane
+ * declaration in a wac test *inert*: eight files said `// test-lane: heavy` and all eight ran on
+ * every push, because the exclusion is built from this list and this list could not see them.
+ * Measured before fixing it, they were **460s of a 1451s suite** — `checked_test.wac` alone 173s.
+ * The declarations were not wrong and nobody had ignored them; the instrument could not read the
+ * majority of its own subject, which is the same failure the note above records for `jobsSweep.sh`
+ * one level along.
+ */
+export const isWacTest = (file: string): boolean => file.endsWith("_test.wac");
+
+/**
  * Every file that declares *any* lane — what the suite's parallel pass does not run by default.
  *
  * `tools/jobsSweep.sh` and anything else that has to reproduce the suite's own `--ignore` should ask
@@ -89,7 +102,7 @@ async function declaredTests(
       if (e.isDirectory) {
         if (e.name === "node_modules" || e.name === ".git" || e.name === ".cache") continue;
         await walk(path);
-      } else if (e.name.endsWith(".test.ts")) {
+      } else if (e.name.endsWith(".test.ts") || e.name.endsWith("_test.wac")) {
         const m = lane.exec(await Deno.readTextFile(path));
         if (m !== null) out.push({ file: path, why: m[1].trim() });
       }

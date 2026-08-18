@@ -82,7 +82,7 @@
 
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 import { killedLaneNote } from "./killedLane.ts";
-import { exclusiveTests, heavyTests, laneSplit } from "../harness/testLane.ts";
+import { exclusiveTests, heavyTests, isWacTest, laneSplit } from "../harness/testLane.ts";
 import { clearWarnings, warningsSoFar } from "./docCheck.ts";
 import { takeSuiteSlot } from "./suiteGate.ts";
 
@@ -401,7 +401,13 @@ const run = async (args: string[], workers: number): Promise<number> => {
 };
 
 // No targets here: the gate runs whatever `deno test` discovers, so every declared file is in the lane.
-const exclusive = laneSplit([], (await exclusiveTests()).map((e) => e.file)).alone;
+// **Split by runner, because the lanes are now read from both kinds of test file.** `--ignore` here
+// reaches `deno test`, which is handed `.test.ts` paths; the wac files declaring the same lanes are
+// excluded further down, from the command that actually runs them. Before 2026-08-18 the lane module
+// could not see a wac test at all, so this filter had nothing to do and the wac declarations did
+// nothing either.
+const exclusive = laneSplit([], (await exclusiveTests()).map((e) => e.file)).alone
+  .filter((f) => !isWacTest(f));
 
 // **The heavy lane, which a whole-suite run does not pay for.** Ten files hold about a gigabyte each
 // at their peak, and the table above says the binding constraint is memory: four workers peak at
@@ -422,9 +428,23 @@ const exclusive = laneSplit([], (await exclusiveTests()).map((e) => e.file)).alo
 // it needs no knowledge of this lane to do it.
 const declaredHeavy = await heavyTests();
 const targeted = passthrough.some((a) => !a.startsWith("-"));
-const heavy = Deno.env.get("WAC_HEAVY") === "1" || HEAVY_ONLY || targeted
-  ? []
-  : laneSplit([], declaredHeavy.map((e) => e.file)).alone;
+const skipHeavy = !(Deno.env.get("WAC_HEAVY") === "1" || HEAVY_ONLY || targeted);
+const heavy = skipHeavy
+  ? laneSplit([], declaredHeavy.map((e) => e.file).filter((f) => !isWacTest(f))).alone
+  : [];
+/**
+ * The wac half of the same lane, for `wac test --ignore`.
+ *
+ * **Measured before wiring it up, because the declarations had never been honoured.** Eight wac
+ * files say `// test-lane: heavy` and every one of them ran on every push — the lane module read
+ * only `.test.ts`, so the list that builds the exclusion could not see them. Together they are
+ * **460s of a 1451s suite**; `packages/wacc/test/wac/checked_test.wac` alone is 173s. That is about
+ * a third of the push gate spent on files whose authors had already said they were too expensive
+ * for one.
+ */
+const heavyWac = skipHeavy
+  ? declaredHeavy.map((e) => e.file).filter(isWacTest)
+  : [];
 /**
  * When the heavy lane last passed, for the notice below.
  *
@@ -436,6 +456,9 @@ const heavy = Deno.env.get("WAC_HEAVY") === "1" || HEAVY_ONLY || targeted
  * case, and the sweep now only removes notes it can recognise.
  */
 const HEAVY_STAMP = "/tmp/wac-lane-heavy-last";
+
+/** The binary both wac lanes go through — declared here because the heavy branch below runs one. */
+const WAC_BIN = `${Deno.cwd()}/native/v8/target/release/wac`;
 
 // `deno task test:heavy` — the lane on its own, at two workers rather than four. These are the files
 // that spawn processes and hold gigabytes; running them at the width tuned for the broad pass is how
@@ -449,9 +472,30 @@ if (HEAVY_ONLY) {
   // Two rather than `jobs`: these are the files that hold about a gigabyte each, and running them at
   // the width tuned for a pass of mostly-cheap tests is how the machine gets killed.
   for (const h of declaredHeavy) console.log(`   ${h.file}  — ${h.why}`);
-  // `releaseSuiteSlot` above, not a second `takeSuiteSlot()`: the slot is already held by the time
-  // this runs, and taking it again is a run waiting on itself.
-  const code = await run(["--parallel", ...declaredHeavy.map((h) => h.file)], 2);
+  // **Both runners, because the lane holds both kinds of file now.** Handing a `_test.wac` to
+  // `deno test` is a target it cannot read; leaving it out of this branch while the broad pass
+  // excludes it is worse still, because the file would then run nowhere and the suite would be
+  // quietly smaller. Whichever way that mistake is made it looks like a faster green run.
+  const heavyTs = declaredHeavy.map((h) => h.file).filter((f) => !isWacTest(f));
+  const heavyWacFiles = declaredHeavy.map((h) => h.file).filter(isWacTest);
+  let code = heavyTs.length > 0 ? await run(["--parallel", ...heavyTs], 2) : 0;
+  if (heavyWacFiles.length > 0) {
+    const r = await new Deno.Command(WAC_BIN, {
+      args: [
+        "test",
+        "--allow-read",
+        "--allow-write",
+        "--allow-run",
+        "--allow-env",
+        ...heavyWacFiles,
+      ],
+      stdout: "inherit",
+      stderr: "inherit",
+    }).output();
+    // 4 is "every test in that file needs a host oracle", which is not a failure — the same rule the
+    // broad wac pass below follows.
+    if (code === 0 && r.code !== 0 && r.code !== 4) code = r.code;
+  }
   releaseSuiteSlot();
   // Stamped only on success, so "last run 20m ago" cannot mean "last *attempted*". A green lane is
   // the only thing that licenses skipping it on the next push.
@@ -528,7 +572,6 @@ if (exclusive.length > 0) {
 // by `cargo` from a seed that is gitignored. `tools/seedFresh.test.ts` is what says the seed is
 // current; this only says whether the tests pass through it.
 let native = 0;
-const WAC_BIN = `${Deno.cwd()}/native/v8/target/release/wac`;
 if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   console.log("\n── the same wac tests, through `wac test`");
   const r = await new Deno.Command(WAC_BIN, {
@@ -553,7 +596,15 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
     // that the second oracle was not running, and passed. A differential comparing nothing, wearing
     // a green tick. `packages/abi/test/wac/cast_test.wac` now separates "could not look" from "is
     // not there" and fails on the first, which is what turned this from invisible into a red test.
-    args: ["test", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "packages/"],
+    args: [
+      "test",
+      "--allow-read",
+      "--allow-write",
+      "--allow-run",
+      "--allow-env",
+      ...(heavyWac.length > 0 ? ["--ignore", heavyWac.join(",")] : []),
+      "packages/",
+    ],
     stdout: "inherit",
     stderr: "inherit",
   }).output();

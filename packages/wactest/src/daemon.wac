@@ -1,0 +1,151 @@
+// Starting a server, waiting for it, and stopping it — the shape `Cli.exec` deliberately does not have.
+//
+// `exec` runs a program **to completion** and hands back what it said. That is right for an oracle and
+// wrong for a node: `anvil`, `openssl s_server`, a wac server under test — anything a test talks to
+// over a socket has to still be running while the test runs. `platform.wac` says so in `exec`'s own
+// documentation, and the count behind it: of the 107 host-side files that spawn a process, the fifteen
+// that keep a child alive start a *server* and then talk to it, which is `connect`.
+//
+// So this is the other half of that sentence. Nothing here is a new capability — it is `exec`,
+// `connect` and `listen` arranged so a test can hold a child open.
+//
+// ## Why a shell, and why the redirection is not optional
+//
+// `exec` returns when the child's pipes reach end of file. Background a process and the *shell* exits
+// immediately, but the child inherits its standard output and error, so those pipes stay open and
+// `exec` blocks until the server does — which is never. Sending both to a file is what lets the shell
+// exit and the pipes close, and it is why `start` insists on a log path rather than offering to drop
+// the output: a caller who cannot read what a failed server said has to guess.
+//
+// The pid comes back on standard output because the shell is the only thing that knows it. `$!` is the
+// most recently backgrounded job, read immediately, before anything else can be started.
+//
+// ## Waiting is a poll, and the bound is a count rather than a clock
+//
+// There is no sleep here. `connect` to a port nothing is listening on fails immediately — a refused
+// connection is not a timeout — so the loop is a busy retry, and the cost of a spin is one failed
+// syscall. That is deliberate: a fixed sleep is either slower than the server or shorter than it, and
+// the second is the one that produces a test that passes on a fast machine.
+//
+// **A caller must check `waitForPort`'s answer.** A server that never came up leaves every later
+// assertion measuring a refused connection, which is a different failure wearing the same clothes.
+
+import { Cli, Exec, Socket } from "../../platform/src/platform.wac";
+import { quoted } from "./childenv.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+/** A child that is still running. `pid` is negative when it did not start. */
+export struct Daemon {
+  i32 pid;
+  string error;
+  /** Where its output went, so a failure to start can be read rather than guessed at. */
+  string log;
+
+  bool ok(const this) { return this.pid > 0; }
+}
+
+/**
+ * A port nothing is using, from the kernel rather than from a guess.
+ *
+ * Bind zero, read back what was bound, close it. There is a race between the close and whoever binds
+ * it next, and it is the same race every test framework accepts for the same reason: the alternative
+ * is a hardcoded number, which collides with the *other agent* running the same suite on this box.
+ * Returns -1 if a port could not be had at all.
+ */
+export i32 freePort(Cli cli) {
+  Socket s = cli.listen("127.0.0.1", 0).wait();
+  if (s.handle < 0) { return -1; }
+  i32 port = s.port;
+  cli.closeSocket(s.handle);
+  return port;
+}
+
+/**
+ * Run `line` in the background and answer with its pid.
+ *
+ * `line` is a shell line, not an argument vector — the whole point here is the backgrounding, which
+ * only a shell can express. Build it with `quoted` around anything that came from outside.
+ */
+export Daemon start(Cli cli, string line, string logPath) {
+  // **`exec` inside the braces, and it is not a tidiness.** Without it the shell forks a subshell,
+  // backgrounds *that*, and `$!` names the subshell rather than the program — so `stop` kills a shell
+  // and leaves the server running, which showed up as "still answering after stop". `exec` replaces
+  // the subshell with the program, so the pid is the one that matters.
+  string script = "{ exec " + line + "; } >" + quoted(logPath) + " 2>&1 & echo $!";
+  Exec r = cli.exec("/bin/sh", string[]("-c", script), u8[0]()).wait();
+  if (!r.ran()) { return Daemon(-1, "the shell did not run — " + r.error, logPath); }
+  if (r.status != 0) {
+    return Daemon(-1, "the shell exited " + itoa(r.status) + " — " +
+                      string.fromBytes(r.stderr), logPath);
+  }
+  string said = string.fromBytes(r.stdout);
+  u8[] bytes = r.stdout;
+  i32 pid = 0;
+  i32 digits = 0;
+  for (i32 i = 0; i < bytes.len(); i++) {
+    i32 b = bytes[i];
+    if (b < '0' || b > '9') { continue; }
+    pid = pid * 10 + (b - '0');
+    digits = digits + 1;
+  }
+  if (digits == 0) { return Daemon(-1, "the shell printed no pid: " + said, logPath); }
+  return Daemon(pid, "", logPath);
+}
+
+/**
+ * Poll until something accepts on `host:port`.
+ *
+ * `tries` bounds it. A refused connection returns immediately, so this spins rather than sleeps — see
+ * the header. False means nothing ever answered, and the caller must say so rather than carry on.
+ *
+ * **Not for a server that accepts once.** This *connects*, which is a real client as far as the
+ * server is concerned: a fixture written `accept()` and then serve it has already spent its one
+ * connection by the time the test dials, and what the test sees is a reset rather than an answer.
+ * That cost an afternoon in `packages/platform/test/wac/waitany_test.wac`, whose listeners answer
+ * exactly one client each. Use `waitForLog` for those and have the fixture say when it is listening.
+ */
+export bool waitForPort(Cli cli, string host, i32 port, i32 tries) {
+  for (i32 i = 0; i < tries; i++) {
+    Socket s = cli.connect(host, port).wait();
+    if (s.handle >= 0) {
+      cli.closeSocket(s.handle);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Whatever the daemon wrote, for a message about why it did not come up. */
+export string logOf(Cli cli, Daemon d) {
+  return string.fromBytes(cli.readFile(d.log).wait().bytes);
+}
+
+/**
+ * Poll until the daemon's log contains `text`.
+ *
+ * The readiness check for a server that cannot be dialled speculatively — see `waitForPort`. The
+ * fixture says when it is listening and this waits for it to say so, which costs the fixture one
+ * `print` and costs the server nothing.
+ *
+ * A fixture that buffers its output will never appear ready, so whatever prints the marker has to
+ * flush. That is not a detail this can paper over: the alternative is a readiness check that answers
+ * yes before the socket exists.
+ */
+export bool waitForLog(Cli cli, Daemon d, string text, i32 tries) {
+  for (i32 i = 0; i < tries; i++) {
+    if (logOf(cli, d).indexOf(text) >= 0) { return true; }
+  }
+  return false;
+}
+
+/**
+ * Stop it, and do not care whether it was already gone.
+ *
+ * `kill` rather than a graceful word: these are test fixtures, they hold nothing worth flushing, and a
+ * server that ignores TERM would otherwise wedge the suite.
+ */
+export void stop(Cli cli, Daemon d) {
+  if (d.pid <= 0) { return; }
+  cli.exec("/bin/sh", string[]("-c", "kill " + itoa(d.pid) + " 2>/dev/null; wait " + itoa(d.pid) +
+                               " 2>/dev/null; true"), u8[0]()).wait();
+}

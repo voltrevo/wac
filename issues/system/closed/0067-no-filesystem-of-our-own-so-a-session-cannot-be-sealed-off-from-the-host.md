@@ -129,7 +129,7 @@ script that redirects or spawns would diverge for reasons that are not VFS bugs.
 ## Closed, 2026-08-05 (agent-a): both backings answer the same thing
 
 The "done when" above asked for a shell on an in-memory VFS passing the same scripts it passes on the host.
-`packages/sh/test/backings.test.ts` is that, and it goes one step further than the criterion:
+`packages/sh/test/backingsprocess_test.wac` is that, and it goes one step further than the criterion:
 
 - **57 filesystem scripts, run through `wacsh` (host mount) and `sealed` (memory), byte-identical output and
   identical statuses.** Creating, reading, truncating, appending, nested directories, listings, removal

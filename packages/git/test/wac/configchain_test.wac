@@ -1,0 +1,183 @@
+// The config search, against the files real git reads — driven through `gitci`, which is what needs it.
+//
+// `gitci` used to read `.git/config` and nothing else, so it refused to commit for a user whose
+// identity is in `~/.gitconfig` — which is where essentially everyone's is. That is the defect this
+// pins, and the oracle is not a claim about which file was read: it is `git log`, reporting the
+// author of a commit our program wrote.
+//
+// ## The fixture makes all four levels disagree
+//
+// A test where only one file sets `user.name` passes against a reader that searches in the wrong
+// order, or that stops at the first file it finds. So every level names a *different* author and the
+// test walks down them, removing one at a time and requiring the next to take over:
+//
+//     .git/config                      LOCAL      <- wins while present
+//     ~/.gitconfig                     DOTFILE
+//     ~/.config/git/config             XDG
+//     /etc/gitconfig                   (not written — see below)
+//
+// The system file is the one level this cannot write, since `/etc` is not ours to touch in a test; it
+// is covered by `$GIT_CONFIG_SYSTEM` in the probe that established the order, and named here as
+// untested rather than quietly counted.
+//
+// **`user.email` is left set only at the XDG level throughout.** That is what proves the levels merge
+// per *key* rather than per file: if the dotfile replaced the XDG file instead of layering over it,
+// the email would vanish the moment the dotfile appeared and `gitci` would refuse.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// It stayed behind because "`Cli.exec` passes no environment" and which config file git reads *is*
+// the subject, so naming the files on a command line would test a different program. That limit does
+// not exist — `exec` passes the host's whole environment, `issues/system/0198` — and the fixture's
+// three variables are **declared** on a `/bin/sh -c` line through `env_probe.wac` instead. Declared
+// rather than inherited is the point: an inherited `HOME` is the agent's real one, and this test
+// would then be reading whatever identity the machine happens to have.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentSuffix(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return "-" + cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string trimmedEnd(string s) {
+  i32 n = s.len();
+  while (n > 0 && (s.slice(n - 1, n) == "\n" || s.slice(n - 1, n) == " ")) { n = n - 1; }
+  return s.slice(0, n);
+}
+
+/** The three variables the fixture owns. `GIT_AUTHOR_DATE` so a commit's author line is fixed. */
+struct Fixture {
+  Cli cli;
+  string dir;
+  string home;
+
+  string[] names(const this) {
+    return string[]("HOME", "XDG_CONFIG_HOME", "GIT_AUTHOR_DATE");
+  }
+
+  string[] values(const this) {
+    return string[](this.home, this.home + "/.config", "1700000000 +0000");
+  }
+
+  /** `git -C dir args…`, with the fixture's environment and nothing of the machine's identity. */
+  Exec git(const this, string[] args) {
+    string[] full = string[args.len() + 2](fill: "");
+    full[0] = "-C";
+    full[1] = this.dir;
+    for (i32 i = 0; i < args.len(); i++) { full[2 + i] = args[i]; }
+    return withEnv(this.cli, this.names(), this.values(), "git", full);
+  }
+
+  /** What `git` printed, trimmed — these are all one-line answers. */
+  string said(const this, string[] args) {
+    return trimmedEnd(string.fromBytes(this.git(args).stdout));
+  }
+
+  /**
+   * `gitci <dir> "add <file>"`, run through the compiler rather than a built executable.
+   *
+   * The second argument contains a space and stays one argument: `quoted` puts it in one shell
+   * word, so the program sees the same argv the host-side version passed.
+   */
+  Exec commit(const this, string file) {
+    this.cli.writeFile(this.dir + "/" + file, (file + "\n").toBytes()).wait();
+    string wac = this.cli.cwd().wait() + "/native/v8/target/release/wac";
+    return withEnv(this.cli, this.names(), this.values(), wac,
+                   string[]("run", "--allow-read", "--allow-write", "--allow-env",
+                            "packages/git/example/gitci.wac", "--", this.dir, "add " + file));
+  }
+}
+
+export string test_an_identity_in_the_dotfile_is_enough_to_commit_and_the_local_file_still_wins(
+    Core core, Cli cli) {
+  T t = T.create();
+  string suffix = agentSuffix(cli);
+  string dir = "/tmp/wac-git-chain" + suffix;
+  string home = "/tmp/wac-git-chome" + suffix;
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(dir, true).wait();
+  cli.mkdir(home + "/.config/git", true).wait();
+  Fixture f = Fixture(cli, dir, home);
+
+  Exec init = f.git(string[]("init", "-q", "-b", "main", "."));
+  t.eqI32(init.status, 0, "git init — " + string.fromBytes(init.stderr));
+  if (init.status != 0) { return t.report(); }
+
+  // The email lives only here, all the way through, so a level that replaced rather than layered
+  // would take it away and turn every commit below into a refusal.
+  cli.writeFile(home + "/.config/git/config",
+                "[user]\n\tname = XDG\n\temail = xdg@example.com\n".toBytes()).wait();
+  cli.writeFile(home + "/.gitconfig", "[user]\n\tname = DOTFILE\n".toBytes()).wait();
+  FileResult local = cli.readFile(dir + "/.git/config").wait();
+  t.isTrue(local.ok, "the repository's own config is readable — " + local.error);
+  if (!local.ok) { return t.report(); }
+  cli.writeFile(dir + "/.git/config",
+                (string.fromBytes(local.bytes) + "[user]\n\tname = LOCAL\n").toBytes()).wait();
+
+  // **git's own answer first**, so the fixture is known to make the levels disagree before ours is
+  // compared to anything.
+  t.eqStr(f.said(string[]("config", "user.name")), "LOCAL", "git does not prefer the local file");
+  t.eqStr(f.said(string[]("config", "user.email")), "xdg@example.com",
+          "the XDG email did not survive the dotfile");
+
+  Exec r1 = f.commit("a.txt");
+  t.eqI32(r1.status, 0, "gitci refused with a full chain: " + string.fromBytes(r1.stderr));
+  t.eqStr(f.said(string[]("log", "-1", "--format=%an <%ae>")), "LOCAL <xdg@example.com>",
+          "wrong author with all levels set");
+
+  // Drop the local file's identity: the dotfile takes over, for git and for us.
+  FileResult again = cli.readFile(dir + "/.git/config").wait();
+  string without = "";
+  string text = string.fromBytes(again.bytes);
+  i32 at = text.indexOf("[user]\n\tname = LOCAL\n");
+  t.isTrue(at >= 0, "the local identity was written");
+  if (at >= 0) {
+    without = text.slice(0, at) + text.slice(at + "[user]\n\tname = LOCAL\n".len(), text.len());
+    cli.writeFile(dir + "/.git/config", without.toBytes()).wait();
+  }
+  t.eqStr(f.said(string[]("config", "user.name")), "DOTFILE", "git did not fall back to ~/.gitconfig");
+  Exec r2 = f.commit("b.txt");
+  t.eqI32(r2.status, 0,
+          "gitci refused with the identity in ~/.gitconfig: " + string.fromBytes(r2.stderr));
+  t.eqStr(f.said(string[]("log", "-1", "--format=%an <%ae>")), "DOTFILE <xdg@example.com>",
+          "wrong author from the dotfile");
+
+  // And drop that too: the XDG file is the last one standing.
+  cli.remove(home + "/.gitconfig", false).wait();
+  t.eqStr(f.said(string[]("config", "user.name")), "XDG", "git did not fall back to the XDG file");
+  Exec r3 = f.commit("c.txt");
+  t.eqI32(r3.status, 0,
+          "gitci refused with the identity in the XDG file: " + string.fromBytes(r3.stderr));
+  t.eqStr(f.said(string[]("log", "-1", "--format=%an <%ae>")), "XDG <xdg@example.com>",
+          "wrong author from the XDG file");
+
+  // With nothing set anywhere it must still **refuse** rather than invent one — the behaviour the
+  // previous commit established, which a wider search must not quietly undo.
+  cli.remove(home + "/.config/git/config", false).wait();
+  t.isTrue(f.git(string[]("config", "user.name")).status != 0,
+           "git still finds an identity after every file is gone");
+  Exec r4 = f.commit("d.txt");
+  t.isTrue(r4.status != 0, "gitci invented an author once no file set one");
+  t.eqStr(f.said(string[]("rev-list", "--count", "HEAD")), "3", "a refused commit still landed");
+
+  // Every commit above is one git can read, not merely one it accepted at write time.
+  Exec fsck = f.git(string[]("fsck", "--strict"));
+  t.eqI32(fsck.status, 0, "fsck refused the commits: " + string.fromBytes(fsck.stderr));
+
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}

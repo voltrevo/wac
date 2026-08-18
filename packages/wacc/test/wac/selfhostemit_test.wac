@@ -27,7 +27,7 @@
 // feature anywhere in the tree failed this while naming a file the driver never imports.
 // `issues/lang/0139`.
 //
-// test-lane: heavy — the compiler embedded in a driver, compiled by both stages
+// test-lane: heavy — 26s, the compiler embedded in a driver, compiled by both stages
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
@@ -98,7 +98,7 @@ string driverFor(string[] paths, string[] sources, i32 shift) {
 
 /** `wacx run <DRIVER> <export>`, whose last line is the answer. */
 i32 referenceAnswers(Cli cli, string export_, i32[] okOut) {
-  Exec r = cli.exec("deno", string[]("run", "-A", "compiler/wacxMain.ts", "run", DRIVER, export_),
+  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", DRIVER, export_),
                     u8[0]()).wait();
   if (!r.ran() || r.status != 0) { okOut[0] = 0; return 0; }
   string[] lines = splitLines(string.fromBytes(r.stdout));

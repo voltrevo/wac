@@ -84,7 +84,7 @@ the trie**, which is a proof that it holds nothing and is not the same as a zero
 output says which. Balances are printed by long division over the bytes, because 2^256 wei does not fit an
 i64 and the low 64 bits would be readable and wrong.
 
-`test/ensowner_live.test.ts` runs it against a real anvil, with the owner slot set through cheatcodes at a
+`test/wac/ensowner_live_test.wac` runs it against a real anvil, with the owner slot set through cheatcodes at a
 location **`cast` computed** — so a namehash built left-to-right, or a mapping slot hashed `slot ++ key`,
 would ask about a slot nothing was written to and print "no owner". A wrong answer that looks like an
 answer is exactly what a fixture cannot catch.
@@ -119,7 +119,7 @@ answer is exactly what a fixture cannot catch.
 
 ## How it is tested
 
-Against **anvil**, a real execution client, over a real socket: `test/rpc_live.test.ts` starts one on a free
+Against **anvil**, a real execution client, over a real socket: `test/wac/rpc_live_test.wac` starts one on a free
 port, waits for it to answer rather than sleeping, and runs the built program against it. A refused
 connection has to be reported rather than printed as an empty answer.
 

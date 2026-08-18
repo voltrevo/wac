@@ -18,7 +18,7 @@
 // out of reach from here and are recorded below rather than left to look like gaps:
 //
 //   * **host mounts**, which take a whole `Cli` that only a built program has. `test/host.test.ts` and
-//     `packages/box/test/backings.test.ts` drive every one of them against the real filesystem, which is a
+//     `packages/box/test/wac/backingsprocess_test.wac` drive every one of them against the real filesystem, which is a
 //     better oracle than this file could be;
 //   * a handful of guards whose precondition another guard has already established.
 
@@ -81,7 +81,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "Fs onHost(Cli cli, i64 now) {",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -89,7 +89,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.readFile(path).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -97,7 +97,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.stat(path).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -105,7 +105,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { own = cli.readDir(path).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -113,7 +113,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): {}",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -121,7 +121,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.writeFile(path, data).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -129,7 +129,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): {}",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -137,7 +137,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.mkdir(path, parents).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -145,7 +145,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.remove(path, recursive).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -153,7 +153,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chmod on a host mount is not implemented\"); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -161,7 +161,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chown on a host mount is not implemented\"); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -169,7 +169,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): {",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -177,7 +177,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli2): { return cli.rename(from, to).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -185,7 +185,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "else: { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is not implemented\"); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -193,7 +193,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is not implemented\"); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -377,7 +377,7 @@ const CATEGORIES:
     proven: false,
     why:
       "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by " +
-      "`test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a " +
+      "`test/host.test.ts` and `packages/box/test/wac/backingsprocess_test.wac` against the real filesystem, which is a " +
       "better oracle than this probe could be — so this is where the measurement stops, not where the " +
       "testing does.",
   },

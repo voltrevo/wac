@@ -9,7 +9,7 @@
 // abandoned. The cost is not the status, it is `b`, silently absent.
 //
 // Nothing found it for months because every operand case anyone wrote names **one** file, or names two
-// that both exist. It turned up when `backings.test.ts` moved into this package carrying one script —
+// that both exist. It turned up when `backingsprocess_test.wac` moved into this package carrying one script —
 // `cat f1 nothing f2` — out of forty.
 //
 // ## What is comparable, per case

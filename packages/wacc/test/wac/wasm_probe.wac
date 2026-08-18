@@ -37,6 +37,40 @@ export i32 leb(u8[] b, i32[] pos) {
 }
 
 /**
+ * Every export name, whatever it names.
+ *
+ * `exportedFunctions` drops everything that is not a function, which is right when the question is
+ * about functions and wrong when it is about **names**: wasm requires export names to be unique
+ * across all kinds, so a function and a global sharing one is a module the engine refuses. A reader
+ * that filtered by kind first could not see that collision at all.
+ */
+export string[] allExportNames(u8[] b) {
+  i32[] pos = i32[1]();
+  pos[0] = 8;
+  i32 at = -1;
+  while (pos[0] < b.len()) {
+    i32 id = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 size = leb(b, pos);
+    if (id == 7) { at = pos[0]; }
+    pos[0] = pos[0] + size;
+  }
+  if (at < 0) { return string[0](fill: ""); }
+
+  pos[0] = at;
+  i32 n = leb(b, pos);
+  string[] names = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) {
+    i32 len = leb(b, pos);
+    names[i] = string.fromBytes(slice(b, pos[0], pos[0] + len));
+    pos[0] = pos[0] + len;
+    pos[0] = pos[0] + 1;            // the kind
+    leb(b, pos);                    // and the index, whatever it points at
+  }
+  return names;
+}
+
+/**
  * The module's own export section — **the only place a name and an index appear together**.
  *
  * Read out of the bytes rather than asked of the compiler. `namesFiles` answers the same question

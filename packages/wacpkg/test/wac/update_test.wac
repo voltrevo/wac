@@ -1,0 +1,128 @@
+// Writing the lock back after resolving — D10, the other half of `lock_test.wac`.
+//
+// `applyPlan` takes the plan and the commits the caller resolved, and its job is mostly to *not*
+// use them: a step the plan said `USE` keeps the entry that was already there, whatever the caller
+// offers for it. So every case here hands over a commit that would be wrong if it were taken, which
+// is the only way to tell "kept the old one" apart from "was given the old one".
+//
+// A refusal is `applyPlan` answering with fewer entries than the manifest has mappings — the same
+// rule `wacpkg.wac`'s `updatedLock` turns into a code, checked here at the layer that decides it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Manifest, readManifest } from "../../src/manifest.wac";
+import { Lock, LockEntry, readLock, plan, applyPlan, writeLock } from "../../src/lock.wac";
+
+string OLD()   { return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; }
+string OTHER() { return "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }
+string FRESH() { return "cccccccccccccccccccccccccccccccccccccccc"; }
+string WRONG() { return "dddddddddddddddddddddddddddddddddddddddd"; }
+
+/** `updatedLock`'s work, without the byte-in byte-out wrapper: the entries, or none if refused. */
+LockEntry[] updated(string manifestSrc, string lockSrc, string[] resolved) {
+  Manifest m = readManifest(manifestSrc.toBytes());
+  Lock l = readLock(lockSrc.toBytes());
+  if (!m.ok || !l.ok) { return LockEntry[0](); }
+  LockEntry[] next = applyPlan(m, l, plan(m, l), resolved);
+  return next.len() == m.imports.len() ? next : LockEntry[0]();
+}
+
+i32 entryNamed(LockEntry[] es, string name) {
+  for (i32 i = 0; i < es.len(); i++) { if (es[i].name == name) { return i; } }
+  return -1;
+}
+
+export string test_a_mapping_that_did_not_need_resolving_keeps_the_commit_it_had() {
+  T t = T.create();
+  // `std/` is USE and `new` is CREATE. WRONG is offered for `std/` — a caller that resolved
+  // everything because resolving is easier than deciding would pass exactly this.
+  LockEntry[] out = updated(
+    "{ imports: { 'std/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }",
+    "{ imports: { 'std/': { git: 'g1', ref: 'main', commit: '" + OLD() + "' } } }",
+    string[](WRONG(), FRESH()));
+  t.eqI32(out.len(), 2, "both mappings are written");
+  if (out.len() != 2) { return t.report(); }
+  i32 std = entryNamed(out, "std/");
+  i32 fresh = entryNamed(out, "new");
+  t.isTrue(std >= 0 && fresh >= 0, "both are named");
+  if (std < 0 || fresh < 0) { return t.report(); }
+  t.eqStr(out[std].commit, OLD(), "std/ did not advance — a branch moving is not a reason");
+  t.eqStr(out[fresh].commit, FRESH(), "new takes what was resolved for it");
+  return t.report();
+}
+
+export string test_a_changed_input_takes_the_new_commit_and_the_new_inputs() {
+  T t = T.create();
+  // The manifest now says `v2` where the lock recorded `v1`, so the entry is REFRESH: both the
+  // commit and the recorded `ref` have to move, or the next run reads it as changed again for ever.
+  LockEntry[] out = updated(
+    "{ imports: { 'a': { git: 'g', ref: 'v2', subdir: 'lib' } } }",
+    "{ imports: { 'a': { git: 'g', ref: 'v1', commit: '" + OLD() + "' } } }",
+    string[](FRESH()));
+  t.eqI32(out.len(), 1, "it is written");
+  if (out.len() != 1) { return t.report(); }
+  t.eqStr(out[0].commit, FRESH(), "the commit moves");
+  t.eqStr(out[0].ref, "v2", "the ref is the manifest's");
+  t.eqStr(out[0].subdir, "lib", "and so is the subdir");
+  return t.report();
+}
+
+export string test_an_entry_whose_mapping_is_gone_does_not_survive_the_write() {
+  T t = T.create();
+  LockEntry[] out = updated(
+    "{ imports: { 'kept': { git: 'g', ref: 'r' } } }",
+    "{ imports: {\n"
+      + "  'kept': { git: 'g', ref: 'r', commit: '" + OLD() + "' },\n"
+      + "  'gone': { git: 'g', ref: 'r', commit: '" + OTHER() + "' },\n"
+      + "} }",
+    string[](WRONG()));
+  t.eqI32(out.len(), 1, "only the mapping still in the manifest is written");
+  t.eqI32(entryNamed(out, "gone"), -1, "the orphan is not written back");
+  if (out.len() == 1) { t.eqStr(out[0].commit, OLD(), "kept keeps its commit"); }
+  return t.report();
+}
+
+export string test_nothing_to_do_writes_the_same_bytes_it_read() {
+  T t = T.create();
+  // The property that makes this safe to run on every build: a project whose lock is current gets
+  // a file identical to the one on disk, so "did anything change" is a byte comparison and a no-op
+  // run leaves no diff. Written unsorted on both sides so the comparison is against the canonical
+  // form rather than against the input.
+  string manifest = "{ imports: {\n"
+    + "  'b/': { git: 'g2', ref: 'main' },\n"
+    + "  'a':  { git: 'g1', ref: 'v1', subdir: 'lib' },\n"
+    + "} }";
+  string lockText = "{ imports: {\n"
+    + "  'a':  { git: 'g1', ref: 'v1', subdir: 'lib', commit: '" + OLD() + "' },\n"
+    + "  'b/': { git: 'g2', ref: 'main', commit: '" + OTHER() + "' },\n"
+    + "} }";
+  Lock read = readLock(lockText.toBytes());
+  t.isTrue(read.ok, "the lock reads");
+  if (!read.ok) { return t.report(); }
+  LockEntry[] out = updated(manifest, lockText, string[](WRONG(), WRONG()));
+  t.eqI32(out.len(), 2, "both are written");
+  if (out.len() != 2) { return t.report(); }
+  t.eqBytes(writeLock(out), writeLock(read.entries), "a no-op update does not rewrite the file");
+  return t.report();
+}
+
+export string test_a_missing_commit_is_a_refusal_not_a_partial_lock() {
+  T t = T.create();
+  string manifest = "{ imports: { 'a': { git: 'g', ref: 'r' }, 'b': { git: 'g', ref: 'r' } } }";
+  // A lock is a claim about every mapping. Writing one that silently un-pinned whatever the caller
+  // failed to resolve would be worse than writing nothing.
+  string[] labels = string[]("one missing", "not a sha", "abbreviated", "too few", "too many");
+  string[][] cases = string[][](
+    string[](FRESH(), ""),
+    string[](FRESH(), "nope"),
+    string[](FRESH(), FRESH().slice(0, 12)),
+    string[](FRESH()),
+    string[](FRESH(), FRESH(), FRESH()));
+  for (i32 i = 0; i < labels.len(); i++) {
+    t.eqI32(updated(manifest, "{}", cases[i]).len(), 0, labels[i] + " writes no lock at all");
+  }
+  // And the canary: the same call with both commits present must succeed, or the five above prove
+  // nothing about the check and only that the call fails.
+  t.eqI32(updated(manifest, "{}", string[](FRESH(), OTHER())).len(), 2,
+          "the well-formed case still writes");
+  return t.report();
+}

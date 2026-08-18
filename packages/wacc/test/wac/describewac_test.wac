@@ -1,0 +1,91 @@
+// One front end must answer what two answered.
+//
+// `describeFiles` returns the blocked reason, the export signatures and the bind types from a single
+// link, parse and `settleEmittable` — where a build asked `blockedFiles`, `exportSigsFiles` and
+// `bindTypesFiles` separately and paid for the whole front end three times (`issues/lang/0129`). The
+// saving is real and so is the hazard: three walks now share one `Env`.
+//
+// **That sharing rests on a claim about who writes to it.** `bindTypesOf` sets `cbSigCount`,
+// `outSigCount` and the bind-struct table; `exportSigsOf` reads only what `settleEmittable` left.
+// Signatures run first as defence — the read-only walk before the writing one — but that is a choice,
+// not a requirement: swapping the two was tried and changed no output, so do not read the order as
+// load-bearing. What holds is the non-overlap, and "only reads it" is exactly the sort of claim that
+// stops being true without anyone noticing. The failure would not look like a crash; it would look
+// like a host class that is subtly absent, which is `issues/lang/0106`'s whole story.
+//
+// The programs below are chosen for what they make the metadata carry rather than for size:
+// callbacks and out-refs are the parts of `bindTypesOf` that write the most to the `Env`.
+//
+// Host-side until 2026-08-18, `issues/system/0161`. Every call here is an `api.wac` export, so this
+// needed no oracle at all — only the corpus, for the sources.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { blockedFiles, exportSigsFiles, bindTypesFiles, describeFiles,
+         describeSeparator } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { closureOf } from "./source_probe.wac";
+
+string[] entries() {
+  return string[](
+    "packages/zstd/src/frame.wac",      // small, no boundary machinery
+    "packages/json/src/json.wac",       // structs and enums crossing
+    "packages/box/example/boxsh.wac");  // callbacks, out-refs, many `Pending<T>` — issue 0106's program
+}
+
+export string test_describefiles_agrees_with_the_two_calls_it_replaced(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "describewac_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  string[] want = entries();
+
+  // **`example/` is not in the corpus walk**, which enters `src`, `test/wac` and `bench` — and
+  // `boxsh.wac` is the program `issues/lang/0106` was about, so it is the one entry here that
+  // matters most. It is read from disk and appended; everything it imports is under `src` and is
+  // already in the map.
+  i32 extra = 0;
+  for (i32 e = 0; e < want.len(); e++) {
+    bool have = false;
+    for (i32 i = 0; i < c.paths.len(); i++) { if (c.paths[i] == want[e]) { have = true; } }
+    if (!have) { extra = extra + 1; }
+  }
+  string[] paths = string[c.paths.len() + extra](fill: "");
+  string[] sources = string[c.paths.len() + extra](fill: "");
+  for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
+  i32 at2 = c.paths.len();
+  for (i32 e = 0; e < want.len(); e++) {
+    bool have = false;
+    for (i32 i = 0; i < c.paths.len(); i++) { if (c.paths[i] == want[e]) { have = true; } }
+    if (have) { continue; }
+    FileResult f = cli.readFile(want[e]).wait();
+    t.isTrue(f.ok, want[e] + " is readable — " + f.error);
+    if (!f.ok) { return t.report(); }
+    paths[at2] = want[e];
+    sources[at2] = string.fromBytes(f.bytes);
+    at2 = at2 + 1;
+  }
+
+  i32 checked = 0;
+  for (i32 e = 0; e < want.len(); e++) {
+    string blocked = blockedFiles(paths, sources, want[e]);
+    string sigs = exportSigsFiles(paths, sources, want[e]);
+    string types = bindTypesFiles(paths, sources, want[e]);
+    string sep = describeSeparator();
+    string got = describeFiles(paths, sources, want[e]);
+    t.eqStr(got, blocked + sep + sigs + sep + types,
+            want[e] + ": one front end answered differently from two");
+
+    // The separator has to be a line neither half can produce, or the split silently truncates one
+    // of them. Cheap to check and the whole scheme rests on it.
+    t.isFalse(contains(blocked, sep), want[e] + ": a blocked reason contains the separator");
+    t.isFalse(contains(sigs, sep), want[e] + ": a signature line contains the separator");
+    t.isFalse(contains(types, sep), want[e] + ": a bind-type line contains the separator");
+    checked = checked + 1;
+  }
+  t.eqI32(checked, want.len(), "every entry was found and compared");
+  return t.report();
+}

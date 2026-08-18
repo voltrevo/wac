@@ -1,0 +1,98 @@
+// A coverage point says which file it is in, and the line that file's editor shows.
+//
+// wacc links by concatenating files, so every line number inside the emitter is a line of the blob
+// rather than of a file anybody has open. The table said `index, line, col, kind` and stopped there,
+// which leaves a reader two ways to be wrong at once: it attributed every point to the entry — the
+// only path it had — and reported the blob's line as if it were the file's. `packages/json` came back
+// as 621 points in `json.wac` and none at all in `parse.wac`, `stringify.wac` or `value.wac`, where
+// the reference compiler puts 269 of them [issue 0105].
+//
+// A coverage report that names the wrong file is worse than none, because it reads as a file nobody
+// tested.
+//
+// Host-side until 2026-08-18, `issues/system/0161`. `covTableFiles` is an `api.wac` export, so the
+// whole test is the compiler talking about itself.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined, splitLines, has } from "../../../wactest/src/strings.wac";
+import { covTableFiles } from "../../src/api.wac";
+
+const string MAIN = "/t/main.wac";
+const string HELPER = "/t/helper.wac";
+
+string[] paths() { return string[](MAIN, HELPER); }
+
+string[] sources() {
+  return string[](
+    "import { twice } from \"./helper.wac\";\n" +
+    "export i32 run(i32 n) { if (n > 1) { return twice(n); } return twice(1); }\n",
+    "// A comment, so the branch below is not on the same line as main's.\n" +
+    "export i32 twice(i32 n) {\n" +
+    "  if (n > 0) { return n * 2; }\n" +
+    "  return 0;\n" +
+    "}\n");
+}
+
+/** The `n`th tab-separated field of a line, or `""`. */
+string field(string line, i32 n) {
+  i32 from = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i <= line.len(); i++) {
+    if (i < line.len() && line.slice(i, i + 1) != "\t") { continue; }
+    if (seen == n) { return line.slice(from, i); }
+    seen = seen + 1;
+    from = i + 1;
+  }
+  return "";
+}
+
+i32 numOf(string s) {
+  i32 v = 0;
+  for (i32 i = 0; i < s.len(); i++) { v = v * 10 + (s.toBytes()[i] - '0'); }
+  return v;
+}
+
+export string test_a_coverage_point_names_its_own_file_at_that_files_own_line() {
+  T t = T.create();
+  string[] p = paths();
+  string[] s = sources();
+  string[] rows = splitLines(covTableFiles(p, s, MAIN));
+  t.isTrue(rows.len() > 0, "no coverage points at all");
+  if (rows.len() == 0) { return t.report(); }
+
+  string[] named = string[rows.len()](fill: "");
+  i32 nNamed = 0;
+  bool helperHasLine3 = false;
+  i32 overrun = 0;
+  string overName = "";
+  for (i32 i = 0; i < rows.len(); i++) {
+    string file = field(rows[i], 4);
+    t.isTrue(file != "", "a row has no file: " + rows[i]);
+    if (file == "") { continue; }
+    i32 line = numOf(field(rows[i], 1));
+
+    string[] soFar = string[nNamed](fill: "");
+    for (i32 k = 0; k < nNamed; k++) { soFar[k] = named[k]; }
+    if (!has(soFar, file)) { named[nNamed] = file; nNamed = nNamed + 1; }
+
+    // `helper.wac`'s branch is on **its** line 3, not on whatever line the concatenation put it.
+    if (file == HELPER && line == 3) { helperHasLine3 = true; }
+
+    // And no line may exceed the file it claims to be in.
+    for (i32 k = 0; k < p.len(); k++) {
+      if (p[k] != file) { continue; }
+      if (line > splitLines(s[k]).len() + 1) { overrun = overrun + 1; overName = file; }
+    }
+  }
+
+  // Both files have a branch, so both must appear — attributing everything to the entry is the
+  // failure this is here for.
+  string[] all = string[nNamed](fill: "");
+  for (i32 i = 0; i < nNamed; i++) { all[i] = named[i]; }
+  t.isTrue(has(all, MAIN), "no points in " + MAIN + "; the table names " + joined(all, ", "));
+  t.isTrue(has(all, HELPER), "no points in " + HELPER + "; the table names " + joined(all, ", "));
+  t.isTrue(helperHasLine3, "helper's branch is on line 3, and the table does not say so");
+  t.eqI32(overrun, 0, overName + " has a point past the end of the file it claims to be in");
+  return t.report();
+}

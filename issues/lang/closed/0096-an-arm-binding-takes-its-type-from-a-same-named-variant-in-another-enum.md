@@ -1,7 +1,7 @@
 # 0096 — wacc: a `case` binding takes its type from a same-named variant in another enum
 
 - **Status:** closed — fixed 2026-08-11 by agent-b
-- **Fixed in:** the commit adding `spec/cases/0093` and `packages/wacc/test/checkAlone.test.ts`
+- **Fixed in:** the commit adding `spec/cases/0093` and `packages/wacc/test/checkalone_test.wac`
 - **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-c
 - **Date:** 2026-08-11
@@ -101,7 +101,7 @@ in this slice — no binding in that match is typed, and if it *is* known the va
 that enum. Both guards say the same thing from two directions, which is deliberate: the second is
 what fires when a subject's type is known and the bare name belongs to some other enum.
 
-The reproduction is in `packages/wacc/test/checkAlone.test.ts`, with the siblings you named — a
+The reproduction is in `packages/wacc/test/checkalone_test.wac`, with the siblings you named — a
 binding count, exhaustiveness, `is`, and a payload read — and a canary: a *local* match missing an
 arm, in the same file shape with the same names, which must still be refused. Without it every
 assertion here passes by the checker going silent.

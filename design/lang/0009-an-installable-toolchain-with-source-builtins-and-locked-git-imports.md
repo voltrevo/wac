@@ -26,7 +26,9 @@ binary. `wac uninstall [--keep-cache]` removes the binary, the cache, the profil
 metadata, and never a manifest, a lockfile, a source file or a build product.
 
 `app:wacbin` becomes `app:native-binary`, which is what it always was: the generic builder, not the
-dedicated one.
+dedicated one. *(2026-08-18: done — the task, `packages/platform/nativeBinary.ts`'s usage line,
+`native/v8/README.md` and the test that names it. Closed issues keep the old spelling, because they
+record what somebody typed on a day.)*
 
 **D2 — the fixpoint is a property of the command, not of a test.** `wac:build` and `wac:install`
 bootstrap compiler module B, build a native `wac` containing it, ask *that* binary to compile the
@@ -172,7 +174,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | not started — see below |
 | 7. Git mappings and `wac.lock` (D9, D10, D11) | **the pure half is done.** `packages/wacpkg` enforces D9's non-overlap, reads and canonicalises `wac.lock`, and `plan` decides USE/CREATE/REFRESH per mapping — including the rule that a moved branch is not a reason to re-resolve. `refToCommit` resolves a ref to a commit, measured against real `git` — an object name, an exact advertised name, then `refs/heads/` or `refs/tags/`, with an ambiguous name refused rather than ranked, and an annotated tag's peel preferred because the two advertised lines name different objects. The cache **layout** is settled too — `cachePath` is `$WAC_HOME/cache/git/<escaped repository>/<commit>`, a function of those two and nothing else, with the repository name escaped reversibly rather than hashed or slugified. Settled before anything fetches on purpose: a cache key lives in people's home directories and cannot be changed later without a migration. **Fetching works**: `packages/wacpkg/example/fetch.wac` resolves, fetches over `packages/git`+`packages/tls`, verifies the commit is in the pack by content address, writes it to the cache and updates the lock — 7.6 MB and 2618 objects from `github.com/voltrevo/wac`, and a second run fetches nothing, which is D11's sentence demonstrated. What is left is reading a `subdir` out of a cached commit and handing those files to the compiler, which is step 5's blocked half |
-| 8. `wac:install`, `wac uninstall` (D1) | **done as tasks.** `tools/install.ts` builds the seed fixpoint-checked, installs `bin/wac`, `cache/git/`, `env` and `install.json5` under `$WAC_HOME`, and adds one marked line to the profiles that exist — replaced rather than left when it points at a different home, which is how a reinstall to a new `$WAC_HOME` works. `wac:uninstall [--keep-cache]` removes those and the profile line, and nothing else. **Not yet a `wac uninstall` subcommand**: D1 asks for one on the binary, which is Rust in `native/v8/src/main.rs`, and the task does the job today. `app:wacbin` is still not renamed |
+| 8. `wac:install`, `wac uninstall` (D1) | **done as tasks.** `tools/install.ts` builds the seed fixpoint-checked, installs `bin/wac`, `cache/git/`, `env` and `install.json5` under `$WAC_HOME`, and adds one marked line to the profiles that exist — replaced rather than left when it points at a different home, which is how a reinstall to a new `$WAC_HOME` works. `wac:uninstall [--keep-cache]` removes those and the profile line, and nothing else. **Not yet a `wac uninstall` subcommand**: D1 asks for one on the binary, which is Rust in `native/v8/src/main.rs`, and the task does the job today. `app:native-binary` is renamed (2026-08-18) |
 
 Nothing has landed. The counts above were read on 2026-08-17 and are the reason the order is what it
 is: 2 before 3 because otherwise five more files get duplicated, 3 before 4 because the migration is
@@ -234,9 +236,15 @@ the root for the file it is resolving from — `resolveFrom(fromPath, spec)` gai
 rather than gaining a capability. That keeps the browser property and keeps the provider-boundary
 rule (D7) with the code that knows where the boundary is.
 
-**The walk exists four times, and three of them read files.** `harness/wacFiles.ts`,
-`compiler/wacx.ts` and `packages/wacc/example/wacc.wac` each queue a path, read it, ask for its
-import specifiers and resolve them. The fourth, `closureOf` in `packages/wacc/src/api.wac`, does
+**The walk exists four times, and three of them read files.** `harness/wacFiles.ts`, the
+reference CLI's and `packages/wacc/example/wacc.wac` each queue a path, read it, ask for its
+import specifiers and resolve them.
+
+*(2026-08-18: three times now, two of them reading files. The reference CLI went, the `wac`
+binary having replaced it. One fewer copy is one fewer place for a
+manifest lookup to diverge, and does not change what this section argues — the copies that read
+files still have to agree, and the count going down by attrition is not the same as consolidating
+them.)* The fourth, `closureOf` in `packages/wacc/src/api.wac`, does
 the same traversal over an already-supplied `paths`/`sources` pair and opens nothing — so it needs
 to be *told* the root rather than to find it, and it is the one place that must not grow a
 manifest lookup.
@@ -264,8 +272,11 @@ thing to write down:
 **Specifier resolution existed a third time, inside the linker — and there were seven in all.**
 That copy is gone: `packages/wacc/src/path.wac` holds the rule, imports nothing, and both
 `files.wac` and `emit.wac` use it (`issues/lang/0150`, where the two disagreed about
-`./sub/../lib.wac` and a valid program read and then failed to link). Four remain — `compiler/wacResolve.ts`, `harness/wacFiles.ts`,
-`compiler/wacx.ts` and `site/src/editor/file-store.ts`. `packages/wacc/test/corpus.ts` now
+`./sub/../lib.wac` and a valid program read and then failed to link). Four remain —
+`compiler/wacResolve.ts`, `harness/wacFiles.ts`, the reference CLI's and
+`site/src/editor/file-store.ts`. *(2026-08-18: three, and the count in the measurement below with
+it — the reference CLI was retired. The pairs it contributed are gone from
+the total rather than newly disagreeing.)* `packages/wacc/test/corpus.ts` now
 uses the harness's, which also fixed it: its own copy claimed in a comment to resolve "the way
 the emitter's linker does" and did not — `from.slice(0, from.lastIndexOf("/"))` drops the last
 *character* when there is no slash, and its `..` popped unconditionally.
@@ -287,7 +298,7 @@ So step 5 is not "teach the walker about `@/`". It is:
 - `linkFiles` and `resolveImport` take the importing file's project root, which means
 - the `(paths, sources, entry)` shape that about ten exported functions in `packages/wacc/src/api.wac`
   share gains a parallel `roots`, which means
-- `harness/wacFiles.ts`, `packages/wacc/tools/waccx.ts`, the reference and every test that calls
+- `harness/wacFiles.ts`, the reference and every test that calls
   one of them passes it.
 
 That is a cross-cutting change to the compiler's public API rather than a feature added at an edge,

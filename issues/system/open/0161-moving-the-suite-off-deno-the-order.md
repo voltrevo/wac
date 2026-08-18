@@ -137,7 +137,16 @@ and each is now written where the next person to touch that code will read it.
   signatures — but it swaps the oracle from the reference compiler to wacc. That is arguably better
   and it is a change in what is claimed, so it wants the side-by-side treatment.
 - `packages/crypto/test/constanttime.test.ts` needs the compiler's **trace mode**, through
-  `harness/ctTrace.ts`. wacc has no equivalent, so this is a compiler feature rather than a port.
+  `harness/ctTrace.ts`. ~~wacc has no equivalent, so this is a compiler feature rather than a
+  port.~~ **Stale as of 2026-08-18, and the blocker is smaller than this says.** wacc has
+  instrumented since `issues/lang/0105` closed and is now the *default* — `harness/ctTrace.ts` says
+  so in its own header, with `WAC_CT_FROM=reference` to go back — and `packages/wacc/src/api.wac`
+  exports `emitFilesTraced`, `emitFilesTracedSlots` and `traceTableFiles`. So the compiler half is
+  done. What is missing is the two ends around it: a CLI surface that runs a traced module, and a
+  way to get the event log out of it, since `ctTrace.ts` reads it by instantiating in JavaScript and
+  a wac test cannot instantiate. That is the shape `wac covdump` already has — run `main` under the
+  instrumentation and print the table — so the work is a `wac tracedump` beside it rather than
+  anything in the compiler.
 
 **And what stays.** `compiler/` and the 21 `packages/wacc` tests that measure wacc against it are
 the bootstrap. `harness/wac/hostless.test.ts` is the alternative-host check and is the point rather
@@ -187,10 +196,60 @@ The verifiable facts, and they are the only ones worth planning against:
   - **The host is one import away.** `gzip/gzip_fixed.test.ts` looks clean and imports `gunzip` from
     `./util.ts`, which spawns the system gunzip — the right oracle, since a self-round-trip cannot
     catch a wrong bit order.
+  - **What is left, split by what actually blocks it — 2026-08-18.** 44,490 lines of `.test.ts`
+    remain under `packages/`:
+
+    | | lines |
+    |---|---:|
+    | needs a live child (`issues/system/0165`) | 12,132 |
+    | needs a live TLS or QUIC **peer** wac cannot be | 3,425 |
+    | needs a browser | 3,355 |
+    | nominally convertible | 25,578 |
+
+    **Take 4,035 off that last row**, measured rather than estimated: a test that never names a
+    `.wac` file and never calls `wacBind`, `waccApi`, `buildApp`, `buildNative` or `buildBinary` is
+    not driving a wac program, so its subject is the TypeScript beside it. That leaves **21,543
+    lines** of genuinely convertible wac-subject work — `wacc` 8,582, `platform` 4,799, `box` 3,515,
+    `wacpkg` 1,193, `git` 1,002.
+
+    Three categories fooled a grep in turn before that discriminator was found, and each cost a
+    re-measurement:
+
+      - a file whose oracle is a *runtime peer* — `Deno.QuicEndpoint`, `listenTls` — is not
+        convertible however little it spawns. wac has UDP and no QUIC peer to be. Sixteen files.
+      - a file whose *subject* is TypeScript never moves: `platform/host/marshal.test.ts` sits beside
+        the `marshal.ts` it tests, the three `*_model.test.ts` check a TS model, and
+        `platform/test/browser.test.ts` — which needs no browser at all — drives the browser handler
+        mapping with an in-memory double. ~2,000 lines.
+      - `crypto.subtle` is *not* in either category: WebCrypto is reachable as an oracle process
+        (`capture-hkdfcap.wac` asks it through `deno eval`), because that question is a computation
+        and not a conversation.
+
+    `typecheck.test.ts` alone is 3,078 of `wacc`'s share. `wacpkg` and `sh` are convertible and
+    belong to other agents.
+
+    **The lesson is about the discriminator, not the number.** "Does it spawn a child" and "does it
+    mention a browser" are questions about a test's *machinery*; "does it drive a wac program at all"
+    is the question about its *subject*, and it is the one that decides whether a conversion is even
+    meaningful. Three published figures were wrong before that was asked.
+
+  - **What the reference oracle now answers**, for whoever takes the rungs on:
+    `packages/wacc/test/reference.ts` is the batched TypeScript half of rungs 1, 2 and 4 —
+    `runfn` (compile, instantiate, call an export), `parsehash`/`parsedump`, `lexhash`/`lexdump`,
+    `lexerrs` (it adjudicates our triples rather than handing back a table), `lexkinds`, `lexcodes`.
+    `typecheck.test.ts` will want a `checkpos`; it was written and then reverted rather than
+    committed with no caller.
+
+  - **Two files that look easy and are not.** `specAccept` and `specCheck` read `specCorpus.ts`,
+    which extracts programs by *reading* `compiler/wacSpec.test.ts` — the exact thing
+    `tools/specCases.ts` exists to avoid, and which its own header records as having produced three
+    disagreeing answers. Pointing them at the generated `specCases.json` instead would merge two
+    corpora, which is a decision about coverage rather than a translation.
+
   - **New TypeScript arrives while this runs.** On 2026-08-17 alone, seventeen `.test.ts` files were
     added by other agents — 1,908 lines still present — against roughly 800 lines converted away the
     same day. Some of it is genuinely host-side (`packages/wacpkg`'s transport and cache), and some
-    is not (`wacc/interiorDotDot.test.ts` is a compiler test). This is not an argument for stopping
+    is not (`wacc/interiordotdot_test.wac` is a compiler test). This is not an argument for stopping
     anyone; it is the reason a line count of what remains moves in both directions, and why "how much
     is left" cannot be read as "how much has been done".
 
@@ -911,7 +970,8 @@ says `delete mode` rather than anything about content.
 ### The registrar tier is gone — 2026-08-17
 
 `grep -rl wacTestRun packages/*/test/*.ts` now returns two files, and neither is a package handing
-its subject a callback: `packages/wactest/test/assert.test.ts` tests the harness, and
+its subject a callback: packages/wactest/test/assert.test.ts (unbackticked because it no longer
+exists — see the section below) tests the harness, and
 `packages/wacc/test/nativeBinary.test.ts` tests the binary. Every `*_wac.test.ts` in the repository
 is deleted. Sixteen of them went in one day — four in `crypto`, three in `tls`, nine in `tor` — and
 what they had in common is worth writing down, because the same shapes will come up in the 232
@@ -967,3 +1027,269 @@ where wac writes it in decimal, so every AES record went down the ChaCha path �
 then failed, it read as our sealing being wrong rather than as the oracle mistaking the suite. The
 five ChaCha records passing beside the five AES ones is what named it. An oracle that had answered
 one record at a time would have looked like a broken record layer.
+
+### The last registrar under `packages/` — 2026-08-18, and the guard that could not survive it
+
+packages/wactest/test/assert.test.ts is gone, and with it the registrar tier under `packages/`
+entirely: `grep -rl "wacTestRun(" packages/` now returns nothing. Its subject was `wacTestRun` —
+the harness `wac test` replaces — so translating it would have pinned something on its way out.
+What moved is the *guarantee*, asked of the runner that now has to keep it, in
+`packages/wactest/test/wac/runner_test.wac`: discovery finds every `test*` export, a file exporting
+none is an error rather than a silent pass, and a failing assertion's message comes back. All three
+are the same failure in different disguises — **a runner that runs nothing looks exactly like a
+runner whose tests all pass.**
+
+**Deleting it broke two guards, and one of them had said it could not be broken this way.**
+`harness/wacTestNames.test.ts` walks the tree counting `wacTestRun` calls, and it walked `packages/`
+only, under a comment reading "and that is not a shortcut — all 83 registrations are there". That had
+already expired: the registrations were consolidated into `harness/wac/hostless.test.ts`, 57 of
+them, which is the file `tools/mutate/profile.ts` reads statically. So the walk's own root held none,
+and its floor — `filesWithCall === 0` — fired with *"the walk found no file containing `wacTestRun(`
+— it did not resolve"*. The floor was derived rather than hand-picked precisely so a migration could
+not outrun it, and the comment saying so is the one that aged: **a derived floor is only as wide as
+the roots it is derived from.** Fixed by walking `harness/wac/` too, which is a directory that
+excludes the two self-scanning files by path rather than by a filename list.
+
+**A refusal test lost the only file with the shape it needed.** `tools/mutate/nativeShare.test.ts`
+asserted that a file which registers wac tests *and* declares its own `Deno.test`s is left to Deno,
+and it used this file as the subject. After the delete no file in the tree has both properties, so
+the subject is now synthetic — which states the rule instead of waiting for some file to grow it
+back.
+
+Writing it exposed the harder half. The obvious fixture location is a temp directory, and it is
+wrong: `work` is also the cwd `nativeShare` runs `wac test` from, so from a temp directory the
+registered entry does not resolve, the run fails, and `nativeShare` returns null *anyway*. Delete
+the refusal the case is named for and it still passes. Putting the fixture in `ROOT/.cache` — in
+`deno.json`'s `exclude` and in `.gitignore`, so the test walk never tries to run it — makes the
+entry resolve, and removing the refusal now returns a profile and fails the case in 346ms.
+**`null` was both the expected answer and what three unrelated failures return**, so the case needed
+controls proving the fixture would otherwise have been taken: readable registrations, zero
+unresolved, and a non-zero host-test count, each asserted before the refusal is consulted.
+
+It also stopped opening with `if (!await haveBinary()) return`. The refusal is static, ahead of the
+first spawn, so on a checkout with no binary the case used to go unasserted rather than skipped-and-
+said-so.
+
+### 2026-08-18: `wacpkg`, and two ways a migrated package gets quieter
+
+**The wac lane has overtaken: 238 wac test files against 236 Deno ones**, and twenty-one packages
+have no `.test.ts` at all.
+`packages/wacpkg` is one of them as of today: eight `.test.ts` files became seven
+`test/wac/*_test.wac`.
+
+The ports are not the interesting part. Both of these are the family this issue keeps collecting —
+*a check that was not being made* — and both are caused **by migrating**, so they are worth reading
+before porting a package rather than after.
+
+**The bindgen-boundary wrapper layer goes unasserted the moment its callers leave.**
+`packages/wacpkg/src/wacpkg.wac` exists so a host can ask about a file it already holds as bytes;
+every entry point is a one-line delegation. The `.test.ts` files drove the package entirely through
+it. The wac tests that replaced them call the modules underneath — as `example/plan.wac` does,
+which is the whole argument for the boundary existing — so **nothing was left that would notice a
+wrapper returning a constant**. A `guard`+`extreme` sweep found seventeen survivors, one per entry
+point, each gutted to `return ""` with the suite green.
+
+Coverage did not show it and could not: `cov.ts` drives that module from its own workload, so the
+lines ran and nothing checked what came back. A covered line and an asserted one are different
+claims, and a migration is exactly when they come apart. `test/wac/entry_test.wac` is the fix —
+each entry point called beside the function it wraps, on input where a constant cannot pass.
+
+**Importing a constant into the assertion that checks it removes an oracle nobody had named.**
+`t.eqI32(m.code, M_SUBDIR_ESCAPE())` reads better than a literal and **cannot fail**: set the
+constant to 0 and both halves move together. Five error codes were like that. The TypeScript tests
+had caught it only by accident — they kept a hand-copied table of the numbers in the other language,
+which I deleted as redundant duplication. It was not redundant; it was a second opinion nobody had
+written down as one. The replacement is one test asserting the numbers as literals, in the file that
+uses them.
+
+This one generalises to every port in this issue: a `.test.ts` cannot import a wac constant, so
+every error-code assertion in a TypeScript test is against a literal, and every one of them loses
+its independence the moment it is rewritten in wac. Worth grepping for when porting.
+
+The sweep went 62 → 68 of 77 with both fixed. Of the nine left, eight are in `example/`, which has
+no tests, and one is `actionUse` gutted to `return 0` where `USE()` is 0.
+
+**Two things that cannot move, for the record**, both matching the "what stays" rule above:
+`tools/install.test.ts`, because `tools/install.ts` is TypeScript and a wac test cannot import it;
+and packages/wacc/test/renderDiag.test.ts, whose subject is agreement with the reference's own
+`wacDiag`. Same reason as `packages/stream/test/stream.test.ts`.
+
+**~~and `renderDiag.test.ts`~~ — wrong, and it moved on 2026-08-18.** That sentence applied the
+"what stays" rule to the wrong half. `packages/stream`'s subject is the JavaScript *bridge*: there is
+no wac side, so there is nothing to move. `renderDiag`'s subject is `src/render.wac`, which is wac,
+and `wacDiag` is its **oracle** — and this migration's rule has always been that the harness moves
+and the independent implementation does not. Keeping `wacDiag` in TypeScript is the rule being
+followed, not a reason the test cannot move. It is `test/wac/renderdiag_test.wac` now, with the
+reference in `test/renderdiag_oracle.ts`, which imports `wacDiag` rather than reimplementing it.
+
+The distinction worth carrying: *is the TypeScript the subject, or the oracle?* Only the first stays.
+
+**`tools/wac/` is now seven test files** — `runNamed_test.wac` and `cliCommands_test.wac` arrived
+with the `wacx` retirement, and both spawn the binary through `Cli.exec`, which answers the question
+of whether a CLI's own tests can be wac. They can.
+
+`packages/wactest/src/host.wac` is new and shared: `binaryPath`, `agentDir` and `scratch`. **23 test
+files across nine directories carry byte-identical copies of that block, and 13 of them also
+redefine `binary(Cli)`.** Only the new tests use the shared one — sweeping 23 files across nine
+directories people are working in is not a thing to do quietly, and it
+is the kind of churn that makes a migration look risky. Worth doing as its own change by whoever is
+next in those packages.
+
+### `packages/json` — 2026-08-18, and an oracle that serves the corpus
+
+`test/json5.test.ts` and `test/util.ts` are gone; six cases are `test/wac/json5_test.wac`. Four of
+the six ask the host nothing at all — they compare this package's two entry points against each
+other, which is what "JSON5 is a superset of JSON" means, and the JSONTestSuite corpus was already
+being read from wac by the file next door.
+
+**The one that needed the host needed it for number spelling.** The vendored answers are
+`JSON.stringify` of the reference's value, so comparing raw text compares *formatting*: a parser that
+keeps the bytes it read writes `0.0` where `JSON.stringify` writes `0`. Re-reading our output and
+writing it again puts both sides in one spelling without touching the value. That is a fact about the
+reference rather than about a harness, so it stayed in `test/oracle.ts`.
+
+**What changed shape is who reads the corpus.** The obvious port has wac read `vendor/json5.json`
+and parse it — with the parser under test. A misread would then arrive as several hundred
+disagreements about JSON5 rather than as one about the harness, which is the shared-implementation
+trap in a new place. So the oracle grew two ops that **produce** rather than judge: `json5corpus`
+hands over the 467 inputs and `json5cmp <i> <ok> <textHex>` keeps the expected answers on the far
+side entirely. `ask` checks `DONE` against what it *sent*, so a batch of one request answering 467
+times is already the shape it expects. Two batches — the second cannot be built until our answers
+exist — and produced lines go on their own channel ahead of the `FAIL` lines, because the caller
+indexes them by position and a judged op failing partway would shift every answer after it.
+
+It also wanted one grant. `askDeno` runs the oracle with none, which is right for ops that only
+compute; this one reads a file, so the call site asks for `--allow-read` and nothing else rather than
+widening the shared helper for every caller that does not need it.
+
+Canaried three ways: pointing the comparison at `canonicalize` instead of `canonicalizeJson5` gives
+*268 of 467 disagree* naming `+1`, `.5`, `0x0`; adding an agreeing input to the known-divergence list
+gives both *"0" is listed as a known divergence but now agrees — delete the entry* and the count
+assertion that every listed entry was reached.
+
+### `packages/ethrpc` — 2026-08-18, and the shape that was actually blocking the live tests
+
+`packages/ethrpc` has no `.test.ts`: three live tests and `test/anvil.ts` became
+`test/wac/{rpc_live,ethbalance_live,ensowner_live}_test.wac` and `test/wac/anvil_probe.wac`.
+
+**What kept them host-side was not the node, it was the shape.** `Cli.exec` runs a child *to
+completion* — and a node has to still be running while the test talks to it. That is the one thing
+`exec`'s documentation says it deliberately does not do, with the count behind it: of the 107
+host-side files that spawn a process, the fifteen that keep a child alive start a server and then
+talk to it over a socket.
+
+So the missing half is now `packages/wactest/src/daemon.wac`, and it is not a new capability — it is
+`exec`, `connect` and `listen` arranged so a test can hold a child open. `start` backgrounds a shell
+line and answers with the pid, `waitForPort` polls, `stop` kills, `freePort` asks the kernel for one
+rather than guessing a number that would collide with the other agent running the same suite.
+
+Two things it got wrong first, both worth keeping:
+
+- **`{ cmd; } & echo $!` names the subshell, not the program.** `stop` then killed a shell and left
+  the server running, which showed up as "still answering after stop". `{ exec cmd; }` replaces the
+  subshell so the pid is the one that matters.
+- **`kill` returns before the process is gone.** Twenty connects take microseconds and all twenty
+  landed while the server was winding down. What `stop` promises is that it will stop, not that it
+  has by the time it returns, and the test polls.
+
+`test/wac/daemon_test.wac` drives the whole cycle against `python3 -m http.server`, and its controls
+are the point: the port is asserted *dead* before the server starts, so a `waitForPort` that always
+answered true would fail there rather than passing everything.
+
+**This unblocks more than `ethrpc`.** Every remaining live test that needs a server — `packages/http`,
+`packages/server`, `packages/quic`, `packages/tls`'s interop pair — was waiting on the same shape.
+
+The oracles stayed separate implementations, which took some care: `cast rpc` asks the node and
+`cast to-dec` converts, because asking through `packages/ethrpc` or converting with
+`packages/bignum` would have made the question and the answer the same code — and the balances are
+past what an i64 holds, which is why `ethbalance` does long division over the bytes at all. `cast
+block latest -f hash` for the same reason a field is wanted rather than a document: reading one key
+out of a JSON block would have put this repository's own JSON parser in the test.
+
+### `packages/http`'s tunnel, and two files that stay because the loop is TypeScript — 2026-08-18
+
+`test/tunnel.test.ts` became `test/wac/tunnel_test.wac`: it builds `example/tunnel.wac` and runs it
+against this container's Squid, which is the `wac run --allow-net --allow-env` pattern the
+`packages/git` conversions established.
+
+Its third case is why `packages/wactest/src/childenv.wac` has a `withoutEnv`. Proving a program
+complains about a **missing** variable means taking one away, and since `Cli.exec` passes the host's
+whole environment (`issues/system/0198`) the variable is otherwise always there. An empty assignment
+would not do: a program asking "is this set" and one asking "is this non-empty" answer differently,
+and this one asks the first. Canaried by handing the variable back — the tunnel opens and exits 0
+instead of reporting it is unset.
+
+**And the declared-environment helper moved on its third caller.** It was
+`packages/git/test/wac/env_probe.wac`; `packages/http` wanted it and `daemon.wac` had already grown a
+second copy of the quoting, so `quoted`, `withEnv`, `withHome` and `withoutEnv` are now
+`packages/wactest/src/childenv.wac` and the six `packages/git` files import it from there. `shQuoted`
+lost its prefix in the move — one name for one thing.
+
+**`packages/server/test/live.test.ts` and `packages/http/test/interop.test.ts` stay**, and the reason
+is the same for both and worth writing down so nobody re-derives it. `packages/server`'s wac surface
+is `serve(u8[] input, i64 nowMillis) -> Served` — a function from bytes to bytes. The *connection*
+loop is `host/serve.ts`: the buffering, the keep-alive, the pipelining, the connection limit. Those
+socket-level properties are precisely what the live test exists to check, and they are properties of
+the TypeScript. Porting it would mean **writing a wac server loop**, which is new production code
+rather than a test conversion — and there is no `packages/server/example/` to run.
+
+`http/interop.test.ts` is the same shape one layer up: its 2×2 drives the wac client through
+`http/host/client.ts` against `server/host/serve.ts`, so half the grid is host bindings. Both belong
+with `packages/stream/test/stream.test.ts` in the list of files whose subject is the JavaScript, not
+files waiting for a capability.
+
+### Two build features the CLI does not have, and one host divergence — 2026-08-18
+
+Three `packages/platform` files that look convertible are not, and the reasons are worth recording
+because each looks like a missing test rather than a missing feature.
+
+**`test/optimize.test.ts` needs `--optimize`, which only `buildApp` has.** `wac build` answers
+`unknown flag '--optimize' — --allow-read, --allow-write, --allow-net, --allow-env, --allow-run`. The
+flag is a TypeScript build option, so the test cannot ask the binary for the thing it measures.
+
+**`test/producer.test.ts` needs to choose the compiler, which the binary cannot.** Its property is
+*both markers, and different*: a module built by wacc says `processed-by: wacc` and one built by the
+reference says `wac-reference`, and a marker on one compiler only would make absence ambiguous.
+`WAC_APP_FROM=reference wac build` produces a module stamped `wacc` — measured, not assumed: the
+variable is read by `native.ts`, and the binary embeds wacc. Porting half of it would delete the
+comparison that is the whole test, so it stays whole.
+
+**`test/frame.test.ts` found a real bug instead**, filed as `issues/system/0199`. It is a
+differential between the host frame and a substitute built from lambdas, and it passes under
+`deno test`. Run the same two programs with `wac run` and they disagree: the native host does not
+apply a pushed child's `cwd`, so the child is told `note.txt: No such file or directory` in the
+directory that has it. Both spellings of the directory fail, so it is not `issues/system/0194`. The
+divergence was invisible while one host ran both halves — which is what a differential is for, and it
+means the property that test asserts is false on the binary.
+
+The general shape: a conversion is blocked either by something the CLI cannot express, or by
+something that turns out not to work on the host the CLI uses. The second kind is worth more than the
+conversion.
+
+### `packages/wacc`'s tests convert better than anything else — 2026-08-18
+
+Worth stating plainly, because it changes where the remaining effort should go: `waccApi()` is
+TypeScript reaching into wacc through a wasm binding, and in wac the same thing is an **import**.
+`import { diagnoseGraph } from "../../src/api.wac"` — no subprocess, no binding, no harness. The
+compiler is a wac library and the test is a wac program. `checkGraph` (7 cases) was a straight lift on
+that basis.
+
+Where the four remaining siblings stand, so nobody re-derives it:
+
+- **`renderDiag.test.ts` is done** — `test/wac/renderdiag_test.wac`, with the reference's `wacDiag`
+  kept in `test/renderdiag_oracle.ts`, which imports it rather than reimplementing it. The wire
+  crosses rather than being recomputed: both sides render from the *same* `diagnoseFiles` output,
+  because letting the oracle produce its own would compare two compilers' opinions about what to
+  refuse and a disagreement there would arrive looking like a layout bug.
+- **`scoping.test.ts` is half-portable.** `diagnoseFiles` and `emitFiles` lift; the last assertion
+  instantiates the module and calls `run()`, expecting 2. wac cannot instantiate. `wac validate`
+  covers "the engine accepts it" — which is what `duplicateExports` needed — but not "it answers 2",
+  and the fixture's module imports a callback bridge, so running it out needs a manifest rather than
+  a bare `wac mod.wasm`.
+- **`jsxBoundary.test.ts` stays.** A JSX tree built in wac is walked by a renderer *written in
+  JavaScript*, using glue generated from the module's own metadata — two pieces of code that share
+  nothing but the compiler, agreeing on a value. The JavaScript is half the differential, so
+  translating it would delete the claim. Same category as `trapMessage`'s built-app case and
+  `packages/stream`.
+- **`manifest.test.ts` and `jsBindgen.test.ts`** were already rejected earlier for the same kind of
+  reason — a cargo build and JS glue as the subject.

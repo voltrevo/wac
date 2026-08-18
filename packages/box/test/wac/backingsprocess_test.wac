@@ -1,0 +1,104 @@
+// The one thing about the three backings that needs three processes: that an image outlives one.
+//
+// `backings_test.wac` beside this one is the differential: all 946 scripts through three `Fs` values
+// inside one process, with the same three levellings `tools/corpusBackings.ts` applies, so the gate
+// covers the whole of design/0001 D7 rather than the 4% the spawning version reached. This file is
+// the part of `backings.test.ts` that could not join it.
+//
+// **What stays here is the canary, because it is the one claim that is about *processes*.** If
+// `imaged` were quietly in-memory too, every comparison in the wac differential would still pass —
+// three identical things agree perfectly — so something has to establish that the image is a
+// different kind of thing from the memory it agrees with. That is: a second process finds what the
+// first wrote, and a sealed session does not.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `buildApp` becomes `wac build … -o stem`, which writes `stem.wasm` and `stem.json`, and a run is
+// `wac stem.wasm args…`. Three builds at about six seconds each is most of this file's time.
+//
+// **`Cli.exec` has no working directory**, which the TypeScript used for the host-mount case. The
+// script says `cd` instead — it is a shell, and the directory is the only thing that case needs from
+// the parent. The two sealed cases never look at one.
+//
+// test-lane: heavy — 18s, three builds and four processes
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+
+/** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** Build one box binary, and say why not if it did not build. */
+bool build(T t, Cli cli, string entry, string stem, string[] grants) {
+  string[] argv = string[grants.len() + 4](fill: "");
+  argv[0] = "build";
+  argv[1] = entry;
+  argv[2] = "-o";
+  argv[3] = stem;
+  for (i32 i = 0; i < grants.len(); i++) { argv[i + 4] = grants[i]; }
+  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           "built " + entry + " — " + r.error + string.fromBytes(r.stderr));
+  return r.ran() && r.status == 0;
+}
+
+/** Run a built box shell over a script, and hand back what it said. */
+Exec run(Cli cli, string stem, string[] extra, string script) {
+  string[] argv = string[extra.len() + 3](fill: "");
+  argv[0] = stem + ".wasm";
+  for (i32 i = 0; i < extra.len(); i++) { argv[i + 1] = extra[i]; }
+  argv[extra.len() + 1] = "-c";
+  argv[extra.len() + 2] = "mkdir -p /tmp; " + script;
+  return cli.exec(binary(cli), argv, u8[0]()).wait();
+}
+
+string show(Exec r) {
+  return "\"" + string.fromBytes(r.stdout) + string.fromBytes(r.stderr) + "\" (" +
+         itoa(r.status) + ")";
+}
+
+export string test_the_image_is_a_different_thing_from_the_memory_it_agrees_with(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/backings";
+  cli.mkdir(dir, true).wait();
+
+  string sealed = dir + "/sealedsh";
+  string imaged = dir + "/imaged";
+  string host = dir + "/hostsh";
+  if (!build(t, cli, "packages/box/src/bin/sealedsh.wac", sealed, string[0](fill: ""))) {
+    return t.report();
+  }
+  if (!build(t, cli, "packages/box/src/bin/imaged.wac", imaged,
+             string[]("--allow-read", "--allow-write"))) { return t.report(); }
+  if (!build(t, cli, "packages/box/src/bin/sh.wac", host,
+             string[]("--allow-read", "--allow-write", "--allow-env"))) { return t.report(); }
+
+  // **What makes an image an image** is that a second process finds what the first wrote.
+  string image = dir + "/persist.img";
+  cli.remove(image, false).wait();   // a leftover from an earlier run would make this pass for free
+  Exec first = run(cli, imaged, string[](image), "echo kept > /keep; ls /");
+  t.isTrue(contains(string.fromBytes(first.stdout), "keep"), show(first));
+  Exec second = run(cli, imaged, string[](image), "cat /keep");
+  t.eqStr(string.fromBytes(second.stdout), "kept\n",
+          "an image did not survive its own process: " + show(second));
+
+  // **And what makes a memory session memory** is that it does not.
+  Exec forgot = run(cli, sealed, string[0](fill: ""), "cat /keep; echo status=$?");
+  t.eqStr(string.fromBytes(forgot.stdout), "status=1\n",
+          "a sealed session remembered something: " + show(forgot));
+
+  // The host mount is a third thing again: what it wrote is on the real disk, where the other two
+  // cannot see it and this test can.
+  string work = dir + "/persist";
+  cli.mkdir(work, true).wait();
+  cli.remove(work + "/here", false).wait();
+  run(cli, host, string[0](fill: ""), "cd " + work + "; echo ondisk > here");
+  FileResult wrote = cli.readFile(work + "/here").wait();
+  t.isTrue(wrote.ok, "the host mount wrote nothing to the real disk — " + wrote.error);
+  if (!wrote.ok) { return t.report(); }
+  t.eqStr(string.fromBytes(wrote.bytes), "ondisk\n", "the host mount wrote the wrong thing");
+  return t.report();
+}

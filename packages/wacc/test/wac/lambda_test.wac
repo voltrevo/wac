@@ -21,7 +21,7 @@
 // The cases that only ask whether the checker objects need no module at all: `diagnoseGraph` answers
 // in this process.
 //
-// test-lane: heavy — sixty-odd small programs, most of them emitted and run
+// test-lane: heavy — 10s, sixty-odd small programs, most of them emitted and run
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

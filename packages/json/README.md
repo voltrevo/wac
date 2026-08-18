@@ -140,7 +140,7 @@ is a `this.json5` branch in `src/parse.wac` and is numbered there.
 
 It is a **second entry point** rather than a widening of `parse`, because JSON5 accepts strictly
 more: a file written with comments and read back with `parse` has to fail, or the two ends disagree
-silently. `test/json5.test.ts` asserts that directly.
+silently. `test/wac/json5_test.wac` asserts that directly.
 
 **Reading only.** JSON is valid JSON5, so `stringify` already produces an acceptable manifest, and
 `canonicalizeJson5` deliberately emits JSON — a JSON5 document in, a JSON document out. A writer
@@ -158,7 +158,7 @@ tables from the host, and `\p{ID_Start}` would answer this the way `iswprint` an
 reason `printable.wac` keeps its 733 ranges out of `tables.wac` — so two more range tables here
 would be carried by every program that parses JSON, to accept a manifest key nobody needs to write
 unquoted. Quoting the name always works. These are the 12 cases in the status table, and
-each one is listed in `test/json5.test.ts` with the assertion that it *still* diverges, so the
+each one is listed in `test/wac/json5_test.wac` with the assertion that it *still* diverges, so the
 list cannot outlive the limitation.
 
 The oracle is `npm:json5@2.2.3`, the implementation the specification is written against.

@@ -1,0 +1,256 @@
+// `wac.lock`: what is pinned, what has moved, and what the file looks like — D10.
+//
+// Two things live here. The **plan** is the decision — for each mapping, use what is locked, create
+// what is not, or refresh what no longer matches — and the interesting cases are the ones where an
+// input changed, because a plan that quietly reuses a stale commit is how a build stops matching
+// its manifest. The **writer** is a canonicalisation: the same content must produce the same bytes
+// whatever order it arrived in, or two agents who resolved the same mappings conflict on a
+// generated file.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Manifest, readManifest } from "../../src/manifest.wac";
+import { Lock, LockEntry, Step, USE, CREATE, REFRESH, plan, needsResolving, orphansOf,
+         readLock, isFullSha, writeLock } from "../../src/lock.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue } from "../../../json/src/value.wac";
+
+string A() { return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; }
+string B() { return "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }
+string SHA() { return "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"; }
+
+Manifest man(string s) { return readManifest(s.toBytes()); }
+Lock lok(string s) { return readLock(s.toBytes()); }
+
+export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
+  T t = T.create();
+  Manifest m = man("{ imports: {\n"
+                 + "  'std/': { git: 'g1', ref: 'main' },\n"
+                 + "  'acme': { git: 'g2', ref: 'v1', subdir: 'packages/acme' },\n"
+                 + "} }");
+  Lock l = lok("{ imports: {\n"
+             + "  'std/': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
+             + "  'acme': { git: 'g2', ref: 'v1', subdir: 'packages/acme', commit: '" + B() + "' },\n"
+             + "} }");
+  t.isTrue(m.ok, "the manifest reads");
+  t.isTrue(l.ok, "the lock reads");
+  if (!m.ok || !l.ok) { return t.report(); }
+
+  Step[] steps = plan(m, l);
+  t.eqI32(steps.len(), 2, "two steps");
+  if (steps.len() != 2) { return t.report(); }
+  string[] names = string[]("std/", "acme");
+  string[] commits = string[](A(), B());
+  for (i32 i = 0; i < 2; i++) {
+    t.eqStr(steps[i].name, names[i], "step " + names[i]);
+    t.eqI32(steps[i].action, USE(), names[i] + " is USE");
+    t.eqStr(steps[i].commit, commits[i], names[i] + " keeps its commit");
+    t.eqStr(steps[i].why, "", names[i] + " has nothing to explain");
+  }
+  t.isFalse(needsResolving(steps), "the network is not needed when every step is USE");
+  return t.report();
+}
+
+export string test_no_entry_is_create_and_a_changed_input_is_refresh_that_says_which() {
+  T t = T.create();
+  string lockText = "{ imports: {\n"
+                  + "  'std/': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
+                  + "  'sub': { git: 'g2', ref: 'v1', subdir: 'old', commit: '" + B() + "' },\n"
+                  + "} }";
+  Lock l = lok(lockText);
+  if (!l.ok) { t.fail("the lock did not read"); return t.report(); }
+
+  string[] entries = string[](
+    "'std/': { git: 'g1', ref: 'main' }",
+    "'fresh': { git: 'g9', ref: 'main' }",
+    "'std/': { git: 'OTHER', ref: 'main' }",
+    "'std/': { git: 'g1', ref: 'v2' }",
+    "'sub': { git: 'g2', ref: 'v1', subdir: 'new' }",
+    // Dropping a subdir the lock recorded is a change too, in the other direction.
+    "'sub': { git: 'g2', ref: 'v1' }");
+  string[] names   = string[]("std/", "fresh", "std/", "std/", "sub", "sub");
+  i32[] actions    = i32[](USE(), CREATE(), REFRESH(), REFRESH(), REFRESH(), REFRESH());
+  string[] words   = string[]("", "", "git", "ref", "subdir", "subdir");
+
+  for (i32 i = 0; i < entries.len(); i++) {
+    Manifest m = man("{ imports: { " + entries[i] + " } }");
+    if (!m.ok) { t.fail(entries[i] + ": the manifest did not read"); continue; }
+    Step[] steps = plan(m, l);
+    if (steps.len() != 1) { t.fail(entries[i] + ": " + "not one step"); continue; }
+    Step s = steps[0];
+    t.eqStr(s.name, names[i], entries[i] + " names");
+    t.eqI32(s.action, actions[i], entries[i] + " acts");
+    if (words[i] != "") {
+      t.isTrue(contains(s.why, words[i]),
+               entries[i] + ": the reason names " + words[i] + " — got \"" + s.why + "\"");
+    }
+    t.eqBool(needsResolving(steps), s.action != USE(), entries[i] + ": needsResolving agrees");
+    // A step that is not USE must not carry a commit: it is exactly the value that has been
+    // decided to be untrustworthy, and a caller that reads it anyway gets the stale one.
+    if (s.action != USE()) { t.eqStr(s.commit, "", entries[i] + " carries no commit"); }
+  }
+  return t.report();
+}
+
+export string test_two_mappings_on_one_repository_lock_independently() {
+  T t = T.create();
+  // D10's "even when several mappings name one repository". The cache being allowed to share
+  // objects by repository and commit is a different question from which commit each mapping is
+  // pinned to, and conflating them would let updating one silently move the other.
+  Manifest m = man("{ imports: { 'one/': { git: 'same', ref: 'main' },"
+                 + " 'two/': { git: 'same', ref: 'stable' } } }");
+  Lock l = lok("{ imports: {\n"
+             + "  'one/': { git: 'same', ref: 'main', commit: '" + A() + "' },\n"
+             + "  'two/': { git: 'same', ref: 'stable', commit: '" + B() + "' },\n"
+             + "} }");
+  if (!m.ok || !l.ok) { t.fail("the inputs did not read"); return t.report(); }
+  Step[] steps = plan(m, l);
+  t.eqI32(steps.len(), 2, "two steps");
+  if (steps.len() != 2) { return t.report(); }
+  t.eqStr(steps[0].commit, A(), "one/ keeps its own commit");
+  t.eqStr(steps[1].commit, B(), "two/ keeps its own commit");
+  return t.report();
+}
+
+export string test_an_entry_whose_mapping_is_gone_is_an_orphan_not_a_step() {
+  T t = T.create();
+  Manifest m = man("{ imports: { 'kept': { git: 'g', ref: 'r' } } }");
+  Lock l = lok("{ imports: {\n"
+             + "  'kept': { git: 'g', ref: 'r', commit: '" + A() + "' },\n"
+             + "  'gone': { git: 'g', ref: 'r', commit: '" + B() + "' },\n"
+             + "} }");
+  if (!m.ok || !l.ok) { t.fail("the inputs did not read"); return t.report(); }
+  Step[] steps = plan(m, l);
+  t.eqI32(steps.len(), 1, "the plan covers the manifest only");
+  if (steps.len() == 1) { t.eqStr(steps[0].name, "kept", "and it is the one still there"); }
+  string[] orphans = orphansOf(m, l);
+  t.eqStrArray(orphans, string[]("gone"), "the entry with no mapping is an orphan");
+  return t.report();
+}
+
+export string test_a_lockfile_is_rewritten_to_a_canonical_form() {
+  T t = T.create();
+  string messy = "{\n"
+    + "  // written by hand, in no order, with a comment\n"
+    + "  imports: {\n"
+    + "    zeta: { git: 'https://example.invalid/z', ref: 'main', commit: '" + A() + "' },\n"
+    + "    'alpha/': { git: 'https://example.invalid/a', ref: 'v1', subdir: 'packages/a', commit: '" + B() + "' },\n"
+    + "    mid: { git: 'https://example.invalid/m', ref: 'tag/1.0', commit: '" + SHA() + "' },\n"
+    + "  },\n"
+    + "}";
+  Lock first = lok(messy);
+  if (!first.ok) { t.fail("the messy lock did not read"); return t.report(); }
+  u8[] text = writeLock(first.entries);
+
+  // Sorted, so a mapping added above another does not move it in every later diff.
+  Lock back = readLock(text);
+  t.isTrue(back.ok, "the written form reads back");
+  if (!back.ok) { return t.report(); }
+  t.eqI32(back.entries.len(), 3, "all three survive");
+  if (back.entries.len() == 3) {
+    t.eqStr(back.entries[0].name, "alpha/", "first");
+    t.eqStr(back.entries[1].name, "mid", "second");
+    t.eqStr(back.entries[2].name, "zeta", "third");
+    t.eqStr(back.entries[0].subdir, "packages/a", "the subdir survives");
+    t.eqStr(back.entries[1].ref, "tag/1.0", "the ref survives");
+    t.eqStr(back.entries[2].commit, A(), "the commit survives");
+  }
+
+  // Idempotent, and independent of the input's own order — two agents that resolved the same
+  // mappings write the same bytes, so a generated file is one less thing to conflict on.
+  t.eqBytes(writeLock(back.entries), text, "rewriting the canonical form does not change it");
+  string reordered = "{ imports: {\n"
+    + "  mid: { git: 'https://example.invalid/m', ref: 'tag/1.0', commit: '" + SHA() + "' },\n"
+    + "  zeta: { git: 'https://example.invalid/z', ref: 'main', commit: '" + A() + "' },\n"
+    + "  'alpha/': { git: 'https://example.invalid/a', ref: 'v1', subdir: 'packages/a', commit: '" + B() + "' },\n"
+    + "} }";
+  Lock other = lok(reordered);
+  t.isTrue(other.ok, "the reordered lock reads");
+  if (other.ok) {
+    t.eqBytes(writeLock(other.entries), text, "the bytes do not depend on the input's order");
+  }
+
+  // It is JSON as well as JSON5, because the other end may be anything — checked with the strict
+  // parser rather than the one that read it, which accepts both and so cannot tell them apart.
+  t.isTrue(strictJson(text), "the written lock is strict JSON");
+  return t.report();
+}
+
+export string test_every_character_the_writer_escapes_round_trips() {
+  T t = T.create();
+  // A quoted JSON5 key may hold a newline or a tab, and a writer that emitted one raw would
+  // produce a lockfile that is neither JSON nor JSON5 — unreadable by the thing that wrote it,
+  // which is the worst kind of broken.
+  string[] names = string[]("a\"b", "a\\b", "a\nb", "a\tb", "a\rb", "a\"\\\n\t\rb");
+  for (i32 i = 0; i < names.len(); i++) {
+    LockEntry[] one = LockEntry[1](fill: LockEntry(names[i], "g", "r", "", A()));
+    u8[] written = writeLock(one);
+    t.isTrue(strictJson(written), "a name with an escape writes strict JSON");
+    Lock back = readLock(written);
+    t.isTrue(back.ok, "it reads back");
+    if (back.ok && back.entries.len() == 1) {
+      t.eqStr(back.entries[0].name, names[i], "the name survives the round trip");
+    }
+  }
+  return t.report();
+}
+
+export string test_a_commit_must_be_forty_lowercase_hex_digits() {
+  T t = T.create();
+  string[] good = string[](A(), B(), SHA(), "0000000000000000000000000000000000000000",
+                           "abcdef0123456789000000000000000000000000",
+                           // 41, deliberately: a length check written `>= 40` accepts this and
+                           // every other case in this test would still pass.
+                           "abcdef01234567890000000000000000000000000");
+  for (i32 i = 0; i < good.len(); i++) {
+    bool want = good[i].len() == 40;
+    t.eqBool(isFullSha(good[i]), want, "\"" + good[i] + "\" (" + itoa(good[i].len()) + " chars)");
+  }
+  string[] bad = string[]("", "3f2a1b0c", A().slice(0, 39), A() + "a",
+                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                          "gggggggggggggggggggggggggggggggggggggggg", A().slice(0, 39) + " ");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.isFalse(isFullSha(bad[i]), "\"" + bad[i] + "\" is refused");
+  }
+  // The check is applied when the file is read, not left to a caller: an abbreviated commit
+  // resolves to *something*, and to a different something once the repository grows.
+  t.isFalse(lok("{ imports: { 'a': { git: 'g', ref: 'r', commit: '3f2a' } } }").ok,
+            "a lock with an abbreviated commit is refused");
+  return t.report();
+}
+
+export string test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_code() {
+  T t = T.create();
+  string[] empty = string[]("{}", "{ }", "// none yet\n{}");
+  for (i32 i = 0; i < empty.len(); i++) {
+    Lock l = lok(empty[i]);
+    t.isTrue(l.ok, "\"" + empty[i] + "\" is a valid lock");
+    if (l.ok) { t.eqI32(l.entries.len(), 0, "\"" + empty[i] + "\" has no entries"); }
+  }
+  // Present but the wrong kind, for each field in turn. The `else:` arms for `git` and `ref` were
+  // the only unreached branches in the file until every field got a case of its own.
+  string[] texts = string[](
+    "{", "[]", "{ imports: [] }", "{ imports: { a: 1 } }",
+    "{ imports: { a: { ref: 'r', commit: '" + A() + "' } } }",
+    "{ imports: { a: { git: 'g', commit: '" + A() + "' } } }",
+    "{ imports: { a: { git: 'g', ref: 'r' } } }",
+    "{ imports: { a: { git: 1, ref: 'r', commit: '" + A() + "' } } }",
+    "{ imports: { a: { git: 'g', ref: 1, commit: '" + A() + "' } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', commit: 1 } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', commit: '" + A() + "', subdir: 1 } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }");
+  i32[] codes = i32[](1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 6);
+  for (i32 i = 0; i < texts.len(); i++) {
+    Lock l = lok(texts[i]);
+    t.isFalse(l.ok, texts[i] + " is refused");
+    if (!l.ok) { t.eqI32(l.code, codes[i], texts[i] + " gets its own code"); }
+  }
+  return t.report();
+}
+
+/** Does this parse as RFC 8259 JSON — not JSON5? */
+bool strictJson(u8[] src) {
+  JsonValue? v = parse(src);
+  return !(v is null);
+}

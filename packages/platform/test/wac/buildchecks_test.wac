@@ -1,0 +1,62 @@
+// A build runs the checker, not only the emitter.
+//
+// `waccArtifacts` asked `blockedFiles` — what the *emitter* declined — and never `diagnoseFiles`, so
+// a program with type errors was built and run as long as the emitter could guess its way through.
+// `packages/platform/example/page.wac` imported two names `platform.wac` does not export, was
+// reported by the checker, and shipped anyway. The reference path never had that hole: `wacCompile`
+// answers `ok: false` and `build.ts` throws. Flipping the default to wacc carried it in, which is
+// exactly the kind of thing a default change does quietly.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `buildApp` becomes `wac build`, and the assertion got **stronger** in the move rather than merely
+// translated. The host-side version could only look at the exception `buildApp` threw, so it checked
+// the words "did not compile" and a position in the message. Through the command line there is a
+// better witness available: no artefact on disk. That is what the issue was actually about — a
+// program that *shipped* anyway — and a message is only the explanation for it.
+//
+// The wording is therefore not asserted. `wac build` says "return type does not match the function's"
+// where `buildApp` said "did not compile"; pinning either would be pinning a sentence rather than the
+// refusal. What is asserted is the exit status, the absence of the output, and that the diagnostic
+// names the file and line, because a refusal that cannot be located is a riddle.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+export string test_a_program_the_checker_refuses_does_not_build(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/buildchecks";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  // A type error the emitter would happily guess past: the name resolves to nothing, and an emitter
+  // that skipped the function would still produce a module.
+  string entry = dir + "/bad.wac";
+  string out = dir + "/out";
+  Change wrote = cli.writeFile(entry, "export i32 main() { return \"not an i32\"; }\n".toBytes())
+                    .wait();
+  t.eqI32(wrote.fault, 0, "wrote the fixture");
+  if (wrote.fault != 0) { return t.report(); }
+
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec r = cli.exec(wac, string[]("build", entry, "-o", out), u8[0]()).wait();
+  t.isTrue(r.ran(), "the wac binary ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+
+  t.isTrue(r.status != 0, "a program with a type error was built");
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+
+  // **The artefact, which is the thing the issue was about.** A build that reported an error and
+  // wrote the module anyway would satisfy every assertion about the message.
+  t.isTrue(!cli.stat(out + ".wasm").wait().exists, "a module was written for a refused program");
+  t.isTrue(!cli.stat(out + ".json").wait().exists, "a manifest was written for a refused program");
+
+  // The diagnostic itself has to reach the caller, or a refusal is a riddle. The file and a line
+  // number, not the sentence: the sentence belongs to whichever compiler answered.
+  t.isTrue(said.indexOf("bad.wac:1:") >= 0,
+           "the message names no position:\n" + said);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

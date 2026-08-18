@@ -1,0 +1,84 @@
+// The single-file slice, on files whose imports are *not* supplied.
+//
+// This is the surface `corpuscheck_test.wac` uses and the one rung 3 states its invariant against: a
+// file checked alone must be silent about everything that depends on another module. The corpus
+// asserts that over the repository, which is the widest evidence there is — and it only covers shapes
+// the repository happens to contain. `issues/lang/0096` was one it did not: a file that matches on an
+// *imported* enum while declaring an enum of its own that spells a variant the same way.
+//
+// Written as programs rather than as cases in `spec/cases`, because a case supplies every file it
+// names and the reference resolves them. The defect lives in what a checker does with a name whose
+// declaration it cannot see, which is a state a whole-program compiler never occupies.
+//
+// Host-side until 2026-08-18, `issues/system/0161`. `dumpTypeErrors` answers in-process.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { dumpTypeErrors } from "../../src/api.wac";
+
+const string IMPORTED = "import { Unzipped, unzip } from \"./a.wac\";\n";
+const string LOCAL = "enum Object { Ok(i32 kind, u8[] content), Bad(string why) }\n";
+
+/** The codes this checker reports for one file, with nothing else supplied. */
+string codes(string src) {
+  i32[] flat = dumpTypeErrors(src.toBytes());
+  string out = "";
+  for (i32 i = 0; i < flat.len(); i = i + 3) {
+    out = out + (i == 0 ? "" : ",") + itoa(flat[i]);
+  }
+  return out;
+}
+
+export string test_a_match_on_an_imported_enum_says_nothing_about_a_local_same_named_variant() {
+  // The reported shape: `raw` was bound to the *local* `Ok`'s first payload — an `i32` — and every
+  // use of it reported. `packages/git`'s `object.wac`, before it renamed its variants.
+  T t = T.create();
+  string src = IMPORTED + LOCAL + "export i32 f(u8[] file) {\n" +
+               "  match (unzip(file)) {\n" +
+               "    case Bad(why): { return 0; }\n" +
+               "    case Ok(raw): { return raw.len(); }\n" +
+               "  }\n}\n";
+  t.eqStr(codes(src), "", "refused a file whose subject is imported");
+  return t.report();
+}
+
+export string test_the_arms_siblings_are_quiet_too_when_the_subject_is_imported() {
+  // Arity, exhaustiveness and `is` resolve variants the same way, and a bare name that collides with
+  // an imported enum's is exactly what none of them can settle.
+  T t = T.create();
+  string[] what = string[](
+    "a binding count the local enum would refuse",
+    "arms that cover the imported enum but not the local one",
+    "a type test on an imported value",
+    "a payload read through a narrowed import");
+  string[] body = string[](
+    "export i32 f(u8[] b) { match (unzip(b)) { case Bad(w): { return 0; } case Ok(a, c): { return 1; } } }",
+    "export i32 f(u8[] b) { match (unzip(b)) { case Ok(raw): { return 1; } case Bad(w): { return 0; } } }",
+    "export i32 f(u8[] b) { return unzip(b) is Ok ? 1 : 0; }",
+    "export i32 f(u8[] b) { match (unzip(b)) { case Ok(raw): { return raw.len(); } case Bad(w): { return w.len(); } } }");
+  string[] loud = string[what.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < body.len(); i++) {
+    string got = codes(IMPORTED + LOCAL + body[i] + "\n");
+    if (got == "") { continue; }
+    loud[n] = what[i] + ": codes " + got;
+    n = n + 1;
+  }
+  string[] said = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { said[i] = loud[i]; }
+  t.eqI32(n, 0, "refused " + itoa(n) + " of " + itoa(body.len()) + ": " + joined(said, "; "));
+  return t.report();
+}
+
+export string test_a_local_enum_is_still_checked_so_the_rule_above_is_not_blanket_silence() {
+  // The canary. Every assertion here is that something is *not* reported, and the way to pass those
+  // by accident is to report nothing at all — so one program that must be refused, in the same file
+  // shape, with the same names.
+  T t = T.create();
+  string src = LOCAL + "export i32 f() {\n  match (Object.Ok(1, u8[0]())) {\n" +
+               "    case Ok(kind, content): { return kind; }\n  }\n}\n";
+  t.isTrue(codes(src) != "",
+           "a local match missing an arm was accepted — the checker is silent, not correct");
+  return t.report();
+}

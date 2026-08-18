@@ -60,7 +60,7 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
     Input in = openStream(core, cli, fs, a, f, -1);
     // **An operand that will not open does not end the run.** GNU reports it, carries on with the next
     // file and exits 1 at the end — `cat a missing b` prints both `a` and `b` — and stopping here meant
-    // every file after the first bad one silently produced nothing. Found by moving `backings.test.ts`
+    // every file after the first bad one silently produced nothing. Found by moving `backingsprocess_test.wac`
     // into this package (wac-mono 0103), where one script names three files and the middle one is absent.
     if (!in.ok) { status = 1; continue; }
     Lines s = Lines.create();

@@ -23,7 +23,7 @@
 // would agree about a function that is gone. A text scan is independent of both, and when it is
 // wrong it is wrong loudly, by naming a function that is really there.
 //
-// test-lane: heavy — every file in the repository through the emitter, and a process each
+// test-lane: heavy — 143s, every file in the repository through the emitter, and a process each
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

@@ -23,6 +23,11 @@
 //     number <docHex> <bits16>           `Number(text)`'s bit pattern, for a bare JSON number
 //     restringify <docHex> <textHex>     `JSON.stringify(JSON.parse(doc))`, as text
 //     utf8valid <bytesHex> <0|1>         whether a *strict* `TextDecoder` accepts these bytes
+//     json5corpus                        every vendored JSON5 input, as `case <inputHex>`
+//     json5cmp <i> <0|1> <ourTextHex>    `agree`, or `differ <reasonHex>`, for corpus case `i`
+//
+// The last two **produce** rather than judge, and answer on their own channel — see `emit` in
+// `main`. They exist so that the JSON5 corpus never has to be parsed by the parser it is testing.
 //
 // `restringify` carries both halves of this package's relationship with the host: the agreement tests
 // pass our canonical output as `<textHex>`, and the two *divergence* tests pass what JavaScript is
@@ -53,6 +58,31 @@ function bytesOf(h: string): Uint8Array {
   const out = new Uint8Array(h.length / 2);
   for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
   return out;
+}
+
+function hexOf(s: string): string {
+  let out = "";
+  for (const b of new TextEncoder().encode(s)) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+/**
+ * The vendored JSON5 corpus, read here rather than by the caller.
+ *
+ * **The wac side never parses this file**, which is the point of serving it from here: the parser
+ * under test would otherwise be the thing reading its own corpus, and a misread would arrive as
+ * hundreds of disagreements about JSON5 rather than as one about the harness. `json5corpus` hands
+ * over the inputs and `json5cmp` keeps the expected answers on this side entirely.
+ */
+type Vendored = { source: string; cases: { input: string; json: string | null }[] };
+let corpus: Vendored | undefined;
+function json5Corpus(): Vendored {
+  if (corpus === undefined) {
+    corpus = JSON.parse(
+      Deno.readTextFileSync(new URL("./vendor/json5.json", import.meta.url)),
+    ) as Vendored;
+  }
+  return corpus;
 }
 
 /**
@@ -113,6 +143,10 @@ function main(): number {
   const say = (s: string) => {
     if (out.length < 40) out.push(`FAIL ${s}`);
   };
+  // Answers, for the two ops that **produce** rather than judge. Printed before the `FAIL` lines and
+  // never interleaved with them, because the caller indexes these by position: a judged op that
+  // failed partway through would otherwise shift every answer after it.
+  const emit: string[] = [];
 
   for (const line of lines) {
     const f = line.split(" ");
@@ -189,11 +223,52 @@ function main(): number {
       if (want !== f[2]) {
         say(`${text}: parsed to bits ${f[2]}, Number(s) is ${want} (${Number(text)})`);
       }
+    } else if (f[0] === "json5corpus") {
+      // One request line, one answer per case. `ask` checks `DONE` against what it *sent*, so a
+      // batch of one that answers 467 times is exactly the shape it expects.
+      for (const c of json5Corpus().cases) emit.push(`case ${hexOf(c.input)}`);
+    } else if (f[0] === "json5cmp") {
+      // `json5cmp <index> <0|1> <ourTextHex>` — the index is into the corpus above, so the expected
+      // answer never crosses the boundary and cannot be misread on the way.
+      //
+      // Compared after re-spelling: the vendored answer is `JSON.stringify` of the reference's
+      // value, so comparing raw text would be comparing *number formatting* — `0.0` comes back as
+      // `0.0` from a parser that keeps the bytes it read, and as `0` from `JSON.stringify`.
+      // Re-reading our output and writing it again puts both sides in one spelling without touching
+      // the value; a number we got wrong is still wrong afterwards.
+      const c = json5Corpus().cases[Number(f[1])];
+      if (c === undefined) {
+        emit.push(`differ ${hexOf(`no corpus case at index ${f[1]}`)}`);
+        continue;
+      }
+      const accepted = f[2] === "1";
+      let ours: string;
+      if (!accepted) {
+        ours = "reject";
+      } else {
+        const text = textOf(bytesOf(f[3] ?? ""));
+        if (text === null) {
+          ours = "accepted, but the bytes it produced are not UTF-8";
+        } else {
+          try {
+            ours = JSON.stringify(JSON.parse(text));
+          } catch {
+            ours = `accepted, but the text it produced is not JSON: ${JSON.stringify(text)}`;
+          }
+        }
+      }
+      const agrees = c.json === null ? !accepted : ours === c.json;
+      emit.push(
+        agrees ? "agree" : `differ ${
+          hexOf(`${JSON.stringify(c.input)}: json5 says ${c.json ?? "reject"}, we say ${ours}`)
+        }`,
+      );
     } else {
       say(`unknown check ${JSON.stringify(f[0])}`);
     }
   }
 
+  for (const line of emit) console.log(line);
   for (const line of out) console.log(line);
   console.log(`DONE ${lines.length}`);
   return 0;

@@ -8,8 +8,8 @@
 // `build` also takes `--coverage`: a counter per branch point, and `<stem>.cov` saying what each is.
 //                                    #    --quiet for the success line, --allow-* for the grants
 //
-// `packages/wacc/tools/waccx.ts` does the same job in TypeScript, and this is not a port for its own
-// sake: it is what a `wac` binary would dispatch. The wasmtime host already runs `packages/sh` and
+// A TypeScript CLI (`waccx`) did the same job until it was retired, and this was never a port for
+// its own sake: it is what the `wac` binary dispatches. The wasmtime host already runs `packages/sh` and
 // every one of box's applets over a real filesystem, so a compiler that is itself a wac program needs
 // no JavaScript anywhere in the path — design/lang/0003 step 4.
 //
@@ -275,6 +275,17 @@ export i32 main(Core core, Cli cli) {
     return 2;
   }
   string entry = normalisePath(pos[0]);
+
+  // **The command is checked before the entry is read.** This test used to sit after the graph was
+  // gathered and the diagnostics printed, so a line with two mistakes in it was answered about the
+  // wrong one: `wacc chekc nope.wac` reported *cannot read nope.wac* and exited 1, diagnosing the
+  // typo you did not make and giving a compile-failure code for a usage mistake. Whether a usage
+  // error is reported as one should not depend on an unrelated path happening to exist.
+  if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen") {
+    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build or bindgen");
+    return 2;
+  }
+
   Fs fs = Fs.onHost(cli, 0);
 
   Sources src = gather(fs, entry);
@@ -290,7 +301,7 @@ export i32 main(Core core, Cli cli) {
   //
   // **Rendered, not the wire.** This printed `file\tline\tcol\tphase\t…` at a person until
   // `src/render.wac` — the compiler could build this repository and could not say what was wrong
-  // with a file. `test/renderDiag.test.ts` holds it to the layout `waccx` prints.
+  // with a file. `test/wac/renderdiag_test.wac` holds it to the layout `waccx` prints.
   //
   // **Every file, not just the entry.** One checking pass walks only the entry's bodies, so a type
   // error in an imported file was silent — and the emitter, which compiles every body, wrote a
@@ -309,10 +320,6 @@ export i32 main(Core core, Cli cli) {
   if (cmd == "check") {
     core.log(entry + ": " + itoa(src.n) + " file(s), no diagnostics");
     return 0;
-  }
-  if (cmd != "compile" && cmd != "build" && cmd != "bindgen") {
-    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build or bindgen");
-    return 2;
   }
 
   // **One front end for the whole build**, which is what `buildFiles` exists for — `issues/lang/0129`

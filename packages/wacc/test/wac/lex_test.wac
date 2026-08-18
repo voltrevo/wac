@@ -23,7 +23,9 @@
 // the reference decides, because `errorCodes.ts` — the table saying which number means which English
 // sentence — is TypeScript and belongs with the implementation it describes.
 //
-// test-lane: heavy — every file in the repository through both lexers
+// Every file in the repository through both lexers — and **2s**, so not the heavy lane. It read
+// like a whole-repository sweep and was declared heavy on that shape; the wac runner is
+// sequential, so wall clock is what a lane member costs, and this costs nothing worth skipping.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

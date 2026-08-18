@@ -1,6 +1,6 @@
 // Build a wac application into one **native executable**: the program inside a Rust host on V8.
 //
-//   deno task app:wacbin packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
+//   deno task app:native-binary packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
 //   ./wac compile main.wac main.wasm          # no Deno on the machine, no wasm beside it
 //
 // Three ways to make one file, and they differ in what comes along:
@@ -70,7 +70,7 @@ if (import.meta.main) {
   const dest = at >= 0 && at + 1 < args.length ? args[at + 1] : null;
   if (entry === undefined || entry.startsWith("-") || dest === null) {
     console.error(
-      "usage: deno task app:wacbin <entry.wac> -o <dest> [--allow-read] [--allow-write] [--allow-net] [--allow-env]",
+      "usage: deno task app:native-binary <entry.wac> -o <dest> [--allow-read] [--allow-write] [--allow-net] [--allow-env]",
     );
     console.error("  writes one native executable with the program and the host inside it");
     Deno.exit(2);

@@ -1,0 +1,118 @@
+// `waitAny` from a wac program, over two real sockets.
+//
+// `test/ring.test.ts` covers the transport: submit does not block, completions arrive out of order, a
+// spent ticket is refused. What it cannot show is a *wac* program parking on whichever of several
+// answers first, which is the whole reason the ring exists — `nc`, an SSH relay and a shell all need
+// exactly that, and `isDone` in a loop is a spin, not a wait.
+//
+// The two listeners answer at different speeds and the client is given them in the *wrong* order on
+// purpose: index order and speed order disagree, so a `waitAny` that quietly returned "the first one
+// you passed" would pass a test where they agreed.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The fixtures here are servers, so this needed `packages/wactest/src/daemon.wac` — `Cli.exec` runs a
+// child to completion and a listener has to outlive the call. They are `python3` one-liners rather
+// than wac programs, and deliberately: a wac listener would put the capability layer on **both** ends
+// of a test about the capability layer, and a `waitAny` that mis-paired its tickets could then be
+// answered by a matching mistake in the server. Python is not our code.
+//
+// `buildApp` becomes `wac run --allow-net`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Daemon, freePort, logOf, start, stop, waitForLog }
+  from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+
+const string ENTRY = "packages/platform/example/whichever.wac";
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (i > at) { out[count] = s.slice(at, i); count = count + 1; }
+    at = i + 1;
+  }
+  string[] exact = string[count](fill: "");
+  for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+string joinedWith(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+/**
+ * Answer once, after `delaySeconds`, then hold the connection open briefly and close.
+ *
+ * Held open so the *other* recv is still outstanding when the first is collected — that is what makes
+ * the second half of the assertion mean anything.
+ */
+Daemon serveOnce(Cli cli, i32 port, string delaySeconds, string message, string log) {
+  string script =
+    "import socket,time\n" +
+    "s=socket.socket()\n" +
+    "s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n" +
+    "s.bind(('127.0.0.1'," + itoa(port) + "))\n" +
+    "s.listen(1)\n" +
+    "print('listening', flush=True)\n" +
+    "c,_=s.accept()\n" +
+    "time.sleep(" + delaySeconds + ")\n" +
+    "c.sendall(b'" + message + "\\n')\n" +
+    "time.sleep(0.9)\n" +
+    "c.close()\n" +
+    "s.close()\n";
+  return start(cli, "python3 -c " + quoted(script), log);
+}
+
+export string test_waitany_parks_until_whichever_socket_speaks_first(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/waitany";
+  cli.mkdir(dir, true).wait();
+
+  i32 quickPort = freePort(cli);
+  i32 slowPort = freePort(cli);
+  t.isTrue(quickPort > 0 && slowPort > 0 && quickPort != slowPort, "two free ports");
+  if (quickPort <= 0 || slowPort <= 0 || quickPort == slowPort) { return t.report(); }
+
+  Daemon quick = serveOnce(cli, quickPort, "0", "quick", dir + "/quick.log");
+  Daemon slow = serveOnce(cli, slowPort, "0.4", "slow", dir + "/slow.log");
+  t.isTrue(quick.ok() && slow.ok(), "both listeners started");
+  // **Not `waitForPort`.** These listeners accept exactly once, so a readiness probe that dials
+  // them spends the connection the test is about and the client gets a reset. The fixtures say
+  // when they are listening instead.
+  bool up = waitForLog(cli, quick, "listening", 400000) &&
+            waitForLog(cli, slow, "listening", 400000);
+  t.isTrue(up, "both listeners are accepting — quick said: " + logOf(cli, quick) +
+               " slow said: " + logOf(cli, slow));
+  if (!up) { stop(cli, quick); stop(cli, slow); return t.report(); }
+
+  // Slow port first, so its ticket is index 0 while the *fast* answer is index 1.
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec r = cli.exec(wac, string[]("run", "--allow-net", ENTRY, "--",
+                                  itoa(slowPort), itoa(quickPort)), u8[0]()).wait();
+  stop(cli, quick);
+  stop(cli, slow);
+
+  t.isTrue(r.ran(), "the wac binary ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
+  string[] out = splitLines(string.fromBytes(r.stdout));
+  t.isTrue(out.len() >= 2, "two answers: " + joinedWith(out, " | "));
+  if (out.len() < 2) { return t.report(); }
+  t.eqStr(out[0], "first=1 said=quick", "wrong first answer: " + joinedWith(out, " | "));
+  // The slower ticket was never cancelled and is still collectable afterwards.
+  t.eqStr(out[1], "second=0 said=slow", "wrong second answer: " + joinedWith(out, " | "));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

@@ -1,0 +1,217 @@
+// Every clause the spec states about **wacc only** is named by something that checks it.
+//
+// `compiler/wacSpec.test.ts` holds this rule for `§wac-*` tags — *"a tag is a promise that the claim
+// beside it is checked, and a claim nobody checks is the same as a claim nobody wrote, except that it
+// reads as evidence"* — and it can only hold it for clauses the reference implements. The clauses
+// that target wacc alone (`§jsx-*` for JSX, `§wacc-*` for a rule the seed does not have) were outside
+// every guard, and so were the older `§enum-*` ones. They are all covered, which is the point of
+// measuring: a new clause that nothing checks makes it 52 of 53.
+//
+// That is the same rot one namespace over, and it arrived the moment the spec started targeting wacc
+// (`design/lang/0003`). This is the other half of that rule.
+//
+// **Where a claim may be checked.** A spec case says which clauses it holds, in a `// spec:` header
+// line beside `// from:`; a test in this package or in `compiler/` holds one by mentioning the tag.
+// All three count, because the claims are of three kinds: a program's behaviour (a case), what the
+// compiler does with it, and the older `§enum-*` clauses, which both compilers implement and
+// `compiler/wacSpec.test.ts` names one test at a time.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// **The scan grew a fourth place to look, and it had to.** The host-side version read `.test.ts`
+// files for tag mentions, which was every test there was when it was written. `issues/system/0161` is
+// converting those to `*_test.wac`, so a clause whose only checker moved would drop out of the
+// "named" set and this would report it as *a claim in the spec that nothing checks* — blaming the
+// spec for a migration. Two tags already sit only in wac tests today
+// (`§wac-cli-grants-3qm7wv2` and `§wacc-fnref-bound`, the first of which this file excludes anyway),
+// and both are still covered elsewhere, so it has not fired yet. It would have.
+//
+// Every directory here is flat, which is why there is no recursive walk: 21 files in `spec/spec`,
+// 206 cases, and the three test directories.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** A growable list of strings, with membership — the `Set`/`Map` the host-side version used. */
+struct Strs {
+  string[] items;
+  i32 n;
+
+  Strs create() { return Strs(string[0](fill: ""), 0); }
+
+  void push(this, string s) {
+    if (this.n == this.items.len()) {
+      i32 grown = this.items.len() == 0 ? 16 : this.items.len() * 2;
+      string[] next = string[grown](fill: "");
+      for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
+      this.items = next;
+    }
+    this.items[this.n] = s;
+    this.n = this.n + 1;
+  }
+
+  bool has(const this, string s) {
+    for (i32 i = 0; i < this.n; i++) { if (this.items[i] == s) { return true; } }
+    return false;
+  }
+
+  i32 len(const this) { return this.n; }
+  string get(const this, i32 i) { return this.items[i]; }
+}
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+bool startsWith(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+/** A tag character: what `[a-z0-9-]` matched. */
+bool isTagByte(i32 b) {
+  return (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '-';
+}
+
+/**
+ * The tag beginning at `at` in `b`, or "".
+ *
+ * `§` is two bytes in UTF-8 (0xC2 0xA7), so this works on bytes throughout rather than slicing a
+ * string at an offset that could land inside it.
+ */
+string tagAt(u8[] b, i32 at) {
+  i32 end = at;
+  while (end < b.len() && isTagByte(b[end])) { end = end + 1; }
+  if (end == at) { return ""; }
+  string out = "";
+  for (i32 i = at; i < end; i++) { out = out + string.fromBytes(u8[](b[i])); }
+  return out;
+}
+
+/** Whether `§` starts at `i`. */
+bool sectionAt(u8[] b, i32 i) {
+  return i + 1 < b.len() && b[i] == 194 && b[i + 1] == 167;
+}
+
+/** Every `[§tag]` in a file's bytes, appended to `into`, with `where` recorded alongside. */
+void claimedIn(u8[] b, string where, Strs into, Strs wheres) {
+  for (i32 i = 0; i + 2 < b.len(); i++) {
+    if (b[i] != '[') { continue; }
+    if (!sectionAt(b, i + 1)) { continue; }
+    string tag = tagAt(b, i + 3);
+    if (tag == "" || into.has(tag)) { continue; }
+    into.push(tag);
+    wheres.push(where);
+  }
+}
+
+/** Every `§tag` mentioned anywhere in a file's bytes, appended to `into`. */
+void mentionedIn(u8[] b, Strs into) {
+  for (i32 i = 0; i + 1 < b.len(); i++) {
+    if (!sectionAt(b, i)) { continue; }
+    string tag = tagAt(b, i + 2);
+    if (tag == "" || into.has(tag)) { continue; }
+    into.push(tag);
+  }
+}
+
+/** The names in `dir` ending in `suffix`, or an empty list if it cannot be listed. */
+string[] filesIn(Cli cli, string dir, string suffix) {
+  string[]? entries = cli.readDir(dir).wait();
+  if (entries is null) { return string[0](fill: ""); }
+  string[] all = entries!;
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) { if (endsWith(all[i], suffix)) { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (!endsWith(all[i], suffix)) { continue; }
+    out[k] = dir + "/" + all[i];
+    k = k + 1;
+  }
+  return out;
+}
+
+/** The tags a spec case names in its `// spec:` header line. */
+void namedByCase(string text, Strs into) {
+  i32 at = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i < text.len() && text.slice(i, i + 1) != "\n") { continue; }
+    string line = text.slice(at, i);
+    at = i + 1;
+    if (!startsWith(line, "// spec:")) { continue; }
+    mentionedIn(line.toBytes(), into);
+  }
+}
+
+export string test_every_wacc_only_clause_in_spec_is_named_by_a_case_or_a_test(
+    Core core, Cli cli) {
+  T t = T.create();
+
+  // What the spec claims.
+  Strs claimed = Strs.create();
+  Strs wheres = Strs.create();
+  string[] specFiles = filesIn(cli, "spec/spec", ".md");
+  for (i32 i = 0; i < specFiles.len(); i++) {
+    FileResult f = cli.readFile(specFiles[i]).wait();
+    if (!f.ok) { t.fail("cannot read " + specFiles[i] + " — " + f.error); continue; }
+    claimedIn(f.bytes, specFiles[i], claimed, wheres);
+  }
+
+  // The `§wac-*` ones are the reference's to answer for, and `compiler/wacSpec.test.ts` already
+  // requires a test per tag there. Asking twice would report the same gap in two places.
+  Strs mine = Strs.create();
+  Strs mineWhere = Strs.create();
+  for (i32 i = 0; i < claimed.len(); i++) {
+    if (startsWith(claimed.get(i), "wac-")) { continue; }
+    mine.push(claimed.get(i));
+    mineWhere.push(wheres.get(i));
+  }
+  t.isTrue(mine.len() >= 10,
+           "only " + itoa(mine.len()) + " wacc-only tags found — did the walk resolve? " +
+           "(cwd is the repo root)");
+  if (mine.len() < 10) { return t.report(); }
+
+  // What names a claim. Four places, and the fourth is the one the migration made necessary.
+  Strs named = Strs.create();
+  string[] cases = filesIn(cli, "spec/cases", ".wac");
+  for (i32 i = 0; i < cases.len(); i++) {
+    FileResult f = cli.readFile(cases[i]).wait();
+    if (f.ok) { namedByCase(string.fromBytes(f.bytes), named); }
+  }
+  string[] dirs = string[]("packages/wacc/test", "compiler", "packages/wacc/test/wac");
+  string[] suffixes = string[](".test.ts", ".test.ts", "_test.wac");
+  i32[] contributed = i32[dirs.len()]();
+  for (i32 d = 0; d < dirs.len(); d++) {
+    string[] tests = filesIn(cli, dirs[d], suffixes[d]);
+    Strs here = Strs.create();
+    for (i32 i = 0; i < tests.len(); i++) {
+      FileResult f = cli.readFile(tests[i]).wait();
+      if (f.ok) { mentionedIn(f.bytes, here); }
+    }
+    contributed[d] = here.len();
+    for (i32 i = 0; i < here.len(); i++) { if (!named.has(here.get(i))) { named.push(here.get(i)); } }
+  }
+
+  // **Each source is asserted to contribute**, and the third one is why. Both tags that live only in
+  // a wac test are also covered elsewhere today, so dropping that directory would not fail the
+  // comparison below — the widening would sit there doing nothing and be deleted by whoever next read
+  // it. A directory that stops being read is the failure this whole file is about, one level up.
+  for (i32 d = 0; d < dirs.len(); d++) {
+    t.isTrue(contributed[d] > 0,
+             dirs[d] + "/*" + suffixes[d] + " named no tags at all — that source is not being read");
+  }
+
+  string missing = "";
+  i32 n = 0;
+  for (i32 i = 0; i < mine.len(); i++) {
+    if (named.has(mine.get(i))) { continue; }
+    missing = missing + (n == 0 ? "" : " | ") + mine.get(i) + " — " + mineWhere.get(i);
+    n = n + 1;
+  }
+  core.log("    wacc-only clauses: " + itoa(mine.len() - n) + " of " + itoa(mine.len()) +
+           " named by a case or a test");
+  t.eqI32(n, 0, "each of these is a claim in the spec that nothing checks; add a `// spec:` line " +
+                "to the case that holds it, or name the tag in the test that does: " + missing);
+  return t.report();
+}

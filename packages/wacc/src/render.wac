@@ -1,8 +1,8 @@
 // A diagnostic a person can read, from the wire a program can parse.
 //
 // `diagnoseFiles` answers `file\tline\tcol\tphase\tmessage\tnote\thint\twidth` per line, because a
-// boundary carries strings rather than structures. `packages/wacc/tools/waccx.ts` renders that with
-// the reference's `wacDiag` and prints
+// boundary carries strings rather than structures. `packages/wacc/tools/wireDiagnostics.ts` turns it
+// back into the reference's `DiagError`, which `wacDiag` prints
 //
 //     error: return type does not match the function's
 //       --> main.wac:1:28
@@ -16,7 +16,7 @@
 // the compiler; only one of them was usable at the point where it matters most, which is when
 // something is wrong.
 //
-// **The same output, not a similar one.** `test/renderDiag.test.ts` compares this against `wacDiag`
+// **The same output, not a similar one.** `test/wac/renderdiag_test.wac` compares this against `wacDiag`
 // over the spec's refused programs, character for character, because "the binary explains itself
 // too" is a claim about the text — a renderer that dropped the annotation, or put the caret one
 // column off, would still look like a diagnostic.

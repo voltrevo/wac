@@ -165,8 +165,8 @@ have never appeared in a status line: they are invisible to every rung.
 | self-host | done, and the reference cannot |
 | diagnostics: message | done, and the wording agrees where both speak |
 | diagnostics: annotation, hint, span | operands on 79%, help on 42%, a real span on 60% — ratcheted, so they cannot fall back |
-| CLI: `check`, `compile`, `run` | done, `deno task waccx` |
-| CLI: `bindgen` | done — `waccx bindgen main.wac` writes `main.gen.ts` |
+| CLI: `check`, `compile`, `run` | done — this *is* the `wac` command's compiler |
+| CLI: `bindgen` | done — `wac bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
 | bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, structs and enums as classes, a callback handed *in* and a wac function handed *out*; a funcref **nested** in another signature is what is left, and is named rather than skipped |
 | host imports (an import section) | done — `wac.cb<j>` per callback signature |
@@ -453,12 +453,15 @@ are cases rather than a paragraph in a commit message.
 
 ## The toolchain
 
-There is a second toolchain now: `deno task waccx`, with the same commands as `wacx` — `check`,
-`compile`, `run` — over `wacc` instead of the reference. It reads the import graph with `wacx`'s own
-`readGraph` and renders diagnostics with `wacx`'s own `wacDiag`, so the only difference between the
-two is the compiler in the middle, and a difference in the output is a difference in the compiler.
+**wacc is the `wac` command's compiler.** For a while it was reached through a second toolchain
+instead — `deno task waccx`, the same commands as the reference CLI but over `wacc` — which shared
+that CLI's `readGraph` and `wacDiag` so that the only difference between the two was the compiler in
+the middle. Both CLIs are retired; the binary is what people type, and the comparison they existed
+for is `test/diagnosticGap.test.ts`, which puts `wacCompile` beside `diagnoseFiles` and renders both
+with the same `wacDiag`. Nothing about the argument below changed — it is why that comparison is
+worth having, and it was found by building something that consumed the output.
 
-**It exists because the ladder cannot dogfood itself.** Every oracle here compares wacc to the
+**It existed because the ladder cannot dogfood itself.** Every oracle here compares wacc to the
 reference by position and count, and a position is a shape rather than a sentence — it can be right
 while the compiler is unusable. Building something that *consumes* wacc's output found two things in
 the first hour, neither of which needed a new test:
@@ -488,13 +491,17 @@ them. It says `expected ';', found 'return'` now, every other parse site names t
 on, and the token's own width is the underline. That one function was worth more than every checker
 site put together — 10% of diagnostics carried their operands before it, 43% after.
 
-`waccx.test.ts` prints the sample it can compare against the reference, and the coverage over the
-whole refused corpus:
+`test/diagnosticGap.test.ts` prints the sample it compares against the reference, and the coverage
+over the whole refused corpus. As of 2026-08-18:
 
-    waccx vs wacx on 5 refused programs: 5 at the same position, 2 with the same message,
+    wacc vs the reference on 5 refused programs: 5 at the same position, 2 with the same message,
     annotation-or-hint on 5 of ours against 4 of theirs
-    of 604 diagnostics over the spec's refused programs: operands on 450 (75%),
-    help on 137 (23%), a real span on 351 (58%)
+    of 701 diagnostics over the spec's refused programs: operands on 570 (81%),
+    help on 301 (43%), a real span on 472 (67%)
+
+It read 450 of 604 (75%), 23% and 58% when this section was written, which is the movement the
+paragraphs above describe. The floors in that test are a few points under the current numbers, so
+ordinary movement does not fail the suite and a regression does.
 
 Where wacc and the reference both speak, the output is now the same thing said the same way:
 
@@ -512,8 +519,9 @@ checker error reports at an expression and nothing records how far that expressi
 length at each of 135 call sites, which is the same sweep the annotation was and much less of a win:
 the annotation was the sentence, and this is only the underline.
 
-`waccx bindgen` writes the glue that calls a wacc module and names what it declined — `test/waccx.test.ts`
-drives it. What is still true is that **nothing runs a package through that glue**: `harness/wacBind.ts`
+`wac bindgen` writes the glue that calls a wacc module and names what it declined —
+`test/bindgen.test.ts` drives the generator at library level and `tools/wac/cliCommands_test.wac`
+drives the command. What is still true is that **nothing runs a package through that glue**: `harness/wacBind.ts`
 takes wacc's *code* and keeps the reference's metadata, so a green package says the emitter is right and
 not that the bindgen is. Making the swap is the thing standing between this and a compiler anyone could
 use, and it is a different sentence from the one this paragraph carried, which said there was no bindgen

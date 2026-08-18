@@ -7,7 +7,7 @@
 //
 // **What "the next session reads" means here.** The bytes went to disk and came back: that is the claim,
 // and it does not need two processes to make. The claim that *does* — that an image outlives one, and a
-// sealed session does not — is `backings.test.ts`'s canary, which still spawns, and is what stops all of
+// sealed session does not — is `backingsprocess_test.wac`'s canary, which still spawns, and is what stops all of
 // this being three identical things agreeing with each other.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";

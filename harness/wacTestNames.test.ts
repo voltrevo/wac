@@ -61,10 +61,15 @@ Deno.test("a call written with a variable is counted, not dropped", () => {
 });
 
 Deno.test("every wacTestRun call in the repository can be read from its source", async () => {
-  // The one that cannot: `packages/wactest/test/assert.test.ts` drives the runner with a computed
-  // path, testing the runner rather than registering a suite. It is *counted*, which is the whole
-  // reason `wacTestRegistrations` returns a number instead of a shorter list.
-  const EXPECTED_UNRESOLVED = 1;
+  // Zero, and it was 1 until 2026-08-18. The call that could not be read was in
+  // packages/wactest/test/assert.test.ts, which drove the runner with a computed path — a test of
+  // the runner rather than a registration. `issues/system/0161` retired that file: `wac test` does
+  // the running now, and what it guaranteed is asked of the new runner in
+  // `packages/wactest/test/wac/runner_test.wac`.
+  //
+  // Still *counted* rather than dropped, because the count is what makes a spelling this cannot read
+  // visible at all — the whole reason `wacTestRegistrations` returns a number and not a shorter list.
+  const EXPECTED_UNRESOLVED = 0;
 
   let calls = 0, unresolved = 0, withPrefix = 0;
   // How many files textually contain the call, so the floor below can be derived from the tree
@@ -92,13 +97,20 @@ Deno.test("every wacTestRun call in the repository can be read from its source",
       }
     }
   };
-  // **`packages/` only, and that is not a shortcut.** All 83 registrations are there; the two files
-  // under `harness/` that contain the call are tests *about* the runner — one embeds a synthetic
-  // subject in a template string, and the other is this file, whose own `includes("wacTestRun(")`
-  // counts as a call and whose comment above names a `.wac` file that does not exist. A text scan
-  // that walks the tree scans itself, and both of those would have arrived as findings about the
-  // repository.
+  // **Two roots, and what stays out is excluded by path rather than by name.** This said
+  // "`packages/` only, and that is not a shortcut — all 83 registrations are there", which stopped
+  // being true: the registrations were consolidated into `harness/wac/hostless.test.ts`, the file
+  // `tools/mutate/profile.ts` reads statically, and `packages/` now holds none at all. Walking only
+  // `packages/` found nothing, and the floor below reported that as an extractor that had stopped
+  // resolving rather than as a tree with nothing left to resolve.
+  //
+  // What has to stay out is the two files *directly* under `harness/`, both of them tests about the
+  // runner: `wacTestProfile.test.ts` embeds a synthetic subject in a template string, and this file's
+  // own `includes("wacTestRun(")` counts as a call while the comments above it name `.wac` files that
+  // do not exist. A text scan that walks the tree scans itself. `harness/wac/` is a directory neither
+  // of them is in, so naming it excludes both without a filename list to keep current.
   await walk(`${ROOT}/packages`);
+  await walk(`${ROOT}/harness/wac`);
 
   if (unresolved !== EXPECTED_UNRESOLVED) {
     throw new Error(
@@ -118,7 +130,12 @@ Deno.test("every wacTestRun call in the repository can be read from its source",
   //
   // A file that contains the text has at least one call in it, so `filesWithCall` is a floor the
   // tree computes. It goes to zero exactly when the walk stops finding files, which is the failure
-  // worth catching, and it cannot be outrun by a migration.
+  // worth catching.
+  //
+  // "And it cannot be outrun by a migration" stood here until 2026-08-18, when it was: retiring the
+  // last registrar under `packages/` took this to zero, and a floor that supposedly could not be
+  // outrun read that as an extractor that had broken. A derived floor is still only as wide as the
+  // roots it is derived from, so the roots are the part to keep current — see the walk above.
   if (filesWithCall === 0) {
     throw new Error("the walk found no file containing `wacTestRun(` — it did not resolve");
   }

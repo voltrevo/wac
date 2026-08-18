@@ -22,7 +22,7 @@
 // contribute **both halves** — a fold that kept only the low word would agree about two values that
 // differ above bit 32, which is exactly where these operations go wrong.
 //
-// test-lane: heavy — the whole corpus emitted three times
+// test-lane: heavy — 173s, the whole corpus emitted three times
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

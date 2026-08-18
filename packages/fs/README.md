@@ -279,7 +279,7 @@ still not a measurement, which is the distinction this section keeps making.
 holds as one *category* rather than twenty near-identical pins: a pin names a line and proves the
 line still says what it said, which is right for a one-off and unreadable for a fact repeated
 twenty times. They take a `Cli` that only a built program has, and `test/host.test.ts` and
-`packages/box/test/backings.test.ts` run every one of them against the real filesystem, which is a
+`packages/box/test/wac/backingsprocess_test.wac` run every one of them against the real filesystem, which is a
 better oracle than a probe could be. Two paragraphs stood here saying that, and one of them said the
 opposite — that host mounts were *not* recorded as gaps either — which is the shape a section gets
 when a sentence is added beside its predecessor rather than into it.

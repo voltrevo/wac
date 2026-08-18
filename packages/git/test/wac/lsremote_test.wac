@@ -1,0 +1,194 @@
+// `gitls` against real GitHub, judged by `git ls-remote`.
+//
+// This is `design/system/0005` step 6's first half, and the only test in the package that leaves the
+// machine. Everything it exercises was already tested alone — the tunnel against Squid, the trust
+// store against `host/connect.ts`, the advertisement parser against a local `git upload-pack` — and
+// none of that says they compose. This does: one program, one URL, and the same refs real git lists.
+//
+// **What it adds over the local-pipe test is the only thing a pipe cannot give:** a server nobody
+// here configured, a certificate chain that has to verify against the system's roots, and a proxy in
+// the way.
+//
+// ## Two ways this test could lie, and what is done about each
+//
+// **The remote moves.** `refs/pull/*` on a busy repository changes between two calls, so a plain
+// comparison would fail for a reason that is not ours. `git ls-remote` is therefore run *twice*, once
+// before and once after, and the comparison only happens if those two agree — otherwise the remote
+// moved mid-test and the run is skipped with that said.
+//
+// **It is skipped and reads as a pass.** Without a proxy there is nothing to compare, so the skip is
+// announced through `core.warn` rather than being silent. That is the same bargain the host-side
+// version struck and it is still the weak point of this file: a machine with no proxy runs it green.
+//
+// The comparison also covers a shape no assertion here mentions: the first advertisement line carries
+// the capability list after a NUL, and a parser that split it on spaces would produce a ref named
+// `HEAD\0multi_ack…`. That shows up as a diff, so it does not need its own case.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `issues/system/0182` recorded this as needing `HTTP_PROXY` "for a reason nothing in the repository
+// can work around, because the proxy is how this container reaches anything at all". Measured since:
+// `Cli.exec` passes the host's whole environment, so the variable was arriving all along
+// (`issues/system/0198`). It is still read here with `cli.env` and **declared** on the child's command
+// line, for two reasons — it is the spelling that survives the day `exec` stops inheriting, and
+// reading it is what lets the skip above say *which* precondition was missing.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
+
+// Small enough to be polite, and it carries the shapes: heads, lightweight tags, an annotated tag
+// with a peeled entry, and four thousand `refs/pull/*` with deep names.
+const string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
+
+string trimmedEnd(string s) {
+  i32 n = s.len();
+  while (n > 0 && (s.slice(n - 1, n) == "\n" || s.slice(n - 1, n) == " ")) { n = n - 1; }
+  return s.slice(0, n);
+}
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    out[count] = s.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  string[] exact = string[count](fill: "");
+  for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+string[] sorted(string[] all) {
+  string[] out = string[all.len()](fill: "");
+  for (i32 i = 0; i < all.len(); i++) { out[i] = all[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string v = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > v) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = v;
+  }
+  return out;
+}
+
+string joinedWith(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+bool has(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
+  return false;
+}
+
+bool anyEndsWith(string[] all, string suffix) {
+  for (i32 i = 0; i < all.len(); i++) {
+    i32 n = all[i].len();
+    if (n >= suffix.len() && all[i].slice(n - suffix.len(), n) == suffix) { return true; }
+  }
+  return false;
+}
+
+bool anyContains(string[] all, string needle) {
+  for (i32 i = 0; i < all.len(); i++) { if (all[i].indexOf(needle) >= 0) { return true; } }
+  return false;
+}
+
+/** The ref name of an advertisement line — everything after the tab. */
+string refOf(string line) {
+  i32 tab = line.indexOf("\t");
+  return tab < 0 ? "" : line.slice(tab + 1, line.len());
+}
+
+/** How many slash-separated segments a ref name has. */
+i32 segments(string name) {
+  i32 n = 1;
+  for (i32 i = 0; i < name.len(); i++) { if (name.slice(i, i + 1) == "/") { n = n + 1; } }
+  return n;
+}
+
+/** The first up-to-`limit` entries of `all` that are not in `other`. */
+string[] missingFrom(string[] all, string[] other, i32 limit) {
+  string[] out = string[limit](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < all.len() && n < limit; i++) {
+    if (has(other, all[i])) { continue; }
+    out[n] = all[i];
+    n = n + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_git_lists(
+    Core core, Cli cli) {
+  T t = T.create();
+  u8[]? proxyBytes = cli.env("HTTP_PROXY").wait();
+  string proxy = proxyBytes is null ? "" : string.fromBytes(proxyBytes!);
+  if (proxy == "") {
+    core.warn("git ls-remote test: skipped — HTTP_PROXY is not set");
+    return t.report();
+  }
+  string[] names = string[]("HTTP_PROXY", "HTTPS_PROXY");
+  string[] values = string[](proxy, proxy);
+
+  Exec first = withEnv(cli, names, values, "git", string[]("ls-remote", REMOTE));
+  if (!first.ran() || first.status != 0) {
+    core.warn("git ls-remote test: skipped — git ls-remote failed: " +
+              string.fromBytes(first.stderr));
+    return t.report();
+  }
+  string before = trimmedEnd(string.fromBytes(first.stdout));
+  string[] lines = splitLines(before);
+
+  // **The fixture, asserted.** A remote with one branch and no tags would let this pass while
+  // exercising none of the advertisement's shapes.
+  t.isTrue(lines.len() > 100,
+           REMOTE + " advertises " + itoa(lines.len()) + " refs; this test wants many");
+  t.isTrue(anyEndsWith(lines, "\tHEAD"), "no HEAD in the advertisement");
+  t.isTrue(anyContains(lines, "\trefs/heads/"), "no branch in the advertisement");
+  t.isTrue(anyContains(lines, "\trefs/tags/"), "no tag in the advertisement");
+  t.isTrue(anyEndsWith(lines, "^{}"),
+           "no peeled tag in the advertisement — an annotated tag is the shape that produces one");
+  bool deep = false;
+  for (i32 i = 0; i < lines.len(); i++) { if (segments(refOf(lines[i])) > 3) { deep = true; } }
+  t.isTrue(deep, "no deeply-named ref, so a name containing slashes is untested");
+  if (lines.len() <= 100) { return t.report(); }
+
+  // Read for the trust store, net for the socket, env for the proxy. No write.
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec r = withEnv(cli, names, values, wac,
+                   string[]("run", "--allow-net", "--allow-env", "--allow-read",
+                            "packages/git/example/gitls.wac", "--", REMOTE));
+  string err = trimmedEnd(string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "gitls failed: " + err);
+  t.eqStr(err, "", "gitls warned");
+  if (r.status != 0) { return t.report(); }
+  string ours = trimmedEnd(string.fromBytes(r.stdout));
+
+  Exec second = withEnv(cli, names, values, "git", string[]("ls-remote", REMOTE));
+  string after = trimmedEnd(string.fromBytes(second.stdout));
+  if (before != after) {
+    // Not a failure of ours: `refs/pull/*` moved while this ran.
+    core.warn("git ls-remote test: the remote moved mid-test, so the comparison is skipped");
+    return t.report();
+  }
+
+  string[] mine = sorted(splitLines(ours));
+  string[] theirs = sorted(lines);
+  if (joinedWith(mine, "\n") == joinedWith(theirs, "\n")) { return t.report(); }
+  t.fail("our advertisement differs from git's.\n  we lack: " +
+         joinedWith(missingFrom(theirs, mine, 3), " | ") + "\n  we add:  " +
+         joinedWith(missingFrom(mine, theirs, 3), " | ") + "\n  " +
+         itoa(mine.len()) + " against " + itoa(theirs.len()));
+  return t.report();
+}

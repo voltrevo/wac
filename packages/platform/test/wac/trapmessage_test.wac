@@ -1,0 +1,82 @@
+// What a program says when it traps.
+//
+//     export i32 main() { trap "the ring is full"; }
+//     $ wac run p.wac
+//     wac: p.wac trapped: the ring is full
+//
+// It used to be `Uncaught RuntimeError: unreachable` and nothing else. `trap "…"` is the language's
+// way to say why — `spec/spec` has it, the checker checks the message's *type* — and wacc's emitter
+// matched the statement without binding its payload, so a program could be refused for writing
+// `trap 7` and then have a correct message thrown away. `issues/lang/0147`.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// Three of the four cases moved. They drive `wac run` and read what it said, which needs no host.
+//
+// **The fourth stayed, and the reason is not a missing capability.** It builds an *application* with
+// `buildApp` and runs the executable, because the message takes a different route there: a wac
+// `string` is a GC array and opaque to JavaScript, so it comes back through the module's staging
+// buffer, which means the **glue** carries it rather than the host. `bindgen` emits a `$trapped`
+// guard around each exported wrapper and the launcher prints `wac trap: …`. That launcher is
+// `host/entry.ts` and the glue is JavaScript; running the same module with `wac p.wasm` instead takes
+// the interpreter's own path and says `wac: p.wac trapped: …`, which is a different sentence produced
+// by different code. Asserting one against the other would have been a translation that changed the
+// subject, so `test/trapMessage.test.ts` keeps that case and says why.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** Write `program` to `.cache` and run it through `wac run`, both streams together. */
+struct Said {
+  string text;
+  i32 status;
+  bool ran;
+}
+
+Said run(Cli cli, string name, string program) {
+  string dir = cli.cwd().wait() + "/.cache/trapmsg";
+  cli.mkdir(dir, true).wait();
+  string path = dir + "/" + name + ".wac";
+  Change wrote = cli.writeFile(path, program.toBytes()).wait();
+  if (wrote.fault != 0) { return Said("could not write " + path, -1, false); }
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec r = cli.exec(wac, string[]("run", path), u8[0]()).wait();
+  if (!r.ran()) { return Said("the wac binary did not run — " + r.error, -1, false); }
+  cli.remove(path, false).wait();
+  return Said(string.fromBytes(r.stdout) + string.fromBytes(r.stderr), r.status, true);
+}
+
+export string test_a_trap_with_a_message_says_it(Core core, Cli cli) {
+  T t = T.create();
+  Said s = run(cli, "literal", "export i32 main() { trap \"the ring is full\"; }\n");
+  t.isTrue(s.ran, s.text);
+  if (!s.ran) { return t.report(); }
+  t.eqI32(s.status, 1, s.text);
+  t.isTrue(s.text.indexOf("trapped: the ring is full") >= 0, s.text);
+  return t.report();
+}
+
+export string test_a_message_the_program_computed_not_only_a_literal(Core core, Cli cli) {
+  T t = T.create();
+  Said s = run(cli, "computed",
+               "export i32 main() { string why = \"ring \" + \"full\"; " +
+               "if (1 > 0) { trap why; } return 0; }\n");
+  t.isTrue(s.ran, s.text);
+  if (!s.ran) { return t.report(); }
+  t.isTrue(s.text.indexOf("trapped: ring full") >= 0, s.text);
+  return t.report();
+}
+
+export string test_a_bare_trap_claims_no_message(Core core, Cli cli) {
+  T t = T.create();
+  Said s = run(cli, "bare", "export i32 main() { trap; }\n");
+  t.isTrue(s.ran, s.text);
+  if (!s.ran) { return t.report(); }
+  t.eqI32(s.status, 1, s.text);
+  t.isTrue(s.text.indexOf("trapped") >= 0, s.text);
+  // The colon is the whole assertion: a trap with nothing to say must not invent a message, and
+  // "trapped" alone is what that looks like.
+  t.isTrue(s.text.indexOf("trapped:") < 0, s.text);
+  return t.report();
+}

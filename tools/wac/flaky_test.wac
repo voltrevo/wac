@@ -1,0 +1,325 @@
+// Every `[flaky NNNN]` tag names an issue that is still open.
+//
+// A test that fails for reasons unrelated to the change under test costs whoever is pushing an hour
+// of diagnosing their own work — that is what `issues/system/0082` was about, and it is why a
+// tolerated test carries the issue number in its name: a failure then arrives with its own
+// alternative explanation rather than needing one looked up.
+//
+// **The tag is the dangerous half.** "Known flaky" is how a real regression gets waved through, and
+// a tag that outlives its issue is exactly that — an explanation standing by for a failure it no
+// longer explains. So this asserts the tag and the issue rise and fall together: the moment the
+// issue moves to `closed/`, this fails and says which names to take off.
+//
+// ## What was wrong with it, found porting it
+//
+// **The lookup read `issues/open/`, which has not existed since the issues split into `lang/` and
+// `system/`.** Both `readDir` calls threw. Nothing had noticed because no test carries a tag today
+// — 0082 closed and the three tags came off with it, which is the convention working — so the loop
+// that would have called the lookup never ran. A guard whose only two outcomes are *nothing to
+// check* and *crash* reads exactly like a guard that is passing.
+//
+// Two things follow, and both are in here rather than only in the fix:
+//
+//   - **A canary, because zero tags is the normal state.** `test_the_lookup_can_find_an_open_issue`
+//     resolves a number that is open right now. Without it this file goes green whether or not the
+//     resolver works at all, which is how the broken path survived a repository reorganisation.
+//   - **Tracked files, and `.wac` as well as `.ts`.** The old walk read the filesystem, so an
+//     untracked stray could carry a tag, and it scanned only TypeScript — there are 238 wac test
+//     files now and a tag in one of them was invisible. `git ls-files` answers both at once.
+//
+// The old version matched only *declaration* lines, to avoid matching its own explanatory prose. A
+// wac test cannot put a bracket in an export name — the convention is a header comment, as
+// `packages/wacc/test/wac/grants_test.wac` does — so prose is where a wac tag lives, and the
+// distinction cannot survive the port. This file excludes itself by name instead, which is the only
+// thing that rule was buying.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../packages/platform/src/platform.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** This file, which quotes the tag it looks for and must not be read as carrying one. */
+string SELF() { return "tools/wac/flaky_test.wac"; }
+
+/** Where an issue may live, both trees, open before closed. */
+string[] OPEN_DIRS() { return string[]("issues/lang/open", "issues/system/open"); }
+string[] CLOSED_DIRS() { return string[]("issues/lang/closed", "issues/system/closed"); }
+
+string[] tracked(Core core, Cli cli) {
+  Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("flaky: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
+    trap;
+  }
+  return nonEmptyLines(string.fromBytes(r.stdout));
+}
+
+string[] nonEmptyLines(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    if (i > start) { n = n + 1; }
+    start = i + 1;
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    if (i > start) { out[at] = s.slice(start, i); at = at + 1; }
+    start = i + 1;
+  }
+  return out;
+}
+
+bool endsWith(string s, string suf) {
+  return s.len() >= suf.len() && s.slice(s.len() - suf.len(), s.len()) == suf;
+}
+
+bool startsWith(string s, string pre) {
+  return s.len() >= pre.len() && s.slice(0, pre.len()) == pre;
+}
+
+bool isDigit(string c) { return c >= "0" && c <= "9"; }
+
+string joinPaths(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : " and ") + xs[i]; }
+  return out;
+}
+
+/** A tagged site: the file it is in, and the four digits it names. */
+struct Tag {
+  string file;
+  string issue;
+}
+
+/**
+ * Every `[flaky NNNN]` in `text`, four digits exactly.
+ *
+ * Written as a scan rather than by splitting, because a line may hold more than one and the count
+ * is what the report is about.
+ */
+string[] tagsIn(string text) {
+  string marker = "[flaky ";
+  i32 found = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    string[] out = string[found](fill: "");
+    i32 at = 0;
+    i32 i = 0;
+    while (i + marker.len() + 5 <= text.len()) {
+      if (text.slice(i, i + marker.len()) != marker) { i = i + 1; continue; }
+      i32 d = i + marker.len();
+      bool four = isDigit(text.slice(d, d + 1)) && isDigit(text.slice(d + 1, d + 2))
+               && isDigit(text.slice(d + 2, d + 3)) && isDigit(text.slice(d + 3, d + 4))
+               && text.slice(d + 4, d + 5) == "]";
+      if (four) {
+        if (pass == 0) { found = found + 1; } else { out[at] = text.slice(d, d + 4); at = at + 1; }
+        i = d + 5;
+        continue;
+      }
+      i = i + 1;
+    }
+    if (pass == 1) { return out; }
+  }
+  return string[0]();
+}
+
+/**
+ * Every issue numbered `n`, across both trees.
+ *
+ * **A bare number names up to two issues.** `issues/lang/` and `issues/system/` are numbered from
+ * 0001 independently and 151 numbers currently exist in both — `0082` is *five tests fail rather
+ * than slow down* in one and *increment of an i64 field emits an i32 one* in the other. A resolver
+ * that returned the first match would silently pick a tree, which for a tag whose entire job is to
+ * point a reader at an explanation is worse than refusing. So this answers with all of them and the
+ * caller decides what more than one means.
+ */
+string[] issuesNamed(Cli cli, string[] dirs, string n) {
+  string[] hits = string[0]();
+  for (i32 i = 0; i < dirs.len(); i++) {
+    // A directory that cannot be read is not "no such issue" — it is the failure this whole file
+    // exists because of, so the canary below reports it separately.
+    string[]? names = cli.readDir(dirs[i]).wait();
+    if (names is null) { continue; }
+    string[] here = names!;
+    for (i32 k = 0; k < here.len(); k++) {
+      if (!startsWith(here[k], n + "-")) { continue; }
+      string[] grown = string[hits.len() + 1](fill: "");
+      for (i32 j = 0; j < hits.len(); j++) { grown[j] = hits[j]; }
+      grown[hits.len()] = dirs[i] + "/" + here[k];
+      hits = grown;
+    }
+  }
+  return hits;
+}
+
+/** The path of the open issue numbered `n`, or "" — "" also when the number is ambiguous. */
+string openIssue(Cli cli, string n) {
+  string[] hits = issuesNamed(cli, OPEN_DIRS(), n);
+  return hits.len() == 1 ? hits[0] : "";
+}
+
+/** Tracked source that could carry a tag, minus this file. */
+Tag[] taggedFiles(Core core, Cli cli) {
+  string[] paths = tracked(core, cli);
+  Tag[] out = Tag[0]();
+  for (i32 i = 0; i < paths.len(); i++) {
+    string p = paths[i];
+    if (p == SELF()) { continue; }
+    // `issues/` describes the convention; it does not use it.
+    if (startsWith(p, "issues/")) { continue; }
+    if (!endsWith(p, ".ts") && !endsWith(p, ".wac")) { continue; }
+    FileResult r = cli.readFile(p).wait();
+    if (!r.ok) { continue; }
+    string text = string.fromBytes(r.bytes);
+    if (!contains(text, "[flaky ")) { continue; }
+    string[] found = tagsIn(text);
+    for (i32 k = 0; k < found.len(); k++) {
+      Tag[] grown = Tag[out.len() + 1](fill: Tag("", ""));
+      for (i32 j = 0; j < out.len(); j++) { grown[j] = out[j]; }
+      grown[out.len()] = Tag(p, found[k]);
+      out = grown;
+    }
+  }
+  return out;
+}
+
+export string test_the_lookup_can_find_an_open_issue(Core core, Cli cli) {
+  T t = T.create();
+  // **The canary, and the whole reason this file is not a no-op.** No test carries a tag today, so
+  // every assertion below runs zero times and reports success. That is indistinguishable from a
+  // resolver that cannot resolve anything — which is exactly what this was for however long
+  // `issues/open/` had not existed. So: one number that is open right now, resolved.
+  string one = "0161";
+  string path = openIssue(cli, one);
+  t.isTrue(path != "", "issue " + one + " resolves as open — got \"" + path + "\"");
+  t.isTrue(contains(path, "/open/"), "and the path is in an open directory");
+
+  // And a number nothing uses must not resolve, or the lookup is answering yes to everything.
+  t.eqStr(openIssue(cli, "9999"), "", "a number with no issue resolves to nothing");
+
+  // **The collision, with a number that really collides.** 0082 is an issue in both trees — five
+  // tests failing under load in `system`, an i64 increment bug in `lang` — and 151 numbers are like
+  // that today, against the 79 `CLAUDE.md` recorded when the repositories merged. A resolver that
+  // returned the first match would answer confidently with whichever tree it happened to read
+  // first, which for a tag whose whole job is to point at an explanation is the worst answer.
+  t.eqI32(issuesNamed(cli, CLOSED_DIRS(), "0082").len(), 2, "0082 names an issue in both trees");
+
+  // Both trees are searched: `lang` and `system` number from 1 independently, so a resolver that
+  // read one of them would be right about half the repository and silently wrong about the rest.
+  t.isTrue(OPEN_DIRS().len() == 2, "both issue trees are searched");
+  for (i32 i = 0; i < OPEN_DIRS().len(); i++) {
+    // **Readable, said separately from non-empty.** `issues/open/` did not exist and the lookup
+    // answered "" for every number, which reads as "no such issue" — the two must not be one
+    // answer, or a whole tree going missing looks like a clean run.
+    string[]? names = cli.readDir(OPEN_DIRS()[i]).wait();
+    t.isFalse(names is null, OPEN_DIRS()[i] + " is readable");
+    if (!(names is null)) { t.isTrue(names!.len() > 0, OPEN_DIRS()[i] + " is not empty"); }
+  }
+  return t.report();
+}
+
+export string test_the_tag_scanner_finds_what_it_should_and_nothing_else(Core core, Cli cli) {
+  T t = T.create();
+  // A scanner is the other half that can silently find nothing. Held to a string built here, so it
+  // fails whether or not the repository happens to contain a tag.
+  string sample = "Deno.test(\"[flaky 0082] a thing\")\n"
+                + "name: \"[flaky 0106] another\"\n"
+                + "// prose mentioning [flaky 0107] as well\n";
+  t.eqI32(tagsIn(sample).len(), 3, "three tags in the sample");
+  string[] got = tagsIn(sample);
+  if (got.len() == 3) {
+    t.eqStr(got[0], "0082", "first");
+    t.eqStr(got[1], "0106", "second");
+    t.eqStr(got[2], "0107", "third");
+  }
+  // The shapes that are not a tag: too few digits, too many, no bracket, and the bare word.
+  string[] no = string[]("[flaky 082]", "[flaky 01234]", "[flaky 0082", "flaky 0082]", "[flaky ]",
+                         "[flaky abcd]");
+  for (i32 i = 0; i < no.len(); i++) {
+    t.eqI32(tagsIn(no[i]).len(), 0, "\"" + no[i] + "\" is not a tag");
+  }
+  // `[flaky 01234]` must find nothing rather than reading the first four digits: a five-digit
+  // number is a typo, and silently truncating it to an issue that exists is the worst answer.
+  return t.report();
+}
+
+export string test_every_flaky_tag_names_an_issue_that_is_still_open(Core core, Cli cli) {
+  T t = T.create();
+  Tag[] tags = taggedFiles(core, cli);
+  for (i32 i = 0; i < tags.len(); i++) {
+    string where = tags[i].file + " [flaky " + tags[i].issue + "]";
+    string[] open = issuesNamed(cli, OPEN_DIRS(), tags[i].issue);
+    if (open.len() == 1) { continue; }
+    if (open.len() > 1) {
+      // Ambiguous rather than absent, and said as its own thing: the tag points at two issues and
+      // the reader cannot tell which, so the fix is to name the tree, not to remove the tag.
+      t.fail(where + " names " + itoa(open.len()) + " open issues — " + joinPaths(open)
+             + " — the two trees number independently, so the tag has to say which");
+      continue;
+    }
+    string[] closed = issuesNamed(cli, CLOSED_DIRS(), tags[i].issue);
+    t.fail(where + " is " + (closed.len() == 0 ? "not an issue at all" : "closed (" + joinPaths(closed) + ")")
+           + " — take the tag off, a \"known flaky\" label with nothing behind it is how a real "
+           + "regression gets waved through");
+  }
+  // Printed rather than merely checked, so a reader of a green run knows what is being tolerated. A
+  // list nobody sees is how three flaky tests became normal in the first place.
+  if (tags.len() > 0) {
+    string said = "tolerating " + itoa(tags.len()) + " known-flaky test(s):";
+    for (i32 i = 0; i < tags.len(); i++) {
+      said = said + "\n    " + tags[i].file + " — issue " + tags[i].issue;
+    }
+    core.log("  " + said);
+  }
+  return t.report();
+}
+
+export string test_the_issue_a_tag_names_says_what_the_tag_is_for(Core core, Cli cli) {
+  T t = T.create();
+  // A tag pointing at an issue that never mentions flakiness would be a dead end for the person
+  // reading it mid-failure — which is the one moment this convention exists to serve.
+  Tag[] tags = taggedFiles(core, cli);
+  for (i32 i = 0; i < tags.len(); i++) {
+    string path = openIssue(cli, tags[i].issue);
+    if (path == "") { continue; }        // the test above reports this
+    FileResult r = cli.readFile(path).wait();
+    t.isTrue(r.ok, path + " is readable");
+    if (!r.ok) { continue; }
+    string text = lower(string.fromBytes(r.bytes));
+    t.isTrue(contains(text, "flak") || contains(text, "fail, rather than slow down")
+             || contains(text, "intermittent"),
+             path + " does not read as an issue about intermittent failure, but "
+             + tags[i].file + " points at it");
+  }
+  return t.report();
+}
+
+export string test_the_convention_is_written_down_where_somebody_would_look(Core core, Cli cli) {
+  T t = T.create();
+  // In `issues/system/README.md`, because that is what a person opens when a test name tells them
+  // to read an issue number. A convention that lives only in the tests that use it is one the next
+  // person invents differently.
+  FileResult r = cli.readFile("issues/system/README.md").wait();
+  t.isTrue(r.ok, "issues/system/README.md is there");
+  if (!r.ok) { return t.report(); }
+  t.isTrue(contains(string.fromBytes(r.bytes), "[flaky"),
+           "issues/system/README.md describes the tag, so the convention is not only in the code");
+  return t.report();
+}
+
+/** ASCII lowercase, so "Flaky" in an issue's prose reads the same as "flaky". */
+string lower(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len()]();
+  // No `as u8` on the sum: wacc declines that cast, and the repository's own idiom — see
+  // `packages/tls/src/x509.wac`'s `lowerByte` — keeps the arithmetic in `i32` and lets the
+  // element assignment narrow it. The value is 'a'..'z' either way, so nothing can be lost.
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i] = (b[i] >= 'A' && b[i] <= 'Z') ? b[i] + 32 : b[i];
+  }
+  return string.fromBytes(out);
+}

@@ -19,7 +19,7 @@ Widening only the linker's tables moves the reproduction from 511 distinct files
 601: `env.filePaths` is the binding constraint for the names, and `env.fileFirstLine` for the lines.
 Both had to go. With all four, the 600-file case names all 601.
 
-`packages/wacc/test/manyFiles.test.ts` generates 560 files and asserts every one is named. Canaried:
+`packages/wacc/test/wac/manyfiles_test.wac` generates 560 files and asserts every one is named. Canaried:
 with the fix reverted it reports "1681 coverage points name 511 distinct files, not 561 — 50 file(s)
 got none".
 

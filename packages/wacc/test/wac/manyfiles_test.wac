@@ -1,0 +1,114 @@
+// More files than the linker's tables used to hold.
+//
+// `linkFiles` accepts up to 1024 files — `seen` and `queue` are both that size and it refuses past
+// them. The tables its callers handed it were half that, and the writes were *guarded* rather than
+// checked: `if (starts.len() > sn)`, `if (filePaths.len() > sn - 1)`. So a program with more than 512
+// files linked, compiled, and ran correctly, while every line past the cut was attributed to
+// whichever file happened to be last in the table.
+//
+// It cost nothing visible because nothing here is near the limit — `packages/box` is the largest at
+// 170 — which is exactly why this generates its own program rather than using one. The symptom is not
+// a crash or a wrong answer: `total()` was right the whole time. It is that a coverage report, or any
+// diagnostic whose line lands past the cut, names the wrong file and says so with complete
+// confidence. `issues/lang/0130`.
+//
+// Kept deliberately just past the boundary rather than at 600, because the cost is compiling the
+// generated program and the interesting question is only whether the table stops early.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `total()` answers 156,520, which an exit status cannot carry — it is eight bits
+// (`issues/system/0184`) — so the driver compares inside the module and returns 7. The answer is
+// still asserted; it is the *channel* that changed.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined, splitLines, has } from "../../../wactest/src/strings.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { blockedFiles, covTableFiles } from "../../src/api.wac";
+import { Ran, runEmitted, scratchDir } from "./artifacts_probe.wac";
+
+const i32 N = 560;   // past 512, and cheap enough to compile in a test
+const string ENTRY = "/many/main.wac";
+
+/** The `n`th tab-separated field of a line, or `""`. */
+string field(string line, i32 n) {
+  i32 from = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i <= line.len(); i++) {
+    if (i < line.len() && line.slice(i, i + 1) != "\t") { continue; }
+    if (seen == n) { return line.slice(from, i); }
+    seen = seen + 1;
+    from = i + 1;
+  }
+  return "";
+}
+
+/** The last tab-separated field, which is the file a coverage row names. */
+string lastField(string line) {
+  i32 last = 0;
+  for (i32 i = 0; i < line.len(); i++) { if (line.slice(i, i + 1) == "\t") { last = i + 1; } }
+  return line.slice(last, line.len());
+}
+
+export string test_more_files_than_the_linkers_tables_used_to_hold(Core core, Cli cli) {
+  T t = T.create();
+  string[] paths = string[N + 1](fill: "");
+  string[] sources = string[N + 1](fill: "");
+  for (i32 i = 0; i < N; i++) {
+    paths[i] = "/many/f" + itoa(i) + ".wac";
+    // A branch, so each file contributes a coverage point that has to be attributed to it.
+    sources[i] = "export i32 v" + itoa(i) + "(i32 x) {\n  if (x > 0) { return " + itoa(i) +
+                 "; }\n  return 0;\n}\n";
+  }
+  // Through a `Buf`: five hundred imports and five hundred calls concatenated one at a time is
+  // quadratic, and this file exists because five hundred is the interesting number.
+  Buf head = Buf.create();
+  Buf calls = Buf.create();
+  for (i32 i = 0; i < N; i++) {
+    head.pushAll(("import { v" + itoa(i) + " } from \"./f" + itoa(i) + ".wac\";\n").toBytes());
+    if (i > 0) { calls.pushAll(" + ".toBytes()); }
+    calls.pushAll(("v" + itoa(i) + "(1)").toBytes());
+  }
+  i32 want = (N - 1) * N / 2;
+  paths[N] = ENTRY;
+  sources[N] = string.fromBytes(head.take()) + "\nexport i32 total() { return " +
+               string.fromBytes(calls.take()) + "; }\n" +
+               "export i32 main() { return total() == " + itoa(want) + " ? 7 : 0; }\n";
+
+  t.eqStr(blockedFiles(paths, sources, ENTRY), "",
+          "declined a " + itoa(N + 1) + "-file program");
+
+  // The module is correct either way — that is the point, and why this went unnoticed.
+  Ran r = runEmitted(cli, paths, sources, ENTRY, scratchDir(cli), "manyfiles.wasm", 0,
+                     string[0](fill: ""));
+  t.isTrue(r.ok, "it built and ran — " + r.error);
+  if (!r.ok) { return t.report(); }
+  t.eqI32(r.status, 7, "total() is not " + itoa(want) + " — stderr: " + r.stderr);
+
+  // What was actually broken: which file each counter belongs to.
+  string[] rows = splitLines(covTableFiles(paths, sources, ENTRY));
+  string[] named = string[rows.len()](fill: "");
+  i32 nNamed = 0;
+  for (i32 i = 0; i < rows.len(); i++) {
+    string file = lastField(rows[i]);
+    bool seen = false;
+    for (i32 k = 0; k < nNamed; k++) { if (named[k] == file) { seen = true; } }
+    if (!seen) { named[nNamed] = file; nNamed = nNamed + 1; }
+  }
+  string first = "";
+  i32 missing = 0;
+  for (i32 i = 0; i < paths.len(); i++) {
+    bool seen = false;
+    for (i32 k = 0; k < nNamed; k++) { if (named[k] == paths[i]) { seen = true; } }
+    if (seen) { continue; }
+    if (missing == 0) { first = paths[i]; }
+    missing = missing + 1;
+  }
+  t.eqI32(nNamed, N + 1,
+          itoa(rows.len()) + " coverage points name " + itoa(nNamed) + " distinct files, not " +
+          itoa(N + 1) + " — " + itoa(missing) + " file(s) got none, first " + first +
+          ". The line table stopped early and their counters were credited to another file.");
+  return t.report();
+}

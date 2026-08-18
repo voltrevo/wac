@@ -82,7 +82,7 @@ it saves work for, but it grows.
 
 ## Done: the backings differential is in wac, and covers 946 scripts instead of 40 — 2026-08-18
 
-`backings.test.ts` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes,
+`backingsprocess_test.wac` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes,
 **29.8 s**. It is `packages/box/test/wac/backings_test.wac` now — three `Fs` values in one process — and
 runs the **whole** corpus, 946 scripts on three backings, in **7.6 s of which about 6 s is the compile**.
 The Deno file keeps the one claim that needs processes, that an image outlives one and a sealed session
@@ -170,7 +170,7 @@ has no spelling. That difference *is* wac-mono 0113: a pipeline whose first stag
 only under the held shape. Needs a real process until a frame can express it. Should be a targeted set of
 pipeline-shaped scripts, not the whole generated corpus.
 
-**2. An image outliving its process** — `backings.test.ts`. What makes an image an image is that a
+**2. An image outliving its process** — `backingsprocess_test.wac`. What makes an image an image is that a
 *second* process finds what the first wrote, and what makes a sealed session sealed is that it does not.
 Both claims are about process boundaries and neither can be asked inside one. This is also the canary that
 stops the whole three-backing differential being vacuous, so it earns its spawns.

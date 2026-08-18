@@ -36,9 +36,14 @@ why four decisions here moved.
 
 ## Why this is small in the compiler and large in consequence
 
-**Two resolvers exist.** `compiler/wacx.ts` walks the graph for the CLI, and the packages'
+**Two resolvers exist.** The reference CLI walks the graph, and the packages'
 `harness/wacFiles.ts` does the same for its harness. Both now read imports off the *parsed program*
 rather than by matching text, so both already have one place where a specifier becomes a file.
+
+*(2026-08-18: that CLI is gone — it was retired once the `wac` binary covered its commands. The graph walk it named lives on in `readGraph`'s successors and in
+`packages/wacc/src/files.wac`; the point the paragraph is making, that there is more than one
+resolver and they must agree about what a specifier means, is unchanged and is why
+`packages/wacc/src/path.wac` exists.)*
 
 **`wacCompile` already takes a source map.** Its signature is `wacCompile(files: Map<path, string>,
 entry, options)` — the browser playground compiles with no filesystem at all. So "sources that are not
