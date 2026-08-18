@@ -85,6 +85,14 @@ and the other chunks do not: the same defect reports 60 failures from a whole-di
 quarter of that from the lane. Nothing is masked, but a count that moves with an unrelated file being
 added is worth knowing about before it is read as flakiness.
 
+## How to look at the module
+
+`WAC_KEEP_AGGREGATE=1 wac test packages/wacc/` keeps the generated file as
+`.cache/wac-aggregate-<pid>-<group>.kept.wac` — added for this bug, because the aggregate is deleted before
+anything fails and rebuilding it by hand is a second implementation of the generator. Build that file with
+`wac build` and the type and export sections of the result are where the answer is: the manifest is
+generated from the source and lists the no-argument wrappers, so it is the emitter that is dropping them.
+
 ## Why it matters more than the workaround
 
 The workaround is a rename and costs nothing. What the bug costs is *diagnosis*: the failure lands on

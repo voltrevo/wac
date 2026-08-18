@@ -31,6 +31,11 @@ after it drains, which the serial lane did for free.
 A target narrows the lane, which it did not before: `deno task test packages/tty/` used to run every wac
 test in the repository.
 
+**`WAC_KEEP_AGGREGATE=1` keeps the generated aggregate**, as `.cache/wac-aggregate-<pid>-<group>.kept.wac`
+— the file the compiler actually saw, which is otherwise deleted before anything can fail. Reach for it
+when a test passes on its own and fails in a directory run: that difference is the aggregate, and
+`issues/lang/0154` is one bug that lives there.
+
 A wait that is a *spin* is what makes that parallelism unsafe, and there were two — see
 `waitForPortWithin` in [`packages/wactest/src/daemon.wac`](../packages/wactest/src/daemon.wac). Four
 workers turned "sshd never accepted" from a rare flake into a reliable one, which is how they were

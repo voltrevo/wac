@@ -1008,6 +1008,24 @@ fn test_command(rest: &[String]) -> i32 {
             .join(format!("wac-aggregate-{}-{g}_test.wac", std::process::id()));
         let made = write_aggregate(&files, members, &at).and_then(|(agg, carried)| {
             let m = build_module(&grants, &agg, false).ok();
+            // **`WAC_KEEP_AGGREGATE=1` keeps a copy**, because a bug in the aggregate is otherwise
+            // impossible to look at: the file the compiler saw is gone by the time anything fails, and
+            // reconstructing it by hand is a second implementation of `write_aggregate`.
+            // `issues/lang/0154` is the bug that wanted it — a struct name declared three times in one
+            // link drops every no-argument export from the module while leaving it in the manifest, and
+            // the next step on it is reading the type and export sections of exactly this file's build.
+            //
+            // The copy is `.kept.wac`, not `_test.wac`: the walk collects the latter, so a kept
+            // aggregate under `.cache` would otherwise be read as a test file of its own on the next
+            // run — which is what the removal below is for.
+            if matches!(std::env::var("WAC_KEEP_AGGREGATE").as_deref(), Ok("1")) {
+                let kept = std::path::Path::new(".cache")
+                    .join(format!("wac-aggregate-{}-{g}.kept.wac", std::process::id()));
+                match std::fs::copy(&at, &kept) {
+                    Ok(_) => eprintln!("wac: kept the generated aggregate at {}", kept.display()),
+                    Err(e) => eprintln!("wac: could not keep the aggregate — {}", message_of(&e)),
+                }
+            }
             // **Removed whether or not it built.** A generated file left in `.cache` is read by the
             // next `wac test packages/` as a test file of its own, and then imports every test under
             // it into a run that asked for one directory.
