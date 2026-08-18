@@ -79,8 +79,20 @@ export string test_then_returns_now_and_the_continuations_run_inside_drain(Core 
   // Two things this pins. **`scheduled 2, ran 0`**: `then` registered and returned, and neither
   // continuation had run — a `then` that ran its callback immediately would say `ran 2` here and be
   // `wait` with extra steps. **Both lines before `drained`**: they ran inside that call.
-  t.eqStr(joinedWith(splitLines(r.out), "\n"),
-          "scheduled 2, ran 0\nfirst\nsecond\ndrained 2, ran 2", "the drain transcript");
+  //
+  // **In either order, and that is not laziness.** The two continuations belong to a 1ms and a 2ms
+  // delay, and `run` dispatches whichever `waitAny` says is ready. Each capability call runs on its own
+  // thread, so which of two overdue timers marks itself ready first is thread scheduling: on a loaded
+  // machine this file failed with `second` before `first`, having passed every run before it. The order
+  // is the host's answer order, as `example/scheduled.wac` says, and a tie between two simultaneously
+  // due timers has no rule — `issues/system/0202`. What the transcript is *for* is that neither ran
+  // early and both ran inside the call, and that is asserted position by position.
+  string[] lines = splitLines(r.out);
+  t.eqI32(lines.len(), 4, r.out);
+  if (lines.len() != 4) { return t.report(); }
+  t.eqStr(lines[0], "scheduled 2, ran 0", r.out);
+  t.eqStr(joinedWith(sorted(string[](lines[1], lines[2])), " "), "first second", r.out);
+  t.eqStr(lines[3], "drained 2, ran 2", r.out);
   return t.report();
 }
 
@@ -113,9 +125,14 @@ export string test_a_bounded_drain_runs_what_it_reaches_and_leaves_the_rest(Core
   t.isTrue(r.ran, r.err);
   if (!r.ran) { return t.report(); }
   t.eqI32(r.status, 0, r.err);
-  t.eqStr(joinedWith(splitLines(r.out), "\n"),
-          "scheduled 2, ran 0\nfirst\nsecond\nbudget ran 2, left 1\nabandoned 1",
-          "the budget transcript");
+  // The two continuations in either order, for the reason the drain case above gives at length.
+  string[] lines = splitLines(r.out);
+  t.eqI32(lines.len(), 5, r.out);
+  if (lines.len() != 5) { return t.report(); }
+  t.eqStr(lines[0], "scheduled 2, ran 0", r.out);
+  t.eqStr(joinedWith(sorted(string[](lines[1], lines[2])), " "), "first second", r.out);
+  t.eqStr(lines[3], "budget ran 2, left 1", r.out);
+  t.eqStr(lines[4], "abandoned 1", r.out);
   // And it came back on time. The bound is what is being tested, so the assertion is that it *ended* —
   // a budget in the wrong unit would sit here for the full minute. Loose on both sides: compiling the
   // program dominates this number, and the only wrong answers are "immediately" and "a minute".

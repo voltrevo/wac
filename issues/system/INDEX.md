@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0202](open/0202-two-simultaneously-due-timers-have-no-tie-break-so-continuations-run-in-either-order.md) | two simultaneously due timers have no tie-break, so a scheduler dispatches their continuations in either order | missing feature | wrong answer |
 | [0201](open/0201-a-shell-builtin-shadows-a-box-applet-and-answers-differently.md) | a shell builtin shadows a box applet and refuses in fewer words than the applet does | bug | wrong answer |
 | [0200](open/0200-coverage-crypto-is-red-mlkem-and-keccak-lost-their-driver.md) | `coverage:crypto` is red: 127 points uncovered, 48 of them in `mlkem.wac` | bug | wrong answer |
 | [0199](open/0199-the-native-host-ignores-a-pushed-childs-cwd-so-the-two-hosts-disagree.md) | the native host ignores a pushed child's `cwd`, so the same program answers differently on the two hosts | bug | wrong answer |
@@ -57,7 +58,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-207 issues, 162 closed.
+208 issues, 162 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
