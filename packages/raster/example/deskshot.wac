@@ -9,7 +9,7 @@
 // takes **no capability at all**, so the same drawing runs anywhere, and the bytes it produces are
 // the same bytes or the claim is false.
 //
-// `packages/raster/test/hosts.test.ts` runs it on both and compares them byte for byte. That is the
+// `packages/raster/test/wac/hosts_test.wac` runs it on both and compares them byte for byte. That is the
 // arrival test for pixels, and it is what step 5 needs before a framebuffer is worth writing: a
 // framebuffer that disagrees with the canvas is not the same desktop, and nothing else would say so.
 //
