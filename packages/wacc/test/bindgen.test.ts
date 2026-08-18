@@ -108,6 +108,50 @@ i32 inc(i32 a) { return a + 1; }
   }
 });
 
+/**
+ * `§wac-bind-bulk-70zh5tg` — byte arrays across the page boundaries, and an earlier result surviving.
+ *
+ * The clause names the sizes: *"round-trips byte arrays unchanged at 0, 1, 65535, 65536 and 65537 bytes
+ * — the sizes either side of a wasm page — and a previously returned array is unaffected by a later
+ * call"*. `compiler/wacCompile.test.ts` held **the reference** to it; a measurement of all 419 clauses
+ * on 2026-08-18 found this was one of twelve nothing held wacc to.
+ *
+ * The second half is the one that would fail quietly: bulk arrays cross through a staging buffer in the
+ * module's memory, so a result that was a *view* of that buffer rather than a copy would read correctly
+ * until the next call overwrote it — right in every test that checks one call at a time.
+ */
+Deno.test("bindgen: byte arrays cross at the page boundaries, and an earlier one survives a later call", async () => {
+  const src = `export u8[] echoBytes(u8[] b) { return b; }\n`;
+  const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
+  const wire = bindTypes(["m.wac"], [src], "m.wac");
+  const source = generate(wasm, parseSigs(exportSigs(["m.wac"], [src], "m.wac")),
+    parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire));
+  const path = await Deno.makeTempFile({ suffix: ".gen.ts" });
+  await Deno.writeTextFile(path, source);
+  try {
+    const glue = await import(`file://${path}`) as Record<string, CallableFunction>;
+    const made = (n: number) => Uint8Array.from({ length: n }, (_, i) => (i * 7 + 3) & 0xFF);
+    const wrong: string[] = [];
+    for (const n of [0, 1, 65535, 65536, 65537]) {
+      const input = made(n);
+      const out = glue.echoBytes(input) as Uint8Array;
+      if (out.length !== n) { wrong.push(`${n} bytes came back as ${out.length}`); continue; }
+      for (let i = 0; i < n; i++) {
+        if (out[i] !== input[i]) { wrong.push(`${n} bytes: byte ${i} is ${out[i]}, wanted ${input[i]}`); break; }
+      }
+    }
+    // The second half of the clause: hold an earlier answer, make a big call, and read it again.
+    const earlier = glue.echoBytes(made(3)) as Uint8Array;
+    const before = Array.from(earlier).join(",");
+    glue.echoBytes(made(65537));
+    const after = Array.from(earlier).join(",");
+    if (before !== after) wrong.push(`an earlier array changed from ${before} to ${after}`);
+    if (wrong.length > 0) throw new Error(`${wrong.length} problem(s):\n  ${wrong.join("\n  ")}`);
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
 Deno.test("bindgen: what it cannot bind is named, not silently skipped", () => {
   const src = `struct P { i32 x; }
 export i32 fine(i32 n) { return n; }

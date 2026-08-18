@@ -1,4 +1,4 @@
-// The spans the spec *requires*, asserted against wacc.
+// The clauses the spec states and **nothing else held wacc to**.
 //
 // `spec/spec/errors.md` does not merely ask for a span field — it names the width for particular
 // programs: *"The compiler must emit `span: 1`, `annotation: "expected bool, found i32"`,
@@ -14,6 +14,12 @@
 //
 // The counting version of this lives in `diagnosticgap_test.wac`, which holds a floor under the *share*
 // of diagnostics carrying a span. A share cannot say which clause is unmet, so this names them.
+//
+// **It has grown past spans, which is why it is no longer called `diagspans`.** A measurement of all 419
+// clauses on 2026-08-18 asked which of them anything holds *wacc* to, rather than which are mentioned:
+// twelve were held only by the reference's own tests, and eight of those are `§wac-wapy-*`, a TypeScript
+// surface that is reference-only by design. The rest belong here, whether or not they are about a span —
+// what they have in common is that `compiler/wacSpec.test.ts` drives `wacCompile` and this drives wacc.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
@@ -195,4 +201,60 @@ export string test_the_cast_hint_the_spec_states_quotes_the_expression() {
   if (d.len() != 4) { return t.report(); }
   t.eqStr(d[2], "use `(sum > 0) as i32` to convert", "the hint the spec states");
   return t.report();
+}
+
+/**
+ * `§enum-variant-name-collision` — two enums in one file cannot share a variant name.
+ *
+ * A variant is a file-scope name, which is what makes `Circle(2.0)` work without naming its enum — so a
+ * second enum claiming `Circle`, or a struct or function of that name, is a collision. The spec states
+ * it in `enums.md` and `generics.md` refers to it; `compiler/wacResolve.test.ts` held the reference to it
+ * and nothing asked wacc.
+ *
+ * All three shapes, because "two enums" is the one the spec's example shows and the other two are the
+ * same rule reached from a different side.
+ */
+export string test_a_variant_name_cannot_collide_at_file_scope() {
+  T t = T.create();
+  string[] two = firstDiagnostic(
+      "enum Shape { Circle(f64 r) }\nenum Hole { Circle(f64 r) }\nexport i32 f() { return 0; }");
+  string[] withStruct = firstDiagnostic(
+      "struct Circle { f64 r; }\nenum Shape { Circle(f64 r) }\nexport i32 f() { return 0; }");
+  string[] withFunc = firstDiagnostic(
+      "i32 Circle() { return 1; }\nenum Shape { Circle(f64 r) }\nexport i32 f() { return 0; }");
+  t.isTrue(two.len() == 4, "two enums sharing a variant name were accepted");
+  t.isTrue(withStruct.len() == 4, "a variant sharing a struct's name was accepted");
+  t.isTrue(withFunc.len() == 4, "a variant sharing a function's name was accepted");
+  if (two.len() != 4 || withStruct.len() != 4 || withFunc.len() != 4) { return t.report(); }
+  t.eqStr(two[0], "duplicate name at file scope", "the message for two enums");
+  t.eqStr(withStruct[0], "duplicate name at file scope", "the message for a struct");
+  t.eqStr(withFunc[0], "duplicate name at file scope", "the message for a function");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-null-h6kp9wn` — a nullable value assigned to a non-null type, and the help that unwraps it.
+ *
+ * The spec's block shows `= help: unwrap with `!`: Point p = q!;`. wacc's hint says the same thing in its
+ * own words, which is the part worth pinning: the clause is about the reader being told *what to write
+ * next*, and a hint that omitted the `!` would be the failure. Held only by the reference until now.
+ */
+export string test_the_nullable_assignment_clause() {
+  T t = T.create();
+  string[] d = firstDiagnostic(
+      "struct Point { i32 x; }\nexport i32 f(Point? q) {\n  Point p = q;\n  return p.x;\n}");
+  t.isTrue(d.len() == 4, "assigning a nullable to a non-null type was accepted");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "a nullable value cannot be assigned to a non-null type", "the message");
+  t.isTrue(contains(d[2], "!"), "the help does not say to unwrap with `!`: " + d[2]);
+  return t.report();
+}
+
+/** `needle` anywhere in `haystack`. */
+bool contains(string haystack, string needle) {
+  if (needle.len() > haystack.len()) { return false; }
+  for (i32 i = 0; i + needle.len() <= haystack.len(); i++) {
+    if (haystack.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
 }

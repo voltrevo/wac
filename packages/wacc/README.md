@@ -164,7 +164,7 @@ have never appeared in a status line: they are invisible to every rung.
 | emit wasm | **every file it is given** — 356 of 359 whole, 0 invalid; the three left import a file the fixture deliberately does not supply |
 | self-host | done, and the reference cannot |
 | diagnostics: message | done, and the wording agrees where both speak |
-| diagnostics: annotation, hint, span | operands on 81%, help on 43%, a real span on **73%** — ratcheted, so they cannot fall back. The spec states particular widths as clauses — `span: 1` for `if (x)`, `4` for `3.14`, `3` for `p.x`, `7` for `sum > 0` — and `test/wac/diagspans_test.wac` names them, along with the two wordings it quotes; the reference attaches no hint or span at all on that corpus |
+| diagnostics: annotation, hint, span | operands on 81%, help on 43%, a real span on **73%** — ratcheted, so they cannot fall back. The spec states particular widths as clauses — `span: 1` for `if (x)`, `4` for `3.14`, `3` for `p.x`, `7` for `sum > 0` — and `test/wac/specclauses_test.wac` names them, along with the two wordings it quotes; the reference attaches no hint or span at all on that corpus |
 | CLI: `check`, `compile`, `run` | done — this *is* the `wac` command's compiler |
 | CLI: `bindgen` | done — `wac bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |

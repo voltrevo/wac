@@ -38,7 +38,7 @@ neighbouring cases found the same way on 2026-08-18 were real and are fixed:
 - wacc's annotation for an unknown type was `no type foo in scope`, where the spec quotes
   `unknown type 'foo'`.
 
-Both were one-line changes. `packages/wacc/test/wac/diagspans_test.wac` now pins them, and the two span
+Both were one-line changes. `packages/wacc/test/wac/specclauses_test.wac` now pins them, and the two span
 clauses beside them.
 
 ## The decision
