@@ -49,6 +49,24 @@ Deno.test("a pipeline in a shell with no grants at all", async () => {
     const err = dec.decode(out.stderr);
     assertEquals(err.includes("Not granted"), false, `${err}\n--- stdout:\n${said}`);
     assertEquals(said, "hi\na-b\n", `${said}\n--- stderr:\n${err}`);
+
+    // **The grant canary.** Everything above asserts that a refusal did *not* happen, which passes for
+    // free if this build quietly had the grant after all — a `read: true` slipped into the line above,
+    // or a builder that stopped recording an empty grant set — and the file would go green while
+    // testing nothing. So a read that genuinely needs the grant must still be refused by the same
+    // binary in the same build.
+    const needs = new Deno.Command(built, { args: [], stdin: "piped", stdout: "piped", stderr: "piped" })
+      .spawn();
+    const nw = needs.stdin.getWriter();
+    await nw.write(new TextEncoder().encode("cat /etc/hostname\n"));
+    await nw.close();
+    const refused = await needs.output();
+    assertEquals(
+      dec.decode(refused.stderr).includes("Not granted"),
+      true,
+      "reading a real file was allowed, so this build was not ungranted and the assertions above " +
+        `prove nothing — stderr: ${dec.decode(refused.stderr)}`,
+    );
   } finally {
     await Deno.remove(built);
   }

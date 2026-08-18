@@ -147,6 +147,37 @@ arithmetic says so plainly.** A `*_test.wac` that imports box's world costs abou
 every run, because `wac test` compiles each file's import graph from scratch. The Deno files it would
 replace cost **0.5–5 s each**. `pipeUngranted.test.ts` is 514 ms; moving it to wac would make it 6 s.
 
+### That diagnosis is now out of date, and the blocker moved — 2026-08-18 (agent-c)
+
+`0192` landed: `wac test` builds **one aggregate per directory**, so a test file's import graph is
+compiled once for the whole directory rather than once per file. The paragraph above priced the
+conversion at a per-file compile that no longer exists.
+
+So I wrote the conversion to find out what it costs now — `pipeungranted_test.wac`, the same two
+pipelines through `wac build` with no grant flags — and measured it three ways:
+
+| | measured |
+| --- | --- |
+| `pipeUngranted.test.ts`, warm | **375 ms** (not 514 ms) |
+| the wac version, run on its own | 2 317 ms |
+| the wac version's *marginal* cost inside `packages/box/test/wac` | **+2.1 s** (11.2 s → 13.3 s over 17 files) |
+
+The aggregate does not help, because the cost is not the test file's own graph: the test **shells out to
+`wac build`** to produce an ungranted shell, and that build recompiles `boxsh` from scratch every run.
+The TypeScript version costs 375 ms for the same work because `buildApp` keys the artefact on the
+content of everything it read and reuses it — `harness/buildCache.ts`.
+
+**So the blocker for every build-and-run test in this issue is `issues/system/0204`, not `0192`.** Until
+`wac build` has the cache the Deno side has had for months, converting a file that builds an application
+trades 375 ms for 2.1 s, and no amount of aggregate sharing changes it. The conversion is written and
+was reverted for that reason alone; the numbers above are what to re-check after `0204`.
+
+**One thing did move, and it cost nothing.** Writing the wac version made the vacuity obvious: the whole
+file asserts that a refusal did *not* happen, which passes for free if the build quietly had the grant
+after all. `pipeUngranted.test.ts` now ends with a grant canary — `cat /etc/hostname` through the same
+binary and the same build **must** be refused — and it was proved in both directions by granting `read`
+and watching it fail. That belongs in every "no refusal happened" test in this package.
+
 So the conversions that paid are the ones where spawning dominated — `backings` (29.8 s → 1.5 s + a
 7.2 s wac file that also does 24× more work) and `fuzz` (38 s → 20.6 s + 6.9 s). What is left is either
 about processes on purpose (`sealed`, `sealing`, `shell`, `routes`, `node_shell`, `rasterterm_live`,

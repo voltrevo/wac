@@ -70,6 +70,35 @@ that costs 0.4s of 12s — 3% — while halving the wall clock, and on `packages
 looked worst, the shared graph is 2.25s, so four chunks cost about 7s of extra work across the whole
 lane and buy three-quarters of that directory's wall clock back. It stays.
 
+## It also blocks the rest of `0161` — 2026-08-18
+
+The suite arithmetic above makes this issue look small. The conversion work does not, and that is the
+better argument for it.
+
+`issues/system/0161` is moving TypeScript tests to `*_test.wac`, and `packages/box` is the largest pool
+left — seventeen files. Many of them **build an application and run it**, which is the shape this
+repository's capability model asks for: the grants a program has are the ones its build declared. On the
+Deno side that build is 375 ms because `buildApp` reuses a content-keyed artefact. Through `wac build`
+the same build is ~2 s, every run.
+
+Measured on `packages/box/test/pipeUngranted.test.ts`, converted and then reverted for this reason
+(`issues/system/0193` carries the table): 375 ms warm as TypeScript, 2 317 ms as a wac file on its own,
+and **+2.1 s marginal** inside `packages/box/test/wac` — 11.2 s to 13.3 s across seventeen files. The
+per-directory aggregate (`0192`) does not help, because what recompiles is not the test's own graph but
+the application the test shells out to build.
+
+So every remaining build-and-run conversion trades 375 ms for 2 s until this exists. Seventeen of them
+would be about 30 s a run — which is the same order as the whole saving estimated above, arriving from
+the other direction.
+
+**And the cache belongs on the wac side, not in the Rust.** `wac build` is
+`packages/wacc/example/wacc.wac` — it resolves the import graph itself and prints "N bytes from M
+file(s)" — so the artefact, the file set and the flags are all in hand there. What is *not* in hand is
+the identity of the compiler doing the compiling: the seed is embedded in the binary and a wac program
+cannot hash it. That is one small thing the host must supply — the seed's hash, as an environment
+variable or a capability — and it is the part to design first, because a cache that cannot tell which
+compiler produced an entry is the stale-hit bug this issue would introduce.
+
 ## The decision this needs
 
 The work is in `native/v8/src/main.rs`; the part that needs a decision is the key, because a stale
