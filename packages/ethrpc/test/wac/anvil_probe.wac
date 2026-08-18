@@ -13,7 +13,7 @@
 // a child to completion and a node has to outlive the call.
 
 import { Cli, Exec, Stat } from "../../../platform/src/platform.wac";
-import { Daemon, freePort, logOf, start, stop, waitForPort }
+import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForPort }
   from "../../../wactest/src/daemon.wac";
 // `quoted` is `childenv.wac`'s, not `daemon.wac`'s — importing it from the latter is a compile
 // error in every program that reaches this file, which is what `rung 3` and the lambda test caught.
@@ -57,8 +57,9 @@ export Node anvil(Cli cli) {
                 "anvil not found at " + path + " — packages/ethrpc's live tests will not run. " +
                 "Install the release tarball for this machine's architecture into ~/tools/foundry/");
   }
-  i32 port = freePort(cli);
-  if (port <= 0) { return Node(-1, Daemon(-1, "", ""), "no free port"); }
+  Port p = freePortOr(cli);
+  if (p.port <= 0) { return Node(-1, Daemon(-1, "", ""), "no free port — " + p.error); }
+  i32 port = p.port;
 
   string log = cli.cwd().wait() + "/.cache/anvil-" + itoa(port) + ".log";
   cli.mkdir(cli.cwd().wait() + "/.cache", true).wait();

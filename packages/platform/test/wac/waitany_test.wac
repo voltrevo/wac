@@ -22,7 +22,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Daemon, freePort, logOf, start, stop, waitForLog }
+import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForLog }
   from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 
@@ -79,9 +79,12 @@ export string test_waitany_parks_until_whichever_socket_speaks_first(Core core, 
   string dir = cli.cwd().wait() + "/.cache/waitany";
   cli.mkdir(dir, true).wait();
 
-  i32 quickPort = freePort(cli);
-  i32 slowPort = freePort(cli);
-  t.isTrue(quickPort > 0 && slowPort > 0 && quickPort != slowPort, "two free ports");
+  Port quick = freePortOr(cli);
+  Port slow = freePortOr(cli);
+  i32 quickPort = quick.port;
+  i32 slowPort = slow.port;
+  t.isTrue((quickPort > 0) && (slowPort > 0) && (quickPort != slowPort),
+           "two free ports — " + quick.error + " " + slow.error);
   if (quickPort <= 0 || slowPort <= 0 || quickPort == slowPort) { return t.report(); }
 
   Daemon quick = serveOnce(cli, quickPort, "0", "quick", dir + "/quick.log");

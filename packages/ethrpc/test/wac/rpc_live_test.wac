@@ -19,7 +19,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { freePort } from "../../../wactest/src/daemon.wac";
+import { Port, freePortOr, freePort } from "../../../wactest/src/daemon.wac";
 import { Node, anvil, anvilPath, haveAnvil, runExample, stopAnvil } from "./anvil_probe.wac";
 
 const string ENTRY = "packages/ethrpc/example/blocknumber.wac";
@@ -48,8 +48,9 @@ export string test_ethrpc_asks_a_real_node_for_its_block_number_over_a_real_sock
   t.eqStr(trimmedEnd(string.fromBytes(r.stdout)), "0x0", "the block number");
 
   // And with nothing listening on that port, it must say so rather than printing an empty answer.
-  i32 dead = freePort(cli);
-  t.isTrue(dead > 0, "a port nothing is listening on");
+  Port deadPort = freePortOr(cli);
+  i32 dead = deadPort.port;
+  t.isTrue(dead > 0, "a port nothing is listening on — " + deadPort.error);
   if (dead > 0) {
     Exec bad = runExample(cli, ENTRY, string[]("127.0.0.1", itoa(dead)));
     t.eqI32(bad.status, 1, "a refused connection should fail: " + string.fromBytes(bad.stdout));

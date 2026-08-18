@@ -487,6 +487,7 @@ if (HEAVY_ONLY) {
         "--allow-write",
         "--allow-run",
         "--allow-env",
+        "--allow-net",
         ...heavyWacFiles,
       ],
       stdout: "inherit",
@@ -596,12 +597,23 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
     // that the second oracle was not running, and passed. A differential comparing nothing, wearing
     // a green tick. `packages/abi/test/wac/cast_test.wac` now separates "could not look" from "is
     // not there" and fails on the first, which is what turned this from invisible into a red test.
+    // **`--allow-net`, added 2026-08-18, and the reason is the same one `--allow-env` has.** Six wac
+    // test files bind a socket — `freePort` in `packages/wactest/src/daemon.wac` asks the kernel for
+    // a port by binding zero — and `cli.listen` needs this grant. Without it the handle comes back
+    // negative and `freePort` answers -1, so the test reports **"no free port"**: a sentence about
+    // port exhaustion, on a machine with twenty-eight thousand of them free. Five tests failed that
+    // way on every run since they were written, and the message is convincing enough that I read it
+    // as contention on a shared box, re-ran them by hand *with the flag*, saw them pass, and
+    // credited the wrong variable. `deno test` runs with `-A`, so this narrows the gap between the
+    // lanes rather than opening anything. `issues/system/0173` is the granularity that would let a
+    // test say it needs this rather than a lane granting it to everyone.
     args: [
       "test",
       "--allow-read",
       "--allow-write",
       "--allow-run",
       "--allow-env",
+      "--allow-net",
       ...(heavyWac.length > 0 ? ["--ignore", heavyWac.join(",")] : []),
       "packages/",
     ],
