@@ -183,3 +183,30 @@ Deno.test("wac validate: no arguments is a usage error", async () => {
   const r = await validate([]);
   assertEquals(r.code, 2, "usage, not failure");
 });
+
+
+// ── `wac covdump` ─────────────────────────────────────────────────────────────────────────────────
+//
+// The counters themselves, which `--coverage` cannot give: it prints how many points were *reached*
+// and this prints how many times each one ran. `packages/wacc/test/wac/coverage_test.wac` is what
+// needs it — nothing in wac can call `__cov_get`, since the instrumentation injects it.
+
+Deno.test("[§wac-cli-covdump-9pf3wq2] wac covdump: a module without counters is an error, not an empty report", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-covdump-" });
+  const src = `${dir}/m.wac`;
+  await Deno.writeTextFile(src, "export i32 main() { return 0; }\n");
+  const built = await new Deno.Command(WAC, { args: ["build", src, "-o", `${dir}/m`], stdout: "null", stderr: "null" }).output();
+  if (!built.success) throw new Error("could not build the module");
+  const r = await new Deno.Command(WAC, { args: ["covdump", `${dir}/m.wasm`], stdout: "piped", stderr: "piped" }).output();
+  assertEquals(r.code, 1, "a module built without coverage is an error");
+  assertEquals(
+    new TextDecoder().decode(r.stderr).includes("carries no counters"),
+    true,
+    `and says so — got: ${new TextDecoder().decode(r.stderr)}`,
+  );
+});
+
+Deno.test("[§wac-cli-covdump-9pf3wq2] wac covdump: no arguments is a usage error", async () => {
+  const r = await new Deno.Command(WAC, { args: ["covdump"], stdout: "null", stderr: "null" }).output();
+  assertEquals(r.code, 2, "usage, not failure");
+});

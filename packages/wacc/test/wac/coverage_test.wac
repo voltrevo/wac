@@ -1,0 +1,217 @@
+// Coverage instrumentation: a counter per branch point, and a table saying what each one is.
+//
+// The names are the reference's — `__cov_init`, `__cov_len`, `__cov_get` — so a consumer written
+// against one compiler works against the other. The representation is ours: the counters live in a
+// global `i32[]` rather than in linear memory, where the staging buffer already is.
+//
+// What is asserted here is what a coverage reader actually relies on: that a counter says how many
+// times its point ran, that the table's `i`th row describes counter `i`, and that a function nobody
+// called is visible as such rather than as a body whose branches happened not to fire.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// **`wac covdump` exists because of this test.** Nothing in wac can call `__cov_get`: the
+// instrumentation injects it, so no source names it, and `wac test --coverage` prints how many
+// points were *reached* — a percentage per file, which cannot say how often. A test about what a
+// counter means needs the counter. So the binary gained a command that runs `main` under the
+// counters and prints each one against its index, which is the pairing `covTableFiles` is keyed by.
+//
+// Three arguments mean three routes through one function, and a run reaches `main` and nothing else
+// — so each route is its own module, differing only in what `main` calls.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined, splitLines, trimmed } from "../../../wactest/src/strings.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { emitFiles, emitFilesCovered, covTableFiles } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";
+
+const string ENTRY = "/t/m.wac";
+
+/** Each `case` on its own line, so a point's line is a point rather than three of them. */
+const string SRC =
+  "export i32 classify(i32 n) {\n" +
+  "  if (n > 10) { return 1; }\n" +
+  "  i32 t = 0;\n" +
+  "  for (i32 i = 0; i < n; i++) { t = t + i; }\n" +
+  "  switch (n) {\n" +
+  "    case 0: { return 100; }\n" +
+  "    case 1: { return 200; }\n" +
+  "    default: { return t; }\n" +
+  "  }\n" +
+  "}\n" +
+  "export i32 nobodyCalls(i32 n) { return n; }\n";
+
+/** The same program, with `main` taking one route through it. */
+string program(i32 arg) {
+  return SRC + "export i32 main() { return classify(" + itoa(arg) + ") & 0; }\n";
+}
+
+/** The `n`th tab-separated field of a line. */
+string field(string line, i32 n) {
+  i32 from = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i <= line.len(); i++) {
+    if (i < line.len() && line.slice(i, i + 1) != "\t") { continue; }
+    if (seen == n) { return line.slice(from, i); }
+    seen = seen + 1;
+    from = i + 1;
+  }
+  return "";
+}
+
+/** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/**
+ * Run one route and hand back its counters.
+ *
+ * The last line is `<n> counter(s)` and is checked against the table's length — a dump that stopped
+ * halfway would otherwise report zeroes, which is what an unreached branch looks like.
+ */
+i32[] countsFor(T t, Cli cli, string dir, i32 arg, i32 want) {
+  string[] paths = string[](ENTRY);
+  string[] sources = string[](program(arg));
+  u8[] wasm = emitFilesCovered(paths, sources, ENTRY);
+  string at = dir + "/cov" + itoa(arg) + ".wasm";
+  Change wrote = cli.writeFile(at, wasm).wait();
+  if (wrote.fault != 0) { t.fail("could not write " + at); return i32[0](); }
+
+  Exec r = cli.exec(binary(cli), string[]("covdump", at), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    t.fail("covdump did not run for classify(" + itoa(arg) + ") — " + r.error +
+           string.fromBytes(r.stderr));
+    return i32[0]();
+  }
+  string[] lines = splitLines(string.fromBytes(r.stdout));
+  if (lines.len() == 0) { t.fail("covdump said nothing"); return i32[0](); }
+  if (trimmed(lines[lines.len() - 1]) != itoa(want) + " counter(s)") {
+    t.fail("covdump reported \"" + lines[lines.len() - 1] + "\", the table has " + itoa(want));
+    return i32[0]();
+  }
+
+  i32[] out = i32[want]();
+  for (i32 i = 0; i < lines.len() - 1; i++) {
+    i32 idx = atoiField(field(lines[i], 0));
+    if (idx >= 0 && idx < want) { out[idx] = atoiField(field(lines[i], 1)); }
+  }
+  return out;
+}
+
+/** A small non-negative integer, or -1. */
+i32 atoiField(string s) {
+  if (s.len() == 0) { return -1; }
+  i32 v = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    i32 c = s.toBytes()[i];
+    if (c < '0' || c > '9') { return -1; }
+    v = v * 10 + (c - '0');
+  }
+  return v;
+}
+
+/** The count at the `nth` point of `kind`, or -1 if the table has no such point. */
+i32 at(i32[] counts, string[] kinds, string kind, i32 nth) {
+  i32 seen = 0;
+  for (i32 i = 0; i < kinds.len(); i++) {
+    if (kinds[i] != kind) { continue; }
+    if (seen == nth) { return i < counts.len() ? counts[i] : -1; }
+    seen = seen + 1;
+  }
+  return -1;
+}
+
+export string test_coverage_a_counter_says_how_many_times_its_point_ran(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratchDir(cli);
+  string[] rows = splitLines(covTableFiles(string[](ENTRY), string[](program(3)), ENTRY));
+  t.isTrue(rows.len() >= 6,
+           "only " + itoa(rows.len()) + " points — the instrumentation is not reaching the branches");
+  if (rows.len() < 6) { return t.report(); }
+
+  string[] kinds = string[rows.len()](fill: "");
+  for (i32 i = 0; i < rows.len(); i++) { kinds[i] = field(rows[i], 3); }
+
+  i32[] three = countsFor(t, cli, dir, 3, rows.len());
+  i32[] twenty = countsFor(t, cli, dir, 20, rows.len());
+  i32[] zero = countsFor(t, cli, dir, 0, rows.len());
+  if (three.len() == 0 || twenty.len() == 0 || zero.len() == 0) { return t.report(); }
+
+  string[] wrong = string[16](fill: "");
+  i32 n = 0;
+  // The early return: the `then` arm runs and nothing after it does.
+  if (at(twenty, kinds, "then", 0) != 1) { wrong[n] = "classify(20) did not take the `then` arm"; n = n + 1; }
+  if (at(twenty, kinds, "loop", 0) != 0) { wrong[n] = "classify(20) entered the loop after returning"; n = n + 1; }
+  // A loop counter counts *iterations*, which is what makes it worth having.
+  if (at(three, kinds, "loop", 0) != 3) {
+    wrong[n] = "classify(3) ran the loop " + itoa(at(three, kinds, "loop", 0)) + " times, wanted 3";
+    n = n + 1;
+  }
+  if (at(three, kinds, "then", 0) != 0) { wrong[n] = "classify(3) took the `then` arm"; n = n + 1; }
+  if (at(three, kinds, "else", 0) != 1) { wrong[n] = "classify(3) missed the `else` arm"; n = n + 1; }
+  // The arms of a switch are distinguishable from each other.
+  if (at(zero, kinds, "case", 0) != 1) { wrong[n] = "classify(0) did not take the first case"; n = n + 1; }
+  if (at(three, kinds, "case", 0) != 0) { wrong[n] = "classify(3) took the first case"; n = n + 1; }
+  // A function nobody called has a point that never fires — the fact a "which lines ran" report is
+  // built from, and the one a body-only instrumentation cannot state.
+  i32 entries = 0;
+  for (i32 i = 0; i < kinds.len(); i++) { if (kinds[i] == "entry") { entries = entries + 1; } }
+  if (entries < 2) { wrong[n] = itoa(entries) + " entry points for two functions"; n = n + 1; }
+  if (at(three, kinds, "entry", 1) != 0) { wrong[n] = "an uncalled function's entry point fired"; n = n + 1; }
+
+  string[] said = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { said[i] = wrong[i]; }
+  t.eqI32(n, 0, itoa(n) + " disagreement(s): " + joined(said, "; ") +
+                " — the table is " + joined(kinds, ", "));
+  return t.report();
+}
+
+export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_it(
+    Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "coverage_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  string dir = scratchDir(cli);
+  i32 compared = 0;
+  i32 instrumented = 0;
+  string[] same = string[16](fill: "");
+  i32 nSame = 0;
+  string[] wrote = string[40](fill: "");
+  i32 nWrote = 0;
+
+  i32 upto = c.paths.len() < 40 ? c.paths.len() : 40;
+  for (i32 f = 0; f < upto; f++) {
+    u8[] plain = emitFiles(c.paths, c.sources, c.paths[f]);
+    u8[] cov = emitFilesCovered(c.paths, c.sources, c.paths[f]);
+    compared = compared + 1;
+    if (plain.len() <= 8) { continue; }
+    instrumented = instrumented + 1;
+    string at = dir + "/covfile" + itoa(f) + ".wasm";
+    cli.writeFile(at, cov).wait();
+    wrote[nWrote] = at;
+    nWrote = nWrote + 1;
+    // The instrumented build must differ — a build that instruments nothing would pass every
+    // assertion above by accident.
+    if (cov.len() == plain.len() && nSame < same.len()) {
+      same[nSame] = c.paths[f];
+      nSame = nSame + 1;
+    }
+  }
+
+  string[] toCheck = string[nWrote](fill: "");
+  for (i32 i = 0; i < nWrote; i++) { toCheck[i] = wrote[i]; }
+  Validated v = validateAll(cli, toCheck);
+  t.isTrue(v.ok, "the engine was asked about the instrumented modules — " + v.error);
+  t.eqI32(v.rejected.len(), 0,
+          itoa(v.rejected.len()) + " instrumented module(s) do not validate: " +
+          joined(v.rejected, ", "));
+
+  t.isTrue(instrumented >= 20, "only " + itoa(instrumented) + " modules were instrumented");
+  string[] said = string[nSame](fill: "");
+  for (i32 i = 0; i < nSame; i++) { said[i] = same[i]; }
+  t.eqI32(nSame, 0, "instrumenting changed nothing in: " + joined(said, ", "));
+  return t.report();
+}

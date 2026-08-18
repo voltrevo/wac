@@ -1106,6 +1106,12 @@ fn main() {
     if SEED.is_some() && stem == "validate" {
         std::process::exit(validate_command(&args[2..]));
     }
+    // **The counters themselves, not a percentage.** `--coverage` prints how many points were
+    // reached; a test about what a counter *means* needs how many times each one ran, and nothing
+    // in wac can call `__cov_get` — the instrumentation injects it, so no source names it.
+    if SEED.is_some() && stem == "covdump" {
+        std::process::exit(covdump_command(&args[2..]));
+    }
     if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
         start_v8();
         std::process::exit(run_seed(&args[1..]));
@@ -1231,6 +1237,88 @@ fn validate_command(paths: &[String]) -> i32 {
     }
     println!("{} module(s): {bad} rejected", paths.len());
     if bad > 0 { 1 } else { 0 }
+}
+
+/// `wac covdump <module.wasm>` — run `main` under the counters and print each one.
+///
+/// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
+/// `i`th row describes counter `i`, and a test asserting "the loop ran three times" needs the pair.
+/// The aggregated report `--coverage` prints answers a different question — how much was reached —
+/// and cannot say how often.
+///
+/// The module is instantiated with no imports, which is what an instrumented single file needs.
+fn covdump_command(rest: &[String]) -> i32 {
+    let Some(path) = rest.first() else {
+        eprintln!("usage: wac covdump <module.wasm>");
+        return 2;
+    };
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("wac: cannot read {path} — {e}");
+            return 1;
+        }
+    };
+    start_v8();
+    let isolate = &mut v8::Isolate::new(Default::default());
+    v8::scope!(let handle_scope, isolate);
+    let context = v8::Context::new(handle_scope, Default::default());
+    let scope = &mut v8::ContextScope::new(handle_scope, context);
+
+    let Some(module) = v8::WasmModuleObject::compile(scope, &bytes) else {
+        eprintln!("wac: {path} was rejected by the engine");
+        return 1;
+    };
+    let imports = v8::Object::new(scope);
+    let global = context.global(scope);
+    let mod_key = v8::String::new(scope, "__mod").unwrap();
+    global.set(scope, mod_key.into(), module.into()).unwrap();
+    let imp_key = v8::String::new(scope, "__imports").unwrap();
+    global.set(scope, imp_key.into(), imports.into()).unwrap();
+    let src = v8::String::new(scope, "new WebAssembly.Instance(__mod, __imports).exports").unwrap();
+    let Some(exports) = v8::Script::compile(scope, src, None)
+        .and_then(|sc| sc.run(scope))
+        .and_then(|v| v.to_object(scope))
+    else {
+        eprintln!("wac: {path} did not instantiate — an import it wants is missing");
+        return 1;
+    };
+
+    // The counters are allocated by a call, not by instantiation: skip this and every instrumented
+    // function traps on its first branch with a message about the program rather than the omission.
+    let Some(init) = get_export(scope, exports, "__cov_init") else {
+        eprintln!("wac: {path} carries no counters — was it built with coverage?");
+        return 1;
+    };
+    init.call(scope, exports.into(), &[]);
+    if let Some(main) = get_export(scope, exports, "main") {
+        main.call(scope, exports.into(), &[]);
+    }
+
+    let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
+        eprintln!("wac: {path} has __cov_init and no __cov_len");
+        return 1;
+    };
+    let len = len_fn
+        .call(scope, exports.into(), &[])
+        .and_then(|v| v.to_int32(scope))
+        .map(|v| v.value())
+        .unwrap_or(0);
+    let Some(get_fn) = get_export(scope, exports, "__cov_get") else {
+        eprintln!("wac: {path} has __cov_len and no __cov_get");
+        return 1;
+    };
+    for i in 0..len {
+        let idx = v8::Integer::new(scope, i);
+        let n = get_fn
+            .call(scope, exports.into(), &[idx.into()])
+            .and_then(|v| v.to_int32(scope))
+            .map(|v| v.value())
+            .unwrap_or(-1);
+        println!("{i}\t{n}");
+    }
+    println!("{len} counter(s)");
+    0
 }
 
 fn run(m: &Manifest, wasm: &[u8], manifest_text: &str) -> i32 {
