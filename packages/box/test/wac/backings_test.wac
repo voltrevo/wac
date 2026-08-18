@@ -1,0 +1,267 @@
+// One filesystem, three backings, and the same answers — design/0001 D7's own differential, in one process.
+//
+// D7 says it in as many words: "the same scripts can run against a host mount *and* against an image, and
+// any divergence between those two is a VFS bug with a reference answer." The three differ only underneath
+// the boundary:
+//
+//   **memory** `Fs.inMemory` — what `bin/sealedsh.wac` builds, with no grants at all
+//   **image**  `boot`/`save` — the same, read from a file and written back to it
+//   **host**   `Fs.onHost`   — the real disk through a `Cli`, which is what `bin/sh.wac` builds
+//
+// ## This used to spawn, and it used to run forty scripts
+//
+// `backings.test.ts` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes at
+// 130 ms, 30 s of the box suite. `deno task corpus:backings` ran the other 906, outside the gate, and
+// nothing in a gate run said the gate was covering 4% of the differential.
+//
+// In this process a script costs about a millisecond, so **the whole corpus runs here** — 946 scripts on
+// three backings inside one wasm module, in less wall clock than building one of the three binaries took.
+// The claim was always about what sits *under* one program, and three `Fs` values in one process is that
+// claim more directly: the code above the boundary is now literally the same code rather than three builds
+// of it.
+//
+// What cannot move is the canary — that an image survives its own *process* and a sealed session does not.
+// That one is about processes, so it stays in `backings.test.ts` and spawns.
+//
+// ## Three differences are levelled
+//
+// `sealedsh` makes `/tmp` and `imaged` does not, so every script runs after `mkdir -p /tmp`; the host shell
+// gets an empty directory of its own, or it would see the repository while the other two see nothing; and
+// a script naming an absolute path that **exists on this machine** is compared on memory against image
+// only, because the host arm would be answering about Linux rather than about a backing. All three
+// levellings are `tools/corpusBackings.ts`'s, which this file replaces in the gate; the third is counted
+// and reported rather than quietly applied.
+
+import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
+import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { Fs, mountSystem } from "../../../fs/src/fs.wac";
+import { Booted, boot, save } from "../../../fs/src/image.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Shell } from "../../../sh/src/exec.wac";
+import { shellMain } from "../../../sh/src/entry.wac";
+import { boxNames, boxRun } from "../../src/shrun.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { corpus } from "../../../sh/test/wac/corpus.wac";
+
+struct Ran {
+  string out;
+  string err;
+  i32 status;
+}
+
+/**
+ * One script through a shell whose filesystem is `fs`, inside this process.
+ *
+ * `shellMain`'s `first` is an index into the arguments and a frame's `argv` starts with the child's own
+ * name, so the shell's own arguments start at 1.
+ */
+Ran runOn(Core core, Cli cli, Fs fs, string script) {
+  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), "/", false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Shell sh = Shell.onFs(c, l, fs);
+  sh.cwd = "/";
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
+}
+
+/** The same, on the real disk: `Shell.create` builds `Fs.onHost`, and the frame's cwd is where it lands. */
+Ran runHost(Core core, Cli cli, string cwd, string script) {
+  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), cwd, false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Shell sh = Shell.create(c, l);
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
+}
+
+/** A memory filesystem wired the way `bin/sealedsh.wac` wires one, `/tmp` and `/dev` included. */
+Fs memoryFs(Core core) {
+  Fs fs = Fs.inMemory(0);
+  fs.mkdir("/tmp", true);
+  Vec<string> argv = Vec.create();
+  argv.push("sealedsh");
+  mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
+  return fs;
+}
+
+/**
+ * An image backing, read from `path`.
+ *
+ * **`boot` on a path that does not exist is an empty world**, deliberately, so that a first run needs no
+ * separate step. That makes booting a name nothing has written indistinguishable from `Fs.inMemory`, and a
+ * differential whose second arm is secretly its first arm agrees with itself perfectly. So the file is
+ * seeded by `seedImage` first, and every boot here parses real image bytes.
+ */
+Fs imageFs(Core core, Cli cli, string path) {
+  Booted booted = boot(core, cli, path, Vec.fromArray(string[]("imaged")), Vec.fromArray(boxNames()));
+  return booted.fs;
+}
+
+/** Write an empty world to `path`, so the boots that follow are reads of a file rather than of nothing. */
+bool seedImage(Core core, Cli cli, string path) {
+  Fs fs = Fs.inMemory(0);
+  mountSystem(fs, core.randomBytes, Vec.fromArray(string[]("imaged")), Vec.fromArray(boxNames()));
+  return save(core, cli, "backings", path, fs);
+}
+
+string workRoot(Cli cli) { return cli.cwd().wait() + "/.cache/wac-backings"; }
+
+export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mount(Core core, Cli cli) {
+  T t = T.create();
+  string[] scripts = corpus();
+  string root = workRoot(cli);
+  cli.mkdir(root, true).wait();
+  string seed = root + "/seed.wacimg";
+  string scratch = root + "/saved.wacimg";
+  t.isTrue(seedImage(core, cli, seed), "could not write the seed image");
+
+  i32 agree = 0;
+  i32 machineOnly = 0;
+  i32 unsaved = 0;
+  i32 differ = 0;
+  string detail = "";
+  for (i32 i = 0; i < scripts.len(); i++) {
+    string script = "mkdir -p /tmp; " + scripts[i];
+    // A directory of its own per script, because the corpus writes files and reads them back. Absolute,
+    // because a relative frame `cwd` does not resolve — `issues/system/0194`.
+    string work = root + "/host" + itoa(i);
+    cli.mkdir(work, true).wait();
+
+    Ran memory = runOn(core, cli, memoryFs(core), script);
+    Fs image = imageFs(core, cli, seed);
+    Ran onImage = runOn(core, cli, image, script);
+    // And written back, because a session that ran and could not be saved is a session lost: the write
+    // half of the image backing is as much of it as the read half.
+    if (!save(core, cli, "backings", scratch, image)) { unsaved = unsaved + 1; }
+    Ran onHost = runHost(core, cli, work, script);
+
+    cli.remove(work, true).wait();
+
+    if (reachesTheMachine(cli, scripts[i])) {
+      machineOnly = machineOnly + 1;
+      if (same(memory, onImage)) { agree = agree + 1; continue; }
+      differ = differ + 1;
+      if (differ <= 5) {
+        detail = detail + "\n  " + show(scripts[i]) + "  (host not compared: names an absolute path)" +
+                 "\n    memory " + shape(memory) + "\n    image  " + shape(onImage);
+      }
+      continue;
+    }
+    if (same(memory, onImage) && same(memory, onHost)) { agree = agree + 1; continue; }
+    differ = differ + 1;
+    if (differ <= 5) {
+      detail = detail + "\n  " + show(scripts[i]) +
+               "\n    memory " + shape(memory) +
+               "\n    image  " + shape(onImage) +
+               "\n    host   " + shape(onHost);
+    }
+  }
+  cli.remove(scratch, false).wait();
+  cli.remove(seed, false).wait();
+
+  t.isTrue(scripts.len() > 900, "only " + itoa(scripts.len()) + " scripts — did the corpus load?");
+  t.eqI32(unsaved, 0, itoa(unsaved) + " sessions could not be written back to an image");
+  // **Said rather than applied.** A differential that silently narrows what it compares reports a better
+  // number for checking less, so the two-arm cases are counted and the count is bounded: if levelling
+  // starts eating the corpus, this is where it shows.
+  t.isTrue(machineOnly < 40,
+           itoa(machineOnly) + " scripts were compared on memory and image only, because they name an " +
+           "absolute path this machine has — the host arm would answer about Linux, not about a backing");
+  t.eqI32(differ, 0, itoa(differ) + " of " + itoa(scripts.len()) +
+                     " scripts answer differently by backing (" + itoa(agree) + " agree, " +
+                     itoa(machineOnly) + " on two arms)" + detail);
+  return t.report();
+}
+
+/**
+ * Not "they agree" but "each of them did something".
+ *
+ * Three shells that refused everything would agree perfectly, so this asks each backing a question about
+ * its own filesystem: make a file, read it back, count what is in the directory. The corpus is thin here —
+ * it is a *shell language* corpus, and only 43 of its 946 scripts redirect anywhere — so this is what
+ * stands behind the run above being about filesystems at all.
+ */
+export string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Core core, Cli cli) {
+  T t = T.create();
+  string script = "mkdir -p /tmp/d; echo hello > /tmp/d/f; cat /tmp/d/f; ls /tmp/d | wc -l";
+  string root = workRoot(cli);
+  cli.mkdir(root, true).wait();
+
+  Ran memory = runOn(core, cli, memoryFs(core), script);
+  t.eqStr(memory.out, "hello\n1\n", "memory: " + shape(memory));
+
+  string image = root + "/alive.wacimg";
+  t.isTrue(seedImage(core, cli, image), "could not write the seed image");
+  Ran onImage = runOn(core, cli, imageFs(core, cli, image), script);
+  cli.remove(image, false).wait();
+  t.eqStr(onImage.out, "hello\n1\n", "image: " + shape(onImage));
+
+  string work = root + "/alive";
+  cli.mkdir(work, true).wait();
+  Ran onHost = runHost(core, cli, work, script);
+  cli.remove(work, true).wait();
+  t.eqStr(onHost.out, "hello\n1\n", "host: " + shape(onHost));
+  return t.report();
+}
+
+/**
+ * Whether this script names an absolute path that **exists on this machine**.
+ *
+ * `/tmp` is levelled already — every script runs after `mkdir -p /tmp` — so it is the one absolute path
+ * all three backings have. Anything else absolute reaches the real filesystem on the host arm and nothing
+ * in a sealed session.
+ *
+ * **The existence check is the point**, and `corpusBackings.ts` records what happened without it: naming an
+ * absolute path is not enough, since `/nosuchfile` is absent on the machine *and* in a session, so all
+ * three agree and the comparison is worth keeping. Excluding on the name alone dropped the host arm for 34
+ * scripts where only 6 could ever have differed.
+ */
+bool reachesTheMachine(Cli cli, string script) {
+  for (i32 i = 0; i < script.len(); i++) {
+    if (script.slice(i, i + 1) != "/") { continue; }
+    if (i > 0 && !opensAPath(script.slice(i - 1, i))) { continue; }
+    i32 end = i + 1;
+    while (end < script.len() && pathByte(script.slice(end, end + 1))) { end = end + 1; }
+    if (end == i + 1) { continue; }
+    string path = script.slice(i, end);
+    if (path == "/tmp" || (path.len() > 5 && path.slice(0, 5) == "/tmp/")) { continue; }
+    Stat st = cli.stat(path).wait();
+    if (st.exists) { return true; }
+  }
+  return false;
+}
+
+/** The bytes a path can follow: the start of a word, in other words. */
+bool opensAPath(string ch) {
+  return ch == " " || ch == "\t" || ch == "\n" || ch == "\"" || ch == "'" ||
+         ch == "<" || ch == ">" || ch == "|" || ch == "=" || ch == "(";
+}
+
+/** The bytes a path is made of, matching `corpusBackings.ts`'s `[\w./-]`. */
+bool pathByte(string ch) {
+  u8[] b = ch.toBytes();
+  if (b.len() != 1) { return false; }
+  i32 c = b[0];
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+         c == '_' || c == '.' || c == '/' || c == '-';
+}
+
+bool same(Ran a, Ran b) { return a.out == b.out && a.err == b.err && a.status == b.status; }
+
+string shape(Ran r) { return show(r.out + r.err) + " (" + itoa(r.status) + ")"; }
+
+/** A string with its newlines visible, so a failure reads on one line. */
+string show(string s) {
+  string out = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    string ch = s.slice(i, i + 1);
+    out = out + (ch == "\n" ? "\\n" : ch);
+  }
+  return "\"" + out + "\"";
+}

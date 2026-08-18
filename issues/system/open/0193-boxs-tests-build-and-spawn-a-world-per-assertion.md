@@ -80,3 +80,80 @@ and nothing prunes either. `tools/prune-deno-cache.sh` sweeps Deno's transpile c
 entry per *source set* rather than per source-set-times-grant-set, so it grows more slowly than the cache
 it saves work for, but it grows.
 
+## Done: the backings differential is in wac, and covers 946 scripts instead of 40 — 2026-08-18
+
+`backings.test.ts` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes,
+**29.8 s**. It is `packages/box/test/wac/backings_test.wac` now — three `Fs` values in one process — and
+runs the **whole** corpus, 946 scripts on three backings, in **7.6 s of which about 6 s is the compile**.
+The Deno file keeps the one claim that needs processes, that an image outlives one and a sealed session
+does not, and is **2.0 s**.
+
+Two things the move found:
+
+* the old sample was **vacuous**. Breaking the host arm outright made 2 of the 40 cases differ and 38
+  agree — the head of the corpus is the shell language, not the world. That is what made running all 946
+  the right answer rather than a better sample.
+* `tools/corpusBackings.ts` says six scripts name an absolute path this machine has and are compared on
+  two arms. It is **30**, measured with that file's own regex. The wac port agrees with it exactly, script
+  for script, which is how the port was checked.
+
+The corpus is thin on filesystem work either way — 43 of 946 scripts redirect anywhere — so a differential
+about filesystems is mostly running scripts that never open one. Worth a corpus of its own; not filed yet.
+
+## Done: the fuzz differential is captured vectors, and the generator is in wac — 2026-08-18
+
+`fuzz.test.ts` ran four seeds × thirty scripts × two stdin shapes × two shells: **480 processes, 38 s**,
+every suite run, to ask what bash does about scripts that are fixed by their seed.
+
+* `tools/shellFuzz.ts` is `tools/wac/shfuzz.wac`. The port is exact and was **checked rather than
+  assumed**: both grew a `--print` mode and were diffed byte for byte over **1,400 scripts and seven
+  seeds**. The first attempt drifted — a `r.pick` inside an array literal is evaluated before the pick
+  that chooses between its elements — and seed 1 agreed for ten scripts before it showed.
+* `packages/box/test/fuzz-vectors.txt` is bash's answer to all 120, **11 KB**, captured by
+  `--capture`. `packages/box/test/wac/fuzz_test.wac` replays them in process (**7.7 s, ~6 s of it the
+  compile**) and keeps eight of them live against bash as the drift canary.
+* `fuzz.test.ts` keeps the one shape a `Frame` cannot express — standard input open and silent, which is
+  what wac-mono 0113 needed — and spawns 120 times for it: **19 s**, down from 38 s. That gap is
+  `issues/system/0195`, and it is the only reason the file still exists.
+
+One answer per script rather than one per stdin shape, and that is measured: bash answers **identically
+for all 120** under both, checked by running both ways and diffing. The two shapes were never about bash.
+
+**Found in passing** (`issues/system/0196`): the caret-blink browser test went red twice in full box runs
+and green alone, on the *precondition* that 0159's fix left in front of its sampling guard. Its message
+says a sample cost 1 ms, so the guard let it through — what was starved was the renderer, not the sampler.
+
+## Where this stops, and why — 2026-08-18
+
+`packages/box` measured file by file: **351 s at the start of this issue, 184 s now.** The suite (parallel,
+both lanes) went from 4m23s to about 3m40s.
+
+| | ms | |
+|---|---:|---|
+| `box.test.ts` | 23 828 | the coreutils differential, 26 tests, none over 3 s |
+| `fuzz.test.ts` | 20 631 | 120 spawns for the held-open stdin shape — `0195` |
+| `sealed.test.ts` | 15 725 | processes, deliberately |
+| `notdir.test.ts` | 11 578 | ~90 spawns: GNU as oracle, twice per case |
+| `routes.test.ts` | 11 202 | 80 spawns: called against spawned, which needs both |
+| `shell.test.ts` | 8 528 | about spawning; cannot move |
+| **`wac/backings_test.wac`** | **7 201** | 946 scripts × 3 backings — **6 s of it is the compile** |
+| **`wac/fuzz_test.wac`** | **6 878** | 120 replays — 6 s of it is the compile |
+| **`wac/corpus_test.wac`** | **6 702** | 301 replays — 6 s of it is the compile |
+| **`wac/inprocess_test.wac`** | **6 101** | 3 assertions — 6 s of it is the compile |
+| the other 19 Deno files | 500–5 200 each | one cached build and a Deno start |
+
+**Step 2 — "move the ~60 tests with no external oracle in-process" — is now blocked by `0192`, and the
+arithmetic says so plainly.** A `*_test.wac` that imports box's world costs about **6 s of compile**,
+every run, because `wac test` compiles each file's import graph from scratch. The Deno files it would
+replace cost **0.5–5 s each**. `pipeUngranted.test.ts` is 514 ms; moving it to wac would make it 6 s.
+
+So the conversions that paid are the ones where spawning dominated — `backings` (29.8 s → 1.5 s + a
+7.2 s wac file that also does 24× more work) and `fuzz` (38 s → 20.6 s + 6.9 s). What is left is either
+about processes on purpose (`sealed`, `sealing`, `shell`, `routes`, `node_shell`, `rasterterm_live`,
+and the 120 spawns `0195` forces) or already at the floor.
+
+**The floor is the work now**, and it is the same shape in both lanes: a per-file cost paid to ask a
+handful of questions. `0192` on the wac side is worth more than every remaining conversion in this issue
+put together — 205 wac test files at ~6 s of compile each — and it is what would make the other ~60
+assertions nearly free to move.
+

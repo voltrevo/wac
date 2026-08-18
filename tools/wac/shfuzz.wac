@@ -1,0 +1,523 @@
+// A script generator for the shell, with bash as the oracle — and the tool that writes its answers down.
+//
+//   wac run --allow-read --allow-write --allow-run tools/wac/shfuzz.wac            explore: ask bash live
+//   wac run --allow-read --allow-write --allow-run tools/wac/shfuzz.wac --capture  write the vectors
+//   … --seed 7 --count 200                                                        a wider sweep
+//
+// Every sweep this shell has enumerates one construct at a time — the corpus, `gaps.test.ts`,
+// `behaviour.test.ts` — and each was written just after the construct it covers. The bugs that survive
+// those live at *intersections*, which is what a generator reaches and a matrix somebody typed does not.
+//
+// It has earned its place four times: **wac-mono 0113** (a pipeline whose first stage produces no bytes
+// hung), `test`'s diagnostics naming `test` when reached through `[`, `$?` on a `for` body's first line
+// being 0 rather than what the previous command answered, and a compound that collected its output while
+// letting its errors go to whatever buffer the caller owned.
+//
+// ## This was a TypeScript tool
+//
+// Same generator, same menu, same seeds, in the language the shell is written in. The port is not a
+// rewrite for its own sake: the gate ran the whole differential — four seeds, thirty scripts, two stdin
+// shapes, 480 processes — on **every suite run**, which is 38 s to ask what bash does about scripts that
+// are fixed by their seed and do not change between runs. So the answers are captured here and replayed
+// from `packages/box/test/wac/fuzz_test.wac` in process.
+//
+// The determinism is what makes that safe, and it is exact rather than approximate: `Rand` is xorshift32
+// and `int(n)` is `floor(u/2^32 * n)` computed in 64-bit integers, which is the same arithmetic the
+// TypeScript did in doubles — `u < 2^32` and `n <= 18`, so no rounding is possible in either.
+//
+// ## What the generator must not produce
+//
+// Two shapes cost an hour between them and are worth stating:
+//
+//   - **A loop variable reused by a nested loop.** `for i` inside `while [ $i -lt 2 ]` resets the outer
+//     counter and the script never ends — in bash as much as here, so it is the generator that is wrong
+//     rather than a finding. Every loop gets a name from its depth.
+//   - **`case x y in`**, and anything else that is a *syntax* error. Both shells refuse it and their
+//     messages differ by design: bash names the offending token and the line, ours says `syntax error`.
+//     Generating them buries the real findings under a class that is already understood.
+
+import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wac";
+import { Buf } from "../../packages/bytes/src/buf.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { Frame, childCli, childCore } from "../../packages/platform/src/frame.wac";
+import { Shell } from "../../packages/sh/src/exec.wac";
+import { shellMain } from "../../packages/sh/src/entry.wac";
+import { boxNames, boxRun } from "../../packages/box/src/shrun.wac";
+
+/** The seeds the gate keeps, and how many scripts each contributes. */
+export i32[] seeds() { return i32[](1, 3, 11, 47); }
+export i32 perSeed() { return 30; }
+
+export string vectorsPath() { return "packages/box/test/fuzz-vectors.txt"; }
+
+/**
+ * A deterministic 32-bit generator, so a seed means the same thing everywhere.
+ *
+ * xorshift32, and its only requirement is that a seed reproduces a run.
+ */
+export struct Rand {
+  i32 state;
+
+  Rand of(i32 seed) { return Rand(seed == 0 ? 0 - 1640531527 : seed); }
+
+  /** The next 32 bits, as they come out — the sign is not meaningful. */
+  i32 next(this) {
+    i32 x = this.state;
+    x = x ^ (x << 13);
+    x = x ^ (x >>> 17);
+    x = x ^ (x << 5);
+    this.state = x;
+    return x;
+  }
+
+  /**
+   * A number below `n`, from the top bits.
+   *
+   * `floor(u / 2^32 * n)` where `u` is the unsigned reading of `next()`, done in 64 bits. The
+   * TypeScript this ports computed the same value as a double and could not round, since `u < 2^32`
+   * and `n <= 18` keep the product under 2^36.
+   */
+  i32 int(this, i32 n) {
+    u64 u = (this.next() as@ u32) as u64;
+    return ((u * (n as@ u32 as u64)) >> 32) as@ i32;
+  }
+
+  string pick(this, string[] xs) { return xs[this.int(xs.len())]; }
+}
+
+string[] words() {
+  return string[]("a", "b", "hi", "\"x y\"", "$'t\\tb'", "\"$v\"", "$v", "f", "n");
+}
+
+string[] redirs() {
+  return string[]("", " > out", " >> out", " 2> err", " 2>&1", " >&2", " 2>/dev/null", " < f");
+}
+
+/** One command with no control flow in it. The fifteen shapes, in the order the seeds expect. */
+string simple(Rand r) {
+  i32 which = r.int(15);
+  if (which == 0) { return "echo " + r.pick(words()); }
+  if (which == 1) {
+    // Two picks, in this order: a single expression would leave the order to the compiler, and the
+    // order *is* the seed.
+    string a = r.pick(words());
+    string b = r.pick(words());
+    return "echo " + a + " " + b;
+  }
+  if (which == 2) { return "true"; }
+  if (which == 3) { return "false"; }
+  if (which == 4) { return ":"; }
+  if (which == 5) { return "[ -f " + r.pick(words()) + " ]"; }
+  if (which == 6) {
+    string a = r.pick(words());
+    string b = r.pick(words());
+    return "[ " + a + " = " + b + " ]";
+  }
+  if (which == 7) { return "test -n " + r.pick(words()); }
+  if (which == 8) { return "v=" + r.pick(words()); }
+  if (which == 9) { return "read q < f; echo [$q]"; }
+  if (which == 10) { return "cat <<< " + r.pick(words()); }
+  if (which == 11) { return "echo $?"; }
+  if (which == 12) { return "printf '%s|' " + r.pick(words()); }
+  if (which == 13) { return "local v=in"; }
+  return "case " + r.pick(words()) + " in a) echo A;; *) echo other;; esac";
+}
+
+/**
+ * One statement, at most `maxDepth` deep.
+ *
+ * The depth cap has to exclude *every* recursive branch rather than shrink the menu: the first version
+ * picked from a smaller range that still contained only recursive cases, and blew the stack instead of
+ * producing a script.
+ */
+string stmt(Rand r, i32 depth, i32 maxDepth) {
+  if (depth >= maxDepth) { return simple(r) + r.pick(redirs()); }
+  i32 which = r.int(18);
+  string d = itoa(depth);
+  if (which == 0) {
+    string cond = simple(r);
+    string yes = stmt(r, depth + 1, maxDepth);
+    string no = stmt(r, depth + 1, maxDepth);
+    return "if " + cond + "\nthen " + yes + "\nelse " + no + "\nfi";
+  }
+  if (which == 1) { return "for v" + d + " in 1 2\ndo " + stmt(r, depth + 1, maxDepth) + "\ndone"; }
+  if (which == 2) {
+    return "c" + d + "=0\nwhile [ $c" + d + " -lt 2 ]\ndo c" + d + "=$((c" + d + "+1))\n" +
+           stmt(r, depth + 1, maxDepth) + "\ndone";
+  }
+  if (which == 3) { return "g" + d + "() {\n" + stmt(r, depth + 1, maxDepth) + "\n}\ng" + d; }
+  if (which == 4) {
+    return "h" + d + "() {\nlocal v=in\n" + stmt(r, depth + 1, maxDepth) + "\n}\nh" + d + "\necho [$v]";
+  }
+  if (which == 5) { return simple(r) + " | cat"; }
+  if (which == 6) { return "! " + simple(r) + "; echo $?"; }
+  if (which == 7) { return "for v" + d + " in 1 2 3\ndo " + simple(r) + "\nbreak\ndone"; }
+  if (which == 8) { return "until [ -f nosuchfile ]\ndo " + simple(r) + "\nbreak\ndone"; }
+  // **Three forms the generator could not reach**, added 2026-08-12 after the two it *could* reach found
+  // two defects. A subshell is where `local` and `return` broke — through a pipeline stage, because
+  // `( … )` was not in this list at all, so the shape that carries the fault was reachable only sideways.
+  if (which == 9) { return "(\n" + stmt(r, depth + 1, maxDepth) + "\n)"; }
+  if (which == 10) {
+    string a = simple(r);
+    string b = simple(r);
+    string c = simple(r);
+    return a + " && " + b + " || " + c;
+  }
+  if (which == 11) {
+    string subject = r.pick(string[]("x", "$v", "f", "\"x y\""));
+    string a = simple(r);
+    string b = simple(r);
+    return "case " + subject + " in\nx) " + a + ";;\n*) " + b + ";;\nesac";
+  }
+  // **A compound as a pipeline stage**, which is where the third defect lived: `runCompound` collects when
+  // it is not the last command, and a stage is never last.
+  if (which == 12) { return simple(r) + " | cat | cat"; }
+  if (which == 13) { return "{\n" + stmt(r, depth + 1, maxDepth) + "\n} | cat"; }
+  // **A redirection on a compound**, which `redirs()` only ever reaches a *simple* command with.
+  if (which == 14) { return "{\n" + stmt(r, depth + 1, maxDepth) + "\n}" + r.pick(redirs()); }
+  // **A here-document, and only at the top level.** Its terminator must be alone on a line, which is why
+  // a `; ` joiner made this ungenerable — and why it stays ungenerable *inside* a compound.
+  if (which == 15) {
+    string cmd = r.pick(string[]("cat", "wc -l", "head -1"));
+    string body = r.pick(string[]("one", "x y", "$v"));
+    return cmd + " <<EOF\n" + body + "\nEOF";
+  }
+  // **The positional parameters**: `set --` replaces them, `shift` drops one, and a function body has its
+  // own set — the interesting intersection, since `callFunction` saves and restores them around the call.
+  if (which == 16) {
+    // **The word is drawn before the form, and it is drawn every time.** In the TypeScript this ports,
+    // the three spellings are an *array literal* whose third element interpolates a pick — so the array is
+    // built, pick and all, before the outer pick chooses between them. Reading it as "choose, then draw if
+    // needed" consumes the random source in a different order, and the seeds then mean different scripts:
+    // seed 1 agreed for ten scripts and diverged on the eleventh, which is exactly how far a plausible
+    // misreading gets before anything notices.
+    string word = r.pick(string[]("x", "\"x y\"", "$v"));
+    i32 form = r.int(3);
+    if (form == 0) { return "set -- a b c\necho $#\nshift\necho $1 $#"; }
+    if (form == 1) { return "p" + d + "() { shift\necho \"[$1]\"\n}\np" + d + " one two"; }
+    return "set -- " + word + "\necho $@\nset --\necho \"[$*]\" $#";
+  }
+  return simple(r) + r.pick(redirs());
+}
+
+/**
+ * One script.
+ *
+ * **Newlines between statements, not `; `.** Equivalent for every form above and *not* equivalent for a
+ * here-document, whose terminator has to be alone on its line.
+ */
+export string script(Rand r) {
+  i32 n = 1 + r.int(2);
+  string out = "v=set";
+  for (i32 i = 0; i < n; i++) { out = out + "\n" + stmt(r, 0, 2); }
+  return out;
+}
+
+/**
+ * The prefixes a diagnostic carries, removed so that two shells' messages can be compared.
+ *
+ * A builtin's diagnostic in bash carries the shell's name and a line number; ours carries neither,
+ * deliberately — there is no line to give in a `-c` string that has been through a parser.
+ *
+ * **The patterns are matched anywhere rather than at a line start**, which cost an hour to get right:
+ * `printf '%s|' a >&2` leaves `a|bash: line 1: local: …` with the prefix in the middle. That costs the
+ * ability to tell a *message* from a script that printed the same characters, which is safe here and only
+ * here — every script comes from `script()` above, whose vocabulary cannot produce `sh: ` or `bash: `.
+ * Widen that vocabulary and this has to be revisited.
+ */
+export string normalise(string text) {
+  string out = removeName(text, "bash");
+  out = removeName(out, "environment");
+  out = removeName(out, "ba-c");
+  return removeAll(out, "sh: ");
+}
+
+/** `<anything>bash: line 12: ` — the name, a line number, and the colon-space. */
+string removeName(string text, string name) {
+  string out = text;
+  for (i32 guard = 0; guard < 64; guard++) {
+    i32 at = out.indexOf(name + ": line ");
+    if (at < 0) { return out; }
+    i32 end = at + (name + ": line ").len();
+    while (end < out.len() && isDigit(out.slice(end, end + 1))) { end = end + 1; }
+    if (end + 2 > out.len() || out.slice(end, end + 2) != ": ") { return out; }
+    // A path may precede the name — `env` execs by path, so `/usr/bin/bash: line 1: ` happens.
+    i32 from = at;
+    while (from > 0 && isPathByte(out.slice(from - 1, from))) { from = from - 1; }
+    out = out.slice(0, from) + out.slice(end + 2, out.len());
+  }
+  return out;
+}
+
+string removeAll(string text, string what) {
+  string out = text;
+  for (i32 guard = 0; guard < 256; guard++) {
+    i32 at = out.indexOf(what);
+    if (at < 0) { return out; }
+    out = out.slice(0, at) + out.slice(at + what.len(), out.len());
+  }
+  return out;
+}
+
+bool isDigit(string ch) {
+  u8[] b = ch.toBytes();
+  if (b.len() != 1) { return false; }
+  i32 c = b[0];
+  return c >= '0' && c <= '9';
+}
+
+bool isPathByte(string ch) {
+  u8[] b = ch.toBytes();
+  if (b.len() != 1) { return false; }
+  i32 c = b[0];
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+         c == '/' || c == '.' || c == '-' || c == '_';
+}
+
+/** Standard output and standard error, joined so that neither can be read as part of the other. */
+export string combined(string out, string err) { return out + "\n" + err; }
+
+/** What one shell said: the two streams joined and normalised, and the status. */
+export struct Answer {
+  string text;
+  i32 status;
+}
+
+/** The fixtures a generated script may name, back to their starting contents. */
+export bool fixtures(Cli cli, string dir) {
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) { return false; }
+  if (!cli.writeFile(dir + "/f", "a\nb\nc\n".toBytes()).wait().ok()) { return false; }
+  return cli.writeFile(dir + "/n", "3\n1\n2\n".toBytes()).wait().ok();
+}
+
+/**
+ * Ask bash, in a directory of its own with no inherited environment.
+ *
+ * `env` rather than arguments to `exec`, because **`Cli.exec` passes no environment and takes no working
+ * directory** — `issues/system/0182`. The inner `bash -c` is what gives a diagnostic the plain `bash: `
+ * prefix; through `env` alone, argv[0] is `/usr/bin/bash` and the prefix carries the path.
+ */
+Exec askBash(Cli cli, string dir, string script) {
+  return cli.exec("env",
+                  string[]("-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                           "LC_ALL=C", "HOME=" + dir,
+                           "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
+                           "bash", dir, script),
+                  u8[0]()).wait();
+}
+
+/** The same script through this repository's own shell, in this process. */
+export Answer askOurs(Core core, Cli cli, string dir, string script) {
+  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), dir, false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Shell sh = Shell.create(c, l);
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  i32 status = shellMain(c, l, sh, 1);
+  return Answer(normalise(combined(string.fromBytes(f.out.bytes()),
+                                   string.fromBytes(f.err.bytes()))), status);
+}
+
+/** `<tag> <n>\n<bytes>\n`. */
+void field(Buf out, string tag, u8[] bytes) {
+  out.pushAll((tag + " " + itoa(bytes.len()) + "\n").toBytes());
+  out.pushAll(bytes);
+  out.pushAll("\n".toBytes());
+}
+
+string versionOf(Cli cli, string program, string flag) {
+  Exec r = cli.exec(program, string[](flag), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return "(absent)"; }
+  string all = string.fromBytes(r.stdout);
+  i32 nl = all.indexOf("\n");
+  return nl < 0 ? all : all.slice(0, nl);
+}
+
+string flagValue(Cli cli, string name, string fallback) {
+  i32 n = cli.argCount().wait();
+  for (i32 i = 0; i + 1 < n; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == name) { return string.fromBytes(cli.arg(i + 1).wait()); }
+  }
+  return fallback;
+}
+
+bool hasFlag(Cli cli, string name) {
+  i32 n = cli.argCount().wait();
+  for (i32 i = 0; i < n; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == name) { return true; }
+  }
+  return false;
+}
+
+i32 numberOr(string s, i32 fallback) {
+  if (s.len() == 0) { return fallback; }
+  i32 v = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    if (!isDigit(s.slice(i, i + 1))) { return fallback; }
+    v = v * 10 + (s.slice(i, i + 1).toBytes()[0] - '0');
+  }
+  return v;
+}
+
+export i32 main(Core core, Cli cli) {
+  string dir = ".cache/wac-shfuzz";
+  if (!fixtures(cli, dir)) {
+    core.warn("shfuzz: cannot make " + dir);
+    return 1;
+  }
+  if (hasFlag(cli, "--capture")) { return capture(core, cli, dir); }
+  if (hasFlag(cli, "--print")) { return printScripts(core, cli); }
+  return explore(core, cli, dir);
+}
+
+/**
+ * The scripts a seed produces, one per line with newlines escaped, and nothing else.
+ *
+ * **This is how the port was checked.** The TypeScript generator this replaces had the same mode added on
+ * the same day, and the two were compared byte for byte: **1,400 scripts over seven seeds, identical**. A
+ * generator that drifts by one call to the random source produces plausible scripts that are not the ones
+ * the seeds mean, and nothing downstream would say so — the vectors would simply be captured for the
+ * scripts it does produce. It drifted exactly that way on the first attempt, and seed 1 agreed for ten
+ * scripts before it showed.
+ */
+i32 printScripts(Core core, Cli cli) {
+  i32 seed = numberOr(flagValue(cli, "--seed", "1"), 1);
+  i32 count = numberOr(flagValue(cli, "--count", itoa(perSeed())), perSeed());
+  Rand r = Rand.of(seed);
+  for (i32 i = 0; i < count; i++) { core.log(show(script(r))); }
+  return 0;
+}
+
+/**
+ * The vectors: every script the gate's seeds produce, and what bash answered.
+ *
+ * **One answer per script, not one per stdin shape**, and that is a measurement rather than an assumption.
+ * The differential this replaces ran every script twice — stdin closed, and stdin open but silent — and
+ * bash answers **identically for all 120 of them**, checked on 2026-08-18 by running both shapes and
+ * diffing. It could hardly do otherwise: nothing `script()` can generate reads standard input, since `cat`
+ * appears only as a pipeline stage and `read` only with a redirection.
+ *
+ * The two shapes were never about bash. They are about *ours*: 0113 was a pipeline whose first stage
+ * produced no bytes hanging, and it appears only under an input that is open and silent. So the shape is
+ * still run — by `packages/box/test/fuzz.test.ts`, which spawns, because a `Frame`'s standard input is a
+ * byte array and empty means end of input. The distinction 0113 was about is exactly the one a frame
+ * cannot express (`issues/system/0195`).
+ */
+i32 capture(Core core, Cli cli, string dir) {
+  Buf out = Buf.create();
+  out.pushAll("wac-sh-fuzz 1\n".toBytes());
+  out.pushAll(("bash: " + versionOf(cli, "bash", "--version") + "\n").toBytes());
+  out.pushAll("locale: LC_ALL=C\n".toBytes());
+  string list = "";
+  for (i32 i = 0; i < seeds().len(); i++) { list = list + (i == 0 ? "" : " ") + itoa(seeds()[i]); }
+  out.pushAll(("seeds: " + list + "\n").toBytes());
+  out.pushAll(("per-seed: " + itoa(perSeed()) + "\n").toBytes());
+  out.pushAll(("count: " + itoa(seeds().len() * perSeed()) + "\n").toBytes());
+
+  i32 written = 0;
+  for (i32 s = 0; s < seeds().len(); s++) {
+    Rand r = Rand.of(seeds()[s]);
+    for (i32 i = 0; i < perSeed(); i++) {
+      string sc = script(r);
+      // The whole directory back to its starting state, not just `out` and `err`: a script can truncate a
+      // fixture — `> f` is one redirection away — and the next would then be measured against a world the
+      // previous one changed.
+      cli.remove(dir, true).wait();
+      if (!fixtures(cli, dir)) {
+        core.warn("shfuzz: cannot reset " + dir);
+        return 1;
+      }
+      Exec got = askBash(cli, dir, sc);
+      if (!got.ran()) {
+        core.warn("shfuzz: bash would not start: " + got.error);
+        return 1;
+      }
+      field(out, "S", sc.toBytes());
+      out.pushAll(("X " + itoa(got.status) + "\n").toBytes());
+      field(out, "C", normalise(combined(string.fromBytes(got.stdout),
+                                         string.fromBytes(got.stderr))).toBytes());
+      written = written + 1;
+    }
+  }
+  cli.remove(dir, true).wait();
+
+  Change wrote = cli.writeFile(vectorsPath(), out.bytes()).wait();
+  if (!wrote.ok()) {
+    core.warn("shfuzz: cannot write " + vectorsPath() + " — " + wrote.message);
+    return 1;
+  }
+  core.log(vectorsPath() + ": " + itoa(written) + " answers, " + itoa(out.len / 1024) + " KB");
+  return 0;
+}
+
+/**
+ * A live sweep: generate, ask bash, ask ours, print what differs.
+ *
+ * This is the exploring half — any seed, any count — and what the gate keeps is `--capture`'s output.
+ * **The canary is the first thing it does**, because everything below is "these two agree", which a
+ * harness that ran neither would also report.
+ */
+i32 explore(Core core, Cli cli, string dir) {
+  i32 seed = numberOr(flagValue(cli, "--seed", "1"), 1);
+  i32 count = numberOr(flagValue(cli, "--count", "200"), 200);
+
+  Answer one = askOurs(core, cli, dir, "echo one");
+  Answer two = askOurs(core, cli, dir, "echo two");
+  if (one.text == two.text || one.text.indexOf("one") < 0) {
+    core.warn("shfuzz: our shell did not answer `echo one`: " + one.text);
+    return 2;
+  }
+
+  Rand r = Rand.of(seed);
+  i32 differ = 0;
+  for (i32 i = 0; i < count; i++) {
+    string sc = script(r);
+    cli.remove(dir, true).wait();
+    if (!fixtures(cli, dir)) {
+      core.warn("shfuzz: cannot reset " + dir);
+      return 1;
+    }
+    Exec want = askBash(cli, dir, sc);
+    if (!want.ran()) {
+      core.warn("shfuzz: bash would not start: " + want.error);
+      return 1;
+    }
+    string wanted = normalise(combined(string.fromBytes(want.stdout), string.fromBytes(want.stderr)));
+    cli.remove(dir, true).wait();
+    fixtures(cli, dir);
+    Answer got = askOurs(core, cli, dir, sc);
+    if (wanted != got.text || want.status != got.status) {
+      differ = differ + 1;
+      if (differ <= 8) {
+        core.log("\nSCRIPT " + sc + "\n  bash " + show(wanted) + " (" + itoa(want.status) + ")" +
+                 "\n  ours " + show(got.text) + " (" + itoa(got.status) + ")");
+      }
+    }
+  }
+  cli.remove(dir, true).wait();
+  core.log(itoa(count - differ) + " of " + itoa(count) + " scripts agree with bash (seed " +
+           itoa(seed) + ")");
+  return differ == 0 ? 0 : 1;
+}
+
+/**
+ * A string with its newlines visible, so a difference reads on one line.
+ *
+ * Escaped the way `JSON.stringify` escapes — backslash, quote, newline and tab — because `--print`'s
+ * output is diffed against the TypeScript generator's, and an escaping that differs would report every
+ * script as a difference and hide any real one among them.
+ */
+export string show(string s) {
+  string out = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    string ch = s.slice(i, i + 1);
+    if (ch == "\\") { out = out + "\\\\"; }
+    else if (ch == "\"") { out = out + "\\\""; }
+    else if (ch == "\n") { out = out + "\\n"; }
+    else if (ch == "\t") { out = out + "\\t"; }
+    else { out = out + ch; }
+  }
+  return "\"" + out + "\"";
+}

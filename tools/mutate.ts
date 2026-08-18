@@ -675,7 +675,7 @@ async function stageProject(dest: string): Promise<void> {
   //     through a `wac/` alias pointing at `../…`, which the rewrite below turns into a real path
   //     outside the staging directory, so not copying it was correct; afterwards the alias became
   //     `./compiler/` and the directory was simply never staged.
-  //   - `tools/` was never staged, and tests import from it: `shellFuzz.ts`, and since the standard
+  //   - `tools/` was never staged, and tests import from it: `tools/wac/shfuzz.wac`, and since the standard
   //     error sweep, `corpusStderr.ts` from two of them.
   //
   // Both produced `Module not found`, a red baseline, and a run that correctly reported **nothing is

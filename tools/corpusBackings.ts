@@ -1,6 +1,14 @@
-// The whole shell corpus, through **three filesystem backings**.
+// The whole shell corpus, through **three filesystem backings**, as three spawned binaries.
 //
 //   deno task corpus:backings [--from N] [--count N]
+//
+// **The gate runs this comparison now**, over the same 946 scripts, in
+// `packages/box/test/wac/backings_test.wac` — three `Fs` values inside one process, about a second and a
+// half. What is left here that is not there is the *route*: three real binaries, three real processes, a
+// `timeout` around each, and grants that differ per backing. Run it when the question is about the
+// programs rather than about the filesystems; the levellings below are the ones the wac file ports, and
+// its `reachesTheMachine` was checked against this one's — both answer 30 scripts of 946, not the six
+// this file's comment says.
 //
 // design/0001 D7 asks for exactly this and it did not exist: "the same scripts can run against a host
 // mount *and* against an image, and any divergence between those two is a VFS bug with a reference
