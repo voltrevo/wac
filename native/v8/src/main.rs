@@ -3593,22 +3593,43 @@ fn dispatch(
                     _ => None,
                 }
             });
-            // 65535 is the largest a UDP payload can be, so a buffer of it cannot truncate one.
-            // Truncation here would be silent and would look like a peer sending short datagrams.
-            let answer = match sock {
-                None => Answer::Datagram(Vec::new(), String::new(), 0, "not an open datagram socket".into()),
-                Some(sk) => {
-                    let mut buf = vec![0u8; 65535];
-                    match sk.recv_from(&mut buf) {
-                        Ok((n, from)) => {
-                            buf.truncate(n);
-                            Answer::Datagram(buf, from.ip().to_string(), from.port() as i32, String::new())
-                        }
-                        Err(e) => Answer::Datagram(Vec::new(), String::new(), 0, e.to_string()),
-                    }
-                }
+            // A bad handle is known now and answers now — there is nothing to wait for.
+            let Some(sk) = sock else {
+                return match ticket_for(
+                    scope,
+                    "Datagram",
+                    Answer::Datagram(Vec::new(), String::new(), 0, "not an open datagram socket".into()),
+                ) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Datagram> for receiveFrom"),
+                };
             };
-            match ticket_for(scope, "Datagram", answer) {
+            // **On a thread, with a live ticket — like `recv`, and for a sharper reason.**
+            // `recv_from` used to run here, inline, and the ticket was built from the finished
+            // answer; so the caller blocked *before* it had an id, and `waitAny` could not bound it.
+            // `waitAny`'s own documentation promises the opposite — a deadline belongs to the wait
+            // rather than to each capability — and this was the one capability where that mattered
+            // most, because a stream read ends when the peer closes and a datagram read ends only
+            // when a datagram arrives, which may be never. The Deno host had it right all along
+            // (`submit(b, OP.RECEIVE_FROM, …)`), so a program correct under one host parked under
+            // the other with nothing said. `issues/system/0206`.
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            std::thread::spawn(move || {
+                // 65535 is the largest a UDP payload can be, so a buffer of it cannot truncate one.
+                // Truncation here would be silent and would look like a peer sending short datagrams.
+                let mut buf = vec![0u8; 65535];
+                let a = match sk.recv_from(&mut buf) {
+                    Ok((n, from)) => {
+                        buf.truncate(n);
+                        Answer::Datagram(buf, from.ip().to_string(), from.port() as i32, String::new())
+                    }
+                    Err(e) => Answer::Datagram(Vec::new(), String::new(), 0, e.to_string()),
+                };
+                worker.complete(id, a);
+            });
+            match ticket_pending(scope, "Datagram", id) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<Datagram> for receiveFrom"),
             }
