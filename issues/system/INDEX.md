@@ -5,6 +5,9 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0194](open/0194-a-relative-frame-cwd-does-not-resolve.md) | a `Frame`'s `cwd` works when it is absolute and silently does not when it is relative | bug | wrong answer |
+| [0193](open/0193-boxs-tests-build-and-spawn-a-world-per-assertion.md) | box's tests build and spawn a world per assertion, and the differentials re-derive their oracle every run | performance | no error |
+| [0192](open/0192-wac-test-compiles-the-same-import-graph-once-per-test-file.md) | `wac test` compiles the same import graph once per test file, so a package pays for it N times | performance | no error |
 | [0191](open/0191-issue-numbers-are-allocated-by-a-read-modify-write-with-three-writers.md) | issue numbers are a read-modify-write with three writers, and every collision reds master | process | the shared suite goes red |
 | [0190](open/0190-the-usage-test-passes-or-fails-on-an-untracked-per-agent-file.md) | `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm` | bug | a gitignored file decides |
 | [0184](open/0184-a-run-programs-exit-status-cannot-tell-a-trap-from-an-answer-of-one.md) | a run program's exit status cannot tell a trap from an answer of 1 | missing feature | wrong answer |
@@ -48,7 +51,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-197 issues, 161 closed.
+200 issues, 161 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

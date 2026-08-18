@@ -20,11 +20,11 @@ import { sameName } from "../../../tools/corpusStderr.ts";
 // bash runs with `LC_ALL=C`, which keeps a run independent of whoever's `LANG` started it. It used
 // to say this was so `sort` would compare bytes as ours does; the filter above means none of the
 // 554 cases here runs `sort` — or `wc`, `tr`, `cut` — and that argument now belongs to
-// `packages/box/test/corpus.test.ts`, which runs those scripts against the applets.
+// `packages/box/test/wac/corpus_test.wac`, which runs those scripts against the applets.
 
 // **Filtered.** `packages/sh` is giving its programs up a few at a time in favour of `packages/box`'s
 // applets (wac-mono 0103), and a script naming one it no longer has would run against a shell without
-// it. Those scripts are not lost: `packages/box/test/corpus.test.ts` runs every script that names any of
+// it. Those scripts are not lost: `packages/box/test/wac/corpus_test.wac` runs every script that names any of
 // the eleven through a shell built with the applets. `corpus.ts`'s `DELETED` is the line between them.
 const CASES: string[] = CORPUS.filter((s) => !usesDeleted(s));
 
@@ -386,88 +386,17 @@ const haveBash = await (async () => {
   }
 })();
 
-Deno.test({
-  name: "every script agrees with bash on output and exit status",
-  ignore: !haveBash,
-  fn: async () => {
-    // Four at a time. Each script is a bash subprocess and an in-process run of our shell, so serially this
-    // is twenty-odd seconds of a suite that runs in a minute.
-    //
-    // Through `pool` rather than a hand-rolled queue for one reason: when this test wedges — and it has,
-    // for over ten minutes at load 0.55, which is 0082's last open question — the pool writes the scripts
-    // it is still holding to standard error. Without that, a hang here reports the name of this test and
-    // nothing about which of 614 scripts caused it, and the only way to find out is to instrument the
-    // harness by hand, which is what I did the first time and then deleted.
-    const differences: string[] = [];
-    await pool(CASES, 4, async (script, _index, note) => {
-      // One directory per case, removed after it. Per case rather than per run because several scripts
-      // write the same names — `f`, `d`, `out` — and a case that found the previous one's file would
-      // pass or fail on the order the pool happened to run them in.
-      const dir = await Deno.makeTempDir({ prefix: "sh-case-" });
-      // **One per shell.** They start identical and empty; what a case writes into one is invisible
-      // to the other, which is the whole of the fix for 0131. Sharing was deliberate once — the
-      // comment on `bash` below argues for "the same one our shell gets" — and it is right about the
-      // *starting* conditions and wrong about what happens after, because the two halves run at
-      // once. Two empty directories are as identical as one.
-      const dirBash = `${dir}/bash`;
-      const dirOurs = `${dir}/ours`;
-      await Deno.mkdir(dirBash);
-      await Deno.mkdir(dirOurs);
-      try {
-      // Both halves run at once, and the note says which are still outstanding. Without it a wedge names
-      // the script and leaves it open whether the stuck half is the real `bash` subprocess or our own
-      // shell in this process — wac-mono 0082, where four cases hung for 550s and that was the question.
-      let waiting = new Set(["bash", "wacsh"]);
-      const finish = (half: string) => {
-        waiting.delete(half);
-        note([...waiting].join("+"));
-      };
-      note("bash+wacsh");
-      const [want, got] = await Promise.all([
-        bash(script.replaceAll(WORK, dirBash), dirBash).then((r) => {
-          finish("bash");
-          return r;
-        }),
-        // The phase goes into the note too: `[wacsh:running]` and `[wacsh:draining]` are different
-        // bugs, and a wedge that says which costs one run instead of a bisect.
-        wacsh(script.replaceAll(WORK, dirOurs), dirOurs, (phase) => {
-          if (waiting.has("wacsh")) note([...waiting].join("+").replace("wacsh", `wacsh:${phase}`));
-        }).then((r) => {
-          finish("wacsh");
-          return r;
-        }),
-      ]);
-      // **The path each half ran in goes back to the placeholder before comparing.** A script that
-      // prints `pwd` would otherwise differ by construction now that the two have separate
-      // directories — which is a fact about the harness, not about the shells. Only the exact
-      // directory this case was given is substituted, so a script that prints some *other* path
-      // still shows a real difference.
-      const unwork = (t: string, own: string) => t.replaceAll(own, WORK);
-      want.stdout = unwork(want.stdout, dirBash);
-      got.stdout = unwork(got.stdout, dirOurs);
-      if (want.stdout !== got.stdout || want.code !== got.code) {
-        differences.push(
-          `script: ${JSON.stringify(script)}\n` +
-          `  bash: ${JSON.stringify(want.stdout)} exit ${want.code}\n` +
-          `  ours: ${JSON.stringify(got.stdout)} exit ${got.code}` +
-          (got.stderr.trim() === "" ? "" : `\n  stderr: ${got.stderr.trim().split("\n")[0]}`),
-        );
-      }
-      } finally {
-        await Deno.remove(dir, { recursive: true }).catch(() => {});
-      }
-    }, {
-      what: "script",
-      // The script itself is the label, shortened: a case is identified by what it runs, and the longest
-      // here would wrap several times in a terminal.
-      label: (script) => (script.length > 110 ? `${script.slice(0, 110)}…` : script),
-    });
-    if (differences.length > 0) {
-      throw new Error(`${differences.length} of ${CASES.length} scripts differ from bash:\n\n` +
-                      differences.join("\n\n"));
-    }
-  },
-});
+// **The corpus differential moved to wac and to captured expectations.**
+//
+// It ran bash once per script and this shell beside it — 645 scripts, two processes each, every suite —
+// which asserted what this machine's bash did today rather than what a shell should do. The answers are
+// captured once by `tools/wac/shvectors.wac` into `vectors.txt` and replayed in-process by
+// `test/wac/corpus_test.wac`: 645 scripts in 1.8 s against 14 s, with no build and no spawn. Ten cases
+// stay live there as a drift canary. `issues/system/0193`.
+//
+// The nine tests below stay: each asks the live oracle about something the corpus cannot carry — how
+// streams interleave, what GNU says when it fails, which signals `kill -l` names, what `$$` answers.
+
 
 /**
  * Standard error arrives when it happened, not at the end of the run.
