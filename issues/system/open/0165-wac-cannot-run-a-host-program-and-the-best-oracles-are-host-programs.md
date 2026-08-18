@@ -43,13 +43,23 @@ converted a large part of the suite, so the interesting number is what the *rema
 
 | | lines |
 |---|---:|
-| remaining `.test.ts` under `packages/` | 47,226 |
+| remaining `.test.ts` under `packages/` | 45,873 |
 | of which need a live child — this issue | **12,029** |
 | of which need a browser | 3,336 |
-| **convertible with what exists today** | **31,861** |
+| of which need a live TLS or QUIC **peer** wac cannot be | 3,425 |
+| **convertible with what exists today** | **~27,000** |
 
-So this blocks a quarter of what is left, and is not the reason the other two thirds are still
-TypeScript. That is worth knowing before anyone builds `start`/`stop` to unblock the conversion: it
+**The third row was missing when this was first written, and the number above it was too kind.** The
+first split asked only whether a file spawns a child or drives a browser, so
+`packages/quic/test/stream.test.ts` counted as convertible — and its oracle is `Deno.QuicEndpoint`,
+an in-process QUIC server. wac has UDP and no QUIC peer, so there is nothing on the other end of that
+socket to be. Sixteen files are in that position, mostly `quic` and `webrtc`.
+
+`crypto.subtle` is *not* in it, which is the distinction worth keeping: WebCrypto is reachable as an
+oracle *process* — `packages/crypto/tools/capture-hkdfcap.wac` asks it through `deno eval` — because
+the question is a computation and not a conversation. A TLS peer is a conversation.
+
+So this blocks a quarter of what is left, and is not the reason the other ~59% is still TypeScript. That is worth knowing before anyone builds `start`/`stop` to unblock the conversion: it
 would unblock 25% of it, and the remaining 67% is waiting on nothing but the work.
 
 The files it does block are the ones where a server is the subject — `tor/dird.test.ts` stands
