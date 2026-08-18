@@ -1887,3 +1887,119 @@ export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_val
   "a case, a method's return, a static as a value");
   return t.report();
 }
+
+export string test_rung3_override_increments_construction_arity_and_default_values(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    // override, both directions.
+    "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
+    "struct BadRect : Shape { i32 w; i32 name(const this) { return 2; } }",
+    "struct BadShape { override i32 foo(const this) { return 0; } }",
+    // `++` on a const, at the operand; on a float, at the operator. Both spellings of the second.
+    "export i32 g() { const i32 x = 1; return x++; }",
+    "export f64 h() { f64 x = 1.5; return x++; }",
+    "export f64 h2() { f64 x = 1.5; return ++x; }",
+    // `>>>` where it says nothing, and where it means nothing.
+    "export u32 bad(u32 x) { return x >>> 1; }",
+    "export u64 bad2(u64 x) { return x >>> 1; }",
+    "export f64 bad3(f64 x) { return x >>> 1.0; }",
+    // Positional construction, parents included in the count.
+    "struct Point { i32 x; i32 y; } export void bad() { Point p = Point(3); }",
+    "struct A { i32 a; } struct B : A { i32 b; } export void bad() { B x = B(1); }",
+    // Nothing to default-construct from: a recursive struct, an enum, a struct containing one.
+    "struct Node { i32 v; Node next; } export void bad() { Node n = Node(); }",
+    "struct Node { Node next; }",
+    "enum E { A(i32 v), B } export i32 f() { E[] a = E[2](); return a.len(); }",
+    "enum E { A, B } struct S { E e; } export i32 f() { S s = S(); return 1; }",
+    // A packed type where there is no slot for one.
+    "export i32 process(i8 val) { return 0; }",
+    // A const struct makes every field const without any of them saying so.
+    "const struct Config { i32 w; i32 h; } export void bad() { Config c = Config(8, 6); c.w = 1; }",
+    // Immutable strings, and a downcast that can fail.
+    "export void bad() { string s = \"hello\"; s[0] = \"H\"; }",
+    "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
+    "export void bad(Shape s) { Circle c = s as Circle; }"),
+  string[](
+    // `override` that is correct, and a method that hides nothing.
+    "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
+    "struct R : Shape { i32 w; override i32 name(const this) { return 2; } }",
+    "struct Shape { i32 x; } struct R : Shape { i32 w; i32 other(const this) { return 2; } }",
+    // Unsigned increments are fine, whatever the reference's message says, and so are packed
+    // elements — the rule is about floats.
+    "export void f(u32 x) { x++; }",
+    "export void f(u8[] b) { b[0]++; }",
+    "export void f(i64 x) { x--; }",
+    // `>>>` on a signed type is the whole point of it.
+    "export i32 ok(i32 x) { return x >>> 1; }",
+    "export i64 ok2(i64 x) { return x >>> 1; }",
+    // The right number of arguments, parents first.
+    "struct A { i32 a; } struct B : A { i32 b; } export void f() { B x = B(1, 2); }",
+    // Defaults that do exist: primitives, a nullable recursive field, an enum with a fill.
+    "struct P { i32 v; } export void f() { P p = P(); }",
+    "struct Node { i32 v; Node? next; } export void f() { Node n = Node(); }",
+    "enum E { A, B } export i32 f() { E[] a = E[2](fill: E.A); return a.len(); }",
+    // Reading a string index is ordinary; only writing is refused.
+    "export i32 ok() { string s = \"hi\"; return s[0]; }",
+    // Upcasting is silent, and a checked downcast is what `as!` is for.
+    "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
+    "export void ok(Circle c) { Shape s = c as Shape; }",
+    "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
+    "export void ok(Shape s) { Circle c = s as! Circle; }"),
+  "override, increments, arity and defaults");
+  return t.report();
+}
+
+export string test_rung3_arity_loop_depth_representation_and_compile_time_constants(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    // `break` and `continue` with nothing to leave.
+    "export void f() { break; }",
+    "export void f() { continue; }",
+    // ...and a `continue` whose only enclosing form is a switch, which is nothing to leave either.
+    "export void f(i32 x) { switch (x) { case 1: continue; } }",
+    // Arithmetic on booleans. They agree with each other, so the same-type rule has nothing to say.
+    "export bool f(bool a, bool b) { return a + b; }",
+    "export i32 f(bool a) { return a - 1; }",
+    "export bool f(bool a, bool b) { return a & b; }",
+    // Call arity, all three directions.
+    "i32 g() { return 1; } export i32 f() { return g(1); }",
+    "i32 g(i32 a) { return a; } export i32 f() { return g(); }",
+    "i32 g(i32 a) { return a; } export i32 f() { return g(1, 2); }",
+    // A nullable packed type has no representation, in an array or on its own.
+    "export i32 f() { u8?[] xs = u8?[3](); return xs.len(); }",
+    "export void f() { u8? x = null; }",
+    "export void f(i8? y) { }",
+    // A constant computed by calling something.
+    "i32 n() { return 3; } const i32 K = n(); export i32 f() { return K; }",
+    "i32 n() { return 3; } const i32[] T = i32[n()](); export i32 f() { return T[0]; }"),
+  string[](
+    // Every enclosing form that makes `break` legal. **`continue` in a switch was here** and both
+    // compilers accepted it, where it silently meant `break` — it left the switch and carried on
+    // after it. Now refused by both, stated at `[§wac-continue-not-switch-8kd3pq7]`, and moved to
+    // the caught list above: the pair is the whole point, since one counter for loops and switches
+    // is what made a `continue` legal wherever a `break` was.
+    "export void f() { while (true) { break; } }",
+    "export void f() { for (i32 i = 0; i < 2; i++) { continue; } }",
+    "export void f(i32 x) { switch (x) { case 1: break; } }",
+    // ...and the one that keeps a switch inside a loop honest, where `continue` does reach the loop.
+    "export void f(i32 n) { for (i32 i = 0; i < n; i++) { switch (i) { case 1: continue; } } }",
+    "export void f() { do { break; } while (true); }",
+    // Booleans where booleans belong.
+    "export bool ok(bool a, bool b) { return a && b; }",
+    "export bool ok2(bool a, bool b) { return a == b; }",
+    // The right number of arguments, and a construction that must not be read as a call.
+    "i32 g(i32 a, i32 b) { return a; } export i32 ok() { return g(1, 2); }",
+    "struct P { i32 x; i32 y; } export i32 ok() { P p = P(1, 2); return p.x; }",
+    // A packed array is fine; it is the *nullable* packed that has nowhere to live.
+    "export i32 ok(u8[] b) { return b.len(); }",
+    "export i32 ok2(i32? x) { return 1; }",
+    // Constants that are computable: arithmetic on literals, and a construction, which is a shape
+    // rather than a computation.
+    "const i32 K = 1 + 2; export i32 ok() { return K; }",
+    "struct P { i32 v; } const P S = P(1); export i32 ok() { return S.v; }",
+    "const i32[] T = i32[3](); export i32 ok() { return T[0]; }"),
+  "arity, loop depth, representation and constants");
+  return t.report();
+}
