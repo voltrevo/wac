@@ -30,7 +30,7 @@ anything at all.
 | packages/git/test/configchain.test.ts | `HOME`, `XDG_CONFIG_HOME` | The subject *is* which config file git reads. The fixture makes four levels disagree and walks down them; naming the files on a command line would test a different program. |
 | packages/git/test/status.test.ts's `core.excludesFile` | `HOME` | `~/.gitignore_global` — expanding the `~` is what proves the `env` grant is real, and the test says so. |
 | packages/git/test/commit.test.ts | `GIT_AUTHOR_DATE` | `gitci` honours it so two runs of one tree name the same commit. Without it the clock is used and the content-addressing assertion — commit twice, get the same sha — cannot be made. |
-| `packages/git/test/lsremote.test.ts` | `HTTP_PROXY` | Measured, not inferred: `wac run … gitls.wac -- https://github.com/…` lists the refs with the variable set and fails with `failed to lookup address information` without it. This container reaches nothing except through Squid. |
+| packages/git/test/lsremote.test.ts | `HTTP_PROXY` | Measured, not inferred: `wac run … gitls.wac -- https://github.com/…` lists the refs with the variable set and fails with `failed to lookup address information` without it. This container reaches nothing except through Squid. |
 | `packages/git/test/clone.test.ts` | `HTTP_PROXY` | Same, one layer up. |
 | `packages/git/test/fetchlive.test.ts` | `HTTP_PROXY` | Same. |
 
