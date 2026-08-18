@@ -71,3 +71,32 @@ nobody reads the line. The line is why it prints.
 
 `push.sh` does not block on `coverage:all` — it says so and pushes — pending `issues/lang/0111`. So
 this stays red without stopping anybody, which is how it survived three gate runs.
+
+## 127 was mostly not the package — 2026-08-18, agent-c
+
+The number this issue quotes was measured by a loop in `packages/crypto/cov.ts` that filtered on the
+package prefix alone, while the table beside it — `report()` in `harness/wacCoverage.ts` — excludes test
+files, "because a coverage report is about the package". So the two disagreed, and the list was the one
+that was wrong:
+
+    before   127 points: 57 in `rsa_test.wac`, 48 in `mlkem.wac`, 16 in `keccak.wac`, 6 in `rsa.wac`
+    after     59 points: 48 in `mlkem.wac`,     6 in `rsa.wac`,    5 in `keccak.wac`
+
+Three things came out of it:
+
+- **57 of the 127 were lines in a test file**, uncovered because ten of `rsa_test.wac`'s tests need a host
+  this driver cannot build. Counting them punished instrumenting a test file, since each one brings its own
+  unreachable lines — and the ledger already carried two `UNREACHED` entries paying that tax, whose own
+  reason said so: "a test file in the denominator brings its own detectors with it". Both are gone.
+- **`keccak.wac` was 51.4% because its tests were not in the run**, not because it is untested.
+  `keccak_test.wac` has nine, seven of which need nothing from a host. Instrumented and run, the file reads
+  **86.5%**, and the five points left are reached only by the two that compare against the host.
+- **`cov.ts` keeps two run lists** — one for `report`, one for its own accumulation — and adding a unit to
+  only the first is silent: the table read 86.5% while the list underneath still called sixteen of that
+  file's lines uncovered. They are the same list now, and the comment says why there is a trap there.
+
+**What is left is 48 points in `mlkem.wac`, and this driver cannot reach them.** All five of
+`mlkem_test.wac`'s tests take `(Core core, Cli cli)` — they read their KAT vectors — and neither
+`wacCoverage`'s `instrument` nor `wacBind` can supply a capability, which is why the Deno-side registrar is
+called *hostless*. So mlkem's coverage needs the measurement to move to `wac test --coverage`, which does
+build a host. That is the shape of the answer; it is not a matter of writing more tests.

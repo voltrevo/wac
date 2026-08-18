@@ -482,23 +482,12 @@ const UNREACHED: { file: string; line: number; snippet: string; why: string }[] 
       "the vectors here, which are real keys and signatures. Same status as `ed25519.wac:327` — a " +
       "test to write.",
   },
-  {
-    file: "packages/crypto/test/wac/ct_test.wac",
-    line: 40,
-    snippet: "if (ctEqual(a, b))",
-    why:
-      "**The failure side of a detector.** This test flips one bit and counts the comparisons that " +
-      "wrongly answer equal; the branch inside fires only when `ctEqual` is broken. Driving it " +
-      "means shipping the bug it exists to catch. It is here at all because `ct_test.wac` is a " +
-      "coverage unit — which it is so that `ct.wac`'s own guard is measured — and a test file in " +
-      "the denominator brings its own detectors with it.",
-  },
-  {
-    file: "packages/crypto/test/wac/ct_test.wac",
-    line: 62,
-    snippet: "if (ctEqualN(seq(16, 0), b, 16))",
-    why: "The counted form of the detector above, and the same reasoning.",
-  },
+  // **Two entries stood here for `ct_test.wac`:40 and :62**, the failure sides of a detector — a branch
+  // that fires only when `ctEqual` is broken, so driving it means shipping the bug it exists to catch.
+  // Their own reason named the cause: "a test file in the denominator brings its own detectors with it."
+  // The denominator no longer holds test files, so both entries are gone rather than kept as exemptions
+  // for lines nothing counts. An exemption per detector was the tax on instrumenting a test file, and it
+  // is the tax that has been removed.
 
   {
     file: "packages/crypto/src/field25519.wac",
@@ -853,6 +842,14 @@ const rsaTests = await instrument("packages/crypto/test/wac/rsa_test.wac");
   runTestExports(rsaTests, "rsa_test.wac");
 }
 
+// **`keccak_test.wac`, for the gap it left in the ledger.** `keccak.wac` read 19 of 37 points — 51% for a
+// file with nine tests — because none of them ran here: this driver's probes reach the hash through
+// `sha3`/`shake` wrappers, and the sponge's own edges (rate boundaries, padding, the absorb/squeeze split)
+// are what the tests exercise directly. Seven of the nine need nothing from a host and are run; the two
+// that do are named by `runTestExports`, as everywhere else here.
+const keccakTests = await instrument("packages/crypto/test/wac/keccak_test.wac");
+runTestExports(keccakTests, "keccak_test.wac");
+
 // **`ct_test.wac` is a unit for the same reason `rsa_test.wac` is**, and its absence had the effect
 // this ledger exists to prevent: `ct.wac:47` — the length guard in `ctEqualN` — is exercised by all
 // four of that file's tests and was reported as unreached, because the file it lives in was not in
@@ -890,7 +887,7 @@ for (const fn of Object.values(traps.mod)) {
   }
 }
 
-report([run, curve, p256, rsa, rsaTests, ctTests, traps], "packages/crypto/", { verbose });
+report([run, curve, p256, rsa, rsaTests, ctTests, traps, keccakTests], "packages/crypto/", { verbose });
 
 // **Hit-ness is accumulated across the units before anything is called missed**, which it was not
 // until 2026-08-12. The old loop closed over one unit at a time and added every point that unit did
@@ -899,11 +896,23 @@ report([run, curve, p256, rsa, rsaTests, ctTests, traps], "packages/crypto/", { 
 // field, `p256_probe.wac` the curve, `rsa_probe.wac` the RSA verifier. `rsa_test.wac` is the first
 // unit that compiles a file another one already had, and it made the driver report 57 uncovered
 // points while the per-file table beside it read 81.3%. The table was right.
+// **The same list `report` is given, and it is a second place to forget one.** `keccak_test.wac` was
+// added above and only to `report`, so `keccak.wac` read 86.5% in the table while sixteen of its lines
+// were still listed as uncovered underneath — the table and the list disagreeing about one file, which
+// is what this whole accumulation was written to stop.
+//
+// **And test files are excluded here as `report` excludes them.** A package's coverage is about its
+// sources — `report`'s own comment says the tests themselves are not in it — but this loop filtered on
+// the package prefix alone, so `rsa_test.wac`'s lines were counted: **57 of the 127 points this driver
+// called uncovered were lines in a test file**, uncovered because ten of that file's tests need a host
+// this driver cannot build. That inflated the number the issue quotes and it punished instrumenting a
+// test file, since each one brings its own unreachable lines with it. What a test file does not reach is
+// worth knowing and is not this: `report` prints which ones it did not count.
 const hitAnywhere = new Map<string, boolean>();
-for (const r of [run, curve, p256, rsa, rsaTests, ctTests, traps]) {
+for (const r of [run, curve, p256, rsa, rsaTests, ctTests, traps, keccakTests]) {
   const counts = r.counts();
   for (const p of r.points) {
-    if (!p.file.startsWith("packages/crypto/")) continue;
+    if (!p.file.startsWith("packages/crypto/src/")) continue;
     const key = `${p.file}:${p.line}:${p.col}:${p.kind}`;
     hitAnywhere.set(key, (hitAnywhere.get(key) ?? false) || counts[p.index] > 0);
   }
