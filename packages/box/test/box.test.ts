@@ -1138,7 +1138,7 @@ Deno.test("box's package-backed applets: gzip, gunzip, crc32, date, urlencode", 
   }
 });
 
-Deno.test("box's mutation tier: mkdir, rm, rmdir, mv, touch", async () => {
+Deno.test("cp writes beside its target and renames, and none of the tier happens without the grant", async () => {
   // `writeFile` was the only mutation the world had, which meant an application could
   // create a file but never remove or move one — so it could not write safely either.
   // These three ops are what `cp` needs to write beside its target and rename into place.
@@ -1159,35 +1159,14 @@ Deno.test("box's mutation tier: mkdir, rm, rmdir, mv, touch", async () => {
       }
     };
 
-    const deep = `${root}/a/b/c`;
-    assertEquals(box(["mkdir", "-p", deep]).code, 0);
-    assertEquals(await exists(deep), true, "mkdir -p made the parents");
-    // Without -p a missing parent is an error, which is the difference between them.
-    assertEquals(box(["mkdir", `${root}/x/y`]).code, 1, "mkdir without -p needs the parent");
-
-    assertEquals(box(["touch", `${deep}/f`]).code, 0);
-    assertEquals((await Deno.stat(`${deep}/f`)).size, 0, "touch made it empty");
-    await Deno.writeTextFile(`${deep}/f`, "kept");
-    assertEquals(box(["touch", `${deep}/f`]).code, 0);
-    assertEquals(await Deno.readTextFile(`${deep}/f`), "kept", "touch left an existing file alone");
-
-    assertEquals(box(["mv", `${deep}/f`, `${root}/moved`]).code, 0);
-    assertEquals(await exists(`${deep}/f`), false, "mv left nothing behind");
-    assertEquals(await Deno.readTextFile(`${root}/moved`), "kept", "mv kept the contents");
-
-    // `rmdir` is never recursive; that distinction is the reason it is its own command.
-    await Deno.writeTextFile(`${deep}/g`, "x");
-    assertEquals(box(["rmdir", deep]).code, 1, "rmdir refuses a non-empty directory");
-    assertEquals(box(["rm", `${deep}/g`]).code, 0);
-    assertEquals(box(["rmdir", deep]).code, 0, "and takes an empty one");
-
-    // Absence is an error unless you say it is not, as `rm -f` says.
-    assertEquals(box(["rm", `${root}/never`]).code, 1);
-    assertEquals(box(["rm", "-f", `${root}/never`]).code, 0);
-    assertEquals(box(["rm", `${root}/a`]).code, 1, "rm needs -r for a directory");
-    assertEquals(box(["rm", "-r", `${root}/a`]).code, 0);
-    assertEquals(await exists(`${root}/a`), false);
-
+    // **The rest of the tier is `test/wac/applets_test.wac`** — `mkdir -p` and its parents, `touch`
+    // leaving an existing file alone, `mv`, `rmdir` refusing a non-empty directory, `rm` needing `-r`.
+    // Those are assertions about our own behaviour and need neither a build nor a process.
+    //
+    // These two do. The first because `cp` streams through `lib/safe.wac`'s `openOutput`, which inside a
+    // frame is kept by the capture — `issues/system/0166`, where in process it writes an empty file and
+    // exits 0. The second because a grant is a property of the built program and the host that enforces
+    // it, and a test process holds grants of its own.
     // The point of the tier: `cp` writes beside its target and renames, so the destination
     // is never seen half-written and no temporary name survives a successful copy.
     assertEquals(box(["cp", "README.md", `${root}/copy`]).code, 0);
@@ -1198,7 +1177,8 @@ Deno.test("box's mutation tier: mkdir, rm, rmdir, mv, touch", async () => {
     );
     const left: string[] = [];
     for await (const e of Deno.readDir(root)) left.push(e.name);
-    assertEquals(left.sort().join(","), "copy,moved", `a temporary file survived: ${left}`);
+    // Just the copy: `moved` was the `mv` step, which is in the wac file now.
+    assertEquals(left.sort().join(","), "copy", `a temporary file survived: ${left}`);
 
     // And without the write grant none of it happens, whatever the arguments say.
     const readOnly = await Deno.makeTempFile({ prefix: "wac-box-ro-" });
