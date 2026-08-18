@@ -602,6 +602,13 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
       "--allow-write",
       "--allow-run",
       "--allow-env",
+      // **And net**, which was missing while every wac test that wanted a socket was a `.test.ts`.
+      // `packages/wactest/src/daemon.wac` arrived with `freePort`, and `waitany`, `daemon` and
+      // `ethrpc`'s three live tests all ask the kernel for a port — so without this they fail rather
+      // than skip, and the message they fail with is about ports rather than about a grant. The Deno
+      // pass above runs with `-A`, so this narrows the gap between the lanes rather than widening
+      // what the suite may do.
+      "--allow-net",
       ...(heavyWac.length > 0 ? ["--ignore", heavyWac.join(",")] : []),
       "packages/",
     ],

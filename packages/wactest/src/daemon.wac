@@ -54,10 +54,26 @@ export struct Daemon {
  */
 export i32 freePort(Cli cli) {
   Socket s = cli.listen("127.0.0.1", 0).wait();
-  if (s.handle < 0) { return -1; }
+  // **Two failures, and they were one answer.** A refused grant and a machine with no port left both
+  // arrived as -1, so every caller reported "no free port" — which sent me looking at the machine when
+  // the suite's `wac test` lane simply did not pass `--allow-net`. `NOT_GRANTED` is a distinct answer
+  // now, and `whyNoPort` turns either into a sentence a caller can print.
+  if (s.handle < 0) { return s.error.indexOf("granted") >= 0 ? notGranted() : 0 - 1; }
   i32 port = s.port;
   cli.closeSocket(s.handle);
   return port;
+}
+
+/** What `freePort` answers when the *grant* is missing rather than the port. */
+export i32 notGranted() { return 0 - 2; }
+
+/** Why there is no port, in words, for a caller that is about to fail. */
+export string whyNoPort(i32 port) {
+  if (port == notGranted()) {
+    return "this run was not granted --allow-net, so no socket could be opened — a wac test that needs " +
+           "one is skipped by `wac test` only if it declares the capability, and fails here otherwise";
+  }
+  return "the kernel had no free port to give";
 }
 
 /**

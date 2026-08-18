@@ -11,7 +11,8 @@
 // command that cannot start is reported rather than returning a pid that is already dead.
 
 import { T } from "../../src/assert.wac";
-import { Daemon, freePort, logOf, start, stop, waitForPort } from "../../src/daemon.wac";
+import { Daemon, freePort, logOf, start, stop, waitForPort, whyNoPort }
+  from "../../src/daemon.wac";
 import { quoted } from "../../src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
@@ -19,7 +20,7 @@ import { Core, Cli } from "../../../platform/src/platform.wac";
 export string test_a_started_server_answers_and_a_stopped_one_does_not(Core core, Cli cli) {
   T t = T.create();
   i32 port = freePort(cli);
-  t.isTrue(port > 0, "the kernel gave a free port");
+  t.isTrue(port > 0, whyNoPort(port));
   if (port <= 0) { return t.report(); }
 
   // Nothing is listening yet. This is the control: without it, a `waitForPort` that answered `true`
