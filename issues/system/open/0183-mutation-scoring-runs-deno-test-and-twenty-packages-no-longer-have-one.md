@@ -219,9 +219,11 @@ and the failure was hidden by a redirect.
 | `--allow-read --allow-write --allow-run` | **31 256 ms** — `3 passed` |
 
 So both numbers are real and they are not the same measurement. Without the grants,
-`test_python_reads_everything_we_write_and_the_reverse` and `test_corrupted_streams_either_decode_correctly_or_trap`
-are skipped by name; they are the two that spawn the real `gunzip` per case, and they are the whole of the
-cost. The 15× is those two tests running or not running.
+`test_python_reads_everything_we_write_and_the_reverse` and the corruption sweep are skipped by name;
+they are the two that spawn per case, and they are the whole of the cost. (The sweep is
+`fuzzcorruption_test.wac` since 2026-08-18, declared heavy, with a 24-case sample left in `fuzz_test.wac`
+as `test_a_sample_of_corrupted_streams_decode_correctly_or_trap` — so the 31s measured here is now about
+2s in the regular lane and 22s in the heavy one.) The 15× is those two tests running or not running.
 
 **The evidence was already in the disagreement**: 127 tests against 124 — three tests' difference, of which
 these are two — which is what "a differential that compares nothing wears a green tick" looks like from the

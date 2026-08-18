@@ -17,17 +17,22 @@
 //
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
-// The reference answers through `wacx run <driver> <export>`, which prints a whole `i32`; ours
-// answers through an exit status, which is eight bits (`issues/system/0184`). So the three answers
-// fold into one checksum read a byte at a time, and the two canaries — that stage A declines nothing
-// and emits something substantial — are asked of the reference directly, where they come back whole.
+// The reference answers through `referenceRun.ts <driver> <export…>`, which prints a whole `i32`;
+// ours answers through `wac <module.wasm> fold`, which prints one too. The three answers still fold
+// into one checksum, and the two canaries — that stage A declines nothing and emits something
+// substantial — ride along in the same reference process.
 //
 // **The driver's own closure, not the whole corpus.** The reference parses *every* file it is given,
 // so handing it the repository meant every corpus file had to be parseable by it, and a wacc-only
 // feature anywhere in the tree failed this while naming a file the driver never imports.
 // `issues/lang/0139`.
 //
-// test-lane: heavy — 26s, the compiler embedded in a driver, compiled by both stages
+// **It is back in the regular lane, and that is what the one-compile change bought.** It was declared
+// heavy at 26s because the driver was compiled four times, once per byte of the fold, and the reference
+// was asked three separate questions about a module that embeds the whole compiler as string literals.
+// One compile and one reference process is 10s, measured — and a self-host differential that runs on
+// every push is worth more than a fuzz sweep that does, which is the trade: `packages/gzip`'s 2,700
+// corrupted streams took the heavy slot this gave up, and kept a 24-case sample in the regular lane.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
