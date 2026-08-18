@@ -6,7 +6,7 @@
 //
 // **Opt-in, and ignored rather than absent.** Not for time — it is about a second with the build
 // cache warm — but for **disk**: each run writes a 105 MB executable, and the shared machine this
-// suite runs on has hit 100% more than once. `program.test.ts` already runs the same wac program and
+// suite runs on has hit 100% more than once. `test/wac/program_test.wac` already runs the same wac program and
 // compares its output byte for byte; `deno compile` only puts a runtime around it.
 // `WAC_BINARY=1 deno test -A packages/wacc/test/binary.test.ts` runs it, and the ignored line in
 // every other run is the reminder that it exists.

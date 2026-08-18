@@ -1,0 +1,214 @@
+// The compiler as a program, run as one.
+//
+// `example/wacc.wac` is what a `wac` binary dispatches (`design/lang/0003` step 4): it reads the
+// entry, walks the imports with `src/files.wac`, and calls the same `emitFiles` the library exposes.
+// What has to stay true is that going the long way round changes nothing — same input, same module,
+// byte for byte — because the moment those differ, "wacc can build this repository by itself" stops
+// being one claim and becomes two.
+//
+// Run as a *subprocess*, not by calling `emitFiles` here: the point is the whole path, including
+// reading files through a capability and writing the result. A test that called the library directly
+// would pass for a program whose argument handling or file walk was broken.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `buildApp` becomes `wac build`, and the distinction matters more here than in most of these ports.
+// **The program is built from the current sources rather than being the `wac` binary itself.** The
+// binary carries a prebuilt seed, so running `wac compile` directly would compare the seed against
+// today's library — a real question, and a different one, which `tools/seedFresh.test.ts` already
+// asks. Building `example/wacc.wac` first keeps this file's claim about the *program*.
+//
+// The last case needs a JavaScript host, because what it asserts is that the generated glue **runs**.
+// `../gluerun.ts` is that host: it imports the module and calls three things. Not an oracle — it
+// compares nothing — but generated JavaScript is only text until something executes it, and a
+// generator that dropped a cast it needed would still read like JavaScript.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { emitFiles } from "../../src/api.wac";
+import { importSpecs, resolveFrom } from "../../src/files.wac";
+
+const string SOURCE = "packages/wacc/example/wacc.wac";
+const string GLUERUN = "packages/wacc/test/gluerun.ts";
+
+string scratch(Cli cli, string name) {
+  string dir = cli.cwd().wait() + "/.cache/" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/**
+ * `example/wacc.wac` built into a module, once per test that needs it.
+ *
+ * About five seconds. Cached under `.cache` and reused when it is already there, so a file that runs
+ * three of these pays for one — and a stale one cannot survive, because `wac build` rewrites it.
+ */
+string buildProgram(T t, Cli cli, string dir) {
+  string stem = dir + "/wacc";
+  Exec r = cli.exec(wacBinary(cli),
+                    string[]("build", SOURCE, "-o", stem, "--allow-read", "--allow-write",
+                             "--quiet"), u8[0]()).wait();
+  t.isTrue(r.ran(), "the wac binary ran — " + r.error);
+  t.eqI32(r.status, 0, "building " + SOURCE + " — " + string.fromBytes(r.stderr));
+  return r.ran() && r.status == 0 ? stem + ".wasm" : "";
+}
+
+/** Run the built program with `args`. */
+Exec runProgram(Cli cli, string program, string[] args) {
+  string[] argv = string[args.len() + 1](fill: "");
+  argv[0] = program;
+  for (i32 i = 0; i < args.len(); i++) { argv[1 + i] = args[i]; }
+  return cli.exec(wacBinary(cli), argv, u8[0]()).wait();
+}
+
+/** The import graph of `entry`, walked the way the program walks it. */
+struct Graph {
+  string[] paths;
+  string[] sources;
+  bool ok;
+  string error;
+}
+
+Graph graphOf(Cli cli, string entry) {
+  string[] paths = string[64](fill: "");
+  string[] sources = string[64](fill: "");
+  i32 n = 0;
+  paths[0] = entry;
+  n = 1;
+  for (i32 i = 0; i < n; i++) {
+    FileResult f = cli.readFile(paths[i]).wait();
+    if (!f.ok) { return Graph(paths, sources, false, "cannot read " + paths[i]); }
+    sources[i] = string.fromBytes(f.bytes);
+    string[] specs = importSpecs(f.bytes);
+    for (i32 s = 0; s < specs.len(); s++) {
+      string resolved = resolveFrom(paths[i], specs[s]);
+      bool seen = false;
+      for (i32 k = 0; k < n; k++) { if (paths[k] == resolved) { seen = true; } }
+      if (seen || n >= paths.len()) { continue; }
+      paths[n] = resolved;
+      n = n + 1;
+    }
+  }
+  string[] p = string[n](fill: "");
+  string[] s = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { p[i] = paths[i]; s[i] = sources[i]; }
+  return Graph(p, s, true, "");
+}
+
+export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "waccprog");
+  string program = buildProgram(t, cli, dir);
+  if (program == "") { return t.report(); }
+
+  string entry = "packages/json/src/json.wac";
+  string out = dir + "/out.wasm";
+  Exec r = runProgram(cli, program, string[]("compile", entry, out));
+  t.eqI32(r.status, 0, "compile failed: " + string.fromBytes(r.stderr) +
+                       string.fromBytes(r.stdout));
+  if (r.status != 0) { return t.report(); }
+
+  // The same program through the library.
+  Graph g = graphOf(cli, entry);
+  t.isTrue(g.ok, "the import graph — " + g.error);
+  if (!g.ok) { return t.report(); }
+  u8[] want = emitFiles(g.paths, g.sources, entry);
+  FileResult got = cli.readFile(out).wait();
+  t.isTrue(got.ok, "the program wrote a module — " + got.error);
+  if (!got.ok) { return t.report(); }
+
+  t.eqI32(got.bytes.len(), want.len(), "the program and the library wrote different sizes");
+  if (got.bytes.len() == want.len()) {
+    i32 first = -1;
+    for (i32 i = 0; i < want.len() && first < 0; i++) {
+      if (got.bytes[i] != want[i]) { first = i; }
+    }
+    t.eqI32(first, -1, first < 0 ? "" :
+            "byte " + itoa(first) + " differs: " + itoa(got.bytes[first]) + " vs " +
+            itoa(want[first]));
+  }
+  core.log("    program: " + itoa(got.bytes.len()) + " bytes for " + entry +
+           ", identical to the library's");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_it_names_the_file_it_cannot_read(Core core, Cli cli) {
+  // A missing import used to be discoverable only as whatever the checker said about the hole it
+  // left, which points at the file that *imported* it. The walk stops and says which path.
+  T t = T.create();
+  string dir = scratch(cli, "waccprog-missing");
+  string program = buildProgram(t, cli, dir);
+  if (program == "") { return t.report(); }
+
+  cli.writeFile(dir + "/main.wac",
+                ("import { x } from \"./gone.wac\";\nexport i32 f() { return x; }\n").toBytes())
+     .wait();
+  Exec r = runProgram(cli, program, string[]("check", dir + "/main.wac"));
+  t.isTrue(r.status != 0, "a missing import compiled");
+  t.isTrue(string.fromBytes(r.stderr).indexOf("gone.wac") >= 0,
+           "did not name the file: " + string.fromBytes(r.stderr));
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_check_refuses_a_program_the_checker_refuses_and_says_where(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "waccprog-bad");
+  string program = buildProgram(t, cli, dir);
+  if (program == "") { return t.report(); }
+
+  cli.writeFile(dir + "/bad.wac", "export i32 f() { return \"no\"; }\n".toBytes()).wait();
+  Exec r = runProgram(cli, program, string[]("check", dir + "/bad.wac"));
+  t.isTrue(r.status != 0, "a type error passed the check");
+  t.isTrue(string.fromBytes(r.stderr).indexOf("bad.wac") >= 0,
+           "no file in the diagnostic: " + string.fromBytes(r.stderr));
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, Cli cli) {
+  // **The last piece of the toolchain that only existed in TypeScript.** `waccx bindgen` wrote glue
+  // and the `wac` binary could not, which is a tooling-parity gap rather than a missing language
+  // feature — `src/bindgen.wac` closes it, and `test/bindgenWac.test.ts` holds the two generators to
+  // the same text byte for byte.
+  //
+  // Here the assertion is the *running*, not the reading: a generator that dropped a cast it needed
+  // would still look like JavaScript. `.js` and imported as such, which is the browser's rule and the
+  // reason the JavaScript mode exists at all.
+  T t = T.create();
+  string dir = scratch(cli, "waccprog-glue");
+  string program = buildProgram(t, cli, dir);
+  if (program == "") { return t.report(); }
+
+  cli.writeFile(dir + "/m.wac",
+    ("struct Point { i32 x; i32 y; i32 sum(const this) { return this.x + this.y; } }\n" +
+     "export Point origin(i32 x, i32 y) { return Point(x, y); }\n" +
+     "export string greet(string who) { return \"hi \" + who; }\n").toBytes()).wait();
+
+  Exec js = runProgram(cli, program, string[]("bindgen", dir + "/m.wac", "--js"));
+  t.eqI32(js.status, 0, "bindgen failed: " + string.fromBytes(js.stderr) +
+                        string.fromBytes(js.stdout));
+  if (js.status != 0) { return t.report(); }
+
+  Exec ran = cli.exec("deno", string[]("run", "-A", GLUERUN, dir + "/m.gen.js"), u8[0]()).wait();
+  t.isTrue(ran.ran(), "deno ran — " + ran.error);
+  t.eqI32(ran.status, 0, "the glue did not answer: " + string.fromBytes(ran.stderr));
+
+  // TypeScript by default, which is the other half of the same generator.
+  Exec ts = runProgram(cli, program, string[]("bindgen", dir + "/m.wac"));
+  t.eqI32(ts.status, 0, "bindgen --ts failed: " + string.fromBytes(ts.stderr));
+  FileResult text = cli.readFile(dir + "/m.gen.ts").wait();
+  t.isTrue(text.ok, "the TypeScript glue was written — " + text.error);
+  if (text.ok) {
+    t.isTrue(string.fromBytes(text.bytes).indexOf(": number") >= 0,
+             "the TypeScript mode emitted no annotations");
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
