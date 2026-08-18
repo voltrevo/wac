@@ -1,0 +1,274 @@
+// Rung 3, first slice: our return-type diagnostics against the reference's, by position.
+//
+// `src/check.wac` decides one thing — whether a returned *literal* can possibly be the declared
+// return type — and says nothing about anything else. So the comparison here is not the one rungs 1
+// and 2 use. Those compare complete outputs and demand equality; this compares a subset against a
+// superset, and the two assertions that makes sense are:
+//
+//   - **soundness**: every diagnostic we report, the reference reports at the same line and column.
+//     A position we invent is a bug even if the program really is wrong, because rung 3's oracle is
+//     "diagnostics match, *including positions*".
+//   - **no false alarms on clean code**: we report nothing for a program the reference accepts.
+//
+// What is deliberately *not* asserted is completeness — that we find everything the reference does.
+// We do not, by design, and a test demanding it would fail on every case until the whole rung is
+// finished, which is the same as having no test until then.
+//
+// Positions rather than messages, as `parse_errors` does and for the same reason: our side reports
+// numeric codes and the reference reports English.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The reference stays TypeScript — it is the reference — behind `reference.ts`'s `checkpos`, which is
+// the whole of what this file asks of it. Everything that decides is here. `rung3_probe.wac` holds
+// the two sides and the batching: one `ask` per test rather than one per program, because a
+// subprocess per cell over these grids would be thousands of processes.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Ref, assertQuiet, assertSound, complaint, joinedWith, ours, referenceFor }
+  from "./rung3_probe.wac";
+import { dumpTypeErrors } from "../../src/api.wac";
+
+/**
+ * Programs that are wrong in the one way this slice knows about.
+ *
+ * Each is a class disagreement — numeric, string and boolean cannot convert into one another — so
+ * every one is an error under any widening rule the reference might apply.
+ */
+string[] WRONG() {
+  return string[](
+    "export i32 main() { return \"x\"; }",
+    "export string s() { return 1; }",
+    "export bool b() { return \"y\"; }",
+    "export i32 n(bool c) { if (c) { return \"a\"; } return 0; }",
+    "export f64 f() { return true; }",
+    "export i32 w(bool c) { while (c) { return \"loop\"; } return 0; }",
+    "export string t(i32 n) { switch (n) { case 1: { return 5; } } return \"d\"; }",
+    "export i32 nested(bool c) { if (c) { if (c) { return \"deep\"; } } return 0; }");
+}
+
+/**
+ * Programs that are right.
+ *
+ * This half is what stops the checker being "report a mismatch whenever the spellings differ", and
+ * writing it taught the slice something. Two cases went in on the assumption that an integer literal
+ * widens to any numeric type, and the reference rejected both:
+ *
+ *     export u8  b() { return 1; }   packed type 'u8' cannot be a return type
+ *                                    return: expected u8, found i32
+ *     export f64 f() { return 1; }   return: expected f64, found i32
+ *
+ * So an integer literal **is** an `i32` and does not widen — `i64` accepts one, `f64` does not. That
+ * makes `src/check.wac`'s numeric *class* coarser than the language: it groups types the reference
+ * keeps apart, which costs recall and never precision, so the checker stays a subset and a later
+ * slice can tighten it to exact primitive names.
+ */
+string[] CLEAN() {
+  return string[](
+    "export i32 main() { return 1; }",
+    "export i64 w() { return 1; }",
+    "export f64 g() { return 1.5; }",
+    "export string s() { return \"x\"; }",
+    "export bool t() { return true; }",
+    "export void v() { return; }",
+    "export i32 add(i32 a, i32 b) { return a + b; }");
+}
+
+export string test_rung3_every_diagnostic_we_report_the_reference_reports_in_the_same_place(
+    Core core, Cli cli) {
+  T t = T.create();
+  string[] wrong = WRONG();
+  Ref r = referenceFor(t, cli, wrong);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < wrong.len(); i++) {
+    string[] mine = ours(wrong[i]);
+    t.isTrue(mine.len() > 0,
+             "we found nothing in " + wrong[i] + "; the reference found " + itoa(r.count(i)) +
+             ": " + r.said[i]);
+    assertSound(t, r, i, "a wrong program");
+  }
+  return t.report();
+}
+
+export string test_rung3_we_report_nothing_for_a_program_the_reference_accepts(Core core, Cli cli) {
+  T t = T.create();
+  string[] clean = CLEAN();
+  Ref r = referenceFor(t, cli, clean);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < clean.len(); i++) {
+    t.eqI32(r.count(i), 0,
+            "this case is meant to be clean but the reference rejects it: " + clean[i] +
+            "\n  " + r.said[i]);
+    assertQuiet(t, r, i, "a clean program");
+  }
+  return t.report();
+}
+
+/**
+ * A local that shadows an **imported** function does not take the call position.
+ *
+ * `[§wac-param-shadows-func-5nkq2wp]` gives call position to a local *of funcref type* before any
+ * function; an `i32` local is not one, so `helper()` means the import. This slice cannot see the
+ * import, so it has to defer rather than judge — and judging is what it did: `issues/lang/0143`,
+ * which had this file red on master for `u8[] cert = cert(cli);` in `packages/tor`.
+ *
+ * The reference is not consulted, unlike `CLEAN` above: its single-file path throws outright on a
+ * program with an import, so there is no second opinion to compare against here. What is asserted is
+ * only that *we* stay quiet, which is this slice's whole contract.
+ *
+ * The second program is the one that says this is not about the initialiser — the call is nowhere
+ * near it. Both were red before the fix and both are green after; `spec/cases/0195` and `0196` pin
+ * the same rule on the full path, where the import is visible and the bug never showed.
+ */
+export string test_a_non_funcref_local_shadowing_an_import_does_not_take_the_call_position() {
+  T t = T.create();
+  string[] cases = string[](
+    "import { helper } from \"./other.wac\";\n" +
+    "export i32 main() { i32 helper = helper(); return helper; }",
+    "import { helper } from \"./other.wac\";\n" +
+    "export i32 main() { i32 helper = 1; return helper(); }");
+  for (i32 i = 0; i < cases.len(); i++) {
+    string[] mine = ours(cases[i]);
+    t.eqI32(mine.len(), 0, "we invented " + itoa(mine.len()) + " diagnostic(s) at " +
+                           joinedWith(mine, ", ") + " in " + cases[i]);
+  }
+  return t.report();
+}
+
+export string test_a_triple_from_dumptypeerrors_is_a_checker_code_and_reads_as_one() {
+  // The two phases number from the same place, and nothing in a triple says which space it is in —
+  // so this pins the one that has already misled somebody. 20 is the checker's `errBuiltinArg`; the
+  // parser's 20 is "unexpected token", and a reader who reaches for that sentence goes looking in
+  // `parse.wac` for a fault that is in `check.wac`. `issues/lang/0149`.
+  T t = T.create();
+  string said = complaint("f.wac", 20, 95, 48);
+  t.isTrue(said.indexOf("argument of the wrong type to a builtin") >= 0,
+           "a complaint does not carry the checker's sentence: " + said);
+  t.isTrue(said.indexOf("unexpected token") < 0,
+           "a complaint reads a checker code in the parser's space: " + said);
+  return t.report();
+}
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+bool startsWith(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+/** Every `.wac` file under `dir`, recursively, skipping what a build never reads. */
+void walk(Cli cli, string dir, string[] into, i32[] n) {
+  string[]? entries = cli.readDir(dir).wait();
+  if (entries is null) { return; }
+  string[] names = entries!;
+  for (i32 i = 0; i < names.len(); i++) {
+    if (names[i] == "node_modules" || startsWith(names[i], ".")) { continue; }
+    string path = dir + "/" + names[i];
+    if (endsWith(names[i], ".wac")) {
+      if (n[0] < into.len()) { into[n[0]] = path; }
+      n[0] = n[0] + 1;
+      continue;
+    }
+    if (cli.readDir(path).wait() is not null) { walk(cli, path, into, n); }
+  }
+}
+
+export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
+  // Every `.wac` file in the repo type-checks cleanly — that is what makes it a corpus — so anything
+  // we say about one is a false alarm. This is the cheapest way to catch a rule that looked sound on
+  // a dozen hand-written cases and is not, and it has already earned itself twice: the missing-return
+  // analysis reported six functions in `check.wac` whose body is a single `match` with a return in
+  // every arm, because `match` had not been modelled as leaving.
+  //
+  // Single-file: this slice reports nothing that depends on another module, so the import graph is
+  // not needed to know that *we* should be quiet about all of them.
+  T t = T.create();
+  string[] found = string[2048](fill: "");
+  i32[] n = i32[1]();
+  walk(cli, "packages", found, n);
+  t.isTrue(n[0] >= 250, "only " + itoa(n[0]) + " .wac files checked — the corpus did not load");
+  if (n[0] < 250) { return t.report(); }
+
+  string[] complaints = string[12](fill: "");
+  i32 said = 0;
+  i32 total = 0;
+  for (i32 i = 0; i < n[0] && i < found.len(); i++) {
+    FileResult f = cli.readFile(found[i]).wait();
+    if (!f.ok) { continue; }
+    i32[] flat = dumpTypeErrors(f.bytes);
+    for (i32 k = 0; k * 3 < flat.len(); k++) {
+      total = total + 1;
+      if (said < complaints.len()) {
+        complaints[said] = complaint(found[i], flat[k * 3], flat[k * 3 + 1], flat[k * 3 + 2]);
+        said = said + 1;
+      }
+    }
+  }
+  t.eqI32(total, 0, "we report diagnostics in " + itoa(total) + " place(s) in files that " +
+                    "type-check cleanly:\n  " + joinedWith(complaints, "\n  "));
+  return t.report();
+}
+
+/**
+ * Every declared primitive against every literal kind, asked of the reference at run time.
+ *
+ * The hand-written lists above are cases somebody thought of; this is the whole grid, and it is what
+ * turned the first slice's single `numeric` class into the real rule. Generated rather than tabulated
+ * on purpose — a table copied into this file would be a second implementation of the language's
+ * assignability, drifting quietly the first time the reference changed its mind. Here the reference
+ * decides each cell on every run, and our job is only to agree with it.
+ *
+ * This is the strongest form of the subset comparison: for the cells the reference accepts we must be
+ * silent, and for the cells it rejects we must either be silent or right about the position. Being
+ * silent everywhere would pass — which is why the rejected count is checked against the grid rather
+ * than against zero.
+ */
+string[] PRIMITIVES() {
+  return string[]("i32", "i64", "u32", "u64", "u8", "u16", "i8", "i16", "f32", "f64", "bool",
+                  "string");
+}
+string[] LITERAL_KINDS() { return string[]("integer", "float", "string", "boolean"); }
+string[] LITERALS() { return string[]("1", "1.5", "\"x\"", "true"); }
+
+export string test_rung3_every_primitive_against_every_literal_kind(Core core, Cli cli) {
+  T t = T.create();
+  string[] types = PRIMITIVES();
+  string[] kinds = LITERAL_KINDS();
+  string[] literals = LITERALS();
+  string[] sources = string[types.len() * literals.len()](fill: "");
+  string[] labels = string[types.len() * literals.len()](fill: "");
+  i32 n = 0;
+  for (i32 a = 0; a < types.len(); a++) {
+    for (i32 b = 0; b < literals.len(); b++) {
+      sources[n] = "export " + types[a] + " f() { return " + literals[b] + "; }";
+      labels[n] = types[a] + " vs " + kinds[b] + " literal";
+      n = n + 1;
+    }
+  }
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+
+  i32 rejected = 0;
+  i32 caught = 0;
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, labels[i]); continue; }
+    rejected = rejected + 1;
+    assertSound(t, r, i, labels[i]);
+    if (ours(sources[i]).len() > 0) { caught = caught + 1; }
+  }
+  // 48 cells, 8 accepted: an integer literal from i32/i64/u32/u64, a float from f32/f64, a boolean
+  // from bool, a string from string. The four packed types accept nothing, which is why this is 8 and
+  // not 12 — the count was written as 10 first, against a ten-type list that was missing i8 and i16.
+  //
+  // Asserting the shape rather than a bare "some failed": a reference that started accepting
+  // everything would otherwise pass this silently, and so would a `referenceFor` that had quietly
+  // stopped returning diagnostics.
+  t.eqI32(rejected, 40, "expected 40 rejected cells of 48");
+  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " cells and we catch " +
+                            itoa(caught) + "; this slice is meant to catch every literal-return " +
+                            "mismatch");
+  return t.report();
+}

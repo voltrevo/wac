@@ -18,6 +18,14 @@
 //   lexerrs <src-hex> <code> <line> <col>…  →  `lexerrs ok`, or `lexerrs BAD <why>`
 //   lexkinds                                →  the token kinds, in the union's order
 //   lexcodes                                →  the codes `errorCodes.ts` declares
+//   checkpos <src-hex>                      →  `checkpos <hex>`: `line:col\tmessage` per
+//                                              non-warning diagnostic the reference reports
+//
+// `checkpos` is rung 3's oracle, and the whole of what `typecheck_test.wac` asks. **Positions and
+// not codes**, because our side reports numeric codes and the reference reports English — and
+// positions are the thing rung 3's contract is actually about. Warnings are dropped here rather
+// than by the caller: the reference emits them on programs this slice is silent about, and a
+// caller filtering them would be a second place to get that rule wrong.
 //
 // `lexerrs` adjudicates rather than reports: the wac side sends the triples *it* produced and the
 // reference decides, because the table that says which number means which English sentence is
@@ -38,6 +46,9 @@
 import { wacCompile } from "wac/wacCompile.ts";
 import { referenceDump } from "./referencePrint.ts";
 import { wacLex } from "wac/wacLex.ts";
+import { wacParse, type Program } from "wac/wacParse.ts";
+import { wacResolve } from "wac/wacResolve.ts";
+import { wacTypeCheck } from "wac/wacTypeCheck.ts";
 import { CODE_DIVERGENCES, disagreement, LEX_CODES, staleDivergence, tableFaults } from "./errorCodes.ts";
 
 const dec = new TextDecoder();
@@ -181,6 +192,28 @@ for (const line of lines) {
       for (const k of [...found, "eof"]) if (!seen.includes(k)) seen.push(k);
       out.push(`lexkinds ${seen.join(" ")}`);
     }
+  } else if (op === "checkpos") {
+    let text: string;
+    try {
+      text = dec.decode(bytes(rest[0]));
+    } catch (e) {
+      out.push(`checkpos ERR ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+      continue;
+    }
+    let lines: string[] = [];
+    try {
+      const { tokens } = wacLex(text);
+      const { program } = wacParse(tokens, "/main.wac");
+      const programs = new Map<string, Program>([["/main.wac", program]]);
+      lines = wacTypeCheck(wacResolve("/main.wac", programs), programs)
+        .filter((e) => e.severity !== "warning")
+        .map((e) => `${e.line}:${e.col}\t${e.message}`);
+    } catch (e) {
+      out.push(`checkpos ERR ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+      continue;
+    }
+    out.push(`checkpos ${[...new TextEncoder().encode(lines.join("\n"))]
+      .map((b) => b.toString(16).padStart(2, "0")).join("")}`);
   } else if (op === "lexcodes") {
     const faults = tableFaults(LEX_CODES);
     out.push(faults.length > 0 ? `lexcodes BAD ${faults.join("; ")}`
