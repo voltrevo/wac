@@ -74,18 +74,53 @@ const denoArgs = (f: string) =>
   ["test", "--no-check", "--allow-all", "--unstable-net", "--quiet", f];
 
 /**
- * The driver's Deno-side profile, taken once.
+ * The Deno-side profile of the three subjects, taken once.
  *
  * `--filter` was tried first and does not do what it looks like it does here: `--filter varint`
- * matched one of that entry's three cases and `--filter "varint:"` matched none. Profiling the whole
- * driver once and selecting from the result is both correct and cheaper — it is one run rather than
- * three, and `all` is then unambiguously the whole module's table, which is the asymmetry this file
- * measures.
+ * matched one of that entry's three cases and `--filter "varint:"` matched none. So the subjects are
+ * registered in a wrapper of their own and it is profiled whole — one run, and every case in it is one
+ * this file compares.
+ *
+ * **It used to profile `harness/wac/hostless.test.ts`, which registers fifty-six entries to read
+ * three.** That is 21s of a 48s file, the largest in the suite's parallel pass, spent compiling
+ * fifty-three entries nothing here looks at.
+ *
+ * The wrapper is written to a **temp directory**, not into the repository, and two things had to be
+ * true for that. `deno test` will not run a file under `.cache` even when it is named on the command
+ * line — that directory is in `deno.json`'s `exclude`, and exclusion beats an explicit path, which
+ * reads as "No test modules found" — so the fixture technique the cases at the bottom of this file use
+ * does not work here. And a file dropped into `harness/` would be a `*.test.ts` in a directory the
+ * suite discovers. Outside the tree it is neither: the harness is imported by absolute path and the
+ * entries resolve from `ROOT`, because that is the cwd `profileWith` runs in.
+ *
+ * `all` is narrower for it — three entries' import closures rather than fifty-six — and that makes the
+ * subset assertion below *sharper*, not weaker: the native table has to fit inside a smaller superset.
+ * That the real driver still qualifies to be taken natively is checked separately, and statically.
  */
 let driverProfile: Profiled | undefined;
 async function denoSide(): Promise<Profiled> {
   if (driverProfile === undefined) {
-    driverProfile = (await profileWith(Deno.execPath(), denoArgs(DRIVER)))[0];
+    const lines = [`import { wacTestRun } from "${ROOT}/harness/wacTestRun.ts";`];
+    for (const [entry, prefix] of SUBJECTS) {
+      lines.push(`await wacTestRun("${entry}", "${prefix}");`);
+    }
+    const dir = await Deno.makeTempDir({ prefix: "wac-subjects-" });
+    const wrapper = `${dir}/subjects.driver.ts`;
+    await Deno.writeTextFile(wrapper, lines.join("\n") + "\n");
+    try {
+      driverProfile = (await profileWith(Deno.execPath(), denoArgs(wrapper)))[0];
+    } finally {
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+    // A wrapper that registered nothing readable would leave every comparison below with nothing to
+    // compare, and `bothSides` would report agreement about it.
+    if (driverProfile === undefined || Object.keys(driverProfile.tests ?? {}).length === 0) {
+      throw new Error(
+        `the subjects wrapper produced no Deno-side profile — the subjects are ` +
+          `${SUBJECTS.map(([e]) => e).join(", ")}, and one of them registering nothing makes every ` +
+          `assertion here vacuous`,
+      );
+    }
   }
   return driverProfile;
 }
@@ -117,7 +152,7 @@ async function bothSides(
   for (const [k, v] of Object.entries(whole?.tests ?? {})) {
     if (k.startsWith(`${prefix}: `)) mine[k] = v;
   }
-  const d: Profiled = { entry: DRIVER, tests: mine, all: whole?.all };
+  const d: Profiled = { entry: "the subjects wrapper", tests: mine, all: whole?.all };
   const n = (await profileWith(`${ROOT}/${WAC_BIN}`, ["test", "--coverage", entry]))[0];
   const native: Tests = {};
   for (const [k, v] of Object.entries(n?.tests ?? {})) native[denoTestName(entry, prefix, k)] = v;
