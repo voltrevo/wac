@@ -88,7 +88,7 @@ string[] exactly(string[] xs, i32 n) {
  *
  * **Four commands and one flag were missing from it** — `bindgen`, `-o`, the grants and `--coverage` —
  * so the command that writes a host's glue was undiscoverable and every `build` needed a flag the
- * usage did not mention. `tools/usageText.test.ts` holds this against the dispatch and against
+ * usage did not mention. `packages/wacc/test/wac/cli_test.wac` holds this against the dispatch and against
  * `spec/cli/wac.md`; the host adds its own commands after these, since each side lists what it
  * implements.
  */

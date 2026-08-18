@@ -1,0 +1,78 @@
+// What `wac test` says when a test traps.
+//
+// A trap leaves nothing to return — the call is over and the host has unwound — so the runner printed
+// `FAIL name — trapped` and stopped there, while `trap "…"` had written a message the program meant for
+// exactly that moment. `issues/lang/0147` gave the message somewhere to survive; this is the runner
+// reading it.
+//
+// The half that must not move: an *engine* trap — a bounds check, a null dereference — writes nothing,
+// and reporting the previous `trap`'s sentence for one of those would be worse than reporting none.
+
+import { Change, Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** Its own directory per agent, so two checkouts running at once do not share a probe. */
+string probeDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  i32 at = -1;
+  for (i32 i = 0; i < cwd.len(); i++) { if (cwd.slice(i, i + 1) == "/") { at = i; } }
+  return ".cache/wac-trapmsg" + (at < 0 ? "" : "-" + cwd.slice(at + 1, cwd.len()));
+}
+
+bool holds(string haystack, string needle) { return haystack.indexOf(needle) >= 0; }
+
+/** Writes a one-file test suite and runs `wac test` over it, answering everything it printed. */
+string runProbe(Cli cli, string source, string[] flags) {
+  string dir = probeDir(cli);
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) { return "could not make " + dir; }
+  string path = dir + "/probe_test.wac";
+  Change wrote = cli.writeFile(path, source.toBytes()).wait();
+  if (!wrote.ok()) { return "could not write " + path; }
+  string[] args = string[flags.len() + 2](fill: "");
+  args[0] = "test";
+  for (i32 i = 0; i < flags.len(); i++) { args[i + 1] = flags[i]; }
+  args[flags.len() + 1] = path;
+  Exec r = cli.exec(binary(cli), args, u8[0]()).wait();
+  cli.remove(path, false).wait();
+  if (!r.ran()) { return "the binary would not start: " + r.error; }
+  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+export string test_a_failing_trap_reports_what_the_trap_said(Core core, Cli cli) {
+  T t = T.create();
+  string out = runProbe(cli,
+    "export string test_boom() {\n  trap \"the ring is full\";\n  return \"\";\n}\n",
+    string[]());
+  t.isTrue(holds(out, "the ring is full"), "the trap's message is not in the report: " + out);
+  return t.report();
+}
+
+export string test_an_engine_trap_says_trapped_and_invents_nothing(Core core, Cli cli) {
+  T t = T.create();
+  string out = runProbe(cli,
+    "export string test_bounds() {\n" +
+    "  i32[] xs = i32[2](fill: 0);\n" +
+    "  i32 n = xs[5];\n" +
+    "  return n == 0 ? \"\" : \"unreachable\";\n" +
+    "}\n",
+    string[]());
+  t.isTrue(holds(out, "trapped"), "an engine trap was not reported as one: " + out);
+  // Nothing borrowed: the line ends at "trapped", with no colon and no sentence after it.
+  t.isTrue(!holds(out, "trapped:"), "a message was invented for a trap that wrote none: " + out);
+  return t.report();
+}
+
+export string test_a_trap_case_that_passes_still_says_what_it_said(Core core, Cli cli) {
+  T t = T.create();
+  // The verdict is a pass, so this is purely what the reader is told — and it is where the message is
+  // worth most, because a `test_traps_*` passing for the *wrong* trap looks exactly like one passing for
+  // the right one. `--verbose`, since a passing test says nothing without it.
+  string out = runProbe(cli,
+    "export string test_traps_on_purpose() {\n  trap \"the size was implausible\";\n  return \"\";\n}\n",
+    string[]("--verbose"));
+  t.isTrue(holds(out, "the size was implausible"), "a passing trap case hid its message: " + out);
+  return t.report();
+}

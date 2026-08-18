@@ -75,7 +75,7 @@ Not the feature this asks for, but one of the two things it lists as unobservabl
 `--verbose` too, which is where it matters most: a case passing for the *wrong* trap looks identical
 to one passing for the right one. An engine trap writes nothing and the line says only "trapped",
 because a bounds check reporting the previous `trap`'s sentence would be worse than reporting none.
-`tools/testTrapMessage.test.ts`.
+`packages/wacc/test/wac/trapmessage_test.wac`.
 
 What remains is what this issue is actually about: **cheapness cannot be observed at all.** The
 `gunzipBytes` case wants "refused without trying", and a decoder that trusted the hint traps too — a

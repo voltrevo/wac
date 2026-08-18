@@ -3046,7 +3046,7 @@ Deno.test("every §wac-* tag in spec/ is named by some test", async () => {
   // evidence. This is cheap and says exactly which tag to go and cover.
   //
   // **The whole repository, not `compiler/`.** This read tests from its own directory only, so a
-  // claim about the `wac` binary — checked by `tools/grantPlacement.test.ts` and three others — was
+  // claim about the `wac` binary — checked by `packages/wacc/test/wac/grants_test.wac` and three others — was
   // reported as covered by nobody, and the only way to satisfy the guard was to write the test in the
   // wrong place. The tests moved out of `compiler/` years of commits ago: 125 of them are wac files
   // now. So both suffixes, everywhere, minus the directories with no tests and a great deal of bulk.
