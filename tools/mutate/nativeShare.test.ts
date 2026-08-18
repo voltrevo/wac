@@ -14,7 +14,7 @@
 // nothing reports. The last case points the native side at a different file and requires a
 // disagreement.
 
-import { wacTestRegistrations } from "../../harness/testRegistrars.ts";
+import { countTestsDeclaredHere, wacTestRegistrations } from "../../harness/testRegistrars.ts";
 import { denoTestName } from "../../harness/wacTestRun.ts";
 import { WAC_BIN } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";
@@ -256,17 +256,65 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
 });
 
 Deno.test("a file that also declares host tests is left to Deno", async () => {
-  if (!await haveBinary()) return;
-  // The refusal half. `packages/wactest/test/assert.test.ts` registers wac tests *and* declares its
-  // own `Deno.test`s, so a native profile of it would be narrower than the truth — and narrower is
-  // the under-selecting direction.
-  const { nativeBinary, nativeShare } = await import("./profile.ts");
-  const binary = (await nativeBinary())!;
-  const share = await nativeShare(ROOT, "packages/wactest/test/assert.test.ts", binary);
-  if (share !== null) {
+  // The refusal half: a file that registers wac tests *and* declares its own `Deno.test`s must be
+  // left to Deno, because a native profile of it would know only the wac tests and every line that
+  // only the host-side ones reach would read as unreached — the under-selecting direction.
+  //
+  // **The subject is synthetic, and that is the point.** It was
+  // packages/wactest/test/assert.test.ts until 2026-08-18, when `issues/system/0161` retired that
+  // file — and no file in the tree has the shape any more, so a test that needs one would have had
+  // to wait for a file to happen to grow it back. Writing the subject states the rule directly, and
+  // the rule is about the two properties rather than about any file that carries them.
+  //
+  // **`ROOT/.cache` rather than a temp directory, and the reason is the canary.** `nativeShare`
+  // reads `work/testFile`, so a temp directory would hold the fixture fine — but `work` is also the
+  // cwd it runs `wac test` from, and from a temp directory the registered entry would not resolve.
+  // The run would fail, `doc` would be null, and `nativeShare` would return null *anyway*: delete
+  // the refusal this case is named for and it would still pass. Under `ROOT` the entry resolves, so
+  // removing the refusal makes a profile come back and the case fails, which is the only version of
+  // it worth having. `.cache` is in `deno.json`'s `exclude` and in `.gitignore`, so the fixture is
+  // invisible to the test walk that would otherwise try to run it.
+  const FIXTURE = [
+    `import { wacTestRun } from "../harness/wacTestRun.ts";`,
+    `await wacTestRun("packages/std/test/wac/option_test.wac", "option");`,
+    `Deno.test("a host-side test declared in the same file", () => {});`,
+    ``,
+  ].join("\n");
+
+  // **The controls, because `null` is also what "nothing here to take" looks like.** `nativeShare`
+  // returns null for an unreadable file, for one with no registrations, and for one with a
+  // registration it cannot read — so a subject failing any of those would give the right answer for
+  // the wrong reason, and would keep giving it after the refusal itself was deleted.
+  const reg = wacTestRegistrations(FIXTURE);
+  if (reg.found.length === 0 || reg.unresolved > 0) {
     throw new Error(
-      "a wrapper that also declares host-side tests was taken natively; the tests it declares here " +
-        "would be missing from the profile and every line only they reach would read as unreached",
+      `the fixture has ${reg.found.length} readable registration(s) and ${reg.unresolved} it ` +
+        `cannot read; it must be a file that would otherwise be taken, or the refusal below is ` +
+        `answering a different question`,
     );
+  }
+  if (countTestsDeclaredHere(FIXTURE) === 0) {
+    throw new Error("the fixture declares no host-side tests, which is the property under test");
+  }
+
+  const rel = ".cache/nativeShare_dual_subject.test.ts";
+  await Deno.mkdir(`${ROOT}/.cache`, { recursive: true });
+  try {
+    await Deno.writeTextFile(`${ROOT}/${rel}`, FIXTURE);
+    // The binary is never reached while the refusal stands: it is static, ahead of the first
+    // `wac test` spawn. So this case runs whether or not one is built, which the version keyed to a
+    // real file did not — it began `if (!await haveBinary()) return`, and on a checkout without one
+    // the refusal went unasserted rather than untested-and-said-so.
+    const { nativeShare } = await import("./profile.ts");
+    const share = await nativeShare(ROOT, rel, WAC_BIN);
+    if (share !== null) {
+      throw new Error(
+        "a wrapper that also declares host-side tests was taken natively; the tests it declares " +
+          "here would be missing from the profile and every line only they reach would read as " +
+          "unreached",
+      );
+    }
+  } finally {
+    await Deno.remove(`${ROOT}/${rel}`).catch(() => {});
   }
 });

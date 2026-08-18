@@ -122,7 +122,8 @@ from the host", and fifteen more commits in that shape — so a test that wanted
 one through `Cli.exec` and needs nothing passed in. `skipped` should therefore be empty everywhere.
 
 **And the lane has no subjects left.** Two `.test.ts` files under `packages/` still register wac tests:
-`packages/wacc/test/nativeBinary.test.ts` and `packages/wactest/test/assert.test.ts`. Both declare host
+`packages/wacc/test/nativeBinary.test.ts` and packages/wactest/test/assert.test.ts (unbackticked
+because it no longer exists — see the update below). Both declare host
 tests of their own (7 and 3), which `nativeShare` declines on its **first** rule —
 `countTestsDeclaredHere(src) > 0` — before any question about profiles. So *23 pure wrappers, 0 taken*
 has become *0 pure wrappers*: the unit this lane profiles has been converted out of existence, not
@@ -137,3 +138,24 @@ file passes vacuously, and that is how two subject lists went stale inside a day
 packages now have no `.test.ts` at all, `deno test packages/gzip/` exits 1 with *No test modules found*,
 and mutation scoring's unit of execution is a `deno test` run.
 
+
+### Zero registrars under `packages/`, and the refusal test lost its subject — 2026-08-18
+
+The count above is now zero, and it was already wrong when written: `grep -rl "wacTestRun(" packages/`
+returned one file, not two — `packages/wacc/test/nativeBinary.test.ts` had stopped registering. The
+remaining one went with `issues/system/0161`, so nothing under `packages/` registers wac tests at
+all. The 57 live registrations are in `harness/wac/hostless.test.ts`, which `tools/mutate/profile.ts`
+reads statically and which this lane has never walked.
+
+That has a consequence for this issue's framing. *0 pure wrappers* is not a lane waiting for
+subjects to come back — the wrappers under `packages/` were converted out of existence, and the one
+file that still registers is a harness file with 57 entries and no host tests of its own. Whether
+that file is a subject this lane should take is the open question now, and it is a different question
+from the one in the title.
+
+The delete also cost `tools/mutate/nativeShare.test.ts` its refusal subject: it needed a file that
+registers wac tests *and* declares its own `Deno.test`s, and no file in the tree has both properties
+any more. It uses a synthetic fixture now, written to `ROOT/.cache` rather than a temp directory so
+that removing the refusal actually fails the case — from a temp directory the registered entry does
+not resolve, `nativeShare` returns null for that reason instead, and the case passes with the rule
+deleted. Detail in `issues/system/0161`.

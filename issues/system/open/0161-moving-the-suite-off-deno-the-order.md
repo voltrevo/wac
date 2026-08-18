@@ -187,6 +187,56 @@ The verifiable facts, and they are the only ones worth planning against:
   - **The host is one import away.** `gzip/gzip_fixed.test.ts` looks clean and imports `gunzip` from
     `./util.ts`, which spawns the system gunzip — the right oracle, since a self-round-trip cannot
     catch a wrong bit order.
+  - **What is left, split by what actually blocks it — 2026-08-18.** 44,490 lines of `.test.ts`
+    remain under `packages/`:
+
+    | | lines |
+    |---|---:|
+    | needs a live child (`issues/system/0165`) | 12,132 |
+    | needs a live TLS or QUIC **peer** wac cannot be | 3,425 |
+    | needs a browser | 3,355 |
+    | nominally convertible | 25,578 |
+
+    **Take 4,035 off that last row**, measured rather than estimated: a test that never names a
+    `.wac` file and never calls `wacBind`, `waccApi`, `buildApp`, `buildNative` or `buildBinary` is
+    not driving a wac program, so its subject is the TypeScript beside it. That leaves **21,543
+    lines** of genuinely convertible wac-subject work — `wacc` 8,582, `platform` 4,799, `box` 3,515,
+    `wacpkg` 1,193, `git` 1,002.
+
+    Three categories fooled a grep in turn before that discriminator was found, and each cost a
+    re-measurement:
+
+      - a file whose oracle is a *runtime peer* — `Deno.QuicEndpoint`, `listenTls` — is not
+        convertible however little it spawns. wac has UDP and no QUIC peer to be. Sixteen files.
+      - a file whose *subject* is TypeScript never moves: `platform/host/marshal.test.ts` sits beside
+        the `marshal.ts` it tests, the three `*_model.test.ts` check a TS model, and
+        `platform/test/browser.test.ts` — which needs no browser at all — drives the browser handler
+        mapping with an in-memory double. ~2,000 lines.
+      - `crypto.subtle` is *not* in either category: WebCrypto is reachable as an oracle process
+        (`capture-hkdfcap.wac` asks it through `deno eval`), because that question is a computation
+        and not a conversation.
+
+    `typecheck.test.ts` alone is 3,078 of `wacc`'s share. `wacpkg` and `sh` are convertible and
+    belong to other agents.
+
+    **The lesson is about the discriminator, not the number.** "Does it spawn a child" and "does it
+    mention a browser" are questions about a test's *machinery*; "does it drive a wac program at all"
+    is the question about its *subject*, and it is the one that decides whether a conversion is even
+    meaningful. Three published figures were wrong before that was asked.
+
+  - **What the reference oracle now answers**, for whoever takes the rungs on:
+    `packages/wacc/test/reference.ts` is the batched TypeScript half of rungs 1, 2 and 4 —
+    `runfn` (compile, instantiate, call an export), `parsehash`/`parsedump`, `lexhash`/`lexdump`,
+    `lexerrs` (it adjudicates our triples rather than handing back a table), `lexkinds`, `lexcodes`.
+    `typecheck.test.ts` will want a `checkpos`; it was written and then reverted rather than
+    committed with no caller.
+
+  - **Two files that look easy and are not.** `specAccept` and `specCheck` read `specCorpus.ts`,
+    which extracts programs by *reading* `compiler/wacSpec.test.ts` — the exact thing
+    `tools/specCases.ts` exists to avoid, and which its own header records as having produced three
+    disagreeing answers. Pointing them at the generated `specCases.json` instead would merge two
+    corpora, which is a decision about coverage rather than a translation.
+
   - **New TypeScript arrives while this runs.** On 2026-08-17 alone, seventeen `.test.ts` files were
     added by other agents — 1,908 lines still present — against roughly 800 lines converted away the
     same day. Some of it is genuinely host-side (`packages/wacpkg`'s transport and cache), and some
@@ -911,7 +961,8 @@ says `delete mode` rather than anything about content.
 ### The registrar tier is gone — 2026-08-17
 
 `grep -rl wacTestRun packages/*/test/*.ts` now returns two files, and neither is a package handing
-its subject a callback: `packages/wactest/test/assert.test.ts` tests the harness, and
+its subject a callback: packages/wactest/test/assert.test.ts (unbackticked because it no longer
+exists — see the section below) tests the harness, and
 `packages/wacc/test/nativeBinary.test.ts` tests the binary. Every `*_wac.test.ts` in the repository
 is deleted. Sixteen of them went in one day — four in `crypto`, three in `tls`, nine in `tor` — and
 what they had in common is worth writing down, because the same shapes will come up in the 232
@@ -967,6 +1018,48 @@ where wac writes it in decimal, so every AES record went down the ChaCha path �
 then failed, it read as our sealing being wrong rather than as the oracle mistaking the suite. The
 five ChaCha records passing beside the five AES ones is what named it. An oracle that had answered
 one record at a time would have looked like a broken record layer.
+
+### The last registrar under `packages/` — 2026-08-18, and the guard that could not survive it
+
+packages/wactest/test/assert.test.ts is gone, and with it the registrar tier under `packages/`
+entirely: `grep -rl "wacTestRun(" packages/` now returns nothing. Its subject was `wacTestRun` —
+the harness `wac test` replaces — so translating it would have pinned something on its way out.
+What moved is the *guarantee*, asked of the runner that now has to keep it, in
+`packages/wactest/test/wac/runner_test.wac`: discovery finds every `test*` export, a file exporting
+none is an error rather than a silent pass, and a failing assertion's message comes back. All three
+are the same failure in different disguises — **a runner that runs nothing looks exactly like a
+runner whose tests all pass.**
+
+**Deleting it broke two guards, and one of them had said it could not be broken this way.**
+`harness/wacTestNames.test.ts` walks the tree counting `wacTestRun` calls, and it walked `packages/`
+only, under a comment reading "and that is not a shortcut — all 83 registrations are there". That had
+already expired: the registrations were consolidated into `harness/wac/hostless.test.ts`, 57 of
+them, which is the file `tools/mutate/profile.ts` reads statically. So the walk's own root held none,
+and its floor — `filesWithCall === 0` — fired with *"the walk found no file containing `wacTestRun(`
+— it did not resolve"*. The floor was derived rather than hand-picked precisely so a migration could
+not outrun it, and the comment saying so is the one that aged: **a derived floor is only as wide as
+the roots it is derived from.** Fixed by walking `harness/wac/` too, which is a directory that
+excludes the two self-scanning files by path rather than by a filename list.
+
+**A refusal test lost the only file with the shape it needed.** `tools/mutate/nativeShare.test.ts`
+asserted that a file which registers wac tests *and* declares its own `Deno.test`s is left to Deno,
+and it used this file as the subject. After the delete no file in the tree has both properties, so
+the subject is now synthetic — which states the rule instead of waiting for some file to grow it
+back.
+
+Writing it exposed the harder half. The obvious fixture location is a temp directory, and it is
+wrong: `work` is also the cwd `nativeShare` runs `wac test` from, so from a temp directory the
+registered entry does not resolve, the run fails, and `nativeShare` returns null *anyway*. Delete
+the refusal the case is named for and it still passes. Putting the fixture in `ROOT/.cache` — in
+`deno.json`'s `exclude` and in `.gitignore`, so the test walk never tries to run it — makes the
+entry resolve, and removing the refusal now returns a profile and fails the case in 346ms.
+**`null` was both the expected answer and what three unrelated failures return**, so the case needed
+controls proving the fixture would otherwise have been taken: readable registrations, zero
+unresolved, and a non-zero host-test count, each asserted before the refusal is consulted.
+
+It also stopped opening with `if (!await haveBinary()) return`. The refusal is static, ahead of the
+first spawn, so on a checkout with no binary the case used to go unasserted rather than skipped-and-
+said-so.
 
 ### 2026-08-18: `wacpkg`, and two ways a migrated package gets quieter
 

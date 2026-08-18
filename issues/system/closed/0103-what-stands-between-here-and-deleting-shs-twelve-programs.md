@@ -202,7 +202,7 @@ about — passes 6/6 once four hand-written groups stop using `cat` and `seq` as
 
 | file | what it is testing | why it needs commands |
 | --- | --- | --- |
-| `test/backings.test.ts` | ~40 scripts against bash over Memory/Host/image backings | the scripts *are* `cat f`, `wc -l f`, `sort f \| head -1` |
+| `test/backingsprocess_test.wac` | ~40 scripts against bash over Memory/Host/image backings | the scripts *are* `cat f`, `wc -l f`, `sort f \| head -1` |
 | `test/sealed.test.ts` | a sealed shell has a filesystem and it is not the host's | reads a file to show which world it came from |
 | `test/imaged.test.ts` | what one session writes the next one reads | same |
 | `test/unnameable.test.ts` | a file whose name is not valid UTF-8 says which side is at fault | the diagnostic belongs to whatever *opens* the file |
@@ -267,7 +267,7 @@ was passing a number down. `sealedsh.wac` named this as the one thing that did n
 complained, and never printed `b`. Eight applets did it — `cat` twice, once in each of its two paths —
 and `lib/input.wac`'s own comment described it as "a difference worth naming rather than a difference
 worth pretending about". Every operand case anyone had written names one file, or two that both exist;
-the one script in `backings.test.ts` that names three found it the moment it ran against these applets.
+the one script in `backingsprocess_test.wac` that names three found it the moment it ran against these applets.
 Fixed, with `packages/box/test/operand_errors.test.ts` as the sweep, against the real tools.
 
 **Two more wordings.** `tac` says "failed to open 'x' for reading" and `split` says "cannot open 'x' for

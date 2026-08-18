@@ -126,7 +126,7 @@ reference answer.
 
 > Landed 2026-08-08, and it had not existed until then: `deno task corpus:backings` runs all 817 of
 > `packages/sh`'s corpus through **three** backings — memory, an image, and a host mount — and
-> `packages/box/test/backings.test.ts` runs the gate's share. All 817 agree. The test that matters most
+> `packages/box/test/wac/backingsprocess_test.wac` runs the gate's share. All 817 agree. The test that matters most
 > is the third one, which checks the image *persists across processes* and the memory session does not:
 > three identical things would agree perfectly, and a differential that cannot tell its subjects apart
 > reports nothing while looking busy.
