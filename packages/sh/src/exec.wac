@@ -38,7 +38,7 @@ import { serveOn } from "../../fs/src/serve.wac";
 // From `fmt`, where the one implementation lives — this package used to have its own copy.
 import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
-import { Arith, errorToken, evaluate } from "./arith.wac";
+import { Arith, arithNotImplemented, errorToken, evaluate } from "./arith.wac";
 import { Fs } from "../../fs/src/fs.wac";
 
 /**
@@ -4770,6 +4770,18 @@ string expandArith(Shell sh, string text) {
   // Substituted until it stops changing, because a value may itself name a variable: bash gives
   // 7 for `a=b; b=c; c=7; echo $((a))`. Bounded, because `x=x` is a cycle — bash calls that
   // "expression recursion level exceeded" and so, in its own words, does this.
+  // **Before the names go**, because after substitution there is nothing left to recognise: `++x`
+  // becomes `++5` and evaluates to 5 with nothing incremented, and `x=7` becomes `5=7` and is reported
+  // as the caller's syntax error. Both are this shell being unfinished. `arithNotImplemented` says so.
+  string missing = arithNotImplemented(text);
+  if (missing != "") {
+    sh.err(("sh: " + text + ": `" + missing + "` is not implemented: assignment and increment write " +
+            "the value back, and this evaluator sees the expression after its names are substituted\n")
+      .toBytes());
+    sh.exiting = true;
+    sh.exitCode = 1;
+    return "";
+  }
   string expanded = text;
   bool settled = false;
   // **The cycle is detected rather than counted out**, and the difference is which name gets blamed.

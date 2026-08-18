@@ -256,3 +256,58 @@ Deno.test({
     }
   },
 });
+
+// **Arithmetic assignment and increment: a gap that read as the caller's mistake, and one that read as
+// nothing at all.**
+//
+// The caller substitutes variables before the evaluator sees the expression — that split is what makes
+// `a=b; b=c; c=7; echo $((a))` answer 7 — so `$((x++))` arrives as `5++` and `$((x=7))` as `5=7`, and
+// both came back as *syntax errors*: this shell telling a caller their bash is malformed when it is
+// this shell that is unfinished. `$((++x))` was worse: `++5` parses as two unary pluses, so it answered
+// **5** where bash answers 6, having incremented nothing and said nothing.
+//
+// The forms are recognised before substitution now, and refused by name. The half that must keep
+// working is the reason the check looks at the *name* beside the operator rather than the operator:
+// `5--3` is `5 - (-3)` and answers 8 in both shells.
+Deno.test("arithmetic increment and assignment are refused by name, not called syntax errors", async () => {
+  const { buildApp } = await import("../../platform/build.ts");
+  const built = await Deno.makeTempFile({ prefix: "wacsh-arith-" });
+  try {
+    await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });
+    const run = (script: string) => {
+      const r = new Deno.Command(built, {
+        args: ["-c", script],
+        stdout: "piped",
+        stderr: "piped",
+        env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+        clearEnv: true,
+      }).outputSync();
+      const dec = new TextDecoder();
+      return { out: dec.decode(r.stdout).trim(), err: dec.decode(r.stderr).trim() };
+    };
+
+    for (const script of ["x=5; echo $((x++))", "x=5; echo $((++x))", "x=5; echo $((x=7))",
+                          "x=5; echo $((x+=2))", "x=5; echo $((x--))"]) {
+      const { out, err } = run(script);
+      if (!err.includes("is not implemented")) {
+        throw new Error(`${script}: expected a refusal naming the gap, got ${JSON.stringify(err)}`);
+      }
+      if (err.includes("syntax error")) {
+        throw new Error(`${script}: called the caller's expression malformed: ${JSON.stringify(err)}`);
+      }
+      if (out !== "") throw new Error(`${script}: answered ${JSON.stringify(out)} as well`);
+    }
+
+    // The cases that are not increments, and must not become refusals: a subtracted negative, and the
+    // comparisons whose spelling contains `=`.
+    for (const [script, want] of [["echo $((5--3))", "8"], ["echo $((7 - -3))", "10"],
+                                  ["echo $((1==1))", "1"], ["echo $((2!=1))", "1"],
+                                  ["x=3; echo $((x<=3))", "1"], ["x=3; echo $((x>=4))", "0"]]) {
+      const { out, err } = run(script);
+      if (out !== want) throw new Error(`${script}: got ${JSON.stringify(out)} want ${want} (${err})`);
+    }
+  } finally {
+    await Deno.remove(built);
+  }
+});
+

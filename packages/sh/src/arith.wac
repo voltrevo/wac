@@ -64,6 +64,56 @@ export struct Arith {
  *
  * `bad` on the returned state says whether the answer means anything.
  */
+/** A byte that may start a shell variable name. */
+bool nameStart(i32 c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+/** A byte that may continue one. */
+bool nameByte(i32 c) { return nameStart(c) || (c >= '0' && c <= '9'); }
+
+/**
+ * The unimplemented arithmetic form in `text`, or `""` — increment, decrement, or assignment.
+ *
+ * **Asked before the names are substituted, because afterwards there is nothing to recognise.** The
+ * caller resolves variables first (see `evaluate`), so `$((++x))` arrives here as `++5` and parses as
+ * two unary pluses: bash answers 6 and this answered **5**, silently, having modified nothing. `x++`
+ * and `x=7` arrive as `5++` and `5=7` and produce *syntax errors*, which say the caller's expression is
+ * malformed when it is this shell that is unfinished — the distinction `test/gaps.test.ts` is built on.
+ *
+ * Recognised by the name beside the operator rather than by the operator alone, because `5--3` is
+ * `5 - (-3)` in bash and evaluates to 8 here already; only a name makes it a decrement. Assignment is
+ * an `=` that is not part of `==`, `!=`, `<=` or `>=`, with a name to its left.
+ */
+export string arithNotImplemented(string text) {
+  u8[] s = text.toBytes();
+  for (i32 i = 0; i + 1 < s.len(); i++) {
+    if ((s[i] == '+' && s[i + 1] == '+') || (s[i] == '-' && s[i + 1] == '-')) {
+      // A *name* to the left, not merely a name byte: `5--3` is `5 - (-3)` in bash and answers 8, and a
+      // digit is a name byte because `x1` is a name. So the run is walked back to its first character,
+      // which a number cannot start with.
+      i32 k = i - 1;
+      while (k >= 0 && nameByte(s[k])) { k = k - 1; }
+      bool before = k < i - 1 && nameStart(s[k + 1]);
+      bool after = i + 2 < s.len() && nameStart(s[i + 2]);
+      if (before || after) { return s[i] == '+' ? "++" : "--"; }
+    }
+  }
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s[i] != '=') { continue; }
+    if (i + 1 < s.len() && s[i + 1] == '=') { continue; }              // ==
+    if (i > 0 && (s[i - 1] == '=' || s[i - 1] == '!' ||
+                  s[i - 1] == '<' || s[i - 1] == '>')) { continue; }   // ==, !=, <=, >=
+    // Skip one compound-assignment operator, then any spaces, and see whether a name ends there.
+    i32 j = i - 1;
+    if (j >= 0 && (s[j] == '+' || s[j] == '-' || s[j] == '*' || s[j] == '/' || s[j] == '%' ||
+                   s[j] == '&' || s[j] == '|' || s[j] == '^')) { j = j - 1; }
+    while (j >= 0 && s[j] == ' ') { j = j - 1; }
+    if (j >= 0 && nameByte(s[j])) { return "="; }
+  }
+  return "";
+}
+
 export i64 evaluate(string text, Arith state) {
   state.src = text.toBytes();
   state.at = 0;

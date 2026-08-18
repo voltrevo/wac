@@ -348,9 +348,13 @@ compile error: duplicate binding.
 The `else` arm narrows nothing — its subject is still the enum type, which is the
 whole reason to be in `else`.
 
-Narrowing costs nothing at run time. The `br_table` on the tag has already selected
-the arm, so the binding is an unchecked downcast: the same instruction an explicit
-`as!` would emit, minus the type test that the dispatch made redundant.
+Narrowing costs nothing at run time. The dispatch on the tag has already selected the
+arm, so the binding is an unchecked downcast: the same instruction an explicit `as!`
+would emit, minus the type test that the dispatch made redundant.
+
+That dispatch is a **comparison chain**, not a `br_table` — the section below says so and
+the emitter does so. This paragraph said `br_table` and had been describing an
+implementation that does not exist since the arms were first narrowed.
 
 ### Recursion
 
