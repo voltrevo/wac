@@ -1769,3 +1769,121 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
   "funcrefs and reference casts");
   return t.report();
 }
+
+/**
+ * The whole cast law, now that the sweep has been over every pair of types four times.
+ *
+ * Three worlds rather than one table. **Value to value** is the numeric tables, measured long ago.
+ * **Value to reference and back** is never a conversion at all — a number and a reference share no
+ * representation. **Reference to reference** is a widening with `as` and a checked narrowing with
+ * `as!`, and never `as~` or `as@`.
+ */
+export string test_rung3_the_cast_law_across_all_three_worlds(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; } struct Base { i32 b; } struct Sub : Base { i32 s; } " +
+             "enum E { A, B } ";
+  caughtAndQuiet(t, cli, string[](
+    // A self-cast is redundant whichever spelling is used, not only the plain one.
+    d + "export void f(i32 a) { i32 v = a as i32; }",
+    d + "export void f(i32 a) { i32 v = a as! i32; }",
+    d + "export void f(i32 a) { i32 v = a as~ i32; }",
+    d + "export void f(i32 a) { i32 v = a as@ i32; }",
+    // Crossing between values and references, in both directions and every spelling.
+    d + "export void f(i32 a) { string v = a as string; }",
+    d + "export void f(i32 a) { P v = a as! P; }",
+    d + "export void f(i32 a) { i32[] v = a as~ i32[]; }",
+    d + "export void f(string a) { i32 v = a as i32; }",
+    d + "export void f(E a) { i32 v = a as! i32; }",
+    // Reference to reference: `as~` and `as@` are never right.
+    d + "export void f(Sub a) { Base v = a as~ Base; }",
+    d + "export void f(Base a) { Sub v = a as@ Sub; }",
+    d + "export void f(P a) { P v = a as~ P; }",
+    // The wrong spelling for the direction.
+    d + "export void f(Sub a) { Base v = a as! Base; }",
+    d + "export void f(Base a) { Sub v = a as Sub; }",
+    d + "export void f(P a) { P? v = a as! P?; }",
+    d + "export void f(P? a) { P v = a as P; }",
+    // Both halves of the direction, independently: the type does not widen, or the nullability does
+    // not.
+    d + "export void f(P? a) { Base? v = a as Base?; }",
+    d + "export void f(string a) { P v = a as P; }"),
+  string[](
+    // The safe direction with `as`, and the checked one with `as!`.
+    d + "export void f(Sub a) { Base v = a as Base; }",
+    d + "export void f(Base a) { Sub v = a as! Sub; }",
+    d + "export void f(P a) { P? v = a as P?; }",
+    d + "export void f(P? a) { P v = a as! P; }",
+    d + "export void f(P? a) { P? v = a as P?; }",
+    d + "export void f(Sub a) { Base? v = a as Base?; }",
+    d + "export void f(P? a) { Base? v = a as! Base?; }",
+    // A string is a reference: casting one to itself is ordinary, where an `i32` to an `i32` is not.
+    d + "export void f(string a) { string v = a as string; }",
+    d + "export void f(i32[] a) { i32[] v = a as i32[]; }",
+    d + "export void f(E a) { E v = a as E; }",
+    // The value tables, untouched by any of this.
+    d + "export void f(i32 a) { i64 v = a as i64; }",
+    d + "export void f(i64 a) { i32 v = a as~ i32; }",
+    d + "export void f(i32 a) { u32 v = a as@ u32; }",
+    // `i31ref` is the one type that crosses: lossy going in, lossless coming back.
+    d + "export void f(i32 a) { i31ref v = a as! i31ref; }",
+    d + "export void f(i31ref a) { i32 v = a as i32; }"),
+  "the cast law");
+  return t.report();
+}
+
+/**
+ * The three that finished the reference corpus, and what each needed that the checker did not have.
+ *
+ * None of them was a rule nobody had thought of. Each was blocked on a *fact the checker did not
+ * record*, which is a different kind of gap and took a table rather than a branch:
+ *
+ * - a `case` arm had no **position**, because a `Case` is not a `Stmt`;
+ * - a method call had no **type**, because nothing recorded what a method returns;
+ * - a static method had no **signature**, because nothing recorded its parameters.
+ *
+ * The middle one is the interesting one. `this.getInner().mutate()` reads like a way to launder
+ * constness — hand the field out through an accessor and call the mutating method on what comes
+ * back — and the language refuses it. What decides is the **receiver**, not the return type: a method
+ * called on something const returns something const.
+ */
+export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_value(
+    Core core, Cli cli) {
+  T t = T.create();
+  string inner = "struct Inner { i32 val; void mutate(this) { this.val = 1; } } ";
+  caughtAndQuiet(t, cli, string[](
+    // A case value is an i32 like the subject, and the complaint names the `case` keyword.
+    "export void f(i32 x) { switch (x) { case true: { } default: { } } }",
+    "export void f(i32 x) { switch (x) { case 1: { } case true: { } default: { } } }",
+    // Constness survives an accessor.
+    inner + "struct O { Inner inner; Inner get(const this) { return this.inner; } " +
+            "void t(const this) { this.get().mutate(); } }",
+    // A static named without being called is a funcref, so this is an ordinary mismatch.
+    "struct S { S make() { return S(); } } export void f() { i32 x = S.make; }",
+    // A method call is typed now, so its result is checked where it lands.
+    "struct C { i32 n; i32 get(const this) { return this.n; } } " +
+    "export string f(C c) { return c.get(); }",
+    "struct C { i32 n; i32 get(const this) { return this.n; } } " +
+    "export void f(C c) { bool b = c.get(); }"),
+  string[](
+    // A case value that is an integer, in every width the subject could be.
+    "export void f(i32 x) { switch (x) { case 1: { } default: { } } }",
+    "export void f(i32 x) { switch (x) { case 1: { } case 2: { } } }",
+    // The same accessor chain through a receiver that is not const.
+    inner + "struct O2 { Inner inner; Inner get(this) { return this.inner; } " +
+            "void t(this) { this.get().mutate(); } }",
+    // A const method called on a const receiver is fine; it is the *mutating* one that is not.
+    inner + "struct O3 { Inner inner; Inner get(const this) { return this.inner; } " +
+            "i32 t(const this) { return this.get().val; } }",
+    // A static assigned to a funcref of its own signature.
+    "struct S { S make() { return S(); } } export void f() { fn[S()] g = S.make; }",
+    "struct S { i32 n; i32 twice(i32 a) { return a + a; } } " +
+    "export void f() { fn[i32(i32)] g = S.twice; }",
+    // A method call whose result is used at its own type.
+    "struct C { i32 n; i32 get(const this) { return this.n; } } " +
+    "export i32 f(C c) { return c.get(); }",
+    // A generic's method, read in the instantiation's world.
+    "struct Box<T> { T v; T get(const this) { return this.v; } } " +
+    "export i32 f(Box<i32> b) { return b.get(); }"),
+  "a case, a method's return, a static as a value");
+  return t.report();
+}
