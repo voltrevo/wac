@@ -20,7 +20,6 @@
 import { diagnoseGraph, emitFiles, bindgenFiles, bindgenDeclinedFiles,
          emitFilesSelfDescribing, wireHasErrors } from "../../src/api.wac";
 import { Cli, Exec, Change } from "../../../platform/src/platform.wac";
-import { slice } from "../../../bytes/src/slice.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, splitLines, startsWith, trimmed } from "../../../wactest/src/strings.wac";
 
@@ -164,74 +163,6 @@ export Ran runModule(Cli cli, u8[] wasm, string dir, string name, string[] args)
   if (!r.ran()) { return notRun("the wac binary did not run " + path + " — " + r.error); }
   string err = string.fromBytes(r.stderr);
   return Ran(true, "", r.status, err.indexOf(" trapped") >= 0, string.fromBytes(r.stdout), err);
-}
-
-/** Every exported function of a module: `names[i]` is at `indices[i]`. */
-export struct Exports {
-  string[] names;
-  i32[] indices;
-}
-
-/** LEB128 unsigned, advancing `pos[0]`. */
-i32 leb(u8[] b, i32[] pos) {
-  i32 r = 0;
-  i32 shift = 0;
-  i32 x = 0x80;
-  while ((x & 0x80) != 0 && pos[0] < b.len()) {
-    x = b[pos[0]];
-    pos[0] = pos[0] + 1;
-    r = r | ((x & 0x7F) << shift);
-    shift = shift + 7;
-  }
-  return r;
-}
-
-/**
- * The module's own export section — **the only place a name and an index appear together**.
- *
- * Read out of the bytes rather than asked of the compiler. `namesFiles` answers the same question
- * from the *link*, which makes it the emitter's account of what it emitted: a function the emitter
- * dropped could still be named there, and a test comparing the two would agree about something that
- * is not in the module. `issues/lang/0090` is that failure, so the check for it has to read the
- * artefact.
- *
- * Section 7 is exports; kind 0 is a function. An empty answer for a module with no export section is
- * the right answer, not a parse failure.
- */
-export Exports exportedFunctions(u8[] b) {
-  i32[] pos = i32[1]();
-  pos[0] = 8;                       // past the magic and the version
-  i32 at = -1;
-  while (pos[0] < b.len()) {
-    i32 id = b[pos[0]];
-    pos[0] = pos[0] + 1;
-    i32 size = leb(b, pos);
-    if (id == 7) { at = pos[0]; }
-    pos[0] = pos[0] + size;
-  }
-  if (at < 0) { return Exports(string[0](fill: ""), i32[0]()); }
-
-  pos[0] = at;
-  i32 n = leb(b, pos);
-  string[] names = string[n](fill: "");
-  i32[] indices = i32[n]();
-  i32 k = 0;
-  for (i32 i = 0; i < n; i++) {
-    i32 len = leb(b, pos);
-    string name = string.fromBytes(slice(b, pos[0], pos[0] + len));
-    pos[0] = pos[0] + len;
-    i32 kind = b[pos[0]];
-    pos[0] = pos[0] + 1;
-    i32 idx = leb(b, pos);
-    if (kind != 0) { continue; }    // 0 is a function; a memory or a global is not one
-    names[k] = name;
-    indices[k] = idx;
-    k = k + 1;
-  }
-  string[] outN = string[k](fill: "");
-  i32[] outI = i32[k]();
-  for (i32 i = 0; i < k; i++) { outN[i] = names[i]; outI[i] = indices[i]; }
-  return Exports(outN, outI);
 }
 
 /** What `wac validate` said about a batch of modules. */

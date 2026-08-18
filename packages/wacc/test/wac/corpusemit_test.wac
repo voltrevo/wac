@@ -31,8 +31,8 @@ import { has, joined, trimmed, startsWith, splitLines } from "../../../wactest/s
 import { Core, Cli } from "../../../platform/src/platform.wac";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
-import { Validated, validateAll, scratchDir, Exports,
-         exportedFunctions } from "./artifacts_probe.wac";
+import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";
+import { exportedFunctions } from "./wasm_probe.wac";
 
 /** The word after `export`, when the declaration is a plain function. */
 string exportedFunctionOn(string line) {

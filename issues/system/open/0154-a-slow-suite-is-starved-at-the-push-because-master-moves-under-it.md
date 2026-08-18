@@ -159,7 +159,7 @@ taken:
 Run after a day of broad checker and emitter changes — cross-module type resolution, four recall
 fixes, bound method references, a warning channel — **none of which any whole-suite run had exercised
 against the whole corpus**, because that is exactly what the lane holds: `checked.test.ts` puts every
-file through the checker, `corpusemit_test.wac` every file through the emitter, `names.test.ts` 176,210
+file through the checker, `corpusemit_test.wac` every file through the emitter, `names_test.wac` 176,210
 functions across 364 modules.
 
 **That lane got more expensive on 2026-08-17, and the first explanation given for it was wrong.**

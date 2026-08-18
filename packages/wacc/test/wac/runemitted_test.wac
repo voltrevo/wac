@@ -19,8 +19,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Change } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-import { Ran, runEmitted, runEmittedOne, scratchDir, Exports,
-         exportedFunctions } from "./artifacts_probe.wac";
+import { Ran, runEmitted, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
+import { Exports, exportedFunctions } from "./wasm_probe.wac";
 import { emitFiles } from "../../src/api.wac";
 import { has, joined, contains } from "../../../wactest/src/strings.wac";
 
