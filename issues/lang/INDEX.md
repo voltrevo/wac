@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0155](open/0155-a-build-that-emitted-no-code-reports-success.md) | a build whose emit produced no code writes a manifest-only module and exits 0, and running an export it lists exits 0 too | diagnostic | no error |
+| [0155](open/0155-a-build-that-emitted-no-code-reports-success.md) | a build whose emit produced no code writes a manifest-only module and exits 0 | diagnostic | no error |
 | [0154](open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md) | an exported struct name that collides in a link produces a module whose manifest lists exports it does not have, and *other* files fail | bug | invalid wasm |
 | [0153](open/0153-a-build-cost-two-emits-and-five-front-ends-and-what-is-left.md) | a build cost two emits and five front ends; what is left after fixing that | performance | no error |
 | [0152](open/0152-wacc-warns-that-a-downcast-out-of-anyref-always-traps-and-it-does-not.md) | wacc warns that a downcast out of `anyref` always traps, and it does not | diagnostic | wrong answer |

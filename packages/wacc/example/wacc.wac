@@ -368,6 +368,21 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
 
+  // **A module with no sections is not a module.** `blocked` above is the emitter *declining*, with a
+  // reason in words. This is the emitter answering with the eight-byte header and nothing after it, which
+  // has happened: `issues/lang/0154` reaches it, and the build reported `73846 bytes from 72 file(s)` and
+  // exited 0, because the manifest section appended to a bare header makes the file look substantial. The
+  // size line is the one number a person checks, and it agreed with the failure.
+  //
+  // So: nothing written, and a non-zero exit. `issues/lang/0155`.
+  if (wasm.len() <= 8) {
+    core.warn("wacc: the emitter produced no code for " + entry + " — " + itoa(wasm.len()) +
+              " bytes is the wasm header and no sections at all, so nothing was written. Nothing was " +
+              "declined either, which is what makes this a defect in the emitter rather than in the " +
+              "program: issues/lang/0154 is the one known way to reach it.");
+    return 1;
+  }
+
   // **`bindgen` writes the glue a host calls the module through**, beside the entry — `main.gen.ts`,
   // or `main.gen.js` with `--js`, since a browser cannot import TypeScript. What it cannot bind is
   // reported rather than skipped: a caller told `makeP(i32) -> P` was declined can change the

@@ -23,18 +23,16 @@ $ echo $?
 is no type section, no function section, no code section and no export section. Every byte of the file is
 the manifest and the eight-byte header.
 
-```
-$ wac .cache/agg.wasm test_zz_trivial__f0
-wac: test_zz_trivial__f0 is not callable
-$ echo $?
-0
-```
+Expected: a build that could not emit says so and exits non-zero.
 
-Expected: a build that could not emit says so and exits non-zero; a program that could not be run does the
-same.
+Actual: it reports success, and the artefact left behind looks like a module — it has the magic number, the
+version, and a manifest a reader will believe.
 
-Actual: both report success, and the artefact left behind looks like a module — it has the magic number,
-the version, and a manifest a reader will believe.
+**A correction, because this issue first said two things and only one was true.** Running an export the
+manifest lists answers `wac: test_zz_trivial__f0 is not callable` — and `native/v8/src/main.rs` returns **1**
+for that, correctly. The first version of this issue claimed exit 0 there as well; that reading came from
+`… | tail -2`, so what was reported was the pipe's status and not the program's. Only the build half is a
+defect.
 
 ## Why this one first
 
@@ -44,6 +42,16 @@ or it failed, and there is no third answer worth putting on disk.
 
 The size line makes it worse rather than better. `73846 bytes from 72 file(s)` is exactly what a successful
 build of a large graph looks like, so the one number a person checks agrees with the failure.
+
+## Fixed in the CLI, 2026-08-18
+
+`packages/wacc/example/wacc.wac` refuses to write a module of eight bytes or fewer and returns 1, with a
+message that says the emitter produced no code and that nothing was declined — the distinction between this
+and the `blocked` path above it, which is the emitter declining *with a reason*. Verified against the
+trigger: exit 1, no file written. A source with no functions at all still builds (2,117 bytes), so the
+threshold does not catch anything legitimate.
+
+That is the reporting half. The emit itself is still `issues/lang/0154`.
 
 ## Where to look
 
