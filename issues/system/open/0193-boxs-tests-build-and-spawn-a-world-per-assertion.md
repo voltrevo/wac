@@ -157,3 +157,52 @@ handful of questions. `0192` on the wac side is worth more than every remaining 
 put together — 205 wac test files at ~6 s of compile each — and it is what would make the other ~60
 assertions nearly free to move.
 
+## What stays out of pure wac, written down before the sweep — 2026-08-18
+
+The sweep's target is that `packages/box` asserts in wac, in process, against expectations captured once.
+This is the list of what is *not* that, and why — so the exceptions are a decision rather than whatever
+happens to be left when the sweep runs out of energy. Everything not on this list should end up a
+`*_test.wac` with no build and no spawn.
+
+**1. Standard input that is open and silent** — `issues/system/0195`. A `Frame`'s stdin is a `u8[]`, so
+empty means end of input, and the difference between "no input" and "a terminal that has not typed yet"
+has no spelling. That difference *is* wac-mono 0113: a pipeline whose first stage produced no bytes hung
+only under the held shape. Needs a real process until a frame can express it. Should be a targeted set of
+pipeline-shaped scripts, not the whole generated corpus.
+
+**2. An image outliving its process** — `backings.test.ts`. What makes an image an image is that a
+*second* process finds what the first wrote, and what makes a sealed session sealed is that it does not.
+Both claims are about process boundaries and neither can be asked inside one. This is also the canary that
+stops the whole three-backing differential being vacuous, so it earns its spawns.
+
+**3. Capabilities, as the built artefact enforces them** — `sealing.test.ts`, `sealed.test.ts`,
+`bin/`'s per-applet grants, `pipeUngranted.test.ts`. A refusal is a property of the manifest baked into a
+module and of the host that reads it. In process, the test's own grants are ambient and a refusal test
+would be asserting against a world it is standing in — the opposite of what it claims. These build a
+program with a stated grant set and run it. See [[no-ambient-capabilities]]: a program gets what it
+declared, and only the boundary can say so.
+
+**4. A host that is not this one** — `node_shell.test.ts` (the point is Node), `rasterterm_live.test.ts`
+(a real browser, real pixels, real keystrokes). Neither is expressible from inside a wac test, because the
+claim is about the runtime the artefact lands in.
+
+**5. That the two routes are genuinely two** — `routes.test.ts`. The in-process route is only worth
+running if it is the same program as the spawned one, and that agreement goes vacuous the moment
+`boxsh` starts spawning. One spawned comparison keeps the rest honest. Two cases, not eighty-three.
+
+**6. One build-and-spawn smoke test per area.** The whole point of moving in process is that the
+in-process route and the shipped artefact are one program; something has to keep saying so.
+
+**7. Live canaries.** Each captured-vector file keeps a handful of cases asked of the real tool every run,
+so a changed environment is noticed on the day rather than at the next capture. Deliberate, small, and
+named as canaries where they sit.
+
+**8. Tests about the Deno artefact itself** — what `buildApp` writes into a shebang, and which grants
+appear there. That is a claim about a TypeScript-generated file and belongs in TypeScript.
+
+Everything else — every applet differential, every operand and flag refusal, every shell behaviour, the
+`ENOTDIR` sweep, the three backings — is expectations that do not change between runs, and belongs in
+`*_test.wac` replaying captured vectors in process.
+
+**The number this predicts**: on the order of 100 spawns for the package, against 1 701 today.
+
