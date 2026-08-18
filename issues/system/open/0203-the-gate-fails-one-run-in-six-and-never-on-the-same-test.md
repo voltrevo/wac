@@ -45,10 +45,20 @@ in `packages/ssh/test/wac/wacsshd.wac`. What is missing is a sweep.
 
 ## What to do, in order
 
-1. **Sweep the unconditional sleeps.** `grep -rnE "setTimeout\(r, [0-9]{3,}\)" packages/*/test/*.ts` finds
-   the ones that are not `Promise.race` deadlines: `packages/platform/test/aliasing.test.ts` (1500ms) and
-   `packages/webrtc/test/browser.test.ts` (1200ms twice, 5000ms once) at the time of writing. Each is a
-   guess about how busy the machine is.
+1. ~~**Sweep the unconditional sleeps.**~~ Done, 2026-08-18, and it was three sites rather than a class:
+
+   - `packages/platform/test/aliasing.test.ts` (1500ms) — a fake server "holding the connection" for a
+     fixed time, which is a guess that the reader finishes inside it *and* a guarantee the test waits out
+     whatever is left. It holds on a signal now, released by the `close()` the test already calls in its
+     `finally`. Two tests in 11ms rather than 1.5s.
+   - `packages/webrtc/test/browser.test.ts` (1200ms, twice) — **deliberate, left alone.** A data channel
+     closing and a peer connection closing are different events at the SCTP layer, and the pause exists so
+     that whatever arrives after each is attributable to that one. There is no state to wait for; the pause
+     *is* the observation. Recorded here so the next reader does not re-derive it.
+   - the same file's 5000ms is a `Promise.race` deadline on ICE gathering with an event resolving it early,
+     which is the shape everything else is being converted *to*.
+
+   So the remaining candidates are not unconditional sleeps. They are the three undiagnosed files below.
 2. **Then the three undiagnosed files above**, by running them under deliberate load rather than waiting
    for the gate to catch them again — `taskset`/parallel `wac test` on the same box reproduces it, which is
    how the ssh one was found.

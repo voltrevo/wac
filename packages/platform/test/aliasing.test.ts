@@ -45,21 +45,34 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-/** A listener that writes `body` once someone connects, then holds the connection. */
+/**
+ * A listener that writes `body` once someone connects, then holds the connection until it is closed.
+ *
+ * **Held on a signal, not for 1500ms.** It slept, and a fixed hold is two guesses in one: that the reader
+ * will be done within it — which is a race with however busy the machine is — and that the test should then
+ * wait out whatever is left of it, which it did, in the `allSettled` at the end. `close()` releases it, and
+ * `close()` is already called in the test's `finally` before `done` is awaited. `issues/system/0203` is the
+ * measured cost of this shape: five of twenty-eight gate runs in one day, each on a different test.
+ */
 function speaker(body: string): { port: number; close: () => void; done: Promise<void> } {
   const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const port = (l.addr as Deno.NetAddr).port;
   let conn: Deno.Conn | null = null;
+  let release = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
   const done = (async () => {
     try {
       conn = await l.accept();
       await conn.write(new TextEncoder().encode(body));
-      await new Promise((r) => setTimeout(r, 1500));
+      await held;
     } catch { /* closed under us */ }
   })();
   return {
     port,
     close: () => {
+      release();
       try { conn?.close(); } catch { /* already */ }
       try { l.close(); } catch { /* already */ }
     },
