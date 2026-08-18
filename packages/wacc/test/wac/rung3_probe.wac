@@ -72,6 +72,14 @@ export struct Ref {
   string[] sources;
   string[] at;
   string[] said;
+  /**
+   * Which sources the reference's own front end would not parse.
+   *
+   * The grids build combinations mechanically and some of them are not programs at all — the
+   * reference throws rather than answering. A hand-written list has no business containing one, so
+   * `referenceFor` fails on it; a grid skips the cell, which is what `referenceTolerant` is for.
+   */
+  bool[] bad;
 
   /** How many diagnostics the reference reported for source `i`. */
   i32 count(const this, i32 i) {
@@ -97,7 +105,17 @@ export struct Ref {
  * about the fixture rather than about the checker, so it is reported as a failure of the test rather
  * than being folded into "the reference said nothing".
  */
+/** Ask, failing the test if any source is one the reference cannot read. */
 export Ref referenceFor(T t, Cli cli, string[] sources) {
+  return refAsk(t, cli, sources, true);
+}
+
+/** Ask, recording unreadable sources in `bad` instead of failing — for the generated grids. */
+export Ref referenceTolerant(T t, Cli cli, string[] sources) {
+  return refAsk(t, cli, sources, false);
+}
+
+Ref refAsk(T t, Cli cli, string[] sources, bool strict) {
   Lines lines = Lines.create();
   for (i32 i = 0; i < sources.len(); i++) {
     lines.add("checkpos " + hex(sources[i].toBytes()));
@@ -106,20 +124,28 @@ export Ref referenceFor(T t, Cli cli, string[] sources) {
                   "the reference type checker");
   string[] at = string[sources.len()](fill: "");
   string[] said = string[sources.len()](fill: "");
-  if (!a.ok) { return Ref(false, sources, at, said); }
+  bool[] bad = bool[sources.len()]();
+  if (!a.ok) { return Ref(false, sources, at, said, bad); }
   if (a.lines.len() != sources.len()) {
     t.eqI32(a.lines.len(), sources.len(), "an answer per program");
-    return Ref(false, sources, at, said);
+    return Ref(false, sources, at, said, bad);
   }
 
   for (i32 i = 0; i < sources.len(); i++) {
     string answer = a.lines[i];
     i32 sp = answer.indexOf(" ");
-    if (sp < 0) { t.fail("the reference said " + answer); return Ref(false, sources, at, said); }
+    if (sp < 0) {
+      t.fail("the reference said " + answer);
+      return Ref(false, sources, at, said, bad);
+    }
     string rest = answer.slice(sp + 1, answer.len());
     if (rest.len() >= 3 && rest.slice(0, 3) == "ERR") {
-      t.fail("the reference could not read " + sources[i] + " — " + rest);
-      return Ref(false, sources, at, said);
+      if (strict) {
+        t.fail("the reference could not read " + sources[i] + " — " + rest);
+        return Ref(false, sources, at, said, bad);
+      }
+      bad[i] = true;
+      continue;
     }
     string text = string.fromBytes(decoded(rest));
     // `line:col\tmessage` per diagnostic.
@@ -140,7 +166,7 @@ export Ref referenceFor(T t, Cli cli, string[] sources) {
     at[i] = positions;
     said[i] = quoted;
   }
-  return Ref(true, sources, at, said);
+  return Ref(true, sources, at, said, bad);
 }
 
 /**
@@ -209,6 +235,43 @@ export void decidedByReference(T t, Cli cli, string[] sources, string what) {
     if (r.count(i) == 0) { assertQuiet(t, r, i, what); continue; }
     assertCaught(t, r, i, what);
   }
+}
+
+/**
+ * The **completeness** direction: every position the reference reports, we report too.
+ *
+ * Rung 3 does not ask for this in general — the checker is a subset by design, and demanding it
+ * everywhere would fail until the whole rung is finished. It is asked where a rule is small enough
+ * to be finished, and a rule claimed to be implemented in four positions and tested in one is how
+ * the packed-type family got missed.
+ */
+export void assertComplete(T t, Ref r, i32 i, string what) {
+  string[] mine = ours(r.sources[i]);
+  string[] theirs = splitCommas(r.at[i]);
+  for (i32 k = 0; k < theirs.len(); k++) {
+    bool got = false;
+    for (i32 m = 0; m < mine.len(); m++) { if (mine[m] == theirs[k]) { got = true; } }
+    if (got) { continue; }
+    t.fail(what + ": the reference reports at " + theirs[k] + " — " + r.said[i] +
+           " — and we report at " + (mine.len() == 0 ? "nowhere" : joinedWith(mine, ", ")));
+  }
+}
+
+/** `a,b,c` as three strings; empty for "". */
+export string[] splitCommas(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == ",") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != ",") { continue; }
+    out[k] = s.slice(at, i);
+    k = k + 1;
+    at = i + 1;
+  }
+  return out;
 }
 
 /** The no-false-alarm half: the reference accepted this program, so we must be silent. */

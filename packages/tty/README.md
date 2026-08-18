@@ -99,7 +99,7 @@ failed for different reasons, which is why they were finished separately and by 
   needs another thread. It needs the shell to be able to **ask while it is busy**:
   `Shell.askInterrupt` is a funcref and an `anyref` context — the session itself, since wac has no
   closures — and `Conn.ready` is `waitAny(ids, 0)` over a read the connection already has
-  outstanding, which costs one look in this worker's own memory. `packages/ssh/test/server.test.ts`
+  outstanding, which costs one look in this worker's own memory. `packages/ssh/test/wac/wacsshd_test.wac`
   drives it with OpenSSH's own client: `while true; do :; done`, a `^C`, and then `echo alive=$?`
   printing **130** on a session that is still there.
 

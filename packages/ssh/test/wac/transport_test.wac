@@ -1,0 +1,287 @@
+// The wire types, the packet framing, the version exchange and algorithm negotiation.
+//
+// The rules these check are written down — RFC 4251 §5 for the wire types, RFC 4253 §6 for the
+// binary packet and §7.1 for negotiation — so the test vectors come from the RFCs rather than from
+// this implementation. That matters most for mpint, where the two rules a naive encoder gets wrong
+// (strip leading zeroes, then add one back when the top bit is set) each have an RFC example.
+//
+// The live counterpart is `live_test.wac`: talking to a real OpenSSH server is the only thing that
+// says the rules were read correctly, and these say the reading was implemented correctly. Neither
+// substitutes for the other — a self-consistent misreading passes everything here.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The TypeScript version reached these through `test/wac/probe.wac`, a 451-line shim flattening
+// every signature to what bindgen could carry. The flattening cost real precision: `Reader.ok` is a
+// field, and the probe exposed it as `sshReadStringOk(buf)` — a *second call* that re-parsed from
+// scratch, so "did it accept" and "what did it read" were two different parses that a stateful
+// reader could answer inconsistently. Here the reader is in reach and there is one parse.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { encode as hexEncode } from "../../../codec/src/hex.wac";
+import { Reader, Writer } from "../../src/wire.wac";
+import { Framed, Status, frame, unframe, minBlock, paddingFor } from "../../src/packet.wac";
+import { Found, Version, scanVersion, speaksV2 } from "../../src/version.wac";
+import { Proposal, clientProposal, decode, encode, negotiate } from "../../src/kexinit.wac";
+import { u32be, str, strOf, cat, ramp, filled, slice } from "./build.wac";
+
+string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+/** `unframe`'s verdict as 0 = ok, 1 = incomplete, 2 = malformed — the shape the cases are written in. */
+i32 unframeCode(u8[] buf) {
+  Framed f = unframe(buf, 0, buf.len());
+  match (f.status) {
+    case Ok: return 0;
+    case Incomplete: return 1;
+    else: return 2;
+  }
+}
+
+/** `scanVersion`'s verdict, likewise. */
+i32 scanCode(u8[] buf) {
+  Version v = scanVersion(buf, 0, buf.len());
+  match (v.status) {
+    case Ok: return 0;
+    case Incomplete: return 1;
+    else: return 2;
+  }
+}
+
+export string test_mpint_is_minimal_and_signed() {
+  // RFC 4251 §5 gives these exact encodings, which is why they are the ones checked.
+  T t = T.create();
+  string[] input = string[](
+    "",                      // zero is an empty string, not one byte
+    "00",                    // leading zeroes are stripped to nothing
+    // RFC 4251 §5's own example. It writes the value as `9a378f9b2e332a7`, an odd number of hex
+    // digits, so the byte string is `09 a3 …` — here with two leading zero bytes to strip as well.
+    "000009a378f9b2e332a7",
+    "80",                    // high bit set, so a zero byte is added
+    "ff",
+    "7f",                    // high bit clear, no padding
+    "0000ff00");             // strip, then pad
+  string[] want = string[](
+    "00000000",
+    "00000000",
+    "0000000809a378f9b2e332a7",
+    "000000020080",
+    "0000000200ff",
+    "000000017f",
+    "0000000300ff00");
+
+  for (i32 i = 0; i < input.len(); i++) {
+    // An odd-length literal would silently lose its last digit to the pairing below, and the
+    // resulting test would still look like it was checking the RFC's value.
+    t.eqI32(input[i].len() % 2, 0, "test vector " + input[i] + " is not whole bytes");
+    u8[] magnitude = u8[input[i].len() / 2]();
+    for (i32 k = 0; k < magnitude.len(); k++) {
+      magnitude[k] = digit(input[i], k * 2) * 16 + digit(input[i], k * 2 + 1);
+    }
+    Writer w = Writer.create();
+    w.mpint(magnitude);
+    t.eqStr(hex(w.take()), want[i],
+            "mpint(" + (input[i] == "" ? "empty" : input[i]) + ")");
+  }
+  return t.report();
+}
+
+i32 digit(string s, i32 at) {
+  string c = s.slice(at, at + 1);
+  if (c >= "0" && c <= "9") { return c.toBytes()[0] - '0'; }
+  return c.toBytes()[0] - 'a' + 10;
+}
+
+export string test_a_string_carries_arbitrary_binary_including_nuls() {
+  T t = T.create();
+  u8[] payload = u8[6]();
+  payload[0] = 0; payload[1] = 1; payload[2] = 0;
+  payload[3] = 255; payload[4] = 0x2c; payload[5] = 0;
+
+  Writer w = Writer.create();
+  w.str(payload);
+  u8[] wire = w.take();
+  t.eqStr(hex(wire), "00000006" + hex(payload), "framed wrong");
+
+  Reader r = Reader.over(wire);
+  u8[] back = r.str();
+  t.isTrue(r.ok, "a well-formed string did not read");
+  t.eqStr(hex(back), hex(payload), "round trip lost bytes");
+  return t.report();
+}
+
+export string test_a_truncated_or_oversized_string_is_refused_not_guessed_at() {
+  T t = T.create();
+  // Claims 8 bytes, supplies 3.
+  u8[] short = u8[7]();
+  short[3] = 8; short[4] = 1; short[5] = 2; short[6] = 3;
+  Reader a = Reader.over(short);
+  a.str();
+  t.isFalse(a.ok, "a truncated string was accepted");
+
+  // Claims 2^31 bytes: the length is negative once read into an i32, which must be rejected
+  // rather than wrapped into a small read.
+  u8[] huge = u8[7]();
+  huge[0] = 0x80; huge[4] = 1; huge[5] = 2; huge[6] = 3;
+  Reader b = Reader.over(huge);
+  b.str();
+  t.isFalse(b.ok, "a string claiming 2^31 bytes was accepted");
+
+  u8[] good = u8[7]();
+  good[3] = 3; good[4] = 1; good[5] = 2; good[6] = 3;
+  Reader c = Reader.over(good);
+  c.str();
+  t.isTrue(c.ok, "a well-formed string was refused");
+  return t.report();
+}
+
+export string test_padding_keeps_the_whole_packet_aligned_including_the_length_field() {
+  T t = T.create();
+  i32[] blocks = i32[](8, 16);
+  for (i32 bi = 0; bi < blocks.len(); bi++) {
+    i32 block = blocks[bi];
+    for (i32 n = 0; n < 64; n++) {
+      i32 pad = paddingFor(n, block);
+      string where = "payload " + itoa(n) + ", block " + itoa(block);
+      t.isTrue(pad >= 4, where + ": padding " + itoa(pad) + " is under the minimum");
+      t.eqI32((4 + 1 + n + pad) % block, 0,
+              where + ": total " + itoa(4 + 1 + n + pad) + " is not a multiple");
+      // Minimal: dropping a whole block would still leave 4 or more, so it was not chosen.
+      t.isTrue(pad - block < 4, where + ": padding " + itoa(pad) + " is not minimal");
+    }
+  }
+  return t.report();
+}
+
+export string test_a_framed_packet_unframes_to_what_went_in() {
+  T t = T.create();
+  i32 block = minBlock();
+  i32[] sizes = i32[](0, 1, 7, 8, 9, 100, 1000);
+  for (i32 i = 0; i < sizes.len(); i++) {
+    i32 n = sizes[i];
+    u8[] payload = ramp(n, 31, 0);
+    u8[] random = ramp(paddingFor(n, block), 17, 3);
+    u8[] packet = frame(payload, random, block);
+    string of = " for " + itoa(n);
+    t.eqI32(packet.len() % block, 0, "packet is not block-aligned" + of);
+    t.eqI32(unframeCode(packet), 0, "packet did not unframe" + of);
+    t.eqStr(hex(unframe(packet, 0, packet.len()).payload), hex(payload), "payload changed" + of);
+    t.eqI32(unframe(packet, 0, packet.len()).used, packet.len(), "used wrong" + of);
+
+    // One byte short is "read more", never a parse.
+    t.eqI32(unframeCode(slice(packet, 0, packet.len() - 1)), 1,
+            "a short packet was not reported as incomplete" + of);
+  }
+  return t.report();
+}
+
+export string test_a_packet_that_cannot_be_one_is_malformed_rather_than_trusted() {
+  T t = T.create();
+  // padding_length below the minimum of 4.
+  u8[] shortPad = u8[16]();
+  shortPad[3] = 12; shortPad[4] = 3;
+  t.eqI32(unframeCode(shortPad), 2, "padding under 4 bytes was accepted");
+
+  // packet_length longer than anything anyone must accept.
+  u8[] oversized = u8[8]();
+  oversized[1] = 1; oversized[4] = 8;
+  t.eqI32(unframeCode(oversized), 2, "an oversized packet length was accepted");
+
+  // padding_length larger than the packet, so the payload length goes negative.
+  u8[] padTooLong = u8[10]();
+  padTooLong[3] = 6; padTooLong[4] = 200;
+  t.eqI32(unframeCode(padTooLong), 2, "padding longer than the packet was accepted");
+
+  // A length with the top bit set arrives negative in an i32.
+  u8[] negative = u8[8]();
+  negative[0] = 0x80; negative[4] = 8;
+  t.eqI32(unframeCode(negative), 2, "a packet length of 2^31 was accepted");
+  return t.report();
+}
+
+export string test_the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out() {
+  T t = T.create();
+  u8[] withBanner =
+    ("Authorized users only.\r\nAnother line\r\nSSH-2.0-OpenSSH_9.6\r\nleftover").toBytes();
+  t.eqI32(scanCode(withBanner), 0, "banner lines were not skipped");
+  Version v = scanVersion(withBanner, 0, withBanner.len());
+  t.eqStr(string.fromBytes(v.line), "SSH-2.0-OpenSSH_9.6", "the version line");
+  // `used` must land exactly after the CR LF, so the caller's next byte is the first packet.
+  t.eqStr(string.fromBytes(slice(withBanner, v.used, withBanner.len())), "leftover",
+          "used left the wrong remainder");
+
+  // A bare LF is tolerated, and there is no CR to strip.
+  u8[] bareLf = ("SSH-2.0-Other\n").toBytes();
+  t.eqI32(scanCode(bareLf), 0, "a bare LF line was rejected");
+  t.eqStr(string.fromBytes(scanVersion(bareLf, 0, bareLf.len()).line), "SSH-2.0-Other",
+          "bare LF line mis-parsed");
+
+  // Half a line is "read more", not a verdict.
+  t.eqI32(scanCode(("SSH-2.0-Open").toBytes()), 1, "a partial line was not incomplete");
+
+  // A line that can never fit the limit is refused rather than buffered forever.
+  t.eqI32(scanCode(filled(300, 'x')), 2, "an overlong line was not refused");
+
+  t.isTrue(speaksV2(("SSH-2.0-OpenSSH_9.6").toBytes()), "SSH-2.0 was not recognised");
+  // `SSH-1.99-` is a server that speaks both and will do 2, so it is accepted on purpose. A server
+  // that only speaks 1 is not, and asserting the pair is what keeps the check from being `true`.
+  t.isTrue(speaksV2(("SSH-1.99-OpenSSH_9.6").toBytes()), "SSH-1.99 offers version 2 and was refused");
+  t.isFalse(speaksV2(("SSH-1.5-OpenSSH_9.6").toBytes()), "a version-1-only server was accepted");
+  return t.report();
+}
+
+export string test_negotiation_takes_the_clients_preference_not_the_servers() {
+  T t = T.create();
+  // Server offers both, in the opposite order to ours. Ours must win.
+  u8[] serverPayload = serverKexInit(string[](
+    "curve25519-sha256@libssh.org,curve25519-sha256",   // reversed relative to ours
+    "ssh-ed25519",
+    "chacha20-poly1305@openssh.com",
+    "chacha20-poly1305@openssh.com",
+    "hmac-sha2-256",
+    "hmac-sha2-256",
+    "none",
+    "none",
+    "",
+    ""));
+
+  t.isTrue(decode(serverPayload) is not null, "hand-built KEXINIT did not parse");
+  Proposal ours = clientProposal();
+  t.eqStr(string.fromBytes(negotiate(ours.kex, decode(serverPayload)!.kex)), "curve25519-sha256",
+          "server order won, rather than our first preference");
+  return t.report();
+}
+
+export string test_no_overlap_is_an_empty_answer_rather_than_a_default() {
+  T t = T.create();
+  string[] lists = string[10](fill: "");
+  lists[0] = "diffie-hellman-group1-sha1";     // nothing we offer
+  for (i32 i = 1; i < 10; i++) { lists[i] = i < 3 ? "none" : ""; }
+  u8[] payload = serverKexInit(lists);
+
+  Proposal? p = decode(payload);
+  t.isTrue(p is not null, "the hand-built KEXINIT did not parse");
+  if (p is null) { return t.report(); }
+  t.eqI32(negotiate(clientProposal().kex, p!.kex).len(), 0,
+          "a key exchange was negotiated with no algorithm in common");
+  return t.report();
+}
+
+/**
+ * A KEXINIT built by hand from ten name lists.
+ *
+ * Deliberately not `kexinit.encode`, which only writes *our* proposal: the point of these two tests
+ * is a peer offering something we did not, and an encoder that can only produce our own lists cannot
+ * express that. RFC 4253 §7.1 gives the layout — byte 20, a 16-byte cookie, ten name-lists, a
+ * first_kex_packet_follows boolean and a reserved uint32.
+ */
+u8[] serverKexInit(string[] lists) {
+  u8[][] parts = u8[][lists.len() + 3](fill: u8[0]());
+  u8[] head = u8[17]();
+  head[0] = 20;                              // SSH_MSG_KEXINIT, cookie left as zeroes
+  parts[0] = head;
+  for (i32 i = 0; i < lists.len(); i++) { parts[1 + i] = strOf(lists[i]); }
+  parts[lists.len() + 1] = u8[1]();          // first_kex_packet_follows
+  parts[lists.len() + 2] = u8[4]();          // reserved
+  return cat(parts);
+}

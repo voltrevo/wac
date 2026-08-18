@@ -288,7 +288,8 @@ The ratchet earned itself one tick later: `image.wac` grew `boot` and `save` —
 image or start an empty world, and write it back" that `imaged` and `sshd` had each written out — and
 the run went red with eight branches nobody had accounted for. They are recorded rather than driven,
 because driving them means fabricating a whole `Cli`, and `packages/box/test/imaged.test.ts` and
-`packages/ssh/test/server.test.ts` already drive them against real files on a real disk.
+`packages/ssh/test/wac/wacsshdimage_test.wac` already drive them against real files on a real
+disk.
 
 ## Not here yet
 

@@ -1,0 +1,358 @@
+// The SSH client, against a real OpenSSH server.
+//
+// These are the tests that can tell us the rules were read correctly rather than implemented
+// consistently. Everything else in this directory compares our encoder against our parser, and a
+// misreading shared by both passes all of it. sshd does not care what we meant: a server that
+// dislikes anything about our framing closes the connection instead of answering.
+//
+// test-lane: exclusive — a real OpenSSH server per case, on a real port. Under the parallel runner
+// these reset during the handshake — see wac-mono 0082, where `MaxStartups` and a reused port are
+// the two candidates and neither needed to be settled once the tests stopped competing with four
+// other workers.
+//
+// Host-side until 2026-08-18, `issues/system/0161`. The move changed one thing of substance: the
+// socket is `Cli.connect`/`recv`/`send` rather than `Deno.connect`, so the client that talks to
+// OpenSSH is now wac end to end — the last piece of this package that was not.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { encode as hexEncode } from "../../../codec/src/hex.wac";
+import { ALPHABET_STANDARD, decode as b64Decode } from "../../../codec/src/base64.wac";
+import { startsWith, contains, trimmed, splitLines } from "../../../wactest/src/strings.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { Verdict, lookUp as knownHost } from "../../src/knownhosts.wac";
+import { Proposal, decode as decodeKexInit, negotiate, clientProposal } from "../../src/kexinit.wac";
+import { verifyEd25519Host } from "../../src/kex.wac";
+import { speaksV2 } from "../../src/version.wac";
+import { Incoming, Window, channelClose, defaultMaxPacket, execRequest, extendedDataStderr,
+         msgChannelClose, msgChannelData, msgChannelExtendedData, msgChannelOpenConfirmation,
+         msgChannelOpenFailure, msgChannelRequest, openSession, parse, windowAdjust }
+  from "../../src/channel.wac";
+import { Session, handshake } from "./handshake.wac";
+import { Sshd, haveSshd, keygen, publicBlobText, reapSelects, restrict, scratch, startSshd,
+         stopSshd } from "./fixture.wac";
+import { flipped, ramp, slice } from "./build.wac";
+
+string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+/** A `Verdict` as its own name — the same spelling `files_test.wac` uses. */
+string verdictName(Verdict v) {
+  match (v) {
+    case Unknown: return "unknown";
+    case Match: return "match";
+    case Mismatch: return "mismatch";
+    else: return "revoked";
+  }
+}
+
+/** The account to authenticate. sshd runs as this user, so it is the only one it can accept. */
+string whoami(Cli cli) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", "id -un"), u8[0]()).wait();
+  string said = trimmed(string.fromBytes(r.stdout));
+  return said == "" ? "claude" : said;
+}
+
+export string test_connect_to_a_real_openssh_server_and_authenticate_with_a_public_key(
+    Core core, Cli cli) {
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Sshd s = startSshd(t, cli, "ssh-live-connect");
+  if (!s.ok) {
+    t.fail("sshd did not come up — " + s.error);
+    stopSshd(cli, s);
+    return t.report();
+  }
+
+  Session r = handshake(cli, s.dir, s.port, whoami(cli));
+  t.isTrue(r.ok, "the handshake did not complete — " + r.error);
+  if (!r.ok) {
+    stopSshd(cli, s);
+    return t.report();
+  }
+
+  t.isTrue(startsWith(string.fromBytes(r.serverVersion), "SSH-2.0-OpenSSH"),
+           "expected an OpenSSH server, got " + string.fromBytes(r.serverVersion));
+  t.isTrue(speaksV2(r.serverVersion), "the server is not SSH-2.0");
+
+  // Our choice must be our own first preference that the server supports — client order decides,
+  // and the server's is ignored.
+  Proposal? theirs = decodeKexInit(r.serverKexInit);
+  t.isTrue(theirs is not null, "the server's KEXINIT did not parse");
+  if (theirs is not null) {
+    Proposal ours = clientProposal();
+    t.eqStr(string.fromBytes(negotiate(ours.kex, theirs!.kex)), "curve25519-sha256",
+            "key exchange");
+    t.eqStr(string.fromBytes(negotiate(ours.hostKey, theirs!.hostKey)), "ssh-ed25519", "host key");
+    t.eqStr(string.fromBytes(negotiate(ours.cipherToServer, theirs!.cipherToServer)),
+            "chacha20-poly1305@openssh.com", "client-to-server cipher");
+    t.eqStr(string.fromBytes(negotiate(ours.cipherToClient, theirs!.cipherToClient)),
+            "chacha20-poly1305@openssh.com", "server-to-client cipher");
+
+    // Sanity that we parsed the server's lists rather than our own: OpenSSH offers several key
+    // exchanges, and a single-entry list would mean we read back what we sent.
+    string theirKex = string.fromBytes(theirs!.kex);
+    t.isTrue(contains(theirKex, ","), "the server's kex list looks wrong: " + theirKex);
+    t.isTrue(contains(theirKex, "kex-strict-s-v00@openssh.com"),
+             "the server did not offer strict KEX, so the sequence numbers do not reset");
+  }
+
+  // Tampering with H must break the signature — otherwise the handshake's own check proves nothing.
+  t.isFalse(verifyEd25519Host(r.hostKeyBlob, r.signature, flipped(r.h, 0, 1)),
+            "a signature verified over the wrong exchange hash");
+
+  // A verifying signature only proves the peer holds the key it presented — it says nothing about
+  // *which* peer. So the host key goes through known_hosts, as a real client does.
+  string wantBlob = publicBlobText(cli, s.dir + "/hostkey.pub");
+  t.isTrue(wantBlob != "", "hostkey.pub had no key in it");
+  u8[] host = ("127.0.0.1").toBytes();
+  u8[] keyType = ("ssh-ed25519").toBytes();
+  string entry = "[127.0.0.1]:" + itoa(s.port) + " ssh-ed25519 " + wantBlob + "\n";
+  t.eqStr(verdictName(knownHost(entry.toBytes(), host, s.port, keyType, r.hostKeyBlob)), "match",
+          "known_hosts did not recognise the host key");
+  t.eqStr(verdictName(knownHost(u8[0](), host, s.port, keyType, r.hostKeyBlob)), "unknown",
+          "an empty known_hosts matched");
+  // The same host and port with somebody else's key is the case the file exists to catch.
+  t.eqStr(verdictName(knownHost(entry.toBytes(), host, s.port, keyType,
+                                flipped(r.hostKeyBlob, r.hostKeyBlob.len() - 1, 1))),
+          "mismatch", "a changed host key was not caught");
+
+  // The blob we parsed out of the private key must be the one in the .pub file, or we would be
+  // offering a key the server never heard of and reading its refusal as our own bug.
+  string wantPub = publicBlobText(cli, s.dir + "/clientkey.pub");
+  u8[]? pubBytes = b64Decode(wantPub.toBytes());
+  t.isTrue(pubBytes is not null, "clientkey.pub is not base64");
+  if (pubBytes is not null) {
+    t.eqStr(hex(r.publicBlob), hex(pubBytes!),
+            "the public blob from the private key does not match clientkey.pub");
+  }
+  t.isTrue(r.sawExtInfo,
+           "no EXT_INFO, though we advertised ext-info-c — decryption may be wrong");
+
+  r.conn.close(cli);
+  stopSshd(cli, s);
+  return t.report();
+}
+
+export string test_run_a_command_on_a_real_openssh_server_and_read_its_output(Core core, Cli cli) {
+  // This is the end of the protocol — everything before it exists to make this possible. The
+  // output is deliberately many windows long, because flow control is the part that is invisible
+  // when it is wrong: a client that never sends WINDOW_ADJUST reads exactly one window and then
+  // hangs, having done nothing that any error reports.
+  //
+  // **Tagged flaky against wac-mono 0082.** Seen once in eight gate runs: `ConnectionReset` 25ms
+  // into the handshake, under the parallel suite only, passing alone immediately afterwards.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Sshd s = startSshd(t, cli, "ssh-live-exec");
+  if (!s.ok) {
+    t.fail("sshd did not come up — " + s.error);
+    stopSshd(cli, s);
+    return t.report();
+  }
+  Session r = handshake(cli, s.dir, s.port, whoami(cli));
+  t.isTrue(r.ok, "the handshake did not complete — " + r.error);
+  if (!r.ok) {
+    stopSshd(cli, s);
+    return t.report();
+  }
+
+  // A small window on purpose, so the output is many windows long and the adjustment path is
+  // exercised rather than merely present. Channel 7 rather than 0, so a client that echoed its own
+  // number back instead of the server's would fail here.
+  i32 OUR_CHANNEL = 7;
+  i32 WINDOW = 8192;
+  r.conn.send(cli, openSession(OUR_CHANNEL, WINDOW, defaultMaxPacket()));
+
+  i32 serverChannel = -1;
+  for (i32 i = 0; i < 8 && serverChannel < 0 && r.conn.ok; i++) {
+    Incoming p = parse(r.conn.next(cli));
+    if (p.kind == msgChannelOpenFailure()) {
+      t.fail("channel open refused: " + string.fromBytes(p.data));
+      break;
+    }
+    if (p.kind != msgChannelOpenConfirmation()) { continue; }
+    t.eqI32(p.channel, OUR_CHANNEL, "the confirmation was addressed to another channel");
+    serverChannel = p.senderChannel;
+  }
+  t.isTrue(serverChannel >= 0, "no channel open confirmation — " + r.conn.error);
+  if (serverChannel < 0) {
+    r.conn.close(cli);
+    stopSshd(cli, s);
+    return t.report();
+  }
+
+  r.conn.send(cli, execRequest(serverChannel, ("seq 1 100000; echo done >&2; exit 3").toBytes(),
+                               true));
+
+  Window window = Window.create(WINDOW);
+  // `Buf` rather than string concatenation: this reads about 600 KB, and `out = out + chunk` in a
+  // loop is quadratic in the number of packets.
+  Buf stdout = Buf.create();
+  Buf stderr = Buf.create();
+  i32 exitStatus = -1;
+  bool closed = false;
+  i32 adjustments = 0;
+
+  for (i32 i = 0; i < 20000 && !closed && r.conn.ok; i++) {
+    Incoming p = parse(r.conn.next(cli));
+    if (!r.conn.ok) { break; }
+    t.isTrue(p.ok, "a channel message did not parse");
+    if (!p.ok) { break; }
+
+    if (p.kind == msgChannelData() || p.kind == msgChannelExtendedData()) {
+      if (p.kind == msgChannelData()) { stdout.pushAll(p.data); }
+      else if (p.extra == extendedDataStderr()) { stderr.pushAll(p.data); }
+      // Give the credit back, or the server stops sending after one window.
+      i32 increment = window.consume(p.data.len());
+      if (increment > 0) {
+        r.conn.send(cli, windowAdjust(serverChannel, increment));
+        adjustments = adjustments + 1;
+      }
+    } else if (p.kind == msgChannelRequest()) {
+      if (string.fromBytes(p.data) == "exit-status") { exitStatus = p.extra; }
+    } else if (p.kind == msgChannelClose()) {
+      closed = true;
+    }
+  }
+
+  t.isTrue(closed, "the channel never closed — " + r.conn.error);
+  t.eqI32(exitStatus, 3, "the exit status");
+  t.eqStr(trimmed(stderr.toStr()), "done", "stderr");
+
+  string out = stdout.toStr();
+  string[] lines = splitLines(trimmed(out));
+  t.eqI32(lines.len(), 100000, "the number of output lines");
+  if (lines.len() == 100000) {
+    t.eqStr(lines[0], "1", "the first line");
+    t.eqStr(lines[99999], "100000", "the last line");
+  }
+  // The point of the large output: without window adjustments this would hang rather than fail,
+  // so assert the path was actually taken.
+  t.isTrue(adjustments >= 5,
+           "only " + itoa(adjustments) + " window adjustments for " + itoa(out.len()) + " bytes");
+
+  r.conn.send(cli, channelClose(serverChannel));
+  r.conn.close(cli);
+  stopSshd(cli, s);
+  return t.report();
+}
+
+export string test_a_known_hosts_written_by_the_real_ssh_client_is_read_correctly(
+    Core core, Cli cli) {
+  // The only way to know the hashed form is right. `HashKnownHosts` is on by default, so a real
+  // entry is `|1|<salt>|<HMAC-SHA-1(salt, name)>` and there is nothing to compare against except a
+  // file OpenSSH produced. It also pins the `[host]:port` spelling that gets hashed for a
+  // non-default port — get that wrong and every lookup silently reports "unknown", which a client
+  // shows as a first connection rather than as a bug.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Sshd s = startSshd(t, cli, "ssh-live-knownhosts");
+  if (!s.ok) {
+    t.fail("sshd did not come up — " + s.error);
+    stopSshd(cli, s);
+    return t.report();
+  }
+
+  // Let the real client connect — that is what writes the entry. Once with hashing and once
+  // without, because `-F /dev/null` drops the system default and the two forms are parsed by
+  // completely different code. Both are files OpenSSH actually produced.
+  string[] which = string[]("plain", "hashed");
+  string[] hashed = string[]("no", "yes");
+  u8[][] files = u8[][2](fill: u8[0]());
+  for (i32 i = 0; i < 2; i++) {
+    string path = s.dir + "/known_hosts_" + which[i];
+    Exec run = cli.exec("ssh",
+      string[]("-F", "/dev/null", "-i", s.dir + "/clientkey", "-p", itoa(s.port),
+               "-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=" + path,
+               "-o", "HashKnownHosts=" + hashed[i], "-o", "BatchMode=yes", "127.0.0.1", "true"),
+      u8[0]()).wait();
+    t.eqI32(run.status, 0, "ssh (" + which[i] + "): " + string.fromBytes(run.stderr));
+    if (run.status != 0) {
+      stopSshd(cli, s);
+      return t.report();
+    }
+    FileResult f = cli.readFile(path).wait();
+    t.isTrue(f.ok, "ssh wrote no " + which[i] + " known_hosts — " + f.error);
+    files[i] = f.bytes;
+  }
+
+  // Confirm each really is the form it claims, so a config change cannot quietly turn this into
+  // the same test twice.
+  t.isFalse(contains(string.fromBytes(files[0]), "|1|"), "the plain file is hashed");
+  t.isTrue(contains(string.fromBytes(files[1]), "|1|"),
+           "expected a hashed entry, got: " + string.fromBytes(files[1]));
+  // The plain form pins the `[host]:port` spelling that also gets hashed.
+  t.isTrue(startsWith(string.fromBytes(files[0]), "[127.0.0.1]:" + itoa(s.port) + " ssh-ed25519 "),
+           "unexpected plain entry: " + string.fromBytes(files[0]));
+
+  // The host key blob, as it appears in the exchange, taken from the .pub file.
+  u8[]? blobOrNull = b64Decode(publicBlobText(cli, s.dir + "/hostkey.pub").toBytes());
+  t.isTrue(blobOrNull is not null, "hostkey.pub is not base64");
+  if (blobOrNull is null) {
+    stopSshd(cli, s);
+    return t.report();
+  }
+  u8[] blob = blobOrNull!;
+  u8[] changed = flipped(blob, blob.len() - 1, 1);
+  u8[] type = ("ssh-ed25519").toBytes();
+  u8[] host = ("127.0.0.1").toBytes();
+
+  for (i32 i = 0; i < 2; i++) {
+    string what = which[i] + ": ";
+    t.eqStr(verdictName(knownHost(files[i], host, s.port, type, blob)), "match",
+            what + "the entry ssh just wrote was not recognised");
+    // One byte different is the case the file exists to catch, and must not read as unknown.
+    t.eqStr(verdictName(knownHost(files[i], host, s.port, type, changed)), "mismatch",
+            what + "a changed host key was not reported as a mismatch");
+    // The same key on another port is a different entry — the port is part of the name, and for
+    // the hashed form that means it is inside the hash.
+    t.eqStr(verdictName(knownHost(files[i], host, s.port + 1, type, blob)), "unknown",
+            what + "a lookup on the wrong port matched");
+    t.eqStr(verdictName(knownHost(files[i], ("example.com").toBytes(), s.port, type, blob)),
+            "unknown", what + "a lookup for another host matched");
+    // A different algorithm says nothing about this key — a host may have several.
+    t.eqStr(verdictName(knownHost(files[i], host, s.port, ("ssh-rsa").toBytes(), blob)), "unknown",
+            what + "an entry for another algorithm was treated as authoritative");
+  }
+
+  stopSshd(cli, s);
+  return t.report();
+}
+
+export string test_the_orphan_reaper_selects_a_server_of_this_shape(Core core, Cli cli) {
+  // **A reaper that matches nothing is indistinguishable from a clean machine.** The host-side
+  // version's first pattern was anchored at `/usr/sbin/sshd` and matched none of them, because
+  // sshd rewrites its own argv — and it passed review that way. So the selection is asserted here
+  // against a process of the shape it is meant to find, which is the only way to tell "nothing was
+  // abandoned" apart from "nothing can be seen".
+  //
+  // A sleeping script *named* `sshd` rather than a real one: the pattern reads `ps` output, so what
+  // makes a line match is the words in it, and a real sshd would need a port and a host key to say
+  // nothing more than this does. `setsid` and a background `&` from a shell that then exits are
+  // what re-parent it to init, which is the other half of what the reaper selects on — a canary
+  // whose parent were still alive would be rejected for the right reason and prove nothing.
+  T t = T.create();
+  string dir = scratch(cli, "ssh-reap-canary");
+  string config = dir + "/sshd_config";
+  cli.writeFile(config, ("# not a real server\n").toBytes()).wait();
+  cli.writeFile(dir + "/sshd", ("#!/bin/sh\nsleep 30\n").toBytes()).wait();
+  cli.setExecutable(dir + "/sshd", true).wait();
+
+  cli.exec("/bin/sh", string[]("-c",
+    "setsid " + quoted(dir + "/sshd") + " -D -f " + quoted(config) + " >/dev/null 2>&1 </dev/null &"),
+    u8[0]()).wait();
+
+  // Re-parenting is not instantaneous, so `ps` is the readiness check rather than a sleep.
+  string selected = "";
+  for (i32 i = 0; i < 400 && !contains(selected, dir); i++) { selected = reapSelects(cli); }
+  t.isTrue(contains(selected, dir),
+           "the reaper's pattern selected nothing of this shape — it would report a clean machine " +
+           "whatever was abandoned. It chose: " + (selected == "" ? "(nothing)" : selected));
+
+  cli.exec("/bin/sh", string[]("-c",
+    "pkill -f " + quoted(dir + "/sshd -D -f") + " 2>/dev/null; true"), u8[0]()).wait();
+  cli.remove(dir, true).wait();
+  return t.report();
+}

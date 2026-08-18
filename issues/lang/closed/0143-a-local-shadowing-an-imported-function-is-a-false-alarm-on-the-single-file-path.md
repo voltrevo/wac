@@ -109,7 +109,7 @@ traded this disagreement for a new one in the other direction. Both are asserted
 where the import is visible and `funcAt` finds the function before the local is consulted. Disabling
 the fix left them at 196 of 196. They document the rule on the path that works.
 
-The guard is a new test in `packages/wacc/test/typecheck.test.ts`, on the single-file path that
+The guard is a new test in `packages/wacc/test/wac/typecheck_test.wac`, on the single-file path that
 broke. It asserts only *our* silence — unlike `CLEAN` beside it, the reference is not consulted,
 because its single-file path throws outright on a program containing an import. Canaried: disabling
 the fix reddens it and the corpus sweep together, restoring it greens all 51.
@@ -122,7 +122,7 @@ rule wrong in the resolver, which the full path shares.
 
 ## It has master red
 
-`packages/wacc/test/typecheck.test.ts` — *"rung 3: the whole repo stays silent"*:
+`packages/wacc/test/wac/typecheck_test.wac` — *"rung 3: the whole repo stays silent"*:
 
 ```
 we report diagnostics in 1 file(s) that type-check cleanly:

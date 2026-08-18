@@ -1,0 +1,362 @@
+// The server on an image: a filesystem it boots from, saves to, and seals sessions inside.
+//
+// design/0001's steps 3, 4 and 7, and the first composition of three packages end to end —
+// `packages/ssh` carries the bytes, `packages/sh` runs the commands, `packages/fs` holds the
+// filesystem and writes it down — with OpenSSH's own client driving the whole thing.
+//
+// What makes these tests rather than demonstrations is the *second* connection. A session that finds
+// what the last one left is a system; one that does not is a toy, and a test that only ever connects
+// once cannot tell them apart.
+//
+// **Two server binaries, differing in one grant.** `wacsshd.wac` builds both, and the difference is
+// load-bearing: the read-only one is what every other test uses, and the first thing these found was
+// that server serving a session, doing the work, and warning it could not save — which is the right
+// behaviour and an invisible one.
+//
+// test-lane: exclusive — a real OpenSSH client against our server, on a real port.
+//
+// Host-side until 2026-08-18, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Stat } from "../../../platform/src/platform.wac";
+import { Daemon, Held, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { contains, trimmed, splitLines } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Said, Wacsshd, buildServer, realSsh, startWacsshd, stopWacsshd } from "./wacsshd.wac";
+import { haveSshd, keygen, publicBlobText, restrict, scratch } from "./fixture.wac";
+
+Wacsshd imageServer(T t, Cli cli, string name, string image) {
+  string binary = buildServer(t, cli, true);
+  if (binary == "") {
+    return Wacsshd(false, "the writable server did not build", "", -1, Daemon(-1, "", ""));
+  }
+  Wacsshd s = startWacsshd(t, cli, name, string[]("-i", image), binary);
+  if (!s.ok) { t.fail("the image server did not come up — " + s.error); }
+  return s;
+}
+
+export string test_a_server_booted_on_an_image_serves_every_session_from_it(Core core, Cli cli) {
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  string holder = scratch(cli, "wacsshd-image-holder");
+  string image = holder + "/home.wacimg";
+  Wacsshd s = imageServer(t, cli, "wacsshd-image", image);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+  string key = s.dir + "/clientkey";
+  string[] none = string[0](fill: "");
+
+  // **The commands are `packages/box`'s applets now**, over the image: sixty of them rather than the
+  // handful `packages/sh` still carries, and they read what the session reads. The edge waited on a
+  // compiler bug (wac 0076) and on applets taking an `Fs` (wac-mono 0109).
+  t.eqStr(realSsh(cli, s, "seq 1 20 > n; sort -nr n | head -3; sha256sum n | cut -c1-16; rm n",
+                  key, none).stdout,
+          "20\n19\n18\nb76ae83c50d61040\n", "the applets over the image");
+
+  // A session with no filesystem grants of its own: `/` is the image, not the server's disk.
+  t.eqStr(realSsh(cli, s, "mkdir /data; echo hello > /data/notes; ls /", key, none).stdout,
+          "bin\ndata\ndev\nproc\n", "what the session sees at the root");
+
+  // A *second connection to the same process* finds it. This is the assertion the whole thing is
+  // for: without it the test passes for a server that hands each client a fresh empty filesystem.
+  t.eqStr(realSsh(cli, s, "cat /data/notes; ls /data", key, none).stdout, "hello\nnotes\n",
+          "a second session did not find what the first left");
+
+  // And the host's own files are not reachable through it, which is what makes this offerable to a
+  // stranger — `packages/box/src/bin/sealedsh.wac` names that as the reason it exists.
+  t.isTrue(contains(realSsh(cli, s, "cat /etc/passwd; echo status=$?", key, none).stdout,
+                    "status=1"),
+           "the host's own files were reachable through a sealed session");
+
+  stopWacsshd(cli, s);
+
+  // A different server process, the same file. The image outlived the program that wrote it, which
+  // is the difference between saving state and having it.
+  Wacsshd again = imageServer(t, cli, "wacsshd-image-again", image);
+  if (again.ok) {
+    t.eqStr(realSsh(cli, again, "cat /data/notes; ls /", again.dir + "/clientkey", none).stdout,
+            "hello\nbin\ndata\ndev\nproc\n", "the image did not outlive the server that wrote it");
+  }
+  stopWacsshd(cli, again);
+  cli.remove(holder, true).wait();
+  return t.report();
+}
+
+export string test_a_session_on_an_image_shows_its_own_pipeline_in_ps(Core core, Cli cli) {
+  // design/0001 step 3's criterion, over ssh: **`ps` shows the pipeline you are running.**
+  //
+  // It could not be met for as long as a session on an image did not spawn its stages, and it did
+  // not spawn them because a spawned stage would have read the machine rather than the image
+  // (wac-mono 0116). Both halves are here in one question: three rows means three instances running
+  // at once, and `cat /etc/passwd` failing in the same session means those instances are still
+  // sealed.
+  //
+  // `seq 1 200000` rather than something short because the pipeline has to still be running when
+  // `ps` looks. A sequential shell answers this with one row however long the first stage takes.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  string holder = scratch(cli, "wacsshd-ps-holder");
+  Wacsshd s = imageServer(t, cli, "wacsshd-ps", holder + "/ps.wacimg");
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+  string key = s.dir + "/clientkey";
+  string[] none = string[0](fill: "");
+
+  Said seen = realSsh(cli, s, "seq 1 200000 | ps", key, none);
+  string[] rows = splitLines(trimmed(seen.stdout));
+  t.eqI32(rows.len(), 4, "expected a header and three rows:\n" + seen.stdout);
+  if (rows.len() == 4) {
+    t.isTrue(contains(rows[2], "seq 1 200000"), "the first stage is not in `ps`: " + rows[2]);
+    t.isTrue(contains(rows[3], "ps"), "the last stage is not in `ps`: " + rows[3]);
+  }
+
+  // The seal, in the same session and through the spawning route, so that a `ps` which showed more
+  // by reading the wrong disk would fail here rather than pass quietly.
+  //
+  // The *output*, not the status: `$?` after a pipeline is its last stage's, so `head` succeeding on
+  // nothing reports 0 whatever `cat` did — which is bash's rule and was this test's first bug.
+  t.eqStr(realSsh(cli, s, "cat /etc/passwd | head -1", key, none).stdout, "",
+          "a spawned stage read the machine");
+
+  // And a stage's writes are the session's: the next connection finds what it left.
+  t.eqStr(realSsh(cli, s, "seq 1 5 | sort -nr > /out", key, none).stdout, "",
+          "the redirection printed something");
+  t.eqStr(realSsh(cli, s, "cat /out", key, none).stdout, "5\n4\n3\n2\n1\n",
+          "what a spawned stage wrote did not survive");
+
+  stopWacsshd(cli, s);
+  cli.remove(holder, true).wait();
+  return t.report();
+}
+
+export string test_an_image_the_server_cannot_read_stops_it_before_it_binds(Core core, Cli cli) {
+  // Starting empty would be worse than stopping: the server would then *save over* the image it
+  // could not read. And it used to announce "listening on port …" first and refuse after, which is
+  // a moment in which it looks like it is working.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  string binary = buildServer(t, cli, true);
+  if (binary == "") { return t.report(); }
+
+  string dir = scratch(cli, "wacsshd-badimage");
+  string image = dir + "/bad.wacimg";
+  cli.mkdir(dir + "/.ssh", true).wait();
+  if (!keygen(t, cli, dir + "/.ssh/ssh_host_ed25519_key")) { return t.report(); }
+  restrict(cli, dir + "/.ssh/ssh_host_ed25519_key");
+  cli.writeFile(dir + "/.ssh/authorized_keys", ("").toBytes()).wait();
+  cli.writeFile(image, ("not an image").toBytes()).wait();
+
+  Held held = Held.take(cli);
+  t.isTrue(held.port > 0, "no port could be bound");
+  held.release(cli);
+  // Run to completion rather than as a daemon: the whole claim is that it *stops*.
+  Exec r = cli.exec("/bin/sh", string[]("-c",
+    "exec env HOME=" + quoted(dir) + " " + quoted(cli.cwd().wait() + "/native/v8/target/release/wac") +
+    " " + quoted(binary) + " -p " + itoa(held.port) + " -i " + quoted(image)), u8[0]()).wait();
+  string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+
+  t.neI32(r.status, 0, "the server started anyway: " + said);
+  t.isTrue(contains(said, "too short to be an image"), "it refused for another reason: " + said);
+  t.isFalse(contains(said, "listening on port"), "it bound first: " + said);
+  t.eqStr(string.fromBytes(cli.readFile(image).wait().bytes), "not an image",
+          "the unreadable image was written over");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_server_that_cannot_write_its_image_says_so(Core core, Cli cli) {
+  // The first thing the image tests found, and they found it by failing for the wrong reason: the
+  // binary every other test here uses is built without `--allow-write`, so it served the session,
+  // did the work, and could not save it. Warning and carrying on is right — the client's commands
+  // ran and their output was real — but a server that lost the session in silence would be
+  // indistinguishable.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  string binary = buildServer(t, cli, false);        // the read-only binary, deliberately
+  if (binary == "") { return t.report(); }
+  string holder = scratch(cli, "wacsshd-nowrite-holder");
+  string image = holder + "/home.wacimg";
+
+  Wacsshd s = startWacsshd(t, cli, "wacsshd-nowrite", string[]("-i", image), binary);
+  t.isTrue(s.ok, "the read-only server did not come up — " + s.error);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  t.eqStr(realSsh(cli, s, "mkdir /data; ls /", s.dir + "/clientkey", string[0](fill: "")).stdout,
+          "bin\ndata\ndev\nproc\n", "the session did not run");
+  // Read before the directory goes: `stopWacsshd` removes the log with it.
+  stop(cli, s.daemon);
+  string said = s.said(cli);
+  t.isTrue(contains(said, "could not be saved"), "it said nothing about the image: " + said);
+  t.isFalse(cli.stat(image).wait().exists,
+            "an image appeared, so the server could write after all");
+
+  stopWacsshd(cli, s);
+  cli.remove(holder, true).wait();
+  return t.report();
+}
+
+export string test_a_session_on_an_image_has_its_own_environment(Core core, Cli cli) {
+  // **design/0001's opening promise, and it was untrue.** A session sealed in an image reported
+  // `HOME=/home/claude` and a `$PATH` from the machine the server was running on, because an unset
+  // variable fell back to `cli.env` — the *server process's* environment. D4 says a session's `Cli`
+  // has `env` that is the session's.
+  //
+  // The fallback is right for `wacsh`, whose filesystem is the same machine's, and wrong here. So
+  // `Shell.onFs` turns it off: a shell whose world is a filesystem does not borrow the host's
+  // environment, which is the same rule as not spawning its stages.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  string holder = scratch(cli, "wacsshd-env-holder");
+  Wacsshd s = imageServer(t, cli, "wacsshd-env", holder + "/env.wacimg");
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  Said said = realSsh(cli, s, "echo HOME=[$HOME] PATHLEN=${#PATH} TERM=[$TERM]",
+                      s.dir + "/clientkey", string[0](fill: ""));
+  t.eqI32(said.status, 0, "the session failed: " + said.stderr);
+  t.eqStr(said.stdout, "HOME=[] PATHLEN=0 TERM=[]\n",
+          "a sealed session read the server's environment");
+
+  // The canary: this process *does* have those variables, so an empty answer above means they were
+  // withheld rather than that this machine happens to have none.
+  u8[]? home = cli.env("HOME").wait();
+  t.isTrue((home is not null) && (home!.len() > 0),
+           "this machine has no HOME, so the assertion above proves nothing");
+
+  stopWacsshd(cli, s);
+  cli.remove(holder, true).wait();
+  return t.report();
+}
+
+export string test_two_keys_land_in_two_homes_and_neither_reads_the_others_file(Core core, Cli cli) {
+  // design/0001 step 4, the whole of it, and a composition of three packages rather than a feature
+  // of any of them. `packages/fs` enforces `mode` and `owner` — which it recorded and ignored until
+  // now. `packages/fs/src/passwd.wac` reads the user table **out of the image**, per D5: a host's
+  // idea of who is logged in cannot survive a file that is one blob owned by whoever ran the
+  // process. `packages/ssh` matches the client's key against each user's own
+  // `~/.ssh/authorized_keys` and hands the session that name.
+  //
+  // The image is built by the first server through an ordinary session — there is no other way to
+  // write one, and that is the point: the system builds its own world with the tools it ships.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  string keys = scratch(cli, "wacsshd-users-keys");
+  string image = keys + "/system.wacimg";
+  string[] none = string[0](fill: "");
+
+  string[] people = string[]("ada", "grace");
+  for (i32 i = 0; i < people.len(); i++) {
+    if (!keygen(t, cli, keys + "/" + people[i])) { return t.report(); }
+    restrict(cli, keys + "/" + people[i]);
+  }
+  string adaPub = publicLine(cli, keys + "/ada.pub");
+  string gracePub = publicLine(cli, keys + "/grace.pub");
+  t.isTrue(adaPub != "" && gracePub != "", "a generated public key could not be read");
+
+  // ── The first server writes the world ──────────────────────────────────────
+  Wacsshd s = imageServer(t, cli, "wacsshd-users-build", image);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+  string build =
+    "mkdir /etc; " +
+    "printf 'ada:x:1000:1000::/home/ada:/bin/sh\ngrace:x:1001:1001::/home/grace:/bin/sh\n' " +
+      "> /etc/passwd; " +
+    "mkdir /home; mkdir /home/ada; mkdir /home/ada/.ssh; mkdir /home/grace; " +
+      "mkdir /home/grace/.ssh; " +
+    "printf '%s\n' '" + adaPub + "' > /home/ada/.ssh/authorized_keys; " +
+    "printf '%s\n' '" + gracePub + "' > /home/grace/.ssh/authorized_keys; " +
+    "echo the difference engine > /home/ada/secret; " +
+    "echo the first compiler > /home/grace/secret; " +
+    "chmod 600 /home/ada/secret; chown ada /home/ada/secret; " +
+    "chmod 600 /home/grace/secret; chown grace /home/grace/secret; " +
+    "chown ada /home/ada; chown grace /home/grace; " +
+    // **A private `.ssh`, which is what everyone is told to keep.** It is also the case that catches
+    // a server reading policy files as whoever logged in last: `authenticate` runs before it knows
+    // who this is, so it has to read as the system rather than as the previous session.
+    "chmod 700 /home/grace/.ssh; chown grace /home/grace/.ssh; " +
+    "chmod 600 /home/grace/.ssh/authorized_keys; chown grace /home/grace/.ssh/authorized_keys";
+
+  // **This session is the other half of 0126's rule**, and it is why the boundary is the user table
+  // rather than the `-i`: the image starts empty, so there is nobody to outrank, and the
+  // server-wide key is the whole policy exactly as it is with no image at all. Refusing here would
+  // mean a fresh image could never be entered to create its first user.
+  Said built = realSsh(cli, s, build, s.dir + "/clientkey", none);
+  t.eqI32(built.status, 0, "building the image failed: " + built.stderr);
+  // **The server is stopped the moment that session returns**, with no second connection in between
+  // — which is what this test could not do until 0108 was fixed. A session now writes the image
+  // *before* it tells the client the command finished, so a client that has exited means an image
+  // on disk.
+  stopWacsshd(cli, s);
+  if (built.status != 0) { cli.remove(keys, true).wait(); return t.report(); }
+
+  // The image on disk has the users, checked before anything boots it: a server that cannot serve
+  // them and an image that never got them are different failures, and the second is the one this
+  // sentence rules out.
+  string onDisk = string.fromBytes(cli.readFile(image).wait().bytes);
+  t.isTrue(contains(onDisk, "ada:x:1000") && contains(onDisk, "grace:x:1001"),
+           "the image the stopped server left behind has no users in it");
+
+  // ── …and a second server serves it, to two people ──────────────────────────
+  Wacsshd live = imageServer(t, cli, "wacsshd-users-live", image);
+  if (!live.ok) { stopWacsshd(cli, live); cli.remove(keys, true).wait(); return t.report(); }
+
+  // Each key lands in its own home, with its own name, without the server being told either.
+  t.eqStr(realSsh(cli, live, "pwd; echo $USER", keys + "/ada", none).stdout, "/home/ada\nada\n",
+          "ada did not land in her own home");
+  // Grace logs in *after* ada, and her key file is one only she may read — so this fails unless the
+  // server reads it as the system rather than as the user it last served.
+  t.eqStr(realSsh(cli, live, "pwd; echo $USER", keys + "/grace", none).stdout,
+          "/home/grace\ngrace\n", "grace did not land in her own home");
+
+  // Each can read their own.
+  t.eqStr(realSsh(cli, live, "cat /home/ada/secret", keys + "/ada", none).stdout,
+          "the difference engine\n", "ada could not read her own file");
+
+  // **And not the other's**, which is the criterion the design states.
+  Said other = realSsh(cli, live, "cat /home/grace/secret; echo status=$?", keys + "/ada", none);
+  t.eqStr(other.stdout, "status=1\n", "ada read grace's file");
+  t.isTrue(contains(other.stderr, "Permission denied"),
+           "expected a permission error, got " + other.stderr);
+
+  // **A third key, which the image knows nothing about, is refused** — `issues/system/0126`,
+  // decided 2026-08-11. It used to be `root`: `authenticate` mapped a key allowed by the server's
+  // own `-a` file to `root` when no user's `authorized_keys` named it, so it had the run of the
+  // image — it read both secrets, with an empty `$USER`, which made a session with every privilege
+  // look like a login that went half wrong.
+  Said harnessKey = realSsh(cli, live, "echo USER=[$USER]; cat /home/ada/secret",
+                            live.dir + "/clientkey", none);
+  t.isTrue(contains(harnessKey.stderr, "Permission denied"),
+           "a key that names no user in the image was admitted; 0126 says it is refused: " +
+           harnessKey.stdout + harnessKey.stderr);
+  t.eqStr(harnessKey.stdout, "", "refused and yet it ran something");
+
+  // **The system can be asked who you are**, which it could not until now: a session with
+  // `/etc/passwd`, per-user keys and enforced ownership had no `whoami` and no `id`. Found by
+  // logging in with a real client and typing the first thing anybody types.
+  //
+  // Each key gets its own answer, from the identity `packages/fs` enforces with rather than from
+  // `$USER`, which a script can overwrite — so this is the same fact the permission checks above
+  // use, asked out loud.
+  string[] uids = string[]("1000", "1001");
+  for (i32 i = 0; i < people.len(); i++) {
+    t.eqStr(realSsh(cli, live, "whoami; id -un; id -u; id -g", keys + "/" + people[i], none).stdout,
+            people[i] + "\n" + people[i] + "\n" + uids[i] + "\n" + uids[i] + "\n",
+            people[i] + " asked who they were");
+  }
+  // …and `$USER` really is a different thing, which is why it is not what those read.
+  t.eqStr(realSsh(cli, live, "USER=somebodyelse; echo $USER; whoami", keys + "/ada", none).stdout,
+          "somebodyelse\nada\n", "whoami followed the variable");
+
+  // Nor by widening it first, which is the obvious way round a check.
+  t.isTrue(contains(realSsh(cli, live,
+             "chmod 644 /home/grace/secret; cat /home/grace/secret; echo status=$?",
+             keys + "/ada", none).stdout, "status=1"),
+           "widening the mode first let ada read grace's file");
+
+  stopWacsshd(cli, live);
+  cli.remove(keys, true).wait();
+  return t.report();
+}
+
+/** A `.pub` file's whole line, trimmed — what goes into an `authorized_keys`. */
+string publicLine(Cli cli, string path) {
+  return trimmed(string.fromBytes(cli.readFile(path).wait().bytes));
+}

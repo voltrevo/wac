@@ -1,0 +1,182 @@
+// Reading an OpenSSH private key, including an encrypted one — bcrypt_pbkdf and AES-CTR, in wac.
+//
+// The strong form is that the *same* key is read from both an unencrypted and an encrypted file and
+// must yield identical seeds. `ssh-keygen -p` changes only the passphrase, so the key material is
+// unchanged by construction and any difference between the two readings is ours. That is why the
+// files are generated here rather than committed: a fixture pair could drift apart, and then the
+// test would be asserting that two different keys are the same key.
+//
+// `ssh-keygen` is the only tool involved. There is no server, and nothing listens.
+//
+// Host-side until 2026-08-18, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { encode as hexEncode } from "../../../codec/src/hex.wac";
+import { ALPHABET_STANDARD, decode as b64Decode, encode as b64Encode }
+  from "../../../codec/src/base64.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { KeyError, PrivateKey, readEd25519 } from "../../src/privatekey.wac";
+import { copyPreserving, keygen, restrict, scratch } from "./fixture.wac";
+import { u32be, u32At, slice } from "./build.wac";
+
+string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+/** A `KeyError` as its own name, so a failure says which refusal it was. */
+string errorName(KeyError e) {
+  match (e) {
+    case Ok: return "ok";
+    case NotOpenSsh: return "not-openssh";
+    case Unsupported: return "unsupported";
+    case Malformed: return "malformed";
+    case BadPassphrase: return "bad-passphrase";
+    else: return "not-ed25519";
+  }
+}
+
+string statusOf(u8[] pem, string passphrase) {
+  return errorName(readEd25519(pem, passphrase.toBytes()).error);
+}
+
+export string test_an_openssh_private_key_reads_encrypted_or_not(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "ssh-privatekey");
+  if (!keygen(t, cli, dir + "/k")) { return t.report(); }
+
+  FileResult plain = cli.readFile(dir + "/k").wait();
+  t.isTrue(plain.ok, "the generated key could not be read — " + plain.error);
+  if (!plain.ok) { return t.report(); }
+  PrivateKey key = readEd25519(plain.bytes, u8[0]());
+  t.eqStr(errorName(key.error), "ok", "an unencrypted key did not read");
+  t.eqI32(key.seed.len(), 32, "the seed is not 32 bytes");
+
+  // Same key, now encrypted. `-p` rewrites the file with a passphrase and nothing else, so the key
+  // material is unchanged by construction. Copied with the mode preserved: `ssh-keygen` refuses to
+  // touch a private key that anyone else could read, and a plain write would make one.
+  t.isTrue(copyPreserving(cli, dir + "/k", dir + "/enc"), "the key could not be copied");
+  string pass = "a passphrase with spaces";
+  Exec rekey = cli.exec("ssh-keygen",
+                        string[]("-p", "-f", dir + "/enc", "-P", "", "-N", pass, "-q", "-a", "8"),
+                        u8[0]()).wait();
+  t.eqI32(rekey.status, 0, "ssh-keygen -p: " + string.fromBytes(rekey.stderr));
+  if (rekey.status != 0) { return t.report(); }
+
+  FileResult enc = cli.readFile(dir + "/enc").wait();
+  t.isTrue(enc.ok, "the encrypted key could not be read — " + enc.error);
+  if (!enc.ok) { return t.report(); }
+  // A file that came back unchanged would make every assertion below pass for the wrong reason.
+  t.isTrue(string.fromBytes(enc.bytes).indexOf("aes256-ctr") >= 0 ||
+           hex(enc.bytes) != hex(plain.bytes), "the key was not actually encrypted");
+
+  PrivateKey opened = readEd25519(enc.bytes, pass.toBytes());
+  t.eqStr(errorName(opened.error), "ok", "the encrypted key did not read");
+  t.eqStr(hex(opened.seed), hex(key.seed),
+          "the encrypted file yielded a different seed for the same key");
+  t.eqStr(hex(opened.publicBlob), hex(key.publicBlob),
+          "the encrypted file yielded a different public blob");
+
+  // A wrong passphrase must be reported as such. There is no MAC over the private section, so
+  // the doubled check word is the only thing that notices — and if it were skipped, the parse
+  // would continue into random bytes.
+  t.eqStr(statusOf(enc.bytes, "wrong"), "bad-passphrase",
+          "a wrong passphrase was not reported as a bad passphrase");
+  t.eqStr(statusOf(enc.bytes, ""), "bad-passphrase",
+          "an empty passphrase against an encrypted key was not caught");
+  // And the right passphrase against an unencrypted key is simply ignored.
+  t.eqStr(statusOf(plain.bytes, pass), "ok", "a passphrase broke reading an unencrypted key");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread() {
+  T t = T.create();
+  string[] cases = string[](
+    "",
+    "-----BEGIN OPENSSH PRIVATE KEY-----\n-----END OPENSSH PRIVATE KEY-----\n",
+    "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\n",
+    "not base64 at all ~~~\n");
+  for (i32 i = 0; i < cases.len(); i++) {
+    t.eqStr(statusOf(cases[i].toBytes(), ""), "not-openssh",
+            "\"" + cases[i].slice(0, cases[i].len() < 30 ? cases[i].len() : 30) + "\"");
+  }
+  return t.report();
+}
+
+export string test_a_key_whose_two_public_halves_disagree_is_refused(Core core, Cli cli) {
+  // An OpenSSH private key states its public key *twice*: once in the outer envelope and again
+  // inside the private section. Every other field here was validated and the outer blob was not,
+  // so a file where the two disagree parsed cleanly — and `sshd.wac`'s `hostPublicPoint`, which
+  // slices the last 32 bytes of that blob, then trapped on a short one. A crafted or corrupt host
+  // key crashed the server at startup instead of being reported.
+  //
+  // Found by following a surviving `trap;` mutant rather than by reading the parser, which is the
+  // argument for mutation testing in one line: the trap was flagged as untested, and the reason
+  // it was untested is that nothing could reach it *through a valid file*.
+  T t = T.create();
+  string dir = scratch(cli, "ssh-badkey");
+  if (!keygen(t, cli, dir + "/k")) { return t.report(); }
+  FileResult pem = cli.readFile(dir + "/k").wait();
+  t.isTrue(pem.ok, "the generated key could not be read — " + pem.error);
+  if (!pem.ok) { return t.report(); }
+
+  // Decode the base64 body, then rewrite the outer public-key string to something short. Every
+  // field is length-prefixed, so shortening one keeps the rest parseable — which is exactly why
+  // the file used to survive parsing.
+  u8[]? rawOrNull = b64Decode(bodyOf(pem.bytes));
+  t.isTrue(rawOrNull is not null, "the key's own base64 did not decode");
+  if (rawOrNull is null) { return t.report(); }
+  u8[] raw = rawOrNull!;
+
+  i32 at = 15;                                    // "openssh-key-v1\0"
+  for (i32 i = 0; i < 3; i++) { at = at + 4 + u32At(raw, at); }   // ciphername, kdfname, kdfoptions
+  at = at + 4;                                    // keycount
+  i32 pubAt = at;
+  i32 pubLen = u32At(raw, pubAt);
+  t.isTrue(pubLen > 8, "the outer public blob is already short — the case cannot be built");
+  if (pubLen <= 8) { return t.report(); }
+
+  Buf mangled = Buf.create();
+  mangled.pushBytes(raw, 0, pubAt);
+  mangled.pushAll(u32be(8));                      // claims 8 bytes…
+  mangled.pushAll(u8[8]());                       // …and supplies 8, so the rest still parses
+  mangled.pushBytes(raw, pubAt + 4 + pubLen, raw.len() - (pubAt + 4 + pubLen));
+
+  string bad = "-----BEGIN OPENSSH PRIVATE KEY-----\n" +
+               wrapped(string.fromBytes(b64Encode(mangled.take(), ALPHABET_STANDARD(), true))) +
+               "-----END OPENSSH PRIVATE KEY-----\n";
+
+  // Anything but a refusal means it was accepted, and an accepted one traps later.
+  t.eqStr(statusOf(bad.toBytes(), ""), "malformed", "a mangled public blob was accepted");
+  // And the untouched key still reads, so the new check is not refusing everything.
+  t.eqStr(statusOf(pem.bytes, ""), "ok", "the real key stopped reading");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** The base64 body of a PEM file — every line that is not a `-----` marker. */
+u8[] bodyOf(u8[] pem) {
+  Buf out = Buf.create();
+  i32 at = 0;
+  while (at < pem.len()) {
+    i32 stop = at;
+    while (stop < pem.len() && pem[stop] != 10) { stop++; }
+    i32 end = stop;
+    if (end > at && pem[end - 1] == 13) { end--; }
+    if (end > at && pem[at] != 0x2d) { out.pushBytes(pem, at, end - at); }
+    at = stop + 1;
+  }
+  return out.take();
+}
+
+/** Base64 in 70-column lines, which is the width `ssh-keygen` writes. */
+string wrapped(string b64) {
+  string out = "";
+  for (i32 at = 0; at < b64.len(); at = at + 70) {
+    i32 end = at + 70 > b64.len() ? b64.len() : at + 70;
+    out = out + b64.slice(at, end) + "\n";
+  }
+  return out;
+}
