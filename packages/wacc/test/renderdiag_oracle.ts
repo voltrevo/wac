@@ -12,7 +12,12 @@
 //
 // The usual direction: the test renders and this reports what it disagrees with.
 //
-//   renderdiag <what-hex> <path-hex> <src-hex> <wire-hex> <ours-hex>
+//   renderdiag <what-hex> <path-hex> <src-hex> <wire-hex> <ours-hex>   (judges)
+//   refrender  <path-hex> <src-hex>                                    →  `refrender <hex>`
+//
+// `refrender` **produces**: it is the *reference compiler's own* diagnostics, rendered by the same
+// `wacDiag`. `renderdiag` renders a wire the caller supplies; this one compiles the source itself,
+// which is a different question — what the other compiler says, rather than how ours is laid out.
 //
 // `wire` is `diagnoseFiles`' output — the same wire the wac side rendered from, passed across rather
 // than recomputed here, so that a disagreement is about the *rendering* and never about two
@@ -22,6 +27,7 @@
 
 import { parseDiagnostics } from "../tools/wireDiagnostics.ts";
 import { wacDiag } from "wac/wacDiag.ts";
+import { wacCompile } from "wac/wacCompile.ts";
 
 function readAll(): Uint8Array {
   const chunks: Uint8Array[] = [];
@@ -49,6 +55,9 @@ function textOf(h: string): string {
 
 const lines = new TextDecoder().decode(readAll()).split("\n").filter((l) => l.length > 0);
 const out: string[] = [];
+// Answers for the ops that **produce**, printed ahead of the `FAIL` lines so a disagreement
+// elsewhere in the batch cannot shift the positions the caller reads them by.
+const emit: string[] = [];
 const say = (s: string) => {
   if (out.length < 20) out.push(`FAIL ${s}`);
 };
@@ -88,6 +97,14 @@ for (const line of lines) {
         break;
       }
       if (!named) say(`${what}: same lines, different length`);
+    } else if (op === "refrender") {
+      const [pathHex, srcHex] = rest;
+      const path = textOf(pathHex);
+      const files = new Map([[path, textOf(srcHex)]]);
+      const r = wacCompile(files, path, {});
+      const text = wacDiag(r.diagnostics, files);
+      emit.push(`refrender ${[...new TextEncoder().encode(text)]
+        .map((b) => b.toString(16).padStart(2, "0")).join("")}`);
     } else {
       say(`unknown op ${JSON.stringify(op)}`);
     }
@@ -96,5 +113,6 @@ for (const line of lines) {
   }
 }
 
+for (const l of emit) console.log(l);
 for (const l of out) console.log(l);
 console.log(`DONE ${lines.length}`);
