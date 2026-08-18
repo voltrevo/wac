@@ -156,7 +156,7 @@ async function validate(paths: string[]): Promise<{ code: number; out: string }>
   return { code: r.code, out: new TextDecoder().decode(r.stdout).trim() };
 }
 
-Deno.test("wac validate: a good module after a bad one still validates", async () => {
+Deno.test("[§wac-cli-validate-2hq7nx4] wac validate: a good module after a bad one still validates", async () => {
   const { good, bad } = await twoModules();
   const r = await validate([good, bad, good]);
   assertEquals(r.code, 1, "a rejected module fails the batch");
@@ -173,7 +173,7 @@ Deno.test("wac validate: names nothing when every module is accepted", async () 
   assertEquals(r.out, "2 module(s): 0 rejected", "only the count");
 });
 
-Deno.test("wac validate: a file it cannot read is a rejection, not a crash", async () => {
+Deno.test("[§wac-cli-validate-2hq7nx4] wac validate: a file it cannot read is a rejection, not a crash", async () => {
   const r = await validate(["/nope/does-not-exist.wasm"]);
   assertEquals(r.code, 1, "unreadable counts against it");
   assertEquals(r.out.split("\n").at(-1), "1 module(s): 1 rejected", "and is counted");
