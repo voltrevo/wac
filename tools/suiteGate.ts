@@ -1,7 +1,8 @@
 // Whether the machine can afford a full suite right now, and whether you have just had one.
 //
-// Three agents share five cores and 11.9 GB. A suite peaks over 3 GB and takes five to eleven
-// minutes, so two at once is tight and three is not survivable: the kernel's `oom_kill` counter moved
+// Three agents share five cores and 11.9 GB. A suite peaks over 3 GB and takes about three and a half
+// minutes — 208s measured 2026-08-18, down from five to eleven, and `deno task test` prints the split by
+// lane — so two at once is tight and three is not survivable: the kernel's `oom_kill` counter moved
 // from 20 to 22 in a single evening, and three of those kills were suite runs that had reached about
 // 70% and reported no failure at all — `EXIT=137`, no summary, nothing to debug.
 //
@@ -161,7 +162,7 @@ function advice(): string {
     "     deno test -A path/to/one.test.ts         one file",
     "     deno task docs                           the doc checks, strictly",
     "",
-    "   The suite is 5-11 minutes and three agents share five cores and 11.9 GB.",
+    "   The suite is about three and a half minutes and three agents share five cores and 11.9 GB.",
     "   Two at once is tight; three get killed at about 70% with no failure reported.",
     "   `WAC_SUITE_ANYWAY=1 deno task test` goes through anyway, and says that it did.",
   ].join("\n");

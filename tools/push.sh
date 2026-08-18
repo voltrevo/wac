@@ -67,7 +67,7 @@ for attempt in 1 2 3; do
   # exactly like a hang if nothing says otherwise. Twice now that has cost time to diagnose, so
   # the numbers are printed rather than remembered.
   # **What is being tested, so that is what gets pushed.** The dirty-tree check at the top runs
-  # once; the suite then takes five to eleven minutes, and an agent working through it — which is
+  # once; the suite then takes three or four minutes, and an agent working through it — which is
   # what the operator asks for rather than watching — can land a commit in that window. `git push
   # origin master` would carry it, and the gate would report a pass for a commit the suite never
   # saw. That is the same failure as the one the header describes, from the other side: there it
@@ -252,9 +252,16 @@ for attempt in 1 2 3; do
   fi
 
   echo "== suite passed in ${elapsed}s (load now $(cut -d' ' -f1-3 /proc/loadavg)) =="
-  if [ "$elapsed" -gt 180 ]; then
-    echo "   that is several times the usual ~50s. Usually the machine was busy rather than the"
-    echo "   suite — but check for a hung test too (issue 0036); the load above tells you which."
+  # **The threshold has to move when the suite does.** This said "several times the usual ~50s" above
+  # 180s, and the suite has been 205-230s since the wac lane became the largest one — so it fired on
+  # every green run, four times stale, which is a warning that cannot warn. Measured 2026-08-18:
+  # 208s, as 78s of Deno tests, 29s of the files that run alone, and 100s of `wac test`; the floor with
+  # the current set of checks is about 190s on five cores, and `deno task test` prints the split.
+  # 330s is where a run is genuinely out of the ordinary rather than merely slow.
+  if [ "$elapsed" -gt 330 ]; then
+    echo "   that is well above the ~210s this suite costs when nothing is wrong. Usually the machine"
+    echo "   was busy — three agents share five cores — but check for a hung test too (issue 0036);"
+    echo "   the load above tells you which, and the \`where the time went\` block says which lane."
     slow=$(grep -oE "'[^']+' has been running for over[^)]*.\)" "$log" | sort -u | head -5)
     [ -n "$slow" ] && { echo "-- tests that ran unusually long --"; echo "$slow"; }
   fi

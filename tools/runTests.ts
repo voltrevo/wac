@@ -630,7 +630,7 @@ if (exclusive.length > 0) {
   });
 }
 
-// **Doc warnings, in the footer.** A doc check prints where it runs, which on a four-to-eleven minute
+// **Doc warnings, in the footer.** A doc check prints where it runs, which even on a three-minute
 // suite is eight hundred lines above where anyone is looking when it finishes. Saying how many there
 // were — and how to make them fail — is what stops "warn instead of fail" becoming "nobody checks".
 // **And the same wac tests again, through `wac`.**

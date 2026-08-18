@@ -131,7 +131,7 @@ refused, so losing a race meant not being able to push at all. Attempts 2 and 3 
 respects memory and load, because overlapping suites are what the kills come from.
 
 **And the gate pushes the revision it tested.** The clean-tree check runs once, at the start; a
-commit made during the five to eleven minutes that follow used to be carried by the push, so the
+commit made during the three or four minutes that follow used to be carried by the push, so the
 gate reported a pass for a commit the suite never saw. It pushes that captured revision now, and
 says so when HEAD has moved:
 
