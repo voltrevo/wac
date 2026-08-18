@@ -100,3 +100,24 @@ Three things came out of it:
 `wacCoverage`'s `instrument` nor `wacBind` can supply a capability, which is why the Deno-side registrar is
 called *hostless*. So mlkem's coverage needs the measurement to move to `wac test --coverage`, which does
 build a host. That is the shape of the answer; it is not a matter of writing more tests.
+
+## mlkem is covered; the driver cannot see it — measured 2026-08-18
+
+    wac test --coverage --allow-read --allow-write --allow-run packages/crypto/test/wac/mlkem_test.wac
+    5 passed, 0 failed
+        125 / 132   packages/crypto/src/mlkem.wac
+
+**94.7%, against the 62.1% this driver reports** for the same file. The five tests exist, pass, and reach
+almost all of it; what the Deno-side driver cannot do is give them the `(Core core, Cli cli)` they take to
+read their vectors, so it measures the file as though nothing tested it and calls 48 points uncovered.
+
+So the 48 are a measurement gap, not coverage debt, and the remaining question is not "write more mlkem
+tests" — it is whether these ratchets should take their numbers from `wac test --coverage`, which builds a
+host, instead of from a driver that cannot. The same question decides `rsa_test.wac`'s ten host-needing
+tests and every other package's.
+
+Two things to know before attempting it. `wac test --coverage` prints a per-file table of reached points
+over the *whole closure*, so a ratchet consuming it has to select the package's own files — the run above
+also reports `packages/fmt/src/ftoa.wac` at 0/91, which says nothing about `fmt`. And `--coverage` keeps the
+per-file build path rather than the shared one (`issues/system/0192`), because counters are per module, so
+measuring this way costs a build per test file.
