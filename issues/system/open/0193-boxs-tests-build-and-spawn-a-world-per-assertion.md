@@ -80,3 +80,23 @@ and nothing prunes either. `tools/prune-deno-cache.sh` sweeps Deno's transpile c
 entry per *source set* rather than per source-set-times-grant-set, so it grows more slowly than the cache
 it saves work for, but it grows.
 
+## Done: the backings differential is in wac, and covers 946 scripts instead of 40 — 2026-08-18
+
+`backings.test.ts` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes,
+**29.8 s**. It is `packages/box/test/wac/backings_test.wac` now — three `Fs` values in one process — and
+runs the **whole** corpus, 946 scripts on three backings, in **7.6 s of which about 6 s is the compile**.
+The Deno file keeps the one claim that needs processes, that an image outlives one and a sealed session
+does not, and is **2.0 s**.
+
+Two things the move found:
+
+* the old sample was **vacuous**. Breaking the host arm outright made 2 of the 40 cases differ and 38
+  agree — the head of the corpus is the shell language, not the world. That is what made running all 946
+  the right answer rather than a better sample.
+* `tools/corpusBackings.ts` says six scripts name an absolute path this machine has and are compared on
+  two arms. It is **30**, measured with that file's own regex. The wac port agrees with it exactly, script
+  for script, which is how the port was checked.
+
+The corpus is thin on filesystem work either way — 43 of 946 scripts redirect anywhere — so a differential
+about filesystems is mostly running scripts that never open one. Worth a corpus of its own; not filed yet.
+
