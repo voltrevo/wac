@@ -97,17 +97,17 @@ Deno.test("no targets means everything, which is where this was wrong the first 
   // when a shared file changed. Reading that as "nothing matches" left the gate's lane working and the
   // other entry point silently running the same files four-at-a-time — the exact inconsistency the lane
   // exists to remove.
-  const declared = ["packages/ssh/test/cli.test.ts", "packages/ssh/test/server.test.ts"];
+  const declared = ["packages/ssh/test/wac/cli_test.wac", "packages/ssh/test/wac/live_test.wac"];
   assertEquals(laneSplit([], declared).alone.length, 2, "empty targets should mean the whole tree");
 });
 
 Deno.test("a directory target contains the files declared under it", () => {
   // The first version compared a directory against a file path with `Set.has`, so nothing ever matched
   // and the lane was inert. Prefixes, not equality.
-  const declared = ["packages/ssh/test/cli.test.ts", "packages/box/test/box.test.ts"];
+  const declared = ["packages/ssh/test/wac/cli_test.wac", "packages/box/test/box.test.ts"];
   assertEquals(
     laneSplit(["packages/ssh/"], declared).alone.join(","),
-    "packages/ssh/test/cli.test.ts",
+    "packages/ssh/test/wac/cli_test.wac",
   );
   assertEquals(laneSplit(["packages/json/"], declared).alone.length, 0, "an unrelated package");
   assertEquals(

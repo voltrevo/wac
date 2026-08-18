@@ -1,0 +1,164 @@
+// chacha20-poly1305@openssh.com, on its own.
+//
+// `live_test.wac` is what says this cipher is *right* — it is the only thing that can, because
+// agreement with OpenSSH is the whole specification. What these pin are the properties a
+// wrong-but-self-consistent implementation would still satisfy, so a future change cannot quietly
+// break interop while continuing to round-trip with itself. The swapped-key-halves case is the one
+// that motivates the file: K_2 is the first half and K_1 the second, exchanging them round-trips
+// perfectly against itself, and only a real server ever notices.
+//
+// Host-side until 2026-08-18, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { encode as hexEncode } from "../../../codec/src/hex.wac";
+import { Opened, Plain, aeadPaddingFor, keyLength, open, peekLength, seal, tagLength }
+  from "../../src/cipher.wac";
+import { ramp, filled, flipped, slice } from "./build.wac";
+
+const i32 MAX = 35000;
+
+string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+/** `open`'s verdict as 0 = ok, 1 = incomplete, 2 = bad. */
+i32 openCode(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
+  Plain p = open(key, seq, src, at, end, maxPacket);
+  match (p.status) {
+    case Ok: return 0;
+    case Incomplete: return 1;
+    else: return 2;
+  }
+}
+
+export string test_sealing_and_opening_round_trips_and_the_padding_rule_is_the_aead_one() {
+  T t = T.create();
+  u8[] key = ramp(64, 7, 1);
+  i32 block = 8;
+  i32[] sizes = i32[](0, 1, 5, 6, 7, 8, 9, 100, 1000);
+  for (i32 i = 0; i < sizes.len(); i++) {
+    i32 n = sizes[i];
+    string of = "payload " + itoa(n);
+    // The AEAD rule excludes the 4-byte length from the alignment, unlike RFC 4253's.
+    i32 pad = aeadPaddingFor(n, block);
+    t.isTrue(pad >= 4, of + ": padding " + itoa(pad) + " is under the minimum");
+    t.eqI32((1 + n + pad) % block, 0,
+            of + ": (1 + " + itoa(n) + " + " + itoa(pad) + ") is not a multiple of 8");
+    // And it is *not* the RFC rule — those differ by exactly 4 for every length, so a test that
+    // only checked "some multiple" would pass with either.
+    t.neI32((4 + 1 + n + pad) % block, 0,
+            of + ": padding also satisfies the non-AEAD rule, so it is ambiguous");
+
+    u8[] payload = ramp(n, 31, 0);
+    u8[] random = ramp(pad, 13, 5);
+    u8[] packet = seal(key, 7, payload, random, block);
+    t.eqI32(packet.len(), 4 + 1 + n + pad + tagLength(), of + ": packet is the wrong size");
+    t.eqI32(peekLength(key, 7, packet, 0), 1 + n + pad, of + ": peeked length is wrong");
+    t.eqI32(openCode(key, 7, packet, 0, packet.len(), MAX), 0, of + ": did not open");
+    t.eqStr(hex(open(key, 7, packet, 0, packet.len(), MAX).payload), hex(payload),
+            of + ": contents changed");
+    t.eqI32(open(key, 7, packet, 0, packet.len(), MAX).used, packet.len(), of + ": used is wrong");
+    // One byte short is "read more", never a verdict.
+    t.eqI32(openCode(key, 7, packet, 0, packet.len() - 1, MAX), 1,
+            of + ": a short packet was not incomplete");
+  }
+  return t.report();
+}
+
+export string test_a_packet_does_not_open_under_the_wrong_sequence_number() {
+  T t = T.create();
+  u8[] key = ramp(64, 5, 0);
+  u8[] payload = ("the sequence number is the nonce, and it is never transmitted").toBytes();
+  u8[] random = ramp(aeadPaddingFor(payload.len(), 8), 3, 1);
+  u8[] packet = seal(key, 42, payload, random, 8);
+
+  t.eqI32(openCode(key, 42, packet, 0, packet.len(), MAX), 0,
+          "the packet did not open under its own sequence number");
+  i32[] wrong = i32[](0, 41, 43, 43 + 65536);
+  for (i32 i = 0; i < wrong.len(); i++) {
+    t.eqI32(openCode(key, wrong[i], packet, 0, packet.len(), MAX), 2,
+            "a packet sealed at 42 opened at " + itoa(wrong[i]) +
+            " — the nonce is not the sequence number");
+  }
+  return t.report();
+}
+
+export string test_any_single_flipped_bit_is_caught_wherever_it_lands() {
+  T t = T.create();
+  u8[] key = ramp(64, 3, 9);
+  u8[] payload = ("sixteen bytes ok").toBytes();
+  u8[] random = ramp(aeadPaddingFor(payload.len(), 8), 11, 2);
+  u8[] packet = seal(key, 3, payload, random, 8);
+
+  // Every byte: the encrypted length, the encrypted body, and the tag. A corrupted length may be
+  // rejected as out of range rather than by the MAC, which is also a refusal.
+  for (i32 i = 0; i < packet.len(); i++) {
+    u8[] bad = flipped(packet, i, 0x40);
+    t.neI32(openCode(key, 3, bad, 0, bad.len(), MAX), 0,
+            "flipping a bit in byte " + itoa(i) + " of " + itoa(packet.len()) + " still opened");
+  }
+
+  // And the wrong key.
+  t.neI32(openCode(flipped(key, 0, 1), 3, packet, 0, packet.len(), MAX), 0,
+          "a packet opened under the wrong key");
+  return t.report();
+}
+
+export string test_the_two_key_halves_are_not_interchangeable() {
+  // K_2 is the first half and K_1 the second. Swapping them is the single most likely mistake,
+  // and it round-trips perfectly against itself — only a real server notices. So it is asserted
+  // here directly: a packet sealed with the halves swapped must not open with them in order.
+  T t = T.create();
+  u8[] key = ramp(64, 11, 4);
+  u8[] swapped = u8[64]();
+  swapped.copyFrom(key, 32, 0, 32);
+  swapped.copyFrom(key, 0, 32, 32);
+
+  u8[] payload = ("halves").toBytes();
+  u8[] random = ramp(aeadPaddingFor(payload.len(), 8), 7, 0);
+  u8[] packet = seal(swapped, 1, payload, random, 8);
+  t.neI32(openCode(key, 1, packet, 0, packet.len(), MAX), 0,
+          "a packet sealed with swapped key halves opened with them in order");
+  return t.report();
+}
+
+export string test_an_unauthenticated_length_is_bounded_before_it_is_believed() {
+  T t = T.create();
+  u8[] key = ramp(64, 1, 0);
+  u8[] payload = ("x").toBytes();
+  u8[] random = ramp(aeadPaddingFor(1, 8), 5, 2);
+  u8[] packet = seal(key, 0, payload, random, 8);
+
+  // The length is decrypted before the MAC can be checked — the MAC covers bytes not yet read —
+  // so a peer can steer it. It must be rejected on range, not used to size an allocation.
+  // This packet's inner length is 8 — a 1-byte payload plus the padding-length byte and 6 of
+  // padding — so the limits here are below that, not at it. A limit equal to the length must
+  // accept, which is checked separately below.
+  i32[] limits = i32[](5, 7);
+  for (i32 i = 0; i < limits.len(); i++) {
+    t.eqI32(openCode(key, 0, packet, 0, packet.len(), limits[i]), 2,
+            "a packet longer than the " + itoa(limits[i]) + "-byte limit was accepted");
+  }
+  t.eqI32(openCode(key, 0, packet, 0, packet.len(), 8), 0,
+          "a packet exactly at the limit was refused; the bound is off by one");
+  // Its own limit still works, so the bound is not simply refusing everything.
+  t.eqI32(openCode(key, 0, packet, 0, packet.len(), MAX), 0,
+          "a packet inside the limit was refused");
+  return t.report();
+}
+
+export string test_the_cipher_is_pinned_to_a_fixed_answer() {
+  // A regression anchor, not an independent vector: these bytes came from this implementation
+  // after the live test established it agrees with OpenSSH. On its own it only says we still do
+  // what we did before.
+  T t = T.create();
+  u8[] key = ramp(64, 1, 0);
+  u8[] packet = seal(key, 1, ("hello").toBytes(), filled(10, 0xaa), 8);
+  // 36 bytes: 4 encrypted length, 16 of body (1 padding-length + 5 payload + 10 padding, since
+  // the minimum of 4 forces a whole extra block here), and a 16-byte tag.
+  t.eqI32(packet.len(), 36, "the packet is not 36 bytes");
+  t.eqStr(hex(packet), "c922a7b5633419b55d6512d087dbd48519bebdb8b96aaad3ff47411634076af21570d9a7",
+          "cipher output changed");
+  t.eqI32(keyLength(), 64, "the key length is not two 32-byte halves");
+  t.eqI32(tagLength(), 16, "the Poly1305 tag is not 16 bytes");
+  return t.report();
+}

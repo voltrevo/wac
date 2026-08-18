@@ -245,7 +245,7 @@ export bool save(Core core, Cli cli, string who, string path, Fs fs) {
   // **Beside the target, then moved into place.** Writing over the image directly leaves it half written
   // if the program stops mid-write, and a half-written image is refused on the next boot — so a process
   // killed at the wrong moment costs the *whole* session rather than the part it had not saved. It
-  // happened: `packages/ssh/test/server.test.ts` killed a server just after a client disconnected and the
+  // happened: `packages/ssh/test/wac/wacsshdimage_test.wac` killed a server just after a client disconnected and the
   // next server said "too short to be an image".
   //
   // `platform.wac` says of `rename` that it exists so "an application can write beside the target and

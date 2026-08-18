@@ -1,0 +1,436 @@
+// The `sshd` program, tested by OpenSSH's own client.
+//
+// Every other test in this package points one way: our code against a real server. This one is the
+// reverse, and it is worth having for exactly that reason — it exercises paths nothing else touches.
+// The server offers algorithm lists a real client negotiates against, *signs* an exchange hash
+// rather than verifying one, is the side that answers a key probe, and picks the channel number the
+// client then has to use.
+//
+// A second implementation of my own misconceptions would agree with itself. OpenSSH does not.
+//
+// test-lane: exclusive — a real OpenSSH client against our server, on a real port.
+//
+// Host-side until 2026-08-18, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Daemon } from "../../../wactest/src/daemon.wac";
+import { contains, trimmed } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Said, Wacsshd, buildClient, buildServer, ourSsh, realSsh, reapSelectsServers,
+         startWacsshd, stopWacsshd, typedInto } from "./wacsshd.wac";
+import { copyPreserving, haveSshd, keygen, publicBlobText, restrict, scratch, wouldReap }
+  from "./fixture.wac";
+
+/** The ordinary read-only server, or `ok` false with `t` already told why. */
+Wacsshd server(T t, Cli cli, string name, string[] extra, bool writable) {
+  string binary = buildServer(t, cli, writable);
+  if (binary == "") {
+    return Wacsshd(false, "the server did not build", "", -1, Daemon(-1, "", ""));
+  }
+  Wacsshd s = startWacsshd(t, cli, name, extra, binary);
+  if (!s.ok) { t.fail("our sshd did not come up — " + s.error); }
+  return s;
+}
+
+export string test_openssh_client_connects_authenticates_and_runs_a_command(Core core, Cli cli) {
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-basic", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+  string key = s.dir + "/clientkey";
+
+  Said hello = realSsh(cli, s, "echo hello from the wac server", key, string[0](fill: ""));
+  t.eqI32(hello.status, 0, "the first command exited non-zero: " + hello.stderr);
+  t.eqStr(hello.stdout, "hello from the wac server\n", "stdout");
+  // A clean end. Closing the socket without waiting for the client's CHANNEL_CLOSE makes ssh report
+  // "Connection closed by remote host", and sending DISCONNECT instead makes it throw the output
+  // away and exit 255 — so the absence of both is the assertion.
+  t.eqStr(trimmed(hello.stderr), "", "unexpected stderr");
+
+  // The command's exit status reaches the client as its own.
+  string[] commands = string[]("true", "false", "frobnicate");
+  i32[] wanted = i32[](0, 1, 127);
+  for (i32 i = 0; i < commands.len(); i++) {
+    t.eqI32(realSsh(cli, s, commands[i], key, string[0](fill: "")).status, wanted[i],
+            "`" + commands[i] + "` exit status");
+  }
+
+  // The two streams stay apart.
+  Said missing = realSsh(cli, s, "frobnicate", key, string[0](fill: ""));
+  t.eqStr(missing.stdout, "", "an error message went to stdout");
+  t.isTrue(contains(missing.stderr, "command not found"),
+           "stderr was \"" + missing.stderr + "\"");
+
+  // The command is run by `packages/sh`, so what arrives over the channel is a shell script rather
+  // than a name the server knows. Each of these needs a different part of it.
+  string[] scripts = string[](
+    "seq 1 100 | grep 7 | wc -l",                          // a pipeline, three stages
+    // `head` rather than `tr`: `packages/sh` has given `tr` up to `packages/box`'s applet, and this
+    // server still gets its commands from `packages/sh` (wac-mono 0103 — the `ssh` → `box` edge is
+    // blocked on a compiler bug, wac 0076). What is under test is quoting and expansion.
+    "x=\"a b c\"; echo \"$x\" | head -1",
+    "echo \"there are $(seq 1 5 | wc -l) lines\"",         // command substitution
+    "false || echo fallback",                              // and-or
+    "echo a; echo b");                                     // a list
+  string[] answers = string[](
+    "19\n",
+    "a b c\n",
+    "there are 5 lines\n",
+    "fallback\n",
+    "a\nb\n");
+  for (i32 i = 0; i < scripts.len(); i++) {
+    t.eqStr(realSsh(cli, s, scripts[i], key, string[0](fill: "")).stdout, answers[i], scripts[i]);
+  }
+
+  // A file read through the capability world.
+  Said cat = realSsh(cli, s, "cat " + s.dir + "/.ssh/authorized_keys", key, string[0](fill: ""));
+  t.isTrue(cat.stdout.len() >= 12 && cat.stdout.slice(0, 12) == "ssh-ed25519 ",
+           "cat gave " + cat.stdout.slice(0, cat.stdout.len() < 40 ? cat.stdout.len() : 40));
+
+  // The shell's exit status becomes the channel's, which becomes ssh's.
+  t.eqI32(realSsh(cli, s, "seq 1 3 | grep 9", key, string[0](fill: "")).status, 1,
+          "grep with no match");
+
+  // A key that is not in authorized_keys does not get in. This is the check that the signature
+  // verification and the key lookup are both doing something.
+  string other = s.dir + "/otherkey";
+  keygen(t, cli, other);
+  restrict(cli, other);
+  Said refused = realSsh(cli, s, "echo should not run", other, string[0](fill: ""));
+  t.neI32(refused.status, 0, "an unauthorized key was let in");
+  t.eqStr(refused.stdout, "", "an unauthorized key ran a command");
+  t.isTrue(contains(refused.stderr, "Permission denied"),
+           "unexpected refusal: " + refused.stderr);
+
+  stopWacsshd(cli, s);
+  return t.report();
+}
+
+export string test_with_a_pty_the_server_does_the_line_editing(Core core, Cli cli) {
+  // `ssh -tt` asks for a pty, which this server refused until design/0001 step 5. The refusal was
+  // the honest answer while there was nothing to echo with: a client that gets a pty stops echoing
+  // locally, so every keystroke it sends must come back or the user types blind.
+  //
+  // What is asserted is the two halves of that. The **echo**, including an erase the client never
+  // saw — the backspace is one byte on the wire and three back, and the client does nothing with
+  // either. And **`\r\n` on the output**, which the shell does not write: a terminal in raw mode
+  // does not return the cursor on a bare newline, so without that translation every line would
+  // start where the last one ended.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-pty", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  // `echo hX<DEL>i` — typed wrong and corrected, which only works if this end is editing.
+  // `\004` on an empty line ends the session.
+  Said r = typedInto(cli, s, string[]("-tt"), "printf 'echo hX\\177i\\n'; sleep 1; printf '\\004'");
+
+  // The echo, with the erase in it: three bytes back for the one that was typed.
+  // Spelled from bytes because wac has no `\b`: `echo hX`, backspace, space, backspace, `i`, CR LF.
+  string erase = string.fromBytes(u8[](8));
+  t.isTrue(contains(r.stdout, "echo hX" + erase + " " + erase + "i\r\n"),
+           "no echo with an erase in it: \"" + r.stdout + "\"");
+  // …and the corrected command ran, with its output wound back to the left margin.
+  t.isTrue(contains(r.stdout, "hi\r\n"),
+           "the corrected command did not run: \"" + r.stdout + "\"");
+
+  stopWacsshd(cli, s);
+  return t.report();
+}
+
+export string test_control_c_ends_a_running_command_and_the_session_carries_on(Core core, Cli cli) {
+  // design/0001 step 5's own criterion. The last thing this loop could not do, and never for want
+  // of something to deliver — `kill -INT $$` has ended a script here for a while. It was that
+  // `runScript` blocks, so while a command ran nothing read the channel and the `^C` sat in the
+  // socket until the command it was meant to end had finished. `Shell.askInterrupt` is the seam.
+  //
+  // Three things are asked, because each could pass on its own while the feature was useless: the
+  // running command **stops**; the **shell survives**, since a `^C` that ended the session would
+  // satisfy the first and is exactly what modelling the interrupt as a signal to the shell did; and
+  // `$?` is **130**, which is what every shell reports for a command an interrupt ended.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-interrupt", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  // **A loop that cannot end on its own and cannot print its way out.** Two earlier versions of
+  // this line were wrong in the same way — they finished before the interrupt arrived, so the `^C`
+  // was read at the *prompt*, which is the case that already worked:
+  //
+  //   `yes > /dev/null`  the server has no write grant, so the redirection failed instantly
+  //   `yes | wc -l`      ended at exactly 4194304 lines — `yes` hit the 8 MiB queue cap (0038)
+  //
+  // This one has no output, no filesystem and no cap to reach. The 1.5s pause is so the command is
+  // genuinely running when the interrupt arrives.
+  Said r = typedInto(cli, s, string[]("-tt"),
+    "printf 'while true; do :; done\\n'; sleep 1.5; printf '\\003'; sleep 0.5; " +
+    "printf 'echo alive=$?\\n'; sleep 0.5; printf '\\004'");
+
+  // **The loop must not have ended itself.** `while true` used to stop at 100000 iterations with
+  // status 2 — a bound put there because a shell that could not be interrupted must not hang the
+  // server — and this test passed once by luck when that happened *before* the `^C` arrived. The
+  // bound is gone where there is a terminal to interrupt from, and this is the assertion that says
+  // so rather than trusting the timing.
+  t.isFalse(contains(r.stderr, "loop ran 100000 times"),
+            "the loop stopped itself, so the interrupt proved nothing: " + r.stderr);
+  t.isTrue(contains(r.stdout, "alive=130"),
+           "`^C` did not end the command and leave a live session at 130: " + tail(r.stdout, 400) +
+           " err=" + tail(r.stderr, 300));
+
+  stopWacsshd(cli, s);
+  return t.report();
+}
+
+export string test_a_client_that_closes_its_stdin_does_not_interrupt_the_command(Core core, Cli cli) {
+  // **Closing stdin is not `^C`.** `ssh` sends a channel EOF when its own standard input ends, and
+  // that means "no more input", exactly as `^D` does. It does not mean "stop what you are doing":
+  // `ssh host 'sh -c "sleep 1; echo hi"' < /dev/null` prints `hi`, and so does every shell.
+  //
+  // The command here takes a second or two on purpose, so the EOF lands *while it runs* rather than
+  // at the prompt — which is the interleaving a busy machine produces and an idle one does not, and
+  // is why 0133 was one failure in a full suite and 0/10 alone.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-eof", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  // No pause before the `^D`: it must land microseconds after the line, while the loop runs.
+  Said r = typedInto(cli, s, string[]("-tt"),
+    "printf 'i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done; echo done=$? ran=$i\\n'; " +
+    "printf '\\004'");
+
+  // `ran=200000` rather than `done=0` alone: it says the loop reached the end rather than that
+  // *something* printed, and a command that was cut short prints neither. The count is also what
+  // keeps the case honest about its own timing — 200,000 iterations is a second and a half in this
+  // shell, so the EOF cannot arrive at the prompt instead, which is the case that always passed.
+  t.isTrue(contains(r.stdout, "done=0 ran=200000"),
+           "the command did not survive the client's EOF: " + tail(r.stdout, 300) +
+           " err=" + tail(r.stderr, 200));
+
+  stopWacsshd(cli, s);
+  return t.report();
+}
+
+export string test_a_line_typed_while_a_command_is_running_is_still_a_command(Core core, Cli cli) {
+  // Type-ahead, which the interrupt poll would otherwise eat. The poll takes bytes off the socket
+  // to look for a `^C`, and the line discipline hands back whole lines whether anybody asked for
+  // them or not — so a version that only looked at the interrupt flag dropped them, while its own
+  // comment claimed they were kept.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-typeahead", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  // `yes | wc -l` runs for about a second on its own — `yes` stops at the 8 MiB queue cap — so the
+  // next line is genuinely typed while it is still going. The long pause before `^D` is because the
+  // command has to have *finished* before the session is asked to end.
+  Said r = typedInto(cli, s, string[]("-tt"),
+    "printf 'yes | wc -l\\n'; sleep 0.2; printf 'echo typed-ahead\\n'; sleep 6; printf '\\004'");
+
+  t.isTrue(contains(r.stdout, "typed-ahead"),
+           "a line typed during a command was lost: " + tail(r.stdout, 300));
+  // …and in order: the running command's answer comes before the typed line *runs*.
+  //
+  // `lastIndexOf`, and the reason is worth keeping: `typed-ahead` appears twice, and the first is
+  // the **echo** of the line as it was typed — which happens during the command and is exactly
+  // right, since a terminal in raw mode shows you what you type when you type it. An `indexOf`
+  // comparison called that an ordering failure and was wrong about correct behaviour.
+  t.isTrue(r.stdout.indexOf("4194304") <= lastIndexOf(r.stdout, "typed-ahead"),
+           "type-ahead ran before the command it was typed during: " + tail(r.stdout, 400));
+
+  stopWacsshd(cli, s);
+  return t.report();
+}
+
+export string test_an_interactive_session_keeps_its_shell_between_lines(Core core, Cli cli) {
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-session", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  // `ssh -T` asks for a shell and no pty, which is the case this server serves. Lines go in over
+  // the channel and each one runs as it arrives.
+  Said r = typedInto(cli, s, string[]("-T"),
+    "printf 'x=hello\\necho $x world\\nseq 1 5 | wc -l\\necho state persists: $x\\n'");
+
+  // The middle assertion is the one that makes it a *session*: a variable set on the first line is
+  // still there on the fourth. Without one shell for the whole channel each line would start again
+  // and the last would print nothing.
+  t.eqStr(r.stdout, "hello world\n5\nstate persists: hello\n", "the interactive session");
+
+  stopWacsshd(cli, s);
+  return t.report();
+}
+
+export string test_the_orphan_reaper_selects_a_server_of_this_shape(Core core, Cli cli) {
+  // The same argument as `live_test.wac`'s: a reaper that matches nothing reports a clean machine
+  // whatever was abandoned, and that is how the first version of the host-side pattern passed
+  // review. Asserted against a planted process of the shape it is meant to find.
+  T t = T.create();
+  string dir = scratch(cli, "wacsshd-reap-canary");
+  string fake = dir + "/.cache/wacsshd/sshd.wasm";
+  cli.mkdir(dir + "/.cache/wacsshd", true).wait();
+  cli.writeFile(dir + "/wac", ("#!/bin/sh\nsleep 30\n").toBytes()).wait();
+  cli.setExecutable(dir + "/wac", true).wait();
+
+  cli.exec("/bin/sh", string[]("-c",
+    "setsid " + dir + "/wac " + fake + " -p 1 >/dev/null 2>&1 </dev/null &"), u8[0]()).wait();
+
+  string selected = "";
+  bool found = false;
+  for (i32 i = 0; i < 400 && !found; i++) {
+    selected = reapSelectsServers(cli);
+    found = trimmed(selected) != "";
+  }
+  t.isTrue(found,
+           "the reaper's pattern selected nothing of this shape — it would report a clean machine " +
+           "whatever was abandoned");
+
+  cli.exec("/bin/sh", string[]("-c", "pkill -f " + fake + " 2>/dev/null; true"), u8[0]()).wait();
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** The last `n` characters, for a message about a long transcript. */
+string tail(string s, i32 n) { return s.len() <= n ? s : "…" + s.slice(s.len() - n, s.len()); }
+
+/** `string` has `indexOf` and no `lastIndexOf`; the ordering check above needs the last one. */
+i32 lastIndexOf(string haystack, string needle) {
+  i32 best = -1;
+  for (i32 at = 0; at + needle.len() <= haystack.len(); at++) {
+    if (haystack.slice(at, at + needle.len()) == needle) { best = at; }
+  }
+  return best;
+}
+
+export string test_a_client_that_sends_environment_requests_first_still_runs(Core core, Cli cli) {
+  // `SendEnv LANG LC_*` is the default in Debian's and Ubuntu's `ssh_config`, so this is what most
+  // clients in the world actually do: two `env` channel requests, both with want_reply *false*, and
+  // then `exec`.
+  //
+  // The server used to treat every request that was not `shell` as an attempt to `exec`, fail to
+  // read a command out of it, and answer CHANNEL_FAILURE. Since the `env` requests asked for no
+  // reply, those answers landed against the *next* request the client had made — its `exec` — so
+  // every command failed with `exec request failed on channel 0` while the server logged that the
+  // client had never asked to run anything.
+  //
+  // It is invisible without this test, because the rest of them pass `-F /dev/null`.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-sendenv", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+  string key = s.dir + "/clientkey";
+  string[] sendEnv = string[]("-o", "SendEnv=LANG LC_*");
+
+  Said r = realSsh(cli, s, "echo env-first", key, sendEnv);
+  t.eqStr(r.stdout, "env-first\n", "the command did not run: " + r.stderr);
+  t.eqI32(r.status, 0, "exit status: " + r.stderr);
+
+  // And the same again with a command whose status is not zero, so the reply pairing is checked
+  // rather than just the happy path.
+  t.eqI32(realSsh(cli, s, "exit 7", key, sendEnv).status, 7, "a non-zero status after env requests");
+
+  stopWacsshd(cli, s);
+  return t.report();
+}
+
+export string test_a_refused_subsystem_is_answered_because_it_wanted_a_reply(Core core, Cli cli) {
+  // The other half of the `want_reply` rule, and the half the `SendEnv` test cannot reach. That one
+  // proves we stay *silent* for requests that asked for nothing; this proves we still *answer* one
+  // that asked. Without it, `requestWantsReply` could return a constant `false` and the whole suite
+  // stayed green — which is exactly what mutation testing found.
+  //
+  // It used to ask this with `ssh -tt`, whose `pty-req` we refused. That request is **accepted** now
+  // (design/0001 step 5, and a test above drives it), so the refusal it was reading is gone and the
+  // property needed a request this server still refuses. `-s` asks for a subsystem — `sftp` — with
+  // want_reply set, and there is no subsystem here.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-subsystem", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  Said r = realSsh(cli, s, "sftp", s.dir + "/clientkey", string[]("-s"));
+  t.isTrue(contains(r.stderr, "subsystem request failed"),
+           "no refusal reached the client. stderr: \"" + r.stderr + "\"");
+
+  stopWacsshd(cli, s);
+  return t.report();
+}
+
+export string test_the_server_announces_the_port_it_is_actually_listening_on(Core core, Cli cli) {
+  // `itoa` in `sshd.wac` has exactly one observable: this line. It survived mutation testing
+  // replaced by `return ""`, which yields `sshd: listening on port ` — a server that has forgotten
+  // to say where it is. Harmless-looking, and the first thing anyone reads when a connection will
+  // not go through.
+  //
+  // Asserted against the port the *test* chose, not against whatever the line contains, so a number
+  // that is merely present but wrong fails too.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-announce", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  string said = s.said(cli);
+  string want = "sshd: listening on port " + itoa(s.port);
+  t.isTrue(contains(said, want),
+           "expected \"" + want + "\", the server said \"" + trimmed(said) + "\"");
+
+  stopWacsshd(cli, s);
+  return t.report();
+}
+
+export string test_the_abandoned_sshd_pattern_matches_what_ps_actually_prints(Core core, Cli cli) {
+  // The trap this exists for: sshd rewrites its own argv, so what `ps` shows is not what was
+  // executed. A pattern anchored at the binary matches nothing, the reaper finds nothing, and a
+  // machine with thirty leaked daemons looks exactly like a clean one. wac-mono 0073.
+  //
+  // `reapSelects`' canary says the pattern is not inert against a live process. This says it
+  // discriminates, which is the other way to be wrong and the worse one: a pattern that also matched
+  // the machine's own sshd would kill it.
+  T t = T.create();
+  string listener =
+    "sshd: /usr/sbin/sshd -D -f /tmp/tmp.VPs8c9aLpd/sshd_config [listener] 0 of 10-100 startups";
+  t.isTrue(wouldReap(cli, listener), "the pattern does not match a real listener:\n  " + listener);
+
+  // And what it must not match: the machine's own sshd, configured from `/etc`, and a client.
+  string[] others = string[](
+    "/usr/sbin/sshd -D",
+    "sshd: /usr/sbin/sshd -D -f /etc/ssh/sshd_config [listener]",
+    "ssh -p 2222 -o StrictHostKeyChecking=no user@127.0.0.1 true");
+  for (i32 i = 0; i < others.len(); i++) {
+    t.isFalse(wouldReap(cli, others[i]), "the pattern matches something it must not:\n  " + others[i]);
+  }
+  return t.report();
+}
+
+export string test_our_own_client_talks_to_our_own_server_both_ends_in_wac(Core core, Cli cli) {
+  // Worth being explicit that this proves less than the tests above: two implementations that share
+  // an author agree with each other about a misreading as readily as about the spec. It is here
+  // because it exercises both halves in one process tree, not as evidence.
+  T t = T.create();
+  if (!haveSshd(cli)) { return t.report(); }
+  string client = buildClient(t, cli, false);
+  if (client == "") { return t.report(); }
+  Wacsshd s = server(t, cli, "wacsshd-bothends", string[0](fill: ""), false);
+  if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
+
+  // A HOME for the client, with the server's host key recorded so it will proceed.
+  string home = s.dir + "/clienthome";
+  cli.mkdir(home + "/.ssh", true).wait();
+  copyPreserving(cli, s.dir + "/clientkey", home + "/.ssh/id_ed25519");
+  restrict(cli, home + "/.ssh/id_ed25519");
+  string hostBlob = publicBlobText(cli, s.dir + "/.ssh/ssh_host_ed25519_key.pub");
+  t.isTrue(hostBlob != "", "the server's host key could not be read");
+  cli.writeFile(home + "/.ssh/known_hosts",
+                ("[127.0.0.1]:" + itoa(s.port) + " ssh-ed25519 " + hostBlob + "\n").toBytes())
+     .wait();
+
+  Said r = ourSsh(cli, client, home,
+                  string[]("-p", itoa(s.port), "127.0.0.1", "echo", "both", "ends", "in", "wac"));
+  t.eqI32(r.status, 0, "our client exited " + itoa(r.status) + ": " + r.stderr);
+  t.eqStr(r.stdout, "both ends in wac\n", "what our client read back");
+
+  stopWacsshd(cli, s);
+  return t.report();
+}

@@ -1,0 +1,82 @@
+// Building SSH wire messages by hand, for tests that need a message our own encoder cannot write.
+//
+// Most of what these tests check is what `src/` *produces*, and for that the encoders under test are
+// the right tool. But several of the cases are messages a **peer** sends — a server KEXINIT offering
+// algorithms in the opposite order, a CHANNEL_OPEN_CONFIRMATION carrying two different channel
+// numbers, a truncated CHANNEL_DATA — and using our encoder for those would compare a parser against
+// its own writer, which agrees with itself whatever either does.
+//
+// So this is deliberately a *second* expression of the wire types, written against RFC 4251 §5
+// rather than against `src/wire.wac`. `u32be` writes the four bytes in order and `str` prefixes a
+// length; that is the whole of it, and the duplication is the point.
+//
+// `Buf` rather than repeated `u8[] +`, because several of these build a message a field at a time
+// and the concatenating form is quadratic in the number of fields.
+
+import { Buf } from "../../../bytes/src/buf.wac";
+
+/** A uint32, big-endian — RFC 4251 §5. */
+export u8[] u32be(i32 n) {
+  u8[] out = u8[4]();
+  out[0] = (n >>> 24) & 255;
+  out[1] = (n >>> 16) & 255;
+  out[2] = (n >>> 8) & 255;
+  out[3] = n & 255;
+  return out;
+}
+
+/** The uint32 at `at`, as a signed i32 — so a length with the top bit set arrives negative. */
+export i32 u32At(u8[] b, i32 at) {
+  if (at < 0 || at + 4 > b.len()) { return -1; }
+  return (b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3];
+}
+
+/** A length-prefixed string, from bytes. */
+export u8[] str(u8[] b) {
+  Buf out = Buf.create();
+  out.pushAll(u32be(b.len()));
+  out.pushAll(b);
+  return out.take();
+}
+
+/** A length-prefixed string, from text. */
+export u8[] strOf(string s) { return str(s.toBytes()); }
+
+/** Everything joined, in order. */
+export u8[] cat(u8[][] parts) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < parts.len(); i++) { out.pushAll(parts[i]); }
+  return out.take();
+}
+
+/** `n` bytes of `(i * mul + add) & 255` — a filler that is not all one value. */
+export u8[] ramp(i32 n, i32 mul, i32 add) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
+  return out;
+}
+
+/** `n` bytes of `v`. */
+export u8[] filled(i32 n, i32 v) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = v & 255; }
+  return out;
+}
+
+/** `b[at..end)`. */
+export u8[] slice(u8[] b, i32 at, i32 end) {
+  i32 from = at < 0 ? 0 : at;
+  i32 to = end > b.len() ? b.len() : end;
+  if (to < from) { to = from; }
+  u8[] out = u8[to - from]();
+  out.copyFrom(b, from, 0, to - from);
+  return out;
+}
+
+/** A copy with the bit `mask` flipped at `at` — for the tamper cases. */
+export u8[] flipped(u8[] b, i32 at, i32 mask) {
+  u8[] out = u8[b.len()]();
+  out.copyFrom(b, 0, 0, b.len());
+  out[at] = out[at] ^ mask;
+  return out;
+}

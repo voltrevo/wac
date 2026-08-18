@@ -1,0 +1,232 @@
+// A local sshd, and the small amount of shell the tests around it need.
+//
+// Its own module rather than a helper inside one test file, because three files need a real server
+// and none of them should import another. This is the wac counterpart of the host-side `server.ts`,
+// and it keeps that file's two hard-won details:
+//
+//   **The port is held, not merely chosen.** Two `ssh-keygen` runs and a config write happen between
+//   picking a port and sshd's bind — hundreds of milliseconds during which a number handed over
+//   early belongs to nobody. `Held` keeps the listener open until immediately before the spawn.
+//   wac-mono 0069.
+//
+//   **Abandoned servers are reaped on the way in.** `tools/push.sh` times a suite out at 45 minutes,
+//   a container can be stopped, and a host can be rebooted — none of which run an exit handler. The
+//   only hook that survives all three is cleaning up when the *next* run starts. wac-mono 0073. The
+//   pattern is this suite's own shape, `sshd -D -f /tmp/…/sshd_config`, and only processes whose
+//   parent is init: a live test's server has a live parent, and so does another agent's.
+//
+// ## Why `/bin/sh` appears here at all
+//
+// Two things this needs are not capabilities and are not going to become ones. `chmod 600` is a
+// POSIX mode, and `Fs` deliberately exposes one executable bit instead — `issues/system/0132` gives
+// the three reasons, of which the browser having no mode bits at all is the one that settles it. And
+// sshd insists on 0600 for a host key, so the alternative to a `chmod` is no test.
+//
+// Each `sh` line names exactly what it does rather than being a general escape hatch, so when
+// `Cli.exec` stops leaking the parent's environment — `issues/system/0198` — what these need is
+// already written down.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Daemon, Held, start, stop, waitForPort } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** Everything a test needs from a running sshd, so the setup is written once. */
+export struct Sshd {
+  bool ok;
+  string error;
+  string dir;
+  i32 port;
+  Daemon daemon;
+}
+
+/** Whether this machine has an sshd to run. Every test here is pointless without one. */
+export bool haveSshd(Cli cli) { return cli.stat("/usr/sbin/sshd").wait().isFile; }
+
+/** A scratch directory of our own, emptied first so a previous run cannot supply a file. */
+export string scratch(Cli cli, string name) {
+  string dir = cli.cwd().wait() + "/.cache/" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+/** `chmod 600`, which sshd requires of a host key and `Fs` has no word for. */
+export bool restrict(Cli cli, string path) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", "chmod 600 " + quoted(path)), u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+/** `cp -p`, preserving the mode — an `ssh-keygen` key copied any other way loses its 0600. */
+export bool copyPreserving(Cli cli, string from, string to) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", "cp -p " + quoted(from) + " " + quoted(to)),
+                    u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+/** Generate an Ed25519 key pair at `path`, failing `t` if `ssh-keygen` will not. */
+export bool keygen(T t, Cli cli, string path) {
+  Exec r = cli.exec("ssh-keygen", string[]("-t", "ed25519", "-f", path, "-N", "", "-q"),
+                    u8[0]()).wait();
+  t.isTrue(r.ran(), "ssh-keygen ran — " + r.error);
+  t.eqI32(r.status, 0, "ssh-keygen for " + path + ": " + string.fromBytes(r.stderr));
+  return r.ran() && r.status == 0;
+}
+
+/**
+ * The base64 blob out of a `.pub` file — the second field, which is the key as it goes on the wire.
+ *
+ * Empty when the file cannot be read or has no second field, which every caller checks: an empty
+ * expected blob would make a `known_hosts` comparison pass against anything.
+ */
+export string publicBlobText(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) { return ""; }
+  string text = string.fromBytes(f.bytes);
+  i32 first = text.indexOf(" ");
+  if (first < 0) { return ""; }
+  string rest = text.slice(first + 1, text.len());
+  i32 second = rest.indexOf(" ");
+  string blob = second < 0 ? rest : rest.slice(0, second);
+  i32 nl = blob.indexOf("\n");
+  return nl < 0 ? blob : blob.slice(0, nl);
+}
+
+/**
+ * The abandoned sshds of runs that were killed, cleared before starting another.
+ *
+ * **Not anchored at the binary, because sshd rewrites its own argv.** A listener shows up as
+ * `sshd: /usr/sbin/sshd -D -f /tmp/…/sshd_config [listener] 0 of 10-100 startups`, so a pattern
+ * beginning `/usr/sbin/sshd` matches nothing — and a reaper that matches nothing is
+ * indistinguishable from a clean machine, which is how the first version of this passed review.
+ *
+ * The config directory goes with the process, since that is the other half of what leaks.
+ *
+ * **The path the pattern looks for is this fixture's, and changing where the config is written
+ * silently disarms it.** The host-side version matched `/tmp/…/sshd_config`, because that is where
+ * `Deno.makeTempDir` put it; these servers are configured under `.cache/`, and a reaper still
+ * looking in `/tmp` would find nothing and report a clean machine either way. Both are matched here
+ * — `/tmp` for the orphans the host-side fixture may already have left on this box — and
+ * `reapSelects` is the test that the pattern is not inert.
+ */
+void reapAbandoned(Cli cli) {
+  cli.exec("/bin/sh", string[]("-c", REAP + "kill \"$pid\" 2>/dev/null; " +
+                               "case \"$dir\" in /tmp/*|*/.cache/*) rm -rf \"$dir\";; esac; " +
+                               "done; true"), u8[0]()).wait();
+}
+
+/**
+ * The selection half of `reapAbandoned`, ending in an open `while` the caller closes.
+ *
+ * Split out so `reapSelects` can run the *same* selection and print what it chose rather than
+ * killing it. A test that re-expressed the pattern would be checking its own copy.
+ *
+ * `ppid == 1` is the whole safety argument: a running test's server has a live parent, and so does
+ * another agent's.
+ */
+/**
+ * What makes a `ps` line one of ours, as a shell function over `$1`.
+ *
+ * Written once and used twice: `REAP` calls it while walking `ps`, and `wouldReap` calls it on a
+ * line the caller supplies. Two copies would let the reaper and the test of the reaper drift apart,
+ * and the test would go on passing against its own copy.
+ */
+const string ARMS =
+  "ours() { " +
+  "  case \"$1\" in *sshd*) ;; *) return 1;; esac; " +
+  "  case \"$1\" in *' -D -f '*'/sshd_config'*) ;; *) return 1;; esac; " +
+  // **And the config has to be somewhere a test put it.** Without this the pattern matches the
+  // machine's own `sshd -D -f /etc/ssh/sshd_config`, whose parent is also init — so the ppid check
+  // is no defence and the reaper would kill the real one. The host-side version got this for free by
+  // anchoring on `/tmp/`, which is where `makeTempDir` puts things; these servers are configured
+  // under `.cache/`, so both are named. `test_the_abandoned_sshd_pattern_matches_what_ps_actually`
+  // is where dropping it was caught.
+  "  d=${1#* -D -f }; d=${d%%/sshd_config*}; " +
+  "  case \"$d\" in /tmp/*|*/.cache/*) ;; *) return 1;; esac; " +
+  "  return 0; }; ";
+
+const string REAP =
+  ARMS +
+  "ps -eo pid=,ppid=,args= 2>/dev/null | while read pid ppid rest; do " +
+  "  case \"$ppid\" in 1) ;; *) continue;; esac; " +
+  "  ours \"$rest\" || continue; " +
+  "  dir=${rest#* -D -f }; dir=${dir%%/sshd_config*}; ";
+
+/** Which pids `reapAbandoned` would kill, one per line — for the test that it selects anything. */
+export string reapSelects(Cli cli) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", REAP + "echo \"$pid $dir\"; done"), u8[0]()).wait();
+  return string.fromBytes(r.stdout);
+}
+
+/**
+ * Whether the reaper's pattern would match one `ps` line — the *discrimination* half.
+ *
+ * `reapSelects` says the pattern is not inert. This says it is not indiscriminate, which is the
+ * other way to get it wrong and the more dangerous one: a pattern that also matched the machine's
+ * own sshd would kill it. Literally the same `ours` function `REAP` uses — see `ARMS`.
+ */
+export bool wouldReap(Cli cli, string line) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", ARMS + "ours \"$1\"", "sh", line), u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+/**
+ * Start an sshd that accepts a freshly generated client key.
+ *
+ * The server runs as this user and so can only authenticate this user, which is exactly the account
+ * the tests attempt. `dir` holds `hostkey`, `hostkey.pub`, `clientkey`, `clientkey.pub` and
+ * `authorized_keys`, all of which the callers read.
+ *
+ * A caller must check `ok`: a server that never came up leaves every later assertion measuring a
+ * refused connection, which is a different failure wearing the same clothes.
+ */
+export Sshd startSshd(T t, Cli cli, string name) {
+  reapAbandoned(cli);
+  string dir = scratch(cli, name);
+
+  Held held = Held.take(cli);
+  if (held.port < 0) { return Sshd(false, "no port could be bound", dir, -1, Daemon(-1, "", "")); }
+
+  string[] keys = string[]("hostkey", "clientkey");
+  for (i32 i = 0; i < keys.len(); i++) {
+    if (!keygen(t, cli, dir + "/" + keys[i])) {
+      held.release(cli);
+      return Sshd(false, "ssh-keygen failed for " + keys[i], dir, held.port, Daemon(-1, "", ""));
+    }
+    restrict(cli, dir + "/" + keys[i]);
+  }
+  copyPreserving(cli, dir + "/clientkey.pub", dir + "/authorized_keys");
+  restrict(cli, dir + "/authorized_keys");
+
+  string config =
+    "Port " + itoa(held.port) + "\n" +
+    "ListenAddress 127.0.0.1\n" +
+    "HostKey " + dir + "/hostkey\n" +
+    "AuthorizedKeysFile " + dir + "/authorized_keys\n" +
+    "StrictModes no\n" +
+    "UsePAM no\n" +
+    "PasswordAuthentication no\n" +
+    "KbdInteractiveAuthentication no\n" +
+    "PidFile none\n";
+  cli.writeFile(dir + "/sshd_config", config.toBytes()).wait();
+
+  // Released here and nowhere earlier: the next statement is the bind.
+  held.release(cli);
+  // Foreground (`-D`), so killing the child actually stops the server.
+  Daemon d = start(cli, "/usr/sbin/sshd -D -f " + quoted(dir + "/sshd_config"), dir + "/sshd.log");
+  if (!d.ok()) { return Sshd(false, "sshd did not start — " + d.error, dir, held.port, d); }
+
+  // `waitForPort` connects, which is a real client as far as sshd is concerned — harmless here,
+  // because sshd accepts many and simply logs a connection that says nothing.
+  if (!waitForPort(cli, "127.0.0.1", held.port, 400)) {
+    return Sshd(false, "sshd never accepted on " + itoa(held.port), dir, held.port, d);
+  }
+  return Sshd(true, "", dir, held.port, d);
+}
+
+/** Stop it and remove its directory, whether or not it ever came up. */
+export void stopSshd(Cli cli, Sshd s) {
+  stop(cli, s.daemon);
+  cli.remove(s.dir, true).wait();
+}

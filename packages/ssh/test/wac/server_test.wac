@@ -1,0 +1,258 @@
+// The server half, and the message numbers every side depends on.
+//
+// Most of this file exists because mutation testing found the code untested rather than because a
+// bug was found. Three groups, each with the same shape of hole:
+//
+//   **The message numbers.** A function returning a constant has no oracle inside this package —
+//   `parse` reads a byte and compares it against `msgChannelEof()`, so both move together if the
+//   number is wrong and every test still passes. Six of them survived being replaced with zero,
+//   including three no test sends at all. So the oracle comes from outside: RFC 4250 §4.1.2, with
+//   EXT_INFO from RFC 8308 §2.3 and the ECDH pair from RFC 5656 §7.1, written out here rather than
+//   derived — a table generated from the same source it checks is the self-comparison this exists
+//   to escape.
+//
+//   **The refusal messages.** `channelFailure`, `openFailure` and `disconnect` survived with their
+//   bodies replaced, because a client only sees them when something has gone wrong and nothing in
+//   the suite makes anything go wrong at this layer. They are pure functions over integers and
+//   bytes, so the fix is not a harder integration test — it is to assert the bytes. All three end
+//   with an empty language tag, which is a `string` and so four zero bytes, not nothing.
+//
+//   **`readOpenChannel`.** This survived as `return 0`, and the reason is worth keeping: OpenSSH's
+//   first channel *is* zero, so the only witness the suite had always agreed with the constant.
+//
+// Host-side until 2026-08-18, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { encode as hexEncode } from "../../../codec/src/hex.wac";
+import { Reader } from "../../src/wire.wac";
+import { msgDisconnect, msgIgnore, msgUnimplemented, msgDebug, msgExtInfo, msgNewKeys }
+  from "../../src/conn.wac";
+import { msgKexEcdhInit, msgKexEcdhReply } from "../../src/kex.wac";
+import { msgKexInit } from "../../src/kexinit.wac";
+import { msgServiceRequest, msgServiceAccept, msgUserAuthRequest, msgUserAuthFailure,
+         msgUserAuthSuccess, publicKeyRequest, signedData } from "../../src/auth.wac";
+import { msgChannelOpen, msgChannelOpenConfirmation, msgChannelOpenFailure, msgChannelWindowAdjust,
+         msgChannelData, msgChannelExtendedData, msgChannelEof, msgChannelClose, msgChannelRequest,
+         msgChannelSuccess, msgChannelFailure } from "../../src/channel.wac";
+import { AuthRequest, byApplication, channelFailure, disconnect, execCommand, exitStatus,
+         hostKeyBlob, openConfirmation, openFailure, parseAuthRequest, pkOk, readOpenChannel,
+         serverProposal, verifyAuth } from "../../src/server.wac";
+import { ed25519PublicKey } from "../../../crypto/src/ed25519.wac";
+import { u32be, u32At, str, strOf, cat, ramp, slice } from "./build.wac";
+
+/** Bytes as `01 02 03`, which is how the RFC layouts below are written out. */
+string spaced(u8[] b) {
+  string out = "";
+  string all = string.fromBytes(hexEncode(b));
+  for (i32 i = 0; i < b.len(); i++) {
+    out = out + (i == 0 ? "" : " ") + all.slice(i * 2, i * 2 + 2);
+  }
+  return out;
+}
+
+export string test_the_signed_data_length_prefixes_the_session_id() {
+  // Omitting that length is a natural mistake and produces a signature the server rejects with no
+  // explanation, so the layout is asserted directly rather than only through interop.
+  T t = T.create();
+  u8[] sessionId = ramp(32, 1, 0);
+  u8[] user = ("alice").toBytes();
+  u8[] pub = ramp(51, 1, 0);
+  u8[] signed = signedData(sessionId, user, pub);
+
+  t.eqI32(u32At(signed, 0), 32, "the session id is not length-prefixed");
+  t.eqStr(spaced(slice(signed, 4, 36)), spaced(sessionId), "session id is not first");
+  t.eqI32(signed[36], msgUserAuthRequest(),
+          "SSH_MSG_USERAUTH_REQUEST does not follow the session id");
+  t.eqI32(u32At(signed, 37), user.len(), "the user name is not next");
+
+  // The signed data must be a prefix of the request itself, up to the signature field.
+  u8[] seed = ramp(32, 3, 0);
+  u8[] request = publicKeyRequest(sessionId, user, pub, seed);
+  u8[] withoutSessionId = slice(signed, 36, signed.len());
+  t.eqStr(spaced(slice(request, 0, withoutSessionId.len())), spaced(withoutSessionId),
+          "the request and the signed data disagree before the signature");
+  // …and the request carries a signature blob after it, naming its algorithm.
+  u8[] tail = slice(request, withoutSessionId.len(), request.len());
+  Reader r = Reader.create(tail, 4, tail.len());
+  t.eqStr(string.fromBytes(r.str()), "ssh-ed25519", "the signature blob does not name ssh-ed25519");
+  return t.report();
+}
+
+export string test_the_servers_messages_carry_the_fields_a_client_reads() {
+  T t = T.create();
+  u8[] point = ramp(32, 1, 1);
+
+  // The host key blob: `string "ssh-ed25519"` then the point. 4 + 11 + 4 + 32.
+  u8[] blob = hostKeyBlob(point);
+  t.eqI32(blob.len(), 51, "the host key blob is the wrong size");
+  Reader br = Reader.over(blob);
+  t.eqStr(string.fromBytes(br.str()), "ssh-ed25519", "the blob does not name its type");
+
+  // OPEN_CONFIRMATION is the one message carrying both channel numbers, and they differ here so
+  // reading the wrong one is visible.
+  u8[] conf = openConfirmation(11, 22, 4096, 1024);
+  t.eqI32(conf[0], msgChannelOpenConfirmation(), "not an open confirmation");
+  t.eqI32(u32At(conf, 1), 11, "the client's number is not the recipient");
+  t.eqI32(u32At(conf, 5), 22, "our number is not the sender");
+  t.eqI32(u32At(conf, 9), 4096, "window wrong");
+
+  // exit-status is a request with want_reply false, then the code.
+  u8[] exit = exitStatus(7, 42);
+  t.eqI32(exit[0], msgChannelRequest(), "exit status is not a channel request");
+  t.eqI32(u32At(exit, 1), 7, "exit status addresses the wrong channel");
+  Reader er = Reader.create(exit, 5, exit.len());
+  t.eqStr(string.fromBytes(er.str()), "exit-status", "wrong request name");
+  t.eqI32(exit[20], 0, "want_reply must be false — nothing answers it");
+  t.eqI32(u32At(exit, 21), 42, "the status is wrong");
+
+  // PK_OK echoes the algorithm and blob back, which is what makes the client sign.
+  u8[] ok = pkOk(("ssh-ed25519").toBytes(), blob);
+  t.eqI32(ok[0], 60, "PK_OK has the wrong message number");
+  Reader okr = Reader.create(ok, 1, ok.len());
+  t.eqStr(string.fromBytes(okr.str()), "ssh-ed25519", "PK_OK type wrong");
+
+  // The exec command comes out of a CHANNEL_REQUEST, and only from an `exec` one.
+  u8[] wantReply = u8[1]();
+  wantReply[0] = 1;
+  u8[] exec = cat(u8[][](u8[](98), u32be(0), strOf("exec"), wantReply, strOf("uname -a")));
+  t.eqStr(string.fromBytes(execCommand(exec)), "uname -a", "the command did not parse");
+  u8[] pty = cat(u8[][](u8[](98), u32be(0), strOf("pty-req"), wantReply));
+  t.eqI32(execCommand(pty).len(), 0, "a pty request was read as exec");
+
+  // The server offers what it can do and nothing else — advertising more would have the client
+  // choose it.
+  t.eqStr(string.fromBytes(serverProposal().hostKey), "ssh-ed25519", "host key list wrong");
+  t.isTrue(string.fromBytes(serverProposal().kex).indexOf("kex-strict-s-v00@openssh.com") >= 0,
+           "the server does not offer its half of strict KEX");
+  return t.report();
+}
+
+export string test_a_userauth_request_is_verified_against_bytes_we_rebuild() {
+  T t = T.create();
+  u8[] seed = ramp(32, 9, 1);
+  u8[] sessionId = ramp(32, 13, 0);
+  u8[] user = ("claude").toBytes();
+  u8[] publicBlob = hostKeyBlob(ed25519PublicKey(seed));
+
+  // Build a genuine request with our own client code, then check the server accepts it.
+  u8[] request = publicKeyRequest(sessionId, user, publicBlob, seed);
+  t.isTrue(verifyAuth(parseAuthRequest(request), sessionId), "a valid request did not verify");
+
+  // The same request under a different session id must not verify — that binding is the whole
+  // reason a signature cannot be replayed to another server.
+  u8[] otherSession = u8[32]();
+  otherSession.copyFrom(sessionId, 0, 0, 32);
+  otherSession[0] = otherSession[0] ^ 1;
+  t.isFalse(verifyAuth(parseAuthRequest(request), otherSession),
+            "a signature verified under a different session id");
+
+  // A probe carries no signature and must never be treated as authentication.
+  u8[] probe = cat(u8[][](u8[](50), str(user), strOf("ssh-connection"), strOf("publickey"),
+                          u8[1](), strOf("ssh-ed25519"), str(publicBlob)));
+  AuthRequest p = parseAuthRequest(probe);
+  t.isTrue(p.ok, "a probe did not parse");
+  t.isFalse(p.hasSignature, "a probe claimed a signature");
+  t.isFalse(verifyAuth(p, sessionId), "a probe was accepted as authentication");
+
+  // Another method parses far enough to be named, so a server can say what it will not do.
+  u8[] password = cat(u8[][](u8[](50), str(user), strOf("ssh-connection"), strOf("password"),
+                             u8[1](), strOf("hunter2")));
+  AuthRequest pw = parseAuthRequest(password);
+  t.isTrue(pw.ok, "a password request did not parse");
+  t.eqStr(string.fromBytes(pw.method), "password", "method name lost");
+  t.isFalse(verifyAuth(pw, sessionId), "a password request verified");
+  return t.report();
+}
+
+export string test_every_message_number_is_the_one_the_rfc_assigns() {
+  // RFC 4250 §4.1.2, RFC 8308 §2.3 for EXT_INFO and RFC 5656 §7.1 for the ECDH pair. Each
+  // constant is named beside its number here — the host-side version compared two positional
+  // lists, where reordering either one silently mismatched the pairs.
+  T t = T.create();
+  t.eqI32(msgDisconnect(), 1, "SSH_MSG_DISCONNECT");
+  t.eqI32(msgIgnore(), 2, "SSH_MSG_IGNORE");
+  t.eqI32(msgUnimplemented(), 3, "SSH_MSG_UNIMPLEMENTED");
+  t.eqI32(msgDebug(), 4, "SSH_MSG_DEBUG");
+  t.eqI32(msgServiceRequest(), 5, "SSH_MSG_SERVICE_REQUEST");
+  t.eqI32(msgServiceAccept(), 6, "SSH_MSG_SERVICE_ACCEPT");
+  t.eqI32(msgExtInfo(), 7, "SSH_MSG_EXT_INFO");
+  t.eqI32(msgKexInit(), 20, "SSH_MSG_KEXINIT");
+  t.eqI32(msgNewKeys(), 21, "SSH_MSG_NEWKEYS");
+  t.eqI32(msgKexEcdhInit(), 30, "SSH_MSG_KEX_ECDH_INIT");
+  t.eqI32(msgKexEcdhReply(), 31, "SSH_MSG_KEX_ECDH_REPLY");
+  t.eqI32(msgUserAuthRequest(), 50, "SSH_MSG_USERAUTH_REQUEST");
+  t.eqI32(msgUserAuthFailure(), 51, "SSH_MSG_USERAUTH_FAILURE");
+  t.eqI32(msgUserAuthSuccess(), 52, "SSH_MSG_USERAUTH_SUCCESS");
+  t.eqI32(msgChannelOpen(), 90, "SSH_MSG_CHANNEL_OPEN");
+  t.eqI32(msgChannelOpenConfirmation(), 91, "SSH_MSG_CHANNEL_OPEN_CONFIRMATION");
+  t.eqI32(msgChannelOpenFailure(), 92, "SSH_MSG_CHANNEL_OPEN_FAILURE");
+  t.eqI32(msgChannelWindowAdjust(), 93, "SSH_MSG_CHANNEL_WINDOW_ADJUST");
+  t.eqI32(msgChannelData(), 94, "SSH_MSG_CHANNEL_DATA");
+  t.eqI32(msgChannelExtendedData(), 95, "SSH_MSG_CHANNEL_EXTENDED_DATA");
+  t.eqI32(msgChannelEof(), 96, "SSH_MSG_CHANNEL_EOF");
+  t.eqI32(msgChannelClose(), 97, "SSH_MSG_CHANNEL_CLOSE");
+  t.eqI32(msgChannelRequest(), 98, "SSH_MSG_CHANNEL_REQUEST");
+  t.eqI32(msgChannelSuccess(), 99, "SSH_MSG_CHANNEL_SUCCESS");
+  t.eqI32(msgChannelFailure(), 100, "SSH_MSG_CHANNEL_FAILURE");
+  return t.report();
+}
+
+export string test_the_refusal_messages_are_laid_out_as_the_rfc_says_byte_for_byte() {
+  T t = T.create();
+  // byte 100, uint32 recipient channel. Nothing else — a CHANNEL_FAILURE carries no reason.
+  // RFC 4254 §5.4.
+  t.eqStr(spaced(channelFailure(7)), "64 00 00 00 07", "channelFailure(7)");
+
+  // byte 1, uint32 reason, string description, string language tag. RFC 4253 §11.1.
+  t.eqStr(spaced(disconnect(11, ("bye").toBytes())),
+          "01 00 00 00 0b 00 00 00 03 62 79 65 00 00 00 00", "disconnect(11, bye)");
+
+  // byte 92, uint32 recipient channel, uint32 reason code, string description, string language.
+  // RFC 4254 §5.1.
+  t.eqStr(spaced(openFailure(3, 4, ("no").toBytes())),
+          "5c 00 00 00 03 00 00 00 04 00 00 00 02 6e 6f 00 00 00 00", "openFailure(3, 4, no)");
+
+  // SSH_DISCONNECT_BY_APPLICATION, RFC 4253 §11.1. The one reason code this server sends.
+  t.eqI32(byApplication(), 11, "SSH_DISCONNECT_BY_APPLICATION");
+  return t.report();
+}
+
+export string test_a_channel_open_is_read_for_its_number_whatever_the_number_is() {
+  // SSH_MSG_CHANNEL_OPEN, RFC 4254 §5.1: byte 90, string channel type, uint32 sender channel,
+  // uint32 initial window, uint32 maximum packet size. Note the sender's number comes *after* the
+  // type string, which is the one message where it is not immediately after the byte — reading it
+  // at a fixed offset is the mistake this function exists to avoid.
+  T t = T.create();
+  i32[] numbers = i32[](0, 1, 7, 258, 0x7fffffff);
+  for (i32 i = 0; i < numbers.len(); i++) {
+    t.eqI32(readOpenChannel(channelOpen("session", numbers[i])), numbers[i],
+            "session channel " + itoa(numbers[i]) + " read back wrong");
+  }
+
+  // Anything that is not a session is refused rather than served on a guessed channel.
+  string[] bad = string[]("x11", "direct-tcpip", "", "sessionx", "sessio");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.eqI32(readOpenChannel(channelOpen(bad[i], 3)), -1,
+            "channel type \"" + bad[i] + "\" was served");
+  }
+
+  // Truncated so the *channel number itself* is incomplete. Cutting less than that is not a
+  // truncation as far as this function is concerned: it needs `5 + typeLen + 4` bytes and reads
+  // nothing beyond them, so lopping off the window and max-packet fields is legitimately fine.
+  u8[] full = channelOpen("session", 5);
+  t.eqI32(readOpenChannel(slice(full, 0, 15)), -1,
+          "an open with an incomplete channel number was read anyway");
+  t.eqI32(readOpenChannel(slice(full, 0, 16)), 5,
+          "an open carrying exactly the channel number was refused");
+
+  // A different message entirely.
+  u8[] notOpen = slice(full, 0, full.len());
+  notOpen[0] = msgChannelRequest();
+  t.eqI32(readOpenChannel(notOpen), -1, "a CHANNEL_REQUEST was read as a CHANNEL_OPEN");
+  return t.report();
+}
+
+u8[] channelOpen(string type, i32 channel) {
+  return cat(u8[][](u8[](90), strOf(type), u32be(channel), u32be(2 * 1024 * 1024), u32be(32768)));
+}

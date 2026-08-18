@@ -1,0 +1,138 @@
+// Channels: the flow-control window, the message parser, and who each message is addressed to.
+//
+// The addressing is the part with a trap in it. Every channel message carries the number the
+// *other* side chose, and with one channel numbered zero on both ends — the common case, and what
+// OpenSSH does — getting it backwards works perfectly. So every case here uses numbers that could
+// only have come from the right place: 7 for ours, 42 for theirs, never the same twice.
+//
+// The window is the other invisible one. A client that never returns credit reads exactly one
+// window and then hangs, having done nothing that any error reports — so the rule is asserted
+// directly rather than only through the live test that would hang if it were wrong.
+//
+// Host-side until 2026-08-18, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Incoming, Window, channelClose, channelData, channelEof, execRequest, extendedDataStderr,
+         msgChannelData, msgChannelOpen, openSession, parse, windowAdjust }
+  from "../../src/channel.wac";
+import { Reader } from "../../src/wire.wac";
+import { u32be, u32At, str, strOf, cat } from "./build.wac";
+
+export string test_the_window_returns_credit_before_it_runs_out_not_after() {
+  T t = T.create();
+  i32 initial = 1000;
+  Window w = Window.create(initial);
+  t.eqI32(w.left, initial, "a new window is not full");
+
+  // Above half, nothing is due: adjusting per packet would spend a packet per packet.
+  t.eqI32(w.consume(100), 0, "adjusted too early");
+  t.eqI32(w.left, 900, "consume did not reduce the window");
+  t.eqI32(w.consume(399), 0, "adjusted at exactly half plus one");
+  t.eqI32(w.left, 501, "the window is the wrong size after two reads");
+
+  // Crossing half returns exactly what was consumed, and refills.
+  t.eqI32(w.consume(1), 500, "the increment on crossing half");
+  t.eqI32(w.left, initial, "the window was not refilled");
+
+  // A single read larger than the whole window still returns the right credit — the server may
+  // send up to its maximum packet size regardless of what we think is left.
+  Window w2 = Window.create(initial);
+  t.eqI32(w2.consume(1500), 1500, "an oversized read mis-credited");
+  t.eqI32(w2.left, initial, "the window was not refilled after overrun");
+  return t.report();
+}
+
+export string test_channel_messages_parse_to_their_fields() {
+  T t = T.create();
+
+  // OPEN_CONFIRMATION: our number, then theirs. They need not agree, and the test uses different
+  // values so a parser that read the wrong one would be caught.
+  Incoming conf = parse(cat(u8[][](u8[](91), u32be(7), u32be(42), u32be(2097152), u32be(32768))));
+  t.eqI32(conf.kind, 91, "kind wrong");
+  t.eqI32(conf.channel, 7, "recipient channel wrong");
+  t.eqI32(conf.senderChannel, 42, "sender channel wrong");
+  t.eqI32(conf.window, 2097152, "window wrong");
+  t.eqI32(conf.extra, 32768, "max packet wrong");
+
+  Incoming data = parse(cat(u8[][](u8[](94), u32be(7), strOf("hello"))));
+  t.eqI32(data.kind, 94, "CHANNEL_DATA kind");
+  t.eqStr(string.fromBytes(data.data), "hello", "CHANNEL_DATA payload");
+
+  Incoming ext = parse(cat(u8[][](u8[](95), u32be(7), u32be(1), strOf("oops"))));
+  t.eqI32(ext.extra, 1, "EXTENDED_DATA type code");
+  t.eqStr(string.fromBytes(ext.data), "oops", "EXTENDED_DATA payload");
+  t.eqI32(extendedDataStderr(), 1, "SSH_EXTENDED_DATA_STDERR is not 1");
+
+  Incoming adjust = parse(cat(u8[][](u8[](93), u32be(7), u32be(4096))));
+  t.eqI32(adjust.window, 4096, "WINDOW_ADJUST increment wrong");
+
+  // exit-status carries a uint32 *after* the want_reply boolean, and is a request rather than a
+  // reply — nothing prompts it.
+  Incoming exit = parse(cat(u8[][](u8[](98), u32be(7), strOf("exit-status"), u8[1](), u32be(3))));
+  t.eqI32(exit.kind, 98, "request kind wrong");
+  t.eqStr(string.fromBytes(exit.data), "exit-status", "request name wrong");
+  t.eqI32(exit.extra, 3, "exit status");
+
+  // A request that is not exit-status has no trailing uint32 to read, and must not go looking.
+  u8[] wantReply = u8[1]();
+  wantReply[0] = 1;
+  Incoming other =
+    parse(cat(u8[][](u8[](98), u32be(7), strOf("keepalive@openssh.com"), wantReply)));
+  t.isTrue(other.ok, "a request without a status did not parse");
+  t.eqI32(other.extra, 0, "a status was invented");
+
+  Incoming failure =
+    parse(cat(u8[][](u8[](92), u32be(7), u32be(4), strOf("no more sessions"), strOf(""))));
+  t.eqI32(failure.extra, 4, "open failure reason wrong");
+  t.eqStr(string.fromBytes(failure.data), "no more sessions", "description wrong");
+
+  // A transport message is not a channel message, and that is ordinary rather than an error.
+  u8[] transport = u8[1]();
+  transport[0] = 21;
+  t.eqI32(parse(transport).kind, 0, "a transport message was taken for a channel one");
+  t.isTrue(parse(transport).ok, "a transport message was reported as malformed");
+
+  // Truncated messages are malformed, not silently zero-filled.
+  u8[] claimsNine = u8[5]();
+  claimsNine[3] = 9; claimsNine[4] = 1;                        // claims 9 bytes, has 1
+  u8[][] truncated = u8[][](
+    u8[0](),
+    u8[](91),
+    cat(u8[][](u8[](91), u32be(7))),
+    cat(u8[][](u8[](94), u32be(7), claimsNine)),
+    cat(u8[][](u8[](98), u32be(7), strOf("exit-status"), u8[1]())));   // no status
+  for (i32 i = 0; i < truncated.len(); i++) {
+    Incoming p = parse(truncated[i]);
+    t.isFalse(p.ok && p.kind != 0,
+              "a truncated message of " + itoa(truncated[i].len()) + " bytes parsed as valid");
+  }
+  return t.report();
+}
+
+export string test_channel_messages_address_the_recipients_channel_number() {
+  // Every channel message carries the number the *other* side chose. With one channel numbered
+  // zero on both sides — the common case — getting this backwards works perfectly, so it is
+  // asserted with a number that could only have come from the right place.
+  T t = T.create();
+  u8[] open = openSession(7, 8192, 32768);
+  t.eqI32(open[0], msgChannelOpen(), "not a CHANNEL_OPEN");
+  // "session", then *our* number, since the server has not chosen one yet.
+  Reader r = Reader.create(open, 1, open.len());
+  t.eqStr(string.fromBytes(r.str()), "session", "channel type wrong");
+  t.eqI32(u32At(open, 12), 7, "open does not carry our channel number");
+  t.eqI32(u32At(open, 16), 8192, "open does not carry the window");
+
+  string[] names = string[]("exec", "adjust", "eof", "close", "data");
+  u8[][] msgs = u8[][](
+    execRequest(42, ("true").toBytes(), true),
+    windowAdjust(42, 100),
+    channelEof(42),
+    channelClose(42),
+    channelData(42, ("x").toBytes()));
+  for (i32 i = 0; i < msgs.len(); i++) {
+    t.eqI32(u32At(msgs[i], 1), 42, names[i] + " does not address the server's number");
+  }
+  t.eqI32(channelData(42, ("x").toBytes())[0], msgChannelData(), "channelData's message number");
+  return t.report();
+}

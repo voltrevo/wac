@@ -249,7 +249,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "Booted of(bool ok, Fs fs, string error) { return Booted(ok, fs, error); }",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -257,7 +257,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "export Booted boot(Core core, Cli cli, string path, Vec<string> argv, Vec<string> programs) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -265,7 +265,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "if (existing.ok) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -273,7 +273,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "if (!got.ok) { return Booted.of(false, fs, got.error); }",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -281,7 +281,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "} else if (existing.fault != FAULT_NOT_FOUND()) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -289,7 +289,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "export bool save(Core core, Cli cli, string who, string path, Fs fs) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -297,7 +297,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "for (i32 i = 0; i < w.skipped.len(); i++) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -305,7 +305,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "if (cli.writeFile(beside, w.bytes).wait().fault != 0) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -313,7 +313,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "if (cli.rename(beside, path).wait().fault != 0) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/wac/imaged_test.wac` and `packages/ssh/test/wac/wacsshdimage_test.wac` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   // ── Guards no caller can trigger ──────────────────────────────────────────────
   //
