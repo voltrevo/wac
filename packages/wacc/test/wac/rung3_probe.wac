@@ -158,6 +158,20 @@ export void assertSound(T t, Ref r, i32 i, string what) {
   }
 }
 
+/**
+ * Sound *and* not silent: the reference rejected this program and this rule is meant to own it.
+ *
+ * Only for the cases a slice claims. Where the reference rejects something this checker does not
+ * model, silence is a **pass** — that is what being a subset means — so those use `assertSound`
+ * alone and never this.
+ */
+export void assertCaught(T t, Ref r, i32 i, string what) {
+  t.isTrue(ours(r.sources[i]).len() > 0,
+           what + ": the reference rejects " + r.sources[i] + " and we said nothing: " +
+           (r.said[i] == "" ? "(nothing)" : r.said[i]));
+  assertSound(t, r, i, what);
+}
+
 /** The no-false-alarm half: the reference accepted this program, so we must be silent. */
 export void assertQuiet(T t, Ref r, i32 i, string what) {
   string[] mine = ours(r.sources[i]);

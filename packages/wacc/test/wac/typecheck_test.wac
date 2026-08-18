@@ -27,7 +27,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Ref, assertQuiet, assertSound, complaint, joinedWith, ours, referenceFor }
+import { Ref, assertCaught, assertQuiet, assertSound, complaint, joinedWith, ours, referenceFor }
   from "./rung3_probe.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
 
@@ -270,5 +270,162 @@ export string test_rung3_every_primitive_against_every_literal_kind(Core core, C
   t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " cells and we catch " +
                             itoa(caught) + "; this slice is meant to catch every literal-return " +
                             "mismatch");
+  return t.report();
+}
+
+/**
+ * The same grid one level up: a returned **name** rather than a returned literal.
+ *
+ * `return s` where `s` is a parameter needs a scope — the first symbol table in this package — and
+ * the grid is the same idea as the literal one, with the reference deciding every cell. It is a
+ * stronger test than the literal grid because a name has no intrinsic type: getting this right means
+ * the declaration was found and read, not that a token was recognised.
+ */
+export string test_rung3_a_returned_parameter_every_declared_type_against_every_parameter_type(
+    Core core, Cli cli) {
+  T t = T.create();
+  string[] all = PRIMITIVES();
+  // Packed types are not legal as a return type, so the declared side leaves them out.
+  string[] usable = string[]("i32", "i64", "u32", "u64", "f32", "f64", "bool", "string");
+  string[] sources = string[usable.len() * all.len()](fill: "");
+  string[] labels = string[usable.len() * all.len()](fill: "");
+  i32 n = 0;
+  for (i32 a = 0; a < usable.len(); a++) {
+    for (i32 b = 0; b < all.len(); b++) {
+      sources[n] = "export " + usable[a] + " f(" + all[b] + " p) { return p; }";
+      labels[n] = usable[a] + " f(" + all[b] + " p)";
+      n = n + 1;
+    }
+  }
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+
+  i32 rejected = 0;
+  i32 caught = 0;
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, labels[i]); continue; }
+    rejected = rejected + 1;
+    assertSound(t, r, i, labels[i]);
+    if (ours(sources[i]).len() > 0) { caught = caught + 1; }
+  }
+  t.isTrue(rejected > 0, "no cell was rejected — the grid is not being evaluated");
+  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " of these and we catch " +
+                            itoa(caught));
+  return t.report();
+}
+
+export string test_rung3_a_name_this_slice_cannot_resolve_is_silence_not_a_guess() {
+  // Shapes where the honest answer is nothing, and each would be easy to get wrong in the direction
+  // that matters — a false diagnostic at a position the reference has no diagnostic for.
+  //
+  // **Two of the four original entries have aged out**, and that is the interesting thing about this
+  // test now. `return later;` sat here on the grounds that a name from outside the function was
+  // unknowable — untrue since the checker gained a module scope. `other(a)` sat here as "needs an
+  // expression typer" — untrue since a call knows what it is calling. Both are now reported, at the
+  // reference's own columns.
+  //
+  // A quiet list is a claim about the checker's *limits*, and limits move. Nothing warns you: the
+  // entry keeps passing, quietly asserting that a rule you have since written does not exist. What
+  // caught both was a recall corpus large enough to notice the case was missing.
+  T t = T.create();
+  string[] quiet = string[](
+    // A local shadowing a parameter. wac scopes by block and this slice does not track blocks, so
+    // the name is poisoned rather than resolved to whichever declaration was seen last.
+    "export i32 sh(i32 a) { if (true) { string a = \"x\"; } return a; }",
+    // An ordinary expression, which has no diagnostic in it at all.
+    "export i32 arith(i32 a, i32 b) { return a + b; }");
+  for (i32 i = 0; i < quiet.len(); i++) {
+    string[] mine = ours(quiet[i]);
+    t.eqI32(mine.len(), 0, "we report " + joinedWith(mine, ", ") + " for " + quiet[i] +
+                           ", where this slice cannot know the answer");
+  }
+  return t.report();
+}
+
+export string test_rung3_a_returned_local_and_a_name_used_before_its_declaration(
+    Core core, Cli cli) {
+  // Locals are declared in a pass of their own before the body is walked, so a `return` above the
+  // declaration still resolves. Both directions are checked because declaring-as-you-walk passes the
+  // first and silently fails the second.
+  T t = T.create();
+  string[] sources = string[](
+    "export i32 g(bool c) { if (c) { return v; } string v = \"x\"; return 0; }");
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+  t.isTrue(r.count(0) > 0, "the reference accepts " + sources[0]);
+  t.isTrue(ours(sources[0]).len() > 0,
+           "a name declared after its use was not resolved — the declaration pass is not running " +
+           "before the check pass");
+  assertSound(t, r, 0, "a name used before its declaration");
+  return t.report();
+}
+
+export string test_rung3_a_function_that_can_reach_its_closing_brace(Core core, Cli cli) {
+  // Two lists rather than one filtered on `all code paths`. A filter on message text is a second
+  // opinion about which diagnostics count — it makes a program the reference rejects for some other
+  // reason look accepted, which is how `i32 && i32` sat in the operator test as "left alone".
+  T t = T.create();
+  string[] caught = string[](
+    "i32 bad(bool x) { if (x) { return 1; } }",
+    "i32 noElse(bool x) { if (x) { return 1; } else { } }",
+    "i32 brk(i32 n) { while (true) { if (n > 0) { break; } n++; } }",
+    "i32 deep(i32 n) { while (true) { { break; } } }",
+    "i32 elseIf(i32 n) { while (true) { if (n > 10) { n++; } else if (n > 5) { break; } } }",
+    "i32 empty() { }");
+  string[] quiet = string[](
+    "i32 ok(bool x) { if (x) { return 1; } return 0; }",
+    "i32 both(bool x) { if (x) { return 1; } else { return 2; } }",
+    "i32 inf(i32 n) { while (true) { n++; } }",
+    "i32 nestedBreak(i32 n) { while (true) { while (n > 0) { break; } } }",
+    "i32 trapping() { trap; }",
+    "void nothing() { }",
+    "void early(bool x) { if (x) { return; } }");
+
+  Ref r = referenceFor(t, cli, caught);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < caught.len(); i++) { assertCaught(t, r, i, "a reachable closing brace"); }
+
+  for (i32 i = 0; i < quiet.len(); i++) {
+    string[] mine = ours(quiet[i]);
+    t.eqI32(mine.len(), 0, quiet[i] + " is accepted and we said " + joinedWith(mine, ", "));
+  }
+  return t.report();
+}
+
+/**
+ * The same question one position over: a variable's declared type against its initialiser.
+ *
+ * Reusing the return rules exactly — a literal is polymorphic over a family, a name has one type —
+ * which is the point: if the second position needed different rules, one of the two would be wrong.
+ *
+ * `null` is the new part, and it covers two spellings. `i32 z;` and `i32 x = null;` parse to the same
+ * `NullLit` initialiser and the reference gives both *"expected i32, got null"*, so a missing
+ * initialiser needs no rule of its own. A `T?` declaration is nullable and legitimately takes one,
+ * and `primOfType` answers `primNone` for a nullable type, so those stay silent rather than being
+ * wrongly refused.
+ */
+export string test_rung3_a_variables_initialiser_against_its_declared_type(Core core, Cli cli) {
+  T t = T.create();
+  string[] sources = string[](
+    "export void a() { i32 x = null; }",
+    "export void b() { i32 z; }",
+    "export void c() { i8 x = 5; }",
+    "export void d() { i32 x = \"s\"; }",
+    "export void e() { f64 x = 1; }",
+    "export void f(string s) { i32 x = s; }",
+    "export void g(i64 n) { i32 x = n; }",
+    // Accepted, and each is a way the rule could be wrong in the other direction.
+    "export void h() { i32 x = 5; }",
+    "export void i() { i64 x = 5; }",
+    "export void j() { f64 x = 1.5; }",
+    "export void k() { i32? n = null; }",
+    "export void l() { string s = \"x\"; }",
+    "export void m(i32 a) { i32 b = a; }");
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, "an initialiser"); continue; }
+    assertCaught(t, r, i, "an initialiser");
+  }
   return t.report();
 }
