@@ -41,6 +41,21 @@ i32 maxBytes() { return 8192; }
  * directory** — `issues/system/0182`. The inner `bash -c` is what gives a diagnostic the plain `bash: `
  * prefix; through `env` alone argv[0] is `/usr/bin/bash` and the prefix carries the path.
  */
+/**
+ * **`LC_ALL=C` is pinned here, and that is a trap for some differentials.**
+ *
+ * A captured expectation is only as good as the environment it was taken in, which is why the header
+ * records the locale. But pinning it *changes what is being asked*: `issues/system/0143` is a gap that
+ * survived precisely because a `wc -w` differential asked the real `wc` a C-locale question while this
+ * machine's ambient locale is `C.UTF-8`. `box.test.ts`'s `wc -w` test says so in as many words — "the real
+ * one is spawned with the ambient environment on purpose. Pinning `LC_ALL=C` here would make this pass
+ * without the fix" — and it is the reason that test has not been swept in here.
+ *
+ * So: a suite whose subject is *how the tool reads bytes* needs the ambient locale, not this one, and
+ * adding it means giving `capture` a locale per suite. Every suite captured so far is about words a shell
+ * says or files an applet opens, where `C` is the right question and the one every other differential in
+ * the repository asks.
+ */
 export Exec askBash(Cli cli, string dir, string script) {
   return cli.exec("env",
                   string[]("-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",

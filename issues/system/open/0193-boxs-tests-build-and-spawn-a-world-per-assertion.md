@@ -206,3 +206,21 @@ Everything else — every applet differential, every operand and flag refusal, e
 
 **The number this predicts**: on the order of 100 spawns for the package, against 1 701 today.
 
+## What `box.test.ts` has left, and what each one needs — 2026-08-18
+
+Twenty tests, from twenty-six. Six moved into `test/wac/applets_test.wac` and `test/wac/readme_test.wac`.
+The rest, with the reason each is still there:
+
+| test | why |
+|---|---|
+| the main applet differential (514 lines) | bespoke assertions interleaved — `chmod 0500` removals, `urlencode` against fixed answers, `seq` at the i32 bounds. Converts test by test, not swept |
+| `wc -w` and the code points that are not spaces | **needs the ambient locale.** `tools/wac/appletvectors.wac` pins `LC_ALL=C`, and `issues/system/0143` is a gap that survived exactly because a `wc -w` differential asked a C-locale question on a `C.UTF-8` machine. Also wants ~40 generated fixtures — one per code point per shape, plus four that break a multi-byte sequence across a 64 KiB chunk boundary — and a decision about the `spec/tour.wac` case, whose expectation would churn every time that file is edited |
+| `gzip`/`gunzip` | the valuable half is the *cross*-check: ours reading the system gzip's output and the system gunzip reading ours. The second direction depends on what our gzip emits today, so it cannot be captured |
+| `diff` | fourteen cases, each needing its own generated pair of files. The capture takes one fixture set per suite; this wants per-case fixtures |
+| `cp` streams / the write-path applets | blocked on `issues/system/0166`, not on effort |
+| the grant tests, the streaming-memory test | on the keep list: a grant is a property of the built program, and holding a chunk is measured in resident bytes |
+| TCP, TLS, `tar`, `httpd`, `nc`, `split`+`wget` | real sockets, a real TLS server, GNU `tar` reading what we wrote |
+
+**The locale is the one to be careful of.** It is the difference between a captured expectation and a
+captured mistake, and nothing about the vectors would show which you had.
+
