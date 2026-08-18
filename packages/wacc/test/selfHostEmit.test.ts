@@ -1,6 +1,6 @@
 // Rung 5, the whole claim: **stage 2 equals stage 3**.
 //
-// `fixpointEmit.test.ts` puts one source file through both stages. This puts *the compiler* through
+// `test/wac/fixpointemit_test.wac` puts one source file through both stages. This puts *the compiler* through
 // them. Stage A is `wacc` built by the reference; stage B is `wacc` built by stage A; and stage C is
 // what stage B produces when it is asked to compile `wacc`. If B and C are the same bytes, the
 // compiler reproduces itself, which is what a bootstrap means and what nothing short of running it
