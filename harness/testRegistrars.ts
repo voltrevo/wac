@@ -81,11 +81,16 @@ export type WacRegistration = {
  * The `wacTestRun` calls in a `.test.ts`, and how many could not be read.
  *
  * **`unresolved` is the point of the return shape.** A call written with a variable —
- * `await wacTestRun(path)`, which `packages/wactest/test/assert.test.ts` does while testing the
- * runner itself — cannot be resolved from the text, and a reader that silently skipped it would be
- * saying "this file registers nothing" about a file that registers something. For a tool deciding
- * which tests to run, that is the difference between a narrowed selection and an empty one, and an
- * empty selection is scored as a passing suite. Count it and let the caller refuse.
+ * `await wacTestRun(path)` — cannot be resolved from the text, and a reader that silently skipped it
+ * would be saying "this file registers nothing" about a file that registers something. For a tool
+ * deciding which tests to run, that is the difference between a narrowed selection and an empty one,
+ * and an empty selection is scored as a passing suite. Count it and let the caller refuse.
+ *
+ * No file in the tree spells it that way as of 2026-08-18 — the one that did was a test of the
+ * runner itself, retired by `issues/system/0161` — so `harness/wacTestNames.test.ts` asserts the
+ * repository's count is zero and covers the reading with a synthetic source. The shape stays because
+ * what it prevents is silent: a spelling this cannot read arrives as a file whose tests a
+ * native-profile reader thinks do not exist, not as an error.
  */
 export function wacTestRegistrations(
   source: string,

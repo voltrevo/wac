@@ -961,7 +961,8 @@ says `delete mode` rather than anything about content.
 ### The registrar tier is gone — 2026-08-17
 
 `grep -rl wacTestRun packages/*/test/*.ts` now returns two files, and neither is a package handing
-its subject a callback: `packages/wactest/test/assert.test.ts` tests the harness, and
+its subject a callback: packages/wactest/test/assert.test.ts (unbackticked because it no longer
+exists — see the section below) tests the harness, and
 `packages/wacc/test/nativeBinary.test.ts` tests the binary. Every `*_wac.test.ts` in the repository
 is deleted. Sixteen of them went in one day — four in `crypto`, three in `tls`, nine in `tor` — and
 what they had in common is worth writing down, because the same shapes will come up in the 232
@@ -1017,3 +1018,45 @@ where wac writes it in decimal, so every AES record went down the ChaCha path �
 then failed, it read as our sealing being wrong rather than as the oracle mistaking the suite. The
 five ChaCha records passing beside the five AES ones is what named it. An oracle that had answered
 one record at a time would have looked like a broken record layer.
+
+### The last registrar under `packages/` — 2026-08-18, and the guard that could not survive it
+
+packages/wactest/test/assert.test.ts is gone, and with it the registrar tier under `packages/`
+entirely: `grep -rl "wacTestRun(" packages/` now returns nothing. Its subject was `wacTestRun` —
+the harness `wac test` replaces — so translating it would have pinned something on its way out.
+What moved is the *guarantee*, asked of the runner that now has to keep it, in
+`packages/wactest/test/wac/runner_test.wac`: discovery finds every `test*` export, a file exporting
+none is an error rather than a silent pass, and a failing assertion's message comes back. All three
+are the same failure in different disguises — **a runner that runs nothing looks exactly like a
+runner whose tests all pass.**
+
+**Deleting it broke two guards, and one of them had said it could not be broken this way.**
+`harness/wacTestNames.test.ts` walks the tree counting `wacTestRun` calls, and it walked `packages/`
+only, under a comment reading "and that is not a shortcut — all 83 registrations are there". That had
+already expired: the registrations were consolidated into `harness/wac/hostless.test.ts`, 57 of
+them, which is the file `tools/mutate/profile.ts` reads statically. So the walk's own root held none,
+and its floor — `filesWithCall === 0` — fired with *"the walk found no file containing `wacTestRun(`
+— it did not resolve"*. The floor was derived rather than hand-picked precisely so a migration could
+not outrun it, and the comment saying so is the one that aged: **a derived floor is only as wide as
+the roots it is derived from.** Fixed by walking `harness/wac/` too, which is a directory that
+excludes the two self-scanning files by path rather than by a filename list.
+
+**A refusal test lost the only file with the shape it needed.** `tools/mutate/nativeShare.test.ts`
+asserted that a file which registers wac tests *and* declares its own `Deno.test`s is left to Deno,
+and it used this file as the subject. After the delete no file in the tree has both properties, so
+the subject is now synthetic — which states the rule instead of waiting for some file to grow it
+back.
+
+Writing it exposed the harder half. The obvious fixture location is a temp directory, and it is
+wrong: `work` is also the cwd `nativeShare` runs `wac test` from, so from a temp directory the
+registered entry does not resolve, the run fails, and `nativeShare` returns null *anyway*. Delete
+the refusal the case is named for and it still passes. Putting the fixture in `ROOT/.cache` — in
+`deno.json`'s `exclude` and in `.gitignore`, so the test walk never tries to run it — makes the
+entry resolve, and removing the refusal now returns a profile and fails the case in 346ms.
+**`null` was both the expected answer and what three unrelated failures return**, so the case needed
+controls proving the fixture would otherwise have been taken: readable registrations, zero
+unresolved, and a non-zero host-test count, each asserted before the refusal is consulted.
+
+It also stopped opening with `if (!await haveBinary()) return`. The refusal is static, ahead of the
+first spawn, so on a checkout with no binary the case used to go unasserted rather than skipped-and-
+said-so.
