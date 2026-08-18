@@ -1,0 +1,64 @@
+// A specifier with an interior `..` links to the file the walker supplied.
+//
+// Host-side until 2026-08-18, `issues/system/0161`. `blockedFiles` and `emitFiles` answer
+// in-process, so this needed no oracle.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined, contains } from "../../../wactest/src/strings.wac";
+import { emitFiles, blockedFiles } from "../../src/api.wac";
+
+const string LIB = "export i32 answer() { return 42; }\n";
+
+/** The walker's own normalisation: what `gather` would have supplied these files under. */
+string[] paths() { return string[]("main.wac", "lib.wac"); }
+
+string[] sourcesFor(string spec) {
+  return string[]("import { answer } from \"" + spec + "\";\nexport i32 main() { return answer(); }\n",
+                  LIB);
+}
+
+export string test_a_specifier_with_an_interior_dotdot_links_to_the_file_supplied() {
+  // Every spelling of "lib.wac, next to main.wac" that a person might write. Each one is resolved to
+  // `lib.wac` by the walker, so each one has to be found by the linker under that key.
+  T t = T.create();
+  string[] specs = string[](
+    "./lib.wac", ".//lib.wac", "./sub/../lib.wac", "./a/b/../../lib.wac", "./././lib.wac",
+    "./sub/./../lib.wac");
+  string[] wrong = string[specs.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < specs.len(); i++) {
+    string[] s = sourcesFor(specs[i]);
+    string why = blockedFiles(paths(), s, "main.wac");
+    if (why != "") { wrong[n] = specs[i] + ": " + why; n = n + 1; continue; }
+    if (emitFiles(paths(), s, "main.wac").len() == 0) {
+      wrong[n] = specs[i] + ": emitted nothing";
+      n = n + 1;
+    }
+  }
+  string[] said = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { said[i] = wrong[i]; }
+  t.eqI32(n, 0, itoa(n) + " spelling(s) did not link: " + joined(said, "; "));
+  return t.report();
+}
+
+export string test_a_specifier_that_really_names_no_supplied_file_still_says_so() {
+  // The canary for the above: the fix widened what resolves, and a fix that resolved *everything* to
+  // something present would pass every case in the first test. This is the same call shape with a
+  // genuinely absent file, and it must still be refused.
+  T t = T.create();
+  string why = blockedFiles(paths(), sourcesFor("./nope.wac"), "main.wac");
+  t.isTrue(why != "", "a missing import was accepted");
+  t.isTrue(contains(why, "not supplied"), "refused for the wrong reason: " + why);
+  return t.report();
+}
+
+export string test_climbing_out_of_the_supplied_set_is_still_not_a_way_in() {
+  // `../` past the root normalises to a leading `..`, which no supplied path has. Worth its own case
+  // because the fix made interior components collapse, and collapsing is exactly what could have
+  // turned `../../lib.wac` into `lib.wac`.
+  T t = T.create();
+  t.isTrue(blockedFiles(paths(), sourcesFor("../lib.wac"), "main.wac") != "",
+           "an import from above the program's root was accepted");
+  return t.report();
+}

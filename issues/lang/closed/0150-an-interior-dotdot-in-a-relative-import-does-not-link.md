@@ -95,7 +95,7 @@ argues the same thing from the other end and says three; it is seven.
 `resolveFrom`, and `resolveImport` is now a name for it rather than a second implementation. A
 module with nothing in it is what breaks the cycle instead of the rule.
 
-`packages/wacc/test/interiorDotDot.test.ts` is the guard, and it is at the **seam** rather than on
+`packages/wacc/test/interiordotdot_test.wac` is the guard, and it is at the **seam** rather than on
 either resolver: `test/files.test.ts` has covered `resolveFrom` all along and passed throughout, so
 a test of one side could not have found this. It links a two-file program through `emitFiles` under
 six spellings of "the file next door", with two canaries — an import that genuinely names nothing

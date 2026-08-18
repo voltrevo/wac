@@ -190,7 +190,7 @@ The verifiable facts, and they are the only ones worth planning against:
   - **New TypeScript arrives while this runs.** On 2026-08-17 alone, seventeen `.test.ts` files were
     added by other agents — 1,908 lines still present — against roughly 800 lines converted away the
     same day. Some of it is genuinely host-side (`packages/wacpkg`'s transport and cache), and some
-    is not (`wacc/interiorDotDot.test.ts` is a compiler test). This is not an argument for stopping
+    is not (`wacc/interiordotdot_test.wac` is a compiler test). This is not an argument for stopping
     anyone; it is the reason a line count of what remains moves in both directions, and why "how much
     is left" cannot be read as "how much has been done".
 
