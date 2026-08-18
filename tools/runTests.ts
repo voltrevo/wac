@@ -406,7 +406,8 @@ const run = async (args: string[], workers: number): Promise<number> => {
 // excluded further down, from the command that actually runs them. Before 2026-08-18 the lane module
 // could not see a wac test at all, so this filter had nothing to do and the wac declarations did
 // nothing either.
-const exclusive = laneSplit([], (await exclusiveTests()).map((e) => e.file)).alone
+const declaredExclusive = await exclusiveTests();
+const exclusive = laneSplit([], declaredExclusive.map((e) => e.file)).alone
   .filter((f) => !isWacTest(f));
 
 // **The heavy lane, which a whole-suite run does not pay for.** Ten files hold about a gigabyte each
@@ -445,6 +446,21 @@ const heavy = skipHeavy
 const heavyWac = skipHeavy
   ? declaredHeavy.map((e) => e.file).filter(isWacTest)
   : [];
+/**
+ * The wac half of the *exclusive* lane, which the queue below must not run beside anything.
+ *
+ * **The serial lane honoured this for free and the queue silently stopped.** Four `packages/ssh` files
+ * declare it — "a real OpenSSH server per case, on a real port" — and while the lane was one
+ * `wac test packages/`, nothing ran at the same time as anything. Running them at four workers is the
+ * condition that produced "sshd never accepted on 34029" about a server that was starting normally.
+ *
+ * A spin masquerading as patience was the *cause* of that particular failure and is fixed
+ * (`waitForPortWithin`), but these tests are timing-sensitive in ways that fix does not cover: one still
+ * sleeps between a `^C` and the next line because a `^C` flushes the input queue, and another asserts an
+ * ordering. Two green runs at four workers is not evidence for deleting a declaration that says the test
+ * needs the machine. Honouring it costs the queue about 15s.
+ */
+const exclusiveWac = declaredExclusive.map((e) => e.file).filter(isWacTest);
 /**
  * When the heavy lane last passed, for the notice below.
  *
@@ -665,8 +681,18 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
     "--allow-run",
     "--allow-env",
     "--allow-net",
-    ...(heavyWac.length > 0 ? ["--ignore", heavyWac.join(",")] : []),
   ];
+  // Heavy is not run at all; exclusive is run below, alone — so the queue ignores both, and the runs
+  // that follow take `flags` without them. Built as two lists rather than filtered back apart, because
+  // "drop the flag whose value has a comma in it" is the kind of cleverness that breaks on the next flag.
+  const queueFlags = [
+    ...flags,
+    ...(heavyWac.length + exclusiveWac.length > 0
+      ? ["--ignore", [...heavyWac, ...exclusiveWac].join(",")]
+      : []),
+  ];
+  // Which of the declared-exclusive files are under the directories this run queued.
+  const alone = exclusiveWac.filter((f) => dirs.some((d) => f.startsWith(d + "/")));
   let next = 0;
   const codes: number[] = [];
   const blocks: string[] = [];
@@ -674,7 +700,7 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
     while (next < dirs.length) {
       const dir = dirs[next++];
       const r = await new Deno.Command(WAC_BIN, {
-        args: [...flags, dir],
+        args: [...queueFlags, dir],
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -685,6 +711,27 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
     }
   };
   await Promise.all(Array.from({ length: wacJobs }, () => worker()));
+
+  // **And the ones that said they need the machine, one at a time.** `--ignore` kept them out of the
+  // queue above; running them here is what makes the declaration true again. Sequential and after the
+  // queue has drained, so "alone" means alone.
+  if (alone.length > 0) {
+    console.log(`   ${count(alone.length, "file", "files")} run alone, by their own declaration:`);
+    for (const e of declaredExclusive.filter((d) => alone.includes(d.file))) {
+      console.log(`     ${e.file} — ${e.why}`);
+    }
+    for (const file of alone) {
+      const r = await new Deno.Command(WAC_BIN, {
+        args: [...flags, file],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const text = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
+      blocks.push(text);
+      codes.push(r.code);
+      console.log(text.trimEnd());
+    }
+  }
   // **The lane's own count, because a summary per directory is not a summary.** Thirty-nine blocks
   // each saying "6 files: 6 ok" is how a lane that stopped running half its directories would read as
   // fine. If the arithmetic does not add up, that is said rather than papered over.
@@ -698,6 +745,11 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
       summaries++;
     }
   }
+  // **The files run alone are counted here, not parsed.** Each of those runs *names a file*, and naming
+  // a file gets the plain run with no summary line — deliberately, since a person typing one file does
+  // not want one. So the queue's directories are the only blocks with a summary to parse, and the
+  // declared-exclusive files are added from the list that ran them.
+  files += alone.length;
   console.log(
     summaries === dirs.length
       ? `   ${count(files, "wac test file", "wac test files")} across ` +
