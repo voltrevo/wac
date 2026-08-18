@@ -1,6 +1,7 @@
 # 0031 — `match` dispatches through a comparison chain, not `br_table`
 
-- **Status:** open
+- **Status:** closed — 2026-08-18, agent-c
+- **Fixed in:** this commit — measured and not worth doing; see below
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
@@ -67,3 +68,43 @@ repeat it, and the caveat from the original notes still applies: this is a hot l
 everything in cache, which flatters the branch predictor and is the best case for a chain.
 
 `emitSwitch` shares the shape, so whoever does it should do both.
+
+## Measured, 2026-08-18 — the chain costs 1.6 ns and a build spends 0.06% of itself there
+
+The issue asks for a measurement before the change, so here it is, from two directions.
+
+**How long are real matches?** Over every `match` in `packages/` and `compiler/` — 766 of them:
+
+    1 arm   364    48%
+    2 arms  168    70% cumulative
+    3 arms  139    88%
+    4 arms   38    93%
+    5+       57   100%   — of which 16 have 11 or more
+
+So 88% of matches are three arms or fewer, and the long ones are exactly where this issue predicted:
+`packages/wacc/src/print.wac` and four in `emit.wac`, all 22 arms, matching `ExprKind` and `StmtKind`.
+(Counted by scanning from each `match (` to its closing brace; a `case` inside a comment or a string
+would be counted, and spot checks found none.)
+
+**What does the chain cost when it is hot?** The same 22-arm match, entered on its first arm and on its
+last — 21 extra comparisons and nothing else different — 30 million iterations each, through
+`wac test --verbose`:
+
+    test_first_arm   70 ms      2.33 ns an iteration
+    test_last_arm   118 ms      3.93 ns an iteration
+
+**1.6 ns per dispatch**, worst case, for the longest match in the repository. The accumulators are
+asserted, so the loops ran.
+
+**Against real work:** `wac build packages/wacc/src/api.wac` is 2 580 ms for a 454 KB module. Saving 1%
+of that would need about 16 million worst-case dispatches in one build; the emitter walks on the order of
+a hundred thousand nodes. The chain is roughly 0.06% of a build.
+
+So: closed, not because it would not work but because the number says it does not matter here. What would
+reopen it is a program whose *inner loop* is enum dispatch — an interpreter over a 20-plus-variant
+instruction enum — where 1.6 ns of 4 is worth having. Anyone in that position should re-measure with this
+probe rather than assume either way.
+
+`spec/spec/enums.md` also had a paragraph claiming the arm was selected by a `br_table`, contradicting the
+section two screens down that says it is a chain. It says chain now.
+
