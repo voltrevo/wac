@@ -16,7 +16,7 @@
 // the compiler; only one of them was usable at the point where it matters most, which is when
 // something is wrong.
 //
-// **The same output, not a similar one.** `test/renderDiag.test.ts` compares this against `wacDiag`
+// **The same output, not a similar one.** `test/wac/renderdiag_test.wac` compares this against `wacDiag`
 // over the spec's refused programs, character for character, because "the binary explains itself
 // too" is a claim about the text — a renderer that dropped the annotation, or put the caret one
 // column off, would still look like a diagnostic.

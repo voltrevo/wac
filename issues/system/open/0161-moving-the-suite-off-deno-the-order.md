@@ -1111,8 +1111,18 @@ no tests, and one is `actionUse` gutted to `return 0` where `USE()` is 0.
 
 **Two things that cannot move, for the record**, both matching the "what stays" rule above:
 `tools/install.test.ts`, because `tools/install.ts` is TypeScript and a wac test cannot import it;
-and `packages/wacc/test/renderDiag.test.ts`, whose subject is agreement with the reference's own
+and packages/wacc/test/renderDiag.test.ts, whose subject is agreement with the reference's own
 `wacDiag`. Same reason as `packages/stream/test/stream.test.ts`.
+
+**~~and `renderDiag.test.ts`~~ — wrong, and it moved on 2026-08-18.** That sentence applied the
+"what stays" rule to the wrong half. `packages/stream`'s subject is the JavaScript *bridge*: there is
+no wac side, so there is nothing to move. `renderDiag`'s subject is `src/render.wac`, which is wac,
+and `wacDiag` is its **oracle** — and this migration's rule has always been that the harness moves
+and the independent implementation does not. Keeping `wacDiag` in TypeScript is the rule being
+followed, not a reason the test cannot move. It is `test/wac/renderdiag_test.wac` now, with the
+reference in `test/renderdiag_oracle.ts`, which imports `wacDiag` rather than reimplementing it.
+
+The distinction worth carrying: *is the TypeScript the subject, or the oracle?* Only the first stays.
 
 **`tools/wac/` is now seven test files** — `runNamed_test.wac` and `cliCommands_test.wac` arrived
 with the `wacx` retirement, and both spawn the binary through `Cli.exec`, which answers the question
@@ -1266,10 +1276,11 @@ that basis.
 
 Where the four remaining siblings stand, so nobody re-derives it:
 
-- **`renderDiag.test.ts` is portable and not yet done.** Its oracle is the *reference's* `wacDiag`,
-  which is right — the claim is that the two halves of the toolchain explain themselves the same way
-  — so the oracle stays TypeScript and wants a batched script, the same shape `packages/json` and
-  `packages/tls` grew. A real port rather than a lift.
+- **`renderDiag.test.ts` is done** — `test/wac/renderdiag_test.wac`, with the reference's `wacDiag`
+  kept in `test/renderdiag_oracle.ts`, which imports it rather than reimplementing it. The wire
+  crosses rather than being recomputed: both sides render from the *same* `diagnoseFiles` output,
+  because letting the oracle produce its own would compare two compilers' opinions about what to
+  refuse and a disagreement there would arrive looking like a layout bug.
 - **`scoping.test.ts` is half-portable.** `diagnoseFiles` and `emitFiles` lift; the last assertion
   instantiates the module and calls `run()`, expecting 2. wac cannot instantiate. `wac validate`
   covers "the engine accepts it" — which is what `duplicateExports` needed — but not "it answers 2",
