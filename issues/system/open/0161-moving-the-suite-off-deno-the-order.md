@@ -197,7 +197,13 @@ The verifiable facts, and they are the only ones worth planning against:
     | needs a browser | 3,355 |
     | nominally convertible | 25,578 |
 
-    **Take about 2,000 off that last row.** Three categories fooled a grep in turn, and each cost a
+    **Take 4,035 off that last row**, measured rather than estimated: a test that never names a
+    `.wac` file and never calls `wacBind`, `waccApi`, `buildApp`, `buildNative` or `buildBinary` is
+    not driving a wac program, so its subject is the TypeScript beside it. That leaves **21,543
+    lines** of genuinely convertible wac-subject work — `wacc` 8,582, `platform` 4,799, `box` 3,515,
+    `wacpkg` 1,193, `git` 1,002.
+
+    Three categories fooled a grep in turn before that discriminator was found, and each cost a
     re-measurement:
 
       - a file whose oracle is a *runtime peer* — `Deno.QuicEndpoint`, `listenTls` — is not
@@ -210,9 +216,13 @@ The verifiable facts, and they are the only ones worth planning against:
         (`capture-hkdfcap.wac` asks it through `deno eval`), because that question is a computation
         and not a conversation.
 
-    So roughly **23,500 lines** are genuinely convertible wac-subject work, concentrated in `wacc`
-    (8,582, of which `typecheck.test.ts` alone is 3,078) and `platform` (8,418). `wacpkg` and `sh`
-    are convertible and belong to other agents.
+    `typecheck.test.ts` alone is 3,078 of `wacc`'s share. `wacpkg` and `sh` are convertible and
+    belong to other agents.
+
+    **The lesson is about the discriminator, not the number.** "Does it spawn a child" and "does it
+    mention a browser" are questions about a test's *machinery*; "does it drive a wac program at all"
+    is the question about its *subject*, and it is the one that decides whether a conversion is even
+    meaningful. Three published figures were wrong before that was asked.
 
   - **What the reference oracle now answers**, for whoever takes the rungs on:
     `packages/wacc/test/reference.ts` is the batched TypeScript half of rungs 1, 2 and 4 —
