@@ -58,8 +58,14 @@ const KNOWN_MISSES = new Set<string>([
   //
   // What it names is a *multi-file* program: `import { foo } from "./b.wac"` where `b.wac` does not
   // export `foo`. A single-file runner has no `b.wac`, so it cannot refuse it, which is the class the
-  // paragraph above calls "`core` importing a name it does not export". The miss is the runner's
-  // scope rather than the checker's, which is why it is known rather than fixed.
+  // paragraph above calls "`core` importing a name it does not export".
+  //
+  // **"The miss is the runner's scope rather than the checker's" is what this said, and it is wrong** —
+  // measured 2026-08-18. `diagnoseFiles(["main.wac"], [src], "main.wac")` has the whole map and reports
+  // nothing either; what refuses is the *emitter*, through `blockedFiles`, with no position and no file
+  // name. The checker has no rule for it at all. `issues/lang/0157` carries the measurements, including
+  // the one that says the rule is safe to add: of the 688 single-file cases recorded, **zero** legal ones
+  // import a relative path, so refusing an unsupplied import cannot make a legal program illegal here.
   // **The number is positional and moves.** It was `#28` until `spec/spec/control.md` and
   // `functions.md` gained `// error:` blocks earlier in the sequence, and the failure then read as this
   // checker having regressed on a block it never saw. Identified by its message rather than its index
