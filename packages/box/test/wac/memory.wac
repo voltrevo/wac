@@ -1,0 +1,54 @@
+// A shell over a filesystem that is not the host's, in this process.
+//
+// Two files need it and neither should import the other: `backings_test.wac`, where a memory filesystem
+// is one of three backings being compared, and `sealedapplets_test.wac`, where it is the world the
+// applets are measured on. The same argument as `packages/ssh/test/wac/fixture.wac`.
+//
+// This is what `bin/sealedsh.wac` builds — `Fs.inMemory` with the system mounts and no grants at all —
+// so a script run through it can reach nothing but what it made.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { Fs, mountSystem } from "../../../fs/src/fs.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Shell } from "../../../sh/src/exec.wac";
+import { shellMain } from "../../../sh/src/entry.wac";
+import { boxNames, boxRun } from "../../src/shrun.wac";
+
+/** What a script answered: the two streams and the status. */
+export struct Ran {
+  string out;
+  string err;
+  i32 status;
+}
+
+/**
+ * The filesystem `sealedsh` builds: memory, with `/bin`, `/dev` and `/proc` mounted, and a `/tmp`.
+ *
+ * `argv` is what `/proc/self/cmdline` answers, so it is the program's own name rather than a test's.
+ */
+export Fs memoryFs(Core core, string program) {
+  Fs fs = Fs.inMemory(0);
+  fs.mkdir("/tmp", true);
+  Vec<string> argv = Vec.fromArray(string[](program));
+  mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
+  return fs;
+}
+
+/**
+ * One script through a shell whose filesystem is `fs`, inside this process.
+ *
+ * `shellMain`'s `first` is an index into the arguments and a frame's `argv` starts with the child's own
+ * name, so the shell's own arguments start at 1.
+ */
+export Ran runOn(Core core, Cli cli, Fs fs, string script) {
+  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), "/", false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Shell sh = Shell.onFs(c, l, fs);
+  sh.cwd = "/";
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
+}
