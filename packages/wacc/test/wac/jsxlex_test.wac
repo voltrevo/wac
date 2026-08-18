@@ -1,0 +1,209 @@
+// The lexer's JSX modes, which rung 1 cannot compare.
+//
+// Every other claim about the lexer is checked against the reference, token for token, over every
+// `.wac` file in the repository. That oracle stops at JSX: the reference has no modes and no
+// `jsx text` kind, so it reads `<p>it's here</p>` as a character literal that swallows the closing
+// tag. `issues/lang/0108`.
+//
+// So this file asserts the two halves that have no oracle, and asks the reference for the one that
+// does:
+//
+//   - **what text mode reads** — a run of text is text, whatever bytes are in it;
+//   - **where a tag begins** — `<` is the less-than operator wherever the token before it can end an
+//     expression, and every non-JSX program is on that side of the line, which is why none of them
+//     lexes differently than it did. That half *is* checked against the reference.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `wacBind` becomes an import — `lexTokens` and `lexErrors` from `src/lex.wac`. The reference half
+// already had somewhere to live: `test/reference.ts`'s `lexdumpsrc` answers with the reference's own
+// `kind|line|col|text` per token, which is what the positions are compared against. No new oracle.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, ask, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { lexErrors, lexTokens } from "../../src/lex.wac";
+
+const string ORACLE = "packages/wacc/test/reference.ts";
+const i32 STRIDE = 5;
+const i32 K_JSX_TEXT = 84;
+
+/** `import … Node f() { return <p>BODY</p>; }`, the shape every text case is wrapped in. */
+string element(string body) {
+  return "import { Attr, Node } from core;\nNode f() { return <p>" + body + "</p>; }\n";
+}
+
+/** Every `jsx text` run in a source, as the text it spans. */
+string[] textRuns(string source) {
+  u8[] bytes = source.toBytes();
+  i32[] flat = lexTokens(bytes);
+  i32 n = 0;
+  for (i32 i = 0; i * STRIDE < flat.len(); i++) {
+    if (flat[i * STRIDE] == K_JSX_TEXT) { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  for (i32 i = 0; i * STRIDE < flat.len(); i++) {
+    i32 at = i * STRIDE;
+    if (flat[at] != K_JSX_TEXT) { continue; }
+    out[k] = source.slice(flat[at + 1], flat[at + 1] + flat[at + 2]);
+    k = k + 1;
+  }
+  return out;
+}
+
+i32 errorCount(string source) { return lexErrors(source.toBytes()).len() / 3; }
+
+string joinedWith(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+/** Assert the runs of `source` are exactly `want`, showing both when they are not. */
+void eqRuns(T t, string source, string[] want, string what) {
+  string[] got = textRuns(source);
+  t.eqStr(joinedWith(got, " ∥ "), joinedWith(want, " ∥ "), what);
+}
+
+export string test_jsx_text_a_run_of_text_is_text_whatever_is_in_it() {
+  // Each of these is a token that would have run past the closing tag if the text were lexed as wac.
+  // The apostrophe and the lone quote are the two the issue named; the rest are the neighbours found
+  // by asking what else a lexer starts on.
+  T t = T.create();
+  string[] what = string[](
+    "an apostrophe",
+    "a lone double quote",
+    "balanced quotes, kept verbatim rather than unescaped",
+    "a byte no token starts with",
+    "a line comment that is not one",
+    "a block comment that is not one",
+    "a backslash, which no escape follows",
+    "a character-literal opener with nothing after it",
+    "a semicolon and a brace-less end");
+  string[] body = string[](
+    "it's here",
+    "a \" b",
+    "He said \"hi\" to me",
+    "cost: #4 & 50%",
+    "see http://x.example",
+    "/* not a comment */",
+    "a \\ b",
+    "don't",
+    "a; b");
+  t.eqI32(what.len(), body.len(), "a name per case");
+  for (i32 i = 0; i < what.len() && i < body.len(); i++) {
+    eqRuns(t, element(body[i]), string[](body[i]), what[i]);
+    t.eqI32(errorCount(element(body[i])), 0, what[i] + ": no lex error");
+  }
+  return t.report();
+}
+
+export string test_jsx_text_a_run_ends_at_a_brace_at_a_tag_and_nowhere_else() {
+  T t = T.create();
+  eqRuns(t, element("hello {who} and <b>you</b> too"),
+         string[]("hello ", " and ", "you", " too"),
+         "four runs: the spliced expression and the nested element each end one");
+  // **A `<` that begins neither a name nor `/` is text.** JSX in JavaScript refuses this and makes
+  // you write `{'<'}`; there is no reason to, since the thing that follows says which it is.
+  eqRuns(t, element("1 < 2 and 3 &lt; 4"), string[]("1 < 2 and 3 &lt; 4"), "a bare less-than");
+  // Whitespace between two elements is a run of its own, which is what makes it a child.
+  eqRuns(t, element("<b>a</b> <b>b</b>"), string[]("a", " ", "b"), "whitespace between elements");
+  // Across lines it is still a run — the emitter is what decides a break is layout, not the lexer.
+  eqRuns(t, "Node f() { return <p>\n  <b>a</b>\n</p>; }\n",
+         string[]("\n  ", "a", "\n"), "across lines");
+  return t.report();
+}
+
+export string test_jsx_text_the_modes_nest_and_come_back() {
+  // tag → normal (an attribute's expression) → tag → text, and out again. A mode machine that forgot
+  // where it came from would still be in text mode at the `;`, and the run would swallow it.
+  T t = T.create();
+  string src = "Node f() { return <div a={g(<b/>)}>x</div>; }\nNode g(Node n) { return n; }\n";
+  eqRuns(t, src, string[]("x"), "nested modes");
+  t.eqI32(errorCount(src), 0, "no lex error");
+
+  // A `}` inside a spliced expression closes its own brace, not the splice.
+  eqRuns(t, "Node f(i32 v) { return <p>{h(P { x: v })}!</p>; }\n", string[]("!"),
+         "a brace inside a splice");
+  return t.report();
+}
+
+export string test_jsx_a_less_than_that_can_be_the_operator_still_is(Core core, Cli cli) {
+  // The discriminator is "the token before it cannot end an expression". These are the shapes where
+  // it can, and every one of them lexes exactly as the reference lexes it — which is the claim that
+  // matters most here, since it is what says no program without JSX changed.
+  T t = T.create();
+  string[] sources = string[](
+    "bool f(i32 a, i32 b) { return a < b; }",
+    "bool f(i32 a) { return g(a) < 2; }",
+    "bool f(i32[] a) { return a[0] < 2; }",
+    "struct S<T> { T v; } i32 f(S<i32> s) { return s.v; }",
+    "bool f(i32? a) { return a! < 2; }",
+    "bool f() { return true < false; }",
+    "i32 f(i32 a) { return a++ < 2 ? 1 : 0; }",
+    "bool f(i32 a) { return (a) < 2 && a << 1 > 3; }");
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < sources.len(); i++) {
+    lines.add("lexdumpsrc " + hex(sources[i].toBytes()));
+  }
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                  "the reference lexer");
+  if (!a.ok) { return t.report(); }
+  t.eqI32(a.lines.len(), sources.len(), "a dump per source");
+  if (a.lines.len() != sources.len()) { return t.report(); }
+
+  for (i32 i = 0; i < sources.len(); i++) {
+    string answer = a.lines[i];
+    i32 sp = answer.indexOf(" ");
+    if (sp < 0) { t.fail(sources[i] + ": the reference said " + answer); continue; }
+    string canon = string.fromBytes(decoded(answer.slice(sp + 1, answer.len())));
+
+    // The reference stores each token's text rather than a span, so the comparison is by position:
+    // one token at each place the reference put one, and none of them a run.
+    string theirs = "";
+    i32 at = 0;
+    for (i32 c = 0; c <= canon.len(); c++) {
+      if (c < canon.len() && canon.slice(c, c + 1) != "\n") { continue; }
+      string line = canon.slice(at, c);
+      at = c + 1;
+      if (line == "") { continue; }
+      // `kind|line|col|text` — the middle two are what this compares.
+      i32 bar1 = line.indexOf("|");
+      if (bar1 < 0) { continue; }
+      string rest = line.slice(bar1 + 1, line.len());
+      i32 bar2 = rest.indexOf("|");
+      if (bar2 < 0) { continue; }
+      string lineNo = rest.slice(0, bar2);
+      string colRest = rest.slice(bar2 + 1, rest.len());
+      i32 bar3 = colRest.indexOf("|");
+      string col = bar3 < 0 ? colRest : colRest.slice(0, bar3);
+      theirs = theirs + (theirs == "" ? "" : ",") + lineNo + ":" + col;
+    }
+
+    i32[] flat = lexTokens(sources[i].toBytes());
+    string mine = "";
+    bool anyText = false;
+    for (i32 k = 0; k * STRIDE < flat.len(); k++) {
+      i32 base = k * STRIDE;
+      if (flat[base] == K_JSX_TEXT) { anyText = true; }
+      mine = mine + (mine == "" ? "" : ",") + itoa(flat[base + 3]) + ":" + itoa(flat[base + 4]);
+    }
+    t.eqStr(mine, theirs, sources[i] + ": a token in each place the reference has one");
+    t.isTrue(!anyText, sources[i] + ": no jsx text");
+  }
+  return t.report();
+}
+
+export string test_jsx_an_element_that_is_never_closed_ends_at_the_end_of_the_file() {
+  // Text mode runs to the end of the source rather than past it. The parser is what reports the
+  // missing closing tag; the lexer's job is to still terminate.
+  T t = T.create();
+  string src = "Node f() { return <p>hello;\n";
+  eqRuns(t, src, string[]("hello;\n"), "an unclosed element");
+  t.eqI32(errorCount(src), 0, "no lex error");
+  return t.report();
+}

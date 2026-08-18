@@ -99,7 +99,7 @@ Harmless for a leaf, because a literal has nothing inside it. Not harmless the m
 compound counts as a literal: `litFamily` already says `1 + 2` is one, and I extended it to
 `cond ? 1 : 2` — which made the whole conditional a leaf to every caller taking that path, and a
 conditional has a **condition**. `i32 n = p is null ? 1 : 0;` lost the warning about `is null` on a
-non-null reference, and `reach.test.ts` lost `Ternary-cond` from its walk. Both caught it immediately,
+non-null reference, and `test/wac/reach_test.wac` lost `Ternary-cond` from its walk. Both caught it immediately,
 which is the good news; the extension is reverted with the reason written where it was.
 
 A binary is safe today only because *every* leaf of one has to be a literal for the family to be known,
@@ -137,7 +137,7 @@ The literal-path half is fixed too, which is what makes the conditional rule saf
 return skipped everything inside a compound literal, so `i32 n = p is null ? 1 : 0;` lost the warning
 about `is null` on a non-null reference the moment `cond ? 1 : 2` counted as one. Both callers walk the
 expression either way now, the `Return` gate uses `litFamily` like the declaration one beside it, and
-`reach.test.ts` and `warnings.test.ts` — the two that caught it — are green.
+`test/wac/reach_test.wac` and `test/wac/warnings_test.wac` — the two that caught it — are green.
 
 What is left in the sweep's missed list is not this: two cases need template bodies instantiated, which is
 a difference from the reference by design, and the rest are single corners.

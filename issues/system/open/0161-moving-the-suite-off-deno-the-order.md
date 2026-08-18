@@ -1281,11 +1281,14 @@ Where the four remaining siblings stand, so nobody re-derives it:
   crosses rather than being recomputed: both sides render from the *same* `diagnoseFiles` output,
   because letting the oracle produce its own would compare two compilers' opinions about what to
   refuse and a disagreement there would arrive looking like a layout bug.
-- **`scoping.test.ts` is half-portable.** `diagnoseFiles` and `emitFiles` lift; the last assertion
-  instantiates the module and calls `run()`, expecting 2. wac cannot instantiate. `wac validate`
-  covers "the engine accepts it" — which is what `duplicateExports` needed — but not "it answers 2",
-  and the fixture's module imports a callback bridge, so running it out needs a manifest rather than
-  a bare `wac mod.wasm`.
+- **`scoping.test.ts` is done** — `test/wac/scoping_test.wac`. The first two assertions lifted;
+  the third instantiated the module and called its export, which wac cannot do. `runEmitted`
+  from `artifacts_probe.wac` is the answer that already existed: the module is written out with
+  a manifest and the binary runs it, so it really is instantiated and really does answer — one
+  process away. The cost is the entry's export name, since the runner calls `main`, and the name
+  was not the subject. `Ran.status` is eight bits and cannot tell a trap from an answer of 1
+  (`issues/system/0184`), which does not bite at 2, and `Ran.trapped` reads stderr for the
+  refusal — the two together say "answered 2" rather than "exited 2".
 - **`jsxBoundary.test.ts` stays.** A JSX tree built in wac is walked by a renderer *written in
   JavaScript*, using glue generated from the module's own metadata — two pieces of code that share
   nothing but the compiler, agreeing on a value. The JavaScript is half the differential, so

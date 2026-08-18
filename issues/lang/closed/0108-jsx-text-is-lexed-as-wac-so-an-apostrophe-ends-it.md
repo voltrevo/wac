@@ -50,7 +50,7 @@ and nothing inside it begins a string, a character literal or a comment. `spec/c
 a tag exactly where it could not be the less-than operator — where the token before it cannot end an
 expression. Every `<` in a program without JSX follows something that can (`a < b`, `f(x) < 2`,
 `Vec<i32>`, `a! < 2`), so no such program lexes differently, and rung 1 says so over every `.wac`
-file in the repository. `packages/wacc/test/jsxLex.test.ts` asserts that half against the reference
+file in the repository. `packages/wacc/test/wac/jsxlex_test.wac` asserts that half against the reference
 directly, because the reference is right about all of it.
 
 **Two things came with it**, neither of them the point:

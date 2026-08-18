@@ -1,0 +1,312 @@
+// Is every node kind actually walked?
+//
+// Twice in two slots a rule looked broken and was merely unreached: method bodies were not descended
+// into at all, and a bare expression statement had no arm in `checkStmt`. Both cost a slot, both
+// looked like a wrong rule, and both had the same tell — one case of a family failing while its
+// siblings passed.
+//
+// No rule test can find that, because a rule test puts its subject where the walk already goes. This
+// asks the other question: for every statement and expression kind the AST has, put a **known-bad
+// construct inside it** and check the diagnostic still comes out. If the kind is not visited, the
+// diagnostic disappears and the cell fails by name.
+//
+// The bad construct is deliberately the same everywhere — `i32 bad = "s";`, an initialiser mismatch
+// this checker has reported since its second slice — so a failing cell means "this kind is not
+// walked" and never "that rule is wrong".
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `wacBind` becomes an import: `dumpTypeErrors` is `api.wac`'s and runs in process. The grids are
+// data, and `variantsOf` still reads `src/ast.wac` — that is the point of it, and is why the
+// completeness check is worth more than the hand-written count it replaced.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { dumpTypeErrors } from "../../src/api.wac";
+
+/** The statement that must be found, wherever it is buried. */
+const string BAD = "i32 bad = \"s\";";
+
+/**
+ * A bad *sub-expression*: an operand mismatch on an `i32` and an `f64`.
+ *
+ * It lives inside an expression rather than being a statement of its own, so burying it proves the
+ * expression walk descends rather than that the statement walk does.
+ */
+const string SUB = "(p + q)";
+
+bool reports(string src) { return dumpTypeErrors(src.toBytes()).len() > 0; }
+
+string joinedWith(string[] all, i32 n, string sep) {
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + (i == 0 ? "" : sep) + all[i]; }
+  return out;
+}
+
+/**
+ * Every statement kind, with `BAD` nested inside it.
+ *
+ * `Break`, `Continue` and `Trap` carry no statements and no expressions, so there is nothing to bury
+ * in them — they are listed with an empty source rather than left out, so the count below still
+ * checks that every kind of the AST was considered rather than that fifteen strings were written.
+ */
+string[] statementLabels() {
+  return string[](
+    "Var", "Assign", "IncrStmt", "If", "If-else", "While", "For", "For-init", "DoWhile", "Switch",
+    "Return", "Break", "Continue", "Trap", "Match", "Block", "ExprStmt");
+}
+
+string[] statementSources() {
+  return string[](
+    "void f() { " + BAD + " }",
+    "void f(i32 n) { n = 1; " + BAD + " }",
+    "void f(i32 n) { n++; " + BAD + " }",
+    "void f(bool c) { if (c) { " + BAD + " } }",
+    "void f(bool c) { if (c) { } else { " + BAD + " } }",
+    "void f(bool c) { while (c) { " + BAD + " } }",
+    "void f() { for (i32 i = 0; i < 1; i++) { " + BAD + " } }",
+    "void f() { for (" + BAD + " true; ) { break; } }",
+    "void f(bool c) { do { " + BAD + " } while (c); }",
+    "void f(i32 n) { switch (n) { case 1: { " + BAD + " } } }",
+    "string f() { return \"x\"; } void g() { " + BAD + " }",
+    "", "", "",
+    "enum E { A, B } void f(E e) { match (e) { case A: { " + BAD + " } case B: { } } }",
+    "void f() { { " + BAD + " } }",
+    "void g(i32 n) { } void f() { g(1); " + BAD + " }");
+}
+
+string[] expressionLabels() {
+  return string[](
+    "Unary", "Binary", "Cast", "Ternary", "Ternary-cond", "Index", "Member", "Call", "Call-method",
+    "Construct", "Assign-rhs", "Return-value", "Condition",
+    // Added after `Incr` turned out to be unwalked in its expression form: `p.n++;` was checked and
+    // `return x++;` was not. The grid had a Return-value cell and it passed, because the fault it
+    // buries is always the same `(p + q)` — what it never varied is *which kind of expression holds
+    // the fault*, which is the dimension the missing arm lived in.
+    "Incr", "Unwrap", "Is", "ArrNew", "ArrNew-size", "MatchExpr",
+    // A JSX element holds expressions in two places — an attribute's value and a child — and a walk
+    // that descends into one and not the other would be invisible to every other cell here.
+    "Jsx",
+    // Nothing can be buried in these: they are leaves, with no sub-expression to descend into.
+    // Listed rather than omitted so the completeness check below sees every kind the AST has. Text
+    // between tags holds no expression of its own — it is a span of the source — so it belongs with
+    // the leaves rather than the grid.
+    "JsxText", "IntLit", "FloatLit", "StrLit", "BoolLit", "NullLit", "Ident",
+    // **A real cell now.** This was empty while the syntax was in flight — a placeholder that kept
+    // the completeness check green and covered nothing. A lambda parses now (`design/lang/0002` tier
+    // two), so here is the debt paid: the body is walked, and something wrong inside it is reported.
+    // The *expression* body, because that is the form the parser desugars — `() => e` becomes
+    // `() => { return e; }` — so a cell on the short form exercises the long one too.
+    // `issues/lang/0136`.
+    "Lambda",
+    // And the written block form, which reaches the same place by a different route through the
+    // parser.
+    "Lambda-block");
+}
+
+string[] expressionSources() {
+  return string[](
+    "void f(i32 p, f64 q) { i32 r = -" + SUB + "; }",
+    "void f(i32 p, f64 q) { i32 r = " + SUB + " + 1; }",
+    "void f(i32 p, f64 q) { i64 r = " + SUB + " as i64; }",
+    "void f(i32 p, f64 q, bool c) { i32 r = c ? " + SUB + " : 0; }",
+    "void f(i32 p, f64 q, bool c) { i32 r = (" + SUB + " > 0) ? 1 : 0; }",
+    "void f(i32 p, f64 q, i32[] a) { i32 r = a[" + SUB + "]; }",
+    "struct P { i32 x; } void f(i32 p, f64 q, P s) { i32 r = s.x + " + SUB + "; }",
+    "void g(i32 n) { } void f(i32 p, f64 q) { g(" + SUB + "); }",
+    "struct P { i32 x; void m(this, i32 n) { } } void f(i32 p, f64 q, P s) { s.m(" + SUB + "); }",
+    "struct P { i32 x; } void f(i32 p, f64 q) { P s = P(" + SUB + "); }",
+    "void f(i32 p, f64 q, i32 n) { n = " + SUB + "; }",
+    "i32 f(i32 p, f64 q) { return " + SUB + "; }",
+    "void f(i32 p, f64 q) { if (" + SUB + " > 0) { } }",
+    "void f(i32 p, f64 q, i32[] a) { a[" + SUB + "]++; }",
+    "void f(i32 p, f64 q, i32[]? a) { i32 r = a![" + SUB + "]; }",
+    "struct B { i32 b; } struct C : B { i32 c; } " +
+    "void f(i32 p, f64 q, B b, i32[] a) { bool r = a[" + SUB + "] > 0 && (b is C); }",
+    "void f(i32 p, f64 q) { i32[] a = i32[2](" + SUB + ", 1); }",
+    "void f(i32 p, f64 q) { i32[] a = i32[" + SUB + "](); }",
+    "enum E { A, B } void f(i32 p, f64 q, E e) { i32 r = match (e) { case A: " + SUB +
+    " case B: 0 }; }",
+    "import { Attr, Node } from core; void f(i32 p, f64 q) { Node n = <div id={itoa(" + SUB +
+    ")}/>; } string itoa(i32 v) { return \"\"; }",
+    "", "", "", "", "", "", "",
+    "void f(i32 p, f64 q) { fn[i32()] g = () => " + SUB + "; }",
+    "void f(i32 p, f64 q) { fn[i32()] g = () => { return " + SUB + "; }; }");
+}
+
+/**
+ * The **containers**, which the two grids above do not cover.
+ *
+ * They vary where a statement sits *within* a body and where an expression sits within a statement.
+ * Neither varies which body — and "which body" is exactly where the method-bodies bug lived, so
+ * planting that bug again leaves both of them green. A grid that misses the fault it was written
+ * after is worth more as a lesson than as a test: a dimension you did not think to vary is invisible
+ * no matter how finely you vary the others.
+ */
+string[] containerLabels() {
+  return string[](
+    "free function", "exported function", "instance method", "const-this method", "static method",
+    "method with params", "method of a child struct");
+}
+
+string[] containerSources() {
+  return string[](
+    "void f() { " + BAD + " }",
+    "export void f() { " + BAD + " }",
+    "struct P { i32 x; void m(this) { " + BAD + " } }",
+    "struct P { i32 x; void m(const this) { " + BAD + " } }",
+    "struct P { i32 x; void m() { " + BAD + " } }",
+    "struct P { i32 x; void m(this, i32 n) { " + BAD + " } }",
+    "struct B { i32 b; } struct C : B { void m(this) { " + BAD + " } }");
+}
+
+/** The kind a grid row is about — `Ternary-cond` and `Ternary` are both the `Ternary` kind. */
+string kindOf(string label) {
+  i32 dash = label.indexOf("-");
+  return dash < 0 ? label : label.slice(0, dash);
+}
+
+/**
+ * The variants of one `enum` in `ast.wac`, so a grid can be checked against the AST it is a grid of.
+ *
+ * The alternative is a hand-written count, which is what the statement grid had: it asserts "17
+ * placements" and is therefore only ever as complete as the day somebody counted. A kind added to
+ * the AST tomorrow does not move that number, so the grid silently stops covering the language. Read
+ * from the source, a new variant fails this file by name on the first run.
+ */
+string[] variantsOf(Cli cli, string enumName) {
+  FileResult f = cli.readFile("packages/wacc/src/ast.wac").wait();
+  if (!f.ok) { return string[0](fill: ""); }
+  string src = string.fromBytes(f.bytes);
+  i32 start = src.indexOf("export enum " + enumName + " {");
+  if (start < 0) { return string[0](fill: ""); }
+  string rest = src.slice(start, src.len());
+  i32 end = rest.indexOf("\n}");
+  string body = end < 0 ? rest : rest.slice(0, end);
+
+  string[] out = string[64](fill: "");
+  i32 n = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= body.len(); i++) {
+    if (i < body.len() && body.slice(i, i + 1) != "\n") { continue; }
+    string line = body.slice(at, i);
+    at = i + 1;
+    // `^  ([A-Z][A-Za-z]*)[(,]` — two spaces, a capitalised name, then `(` or `,`.
+    if (line.len() < 4 || line.slice(0, 2) != "  ") { continue; }
+    u8[] b = line.toBytes();
+    if (b[2] < 'A' || b[2] > 'Z') { continue; }
+    i32 k = 3;
+    while (k < b.len() && ((b[k] >= 'a' && b[k] <= 'z') || (b[k] >= 'A' && b[k] <= 'Z'))) {
+      k = k + 1;
+    }
+    if (k >= b.len() || (b[k] != '(' && b[k] != ',')) { continue; }
+    if (n < out.len()) { out[n] = line.slice(2, k); n = n + 1; }
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+export string test_reach_every_statement_kind_is_walked() {
+  T t = T.create();
+  string[] labels = statementLabels();
+  string[] sources = statementSources();
+  t.eqI32(labels.len(), sources.len(), "a source per label");
+  string[] missed = string[labels.len()](fill: "");
+  i32 n = 0;
+  i32 considered = 0;
+  for (i32 i = 0; i < labels.len() && i < sources.len(); i++) {
+    considered = considered + 1;
+    if (sources[i] == "") { continue; }
+    if (!reports(sources[i])) { missed[n] = labels[i]; n = n + 1; }
+  }
+  // One entry per kind of the AST, plus the two extra placements (`If-else`, `For-init`) that are the
+  // same kind reached by a different field — which is exactly where a walk tends to be partial.
+  t.eqI32(considered, 17, "placements");
+  t.eqI32(n, 0, "a bad initialiser inside these statement kinds is not reported, so the walk does " +
+                "not descend into them: " + joinedWith(missed, n, ", "));
+  return t.report();
+}
+
+export string test_reach_every_expression_kind_is_walked() {
+  T t = T.create();
+  string[] labels = expressionLabels();
+  string[] sources = expressionSources();
+  t.eqI32(labels.len(), sources.len(), "a source per label");
+  string[] missed = string[labels.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < labels.len() && i < sources.len(); i++) {
+    if (sources[i] == "") { continue; }
+    if (!reports(sources[i])) { missed[n] = labels[i]; n = n + 1; }
+  }
+  t.eqI32(n, 0, "a bad operand inside these expression positions is not reported, so the walk does " +
+                "not descend into them: " + joinedWith(missed, n, ", "));
+  return t.report();
+}
+
+export string test_reach_the_grids_cover_every_kind_the_ast_has(Core core, Cli cli) {
+  T t = T.create();
+  string[] enums = string[]("ExprKind", "StmtKind");
+  for (i32 e = 0; e < enums.len(); e++) {
+    string[] labels = e == 0 ? expressionLabels() : statementLabels();
+    string[] variants = variantsOf(cli, enums[e]);
+    string[] other = variantsOf(cli, e == 0 ? "StmtKind" : "ExprKind");
+    t.isTrue(variants.len() > 0, "no enum " + enums[e] + " in ast.wac");
+    string[] uncovered = string[variants.len()](fill: "");
+    i32 n = 0;
+    for (i32 v = 0; v < variants.len(); v++) {
+      bool covered = false;
+      for (i32 i = 0; i < labels.len(); i++) {
+        if (kindOf(labels[i]) == variants[v]) { covered = true; }
+      }
+      if (!covered) { uncovered[n] = variants[v]; n = n + 1; }
+    }
+    t.eqI32(n, 0, enums[e] + " has variants no cell of the grid is about, so nothing checks " +
+                  "whether the walk reaches them: " + joinedWith(uncovered, n, ", "));
+
+    // **And the other direction, which guards the reader rather than the grid.** The check above is
+    // "every variant is covered", and a `variantsOf` that returned three names would satisfy it
+    // *completely* — the fewer variants it finds, the easier they are to cover. So every grid label's
+    // kind must also name a real variant, which is derived from the grid rather than a floor somebody
+    // counted. Crippling the reader to three names fails this with twenty labels at once.
+    //
+    // Against **both** enums, because the expression grid buries its fault inside a statement in two
+    // places — `Assign-rhs` and `Return-value` name `StmtKind` variants, and that is the point of
+    // those cells rather than a mistake. `Condition` names neither: it is a pure *placement*, the one
+    // cell here that is about where an expression sits rather than what it is, so it is named as the
+    // exception instead of being quietly tolerated by a looser rule.
+    string[] both = string[variants.len() + other.len()](fill: "");
+    for (i32 i = 0; i < variants.len(); i++) { both[i] = variants[i]; }
+    for (i32 i = 0; i < other.len(); i++) { both[variants.len() + i] = other[i]; }
+    string[] unknown = string[labels.len()](fill: "");
+    i32 u = 0;
+    for (i32 i = 0; i < labels.len(); i++) {
+      string kind = kindOf(labels[i]);
+      if (kind == "Condition") { continue; }
+      bool real = false;
+      for (i32 v = 0; v < both.len(); v++) { if (both[v] == kind) { real = true; } }
+      if (real) { continue; }
+      bool already = false;
+      for (i32 k = 0; k < u; k++) { if (unknown[k] == kind) { already = true; } }
+      if (!already) { unknown[u] = kind; u = u + 1; }
+    }
+    t.eqI32(u, 0, enums[e] + ": these grid labels name no variant of either enum, so either the " +
+                  "grid is stale or the reader is not finding them: " + joinedWith(unknown, u, ", "));
+  }
+  return t.report();
+}
+
+export string test_reach_every_kind_of_body_is_walked() {
+  T t = T.create();
+  string[] labels = containerLabels();
+  string[] sources = containerSources();
+  string[] missed = string[labels.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < labels.len() && i < sources.len(); i++) {
+    if (!reports(sources[i])) { missed[n] = labels[i]; n = n + 1; }
+  }
+  t.eqI32(n, 0, "a bad initialiser inside these bodies is not reported, so the walk never enters " +
+                "them: " + joinedWith(missed, n, ", "));
+  return t.report();
+}

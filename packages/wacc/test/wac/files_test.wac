@@ -1,0 +1,120 @@
+// The import walk, in wac, against the one in TypeScript.
+//
+// `harness/wacFiles.ts` has walked the import graph for every build this repository has ever done,
+// which makes it the oracle here — and a legitimate one, because it is not the compiler under test.
+// The wac copy exists so that a wac program can be the compiler's command line without TypeScript in
+// the path (`design/lang/0003` step 4), and the two have to agree about what a program is *made of*
+// or they will compile different programs from the same entry.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `wacBind` becomes an import — `importSpecs` and `resolveFrom` come straight from `src/files.wac`.
+// The oracle stays TypeScript, in `../files_oracle.ts`, because it *is* the reference.
+//
+// **Paths cross, not sources.** The corpus is every `.wac` file in the tree, and shipping their text
+// would be megabytes through a pipe to answer a question about a few specifiers per file. The oracle
+// reads each file itself, which is safe precisely because the file is the *input* rather than the
+// answer — it cannot agree with a mistake it did not make. The wac side reads the same file to ask
+// its own question, so a file that changed between the two reads would show up as a disagreement
+// rather than as silence.
+//
+// The second test needs no oracle at all: five spellings and their answers, small enough to write
+// down.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, check } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { importSpecs, resolveFrom } from "../../src/files.wac";
+
+const string ORACLE = "packages/wacc/test/files_oracle.ts";
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+string joinedWith(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+/** A growable list of paths. */
+struct Paths {
+  string[] items;
+  i32 n;
+
+  Paths create() { return Paths(string[0](fill: ""), 0); }
+
+  void push(this, string s) {
+    if (this.n == this.items.len()) {
+      i32 grown = this.items.len() == 0 ? 64 : this.items.len() * 2;
+      string[] next = string[grown](fill: "");
+      for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
+      this.items = next;
+    }
+    this.items[this.n] = s;
+    this.n = this.n + 1;
+  }
+}
+
+/** Every `.wac` file under `dir`, recursively. */
+void walk(Cli cli, string dir, Paths into) {
+  string[]? entries = cli.readDir(dir).wait();
+  if (entries is null) { return; }
+  string[] names = entries!;
+  for (i32 i = 0; i < names.len(); i++) {
+    string name = names[i];
+    if (name == "node_modules" || name == ".git" || name == "target") { continue; }
+    string path = dir + "/" + name;
+    if (endsWith(name, ".wac")) { into.push(path); continue; }
+    // A directory is whatever `readDir` will list. `Stat` would answer too and costs a call per
+    // entry; this costs one only for the entries that are not `.wac`, which is most directories and
+    // few files.
+    if (cli.readDir(path).wait() is not null) { walk(cli, path, into); }
+  }
+}
+
+export string test_the_wac_walk_names_the_same_imports_as_the_typescript_one(Core core, Cli cli) {
+  T t = T.create();
+  Paths found = Paths.create();
+  walk(cli, "packages", found);
+  walk(cli, "spec", found);
+  t.isTrue(found.n >= 100, "only " + itoa(found.n) + " files walked — the corpus is not being found");
+  if (found.n < 100) { return t.report(); }
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < found.n; i++) {
+    string path = found.items[i];
+    FileResult f = cli.readFile(path).wait();
+    if (!f.ok) { t.fail("cannot read " + path + " — " + f.error); continue; }
+    string ours = joinedWith(importSpecs(f.bytes), "|");
+    lines.add("imports " + path + " " + ours);
+  }
+  check(t, cli, "deno", string[]("run", "--allow-read", "--no-check", ORACLE), lines,
+        "the TypeScript import walk");
+  core.log("    imports: " + itoa(found.n) + " files compared");
+  return t.report();
+}
+
+export string test_a_specifier_resolves_against_the_file_that_wrote_it() {
+  // The last two are the ones worth having: an absolute path that must keep its root, and a `..` that
+  // walks past the start, where dropping the leading slash or keeping the `..` are the two ways this
+  // goes wrong quietly.
+  T t = T.create();
+  string[] from = string[](
+    "packages/git/src/repo.wac", "main.wac", "a/b/c.wac", "/abs/dir/a.wac", "/abs/a.wac");
+  string[] spec = string[](
+    "../../fs/src/fs.wac", "./lib.wac", "../../d.wac", "./b.wac", "../../b.wac");
+  // A `..` that climbs past the root stays, in **both** walks — `/../b.wac`. POSIX would say `/`, and
+  // neither of these is a filesystem: what they compute is an identity for a path, and two identities
+  // agreeing matters more than either matching `realpath`. Asserted as it is so that one of them
+  // cannot quietly start "fixing" it.
+  string[] want = string[](
+    "packages/fs/src/fs.wac", "lib.wac", "d.wac", "/abs/dir/b.wac", "/../b.wac");
+  t.eqI32(from.len(), want.len(), "a case per answer");
+  for (i32 i = 0; i < from.len() && i < want.len(); i++) {
+    t.eqStr(resolveFrom(from[i], spec[i]), want[i], from[i] + " + " + spec[i]);
+  }
+  return t.report();
+}

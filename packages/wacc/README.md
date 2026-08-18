@@ -457,7 +457,7 @@ are cases rather than a paragraph in a commit message.
 instead — `deno task waccx`, the same commands as the reference CLI but over `wacc` — which shared
 that CLI's `readGraph` and `wacDiag` so that the only difference between the two was the compiler in
 the middle. Both CLIs are retired; the binary is what people type, and the comparison they existed
-for is `test/diagnosticGap.test.ts`, which puts `wacCompile` beside `diagnoseFiles` and renders both
+for is `test/wac/diagnosticgap_test.wac`, which puts `wacCompile` beside `diagnoseFiles` and renders both
 with the same `wacDiag`. Nothing about the argument below changed — it is why that comparison is
 worth having, and it was found by building something that consumed the output.
 
@@ -491,7 +491,7 @@ them. It says `expected ';', found 'return'` now, every other parse site names t
 on, and the token's own width is the underline. That one function was worth more than every checker
 site put together — 10% of diagnostics carried their operands before it, 43% after.
 
-`test/diagnosticGap.test.ts` prints the sample it compares against the reference, and the coverage
+`test/wac/diagnosticgap_test.wac` prints the sample it compares against the reference, and the coverage
 over the whole refused corpus. As of 2026-08-18:
 
     wacc vs the reference on 5 refused programs: 5 at the same position, 2 with the same message,
@@ -1003,7 +1003,7 @@ into, and a bare expression statement had no arm. Both cost a slot, both looked 
 both had the same tell — one case of a family failing while its siblings passed.
 
 No rule test can find that, because a rule test puts its subject where the walk already goes.
-`test/reach.test.ts` asks the other question: for every node kind, bury a **known-bad construct**
+`test/wac/reach_test.wac` asks the other question: for every node kind, bury a **known-bad construct**
 inside it and check the diagnostic still comes out. The planted fault is the same everywhere, so a
 failing cell means *this kind is not walked* and never *that rule is wrong*.
 

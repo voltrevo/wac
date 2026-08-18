@@ -1,0 +1,193 @@
+// **A coverage point at a position no construct has is a decision nobody measures.**
+//
+// `harness/wacCoverage.ts` merges points on `(file, line, col, kind)`, and `covTableRow` derives the
+// *file* from the point's line in the linked blob. So a point given a floored or zeroed position
+// lands at the entry module's first line, every point like it lands there too, and covering any one
+// of them covers all — a collapse that always reads in the flattering direction. `issues/lang/0148`.
+//
+// Two of each construct, because one is indistinguishable from correct: with a single arm or a single
+// loop the collapse has nothing to collapse into, which is why both of these survived. In an
+// *imported* file, because the entry here contains neither construct — a point attributed to it is
+// then visibly wrong rather than merely misplaced.
+//
+//   - `else:` had no token to take a position from. The parser left `variantTok` at -1 (its "this is
+//     the else arm" sentinel), the emitter asked for that token's line and column, and both accessors
+//     floor a negative index to 1. `Arm` keeps the `else` keyword's token now.
+//   - `for (;;)` has no condition to take a position from, and the emitter asked for `0:0`. `emitLoop`
+//     takes the statement's own position for that case.
+//   - `do { … } while (c)` had no point at all, which the reference emits — found while checking the
+//     first two, and the reason the last test here counts kinds against the reference rather than
+//     asserting a number of its own.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// **No temp directory any more.** `covTableFiles` takes paths and sources in memory, so the two-file
+// fixture is two strings rather than two files written into a scratch directory the test then has to
+// clean up. The point positions are read straight off `index⇥line⇥col⇥kind⇥file`.
+//
+// The last case still needs the reference, because what it compares is the *other compiler's* count —
+// so `../covkinds_oracle.ts` holds that half. It asks `wacCompile` for `compiled.coverage` directly
+// rather than going through `instrument`, which writes glue and allocates counters that nobody here
+// needs.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { covTableFiles } from "../../src/api.wac";
+import { wireField, wireLines } from "./wire_probe.wac";
+
+const string ORACLE = "packages/wacc/test/covkinds_oracle.ts";
+const string LIB = "/lib.wac";
+const string ENTRY = "/entry.wac";
+
+// The table's own columns: `index⇥line⇥col⇥kind⇥file`.
+i32 LINE() { return 1; }
+i32 COL() { return 2; }
+i32 KIND() { return 3; }
+i32 WHERE() { return 4; }
+
+string[] pointsOf(string lib, string entry) {
+  return wireLines(covTableFiles(string[](LIB, ENTRY), string[](lib, entry), ENTRY));
+}
+
+i32 numberOf(string s) {
+  if (s.len() == 0) { return -1; }
+  u8[] b = s.toBytes();
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return v;
+}
+
+/** Every point, as the string a failure should show. */
+string shown(string[] ps) {
+  string out = "";
+  for (i32 i = 0; i < ps.len(); i++) {
+    out = out + (i == 0 ? "" : "\n  ") + wireField(ps[i], WHERE()) + ":" +
+          wireField(ps[i], LINE()) + ":" + wireField(ps[i], COL()) + " " +
+          wireField(ps[i], KIND());
+  }
+  return out == "" ? "(none)" : out;
+}
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+/** No two points may share `(file, line, col, kind)`, or one covers the other. */
+void assertDistinct(T t, string[] ps) {
+  i32 shared = 0;
+  for (i32 i = 0; i < ps.len(); i++) {
+    for (i32 j = i + 1; j < ps.len(); j++) {
+      bool same = wireField(ps[i], WHERE()) == wireField(ps[j], WHERE()) &&
+                  wireField(ps[i], LINE()) == wireField(ps[j], LINE()) &&
+                  wireField(ps[i], COL()) == wireField(ps[j], COL()) &&
+                  wireField(ps[i], KIND()) == wireField(ps[j], KIND());
+      if (same) { shared = shared + 1; }
+    }
+  }
+  t.eqI32(shared, 0, itoa(shared) + " decision(s) cannot be told apart:\n  " + shown(ps));
+}
+
+const string ELSE_LIB =
+  "export enum E { A, B }\n\n" +
+  "export i32 pick(E e) {\n  match (e) {\n    case A: { return 1; }\n" +
+  "    else: { return 2; }\n  }\n}\n\n" +
+  "export i32 other(E e) {\n  match (e) {\n    case A: { return 10; }\n" +
+  "    else: { return 20; }\n  }\n}\n";
+const string ELSE_ENTRY =
+  "import { E, other, pick } from \"./lib.wac\";\n\n" +
+  "export i32 go(bool useA) {\n  E e = E.B;\n  if (useA) { e = E.A; }\n" +
+  "  return pick(e) + other(e);\n}\n";
+
+export string test_each_else_arm_is_its_own_point_in_its_own_file_at_its_own_line() {
+  T t = T.create();
+  string[] ps = pointsOf(ELSE_LIB, ELSE_ENTRY);
+  t.isTrue(ps.len() > 0, "the table is empty, so nothing was instrumented");
+  if (ps.len() == 0) { return t.report(); }
+
+  i32 atOrigin = 0;
+  for (i32 i = 0; i < ps.len(); i++) {
+    if (numberOf(wireField(ps[i], LINE())) <= 1 && numberOf(wireField(ps[i], COL())) <= 1) {
+      atOrigin = atOrigin + 1;
+    }
+  }
+  t.eqI32(atOrigin, 0, "point(s) at a position no construct has:\n  " + shown(ps));
+
+  // The two `else:` keywords are lines 6 and 13 of `lib.wac`.
+  bool six = false;
+  bool thirteen = false;
+  for (i32 i = 0; i < ps.len(); i++) {
+    if (!endsWith(wireField(ps[i], WHERE()), "lib.wac")) { continue; }
+    i32 line = numberOf(wireField(ps[i], LINE()));
+    if (line == 6) { six = true; }
+    if (line == 13) { thirteen = true; }
+  }
+  t.isTrue(six && thirteen,
+           "the else arms are lines 6 and 13 of lib.wac; points are:\n  " + shown(ps));
+  assertDistinct(t, ps);
+  return t.report();
+}
+
+const string LOOP_LIB =
+  "export i32 spin(i32 n) {\n  i32 k = 0;\n  for (;;) {\n    k = k + 1;\n" +
+  "    if (k >= n) { break; }\n  }\n  return k;\n}\n\n" +
+  "export i32 other(i32 n) {\n  i32 k = 0;\n  for (;;) {\n    k = k + 2;\n" +
+  "    if (k >= n) { break; }\n  }\n  return k;\n}\n";
+const string LOOP_ENTRY =
+  "import { other, spin } from \"./lib.wac\";\n\n" +
+  "export i32 go(i32 n) {\n  return spin(n) + other(n);\n}\n";
+
+export string test_a_loop_with_no_condition_is_placed_at_the_loop_not_at_0_0() {
+  T t = T.create();
+  string[] ps = pointsOf(LOOP_LIB, LOOP_ENTRY);
+  i32 loops = 0;
+  i32 misplaced = 0;
+  for (i32 i = 0; i < ps.len(); i++) {
+    if (wireField(ps[i], KIND()) != "loop") { continue; }
+    loops = loops + 1;
+    bool ok = numberOf(wireField(ps[i], LINE())) != 0 &&
+              numberOf(wireField(ps[i], COL())) != 0 &&
+              endsWith(wireField(ps[i], WHERE()), "lib.wac");
+    if (!ok) { misplaced = misplaced + 1; }
+  }
+  t.eqI32(loops, 2, "two conditionless loops, " + itoa(loops) + " loop point(s):\n  " + shown(ps));
+  t.eqI32(misplaced, 0, "a loop point outside the file that holds the loop:\n  " + shown(ps));
+  assertDistinct(t, ps);
+  return t.report();
+}
+
+const string KINDS_LIB =
+  "export i32 spinDo(i32 n) {\n  i32 k = 0;\n  do { k = k + 1; } while (k < n);\n  return k;\n}\n\n" +
+  "export i32 spinWhile(i32 n) {\n  i32 k = 0;\n  while (k < n) { k = k + 1; }\n  return k;\n}\n\n" +
+  "export i32 spinFor(i32 n) {\n  i32 k = 0;\n  for (;;) {\n    k = k + 1;\n" +
+  "    if (k >= n) { break; }\n  }\n  return k;\n}\n";
+const string KINDS_ENTRY =
+  "import { spinDo, spinFor, spinWhile } from \"./lib.wac\";\n\n" +
+  "export i32 go(i32 n) {\n  return spinDo(n) + spinWhile(n) + spinFor(n);\n}\n";
+
+export string test_wacc_counts_as_many_loops_as_the_reference_does(Core core, Cli cli) {
+  // **A kind-set comparison cannot see this and a count can.** `issues/lang/0112` asked for a test
+  // asserting the two compilers emit the same *kinds*; wacc emitted no point for a `do` body, and any
+  // `while` in the same file supplies the `loop` kind — so the set matched while a construct went
+  // unmeasured. `else` and `entry` counts differ on purpose (0112 records why), so this compares the
+  // kinds where a difference is a defect.
+  T t = T.create();
+  string[] ps = pointsOf(KINDS_LIB, KINDS_ENTRY);
+  string[] kinds = string[]("loop", "case");
+  Lines lines = Lines.create();
+  for (i32 k = 0; k < kinds.len(); k++) {
+    i32 ours = 0;
+    for (i32 i = 0; i < ps.len(); i++) {
+      if (wireField(ps[i], KIND()) == kinds[k]) { ours = ours + 1; }
+    }
+    lines.add("covkinds " + hex(KINDS_LIB.toBytes()) + " " + hex(KINDS_ENTRY.toBytes()) + " " +
+              kinds[k] + " " + itoa(ours));
+  }
+  check(t, cli, "deno", string[]("run", "--allow-read", "--no-check", ORACLE), lines,
+        "the reference's coverage points");
+  return t.report();
+}
