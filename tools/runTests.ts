@@ -82,7 +82,7 @@
 
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 import { killedLaneNote } from "./killedLane.ts";
-import { exclusiveTests, heavyTests, isWacTest, laneSplit } from "../harness/testLane.ts";
+import { exclusiveTests, heavyTests, isWacTest, laneSplit, wacTestDirs } from "../harness/testLane.ts";
 import { clearWarnings, warningsSoFar } from "./docCheck.ts";
 import { takeSuiteSlot } from "./suiteGate.ts";
 
@@ -572,58 +572,125 @@ if (exclusive.length > 0) {
 // Skipped when the binary is absent, which is the ordinary state of a fresh checkout — it is built
 // by `cargo` from a seed that is gitignored. `tools/seedFresh.test.ts` is what says the seed is
 // current; this only says whether the tests pass through it.
+
 let native = 0;
 if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
-  console.log("\n── the same wac tests, through `wac test`");
-  const r = await new Deno.Command(WAC_BIN, {
-    // **`--allow-read`, so a test that declares a capability actually runs.** A wac test may name
-    // `(Core core, Cli cli)` and read its own fixtures — `issues/system/0161` step 4 — and without a
-    // grant `wac test` skips it by name. Skipped in this lane *and* ignored in Deno's, which cannot
-    // supply a `Cli` at all, would mean such a test never runs anywhere while looking accounted for.
-    //
-    // Read, write and run — and it is not a widening of what this suite already has: the Deno pass
-    // above runs with `-A`. It narrows the gap between the two lanes rather than opening anything.
-    //
-    // **Broader than read because a test cannot say which grant it wants.** The signature is
-    // `(Core core, Cli cli)` and `wac test` grants a `Cli` if *any* grant was asked for, so a test
-    // needing `--allow-write` is not skipped without it — it runs and fails at the first `mkdir`.
-    // `packages/wacc/test/wac/selfhost_test.wac` is the first that needs more than reading, and it
-    // found this. `issues/system/0172` is the granularity that would let a lane grant narrowly.
-    //
-    // **`--allow-env` was added on 2026-08-17 and the reason is worth keeping.** A differential
-    // against Foundry's `cast` has to find it, and this repository keeps it in `~/tools/foundry` —
-    // reachable only through `HOME`. `Deno.env.get` needed no permission, so the host-side version
-    // of that test never noticed; here, a lane without this flag found nothing on `PATH`, warned
-    // that the second oracle was not running, and passed. A differential comparing nothing, wearing
-    // a green tick. `packages/abi/test/wac/cast_test.wac` now separates "could not look" from "is
-    // not there" and fails on the first, which is what turned this from invisible into a red test.
-    // **`--allow-net`, added 2026-08-18, and the reason is the same one `--allow-env` has.** Six wac
-    // test files bind a socket — `freePort` in `packages/wactest/src/daemon.wac` asks the kernel for
-    // a port by binding zero — and `cli.listen` needs this grant. Without it the handle comes back
-    // negative and `freePort` answers -1, so the test reports **"no free port"**: a sentence about
-    // port exhaustion, on a machine with twenty-eight thousand of them free. Five tests failed that
-    // way on every run since they were written, and the message is convincing enough that I read it
-    // as contention on a shared box, re-ran them by hand *with the flag*, saw them pass, and
-    // credited the wrong variable. `deno test` runs with `-A`, so this narrows the gap between the
-    // lanes rather than opening anything. `issues/system/0173` is the granularity that would let a
-    // test say it needs this rather than a lane granting it to everyone.
-    args: [
-      "test",
-      "--allow-read",
-      "--allow-write",
-      "--allow-run",
-      "--allow-env",
-      "--allow-net",
-      ...(heavyWac.length > 0 ? ["--ignore", heavyWac.join(",")] : []),
-      "packages/",
-    ],
-    stdout: "inherit",
-    stderr: "inherit",
-  }).output();
+  // **This lane was one process walking every directory in turn, and that was 266s of a suite whose
+  // Deno half already runs four ways.** It is now a queue of directories at the same `jobs` workers,
+  // which is 94s measured on this box — the floor is the slowest single directory (`packages/wacc`,
+  // 56s), so there is a further split available inside a directory if that ever becomes the thing.
+  //
+  // A queue rather than four fixed shares: a share needs a cost per directory to be fair, and a table
+  // of measured costs is a table that rots. Longest-first would need the same table. What a queue
+  // needs is nothing, and its imbalance is bounded by one directory.
+  //
+  // **Each block is printed whole when its directory finishes**, rather than inherited, because four
+  // workers writing to one terminal interleave `── file` headers with the failures they belong to.
+  const all = await wacTestDirs("packages");
+  // **A target narrows this lane too, and it did not before.** `deno task test packages/tty/` ran
+  // every wac test in the repository — 266s of unrelated work behind a two-second target — because the
+  // lane's path was the literal string `packages/`. A target that names no wac directory says so rather
+  // than running everything or quietly running nothing.
+  const named = passthrough.filter((a) => !a.startsWith("-"));
+  const dirs = named.length === 0
+    ? all
+    : all.filter((d) => named.some((t) => d === t || d.startsWith(t.replace(/\/+$/, "") + "/") || t.startsWith(d)));
+  const wacJobs = Math.max(1, Math.min(jobs, dirs.length));
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  console.log(
+    `\n── the same wac tests, through \`wac test\` — ` +
+      `${count(dirs.length, "directory", "directories")}, ${count(wacJobs, "worker", "workers")}`,
+  );
+  if (dirs.length === 0) {
+    console.log(
+      `   nothing here: ${named.join(", ")} names no directory holding \`*_test.wac\`, so this lane ` +
+        `ran nothing. That is not the same as passing.`,
+    );
+  }
+  // **`--allow-read`, so a test that declares a capability actually runs.** A wac test may name
+  // `(Core core, Cli cli)` and read its own fixtures — `issues/system/0161` step 4 — and without a
+  // grant `wac test` skips it by name. Skipped in this lane *and* ignored in Deno's, which cannot
+  // supply a `Cli` at all, would mean such a test never runs anywhere while looking accounted for.
+  //
+  // Read, write and run — and it is not a widening of what this suite already has: the Deno pass
+  // above runs with `-A`. It narrows the gap between the two lanes rather than opening anything.
+  //
+  // **Broader than read because a test cannot say which grant it wants.** The signature is
+  // `(Core core, Cli cli)` and `wac test` grants a `Cli` if *any* grant was asked for, so a test
+  // needing `--allow-write` is not skipped without it — it runs and fails at the first `mkdir`.
+  // `packages/wacc/test/wac/selfhost_test.wac` is the first that needs more than reading, and it
+  // found this. `issues/system/0172` is the granularity that would let a lane grant narrowly.
+  //
+  // **`--allow-env` was added on 2026-08-17 and the reason is worth keeping.** A differential
+  // against Foundry's `cast` has to find it, and this repository keeps it in `~/tools/foundry` —
+  // reachable only through `HOME`. `Deno.env.get` needed no permission, so the host-side version
+  // of that test never noticed; here, a lane without this flag found nothing on `PATH`, warned
+  // that the second oracle was not running, and passed. A differential comparing nothing, wearing
+  // a green tick. `packages/abi/test/wac/cast_test.wac` now separates "could not look" from "is
+  // not there" and fails on the first, which is what turned this from invisible into a red test.
+  // **`--allow-net`, added 2026-08-18, and the reason is the same one `--allow-env` has.** Six wac
+  // test files bind a socket — `freePort` in `packages/wactest/src/daemon.wac` asks the kernel for
+  // a port by binding zero — and `cli.listen` needs this grant. Without it the handle comes back
+  // negative and `freePort` answers -1, so the test reports **"no free port"**: a sentence about
+  // port exhaustion, on a machine with twenty-eight thousand of them free. Five tests failed that
+  // way on every run since they were written, and the message is convincing enough that I read it
+  // as contention on a shared box, re-ran them by hand *with the flag*, saw them pass, and
+  // credited the wrong variable. `deno test` runs with `-A`, so this narrows the gap between the
+  // lanes rather than opening anything. `issues/system/0173` is the granularity that would let a
+  // test say it needs this rather than a lane granting it to everyone.
   // 4 is "every test in that file needs a host oracle", which is most of `tor` and `tls` and is
   // not a failure. `wac test` folds those into its own summary and exits 0; anything else here is
   // a real disagreement with the Deno path and should stop the suite.
-  native = r.code;
+  const flags = [
+    "test",
+    "--allow-read",
+    "--allow-write",
+    "--allow-run",
+    "--allow-env",
+    "--allow-net",
+    ...(heavyWac.length > 0 ? ["--ignore", heavyWac.join(",")] : []),
+  ];
+  let next = 0;
+  const codes: number[] = [];
+  const blocks: string[] = [];
+  const worker = async () => {
+    while (next < dirs.length) {
+      const dir = dirs[next++];
+      const r = await new Deno.Command(WAC_BIN, {
+        args: [...flags, dir],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const text = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
+      blocks.push(text);
+      codes.push(r.code);
+      console.log(text.trimEnd());
+    }
+  };
+  await Promise.all(Array.from({ length: wacJobs }, () => worker()));
+  // **The lane's own count, because a summary per directory is not a summary.** Thirty-nine blocks
+  // each saying "6 files: 6 ok" is how a lane that stopped running half its directories would read as
+  // fine. If the arithmetic does not add up, that is said rather than papered over.
+  let files = 0;
+  let summaries = 0;
+  for (const block of blocks) {
+    for (const m of block.matchAll(/^(\d+) files: /gm)) {
+      files += Number(m[1]);
+      summaries++;
+    }
+  }
+  console.log(
+    summaries === dirs.length
+      ? `   ${count(files, "wac test file", "wac test files")} across ` +
+        `${count(dirs.length, "directory", "directories")}`
+      : `   ${files} wac test files, but ${summaries} of ${dirs.length} directories reported a ` +
+        `summary — the count above is short by whatever the silent ones hold`,
+  );
+  // 4 is "every test in that file needs a host oracle", which is most of `tor` and `tls` and is not a
+  // failure — `wac test` folds those into its own summary and exits 0, so it should not reach here.
+  // The first non-zero is taken rather than the worst: with one directory per process there is no
+  // ranking between two different failures, and the blocks above say what each was.
+  native = codes.find((c) => c !== 0) ?? 0;
   // **Said here, because nothing else says it.** This lane's failures are not in either summary
   // above, so a run where it alone fails prints two `0 failed` lines and then exits non-zero — and
   // the reader goes looking in the wrong place. It cost exactly that once. `issues/system/0172`.

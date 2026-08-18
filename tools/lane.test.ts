@@ -9,7 +9,7 @@
 // belongs there; what they do is make the answer to "why is the suite slow?" visible in one place, and
 // stop the reason being the empty string.
 
-import { declaredLaneFiles, exclusiveTests, heavyTests, laneSplit } from "../harness/testLane.ts";
+import { declaredLaneFiles, exclusiveTests, heavyTests, laneSplit, wacTestDirs } from "../harness/testLane.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -144,4 +144,34 @@ Deno.test("the jobs sweep ignores what the suite ignores, by asking rather than 
   for (const e of [...(await exclusiveTests()), ...(await heavyTests())]) {
     assertEquals(every.includes(e.file), true, `declaredLaneFiles missed ${e.file}`);
   }
+});
+
+Deno.test("the wac lane's directories each hold a test, and every declared one is among them", async () => {
+  // The lane is a queue of these, so a discovery that quietly returned fewer would be a suite that
+  // quietly ran less — and it would still print a green summary per directory it did run.
+  const dirs = await wacTestDirs("packages");
+
+  // Every directory returned really holds a test file. This reads the directory rather than the walk's
+  // own bookkeeping, so it can disagree with it.
+  const empty: string[] = [];
+  for (const dir of dirs) {
+    let found = false;
+    for await (const e of Deno.readDir(dir)) {
+      if (e.isFile && e.name.endsWith("_test.wac")) found = true;
+    }
+    if (!found) empty.push(dir);
+  }
+  assertEquals(empty.join(", "), "", "directories with no wac test in them");
+
+  // And every directory the *declarations* name is one of them — an independent source for the same
+  // fact, since a heavy file is a wac test file whose path nobody walked to find.
+  const declared = [...new Set(
+    (await heavyTests()).map((e) => e.file).filter((f) => f.endsWith("_test.wac"))
+      .map((f) => f.slice(0, f.lastIndexOf("/"))),
+  )];
+  const missing = declared.filter((d) => !dirs.includes(d));
+  assertEquals(missing.join(", "), "", "declared heavy wac tests in directories the lane never visits");
+
+  // The canary: a walk that found nothing would satisfy both checks above.
+  assertEquals(dirs.length > 20, true, `only ${dirs.length} directories of wac tests were found`);
 });

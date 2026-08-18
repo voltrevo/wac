@@ -15,11 +15,23 @@ share one container. Sixty-four gate runs on 2026-08-11: **236s fastest, 378s me
 usually a busy machine rather than a broken suite, and the gate prints the load average beside its
 own time for exactly that reason.
 
-The suite runs in two lanes: a parallel pass capped at four workers, then the files that declare
-`// test-lane: exclusive` run alone, because they want a real port or a real external binary. The cap
-is measured rather than guessed — see the table in [`tools/runTests.ts`](../tools/runTests.ts).
+The suite runs in three lanes: a parallel pass capped at four workers, then the files that declare
+`// test-lane: exclusive` run alone, because they want a real port or a real external binary, and then
+the same wac tests through `wac test` with no Deno in the path. The cap is measured rather than
+guessed — see the table in [`tools/runTests.ts`](../tools/runTests.ts).
 
-**A third declaration takes a file out of the whole-suite run entirely.** Ten files declare
+**The wac lane is a queue of directories at the same four workers**, changed 2026-08-18. It was one
+process walking every directory in turn, which was 266s while the Deno half of the same suite ran four
+ways; it is 94s now, and the floor is the slowest single directory. A directory rather than a file is
+the unit because a directory's tests share one build (`issues/system/0192`). A target narrows it, which
+it did not before: `deno task test packages/tty/` used to run every wac test in the repository.
+
+A wait that is a *spin* is what makes that parallelism unsafe, and there were two — see
+`waitForPortWithin` in [`packages/wactest/src/daemon.wac`](../packages/wactest/src/daemon.wac). Four
+workers turned "sshd never accepted" from a rare flake into a reliable one, which is how they were
+found.
+
+**A third declaration takes a file out of the whole-suite run entirely.** Twelve files declare
 `// test-lane: heavy`, and `deno task test` skips them — they are 4m24s of work on their own, and each
 holds around a gigabyte, against a suite that already peaks at 7.5 GB on a machine with 11.9. The run
 prints how many it skipped and when the lane last passed, because a saving nobody is told about is
