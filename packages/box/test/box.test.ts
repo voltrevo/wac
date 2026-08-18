@@ -624,12 +624,13 @@ Deno.test("cp streams, and leaves nothing behind either way", async () => {
   // memory was impossible and copying anything over a megabyte failed outright. It now
   // pumps chunks into a temporary name and renames, which needs `openOutput` — without a
   // streaming *sink* the read half alone would not have helped.
-  const built = await Deno.makeTempFile({ prefix: "wac-cp-" });
   const dir = await Deno.makeTempDir({ prefix: "wac-cp-d-" });
   try {
-    await buildApp(BOX, built, { read: true, write: true });
-    const cp = (src: string, dst: string) =>
-      new Deno.Command(built, { args: ["cp", src, dst], stderr: "piped" }).outputSync();
+    // The five megabytes below are the test; the process around them was not. A worker run crosses the
+    // same 1MB bridge buffer in the same chunks — that is what `appRunner` is, the launcher half of a
+    // built program — so the streaming property is unchanged and three Deno startups are not paid.
+    const runner = await appRunner(BOX, { read: true, write: true });
+    const cp = async (src: string, dst: string) => await runner.run(["cp", src, dst]);
 
     // Several times the 64K chunk and the 1MB bridge buffer, and not a multiple of either.
     const size = 5_000_003;
@@ -638,29 +639,25 @@ Deno.test("cp streams, and leaves nothing behind either way", async () => {
     const src = `${dir}/src`;
     await Deno.writeFile(src, data);
 
-    const r = cp(src, `${dir}/dst`);
-    assertEquals(r.code, 0, new TextDecoder().decode(r.stderr));
+    const r = await cp(src, `${dir}/dst`);
+    assertEquals(r.code, 0, r.err);
     assertSameBytes(await Deno.readFile(`${dir}/dst`), data, "5MB copy");
 
     // Over an existing file, and the rename must not leave the old contents.
     await Deno.writeTextFile(`${dir}/dst`, "stale");
-    assertEquals(cp(src, `${dir}/dst`).code, 0);
+    assertEquals((await cp(src, `${dir}/dst`)).code, 0);
     assertSameBytes(await Deno.readFile(`${dir}/dst`), data, "copy over an existing file");
 
     // A failure must not leave a temporary file lying next to the target.
-    assertEquals(cp(`${dir}/absent`, `${dir}/never`).code, 1, "a missing source fails");
+    assertEquals((await cp(`${dir}/absent`, `${dir}/never`)).code, 1, "a missing source fails");
     const left: string[] = [];
     for await (const e of Deno.readDir(dir)) left.push(e.name);
     assertEquals(left.sort().join(","), "dst,src", `temporary files survived: ${left}`);
 
     // And `write` goes back to standard output afterwards, which is what closes the file.
-    const out = new Deno.Command(built, {
-      args: ["cat", src],
-      stdout: "piped",
-    }).outputSync();
-    assertSameBytes(out.stdout, data, "cat still writes to stdout after a cp");
+    const out = await runner.run(["cat", src]);
+    assertSameBytes(out.bytes, data, "cat still writes to stdout after a cp");
   } finally {
-    await Deno.remove(built);
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -1330,10 +1327,8 @@ Deno.test("streaming applets hold a chunk, not the input", async () => {
   //   strings  a run split across two reads is one run, not two short ones
   //   crc32    the checksum is order-dependent across every chunk
   //   tr, hex  per byte, so only the framing can go wrong
-  const built = await Deno.makeTempFile({ prefix: "wac-stream-" });
   const fixture = await Deno.makeTempFile({ prefix: "wac-stream-in-" });
   try {
-    await buildApp(BOX, built, { read: true });
     // Deliberately larger than one 64K chunk and not a multiple of it, so boundaries land
     // in the middle of words and runs rather than tidily between them.
     const CHUNK = 1 << 16;
@@ -1343,10 +1338,10 @@ Deno.test("streaming applets hold a chunk, not the input", async () => {
     assertEquals(text.length > 3 * CHUNK, true, "the fixture must span several chunks");
     await Deno.writeTextFile(fixture, text);
 
-    const box = (args: string[]) => {
-      const r = new Deno.Command(built, { args, stdout: "piped", stderr: "piped" }).outputSync();
-      return { code: r.code, out: new TextDecoder().decode(r.stdout) };
-    };
+    // In a worker: what is under test is `openInput`/`readChunk` inside the applet, and a chunk
+    // boundary falls in the same place whether the program was started as a process or not.
+    const runner = await appRunner(BOX, { read: true });
+    const box = async (args: string[]) => await runner.run(args);
     const sys = (cmd: string, args: string[]) =>
       new TextDecoder().decode(
         new Deno.Command(cmd, { args, stdout: "piped", stderr: "null" }).outputSync().stdout,
@@ -1354,11 +1349,11 @@ Deno.test("streaming applets hold a chunk, not the input", async () => {
 
     // The real `wc` pads its columns; the numbers are what is under test.
     const cols = (s: string) => s.trim().split(/\s+/).slice(0, 3).join(" ");
-    assertEquals(cols(box(["wc", fixture]).out), cols(sys("wc", [fixture])), "wc across chunks");
+    assertEquals(cols((await box(["wc", fixture])).out), cols(sys("wc", [fixture])), "wc across chunks");
     // Through standard input, because `tr` takes no file operand — GNU's does not either, and this one
     // stopped pretending to (wac-mono 0098). The streaming property is the same either way.
     assertEquals(
-      await pipedThrough(built, ["tr", "a-z", "A-Z"], text),
+      (await runner.run(["tr", "a-z", "A-Z"], { stdin: text })).out,
       text.toUpperCase(),
       "tr across chunks",
     );
@@ -1372,7 +1367,7 @@ Deno.test("streaming applets hold a chunk, not the input", async () => {
       run[200_001] = 0;
       await Deno.writeFile(spanning, run);
       assertEquals(
-        box(["strings", spanning]).out,
+        (await box(["strings", spanning])).out,
         sys("strings", ["-n4", spanning]),
         "a 200K run spanning three chunks is one string",
       );
@@ -1380,10 +1375,10 @@ Deno.test("streaming applets hold a chunk, not the input", async () => {
       await Deno.remove(spanning);
     }
 
-    assertEquals(box(["strings", fixture]).out, sys("strings", ["-n4", fixture]), "strings");
-    assertEquals(box(["hex", fixture]).out.length, text.length * 2 + 1, "hex is 2 chars a byte");
+    assertEquals((await box(["strings", fixture])).out, sys("strings", ["-n4", fixture]), "strings");
+    assertEquals((await box(["hex", fixture])).out.length, text.length * 2 + 1, "hex is 2 chars a byte");
     assertEquals(
-      box(["crc32", fixture]).out.split(" ")[0],
+      (await box(["crc32", fixture])).out.split(" ")[0],
       (() => {
         const table = new Uint32Array(256);
         for (let i = 0; i < 256; i++) {
@@ -1400,23 +1395,13 @@ Deno.test("streaming applets hold a chunk, not the input", async () => {
 
     // The reason the message shape matters: a denied read must still say why, which a
     // bool-returning `openInput` could not.
-    const noGrant = await Deno.makeTempFile({ prefix: "wac-stream-ro-" });
-    try {
-      await buildApp(BOX, noGrant, {});
-      const r = new Deno.Command(noGrant, {
-        args: ["cat", fixture], stdout: "piped", stderr: "piped",
-      }).outputSync();
-      assertEquals(r.code, 1);
-      assertEquals(
-        new TextDecoder().decode(r.stderr).includes("Not granted to this application"),
-        true,
-        new TextDecoder().decode(r.stderr),
-      );
-    } finally {
-      await Deno.remove(noGrant);
-    }
+    // A world with no grants at all, which `appRunner` builds the same way a process would: the
+    // refusal is the runtime's, not the launcher's.
+    const ungranted = await appRunner(BOX, {});
+    const r = await ungranted.run(["cat", fixture]);
+    assertEquals(r.code, 1);
+    assertEquals(r.err.includes("Not granted to this application"), true, r.err);
   } finally {
-    await Deno.remove(built);
     await Deno.remove(fixture);
   }
 });
@@ -1429,12 +1414,10 @@ Deno.test("line-oriented applets stream too, and stay faithful at the edges", as
   // not see, because it had no blank lines and no text outside ASCII: `nl` numbered blank
   // lines, and `rev` reversed bytes rather than characters, so an em dash came back as
   // three replacement characters.
-  const built = await Deno.makeTempFile({ prefix: "wac-lines-" });
   const fixture = await Deno.makeTempFile({ prefix: "wac-lines-in-" });
   const nonl = await Deno.makeTempFile({ prefix: "wac-lines-nonl-" });
   const oneline = await Deno.makeTempFile({ prefix: "wac-lines-one-" });
   try {
-    await buildApp(BOX, built, { read: true });
 
     // Spans several 64K chunks, with blank lines, repeats and non-ASCII in it.
     const rows: string[] = [];
@@ -1449,11 +1432,12 @@ Deno.test("line-oriented applets stream too, and stay faithful at the edges", as
     // One line and no newline at all: the shape that made the first line reader quadratic.
     await Deno.writeTextFile(oneline, "x".repeat(500_000));
 
-    const box = (args: string[], file: string) =>
-      new TextDecoder().decode(
-        new Deno.Command(built, { args: [...args, file], stdout: "piped", stderr: "null" })
-          .outputSync().stdout,
-      );
+    // **In a worker, not a process.** This test is about what the applets *answer*, and the first test
+    // in this file already makes that comparison through `appRunner` — 1ms a run against about 110ms
+    // for the built executable, for byte-identical output. Nineteen runs here were two seconds of
+    // Deno starting up. The tests that are genuinely about a process boundary still build one.
+    const runner = await appRunner(BOX, { read: true });
+    const box = async (args: string[], file: string) => (await runner.run([...args, file])).out;
     const sys = (cmd: string, args: string[], file: string) =>
       new TextDecoder().decode(
         new Deno.Command(cmd, { args: [...args, file], stdout: "piped", stderr: "null" })
@@ -1471,27 +1455,27 @@ Deno.test("line-oriented applets stream too, and stay faithful at the edges", as
       [["uniq"], ["uniq"]],
       [["uniq", "-c"], ["uniq", "-c"]],
     ] as const) {
-      assertEquals(box([...mine], fixture), sys(real[0], real.slice(1), fixture), `${mine.join(" ")}`);
+      assertEquals(await box([...mine], fixture), sys(real[0], real.slice(1), fixture), `${mine.join(" ")}`);
       // A file with no final newline: `head`, `tail` and `rev` preserve that and `nl` and
       // `uniq` add one. Not uniform, so each is checked rather than assumed.
-      assertEquals(box([...mine], nonl), sys(real[0], real.slice(1), nonl), `${mine.join(" ")} unterminated`);
+      assertEquals(await box([...mine], nonl), sys(real[0], real.slice(1), nonl), `${mine.join(" ")} unterminated`);
     }
 
     // `tail -N` asks for more lines than exist, and for exactly one.
-    assertEquals(box(["tail", "-100000"], fixture), sys("tail", ["-100000"], fixture), "tail past the start");
+    assertEquals(await box(["tail", "-100000"], fixture), sys("tail", ["-100000"], fixture), "tail past the start");
 
     // Half a megabyte with no newline in it: one line, and it must not take quadratic time.
     // The first reader appended with `concat` and rescanned from the start after every
     // refill; on a 300MB version of this it had not finished after two minutes.
     const started = performance.now();
-    assertEquals(box(["tail", "-1"], oneline).length, 500_000, "one very long line");
+    assertEquals((await box(["tail", "-1"], oneline)).length, 500_000, "one very long line");
     assertEquals(
       performance.now() - started < 15_000,
       true,
       "a single long line should be linear, not quadratic",
     );
   } finally {
-    for (const f of [built, fixture, nonl, oneline]) await Deno.remove(f);
+    for (const f of [fixture, nonl, oneline]) await Deno.remove(f);
   }
 });
 
@@ -1630,17 +1614,16 @@ Deno.test("box's newest batch: sponge, zstd, json, stat, uuid, shuf, paste, yes"
   const built = await Deno.makeTempFile({ prefix: "wac-b3-" });
   const dir = await Deno.makeTempDir({ prefix: "wac-b3-d-" });
   try {
+    // **A worker for the answers, a process for the one that has to be killed.** Every applet below is
+    // judged by what it writes, and `appRunner` gives that in about a millisecond against roughly a
+    // hundred for the built executable — this test was two seconds of Deno starting up, twelve times.
+    // The executable is still built, for `yes` at the end: that one never stops on its own and is
+    // ended by closing the pipe it writes to, which is a *process* lifecycle a worker run does not
+    // have.
     await buildApp(BOX, built, { read: true, write: true });
-    const run = (args: string[]) => {
-      const r = new Deno.Command(built, { args, stdout: "piped", stderr: "piped" }).outputSync();
-      return { code: r.code, out: new TextDecoder().decode(r.stdout), err: new TextDecoder().decode(r.stderr) };
-    };
-    const pipe = async (args: string[], input: Uint8Array) => {
-      const c = new Deno.Command(built, { args, stdin: "piped", stdout: "piped", stderr: "piped" }).spawn();
-      const w = c.stdin.getWriter();
-      w.write(input).then(() => w.close());
-      return await c.output();
-    };
+    const runner = await appRunner(BOX, { read: true, write: true });
+    const run = async (args: string[]) => await runner.run(args);
+    const pipe = async (args: string[], input: Uint8Array) => await runner.run(args, { stdin: input });
     const enc = new TextEncoder();
 
     // ── sponge: the applet that only exists because of the atomic write ──
@@ -1649,9 +1632,9 @@ Deno.test("box's newest batch: sponge, zstd, json, stat, uuid, shuf, paste, yes"
     const target = `${dir}/inplace`;
     const original = "delta\nalpha\ncharlie\nbravo\n";
     await Deno.writeTextFile(target, original);
-    const sorter = new Deno.Command(built, { args: ["sort", target], stdout: "piped" }).outputSync();
-    const soak = await pipe(["sponge", target], sorter.stdout);
-    assertEquals(soak.code, 0, new TextDecoder().decode(soak.stderr));
+    const sorter = await run(["sort", target]);
+    const soak = await pipe(["sponge", target], sorter.bytes);
+    assertEquals(soak.code, 0, soak.err);
     assertEquals(await Deno.readTextFile(target), "alpha\nbravo\ncharlie\ndelta\n", "sorted in place");
     // And no temporary file survived it.
     const left: string[] = [];
@@ -1660,28 +1643,28 @@ Deno.test("box's newest batch: sponge, zstd, json, stat, uuid, shuf, paste, yes"
 
     // ── zstd: the largest package here, round-tripped ──
     const raw = await Deno.readFile("README.md");
-    const squeezed = (await pipe(["zstd"], raw)).stdout;
+    const squeezed = (await pipe(["zstd"], raw)).bytes;
     assertEquals(squeezed.length < raw.length, true, "zstd did not compress");
-    assertSameBytes((await pipe(["unzstd"], squeezed)).stdout, raw, "zstd round trip");
+    assertSameBytes((await pipe(["unzstd"], squeezed)).bytes, raw, "zstd round trip");
 
     // ── json: canonical output, and a real parse error ──
     const canon = await pipe(["json", "-c"], enc.encode(`{"b":1,"a":[2, 3 ],"c":"x"}`));
-    assertEquals(new TextDecoder().decode(canon.stdout).trim(), `{"b":1,"a":[2,3],"c":"x"}`);
+    assertEquals(canon.out.trim(), `{"b":1,"a":[2,3],"c":"x"}`);
     // Two spellings of the same document canonicalise identically, which is the property
     // that makes this worth having on a pipe rather than a pretty-printer.
     const spaced = await pipe(["json", "-c"], enc.encode(`{ "b" : 1 , "a" : [ 2 , 3 ] , "c" : "x" }`));
-    assertEquals(new TextDecoder().decode(spaced.stdout), new TextDecoder().decode(canon.stdout));
+    assertEquals(spaced.out, canon.out);
     // Without -c it is a validator: silent and exit 0, so it composes in a test.
     const valid = await pipe(["json"], enc.encode(`[1,2,3]`));
     assertEquals(valid.code, 0);
-    assertEquals(valid.stdout.length, 0, "a validator says nothing");
+    assertEquals(valid.bytes.length, 0, "a validator says nothing");
     const bad = await pipe(["json"], enc.encode(`{"a":}`));
     assertEquals(bad.code, 1);
-    assertEquals(new TextDecoder().decode(bad.stderr).includes("invalid JSON at byte"), true);
+    assertEquals(bad.err.includes("invalid JSON at byte"), true);
 
     // ── stat: the capability nothing surfaced ──
     await Deno.writeTextFile(`${dir}/sized`, "12345");
-    const st = run(["stat", `${dir}/sized`, dir]);
+    const st = await run(["stat", `${dir}/sized`, dir]);
     assertEquals(st.code, 0, st.err);
     const rows = st.out.trim().split("\n");
     assertEquals(rows[0].includes(" file 5 "), true, rows[0]);
@@ -1689,10 +1672,10 @@ Deno.test("box's newest batch: sponge, zstd, json, stat, uuid, shuf, paste, yes"
     // The mtime is RFC 3339 and recent, which is `datetime` doing the work.
     const when = Date.parse(rows[0].split(" ").pop()!);
     assertEquals(Math.abs(when - Date.now()) < 120_000, true, rows[0]);
-    assertEquals(run(["stat", `${dir}/absent`]).code, 1, "a missing path is an error");
+    assertEquals((await run(["stat", `${dir}/absent`])).code, 1, "a missing path is an error");
 
     // ── uuid: version 4, and different every time ──
-    const ids = run(["uuid", "-20"]).out.trim().split("\n");
+    const ids = (await run(["uuid", "-20"])).out.trim().split("\n");
     assertEquals(ids.length, 20);
     for (const id of ids) {
       assertEquals(
@@ -1706,19 +1689,19 @@ Deno.test("box's newest batch: sponge, zstd, json, stat, uuid, shuf, paste, yes"
     // ── shuf: a permutation, not a sample ──
     const lines = Array.from({ length: 200 }, (_, i) => `line${i}`);
     await Deno.writeTextFile(`${dir}/lines`, lines.join("\n") + "\n");
-    const shuffled = run(["shuf", `${dir}/lines`]).out.trim().split("\n");
+    const shuffled = (await run(["shuf", `${dir}/lines`])).out.trim().split("\n");
     assertEquals(shuffled.length, 200);
     assertEquals(shuffled.slice().sort().join(","), lines.slice().sort().join(","), "same lines");
     assertEquals(shuffled.join(",") !== lines.join(","), true, "and in some other order");
-    assertEquals(run(["shuf", "-5", `${dir}/lines`]).out.trim().split("\n").length, 5);
+    assertEquals((await run(["shuf", "-5", `${dir}/lines`])).out.trim().split("\n").length, 5);
     // **A different order each time**, which is the part the checks above cannot see. `below` — the
     // rejection-sampled index the shuffle draws — could return a constant and every assertion above still
     // held: swapping each element with position zero is a permutation, and it differs from the input. It
     // is also *the same* permutation on every run, so two shuffles of the same 200 lines are identical.
     // Probabilistic in the direction that cannot fail by accident: 200! orders, and this asks only that
     // two of three runs differ. wac-mono 0005.
-    const again = run(["shuf", `${dir}/lines`]).out.trim();
-    const third = run(["shuf", `${dir}/lines`]).out.trim();
+    const again = (await run(["shuf", `${dir}/lines`])).out.trim();
+    const third = (await run(["shuf", `${dir}/lines`])).out.trim();
     assertEquals(
       new Set([shuffled.join("\n"), again, third]).size > 1,
       true,
@@ -1731,7 +1714,7 @@ Deno.test("box's newest batch: sponge, zstd, json, stat, uuid, shuf, paste, yes"
     const sys = new Deno.Command("paste", {
       args: [`${dir}/p1`, `${dir}/p2`], stdout: "piped", stderr: "null",
     }).outputSync();
-    assertEquals(run(["paste", `${dir}/p1`, `${dir}/p2`]).out, new TextDecoder().decode(sys.stdout));
+    assertEquals((await run(["paste", `${dir}/p1`, `${dir}/p2`])).out, new TextDecoder().decode(sys.stdout));
 
     // ── yes: the only applet that never ends on its own ──
     // It stops because `write` reports the closed pipe. Without that answer it would spin,
