@@ -11,7 +11,7 @@ import { buildApp } from "../../platform/build.ts";
 // status, it is `b`, silently absent.
 //
 // Nothing found it for months because every operand case anyone wrote names **one** file, or names two
-// that both exist. It turned up when `backings.test.ts` moved into this package (wac-mono 0103) carrying
+// that both exist. It turned up when `backingsprocess_test.wac` moved into this package (wac-mono 0103) carrying
 // one script — `cat f1 nothing f2` — out of forty.
 //
 // GNU's rule, measured here rather than remembered: report it, skip it, carry on, and exit non-zero at

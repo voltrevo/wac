@@ -153,7 +153,7 @@ Deno.test("a mount point is a directory, and every question about it had a diffe
   // reason: a memory mount said "no such file or directory" and a synthesised one said "read-only file
   // system". Neither is what `/dev` is, which is a directory.
   //
-  // The right answers are GNU's, measured on this machine rather than remembered — `backings.test.ts`
+  // The right answers are GNU's, measured on this machine rather than remembered — `backingsprocess_test.wac`
   // would be the place to compare them, and cannot be: its host side runs with grants that stop at the
   // directory it was handed, so it fails on `/dev` with "Requires all access" instead of answering.
   //

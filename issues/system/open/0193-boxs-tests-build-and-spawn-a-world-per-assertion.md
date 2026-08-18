@@ -82,7 +82,7 @@ it saves work for, but it grows.
 
 ## Done: the backings differential is in wac, and covers 946 scripts instead of 40 — 2026-08-18
 
-`backings.test.ts` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes,
+`backingsprocess_test.wac` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes,
 **29.8 s**. It is `packages/box/test/wac/backings_test.wac` now — three `Fs` values in one process — and
 runs the **whole** corpus, 946 scripts on three backings, in **7.6 s of which about 6 s is the compile**.
 The Deno file keeps the one claim that needs processes, that an image outlives one and a sealed session

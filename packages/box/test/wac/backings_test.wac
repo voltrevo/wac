@@ -10,7 +10,7 @@
 //
 // ## This used to spawn, and it used to run forty scripts
 //
-// `backings.test.ts` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes at
+// `backingsprocess_test.wac` built three binaries and ran `CORPUS.slice(0, 40)` through each: 120 processes at
 // 130 ms, 30 s of the box suite. `deno task corpus:backings` ran the other 906, outside the gate, and
 // nothing in a gate run said the gate was covering 4% of the differential.
 //
@@ -20,8 +20,10 @@
 // claim more directly: the code above the boundary is now literally the same code rather than three builds
 // of it.
 //
-// What cannot move is the canary — that an image survives its own *process* and a sealed session does not.
-// That one is about processes, so it stays in `backings.test.ts` and spawns.
+// What cannot move *into this file* is the canary — that an image survives its own *process* and a
+// sealed session does not. That one is about processes, so it spawns; it is
+// `test/wac/backingsprocess_test.wac` beside this one, which builds the three binaries with `wac
+// build` and runs them with `Cli.exec`.
 //
 // ## Three differences are levelled
 //
