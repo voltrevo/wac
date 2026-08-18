@@ -25,7 +25,7 @@
 //
 // **The oracle is the file**: this and `capture-hspub.py` must produce byte-identical output, and
 // both must reproduce the committed `test/data/hspublish.json`.
-// `packages/tor/test/captureTools.test.ts` is the `cmp`.
+// `packages/tor/test/wac/capturetools_test.wac` is the `cmp`.
 
 import { Core, Cli, Exec, Change, Stat, FileResult } from "../../platform/src/platform.wac";
 import { parse } from "../../json/src/json.wac";

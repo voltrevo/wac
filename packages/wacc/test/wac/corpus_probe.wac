@@ -1,0 +1,142 @@
+// The differential corpus every rung is compared over.
+//
+// This is `packages/wacc/test/corpus.ts` with no JavaScript in it. Twelve of this package's
+// TypeScript tests — two thousand lines of them — begin by loading the same list of `.wac` files, so
+// it is written once here for the same reason it was written once there.
+//
+// Note what it does *not* do: it does not compile or type-check anything. A corpus entry only has to
+// be lexable and parseable, so a file that is valid syntax and invalid semantics is still a useful
+// case — arguably the more useful kind, since it puts the parser somewhere the working code never
+// goes.
+//
+// ## The two things that make it correct
+//
+//   - **the floor.** A cwd that is not the repository root turns the whole walk into an empty list,
+//     and an empty list makes every differential standing on it pass. Ten is well under the real
+//     count and well over what a broken walk returns.
+//   - **`spec/tour.wac` is required, not optional.** It is the single most valuable entry by a
+//     distance — written to exercise every feature in the language, which no working package does.
+//     It used to be allowed to go missing, and a checkout without it lost the richest file in the
+//     corpus while still printing "compared 50 files" as though nothing had happened. A skip is
+//     fine; a silent skip reads as coverage that was never there.
+//
+// **Sorted by bytes**, through `packages/fs`'s `sortNames`, where the TypeScript used
+// `localeCompare`. The order only has to be the same twice — a failure list that reads differently
+// between two runs makes a diff meaningless — and byte order is what every tool this is compared
+// against does with `LC_ALL=C`.
+
+import { Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { endsWith } from "../../../wactest/src/strings.wac";
+import { sortNames } from "../../../fs/src/fs.wac";
+
+/** As many `.wac` files as the repository is ever expected to hold. */
+const i32 CAP = 4096;
+
+/** The corpus, or why there isn't one. */
+export struct Corpus {
+  bool ok;
+  /** Why not, when `ok` is false. Empty otherwise. */
+  string error;
+  /** Parallel with `sources`, as every `api.wac` entry point wants them. */
+  string[] paths;
+  string[] sources;
+}
+
+Corpus refused(string why) {
+  return Corpus(false, why, string[0](fill: ""), string[0](fill: ""));
+}
+
+/** The directories under each package that hold wac worth reading. */
+string[] subdirs() { return string[]("src", "test/wac", "bench"); }
+
+/**
+ * Every `.wac` path in `packages/`, plus `spec/tour.wac`, sorted.
+ *
+ * Paths first and contents afterwards, so the sort is over one array rather than two kept in step —
+ * a pair sort written by hand is where this would go wrong silently, by pairing a path with another
+ * file's source.
+ */
+string[] paths(Cli cli, i32[] countOut) {
+  string[] found = string[CAP](fill: "");
+  i32 n = 0;
+
+  string[]? top = cli.readDir("packages").wait();
+  if (top is null) { countOut[0] = -1; return found; }
+  string[] packages = top!;
+  sortNames(packages);
+
+  string[] subs = subdirs();
+  for (i32 p = 0; p < packages.len(); p++) {
+    for (i32 s = 0; s < subs.len(); s++) {
+      string dir = "packages/" + packages[p] + "/" + subs[s];
+      string[]? listing = cli.readDir(dir).wait();
+      // Most packages have no `bench/`. An absent directory is the normal case here, unlike an
+      // absent file, so it is not reported.
+      if (listing is null) { continue; }
+      string[] names = listing!;
+      sortNames(names);
+      for (i32 i = 0; i < names.len(); i++) {
+        if (!endsWith(names[i], ".wac")) { continue; }
+        if (n >= CAP) { countOut[0] = -2; return found; }
+        found[n] = dir + "/" + names[i];
+        n = n + 1;
+      }
+    }
+  }
+  countOut[0] = n;
+  return found;
+}
+
+/**
+ * Load the corpus, sanity-check it, and say what it holds.
+ *
+ * `caller` appears in a failure because the same broken walk from two test files otherwise looks
+ * like one flaky test.
+ */
+export Corpus loadCorpus(Cli cli, string caller) {
+  i32[] countOut = i32[1]();
+  string[] all = paths(cli, countOut);
+  i32 n = countOut[0];
+  if (n == -1) { return refused(caller + ": cannot read `packages/` — these run from the repo root"); }
+  if (n == -2) { return refused(caller + ": more than " + itoa(CAP) + " files; the cap is too low"); }
+
+  string[] found = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { found[i] = all[i]; }
+  sortNames(found);
+
+  // `spec/tour.wac` last, as the TypeScript appends it after sorting.
+  string[] wanted = string[n + 1](fill: "");
+  for (i32 i = 0; i < n; i++) { wanted[i] = found[i]; }
+  wanted[n] = "spec/tour.wac";
+
+  string[] sources = string[wanted.len()](fill: "");
+  for (i32 i = 0; i < wanted.len(); i++) {
+    FileResult r = cli.readFile(wanted[i]).wait();
+    if (!r.ok) { return refused(caller + ": cannot read " + wanted[i] + " — " + r.error); }
+    sources[i] = string.fromBytes(r.bytes);
+  }
+
+  if (wanted.len() < 10) {
+    return refused(caller + ": corpus is only " + itoa(wanted.len()) +
+                   " files — the walk is probably wrong. These run from the repo root; check the cwd.");
+  }
+  return Corpus(true, "", wanted, sources);
+}
+
+/** The corpus entries under `packages/wacc/src/`, which is what the bootstrap rung is about. */
+export string[] waccSources(Corpus c) {
+  i32 n = 0;
+  for (i32 i = 0; i < c.paths.len(); i++) {
+    if (c.paths[i].len() > 18 && c.paths[i].slice(0, 18) == "packages/wacc/src/") { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < c.paths.len(); i++) {
+    if (c.paths[i].len() > 18 && c.paths[i].slice(0, 18) == "packages/wacc/src/") {
+      out[at] = c.paths[i];
+      at = at + 1;
+    }
+  }
+  return out;
+}

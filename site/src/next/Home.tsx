@@ -27,7 +27,7 @@ import { ASSETS, c, font, space } from "./tokens";
  * plausible-looking screenshot.
  */
 /**
- * The bootstrap, as the suite reports it — `packages/wacc/test/selfHostEmit.test.ts`.
+ * The bootstrap, as the suite reports it — `packages/wacc/test/wac/selfhostemit_test.wac`.
  *
  * Stage A is wacc built by the TypeScript compiler, B is wacc built by A, and C is what B produces
  * when asked to compile wacc. B and C being the same bytes is the whole claim, and the byte count

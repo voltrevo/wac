@@ -1,6 +1,6 @@
 // Closures, checked by the runner that runs wac rather than by a host.
 //
-// `design/lang/0002` tier two is exercised from TypeScript (`packages/wacc/test/lambda.test.ts`) and
+// `design/lang/0002` tier two is exercised from TypeScript (`packages/wacc/test/wac/lambda_test.wac`) and
 // by `spec/cases` — both of which compile a module and call it from *outside*. This file is the same
 // feature seen from inside the language, run by `wac test`, which is a different path end to end:
 // the native binary compiles it with its own seed and runs it on wasmtime rather than V8.

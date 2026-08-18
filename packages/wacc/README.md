@@ -567,7 +567,7 @@ they find real rules cheaply. What they no longer are is a definition of correct
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; **100%** recall (9,120 of 9,127), held by a 97% floor |
 | `checkSweep.test.ts` | the emitter's **4,148** valid programs of 4,501 | no false alarm, and guarded against an empty run and a narrowed corpus |
 | `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; **99%** recall (989 of 993), held by a 92% floor |
-| `corpusCheck.test.ts` | the repository's own **519** files, imports in scope | no false alarm |
+| `test/wac/corpuscheck_test.wac` | the repository's own **541** files, imports in scope | no false alarm |
 | `corpusMutate.test.ts` | those files, broken 23 ways | no contradiction where the reference says one thing; **100%** recall (223 of 223), held by a 97% floor |
 
 **The rules that need two files now have an oracle, and it is the honest one.** Export visibility,
@@ -3172,7 +3172,7 @@ start position without advancing it. The module validates. It just never finishe
 probe's four-hundred-second timeout rather than an error to say so, which is the same failure mode
 the `i++` bug had two rungs ago.
 
-`selfEmit.test.ts` exists now, and reports the rung-5 number rather than leaving it to be remembered:
+`test/wac/selfemit_test.wac` exists now, and reports the rung-5 number rather than leaving it to be remembered:
 **6 of wacc's 8 sources compile whole**, with `api.wac` and `emit.wac` stopping at a `null` this
 emitter still cannot place. It asserts the corpus invariant on those eight files and a floor on the
 count, so a slot that adds a feature cannot quietly lose one.
@@ -3203,7 +3203,7 @@ the linker written two slots ago uses. That is the whole distance left to a comp
 itself.
 
 *(The commit for this section says "7 of 8" and the count was 6: `api.wac` and `emit.wac` were both
-blocked, and I read a list of eight lines as though the two blocked ones were one. `selfEmit.test.ts`
+blocked, and I read a list of eight lines as though the two blocked ones were one. `selfemit_test.wac`
 prints the number now, which is the point of having it print rather than being remembered.)*
 
 ### A block is a scope — 230 to 244

@@ -1,0 +1,178 @@
+// Ask the oracle what every corpus script should do, once, and write it down.
+//
+//   wac run --allow-read --allow-write --allow-run tools/wac/shvectors.wac
+//
+// **Why a file rather than a differential.** `packages/sh`'s and `packages/box`'s corpus tests each ran
+// bash once per script on every suite run — 946 scripts, twice, with our own shell spawned beside it.
+// That asserts what *this machine's bash did today*; the claim anyone wants is what a shell should do,
+// and it does not change between runs. Captured here, replayed in wac.
+//
+// **The size objection, measured before this was written**: all 946 expectations are 5 KB of stdout and
+// 6 KB of stderr, the largest single output 0.1 KB. The scripts are 26 KB and already in git.
+//
+// **What is lost, deliberately**: nothing notices bash changing under us on the day it happens. That is
+// the point — a refresh is a task somebody runs, and the git diff is the review. The replays keep ten
+// cases live as a canary, so a wholesale change of environment is still caught.
+
+import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wac";
+import { Buf } from "../../packages/bytes/src/buf.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { corpus, programs } from "../../packages/sh/test/wac/corpus.wac";
+
+/** Outputs longer than this are recorded as a length and a hash, not as bytes. */
+i32 maxBytes() { return 4096; }
+
+string vectorsPath() { return "packages/sh/test/vectors.txt"; }
+
+/**
+ * Run one script the way the differential did: a fresh directory, no inherited environment, a fixed
+ * locale and a `PATH` for the external programs the corpus names.
+ *
+ * `env` rather than arguments to `exec`, because **`Cli.exec` passes no environment and takes no working
+ * directory** — `issues/system/0182`. `-i` clears, `-C` enters the directory, and the rest is the world
+ * the expectation was taken in, which the header records.
+ */
+Exec askBash(Cli cli, string dir, string script) {
+  // **Two bashes, and the inner one is the oracle.** `env` execs the program it resolves, so its argv[0]
+  // is `/usr/bin/bash` — and bash prefixes its diagnostics with argv[0], which put `/usr/bin/bash: line
+  // 1: …` in the expectations where every other route says `bash: …`. The outer shell enters the
+  // directory and `exec`s the inner one *by name*, which is what the differential's `bash -c` gave.
+  return cli.exec("env",
+                  string[]("-i",
+                           "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                           "LC_ALL=C.UTF-8", "HOME=" + dir,
+                           "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
+                           "bash", dir, script),
+                  u8[0]()).wait();
+}
+
+/** The first line of `<program> --version`, or "(absent)". */
+string versionOf(Cli cli, string program, string flag) {
+  Exec r = cli.exec(program, string[](flag), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return "(absent)"; }
+  string all = string.fromBytes(r.stdout);
+  i32 nl = all.indexOf("\n");
+  return nl < 0 ? all : all.slice(0, nl);
+}
+
+/** `<tag> <n>\n<bytes>\n`, or `<tag># <n> <sha>` when the bytes are over the cap. */
+void field(Buf out, Cli cli, string tag, u8[] bytes) {
+  if (bytes.len() > maxBytes()) {
+    // Nothing in the corpus reaches this today; the rule is here so a future case cannot quietly put a
+    // megabyte in the repository. A hash still fails the replay when the answer changes.
+    out.pushAll((tag + "# " + itoa(bytes.len()) + " " + overCapMarker() + "\n").toBytes());
+    return;
+  }
+  out.pushAll((tag + " " + itoa(bytes.len()) + "\n").toBytes());
+  out.pushAll(bytes);
+  out.pushAll("\n".toBytes());
+}
+
+export i32 main(Core core, Cli cli) {
+  string[] scripts = corpus();
+  string[] progs = programs();
+  string dir = ".cache/wac-shvectors";
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) {
+    core.warn("shvectors: cannot make " + dir + " — " + made.message);
+    return 1;
+  }
+
+  Buf out = Buf.create();
+  out.pushAll("wac-sh-vectors 1\n".toBytes());
+  out.pushAll(("bash: " + versionOf(cli, "bash", "--version") + "\n").toBytes());
+  out.pushAll(("coreutils: " + versionOf(cli, "cp", "--version") + "\n").toBytes());
+  out.pushAll("locale: LC_ALL=C.UTF-8\n".toBytes());
+  // The programs box carries, so a consumer of this file needs no second copy of the list: it is what
+  // decides which half of the corpus replays a script, and `packages/sh/test/corpus.ts` reads it here.
+  string names = "";
+  for (i32 i = 0; i < progs.len(); i++) { names = names + (i == 0 ? "" : " ") + progs[i]; }
+  out.pushAll(("programs: " + names + "\n").toBytes());
+  out.pushAll(("count: " + itoa(scripts.len()) + "\n").toBytes());
+
+  i32 outBytes = 0;
+  i32 errBytes = 0;
+  for (i32 i = 0; i < scripts.len(); i++) {
+    string script = scripts[i];
+    // A directory per script, because the corpus writes files and reads them back: sharing one would
+    // let a case see the leavings of the case before it, which is the differential's own rule.
+    string here = dir + "/c" + itoa(i);
+    cli.mkdir(here, true).wait();
+    Exec r = askBash(cli, here, script);
+    if (!r.ran()) {
+      core.warn("shvectors: bash would not start: " + r.error);
+      return 1;
+    }
+    outBytes = outBytes + r.stdout.len();
+    errBytes = errBytes + r.stderr.len();
+    field(out, cli, "S", script.toBytes());
+    out.pushAll(("P " + (namesProgram(script, progs) ? "1" : "0") + "\n").toBytes());
+    out.pushAll(("X " + itoa(r.status) + "\n").toBytes());
+    field(out, cli, "O", r.stdout);
+    field(out, cli, "E", r.stderr);
+    cli.remove(here, true).wait();
+  }
+  cli.remove(dir, true).wait();
+
+  Change wrote = cli.writeFile(vectorsPath(), out.bytes()).wait();
+  if (!wrote.ok()) {
+    core.warn("shvectors: cannot write " + vectorsPath() + " — " + wrote.message);
+    return 1;
+  }
+  core.log(vectorsPath() + ": " + itoa(scripts.len()) + " scripts, " +
+           itoa(out.len / 1024) + " KB — " + itoa(outBytes) + " bytes of stdout, " +
+           itoa(errBytes) + " of stderr");
+  return 0;
+}
+
+/**
+ * Whether a script names one of box's programs, which decides which half replays it.
+ *
+ * The same rule `corpus.ts` used: the name has to start a word — `catalogue` is not `cat` — so the
+ * character before it must be a boundary the shell uses.
+ */
+bool namesProgram(string script, string[] progs) {
+  for (i32 i = 0; i < progs.len(); i++) {
+    if (mentions(script, progs[i])) { return true; }
+  }
+  return false;
+}
+
+bool mentions(string script, string name) {
+  i32 at = 0;
+  for (i32 guard = 0; guard < 64; guard++) {
+    // `indexOf` takes no start index here, so the search is over the tail and the offset is added back.
+    i32 rel = script.slice(at, script.len()).indexOf(name);
+    if (rel < 0) { return false; }
+    i32 found = at + rel;
+    bool startOk = found == 0 || isBoundary(script.slice(found - 1, found));
+    i32 after = found + name.len();
+    bool endOk = after >= script.len() || !isWordByte(script.slice(after, after + 1));
+    if (startOk && endOk) { return true; }
+    at = found + 1;
+  }
+  return false;
+}
+
+bool isBoundary(string ch) {
+  return ch == " " || ch == "|" || ch == ";" || ch == "&" || ch == "(" || ch == "`" ||
+         ch == "$" || ch == "{" || ch == "\n" || ch == "\t";
+}
+
+bool isWordByte(string ch) {
+  u8[] b = ch.toBytes();
+  if (b.len() == 0) { return false; }
+  i32 c = b[0];   // a packed type is an array's element type; a local is `i32`
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+         c == '_' || c == '-' || c == '.';
+}
+
+/**
+ * What stands in for the bytes of an output over the cap.
+ *
+ * **Not a hash, and named so it cannot be mistaken for one.** Nothing in the corpus reaches the cap
+ * today; a case that did would replay against its recorded *length* and this marker, which fails loudly
+ * and says why. Importing `packages/crypto` to hash a path nobody takes would put the whole hash package
+ * into this program's graph. If a case ever exceeds the cap, this is the line to change.
+ */
+string overCapMarker() { return "no-bytes-recorded"; }

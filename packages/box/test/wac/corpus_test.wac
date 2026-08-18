@@ -1,0 +1,122 @@
+// box's half of the corpus — the scripts that name a program — replayed in this process.
+//
+// The Deno test this replaces — `corpus.test.ts`, now deleted — built a shell and spawned it once per script, with bash spawned
+// beside it: 301 scripts, two processes each, 24 s a run. The expectations are captured once by
+// `tools/wac/shvectors.wac` and replayed here through the same route the website's terminal uses —
+// `Shell` with `sh.external = boxRun`, which is what `example/boxsh.wac` wires up.
+//
+// `routes.test.ts` asserts that this route and the spawned one are one program, and that they really are
+// two routes. That is what makes replaying in-process a change of cost rather than of subject.
+
+import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { Shell } from "../../../sh/src/exec.wac";
+import { shellMain } from "../../../sh/src/entry.wac";
+import { boxNames, boxRun } from "../../src/shrun.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Vector, Vectors, load } from "../../../sh/test/wac/vectors.wac";
+
+struct Ran {
+  string out;
+  string err;
+  i32 status;
+}
+
+/** One script through a shell that has box's sixty applets, inside this process. */
+Ran runScript(Core core, Cli cli, string cwd, string script) {
+  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), cwd, false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Shell sh = Shell.create(c, l);
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
+}
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli, i32 i) { return cli.cwd().wait() + "/.cache/wac-boxreplay/c" + itoa(i); }
+
+export string test_every_scripted_expectation_still_holds_through_the_applets(Core core, Cli cli) {
+  T t = T.create();
+  Vectors v = load(cli);
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  i32 ran = 0;
+  i32 wrong = 0;
+  string detail = "";
+  for (i32 i = 0; i < v.n; i++) {
+    Vector vec = v.items[i];
+    if (!vec.needsProgram) { continue; }
+    string dir = caseDir(cli, i);
+    cli.mkdir(dir, true).wait();
+    Ran r = runScript(core, cli, dir, vec.script);
+    cli.remove(dir, true).wait();
+    ran = ran + 1;
+    if (r.out != vec.out || r.status != vec.status) {
+      wrong = wrong + 1;
+      if (wrong <= 3) {
+        detail = detail + "\n  script: " + vec.script +
+                 "\n  wanted: " + show(vec.out) + " exit " + itoa(vec.status) +
+                 "\n  got:    " + show(r.out) + " exit " + itoa(r.status) +
+                 (r.err == "" ? "" : "\n  stderr: " + show(r.err));
+      }
+    }
+  }
+  t.isTrue(ran > 200, "only " + itoa(ran) + " scripts replayed — did the vectors load?");
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " disagree with the captured oracle (" +
+                    v.oracle + ")" + detail);
+  return t.report();
+}
+
+/**
+ * The canary, with programs: a handful asked of the live oracle every run.
+ *
+ * Frozen expectations cannot see the environment move. These can, and they cover the applets rather than
+ * the language — which is what this half of the corpus is about.
+ */
+export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli) {
+  T t = T.create();
+  string[] canaries = string[](
+    "seq 1 5 | head -2",
+    "echo a b | tr ' ' '-'",
+    "echo one two three | wc -w",
+    "printf 'b\\na\\n' | sort",
+    "echo hello | rev",
+    "seq 1 20 | grep 7 | wc -l",
+    "echo a b c | cut -d' ' -f2",
+    "printf 'x\\nx\\ny\\n' | uniq -c"
+  );
+  i32 checked = 0;
+  for (i32 i = 0; i < canaries.len(); i++) {
+    string script = canaries[i];
+    Exec r = cli.exec("env",
+                      string[]("-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                               "LC_ALL=C.UTF-8", "bash", "-c", script),
+                      u8[0]()).wait();
+    if (!r.ran()) {
+      t.isTrue(i > 0, "bash would not start: " + r.error);
+      return t.report();
+    }
+    checked = checked + 1;
+    string dir = cli.cwd().wait() + "/.cache/wac-boxcanary/c" + itoa(i);
+    cli.mkdir(dir, true).wait();
+    Ran ours = runScript(core, cli, dir, script);
+    cli.remove(dir, true).wait();
+    t.eqStr(ours.out, string.fromBytes(r.stdout), "live oracle disagrees: " + script);
+    t.eqI32(ours.status, r.status, "live oracle's status disagrees: " + script);
+  }
+  t.eqI32(checked, canaries.len(), "not every canary ran");
+  return t.report();
+}
+
+string show(string s) {
+  string out = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    string ch = s.slice(i, i + 1);
+    out = out + (ch == "\n" ? "\\n" : ch);
+  }
+  return "\"" + out + "\"";
+}

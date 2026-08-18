@@ -58,6 +58,65 @@ tests instantiate the module they emitted and call an export, and the conversion
 read the status. Every one of those tests that asserts a refusal has to read stderr for the word
 `trapped` instead, which is a message rather than a contract and will break the day it is reworded.
 
+## What the missing half costs, measured — and what it does not
+
+There is no way to ask whether a module is well-formed without running it, so `WebAssembly.validate`
+had to become a fork per module. `packages/wacc/test/wac/corpusemit_test.wac` compiles every file in
+the repository and validates each one, and it came out at **193s against the TypeScript's recorded
+51s**.
+
+**The forks were not the cause, and this issue said they were.** Adding `wac validate <module…>` —
+one isolate, a list of modules, one process per chunk — moved that test from 193s to **194s**. The
+time was somewhere else entirely:
+
+| what | cost | now |
+|---|---|---|
+| building a manifest per file (`emitFilesSelfDescribing` over `emitFiles`) | **~66s** | gone — validating never reads one |
+| `namesFiles`, a further link per whole file | ~18s | gone — the module's own export section is read instead |
+| a fork per module, which this issue blamed | ~13s | one fork per chunk of 64 |
+| the emitting itself | ~95s | unchanged |
+
+193s → **114s**, and the export check got *more* independent on the way: it compared the source
+against `namesFiles`, which answers from the link and is the emitter's account of what it emitted, so
+a dropped function could be named on both sides. It reads the artefact now.
+
+The command is still worth having and is still the right shape — it is one fork per chunk rather than
+per module, and it gives `wasRejected` a contract instead of a message to match on. It is just not
+where the time was, and the correction is the useful part of this section.
+
+**The remaining gap is not understood.** 128s here against a recorded 51s for the same work under
+Deno, on a box three agents share, comparing against a number measured elsewhere under unknown load.
+That is not a like-for-like comparison and should not be quoted as one.
+
+## And it is eight bits wide
+
+The same channel, the same conversion, found the day after: `main`'s answer is truncated to a byte.
+
+```
+export i32 main() { return 300; }   ->  exits 44
+export i32 main() { return 255; }   ->  exits 255
+export i32 main() { return 256; }   ->  exits 0
+```
+
+That is POSIX rather than a bug in this repository, and it would be unremarkable except that **256
+exits 0**, so a wrong answer reads as success. A test comparing a checksum through the status is
+comparing `sum & 0xFF` and saying nothing about the rest.
+
+There is no way around it from inside a program that has to stay compilable by **both** compilers:
+
+- **stdout** needs `Cli.write`, which needs `packages/platform`, which the reference cannot parse at
+  all — `Pending<T>.then` is a lambda and the reference has none. A driver used for a two-compiler
+  differential therefore cannot print.
+- **there is no output intrinsic.** `print` is not a builtin; the only way out of a wac program is a
+  capability or the status.
+
+So `packages/wacc/test/wac/bootstrapemit_test.wac` folds its answers into one checksum and reads it
+**a byte at a time**, four runs per compiler. That works and is the wrong shape: the cost is linear
+in the width of an answer, and a test wanting sixteen numbers back has to choose between sixteen
+processes and a checksum that cannot say which number moved.
+
+Both halves want the same fix — a channel from a run program that is not the exit status.
+
 ## Notes
 
 Not the same as `0175`, which is about what a `test_traps_*` case can observe **within** `wac test`.

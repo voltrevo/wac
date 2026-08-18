@@ -1,0 +1,101 @@
+// Every type that crosses the boundary is written down, however many there are.
+//
+// The metadata wacc hands the generator is what the generator writes classes from, so a type that
+// crosses and is *not* in it does not fail in the compiler — it fails much later, in the host, as a
+// class that is asked for and is not there. `packages/box/example/boxsh.wac` filled this table at 64
+// entries and lost every `Pending<T>` among the ones that did not fit; `Pending<T>` is what every
+// capability returns, so the shell built, loaded, and then printed nothing at all, with
+// `Cannot read properties of undefined (reading 'of')` as the only clue [issue 0106].
+//
+// The table is bigger now, which is not the point — the point is that it is checked. A program is
+// generated rather than written because the interesting number is "more than the table holds", and
+// nothing in this repository is meant to be near it.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. Nothing here needed one: `bindTypesFiles` and
+// `blockedFiles` are `api.wac` exports and the whole test is the compiler talking about itself.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { splitLines, has, joined } from "../../../wactest/src/strings.wac";
+import { bindTypesFiles, blockedFiles } from "../../src/api.wac";
+
+const i32 COUNT = 90;   // comfortably past the 64 that boxsh ran into
+const string ENTRY = "/t/main.wac";
+
+/**
+ * `COUNT` structs, each returned by an exported function — which is what makes one cross.
+ *
+ * Through a `Buf`: `s = s + line` in a loop is quadratic, and this is the shape that would grow if
+ * somebody raised `COUNT` to find the next limit.
+ */
+string program() {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < COUNT; i++) {
+    out.pushAll(("export struct T" + itoa(i) + " { i32 v; }\n").toBytes());
+  }
+  for (i32 i = 0; i < COUNT; i++) {
+    out.pushAll(("export T" + itoa(i) + " make" + itoa(i) + "() { return T" + itoa(i) + "(" +
+                 itoa(i) + "); }\n").toBytes());
+  }
+  return string.fromBytes(out.take());
+}
+
+/** The `n`th tab-separated field of `line`, or `""`. The wire format is tabs, not spaces. */
+string field(string line, i32 n) {
+  i32 from = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i <= line.len(); i++) {
+    if (i < line.len() && line.slice(i, i + 1) != "\t") { continue; }
+    if (seen == n) { return line.slice(from, i); }
+    seen = seen + 1;
+    from = i + 1;
+  }
+  return "";
+}
+
+export string test_every_crossing_type_reaches_the_metadata_past_the_size_of_the_table() {
+  T t = T.create();
+  string[] paths = string[](ENTRY);
+  string[] sources = string[](program());
+
+  string wire = bindTypesFiles(paths, sources, ENTRY);
+  string[] lines = splitLines(wire);
+
+  // `S\t<name>\t<name>\t<fields>` is a struct — `S\tT0\tT0\tv:i32`. Collected first so the loop below
+  // is a lookup rather than a scan of the whole wire per type.
+  //
+  // **Columns 1 and 2 are both the name here**, so reading the wrong one of those two changes
+  // nothing and is not a canary. Column 3 is: it makes all ninety look absent.
+  string[] named = string[lines.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (field(lines[i], 0) != "S") { continue; }
+    named[n] = field(lines[i], 1);
+    n = n + 1;
+  }
+  string[] structs = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { structs[i] = named[i]; }
+
+  // The scan found the format it expects. A wire whose separator or tag changed would leave this at
+  // zero and every membership test below would fail together, which reads as ninety missing types
+  // rather than as one changed format.
+  t.isTrue(n > 0, "the wire names " + itoa(n) + " structs");
+
+  string[] missing = string[COUNT](fill: "");
+  i32 m = 0;
+  for (i32 i = 0; i < COUNT; i++) {
+    if (has(structs, "T" + itoa(i))) { continue; }
+    missing[m] = "T" + itoa(i);
+    m = m + 1;
+  }
+  string[] absent = string[m](fill: "");
+  for (i32 i = 0; i < m; i++) { absent[i] = missing[i]; }
+  t.eqI32(m, 0, itoa(m) + " of " + itoa(COUNT) + " crossing types are absent from the metadata (" +
+                joined(absent, ", ") + ") — the generator writes no class for them");
+
+  // And the emitter says so when it genuinely cannot fit them, rather than emitting a module whose
+  // glue is quietly incomplete.
+  t.eqStr(blockedFiles(paths, sources, ENTRY), "", "declined a program it has room for");
+  return t.report();
+}

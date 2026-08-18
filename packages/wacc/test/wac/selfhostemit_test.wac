@@ -1,0 +1,198 @@
+// Rung 5, the whole claim: **stage 2 equals stage 3**.
+//
+// `test/wac/fixpointemit_test.wac` puts one source file through both stages. This puts *the
+// compiler* through them. Stage A is `wacc` built by the reference; stage B is `wacc` built by stage
+// A; and stage C is what stage B produces when it is asked to compile `wacc`. If B and C are the
+// same bytes, the compiler reproduces itself, which is what a bootstrap means and what nothing short
+// of running it can show.
+//
+// The awkward part is the boundary: `emitFiles(string[], string[], string)` cannot be called from a
+// host on a module emitted here by hand. It does not have to be — the driver is wac, so it builds
+// those arrays itself. Every source in the entry's import closure is embedded in it as chunked
+// string literals, and the driver hands them to `emitFiles` from inside the module.
+//
+// Three things are compared, and the third ties this to the rest of the suite: the bytes stage B
+// produces must equal the bytes the *test* gets from `emitFiles` directly, which is the number
+// `test/wac/selfemit_test.wac` and the corpus test are measuring all along.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The reference answers through `wacx run <driver> <export>`, which prints a whole `i32`; ours
+// answers through an exit status, which is eight bits (`issues/system/0184`). So the three answers
+// fold into one checksum read a byte at a time, and the two canaries — that stage A declines nothing
+// and emits something substantial — are asked of the reference directly, where they come back whole.
+//
+// **The driver's own closure, not the whole corpus.** The reference parses *every* file it is given,
+// so handing it the repository meant every corpus file had to be parseable by it, and a wacc-only
+// feature anywhere in the tree failed this while naming a file the driver never imports.
+// `issues/lang/0139`.
+//
+// test-lane: heavy — the compiler embedded in a driver, compiled by both stages
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa, atoi } from "../../../fmt/src/itoa.wac";
+import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { emitFiles, emitFilesSelfDescribing } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
+import { closureOf, literalOf, chunkedLiteral } from "./source_probe.wac";
+
+const string ENTRY = "packages/wacc/src/api.wac";
+const string DRIVER = ".cache/_selfhost.wac";
+
+/** The same checksum the driver computes, so the two can be compared at all. */
+i32 checksum(u8[] b) {
+  i32 h = 7;
+  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }
+  return h;
+}
+
+/**
+ * A driver carrying every source in wacc's closure, with `main` returning one byte of the fold.
+ *
+ * The closure is embedded rather than imported because the point is that *stage B* builds the file
+ * table and calls `emitFiles` on it — a driver that imported these would be asking the linker the
+ * question instead.
+ */
+string driverFor(string[] paths, string[] sources, i32 shift) {
+  Buf out = Buf.create();
+  out.pushAll("import { emitFiles, blockedFiles } from \"../packages/wacc/src/api.wac\";\n\n".toBytes());
+  for (i32 i = 0; i < paths.len(); i++) {
+    out.pushAll(("string src" + itoa(i) + "() { return ").toBytes());
+    out.pushAll(chunkedLiteral(sources[i]).toBytes());
+    out.pushAll("; }\n\n".toBytes());
+  }
+  out.pushAll(("i32 sumBytes(u8[] b) {\n" +
+               "  i32 h = 7;\n" +
+               "  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }\n" +
+               "  return h;\n" +
+               "}\n\n").toBytes());
+
+  Buf fill = Buf.create();
+  for (i32 i = 0; i < paths.len(); i++) {
+    fill.pushAll(("  ps[" + itoa(i) + "] = " + literalOf(paths[i]) + ";\n" +
+                  "  ss[" + itoa(i) + "] = src" + itoa(i) + "();\n").toBytes());
+  }
+  string filled = string.fromBytes(fill.take());
+  string decl = "  string[] ps = string[" + itoa(paths.len()) + "]();\n" +
+                "  string[] ss = string[" + itoa(paths.len()) + "]();\n";
+
+  out.pushAll(("u8[] whole() {\n" + decl + filled +
+               "  return emitFiles(ps, ss, " + literalOf(ENTRY) + ");\n}\n\n" +
+               "export i32 wholeLen() { return whole().len(); }\n" +
+               "export i32 wholeSum() { return sumBytes(whole()); }\n" +
+               "export i32 blockedLen() {\n" + decl + filled +
+               "  return blockedFiles(ps, ss, " + literalOf(ENTRY) + ").len();\n}\n\n" +
+               "export i32 fold() {\n" +
+               "  i32 s = 7;\n" +
+               "  s = s * 31 + wholeLen();\n" +
+               "  s = s * 31 + wholeSum();\n" +
+               "  s = s * 31 + blockedLen();\n" +
+               "  return s;\n" +
+               "}\n" +
+               "export i32 main() { return (fold() >> " + itoa(shift) + ") & 255; }\n").toBytes());
+  return string.fromBytes(out.take());
+}
+
+/** `wacx run <DRIVER> <export>`, whose last line is the answer. */
+i32 referenceAnswers(Cli cli, string export_, i32[] okOut) {
+  Exec r = cli.exec("deno", string[]("run", "-A", "compiler/wacxMain.ts", "run", DRIVER, export_),
+                    u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { okOut[0] = 0; return 0; }
+  string[] lines = splitLines(string.fromBytes(r.stdout));
+  if (lines.len() == 0) { okOut[0] = 0; return 0; }
+  okOut[0] = 1;
+  return atoi(trimmed(lines[lines.len() - 1]));
+}
+
+export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
+    Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "selfhostemit_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  i32 entryAt = -1;
+  for (i32 i = 0; i < c.paths.len(); i++) { if (c.paths[i] == ENTRY) { entryAt = i; } }
+  t.isTrue(entryAt >= 0, ENTRY + " is in the corpus");
+  if (entryAt < 0) { return t.report(); }
+
+  // One of wacc's sources reaches outside its own directory, and a file the driver does not carry is
+  // a module that refuses to link rather than one that is wrong.
+  // **`/`-prefixed keys**, because `resolved` always answers with a leading slash — it was written
+  // for `corpuscheck_test.wac`, whose map is keyed that way. Passing plain corpus paths resolves
+  // every import to a key that is not in the table, and the closure comes back as the entry alone.
+  string[] keys = string[c.paths.len()](fill: "");
+  for (i32 i = 0; i < c.paths.len(); i++) { keys[i] = "/" + c.paths[i]; }
+  i32[] near = closureOf(keys, c.sources, entryAt);
+  t.isTrue(near.len() >= 8, "only " + itoa(near.len()) + " sources in wacc's closure");
+  if (near.len() < 8) { return t.report(); }
+
+  string[] cp = string[near.len()](fill: "");
+  string[] cs = string[near.len()](fill: "");
+  for (i32 i = 0; i < near.len(); i++) { cp[i] = c.paths[near[i]]; cs[i] = c.sources[near[i]]; }
+
+  // The driver joins the map wacc compiles from, and the disk, where the reference looks.
+  string[] paths = string[near.len() + 1](fill: "");
+  string[] sources = string[near.len() + 1](fill: "");
+  for (i32 i = 0; i < near.len(); i++) { paths[i] = cp[i]; sources[i] = cs[i]; }
+  paths[near.len()] = DRIVER;
+
+  string dir = scratchDir(cli);
+  Change wrote = cli.writeFile(DRIVER, driverFor(cp, cs, 0).toBytes()).wait();
+  t.eqI32(wrote.fault, 0, "the driver was written to " + DRIVER);
+  if (wrote.fault != 0) { return t.report(); }
+
+  // **The canaries, before the comparison.** A stage that declined the whole compiler would emit an
+  // eight-byte header, and two eight-byte headers agree about nothing at all.
+  i32[] ok = i32[1]();
+  i32 blocked = referenceAnswers(cli, "blockedLen", ok);
+  t.eqI32(ok[0], 1, "the reference ran the driver");
+  if (ok[0] != 1) { cli.remove(DRIVER, false).wait(); return t.report(); }
+  t.eqI32(blocked, 0,
+          "stage A declines wacc itself (" + itoa(blocked) + " characters of reason), so both " +
+          "stages would be compared on an empty module");
+  i32 lenA = referenceAnswers(cli, "wholeLen", ok);
+  t.isTrue(lenA >= 100000, "stage A emitted only " + itoa(lenA) + " bytes for the whole compiler");
+
+  i32 theirs = referenceAnswers(cli, "fold", ok);
+  t.eqI32(ok[0], 1, "the reference answered the fold");
+
+  i32 mine = 0;
+  bool ran = true;
+  i32[] shifts = i32[](0, 8, 16, 24);
+  for (i32 i = 0; i < shifts.len(); i++) {
+    sources[near.len()] = driverFor(cp, cs, shifts[i]);
+    u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "selfhost.wasm", 0);
+    Ran r = runModule(cli, wasm, dir, "selfhost" + itoa(shifts[i]) + ".wasm", string[0](fill: ""));
+    if (!r.ok || wasRejected(r) || r.trapped) {
+      t.fail("stage B at shift " + itoa(shifts[i]) + " did not run — " +
+             (r.ok ? r.stderr : r.error));
+      ran = false;
+      continue;
+    }
+    mine = mine | (r.status << shifts[i]);
+  }
+  cli.remove(DRIVER, false).wait();
+  if (!ran) { return t.report(); }
+
+  t.eqI32(mine, theirs,
+          "wacc compiled by wacc does not reproduce wacc: stage B=" + itoa(mine) + ", stage A=" +
+          itoa(theirs) + ", folded over wholeLen, wholeSum and blockedLen");
+
+  // **And the third opinion.** What this test gets from `emitFiles` directly is what every other
+  // test in this package measures, and stage B's answer has to be that same module — so the fold is
+  // recomputed here from the bytes rather than trusted to agree by having been derived the same way.
+  u8[] direct = emitFiles(c.paths, c.sources, ENTRY);
+  i32 here = 7;
+  here = here * 31 + direct.len();
+  here = here * 31 + checksum(direct);
+  here = here * 31 + 0;                      // `blockedLen`, asserted zero above
+  t.eqI32(here, theirs,
+          "the module this test emits directly is not the one the stages agree on: " + itoa(here) +
+          " against " + itoa(theirs) + " (" + itoa(direct.len()) + " bytes, checksum " +
+          itoa(checksum(direct)) + ")");
+  return t.report();
+}

@@ -22,7 +22,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 | first argument | what happens |
 |---|---|
 | `prog.wasm`, or a stem with `prog.json` beside it | run that program: the module carries its own manifest, or the pair does |
-| `run`, `test`, `sh` | this host's own commands — compiling, running and the shell |
+| `run`, `test`, `sh`, `validate`, `covdump` | this host's own commands — compiling, running, the shell, and the two that ask about a built module |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` |
 
 A name ending in `.wasm` is a bundle *claim* whether or not the file exists, and is reported as a file
@@ -37,7 +37,32 @@ wac bindgen main.wac [--js]          # the glue a host calls it through
 wac run     main.wac [args…]         # compile into a temporary file and run it
 wac test    [path…]                  # every `test*` export under each path
 wac sh      [-c script]              # the shell, sealed unless granted
+wac validate mod.wasm […]            # whether the engine accepts each module, without running it
+wac covdump mod.wasm                 # run `main` under the counters and print each one
 ```
+
+`validate` answers the one question `WebAssembly.validate` answers on a JavaScript host and nothing in
+wac could ask: are these bytes a module this engine will take? It exists because the alternative was
+to *run* each one, which is a process per module — `packages/wacc/test/wac/corpusemit_test.wac` asks
+about 543 of them, so the list is the point: one isolate, every module compiled inside it.
+
+`[§wac-cli-validate-2hq7nx4]` **Only the rejections are named, then a count.** That is the shape of
+every batched oracle in this repository and it is there for the same reason: a run that stopped
+halfway names no rejections, which is indistinguishable from one where nothing was wrong. The last
+line is `<n> module(s): <m> rejected`, and a caller checks `n` against what it asked for. A file that
+cannot be read is a rejection rather than an error, so one missing path does not hide the verdict on
+the others. Exit is 0 when every module is accepted, 1 when any is not, and 2 for no arguments.
+
+`[§wac-cli-covdump-9pf3wq2]` `covdump` runs a module built with coverage and prints `<index>\t<count>`
+per counter, in index order, then `<n> counter(s)`. The index is the pairing `covTableFiles` is keyed
+by: its `i`th row describes counter `i`, so a caller holding both can say *which* point ran and how
+often. `--coverage` on `test` answers a different question — how many points were reached, as a
+percentage per file — and cannot say how often any one of them ran. Nothing in wac can ask directly:
+`__cov_get` is injected by the instrumentation, so no source names it.
+
+The module is instantiated with no imports and `main` is called if it is exported. A module with no
+`__cov_init` is an error rather than an empty report, because a module built without coverage and one
+whose counters all read zero are different facts.
 
 ### check, compile, bindgen
 

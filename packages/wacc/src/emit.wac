@@ -4490,7 +4490,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   }
   // **The two float-remainder helpers, named and not exported** — the same standing as the wrappers
   // below and as `__wac_start`. A trap cannot happen inside them, but `%` on a float is now a *call*,
-  // so they are a frame anyone reading a stack will meet; `names.test.ts` found them the moment they
+  // so they are a frame anyone reading a stack will meet; `test/wac/names_test.wac` found them the moment they
   // existed, reporting "2 of 153 unnamed" against `packages/bls/src/fp.wac`. `issues/lang/0135`.
   if (fmodHelpersAt >= 0 && fmodHelpersAt + 1 < fnName.len()) {
     fnName[fmodHelpersAt] = "__fmod";
@@ -4498,7 +4498,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   }
   // **The hoisted lambdas.** Named for where they were written, which is the only thing that
   // distinguishes one from another — a lambda has no name in the source, and two in one function are
-  // told apart by position and nothing else. `names.test.ts` found these the moment the repository
+  // told apart by position and nothing else. `test/wac/names_test.wac` found these the moment the repository
   // contained its first file with lambdas in it, reporting "7 of 270 unnamed" and naming `str_cmp` as
   // the function before the run, which is exactly where they sit. `design/lang/0002` tier two.
   for (i32 li = 0; li < env.lambdaCount; li++) {

@@ -1,0 +1,69 @@
+// Running a whole shell script **in this process**, and reading what it wrote.
+//
+// box's tests build a 900 KB bundle and spawn it to ask one question: 71 builds and about a hundred
+// spawns for 130 assertions, at 5.4 s a compile and 132 ms a spawn. Nearly all of those questions are
+// about box's own code, and box's own code is right here — `Shell` with `sh.external = boxRun` is what
+// `example/boxsh.wac` wires up, and a `Frame` is what captures a child's output without a process.
+//
+// This file is the keystone for moving them: if a script runs here and its bytes come back, the rest is
+// rewriting assertions rather than inventing machinery. `routes.test.ts` already asserts that the
+// in-process route and the spawned one are the same program, which is what makes the move safe.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { Shell } from "../../../sh/src/exec.wac";
+import { shellMain } from "../../../sh/src/entry.wac";
+import { boxNames, boxRun } from "../../src/shrun.wac";
+import { T } from "../../../wactest/src/assert.wac";
+
+/** What a script wrote, and the status it left. */
+struct Ran {
+  string out;
+  string err;
+  i32 status;
+}
+
+/**
+ * Run one script through a shell that has box's applets, inside this process.
+ *
+ * The frame is the child's world: its `argv` is what `shellMain` reads its `-c` from, and its `out` and
+ * `err` are where every write lands instead of the host's streams.
+ */
+Ran runScript(Core core, Cli cli, string script) {
+  // **`shellMain`'s `first` is an index into the arguments, and a frame's `argv` starts with the
+  // child's own name** — box's layout, which is how an applet knows what it was called. So the name is
+  // argv[0] and the shell is told to start at 1; passing 0 made it read `sh` as a *script to open* and
+  // answer `sh: sh: No such file or directory`, exit 127.
+  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), "", false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Shell sh = Shell.create(c, l);
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
+}
+
+export string test_a_script_runs_in_this_process_and_its_bytes_come_back(Core core, Cli cli) {
+  T t = T.create();
+  Ran r = runScript(core, cli, "echo hi");
+  t.eqStr(r.out, "hi\n", "a plain echo");
+  t.eqI32(r.status, 0, "and it succeeded: " + r.err);
+  return t.report();
+}
+
+export string test_a_pipeline_through_boxs_applets_runs_here_too(Core core, Cli cli) {
+  T t = T.create();
+  // `seq`, `grep` and `wc` are box applets, reached through `sh.external` rather than by spawning —
+  // the same three the website's transcript uses, and the reason `boxRun` exists.
+  Ran r = runScript(core, cli, "seq 1 20 | grep 7 | wc -l");
+  t.eqStr(r.out, "2\n", "the pipeline's answer");
+  return t.report();
+}
+
+export string test_a_failing_command_leaves_its_status(Core core, Cli cli) {
+  T t = T.create();
+  Ran r = runScript(core, cli, "false");
+  t.eqI32(r.status, 1, "a false exits 1");
+  return t.report();
+}

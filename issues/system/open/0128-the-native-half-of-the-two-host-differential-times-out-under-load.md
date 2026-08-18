@@ -120,7 +120,7 @@ spike now has to be a hundred times worse to do the same damage.
 The gate refused my push twice this evening. The second time was this class, in a different file:
 
 ```
-packages/box/test/corpus.test.ts
+packages/box/test/wac/corpus_test.wac
 2 of 286 scripts differ from bash:
   "printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a\+'"   bash finished; ours did not, in 20s
   "printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a?'"     bash finished; ours did not, in 20s
@@ -133,7 +133,7 @@ machine: load 15, four cases in flight, inside a suite that is itself parallel.
 **A fixed wall-clock bound cannot tell a hang from starvation, so it should ask again.** Both gate
 members now do:
 
-- `packages/box/test/corpus.test.ts` — a case that hits the 20s bound is re-run **alone, in a fresh
+- `packages/box/test/wac/corpus_test.wac` — a case that hits the 20s bound is re-run **alone, in a fresh
   directory, with 60s**, once. If it hangs again the report carries both attempts and bash's own
   elapsed time; if it finishes, its answer is compared like any other and a line on stderr says the
   load and that this was the machine.

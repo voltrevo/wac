@@ -1,0 +1,164 @@
+// Rung 5: `wacc`, compiled by `wacc`, answering what `wacc` answers.
+//
+// The ladder's last rung, and its oracle is the one every rung below uses — **run what both
+// compilers emit and compare the answers**. The awkward part is the surface: `dump(u8[]) -> string`
+// traffics in references, and a reference cannot cross a host boundary without bindgen's glue, which
+// a module emitted here by hand does not have.
+//
+// So the crossing moves inside. `selfdrive.wac` calls `wacc` on a program written into it and
+// returns an `i32`, which crosses anywhere. Compiled by the reference it reports one number;
+// compiled by `wacc` it must report the same one — and that second module is `wacc`'s own lexer,
+// parser, printer and checker as emitted by `wacc`.
+//
+// It found two things in its first minutes that 336 corpus files and 3,600 generated programs had
+// not: `this.pos++` on a field emitted nothing, so the lexer never advanced, and every **character
+// literal** compiled to 0, so `isSpace(c)` asked whether the byte was NUL.
+//
+// ## Host-side until 2026-08-17, `issues/system/0161`
+//
+// The TypeScript instantiated both modules and called eight exports on each. From wac neither half
+// of that is available, and the two toolchains turn out to disagree about what `main` even means:
+//
+//   - **the reference prints it.** `wacx run <file> fold` compiles, instantiates and calls `fold`,
+//     printing the whole `i32`. One process, full width.
+//   - **`wac` exits with it**, and an exit status is eight bits. `123456789` comes back as 21, and
+//     `256` comes back as **0** — a wrong answer wearing the shape of success (`issues/system/0184`).
+//
+// So the eight answers are folded into one checksum, and the wac side reads it **a byte at a time**:
+// four modules differing only in a shift, four runs, reassembled. The reference's single answer is
+// compared against all thirty-two bits, so a difference anywhere in any of the eight is caught rather
+// than one time in 256.
+//
+// The driver cannot print its way out of this. `Cli.write` needs `packages/platform`, whose lambdas
+// the reference has never parsed, so a program used for a two-compiler differential cannot use a
+// capability at all.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa, atoi } from "../../../fmt/src/itoa.wac";
+import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { emitFilesSelfDescribing, blockedFiles } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
+
+const string SELFDRIVE = "packages/wacc/test/wac/selfdrive.wac";
+/**
+ * Under `.cache/`, which the corpus walk does not enter — and that is the point rather than tidiness.
+ *
+ * It lived beside `selfdrive.wac` first, so the import could be `./`. A run that returned early left
+ * the file behind; the next `loadCorpus` then found it, so the driver's path was in the map **twice**
+ * and wacc compiled the stale copy. Every shift answered with byte zero's value and the fold came
+ * back `[236, 236, 236, 236]` — which reads as the emitter having lost the shift, not as the test
+ * having poisoned its own corpus.
+ */
+const string DRIVER = ".cache/_bootdrive.wac";
+
+/**
+ * The driver, with `main` returning one byte of the fold.
+ *
+ * `fold` is what the reference is asked for directly. The multiplier only has to spread a change in
+ * any one answer across the whole word — this is not a hash with properties.
+ */
+string driverSource(i32 shift) {
+  return "import { dumpSum, errorCount, badErrorCount, tokenCount, declCount,\n" +
+         "         subjectLen, subjectBytes, literalBytes } from " +
+         "\"../packages/wacc/test/wac/selfdrive.wac\";\n" +
+         "export i32 fold() {\n" +
+         "  i32 s = 7;\n" +
+         "  s = s * 31 + dumpSum();\n" +
+         "  s = s * 31 + errorCount();\n" +
+         "  s = s * 31 + badErrorCount();\n" +
+         "  s = s * 31 + tokenCount();\n" +
+         "  s = s * 31 + declCount();\n" +
+         "  s = s * 31 + subjectLen();\n" +
+         "  s = s * 31 + subjectBytes();\n" +
+         "  s = s * 31 + literalBytes();\n" +
+         "  return s;\n" +
+         "}\n" +
+         "export i32 main() { return (fold() >> " + itoa(shift) + ") & 255; }\n";
+}
+
+/**
+ * `wacx run <file> <export>`, whose last line is the answer. `fn` is a keyword here.
+ *
+ * **The file matters as well as the name.** `wacx run` calls an export of the *entry* module, and
+ * importing does not re-export — so the driver answers `fold` and nothing else, and the two
+ * canaries have to be asked of `selfdrive.wac` itself.
+ */
+i32 referenceAnswers(Cli cli, string file, string export_, i32[] okOut) {
+  Exec r = cli.exec("deno", string[]("run", "-A", "compiler/wacxMain.ts", "run", file, export_),
+                    u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { okOut[0] = 0; return 0; }
+  string[] lines = splitLines(string.fromBytes(r.stdout));
+  if (lines.len() == 0) { okOut[0] = 0; return 0; }
+  okOut[0] = 1;
+  return atoi(trimmed(lines[lines.len() - 1]));
+}
+
+export string test_rung_5_wacc_compiled_by_wacc_answers_what_wacc_answers(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "bootstrapemit_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  bool haveDriver = false;
+  for (i32 i = 0; i < c.paths.len(); i++) { if (c.paths[i] == SELFDRIVE) { haveDriver = true; } }
+  t.isTrue(haveDriver, SELFDRIVE + " is in the corpus");
+  if (!haveDriver) { return t.report(); }
+
+  // The driver joins the map wacc compiles from, and the disk, which is where the reference looks.
+  string[] paths = string[c.paths.len() + 1](fill: "");
+  string[] sources = string[c.paths.len() + 1](fill: "");
+  for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
+  paths[c.paths.len()] = DRIVER;
+
+  scratchDir(cli);   // `.cache/` may not exist yet
+  Change wrote = cli.writeFile(DRIVER, driverSource(0).toBytes()).wait();
+  t.eqI32(wrote.fault, 0, "the driver was written to " + DRIVER);
+  if (wrote.fault != 0) { return t.report(); }
+
+  sources[c.paths.len()] = driverSource(0);
+  string why = blockedFiles(paths, sources, DRIVER);
+  t.eqStr(why, "", "wacc declines the driver — and so declines part of itself");
+
+  // **The canaries, from the reference.** A checksum of zero would mean the driver ran nothing, and
+  // a driver that accepted the program it is supposed to reject proves nothing about either
+  // compiler. Both are asked of the reference because it is the side that answers in full.
+  i32[] ok = i32[1]();
+  i32 sum = referenceAnswers(cli, SELFDRIVE, "dumpSum", ok);
+  t.eqI32(ok[0], 1, "the reference ran the driver");
+  if (ok[0] != 1) { return t.report(); }
+  t.isTrue(sum != 0, "the reference's own dump checksum is not 0 — the driver ran something");
+  t.isTrue(referenceAnswers(cli, SELFDRIVE, "badErrorCount", ok) != 0,
+           "the program that must be rejected was rejected — the driver proves something");
+
+  i32 theirs = referenceAnswers(cli, DRIVER, "fold", ok);
+  t.eqI32(ok[0], 1, "the reference answered the fold");
+
+  // Ours, a byte at a time.
+  string dir = scratchDir(cli);
+  i32[] shifts = i32[](0, 8, 16, 24);
+  i32 mine = 0;
+  bool ran = true;
+  for (i32 i = 0; i < shifts.len(); i++) {
+    sources[c.paths.len()] = driverSource(shifts[i]);
+    u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "bootdrive.wasm", 0);
+    Ran r = runModule(cli, wasm, dir, "bootdrive" + itoa(shifts[i]) + ".wasm", string[0](fill: ""));
+    if (!r.ok || wasRejected(r) || r.trapped) {
+      t.fail("wacc's module for shift " + itoa(shifts[i]) + " did not run — " +
+             (r.ok ? r.stderr : r.error));
+      ran = false;
+      continue;
+    }
+    mine = mine | (r.status << shifts[i]);
+  }
+
+  cli.remove(DRIVER, false).wait();
+
+  if (!ran) { return t.report(); }
+  t.eqI32(mine, theirs,
+          "wacc compiled by wacc disagrees with wacc: ours=" + itoa(mine) + " reference=" +
+          itoa(theirs) + ", folded over dumpSum, errorCount, badErrorCount, tokenCount, " +
+          "declCount, subjectLen, subjectBytes and literalBytes");
+  return t.report();
+}

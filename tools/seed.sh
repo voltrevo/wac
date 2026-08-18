@@ -14,7 +14,7 @@
 #
 # X1 and X2 must be identical. A difference means the compiler changes its own output when it
 # compiles itself, so every later artefact is built by something nobody checked and the difference
-# surfaces later as something else entirely. `packages/wacc/test/selfHostEmit.test.ts` asserts the
+# surfaces later as something else entirely. `packages/wacc/test/wac/selfhostemit_test.wac` asserts the
 # same thing and is a test; this is the claim made by the command that produces the thing.
 #
 # ## Two ways to get this comparison wrong, both of which I did first
@@ -135,7 +135,7 @@ for n in $(seq 1 "$MAX_ROUNDS"); do
   [ -f "$tmp/$n/wacc.wasm" ] && echo "     X$n  $(stat -c %s "$tmp/$n/wacc.wasm") bytes" >&2
 done
 echo "   So every later artefact is built by something nobody has checked." >&2
-echo "   \`deno test -A packages/wacc/test/selfHostEmit.test.ts\` is the same claim with the stages named." >&2
+echo "   \`wac test --allow-read --allow-write --allow-run packages/wacc/test/wac/selfhostemit_test.wac\` is the same claim with the stages named." >&2
 
 if [ "$had_seed" -eq 1 ]; then
   echo "   Putting the previous seed back, because the rejected ones are already installed by now." >&2

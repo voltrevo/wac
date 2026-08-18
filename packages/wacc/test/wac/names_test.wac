@@ -1,0 +1,135 @@
+// `namesFiles` against the module it describes.
+//
+// Its only consumer is somebody holding a wasm error that says *function #N* — the engine names no
+// function, so this list is how a number becomes a name. That makes a disagreement worse than
+// useless: it is a confident wrong answer, and it sent one investigation to `hexOf` for a fault in
+// `openRepo` (`issues/lang/0097`). The cause was that the list was built from an `Env` with no file
+// table and no import edges, so it declined a different set of functions than the emitter did.
+//
+// Asserted through the **export section**, which is the only place a name and an index appear
+// together in the module itself. An imported function occupies an index too, and they come first.
+//
+// ## And the name section names every function, not most of them
+//
+// The gap that closed was in the last block of the module. The section named the imports, the
+// program's own functions, the builtins and every exported helper — 303 of `json`'s 335 — and left
+// the callback trampolines, which are the frames a host's own callback runs inside. So the one
+// function a host could put a fault in was the one with no name. `issues/lang/0101`.
+//
+// Written as "every index has a name" rather than as a list of the blocks, because the list is what
+// was wrong: each block was named where it was emitted, and a block added later is named nowhere.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// **One export, two properties**, where the TypeScript had two tests. Each one emits the whole
+// corpus, and `wac test` gives an export no way to share that with another — so two exports here
+// would compile every file in the repository twice to ask two questions about the same bytes.
+//
+// The TypeScript skipped a module `WebAssembly.validate` rejected. Nothing here validates: every
+// module in this corpus being well-formed is what `corpusemit_test.wac` asserts, so a second opinion
+// on it would be a fork per file to re-answer a question another test already fails on.
+//
+// test-lane: heavy — every file in the repository through the emitter
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined, splitLines, startsWith } from "../../../wactest/src/strings.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { emitFiles, namesFiles } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { Exports, Names, exportedFunctions, importedFunctions, declaredFunctions,
+         nameSection } from "./wasm_probe.wac";
+
+/**
+ * Whether this export is a helper rather than a function somebody wrote.
+ *
+ * `$trap$message` is named rather than matched by prefix: it is exported by *every* module — it
+ * hands back the string a `trap "…"` left in a global, `issues/lang/0147` — and a `$trap` prefix
+ * rule would also swallow a source function somebody called `$trapdoor`.
+ */
+bool isHelper(string name) {
+  return startsWith(name, "$bind$") || name == "$trap$message";
+}
+
+export string test_every_exported_function_is_where_namesfiles_says_and_all_are_named(
+    Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "names_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  string[] wrong = string[16](fill: "");
+  i32 nWrong = 0;
+  string[] gaps = string[16](fill: "");
+  i32 nGaps = 0;
+  i32 checkedFiles = 0;
+  i32 checkedExports = 0;
+  i32 checkedFunctions = 0;
+
+  for (i32 f = 0; f < c.paths.len(); f++) {
+    u8[] wasm = emitFiles(c.paths, c.sources, c.paths[f]);
+    if (wasm.len() <= 8) { continue; }
+    checkedFiles = checkedFiles + 1;
+
+    // ── The export section against the list ──────────────────────────────────────────────────────
+    string[] said = splitLines(namesFiles(c.paths, c.sources, c.paths[f]));
+    i32 nimp = importedFunctions(wasm);
+    Exports ex = exportedFunctions(wasm);
+    for (i32 i = 0; i < ex.names.len(); i++) {
+      if (isHelper(ex.names[i])) { continue; }
+      checkedExports = checkedExports + 1;
+      i32 at = ex.indices[i] - nimp;
+      string got = at >= 0 && at < said.len() ? said[at] : "(past the end of the list)";
+      if (got == ex.names[i]) { continue; }
+      if (nWrong < wrong.len()) {
+        wrong[nWrong] = c.paths[f] + ": " + ex.names[i] + " is function #" + itoa(ex.indices[i]) +
+                        ", the list says " + got;
+        nWrong = nWrong + 1;
+      }
+    }
+
+    // ── Every function index has a name ──────────────────────────────────────────────────────────
+    i32 total = declaredFunctions(wasm);
+    if (total == 0) { continue; }
+    checkedFunctions = checkedFunctions + total;
+    Names ns = nameSection(wasm);
+
+    // Marked rather than searched: a linear scan per index is quadratic, and `packages/json` alone
+    // has 335 functions.
+    bool[] named = bool[total](fill: false);
+    for (i32 i = 0; i < ns.indices.len(); i++) {
+      if (ns.indices[i] >= 0 && ns.indices[i] < total) { named[ns.indices[i]] = true; }
+    }
+    i32 missing = 0;
+    i32 firstMissing = -1;
+    for (i32 i = 0; i < total; i++) {
+      if (named[i]) { continue; }
+      if (missing == 0) { firstMissing = i; }
+      missing = missing + 1;
+    }
+    if (missing > 0 && nGaps < gaps.len()) {
+      gaps[nGaps] = c.paths[f] + ": " + itoa(missing) + " of " + itoa(total) +
+                    " unnamed, the first being #" + itoa(firstMissing);
+      nGaps = nGaps + 1;
+    }
+  }
+
+  // The canary: a walk that emitted nothing would agree with everything.
+  t.isTrue(checkedFiles >= 100,
+           "only " + itoa(checkedFiles) + " modules were readable — the harness is not reaching " +
+           "the emitter");
+  t.isTrue(checkedExports >= 200,
+           "only " + itoa(checkedExports) + " exports checked — too few to mean anything");
+  t.isTrue(checkedFunctions >= 1000,
+           "only " + itoa(checkedFunctions) + " functions seen — the name section is not being read");
+
+  string[] saidWrong = string[nWrong](fill: "");
+  for (i32 i = 0; i < nWrong; i++) { saidWrong[i] = wrong[i]; }
+  t.eqI32(nWrong, 0, itoa(nWrong) + " exported function(s) are not where `namesFiles` puts them: " +
+                     joined(saidWrong, "; "));
+
+  string[] saidGaps = string[nGaps](fill: "");
+  for (i32 i = 0; i < nGaps; i++) { saidGaps[i] = gaps[i]; }
+  t.eqI32(nGaps, 0, itoa(nGaps) + " module(s) have unnamed functions: " + joined(saidGaps, "; "));
+  return t.report();
+}

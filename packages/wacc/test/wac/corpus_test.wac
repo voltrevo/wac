@@ -1,0 +1,64 @@
+// The corpus walk itself, because twelve ports are going to stand on it.
+//
+// A broken walk is the failure that matters here: it returns a short list rather than an error, and
+// a short list makes every differential above it pass while comparing almost nothing. So this
+// asserts the shape of what came back rather than trusting `ok`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { has, endsWith } from "../../../wactest/src/strings.wac";
+import { Corpus, loadCorpus, waccSources } from "./corpus_probe.wac";
+
+export string test_the_walk_finds_the_repositorys_wac_and_reads_all_of_it(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "corpus_test");
+  t.isTrue(c.ok, "the walk ran — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  t.eqI32(c.paths.len(), c.sources.len(), "a source per path");
+  // Far above the floor of ten, and stated as a floor so adding a package cannot break it.
+  t.isTrue(c.paths.len() > 100, "the corpus holds " + itoa(c.paths.len()) + " files");
+
+  // Every entry is wac and every entry was actually read. An empty source is what a walk that
+  // found a name but could not open it would leave behind.
+  i32 empty = 0;
+  i32 notWac = 0;
+  for (i32 i = 0; i < c.paths.len(); i++) {
+    if (!endsWith(c.paths[i], ".wac")) { notWac = notWac + 1; }
+    if (c.sources[i].len() == 0) { empty = empty + 1; }
+  }
+  t.eqI32(notWac, 0, "every entry is a .wac");
+  t.eqI32(empty, 0, itoa(empty) + " entries were listed but came back empty");
+  return t.report();
+}
+
+export string test_spec_tour_wac_is_present_because_it_is_the_richest_entry(Core core, Cli cli) {
+  // The one entry that used to be allowed to go missing, and the one that cannot: it is written to
+  // exercise every feature in the language, which no working package does. A corpus without it is a
+  // different and much weaker corpus that still reports a large number of files.
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "corpus_test");
+  if (!c.ok) { t.fail(c.error); return t.report(); }
+
+  t.isTrue(has(c.paths, "spec/tour.wac"), "the tour is in the corpus");
+  for (i32 i = 0; i < c.paths.len(); i++) {
+    if (c.paths[i] != "spec/tour.wac") { continue; }
+    t.isTrue(c.sources[i].len() > 10000,
+             "and it was read whole: " + itoa(c.sources[i].len()) + " bytes");
+  }
+  return t.report();
+}
+
+export string test_waccs_own_sources_are_found_since_the_bootstrap_rung_is_about_them(
+    Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "corpus_test");
+  if (!c.ok) { t.fail(c.error); return t.report(); }
+
+  string[] own = waccSources(c);
+  t.isTrue(own.len() >= 8, "wacc has " + itoa(own.len()) + " sources in the corpus");
+  t.isTrue(has(own, "packages/wacc/src/api.wac"), "including api.wac");
+  t.isTrue(has(own, "packages/wacc/src/emit.wac"), "and emit.wac");
+  return t.report();
+}

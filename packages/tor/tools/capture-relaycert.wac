@@ -22,7 +22,7 @@
 //
 // **The oracle is the file**: this and `capture-relaycert.py` must produce byte-identical output,
 // and both must reproduce the committed `test/data/relaycert_vectors.json`.
-// `packages/tor/test/captureTools.test.ts` is the `cmp`.
+// `packages/tor/test/wac/capturetools_test.wac` is the `cmp`.
 
 import { Core, Cli, FileResult, Stat } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
