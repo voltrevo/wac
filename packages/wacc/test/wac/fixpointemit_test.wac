@@ -81,7 +81,7 @@ string driverFor(string text, i32 shift) {
 
 /** `wacx run <DRIVER> <export>`, whose last line is the answer. */
 i32 referenceAnswers(Cli cli, string export_, i32[] okOut) {
-  Exec r = cli.exec("deno", string[]("run", "-A", "compiler/wacxMain.ts", "run", DRIVER, export_),
+  Exec r = cli.exec("deno", string[]("run", "-A", "harness/referenceRun.ts", DRIVER, export_),
                     u8[0]()).wait();
   if (!r.ran() || r.status != 0) {
     okOut[0] = 0;
