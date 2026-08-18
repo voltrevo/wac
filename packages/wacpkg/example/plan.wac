@@ -13,7 +13,7 @@
 
 import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Manifest, Mapping, readManifest, M_OK } from "../src/manifest.wac";
+import { Manifest, Mapping, readManifest, M_OK, unsupportedTransport } from "../src/manifest.wac";
 import { Lock, Step, readLock, plan, orphansOf, USE, CREATE, REFRESH } from "../src/lock.wac";
 import { MANIFEST_NAME } from "../src/root.wac";
 
@@ -52,6 +52,19 @@ export i32 main(Core core, Cli cli) {
     core.log(dir + ": a project with no dependencies");
     return 0;
   }
+
+  // **Before anything else about the mappings.** A url this toolchain cannot fetch is worth saying
+  // now: the alternative is a transport error much later naming a url the person did not think
+  // they had typed. It is not a manifest error — see `unsupportedTransport` — so it is reported
+  // here rather than by the reader.
+  i32 unfetchable = 0;
+  for (i32 i = 0; i < m.imports.len(); i++) {
+    string why = unsupportedTransport(m.imports[i].git);
+    if (why == "") { continue; }
+    unfetchable = unfetchable + 1;
+    core.warn("wacplan: " + m.imports[i].name + ": " + why);
+  }
+  if (unfetchable > 0) { return 1; }
 
   Step[] steps = plan(m, l);
   i32 pending = 0;

@@ -369,3 +369,22 @@ the one above, and the one above should not be taken.
 The other half has no mechanism at all: a bare `deno test -A packages/x/test/` is plain Deno, so
 it cannot announce and cannot be gated by construction. If the presence note goes in, the gate's
 advice should point at something that carries it, or say what the unguarded version costs.
+
+## Three green suites in one `push.sh`, all beaten — 2026-08-17, agent-a
+
+The clearest measurement of this issue I have. One invocation, `DENO_JOBS=1`, the machine quiet
+enough that memory rose to 6.8 GB partway through:
+
+| attempt | suite | outcome |
+| ---: | --- | --- |
+| 1 | passed | push rejected, merged, retried |
+| 2 | passed | push rejected, merged, retried |
+| 3 | passed in 1144s | push rejected; `merge needs hands`, and `push.sh` gave up |
+
+About fifty-seven minutes of suite time, three consecutive green gates, and nothing pushed. The
+run ended eleven commits behind. Nothing failed at any point — this is purely master moving faster
+than a fifteen-minute suite, which is the shape this issue is about and had not previously been
+recorded with three in a row.
+
+Worth adding because the earlier entries here are about being *refused* or *killed*, and both have
+plausible fixes in the gate. This one has none: the gate worked perfectly three times.

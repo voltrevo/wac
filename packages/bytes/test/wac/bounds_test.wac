@@ -101,3 +101,64 @@ export string test_get_returns_the_byte_when_in_range() {
   t.eqI32(b.get(0), 42, "the byte that was pushed");
   return t.report();
 }
+
+/**
+ * A back-reference whose source is not written yet.
+ *
+ * `pushRepeat(at, count)` copies from `at` to the end, and an *overlapping* copy is the point of it —
+ * a run of five from three back reads bytes this same loop is writing. What must not be allowed is a
+ * copy whose **start** is past the written length: there is nothing there to read, and the guard for it
+ * is `count > 0 && at >= this.len`.
+ *
+ * Written because a mutation of that guard survived `packages/bytes`' tests: the sweep runs against
+ * wac tests again (`issues/system/0183`) and this was the first thing it found — a trap the package
+ * takes seriously enough to write a paragraph about and never exercised.
+ */
+export string test_traps_repeating_from_beyond_what_is_written() {
+  Buf b = Buf.create();
+  b.push('a');
+  b.pushRepeat(1, 3);
+  return "";
+}
+
+/** And the boundary that is legal: the last written byte, repeated past the end. */
+export string test_repeating_from_the_last_written_byte_is_allowed() {
+  T t = T.create();
+  Buf b = Buf.create();
+  b.push('a');
+  b.pushRepeat(0, 3);
+  t.eqI32(b.len, 4, "one byte plus three repeated");
+  t.eqI32(b.get(3), 'a', "the run is the byte it started from");
+  return t.report();
+}
+
+/**
+ * A negative count, which is the other half of `pushRepeat`'s guard — and the half that is not
+ * defended by anything downstream.
+ *
+ * With `if (count < 0 || at < 0) { trap; }` removed, a negative `at` still traps on the array read a
+ * few lines later; a negative *count* does not. It reaches `this.len = to + count` and the buffer
+ * silently **shrinks**, which is the difference between a guard that is load-bearing and one the code
+ * would survive without. The sweep found this by removing the trap and watching every test still pass.
+ */
+export string test_traps_repeating_a_negative_count() {
+  Buf b = Buf.create();
+  b.push('a');
+  // **`at` past the end on purpose.** With `at` inside the buffer the copy takes `copyFrom`, which
+  // traps on a negative length by itself — so that input cannot tell the guard from the array. Past
+  // the end it takes the byte-at-a-time loop instead, which simply does not run for a negative count,
+  // and the line after it sets `len = to + count`: the buffer would shrink, silently, and answer
+  // nothing about it. That is what the guard is for and what removing it changes.
+  b.pushRepeat(5, 0 - 1);
+  return "";
+}
+
+/** The same guard's other operand. This one the array read would catch anyway; it is pinned here so
+ *  the pair reads as one rule rather than two accidents. */
+export string test_traps_repeating_from_a_negative_index() {
+  Buf b = Buf.create();
+  b.push('a');
+  b.pushRepeat(0 - 1, 1);
+  return "";
+}
+

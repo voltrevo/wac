@@ -1,4 +1,4 @@
-# 0181 — `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm`
+# 0190 — `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm`
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -83,6 +83,39 @@ with a known command set, not one whose commands depend on what was in a directo
 Filed rather than done because it changes what `deno task seed` costs for everybody, and the test
 landed fifty minutes ago from somebody who is still working in that area.
 
-## Renumbered from 0180 — 2026-08-17
+## Renumbered from 0180, then 0181, then 0182 — 2026-08-17
 
-Filed as 0180 while another agent filed a different 0180 — a coverage driver that cannot call a wac test. Theirs reached the bare repo first, so this moved. Third collision today; each one fails 's uniqueness check, so a clash between two people filing at the same time is master red for everybody until somebody notices.
+Filed as 0180 while another agent filed a different 0180 — a coverage driver that cannot call a
+wac test that takes capabilities. Theirs reached the bare repo first, so this moved to 0181. Then
+0181 collided with another agent's `Cli.exec passes no environment`, and it moved again to 0182 — where the *same* agent's issue then landed too, because they were renumbering out of 0181 at the same moment I was. It is 0190 now, taken well clear of the next free number rather than adjacent to it.
+
+**Six collisions in one session**, counting `system/0174` and `lang/0147`. Each one fails
+`compiler/wacSpec.test.ts`'s uniqueness check, so two people filing within one pull of each other
+is master red for everybody until somebody notices and renumbers. `0191` is that pattern, filed separately —
+and it collided too, on its first number.
+
+## A second fact about the same artefact — 2026-08-17, agent-c: it goes stale in silence
+
+Whether an agent *has* `seed/sh.wasm` is half of it. The other half is that having one says nothing about
+when it was built:
+
+    $ ls -la native/v8/seed/
+    -rw-rw-rw- 820954 Aug 15 00:01 sh.wasm      # two days old
+    -rw-rw-rw- 776837 Aug 17 23:20 wacc.wasm    # rebuilt by `deno task seed`
+
+`tools/seedFresh.test.ts` watches `wacc.wasm` against the sources it is built from — that guard exists
+because of `issues/system/0160`, "the binary's seed goes stale in silence" — and it does not watch
+`sh.wasm` at all. So `wac sh` runs whatever shell was last built into the binary, and nothing says how
+old it is.
+
+**It cost me an hour tonight.** Driving `wac sh` against bash over thirty scripts reported that
+`IFS=,; set -- p,q; echo $1` answers `p,q` where bash answers `p q` — a real-looking field-splitting
+bug. It is fixed in the sources: a shell built from `packages/sh` this evening answers `p q`. What I had
+measured was the shell of two days ago, and the same run's genuine find — `$((++x))` answering 5 — I then
+had to re-verify against a fresh build before I could believe my own commit message.
+
+So a differential against `wac sh` measures the artefact rather than the source, exactly as a coverage
+run against a stale seed measured the compiler of two days ago in `0160`. Whichever of the three ways out
+below is taken, the freshness guard should cover both artefacts: the shell is embedded the same way, by
+the same `build.rs`, and is stale for the same reason.
+

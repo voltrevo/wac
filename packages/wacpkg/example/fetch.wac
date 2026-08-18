@@ -1,0 +1,257 @@
+// `wacfetch <project>` — resolve what the lock does not cover, fetch it, and write the lock.
+//
+//     deno task app:build packages/wacpkg/example/fetch.wac \
+//       --allow-read --allow-write --allow-net --allow-env -o wacfetch
+//     ./wacfetch .
+//
+// This is `design/lang/0009` D11's network half, and it is composition rather than new protocol:
+// `packages/wacpkg` decides *what* to fetch and where it goes, `packages/git` and `packages/tls` do
+// the fetching. Nothing here parses a pack or speaks pkt-line — `packages/git/example/gitfetch.wac`
+// is the same sequence for one repository given on a command line.
+//
+// What it does per mapping the plan says is not covered:
+//
+//   1. refuse a url this toolchain cannot fetch, before opening a socket
+//   2. GET the advertisement, and resolve the mapping's `ref` against it
+//   3. POST a want for that commit, and index the pack that comes back
+//   4. **look the commit up in that index by name**, which is the check worth having
+//   5. write the pack and its index under `$WAC_HOME/cache/git/<repo>/<commit>`
+//
+// Step 4 is why the answer is trustworthy rather than merely arrived. A pack is content-addressed:
+// `indexPack` hashes what each object *resolves to*, deltas included, so a pack mis-parsed cannot
+// produce an object whose SHA-1 is the name we asked for. Getting that commit back out is TLS,
+// HTTP, pkt-line, the pack format, delta resolution and SHA-1 all agreeing at once — which is a
+// stronger statement than any byte count, and the reason this does not simply trust a 200.
+//
+// **A mapping the lock already covers is not fetched and not consulted.** That is `plan`'s rule and
+// the whole point of a lockfile; the loop below skips a `USE` step before it looks at the network.
+
+import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+// `decode` as well as `encode`: the first version of this had its own `hexBytes` and `nib`,
+// which is a third implementation of a rule `packages/codec` already owns.
+import { decode, encode } from "../../codec/src/hex.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { Ad, AdRef, findPack, offers, parseAdvertisement, wantRequest, Reply }
+  from "../../git/src/fetch.wac";
+import { Got, Indexed, Pack, indexPack, objectNamed, openIndexed } from "../../git/src/pack.wac";
+import { PackIndex } from "../../git/src/idx.wac";
+import { Store } from "../../tls/src/roots.wac";
+import { Answer, Remote, parseRemote, request, systemStore } from "../../git/src/transport.wac";
+import { Manifest, Mapping, readManifest, unsupportedTransport } from "../src/manifest.wac";
+import { Lock, LockEntry, Step, applyPlan, plan, readLock, writeLock, USE } from "../src/lock.wac";
+import { MANIFEST_NAME } from "../src/root.wac";
+import { cachePath } from "../src/cache.wac";
+import { resolveRef, Resolved } from "../src/refs.wac";
+
+/** How deep a fetch asks for. One commit is what a locked dependency needs. */
+i32 depth() { return 1; }
+
+export i32 main(Core core, Cli cli) {
+  i32 argc = cli.argCount().wait();
+  string dir = argc > 0 ? string.fromBytes(cli.arg(0).wait()) : ".";
+  string wacHome = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : ".wac";
+
+  FileResult mf = cli.readFile(join(dir, MANIFEST_NAME())).wait();
+  if (!mf.ok) {
+    core.warn("wacfetch: " + join(dir, MANIFEST_NAME()) + " could not be read, so " + dir
+              + " is not a project");
+    return 1;
+  }
+  Manifest m = readManifest(mf.bytes);
+  if (!m.ok) {
+    core.warn("wacfetch: " + MANIFEST_NAME() + " is not valid: code " + itoa(m.code)
+              + (m.detail == "" ? "" : " (" + m.detail + ")"));
+    return 1;
+  }
+  FileResult lf = cli.readFile(join(dir, "wac.lock")).wait();
+  Lock l = lf.ok ? readLock(lf.bytes) : Lock.empty();
+  if (!l.ok) {
+    core.warn("wacfetch: wac.lock is not valid: code " + itoa(l.code)
+              + (l.detail == "" ? "" : " (" + l.detail + ")"));
+    return 1;
+  }
+
+  // Every refusal we can make without a socket, made first and all at once — so a manifest with
+  // three bad urls reports three, rather than one per run.
+  i32 refused = 0;
+  for (i32 i = 0; i < m.imports.len(); i++) {
+    string why = unsupportedTransport(m.imports[i].git);
+    if (why == "") { continue; }
+    refused = refused + 1;
+    core.warn("wacfetch: " + m.imports[i].name + ": " + why);
+  }
+  if (refused > 0) { return 1; }
+
+  Step[] steps = plan(m, l);
+  string[] resolved = string[steps.len()](fill: "");
+  Store store = systemStore(cli);
+  i32 fetched = 0;
+
+  for (i32 i = 0; i < steps.len(); i++) {
+    Mapping map = m.imports[i];
+    if (steps[i].action == USE()) {
+      // Not consulted, not counted. The lock covers it and a branch that moved is not a reason.
+      resolved[i] = steps[i].commit;
+      continue;
+    }
+    string got = fetchOne(core, cli, store, wacHome, map, steps[i].why);
+    if (got == "") { return 1; }
+    resolved[i] = got;
+    fetched = fetched + 1;
+  }
+
+  LockEntry[] next = applyPlan(m, l, steps, resolved);
+  if (next.len() != m.imports.len()) {
+    core.warn("wacfetch: the lock could not be built from what was resolved");
+    return 1;
+  }
+  if (fetched == 0) {
+    core.log("wacfetch: nothing to fetch; " + itoa(steps.len()) + " mapping(s) already locked");
+    return 0;
+  }
+  Change wrote = cli.writeFile(join(dir, "wac.lock"), writeLock(next)).wait();
+  if (!wrote.ok()) {
+    core.warn("wacfetch: cannot write wac.lock: " + wrote.message);
+    return 1;
+  }
+  core.log("wacfetch: " + itoa(fetched) + " fetched, " + itoa(steps.len() - fetched)
+           + " already locked");
+  return 0;
+}
+
+/**
+ * One mapping: resolve, fetch, verify, cache. The commit, or "" having said why.
+ *
+ * `why` is the plan's reason, printed so that a fetch a person did not expect says what changed in
+ * the manifest to cause it.
+ */
+string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping map, string why) {
+  string what = map.name + " (" + map.git + " @ " + map.ref + ")";
+  core.log("wacfetch: " + what + (why == "" ? "" : " — " + why));
+
+  Remote r = parseRemote(map.git);
+  if (!r.ok) { core.warn("wacfetch: " + map.name + ": " + map.git + " is not an https url"); return ""; }
+
+  Answer refs = request(core, cli, store, r.host,
+    r.path + "/info/refs?service=git-upload-pack", u8[0](), "");
+  if (!refs.ok) { core.warn("wacfetch: " + map.name + ": " + refs.error); return ""; }
+  if (refs.status != 200) {
+    core.warn("wacfetch: " + map.name + ": " + r.host + " answered " + itoa(refs.status)
+              + " for the advertisement");
+    return "";
+  }
+
+  string[] names = string[0](fill: "");
+  string[] oids = string[0](fill: "");
+  string caps = "agent=wac/0";
+  match (parseAdvertisement(refs.body)) {
+    case Garbled(why2): {
+      core.warn("wacfetch: " + map.name + ": the advertisement did not parse: " + why2);
+      return "";
+    }
+    case Said(ad) : {
+      names = string[ad.refs.len()](fill: "");
+      oids = string[ad.refs.len()](fill: "");
+      for (i32 i = 0; i < ad.refs.len(); i++) {
+        AdRef one = ad.refs.get(i);
+        names[i] = one.name;
+        oids[i] = string.fromBytes(encode(one.target));
+      }
+      caps = offers(ad, "ofs-delta") ? "ofs-delta agent=wac/0" : "agent=wac/0";
+    }
+  }
+
+  Resolved hit = resolveRef(names, oids, map.ref);
+  if (!hit.ok) {
+    core.warn("wacfetch: " + map.name + ": `" + map.ref + "` "
+              + (hit.code == 2 ? "is both a branch and a tag there; name it in full"
+                               : "names nothing the server advertised"));
+    return "";
+  }
+  core.log("  " + map.ref + " -> " + hit.commit.slice(0, 12)
+           + (hit.via == "" ? " (an object name)" : " via " + hit.via));
+
+  // `resolveRef` guarantees forty lowercase hex, so this cannot fail — but `decode` says so with
+  // a null rather than by trapping, and answering it is cheaper than explaining why it is safe.
+  u8[]? raw = decode(hit.commit.toBytes());
+  if (raw is null) {
+    core.warn("wacfetch: " + map.name + ": " + hit.commit + " is not an object name");
+    return "";
+  }
+  u8[] want = raw!;
+
+  Vec<u8[]> wants = Vec.create();
+  wants.push(want);
+  Vec<u8[]> haves = Vec.create();
+  Answer packed = request(core, cli, store, r.host, r.path + "/git-upload-pack",
+    wantRequest(wants, haves, caps, depth()), "application/x-git-upload-pack-request");
+  if (!packed.ok) { core.warn("wacfetch: " + map.name + ": " + packed.error); return ""; }
+  if (packed.status != 200) {
+    core.warn("wacfetch: " + map.name + ": " + r.host + " answered " + itoa(packed.status)
+              + " for the pack");
+    return "";
+  }
+  u8[] pack = u8[0]();
+  match (findPack(packed.body)) {
+    case NoPack(why3): {
+      core.warn("wacfetch: " + map.name + ": no pack in the reply: " + why3);
+      return "";
+    }
+    case Packfile(bytes): { pack = bytes; }
+  }
+
+  // **The check that makes it trustworthy.** A pack is content-addressed, so one mis-parsed cannot
+  // produce an object whose SHA-1 is the name we asked for.
+  i32 objects = 0;
+  match (indexPack(pack)) {
+    case Unindexable(why4): {
+      core.warn("wacfetch: " + map.name + ": the pack did not index: " + why4);
+      return "";
+    }
+    // Not reachable while every request sends no `have` — a server with nothing to delta against
+    // sends a complete pack. Answered rather than left to fall through, because the day this asks
+    // for an incremental fetch it will be, and a thin pack is not a damaged one.
+    case Thin(bases): {
+      core.warn("wacfetch: " + map.name + ": a thin pack, wanting " + itoa(bases.len())
+                + " object(s) we did not ask about");
+      return "";
+    }
+    case Built(idx): {
+      objects = idx.count;
+      Pack p = openIndexed(pack, idx);
+      match (objectNamed(p, want)) {
+        case Absent(why5): {
+          core.warn("wacfetch: " + map.name + ": the pack does not contain "
+                    + hit.commit.slice(0, 12) + ": " + why5);
+          return "";
+        }
+        case Found(kind, data): {
+          if (kind != 1) {
+            core.warn("wacfetch: " + map.name + ": " + hit.commit.slice(0, 12)
+                      + " came back as kind " + itoa(kind) + " rather than a commit");
+            return "";
+          }
+        }
+      }
+    }
+  }
+
+  string into = cachePath(wacHome, map.git, hit.commit);
+  if (into == "") { core.warn("wacfetch: " + map.name + ": no cache path"); return ""; }
+  Change made = cli.mkdir(into, true).wait();
+  if (!made.ok()) { core.warn("wacfetch: cannot make " + into + ": " + made.message); return ""; }
+  Change wrotePack = cli.writeFile(into + "/pack.pack", pack).wait();
+  if (!wrotePack.ok()) {
+    core.warn("wacfetch: cannot write " + into + "/pack.pack: " + wrotePack.message);
+    return "";
+  }
+  core.log("  " + itoa(pack.len()) + " bytes, " + itoa(objects) + " objects -> "
+           + into + "/pack.pack");
+  return hit.commit;
+}
+
+string join(string dir, string name) {
+  if (dir == "" || dir == ".") { return name; }
+  return dir.slice(dir.len() - 1, dir.len()) == "/" ? dir + name : dir + "/" + name;
+}

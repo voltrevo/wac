@@ -136,6 +136,12 @@ export bool isRound(Shape s) {
 `_` may repeat within a pattern; any other duplicate binding name is an error, as
 elsewhere in the language.
 
+A pattern binds **all** of a variant's payload or none of it. `case Rect:` ignores every
+field, and `case Rect(w, h)` names both; a list that is shorter or longer than the
+payload is an error rather than a partial binding, because a name in the wrong position
+would silently be a different field. `[§enum-match-arity-4jq7wnm]` `case Rect(w)` on a
+two-field variant is refused, and so is `case Point(x)` on one with no payload.
+
 `[§enum-match-ignore]` `isRound(Shape.Circle(1.0))` returns `true`.
 
 ### An arm body is an ordinary block

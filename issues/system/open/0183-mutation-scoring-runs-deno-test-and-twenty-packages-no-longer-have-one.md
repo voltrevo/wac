@@ -302,3 +302,63 @@ measurement above says it is worth roughly 15× on that package.
 cannot parse are still stopped before they start. That is the larger half and it needs its own decision —
 compile with the binary, or keep the reference and accept the shrinking coverage.
 
+## The compile half, 2026-08-17 23:20 — the binary vouches for what the reference cannot read
+
+A file the reference cannot parse used to abort the whole run. Now the binary is asked whether it
+compiles, and if it does the file is *reference-blind* rather than broken: its mutants run, with the
+compile check moved to the worker where `wac build` sees the mutated source.
+
+    $ deno run -A --unstable-net tools/mutate.ts --package fs --operators=all --sample=3
+      3 file(s) the reference cannot read but `wac build` compiles: their mutants
+      run without equivalence pruning, and are compile-checked with the binary instead.
+      baseline: 1/1 test scope(s) pass unmutated
+      3 mutant(s) measured through `wac test`: fs
+      3/3 mutants killed
+
+`packages/fs` is both kinds of blind at once — its tests are wac files and its sources reach the
+capability layer's lambdas — so it went from "nothing can be measured" to a verdict in one run.
+
+**What those mutants lose:** trivial-compiler-equivalence. The hash TCE compares is the reference's
+output and there is none, so no duplicate is pruned and no no-op is proved for them. That is stated in
+the run's own output rather than left to be discovered.
+
+**What must not happen, and does not:** a genuinely broken file still stops the run. Breaking
+`packages/fs/src/image.wac` — already unreadable by the reference — makes `wac build` fail too, so it is
+not marked reference-blind and the abort fires with the message naming the reference. Canaried both ways.
+
+So both halves of this issue are now addressed for the packages that had lost measurement entirely. What
+remains is the note above about selection, and the decision nobody has had to make yet: whether `wasmHash`
+should ask the binary for *everything* and retire the reference from this path, which would restore
+equivalence pruning for those 125 files at the cost of a subprocess per mutant.
+
+### Surveyed after the fix — five packages, all measurable
+
+| package | what was blind | result |
+| --- | --- | --- |
+| `bytes` | tests are wac | 6/8 killed, 2 documented equivalents, and a real gap closed |
+| `gzip` | tests are wac | 4/4 |
+| `fs` | tests are wac **and** 3 sources unreadable by the reference | 3/3 |
+| `rlp` | tests are wac | 5/5, 3 of 5 narrowed by the new profile |
+| `zstd` | 5 sources unreadable — a wacc-only builtin rather than a lambda | 5/5, 3 of 5 narrowed |
+
+Sampled runs (`--operators=all --sample=5`), so the scores estimate rather than count. The point is that
+each of these produced *no verdict at all* this morning.
+
+## Where the reference is still in this path, and what it costs — operator's steer, 2026-08-17
+
+> wacc is the primary compiler and has been for some time. the ref is only used to build wacc.
+
+`wasmHash` still asks the reference, and after tonight that buys exactly one thing: **trivial-compiler
+equivalence** — pruning mutants whose wasm is unchanged (no-ops) or identical to another's (duplicates).
+Measurement no longer depends on it: a file the reference cannot read is compile-checked with the binary
+in the worker, and its mutants run.
+
+So the cost of leaving it is a handful of no-op mutants that reach the report and have to be argued into
+`known.ts` by hand, not a package that cannot be measured. That is a refinement rather than a gap, and it
+is deliberately not being done tonight.
+
+**When someone does take it**: build with the binary and hash its output — `wac build` is byte-identical
+for identical input, which `tools/seed.sh` relies on. The work is that `wasmHash` reads sources from a
+`Map` in memory and the binary needs them on disk, so the triage phase needs a staged copy, which is
+currently created later. One `stageProject` call moved earlier is the whole of it.
+

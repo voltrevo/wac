@@ -97,6 +97,24 @@ export function byCost(files: string[], profile: Profile | undefined): string[] 
 }
 
 /** Every test file under the given package directories. */
+/** Every `*_test.wac` under these directories — the entries `wac test` runs. */
+export async function wacEntriesIn(dirs: string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const d of dirs) {
+    const walk = async (p: string) => {
+      try {
+        for await (const e of Deno.readDir(p)) {
+          const q = `${p}/${e.name}`;
+          if (e.isDirectory) await walk(q);
+          else if (e.name.endsWith("_test.wac")) out.push(q);
+        }
+      } catch { /* a directory that does not exist contributes nothing */ }
+    };
+    await walk(d);
+  }
+  return out.sort();
+}
+
 export async function testFilesIn(dirs: string[]): Promise<string[]> {
   const out: string[] = [];
   for (const d of dirs) {
@@ -288,6 +306,53 @@ type NativeShare = { all: string[]; tests: Record<string, string[]>; ms: number 
  * through `deno test --filter`. A native profile holding `test_basics` against a suite that calls it
  * `map: basics` filters to nothing, exits 0, and scores the mutant as survived.
  */
+/**
+ * A profile for one `*_test.wac` entry, run directly by the binary.
+ *
+ * **`nativeShare` without the wrapper.** That one exists because a `.test.ts` *registers* wac tests and
+ * execution went back through `deno test --filter`, so its names had to be translated into the wrapper's
+ * spelling. A package whose tests are wac files has no wrapper and is run by `wac test`, so the names are
+ * the exports' own and no translation is wanted — translating them is how a filter comes to match
+ * nothing and a mutant is scored against a run of zero tests. `issues/system/0183`.
+ *
+ * Declines the same way it does: a profile listing anything in `skipped` is partial, and a partial
+ * profile scores a mutant against tests that never ran.
+ */
+export async function wacShare(
+  work: string,
+  entry: string,
+  binary: string,
+): Promise<NativeShare | null> {
+  const dir = await Deno.makeTempDir({ prefix: "wac-wacprof-" });
+  try {
+    const began = performance.now();
+    await new Deno.Command(binary, {
+      // The grants the suite's own wac lane passes: a test skipped for want of one contributes no
+      // coverage, and code only that test reaches then looks unreached.
+      args: ["test", "--coverage", "--allow-read", "--allow-write", "--allow-run", "--allow-env", entry],
+      cwd: work,
+      env: { WAC_PROFILE: dir },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const ms = performance.now() - began;
+    let doc: { all?: string[]; tests?: Record<string, string[]>; skipped?: string[] } | null = null;
+    for await (const e of Deno.readDir(dir)) {
+      if (!e.name.endsWith(".json")) continue;
+      const d = JSON.parse(await Deno.readTextFile(`${dir}/${e.name}`));
+      if (d.entry === entry || d.entry.endsWith(`/${entry}`)) doc = d;
+    }
+    if (doc === null || !Array.isArray(doc.skipped) || doc.skipped.length > 0) return null;
+    const tests: Record<string, string[]> = {};
+    for (const [name, pts] of Object.entries(doc.tests ?? {})) tests[name] = pts;
+    return Object.keys(tests).length === 0 ? null : { all: doc.all ?? [], tests, ms };
+  } catch {
+    return null;
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+}
+
 export async function nativeShare(
   work: string,
   testFile: string,
@@ -367,7 +432,10 @@ export async function buildProfile(
   const binary = await nativeBinary();
   if (binary !== null && !opts.noNative) {
     for (const f of testFiles) {
-      const share = await nativeShare(work, f, binary);
+      // A wac entry is profiled directly; a `.test.ts` is asked whether it is a pure wrapper first.
+      const share = f.endsWith("_test.wac")
+        ? await wacShare(work, f, binary)
+        : await nativeShare(work, f, binary);
       if (share !== null) {
         native.set(f, share);
         cost.set(f, share.ms);

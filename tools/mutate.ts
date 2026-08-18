@@ -86,14 +86,14 @@ import { CURATED } from "./mutate/curated.ts";
 import { KNOWN_SURVIVORS } from "./mutate/known.ts";
 import { fileCount, sampleMutants } from "./mutate/sample.ts";
 import {
-  buildProfile, byCost, filterFor, planFor, testFilesIn, type Profile,
+  buildProfile, byCost, filterFor, planFor, testFilesIn, wacEntriesIn, type Profile,
 } from "./mutate/profile.ts";
 import { ALL_OPERATORS, generate, type OperatorName } from "./mutate/operators.ts";
 import { applyEdits, isBlindScope, packagesOf, testDirsFor, type Curated, type Edit, type Mutant }
   from "./mutate/types.ts";
 import { firstFailureLine } from "./mutate/why.ts";
 import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } from "./mutate/deadline.ts";
-import { WAC_BIN } from "./mutate/native.ts";
+import { classify, WAC_BIN } from "./mutate/native.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 
 refuseIfNested("deno task mutate");
@@ -423,10 +423,49 @@ for (const m of mutants) {
   }
 }
 
+/**
+ * Files the *reference* cannot read but the binary compiles.
+ *
+ * 125 of the 361 sources under each package's `src` are in this state — anything whose import graph reaches
+ * `packages/platform`'s lambdas, `box` being 78 of them — and until now every one of them aborted the
+ * whole run with "does not compile", which points at the file. `wac build` compiles all of them.
+ *
+ * A mutant in one of these runs **without trivial-compiler-equivalence**: the hash TCE compares is the
+ * reference's output, and there is none. So no duplicate is pruned and no no-op is proved for them, and
+ * the compile check moves to the worker, where `wac build` sees the mutated source. `issues/system/0183`.
+ */
+const refBlind = new Set<string>();
+const brokenBaselineAll = [...baseline.entries()].filter(([, h]) => h === null).map(([f]) => f);
+if (brokenBaselineAll.length > 0) {
+  const bin = `${Deno.cwd()}/${WAC_BIN}`;
+  const haveBin = await Deno.stat(bin).then(() => true).catch(() => false);
+  if (haveBin) {
+    const scratch = await Deno.makeTempDir({ prefix: "wac-refblind-" });
+    for (const f of brokenBaselineAll) {
+      const { code } = await new Deno.Command(bin, {
+        args: ["build", f, "-o", `${scratch}/probe`, "--quiet"],
+        cwd: Deno.cwd(),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (code === 0) refBlind.add(f);
+    }
+    await Deno.remove(scratch, { recursive: true }).catch(() => {});
+    if (refBlind.size > 0) {
+      console.log(
+        `  ${refBlind.size} file(s) the reference cannot read but \`wac build\` compiles: their mutants
+` +
+          `  run without equivalence pruning, and are compile-checked with the binary instead. ` +
+          `issues/system/0183`,
+      );
+    }
+  }
+}
+
 // A file that does not compile *before* being mutated is not a mutation result, and reporting it
 // as one is how mutation testing dies quietly: every mutant in the file comes back INVALID, which
 // reads as "the mutations were bad" rather than "the baseline is broken". Say so and stop.
-const brokenBaseline = [...baseline.entries()].filter(([, h]) => h === null).map(([f]) => f);
+const brokenBaseline = brokenBaselineAll.filter((f) => !refBlind.has(f));
 if (brokenBaseline.length > 0) {
   // **Name the compiler that said so.** This baseline is `wasmHash`, which calls the *reference* —
   // and the reference has not been able to parse a lambda since they landed in
@@ -458,6 +497,9 @@ function triage(m: Mutant): Triage {
   const mutated = applyEdits(sources, m);
   const parts: string[] = [];
   for (const file of [...new Set(m.edits.map((e) => e.file))].sort()) {
+    // No hash to compare for a file the reference cannot read: run it, and let the binary say in the
+    // worker whether the *mutation* compiles. Pruning it here would discard every mutant in 125 files.
+    if (refBlind.has(file)) return { verdict: "run" };
     const h = wasmHash(mutated, file);
     if (h === null) return { verdict: "invalid", detail: `${file} does not compile` };
     parts.push(`${file}=${h}`);
@@ -733,6 +775,11 @@ function testDirs(m: Mutant): string[] {
  * --allow-net and --allow-env because the suite needs them: a permission error does not
  * skip a test, it fails the run.
  */
+/** Whether these targets are run by the binary rather than by Deno — see `testCommand`. */
+function isWacRun(dirs: string[]): boolean {
+  return dirs.length > 0 && dirs.every((d) => hostless.has(d.split("/")[1] ?? ""));
+}
+
 function testCommand(work: string, dirs: string[], filter?: string): Deno.Command {
   // **The binary, for a scope whose tests are wac files.** `wac test` takes directories and finds the
   // `*_test.wac` under them, so the scope needs no translation; the grants are the ones
@@ -740,9 +787,14 @@ function testCommand(work: string, dirs: string[], filter?: string): Deno.Comman
   // not run — and this tool counts a green run as a survivor. The binary is read from the *original*
   // checkout: it is a build artefact rather than a source, and `stageProject` does not copy
   // `native/target`. `cwd` is still the staged copy, so it compiles the mutated sources.
-  if (dirs.length > 0 && dirs.every((d) => hostless.has(d.split("/")[1] ?? ""))) {
+  if (isWacRun(dirs)) {
     const args = ["test", "--allow-read", "--allow-write", "--allow-run", "--allow-env"];
-    if (filter !== undefined) args.push("--filter", filter);
+    // **The filter is not passed on.** `filterFor` builds Deno's regex spelling and `wac test --filter`
+    // matches a plain substring, so handing it over selects *nothing* and the mutant is scored against a
+    // run of zero tests — a survivor, silently. Selection on this path is by *entry*: the narrow branch
+    // already reduces the scope to the files holding the covering tests, which is most of the win and
+    // costs no name translation. `issues/system/0183`.
+    void filter;
     return new Deno.Command(`${Deno.cwd()}/${WAC_BIN}`, {
       args: [...args, ...dirs],
       cwd: work,
@@ -814,6 +866,15 @@ type Result = {
   detail: string;
   /** The profile knows this line and no test reaches it, so nothing was run. */
   notCovered?: boolean;
+  /**
+   * The run answered something that is neither a pass nor a failure, so this mutant has no verdict.
+   *
+   * `wac test` distinguishes them by exit code — 3 is "ran and failed", 1 is "did not run", 4 is
+   * "nothing here to run" — and `tools/mutate/native.ts` has said so since the native lane was written.
+   * Treating any non-zero as a kill is the false-kill direction: a mutant that stops the file compiling
+   * would be scored as *detected* by tests that never ran. `issues/system/0183`.
+   */
+  noVerdict?: string;
 };
 
 /**
@@ -1044,7 +1105,16 @@ try {
   phase = "measuring baselines and building the coverage profile";
   if (!noSelect && measurable.length > 0) {
     const scope = [...new Set(measurable.flatMap((t) => testDirs(t.mutant)))].sort();
-    const files = await testFilesIn(scope.map((d) => `${workDirs[0]}/${d}`));
+    // **Wac entries as well as host test files.** A scope whose package has no `.test.ts` contributes
+    // nothing to a Deno-only walk, so its mutants had no coverage data and every one of them fell back
+    // to running the whole package — 38 s a mutant for `gzip`, of which 36 is two differential entries
+    // almost no mutant needs. `issues/system/0183`.
+    const files = [
+      ...await testFilesIn(scope.map((d) => `${workDirs[0]}/${d}`)),
+      ...await wacEntriesIn(
+        scope.filter((d) => hostless.has(d.split("/")[1] ?? "")).map((d) => `${workDirs[0]}/${d}`),
+      ),
+    ];
     const rel = files.map((f) => f.slice(workDirs[0].length + 1));
     profile = await buildProfile(workDirs[0], rel, (m) => console.log(m), { noCache: noProfileCache });
     console.log(
@@ -1114,6 +1184,25 @@ try {
       const touched = [...new Set(mutant.edits.map((e) => e.file))];
       for (const f of touched) await Deno.writeTextFile(`${work}/${f}`, mutated.get(f)!);
 
+      // **The compile check the reference could not do**, for the files it cannot read. TCE pruned
+      // nothing for these, so a mutation that does not compile arrives here — and running the tests
+      // against it would fail them and score the mutant *killed* by tests that never saw it. The binary
+      // compiles the mutated source in this worker's own copy. `issues/system/0183`.
+      let uncompilable: string | null = null;
+      for (const f of touched.filter((f) => refBlind.has(f))) {
+        const { code } = await new Deno.Command(`${Deno.cwd()}/${WAC_BIN}`, {
+          args: ["build", f, "-o", `${work}/.mutant-probe`, "--quiet"],
+          cwd: work,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        if (code !== 0) {
+          uncompilable = `${f} does not compile with the mutation — \`wac build\` says so, and the ` +
+            `reference cannot read this file to have said it earlier`;
+          break;
+        }
+      }
+
       const dirs = testDirs(mutant);
       // Narrow to the tests that actually execute the mutated lines, when the profile
       // knows them. `null` means it does not, and the full scope runs — see profile.ts
@@ -1140,6 +1229,20 @@ try {
           widened++;
         }
       }
+      if (uncompilable !== null) {
+        results.push({
+          index,
+          mutant,
+          killed: false,
+          timedOut: false,
+          dirs,
+          detail: uncompilable,
+          noVerdict: uncompilable,
+        });
+        console.log(`  --  ${mutant.name.padEnd(52)} no verdict: does not compile`);
+        for (const f of touched) await Deno.writeTextFile(`${work}/${f}`, sources.get(f)!);
+        continue;
+      }
       const cmd = testCommand(work, runDirs, filter);
       const child = cmd.spawn();
       let timedOut = false;
@@ -1156,7 +1259,14 @@ try {
 
       const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
       // A timeout counts as killed: an infinite loop is a detected defect, not a silent one.
-      const killed = timedOut || code !== 0;
+      // Otherwise a Deno run says so with any non-zero, and a `wac test` run says which kind.
+      const verdict = isWacRun(runDirs) && !timedOut ? classify(code) : null;
+      const killed = timedOut || (verdict === null ? code !== 0 : verdict.kind === "killed");
+      const noVerdict = verdict === null || verdict.kind === "killed" || verdict.kind === "survived"
+        ? undefined
+        : verdict.kind === "no-tests-here"
+        ? "nothing in that scope ran"
+        : verdict.why;
       const firstFail = output.split("\n").find((l) => l.includes("FAILED") || l.includes("error"));
       ranCount++;
       results.push({
@@ -1168,6 +1278,7 @@ try {
         // Only a *surviving* mutant on an unhit line is reported that way. One that died was reachable
         // after all, whatever its own line's counter says.
         notCovered: notCovered && !killed,
+        noVerdict,
         detail: timedOut
           ? `timed out after ${(deadline / 1000).toFixed(0)}s`
           : notCovered && !killed
@@ -1236,8 +1347,20 @@ if (uncovered.length > 0) {
   if (uncovered.length > 12) console.log(`  ... and ${uncovered.length - 12} more`);
 }
 
-const controls = results.filter((r) => r.mutant.mustSurvive);
-const real = results.filter((r) => !r.mutant.mustSurvive);
+const controls = results.filter((r) => !r.noVerdict && r.mutant.mustSurvive);
+// **Neither killed nor survived.** A run that could not execute the tests says so, and counting it
+// either way is a made-up number — `tools/mutate/native.ts` puts it exactly that way.
+const noVerdicts = results.filter((r) => r.noVerdict);
+const real = results.filter((r) => !r.noVerdict && !r.mutant.mustSurvive);
+
+if (noVerdicts.length > 0) {
+  console.log(`\n${noVerdicts.length} mutant(s) have no verdict: the run could not execute the tests.`);
+  console.log("  Not counted as killed and not as survived, because neither was measured.");
+  for (const r of noVerdicts.slice(0, 6)) {
+    console.log(`  - ${r.mutant.name}: ${(r.noVerdict ?? "").slice(0, 90)}`);
+  }
+}
+
 const survivors = real.filter((r) => !r.killed);
 const knownWhy = new Map(KNOWN_SURVIVORS.map((k) => [k.name, k.why]));
 const documented = survivors.filter((r) => knownWhy.has(r.mutant.name));

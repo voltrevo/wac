@@ -1,0 +1,139 @@
+// Where a fetched commit lives on disk — `design/lang/0009` D11's cache layout.
+//
+//     $WAC_HOME/cache/git/<escaped repository>/<commit>
+//
+// D11: "the cache lives at `$WAC_HOME/cache/git/`, and a locked commit is usable from it without
+// consulting a moving branch". That sentence is a constraint on the *key*: the path has to be a
+// function of the repository and the commit and nothing else, so a build with a lockfile can find
+// what it needs without asking a server what a ref means today.
+//
+// **This is pure, and it is here before the fetching on purpose.** A cache key is written into
+// people's home directories and is the one part of a package system that cannot be changed later
+// without either a migration or orphaning everything already downloaded. It costs nothing to
+// settle now, against a property test, and a great deal to discover afterwards.
+//
+// ## Escaping, and why not a hash
+//
+// A repository URL is not a directory name: it has `/`, `:`, and on a case-insensitive filesystem
+// `github.com/A/b` and `github.com/a/B` are the same directory. Three ways out, and the choice
+// matters more than it looks:
+//
+// - **Hash the URL.** Injective enough and trivially safe, and the cache becomes unreadable: `ls`
+//   tells you nothing, and neither does a bug report containing a path.
+// - **Slugify** — replace the unsafe characters and hope. Not injective: `a/b` and `a-b` collide,
+//   and a collision here means one repository's contents served for another's.
+// - **Escape reversibly**, which is what this does. Every byte outside `[a-z0-9._-]` becomes `%HH`,
+//   and an uppercase letter becomes `!x` — Go's module-cache trick, and the reason is exactly the
+//   one Go had: without it a case-insensitive filesystem merges two distinct repositories into one
+//   directory, and the second fetch silently serves the first's files.
+//
+// Reversible is the property worth having: `unescapeRepo(escapeRepo(u)) == u` is a test a machine
+// can check over any corpus, where "these look different enough" is not.
+
+import { Buf } from "../../bytes/src/buf.wac";
+
+/** `$WAC_HOME/cache/git` — the directory every fetched repository lives under. */
+export string cacheRoot(string wacHome) {
+  return trimTrailingSlash(wacHome) + "/cache/git";
+}
+
+/**
+ * Where `commit` of `git` lives, or "" if either is unusable.
+ *
+ * The commit is required to be forty lowercase hex digits by the caller — `isFullSha` in
+ * `lock.wac` — and is used verbatim, because it is already a safe directory name and escaping it
+ * would only make the path harder to read. An empty URL or commit answers "" rather than a path
+ * under the cache root, so a caller that lost one does not write into `…/cache/git//`.
+ */
+export string cachePath(string wacHome, string git, string commit) {
+  if (git == "" || commit == "") { return ""; }
+  return cacheRoot(wacHome) + "/" + escapeRepo(git) + "/" + commit;
+}
+
+/**
+ * A repository URL as one directory name, reversibly.
+ *
+ * `[a-z0-9._-]` pass through. An uppercase letter becomes `!` and its lowercase — so a
+ * case-insensitive filesystem cannot merge two repositories that differ only in case. Everything
+ * else becomes `%HH`, upper-case hex, which includes `!` and `%` themselves so the escaping has no
+ * ambiguity to resolve.
+ */
+export string escapeRepo(string url) {
+  u8[] b = url.toBytes();
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];
+    bool plain = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                 || c == '.' || c == '_' || c == '-';
+    if (plain) { out = out + string.fromCodepoint(c); continue; }
+    if (c >= 'A' && c <= 'Z') { out = out + "!" + string.fromCodepoint(c + 32); continue; }
+    out = out + "%" + hexPair(c);
+  }
+  return out;
+}
+
+/**
+ * The inverse. "" for input that is not something `escapeRepo` produced.
+ *
+ * **Bytes, not codepoints.** `%C3` is the *byte* 0xC3, and rebuilding it with `fromCodepoint`
+ * would produce U+00C3 — two bytes where one was escaped, so a URL with anything non-ASCII in it
+ * would not survive the round trip. The corpus in the test has one for that reason.
+ */
+export string unescapeRepo(string name) {
+  u8[] b = name.toBytes();
+  Buf out = Buf.create();
+  i32 i = 0;
+  while (i < b.len()) {
+    i32 c = b[i];
+    if (c == '!') {
+      if (i + 1 >= b.len()) { return ""; }
+      i32 n = b[i + 1];
+      if (n < 'a' || n > 'z') { return ""; }
+      out.push(n - 32);
+      i = i + 2;
+      continue;
+    }
+    if (c == '%') {
+      if (i + 2 >= b.len()) { return ""; }
+      i32 hi = hexVal(b[i + 1]);
+      i32 lo = hexVal(b[i + 2]);
+      if (hi < 0 || lo < 0) { return ""; }
+      out.push((hi << 4) | lo);
+      i = i + 3;
+      continue;
+    }
+    // Anything an escape should have covered is not a name this produced.
+    bool plain = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                 || c == '.' || c == '_' || c == '-';
+    if (!plain) { return ""; }
+    out.push(c);
+    i = i + 1;
+  }
+  return string.fromBytes(out.bytes());
+}
+
+string hexPair(i32 c) {
+  return string.fromCodepoint(hexDigitOf((c >> 4) & 15)) + string.fromCodepoint(hexDigitOf(c & 15));
+}
+
+i32 hexDigitOf(i32 v) { return v < 10 ? '0' + v : 'A' + (v - 10); }
+
+i32 hexVal(i32 c) {
+  if (c >= '0' && c <= '9') { return c - '0'; }
+  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+  return -1;
+}
+
+/**
+ * `s` without *trailing* `/`, so joining never doubles one.
+ *
+ * Trailing only. The first version trimmed both ends, which turns `/home/claude/.wac` into
+ * `home/claude/.wac` — an absolute cache root silently becoming a relative one, so the cache is
+ * written wherever the command happened to be run from. Caught before it was tested, which is
+ * luck; the test below asserts the leading slash survives.
+ */
+string trimTrailingSlash(string s) {
+  i32 to = s.len();
+  while (to > 0 && s.slice(to - 1, to) == "/") { to = to - 1; }
+  return s.slice(0, to);
+}

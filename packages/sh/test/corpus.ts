@@ -12,6 +12,78 @@
 // rather than a judgement made twice.
 
 export const CORPUS: string[] = [
+  // **Sixty-four scripts driven against bash on 2026-08-17**, and the four that disagreed are all
+  // documented gaps: `$((x++))` (refused by name now), brace expansion (absent, as in dash), and
+  // `xargs`, which box does not carry. The rest agreed to the byte and are here so they keep
+  // agreeing — parameter expansion in every form the shell has, arithmetic that is *not* an
+  // increment, redirection, subshells, `read`, `printf` widths, and the test operators.
+  //
+  // The run that produced them measured the shell **embedded in the binary**, which was two days
+  // old, and reported a field-splitting bug that had been fixed that afternoon — see
+  // `issues/system/0190`. These were re-run against a shell built from source.
+  "x=abc; echo ${x:-def}",
+  "x=; echo ${x:-def}",
+  "unset x; echo ${x:-def}",
+  "x=abc; echo ${x#a}",
+  "x=abc; echo ${x%c}",
+  "x=a/b/c; echo ${x##*/}",
+  "x=a/b/c; echo ${x%%/*}",
+  "x=hello; echo ${#x}",
+  "x=abc; echo ${x:1}",
+  "x=abc; echo ${x:1:1}",
+  "echo $(( 7 % 3 )) $(( -7 % 3 ))",
+  "echo $(( 1 == 1 )) $(( 2 < 1 ))",
+  "printf '%s|%s\\n' a b c",
+  "echo \"a  b\" | tr -s ' '",
+  "echo a b c | cut -d' ' -f2",
+  "for i in 1 2 3; do echo $i; done",
+  "i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done",
+  "case abc in a*) echo yes;; *) echo no;; esac",
+  "test -z \"\" && echo empty",
+  "[ 1 -eq 1 ] && echo eq",
+  "echo $?; false; echo $?",
+  "(exit 3); echo $?",
+  "echo one > wsh1 && cat wsh1",
+  "echo \"quoted $(echo sub)\"",
+  "echo 'single $notexpanded'",
+  "x=1; (x=2); echo $x",
+  "x=abc; echo ${x:=def}; echo $x",
+  "unset y; echo ${y:=set}; echo $y",
+  "x=abc; echo ${x#*b}",
+  "x=a.b.c; echo ${x%.*}",
+  "x=a.b.c; echo ${x%%.*}",
+  "echo \"a b\" \"c  d\"",
+  "echo $(echo $(echo deep))",
+  "v=1; echo \"${v}2\"",
+  "echo ${#@}",
+  "set -- a b c; echo $#; echo $2; shift; echo $1",
+  "echo a > wsh2; echo b >> wsh2; cat wsh2",
+  "cat < wsh2",
+  "echo err 1>&2 2>/dev/null; echo done",
+  "{ echo one; echo two; } | wc -l",
+  "(echo sub; exit 4); echo $?",
+  "echo a b | while read p q; do echo \"$q-$p\"; done",
+  "printf '%d\\n' 42",
+  "printf '%5s|\\n' hi",
+  "printf '%-5s|\\n' hi",
+  "printf '%x\\n' 255",
+  "printf '%c' abc; echo",
+  "echo abc | rev 2>/dev/null || echo norev",
+  "test \"a\" = \"a\" && echo same",
+  "[ \"a\" != \"b\" ] && echo diff",
+  "[ -n \"x\" ] && echo nonempty",
+  "[ 3 -gt 2 ] && [ 2 -lt 3 ] && echo both",
+  "if false; then echo no; elif true; then echo elif; fi",
+  "until [ -f wsh-none ]; do break; done; echo after",
+  "f() { echo \"in $1\"; }; f arg",
+  "f() { return 3; }; f; echo $?",
+  "echo $(( (1+2) * 3 ))",
+  "echo $((10/3)) $((10%3))",
+  "x=\" a \"; echo \"[$x]\"",
+  "x=\" a \"; echo [$x]",
+  "IFS=,; set -- p,q; echo $1",
+  "true && echo t || echo f",
+  "false && echo t || echo f",
   // **Every stage of a pipeline is a subshell** (wac-mono 0114). A stage that is a bare assignment
   // wrote straight into this shell and bash's does not, so `v=b | cat` left `v` as `b` here and
   // `set` in bash. The one-stage case is the boundary — `v=b` alone is not a pipeline and must
@@ -1239,7 +1311,10 @@ esac`,
  * program and stays with the language cases. That distinction is not cosmetic: it is what made deleting
  * the twelve dangerous before `printf` was moved (wac-mono 0103).
  */
-export const PROGRAMS = ["cat", "wc", "head", "tail", "sort", "uniq", "nl", "rev", "grep", "tr", "seq"];
+export const PROGRAMS = ["cat", "wc", "head", "tail", "sort", "uniq", "nl", "rev", "grep", "tr", "seq",
+  // `cut` is box's too, and was missing here: a script naming it stayed in `packages/sh`'s half,
+  // where there is no `cut`, and failed with `command not found` the moment one was added.
+  "cut"];
 
 /**
  * Whether a script runs one of those programs.
