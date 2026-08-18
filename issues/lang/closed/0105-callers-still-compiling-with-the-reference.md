@@ -79,7 +79,7 @@ Emitter identity is not boundary identity, and the manifest is where the differe
 names the file and the line that file's own editor shows. That last part was wrong until now: the
 table carried `index, line, col, kind` and no file at all, so every point was attributed to the
 entry at a line of the *linked blob*. `packages/json` read as 621 points in `json.wac` and none in
-`parse.wac`, `stringify.wac` or `value.wac`. `packages/wacc/test/covTable.test.ts` holds it.
+`parse.wac`, `stringify.wac` or `value.wac`. `packages/wacc/test/wac/covtable_test.wac` holds it.
 
 What blocks the default is the `NOT_COVERED` ledgers. Each `cov.ts` names the branches its tests
 deliberately do not drive, and those names are calibrated against one compiler's branch points. The
