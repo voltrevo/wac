@@ -17,7 +17,7 @@
 // constantly. `error` is non-empty only for the second.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../src/platform.wac";
+import { Core, Cli, Exec, Pending } from "../../src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 string text(u8[] b) { return string.fromBytes(b); }
@@ -141,5 +141,44 @@ export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, C
     if (r.stdout[i] != big[i]) { differed = i; break; }
   }
   t.eqI32(differed, -1, "and in order");
+  return t.report();
+}
+
+/**
+ * Three children at once, because a ticket is a thing that has been *asked for*.
+ *
+ * Every capability that hands back a `Pending<T>` means "asked for, not yet answered" — that is what
+ * makes `waitAny` a thing a program can write, and it is why `core.delay` can be waited on beside a
+ * socket. `exec` is one of them, so taking three tickets before waiting on any of them must overlap
+ * the three children.
+ *
+ * **It did not, on one host of four.** `native/src/main.rs` ran the child to completion inside the
+ * capability call and handed back a ticket that was already settled — 3006ms here against 1009ms for
+ * the same program on the Deno host, which is issue 0206. Two things came with it: no test that
+ * shells out could overlap its oracle, and a child that wedged had no ticket to bound, since
+ * `waitAny` needs a ticket that exists while the work is still running.
+ *
+ * The bound is 2.5s rather than 1.2s deliberately — this machine is shared by three agents, so the
+ * number that separates "concurrent" from "serial" is the one with three seconds on the other side of
+ * it, not the one that is tight against a perfect run.
+ */
+export string test_three_children_run_at_once(Core core, Cli cli) {
+  T t = T.create();
+  i64 t0 = core.monotonicNanos().wait();
+  Pending<Exec>[] ps = Pending<Exec>[3]();
+  for (i32 i = 0; i < ps.len(); i++) {
+    ps[i] = cli.exec("/bin/sleep", string[]("1"), u8[0]());
+  }
+  i32 ran = 0;
+  for (i32 i = 0; i < ps.len(); i++) {
+    Exec r = ps[i].wait();
+    if (r.ran() && r.status == 0) { ran = ran + 1; }
+  }
+  i64 ms = (core.monotonicNanos().wait() - t0) / (1000000 as i64);
+  // The canary: three sleeps that never ran would finish instantly and pass a timing assertion by
+  // doing nothing at all.
+  t.eqI32(ran, 3, "all three slept");
+  t.isTrue(ms >= (900 as i64), "and really took a second: " + itoa(ms as! i32) + "ms");
+  t.isTrue(ms < (2500 as i64), "three concurrent `sleep 1` in one second, not three: " + itoa(ms as! i32) + "ms");
   return t.report();
 }

@@ -19,7 +19,7 @@
 // `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, Stat } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, Stat, Pending } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
@@ -82,13 +82,37 @@ export string test_every_entry_file_compiles(Core core, Cli cli) {
   // A floor, because a list that emptied would leave this reporting a clean sweep of nothing.
   t.isTrue(es.len() >= 10, "the entry list still has entries: " + itoa(es.len()));
 
-  for (i32 i = 0; i < es.len(); i++) {
-    Exec r = cli.exec(binary(cli),
-                      string[]("build", es[i], "-o", work + "/out", "--allow-read", "--allow-write"),
-                      u8[0]()).wait();
-    t.isTrue(r.ran(), es[i] + ": the compiler would not start — " + r.error);
-    if (!r.ran()) { continue; }
-    t.eqI32(r.status, 0, es[i] + " did not compile:\n" + string.fromBytes(r.stderr));
+  // **Four at a time, because a ticket is a thing that has been asked for.** Thirteen full compiles
+  // one after another were 9.5s and the second-largest test in the lane, with a machine that has
+  // cores to spare doing one at a time. `cli.exec` hands back a `Pending<Exec>` and every host now
+  // starts the child before returning it — that was not true of the two native hosts until issue
+  // 0206, which is what made this list serial however it was written.
+  //
+  // Four rather than thirteen, and the bound is about memory rather than cores: each of these is a
+  // compiler holding a whole program's graph, and three agents share this machine. **Measured, as the
+  // peak resident set of every `wac` process while this ran: 447 MB one at a time, 833 MB at four.**
+  // Thirteen at once would be some way past two gigabytes, which is the whole suite's peak today.
+  // Four buys most of the wall clock there is to buy — 9.5s to 3.5s — and the rest of it would cost
+  // memory the machine is already short of.
+  //
+  // **Each one writes its own output.** A shared `-o` would have thirteen compilers writing one path
+  // at once, and the failure would be a corrupt artefact rather than a race anything reports.
+  i32 WIDTH = 4;
+  for (i32 base = 0; base < es.len(); base = base + WIDTH) {
+    i32 n = es.len() - base < WIDTH ? es.len() - base : WIDTH;
+    Pending<Exec>[] ps = Pending<Exec>[n]();
+    for (i32 k = 0; k < n; k++) {
+      ps[k] = cli.exec(binary(cli),
+                       string[]("build", es[base + k], "-o", work + "/out" + itoa(k),
+                                "--allow-read", "--allow-write"),
+                       u8[0]());
+    }
+    for (i32 k = 0; k < n; k++) {
+      Exec r = ps[k].wait();
+      t.isTrue(r.ran(), es[base + k] + ": the compiler would not start — " + r.error);
+      if (!r.ran()) { continue; }
+      t.eqI32(r.status, 0, es[base + k] + " did not compile:\n" + string.fromBytes(r.stderr));
+    }
   }
 
   Change gone = cli.remove(work, true).wait();

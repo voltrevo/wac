@@ -1931,66 +1931,22 @@ fn dispatch(
                 );
                 return settle_now(caller, Kind::Exec, refused, results);
             }
-            // An argument *vector*, never a shell line: a value containing a space or a semicolon
-            // arrives whole. A caller who wants a shell names `/bin/sh -c`.
-            let mut cmd = std::process::Command::new(&path);
-            cmd.args(&argv)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            let outcome = match cmd.spawn() {
-                Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
-                Ok(mut child) => {
-                    // **Draining starts before the write, not after.** A child that answers while it
-                    // is still being fed — `cat`, `grep`, any filter — blocks on its own output once
-                    // the pipe buffer is full, and a host that writes the whole of stdin first blocks
-                    // on the write. Both waiting on the other.
-                    //
-                    // `wait_with_output` does drain both pipes, which is what the comment here used
-                    // to say, and it is not enough: it does not start until the write has finished.
-                    // Two megabytes through `cat` hung every host —
-                    // `packages/platform/test/wac/exec_test.wac`.
-                    let (out_tx, out_rx) = std::sync::mpsc::channel();
-                    let (err_tx, err_rx) = std::sync::mpsc::channel();
-                    let mut out_pipe = child.stdout.take();
-                    let mut err_pipe = child.stderr.take();
-                    std::thread::spawn(move || {
-                        use std::io::Read;
-                        let mut v = Vec::new();
-                        if let Some(p) = out_pipe.as_mut() {
-                            let _ = p.read_to_end(&mut v);
-                        }
-                        let _ = out_tx.send(v);
-                    });
-                    std::thread::spawn(move || {
-                        use std::io::Read;
-                        let mut v = Vec::new();
-                        if let Some(p) = err_pipe.as_mut() {
-                            let _ = p.read_to_end(&mut v);
-                        }
-                        let _ = err_tx.send(v);
-                    });
-                    // Dropped at the end of the block, which is what closes the child's input: a
-                    // program that reads to the end needs the end to arrive.
-                    if let Some(mut w) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = w.write_all(&stdin);
-                    }
-                    let out = out_rx.recv().unwrap_or_default();
-                    let err = err_rx.recv().unwrap_or_default();
-                    match child.wait() {
-                        Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
-                        // A signalled child has no code; -1 rather than 0, never read as success.
-                        Ok(status) => Outcome::Exec(
-                            status.code().unwrap_or(-1),
-                            out,
-                            err,
-                            String::new(),
-                        ),
-                    }
-                }
-            };
-            return settle_now(caller, Kind::Exec, outcome, results);
+            // **On a thread, so the ticket is handed back while the child is still running.**
+            // Everything above reads wasm memory and has to happen here; nothing below touches the
+            // module. This used to run the child to completion inside the call and settle the ticket
+            // in the same breath, which made a `Pending<Exec>` on this host a promise of something
+            // that had already happened — while the other three hosts dispatch and return at once
+            // (`packages/platform/host/respond.ts`). Three concurrent `sleep 1` were three seconds
+            // here and one on Deno: issue 0206, and `packages/platform/test/wac/exec_test.wac` is
+            // where it is held. The second half of what it cost is worse than the lost overlap: a
+            // ticket that only exists after the work is over cannot be watched by `waitAny`, so a
+            // wedged child had nothing bounding it.
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            std::thread::spawn(move || {
+                table.complete(id, run_host_program(path, argv, stdin));
+            });
+            return pending_for(caller, Kind::Exec, id, results);
         }
         Cap::SetExecutable => {
             let path = read_string(caller, &params[1])?;
@@ -2785,4 +2741,75 @@ fn write_raw(bytes: &[u8], to_stderr: bool) -> bool {
     // not have the prompt sitting in this process's buffer.
     let _ = if to_stderr { std::io::stderr().flush() } else { std::io::stdout().flush() };
     ok
+}
+
+/// A host program, run to completion, off the wasm thread — the body of `Cap::Exec`.
+///
+/// Named apart from `run_child` above, which starts a confined **wasm module**: `Cli.exec` and
+/// `spawn` are separate capabilities for exactly that reason, and two functions called the same
+/// thing would undo the distinction the capability list is built on.
+///
+/// Lifted out of the capability call so the ticket can be handed back before any of this happens;
+/// see the note at `Cap::Exec` and issue 0206. Nothing in here reads wasm memory, which is what
+/// makes it liftable at all.
+fn run_host_program(path: String, argv: Vec<String>, stdin: Vec<u8>) -> Outcome {
+    // An argument *vector*, never a shell line: a value containing a space or a semicolon
+    // arrives whole. A caller who wants a shell names `/bin/sh -c`.
+    let mut cmd = std::process::Command::new(&path);
+    cmd.args(&argv)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    match cmd.spawn() {
+        Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+        Ok(mut child) => {
+            // **Draining starts before the write, not after.** A child that answers while it
+            // is still being fed — `cat`, `grep`, any filter — blocks on its own output once
+            // the pipe buffer is full, and a host that writes the whole of stdin first blocks
+            // on the write. Both waiting on the other.
+            //
+            // `wait_with_output` does drain both pipes, which is what the comment here used
+            // to say, and it is not enough: it does not start until the write has finished.
+            // Two megabytes through `cat` hung every host —
+            // `packages/platform/test/wac/exec_test.wac`.
+            let (out_tx, out_rx) = std::sync::mpsc::channel();
+            let (err_tx, err_rx) = std::sync::mpsc::channel();
+            let mut out_pipe = child.stdout.take();
+            let mut err_pipe = child.stderr.take();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut v = Vec::new();
+                if let Some(p) = out_pipe.as_mut() {
+                    let _ = p.read_to_end(&mut v);
+                }
+                let _ = out_tx.send(v);
+            });
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut v = Vec::new();
+                if let Some(p) = err_pipe.as_mut() {
+                    let _ = p.read_to_end(&mut v);
+                }
+                let _ = err_tx.send(v);
+            });
+            // Dropped at the end of the block, which is what closes the child's input: a
+            // program that reads to the end needs the end to arrive.
+            if let Some(mut w) = child.stdin.take() {
+                use std::io::Write;
+                let _ = w.write_all(&stdin);
+            }
+            let out = out_rx.recv().unwrap_or_default();
+            let err = err_rx.recv().unwrap_or_default();
+            match child.wait() {
+                Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+                // A signalled child has no code; -1 rather than 0, never read as success.
+                Ok(status) => Outcome::Exec(
+                    status.code().unwrap_or(-1),
+                    out,
+                    err,
+                    String::new(),
+                ),
+            }
+        }
+    }
 }
