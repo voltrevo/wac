@@ -1,6 +1,7 @@
 # 0166 — a child inside a frame loses its `openOutput` redirection, and is told it worked
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
@@ -192,4 +193,32 @@ closed. `lib/safe.wac` does close its own (`openOutput("")` on both the success 
 common case is covered, but "the child exited mid-redirect" needs an answer rather than an assumption.
 
 That is a change to a platform contract, so it is written down here rather than made in passing.
+
+## Fixed — 2026-08-18
+
+A `Frame` carries the redirection now: `outPath` is where the child said its output goes, `held` is what
+has been written since, and `openOutput("")` writes the file and puts the capture back. `childCli` wires
+`openOutput` to `Frame.redirectOutput` rather than passing it to the parent, and opening a second
+redirection closes the first — which is what a program writing one file per piece expects.
+
+**Buffered rather than streamed, and that is the decision this issue was waiting on.** `openOutput` on the
+host *is* the streaming form, and the only writing capability a frame's parent has is `writeFile`, which
+truncates — there is no append. So the bytes are held until the child closes the stream. That costs the
+memory the applet was avoiding, bounded by the same thing that bounds every other in-process child: a
+frame holds its child's output anyway.
+
+**A child that never closes its redirection loses what it held**, and that is stated rather than silent:
+`Frame.flushOutput` is there for a caller that wants to be sure, and `lib/safe.wac` closes on both its
+success and failure paths, `split` after its last piece. What is not acceptable is what this issue was
+about, where a child that closed *correctly* still lost the file.
+
+Verified by `packages/platform/test/wac/frameoutput_test.wac`, written first and watched fail in both
+shapes — the file empty, and the redirected bytes arriving as the child's output — then again for the
+bytes either side of a redirection still being the child's own. And by the applets: `cp`, `sponge` and
+`split` write their files in process now, which is three skips removed from
+`packages/box/test/wac/behaviour_test.wac` and `applets_test.wac`, each of which asserted a count that had
+to be raised before it would pass again.
+
+And the clause that kept this filed rather than fixed is gone from `frame.wac`. The host's behaviour is to
+write the file.
 

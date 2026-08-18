@@ -162,12 +162,15 @@ export string test_boxs_mutation_tier(Core core, Cli cli) {
   t.eqI32(runCase(core, cli, root, "rm -r a").status, 0, "rm -r");
   t.isTrue(!cli.stat(root + "/a").wait().exists, "rm -r took the tree");
 
-  // **The point of the tier — `cp` writing beside its target and renaming — is not here**, and cannot be
-  // until `issues/system/0166`. `cp` streams through `lib/safe.wac`'s `openOutput`, and inside a frame
-  // those bytes are kept by the capture: `cp src copy` prints the contents, writes an empty `copy` and
-  // exits 0. `sponge`, `split` and `wget` take the same path. That paragraph stays in `box.test.ts`,
-  // where the program is built and spawned and the copy actually happens.
-  t.eqStr(sortedJoin(cli.readDir(root).wait()), "moved", "something unexpected is left in the directory");
+  // The point of the tier: `cp` writes beside its target and renames, so the destination is never seen
+  // half-written and no temporary name survives a successful copy. **This could not be asserted in
+  // process until `issues/system/0166`** — a frame kept the bytes `cp` redirected to its temporary, so the
+  // copy printed itself and wrote nothing.
+  t.isTrue(cli.writeFile(root + "/src", "some bytes to copy\n".toBytes()).wait().ok(), "fixture");
+  t.eqI32(runCase(core, cli, root, "cp src copy").status, 0, "cp");
+  t.eqStr(string.fromBytes(cli.readFile(root + "/copy").wait().bytes), "some bytes to copy\n",
+          "cp copied it");
+  t.eqStr(sortedJoin(cli.readDir(root).wait()), "copy moved src", "a temporary file survived");
   cli.remove(root, true).wait();
   return t.report();
 }

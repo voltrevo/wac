@@ -31,7 +31,8 @@
 // capabilities untouched. A real boundary is `spawn`. What it does remove is a host round trip from
 // something that should be a value, and `design/lang/0002` is why it can be one.
 
-import { Captured, Change, Cli, Core, Datagram, FileResult, Pending, Socket, Stat } from "./platform.wac";
+import { Captured, Change, Cli, Core, Datagram, FAULT_NONE, FileResult, Pending, Socket, Stat }
+  from "./platform.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Read } from core;
 
@@ -101,19 +102,81 @@ export struct Frame {
    * honest answer to it is a failure rather than a number that is not the answer.
    */
   bool overflowed;
+  /**
+   * Where the child said its standard output goes, or "" for the capture — `openOutput`'s path.
+   *
+   * **This used to be ignored, and `issues/system/0166` is what that cost.** A child that redirected
+   * itself had its bytes kept by the capture and wrote an empty file: `cp`, `sponge`, `split` and `wget`
+   * all stream through `packages/box/src/lib/safe.wac`'s `openOutput`, so in process each of them copied
+   * nothing and exited 0. On the host the same call is a real redirection, so the two routes disagreed
+   * about a copy — on the route `packages/box/example/boxsh.wac` uses, which is the website's terminal.
+   */
+  string outPath;
+  /**
+   * What has been written since the redirection opened, waiting for it to close.
+   *
+   * **Buffered rather than streamed, because a `Cli` has no append**: `openOutput` on the host *is* the
+   * streaming form, and the only writing capability a frame's parent has is `writeFile`, which truncates.
+   * So the bytes are held and written when the child puts the stream back. That costs the memory the
+   * applet was avoiding by streaming — bounded by the same thing bounding every other in-process child,
+   * which is that a frame holds its child's output anyway.
+   *
+   * **A child that never closes its redirection loses this**, and that is a stated limitation rather than
+   * an oversight: `safe.wac` closes on both its success and failure paths, `split` closes after its last
+   * piece, and `flushOutput` is here for a caller that wants to be sure. What is *not* acceptable is the
+   * old behaviour, where a child that closed correctly still lost the file.
+   */
+  Buf held;
 
   Frame of(string[] argv, u8[] stdin, string cwd, bool inheritIn) {
-    return Frame(argv, stdin, 0, inheritIn, cwd, false, Buf.create(), Buf.create(), false);
+    return Frame(argv, stdin, 0, inheritIn, cwd, false, Buf.create(), Buf.create(), false, "",
+                 Buf.create());
   }
 
   /** Keep these bytes as the child's output. False means the buffer is full. */
   bool write(this, u8[] bytes) {
+    // **A redirection takes them instead**, which is what `openOutput` means. Uncapped, like `err`: the
+    // cap exists so a child cannot exhaust memory printing at its caller, and a child writing to a file
+    // it named is bounded by the file rather than by the caller's patience.
+    if (this.outPath != "") {
+      this.held.pushAll(bytes);
+      return true;
+    }
     if (this.out.len + bytes.len() > outputCap()) {
       this.overflowed = true;
       return false;
     }
     this.out.pushAll(bytes);
     return true;
+  }
+
+  /**
+   * Point the child's output at `path`, or back at the capture when `path` is empty.
+   *
+   * Closing writes what was held. A `Change` comes back either way, because the child is asking a
+   * capability a question and "the file could not be written" is the answer it has to be able to get —
+   * the old wiring passed the parent's answer through and then ignored the bytes.
+   */
+  Change redirectOutput(this, const Cli parent, string path) {
+    Change closed = this.flushOutput(parent);
+    if (path == "") { return closed; }
+    if (!closed.ok()) { return closed; }
+    this.outPath = this.path(path);
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /**
+   * Write what a redirection has held, and put the capture back.
+   *
+   * Safe to call when nothing is redirected — it is then the empty statement, which is what lets a caller
+   * that does not know whether its child closed its own output call this and be sure.
+   */
+  Change flushOutput(this, const Cli parent) {
+    if (this.outPath == "") { return Change.of(FAULT_NONE(), ""); }
+    string path = this.outPath;
+    u8[] bytes = this.held.take();
+    this.outPath = "";
+    return parent.writeFile(path, bytes).wait();
   }
 
   /**
@@ -224,10 +287,10 @@ export Core childCore(Frame f, const Core parent) {
  *   - every path capability is taken relative to `f.cwd`;
  *   - `cwd` answers the child's, since that is where it stands.
  *
- * **`openOutput` does not escape the capture**, which is the host's behaviour too: a child inside a
- * frame has its output kept even after it says its output is a file. See `issues/system/0166` — that
- * is a real defect, filed rather than changed here, because changing it in one of the two
- * implementations would make them disagree about something neither documents.
+ * **`openOutput` redirects, as it does on the host**: a child that says its output is a file gets a file.
+ * It did not until `issues/system/0166` — the capture kept the bytes, so `cp`, `sponge`, `split` and
+ * `wget` each wrote an empty file in process and exited 0. The comment here used to claim the capture was
+ * "the host's behaviour too", and that was simply false; measuring both routes is what settled it.
  */
 export Cli childCli(Frame f, const Cli parent) {
   return Cli.of(
@@ -257,7 +320,11 @@ export Cli childCli(Frame f, const Cli parent) {
       return Read.Data(chunk);
     },
     parent.outputError,
-    (string p) => parent.openOutput(f.streamPath(p)),
+    // **Redirection is the child's, and it lands in a file.** An empty path means "back to standard
+    // output", which here means back to the capture, and closing is when the held bytes are written —
+    // see `Frame.held` and `issues/system/0166`. Opening a second redirection closes the first, which is
+    // what a program doing this per piece expects: `split` opens one output per piece and closes the last.
+    (string p) => ready(f.redirectOutput(parent, p)),
     parent.connect,
     parent.listen,
     parent.accept,

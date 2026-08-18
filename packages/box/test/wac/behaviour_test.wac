@@ -23,20 +23,6 @@ string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
 /** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
 string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-behaviour"; }
 
-/**
- * Cases the in-process route cannot answer, by name and with the reason.
- *
- * **`issues/system/0166`**, which `frame.wac` names in as many words: "`openOutput` does not escape the
- * capture". An applet that redirects its own standard output to a file — `split` is the only one — has
- * those bytes kept by the frame instead, so its pieces land on stdout as well as in the files. Spawned,
- * the same applet is correct, which is how this survived: every sweep that covered `split` spawned.
- *
- * Listed here rather than dropped from `cases.wac`, because the case is a real expectation and the
- * capture holds the right answer for it. When 0166 is fixed this list empties and the count below rises
- * by one, which is the loudest way to notice.
- */
-bool blockedByFrame(string script) { return script.indexOf("split ") >= 0; }
-
 export string test_every_implemented_flag_still_answers_what_the_real_tool_answered(Core core, Cli cli) {
   T t = T.create();
   Loaded v = load(cli, vectorsPath());
@@ -54,7 +40,6 @@ export string test_every_implemented_flag_still_answers_what_the_real_tool_answe
     // adds or reorders one would otherwise compare every later case against its neighbour's expectation
     // and report a hundred applet bugs.
     if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
-    if (blockedByFrame(list[i])) { continue; }
     if (!layFixtures(cli, dir, fixtures())) {
       t.isTrue(false, "cannot lay the fixtures in " + dir);
       return t.report();
@@ -73,10 +58,12 @@ export string test_every_implemented_flag_still_answers_what_the_real_tool_answe
   }
   cli.remove(dir, true).wait();
 
-  // One short of the list, and the one is named: `split` cannot be replayed in process until
-  // `issues/system/0166` is fixed. A bare `ran == list.len()` would have to be relaxed silently.
-  t.eqI32(ran, list.len() - 1, "not every case replayed — " + itoa(list.len()) + " cases, " +
-                               itoa(v.n) + " vectors, and one skipped for issues/system/0166");
+  // **Every case, and it was not always.** `split` was skipped by name until `issues/system/0166` was
+  // fixed — a frame kept the bytes an applet redirected to a file, so `split` wrote its pieces to standard
+  // output and left them empty. The count is what announced the fix: it had to be raised here before this
+  // file would pass again.
+  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+                           " vectors");
   t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded script — `cases.wac` changed, so " +
                       "`wac run --allow-read --allow-write --allow-run tools/wac/appletvectors.wac` is " +
                       "what makes this file mean anything again");
@@ -99,7 +86,6 @@ export string test_the_live_tools_still_agree_on_a_handful(Core core, Cli cli) {
   // Spread across the list rather than the first ten, which are all `sort`.
   for (i32 k = 0; k < 10; k++) {
     i32 i = (k * list.len()) / 10;
-    if (blockedByFrame(list[i])) { continue; }
     if (!layFixtures(cli, dir, fixtures())) {
       t.isTrue(false, "cannot lay the fixtures in " + dir);
       return t.report();

@@ -1163,10 +1163,11 @@ Deno.test("cp writes beside its target and renames, and none of the tier happens
     // leaving an existing file alone, `mv`, `rmdir` refusing a non-empty directory, `rm` needing `-r`.
     // Those are assertions about our own behaviour and need neither a build nor a process.
     //
-    // These two do. The first because `cp` streams through `lib/safe.wac`'s `openOutput`, which inside a
-    // frame is kept by the capture — `issues/system/0166`, where in process it writes an empty file and
-    // exits 0. The second because a grant is a property of the built program and the host that enforces
-    // it, and a test process holds grants of its own.
+    // What is left here is the grant, which is a property of the built program and the host that
+    // enforces it — a test process holds grants of its own, so it cannot ask. `cp` writing beside its
+    // target *is* asserted in process now, since `issues/system/0166` was fixed and a frame carries a
+    // child's redirection; this keeps the spawned spelling of it, which is the smoke test the boundary
+    // is entitled to.
     // The point of the tier: `cp` writes beside its target and renames, so the destination
     // is never seen half-written and no temporary name survives a successful copy.
     assertEquals(box(["cp", "README.md", `${root}/copy`]).code, 0);
