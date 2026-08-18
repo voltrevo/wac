@@ -97,6 +97,12 @@ export Daemon start(Cli cli, string line, string logPath) {
  *
  * `tries` bounds it. A refused connection returns immediately, so this spins rather than sleeps — see
  * the header. False means nothing ever answered, and the caller must say so rather than carry on.
+ *
+ * **Not for a server that accepts once.** This *connects*, which is a real client as far as the
+ * server is concerned: a fixture written `accept()` and then serve it has already spent its one
+ * connection by the time the test dials, and what the test sees is a reset rather than an answer.
+ * That cost an afternoon in `packages/platform/test/wac/waitany_test.wac`, whose listeners answer
+ * exactly one client each. Use `waitForLog` for those and have the fixture say when it is listening.
  */
 export bool waitForPort(Cli cli, string host, i32 port, i32 tries) {
   for (i32 i = 0; i < tries; i++) {
@@ -112,6 +118,24 @@ export bool waitForPort(Cli cli, string host, i32 port, i32 tries) {
 /** Whatever the daemon wrote, for a message about why it did not come up. */
 export string logOf(Cli cli, Daemon d) {
   return string.fromBytes(cli.readFile(d.log).wait().bytes);
+}
+
+/**
+ * Poll until the daemon's log contains `text`.
+ *
+ * The readiness check for a server that cannot be dialled speculatively — see `waitForPort`. The
+ * fixture says when it is listening and this waits for it to say so, which costs the fixture one
+ * `print` and costs the server nothing.
+ *
+ * A fixture that buffers its output will never appear ready, so whatever prints the marker has to
+ * flush. That is not a detail this can paper over: the alternative is a readiness check that answers
+ * yes before the socket exists.
+ */
+export bool waitForLog(Cli cli, Daemon d, string text, i32 tries) {
+  for (i32 i = 0; i < tries; i++) {
+    if (logOf(cli, d).indexOf(text) >= 0) { return true; }
+  }
+  return false;
 }
 
 /**
