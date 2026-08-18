@@ -28,6 +28,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ref, assertCaught, assertQuiet, assertSound, caughtAndQuiet, complaint, decidedByReference,
+         referenceTolerant,
          joinedWith, ours, referenceFor }
   from "./rung3_probe.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
@@ -1091,5 +1092,138 @@ export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core cor
     // A local of that name is a variable, not a type: the scope is consulted before the surface.
     "export i32 ok(i32 f64) { return f64; }"),
   "the builtin surface");
+  return t.report();
+}
+
+/**
+ * A grid's verdict: which cells the reference rejects and we ignore, and which we invent.
+ *
+ * Both directions are collected rather than thrown on, because the count is the diagnosis: one
+ * silent cell is a gap and four hundred is a rule that never ran.
+ */
+struct Grid {
+  i32 cells;
+  i32 accepted;
+  string silent;
+  i32 silentN;
+  string alarms;
+  i32 alarmsN;
+}
+
+Grid gridOf(T t, Cli cli, string[] sources, string[] labels) {
+  Ref r = referenceTolerant(t, cli, sources);
+  Grid g = Grid(0, 0, "", 0, "", 0);
+  if (!r.ok) { return g; }
+  for (i32 i = 0; i < sources.len(); i++) {
+    // A combination the reference's own front end will not parse is not a cell.
+    if (r.bad[i]) { continue; }
+    g.cells = g.cells + 1;
+    i32 theirs = r.count(i);
+    i32 mine = ours(sources[i]).len();
+    if (theirs == 0) { g.accepted = g.accepted + 1; }
+    if (theirs > 0 && mine == 0) {
+      if (g.silentN < 20) { g.silent = g.silent + (g.silentN == 0 ? "" : "\n  ") + labels[i]; }
+      g.silentN = g.silentN + 1;
+    }
+    if (theirs == 0 && mine > 0) {
+      if (g.alarmsN < 20) { g.alarms = g.alarms + (g.alarmsN == 0 ? "" : "\n  ") + labels[i]; }
+      g.alarmsN = g.alarmsN + 1;
+    }
+  }
+  return g;
+}
+
+export string test_rung3_every_operator_against_every_type(Core core, Cli cli) {
+  T t = T.create();
+  string prelude = "struct S { i32 v; } enum E { A, B }\n";
+  string[] types = string[](
+    "i32", "i64", "f64", "bool", "string", "string?",
+    "S", "S?", "E", "E?", "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref");
+  string[] ops = string[]("==", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "&", "|", "^",
+                          "&&", "||");
+  i32 total = types.len() * types.len() * ops.len();
+  string[] sources = string[total](fill: "");
+  string[] labels = string[total](fill: "");
+  i32 n = 0;
+  for (i32 l = 0; l < types.len(); l++) {
+    for (i32 rr = 0; rr < types.len(); rr++) {
+      for (i32 o = 0; o < ops.len(); o++) {
+        // The slot is what the operator answers, so a cell is about the operator rather than about a
+        // cast bolted on to make it a statement.
+        bool comparison = ops[o] == "==" || ops[o] == "!=" || ops[o] == "<" || ops[o] == "<=" ||
+                          ops[o] == ">" || ops[o] == ">=" || ops[o] == "&&" || ops[o] == "||";
+        string slot = comparison ? "bool" : types[l];
+        sources[n] = prelude + "export void f(" + types[l] + " a, " + types[rr] + " b) { " +
+                     slot + " r = a " + ops[o] + " b; }";
+        labels[n] = types[l] + " " + ops[o] + " " + types[rr];
+        n = n + 1;
+      }
+    }
+  }
+  Grid g = gridOf(t, cli, sources, labels);
+
+  // The canary the first version lacked. If the matrix stops containing programs of both kinds, the
+  // two assertions below are being satisfied by an absence rather than by agreement.
+  t.isTrue(g.cells >= 3000, "only " + itoa(g.cells) + " cells reached the comparison");
+  t.isTrue(g.accepted >= 20, "the reference accepts only " + itoa(g.accepted) + " of " +
+                             itoa(g.cells) + " cells, so \"no false alarm\" is not being tested");
+  t.isTrue(g.accepted <= g.cells - 100,
+           "the reference rejects only " + itoa(g.cells - g.accepted) + " of " + itoa(g.cells) +
+           " cells, so \"we are not silent\" is not being tested");
+  t.eqI32(g.silentN, 0, itoa(g.silentN) + " of " + itoa(g.cells) +
+                        " cells the reference rejects and we say nothing about:\n  " + g.silent);
+  t.eqI32(g.alarmsN, 0, itoa(g.alarmsN) + " cells we report on that the reference accepts:\n  " +
+                        g.alarms);
+  core.log("    operator grid: " + itoa(g.cells) + " cells, " + itoa(g.accepted) + " accepted");
+  return t.report();
+}
+
+/**
+ * **Every type into every other type's slot**, again with the reference deciding.
+ *
+ * The initialiser rung is a hand-written list of thirteen programs. This is the same question asked
+ * 324 times, and the one thing it found was in the direction that list could never have covered: not
+ * a rule we are missing, but a **program we refuse that the reference accepts**.
+ *
+ * `anyref r = someEnum` is legal — an enum is held by reference like anything else — and wacc refused
+ * it. `isReferenceType`, which is the predicate `anyref` asks, listed arrays, strings, `anyref` and
+ * structs. Its neighbour `isCastRef` carries a comment saying in as many words that "an enum and a
+ * funcref are references too", so the fact was known and written down next to the helper that did not
+ * use it.
+ *
+ * A funcref is a different matter and stays out: the reference refuses `anyref r = someFn` too, and
+ * the grid is what says so rather than the comment.
+ */
+export string test_rung3_every_type_into_every_other_types_slot(Core core, Cli cli) {
+  T t = T.create();
+  string prelude = "struct S { i32 v; } enum E { A, B }\n";
+  string[] types = string[](
+    "i32", "i64", "f64", "bool", "string", "string?", "S", "S?", "E", "E?",
+    "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref", "i8", "u32", "f32");
+  i32 total = types.len() * types.len();
+  string[] sources = string[total](fill: "");
+  string[] labels = string[total](fill: "");
+  i32 n = 0;
+  for (i32 s = 0; s < types.len(); s++) {
+    for (i32 h = 0; h < types.len(); h++) {
+      sources[n] = prelude + "export void f(" + types[h] + " b) { " + types[s] + " r = b; }";
+      labels[n] = types[h] + " into " + types[s];
+      n = n + 1;
+    }
+  }
+  Grid g = gridOf(t, cli, sources, labels);
+
+  // Both kinds of cell have to be present, or one of the two assertions below is vacuous.
+  t.isTrue(g.cells >= 300, "only " + itoa(g.cells) + " cells reached the comparison");
+  t.isTrue(g.accepted >= 10 && g.accepted <= g.cells - 50,
+           itoa(g.accepted) + " of " + itoa(g.cells) +
+           " accepted — the grid has stopped containing both kinds");
+  // **The alarms first**, because refusing correct code is the worse failure: a gap costs a
+  // diagnostic nobody gets, and an alarm costs a program nobody can compile.
+  t.eqI32(g.alarmsN, 0, itoa(g.alarmsN) + " cells we refuse that the reference accepts:\n  " +
+                        g.alarms);
+  t.eqI32(g.silentN, 0, itoa(g.silentN) + " of " + itoa(g.cells) +
+                        " cells the reference rejects and we say nothing about:\n  " + g.silent);
+  core.log("    slot grid: " + itoa(g.cells) + " cells, " + itoa(g.accepted) + " accepted");
   return t.report();
 }
