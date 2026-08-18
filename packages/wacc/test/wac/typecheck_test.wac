@@ -28,7 +28,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ref, assertCaught, assertQuiet, assertSound, caughtAndQuiet, complaint, decidedByReference,
-         referenceTolerant,
+         assertComplete, referenceTolerant,
          joinedWith, ours, referenceFor }
   from "./rung3_probe.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
@@ -1225,5 +1225,115 @@ export string test_rung3_every_type_into_every_other_types_slot(Core core, Cli c
   t.eqI32(g.silentN, 0, itoa(g.silentN) + " of " + itoa(g.cells) +
                         " cells the reference rejects and we say nothing about:\n  " + g.silent);
   core.log("    slot grid: " + itoa(g.cells) + " cells, " + itoa(g.accepted) + " accepted");
+  return t.report();
+}
+
+/**
+ * **The unary operators and `!`-unwrap, over every type.**
+ *
+ * The third grid, and it found the same shape a third time: a rule spelled as a list of type names,
+ * and the list was short. `-` refused `bool`, `string` and structs, so `-someEnum`, `-someArray`,
+ * `-someFn` and `-someAnyref` all compiled — as did `-a` on a `u32`, which is not a reference at all
+ * but is equally not a thing with a negation.
+ *
+ * `p!` was the same: refused on a struct or a primitive, silent on an enum, an array, a funcref or an
+ * `anyref`, none of which has a `?` to unwrap either.
+ *
+ * ## Why each program's slot is the operand's own type
+ *
+ * So that only the operator can be the error. An earlier version wrote `i32 r = (a!).v` and learned
+ * about `.v` on a string rather than about the unwrap, and `bool r = (a op b) as~ bool` measured the
+ * cast. A grid is only as good as the thing it isolates.
+ */
+export string test_rung3_the_unary_operators_over_every_type(Core core, Cli cli) {
+  T t = T.create();
+  string prelude = "struct S { i32 v; } enum E { A, B }\n";
+  string[] types = string[](
+    "i32", "i64", "f64", "f32", "bool", "i8", "u8", "i16", "u16", "u32", "u64",
+    "string", "string?", "S", "S?", "E", "E?", "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref");
+  string[] forms = string[]("-a", "!a", "~a", "a!");
+  for (i32 f = 0; f < forms.len(); f++) {
+    string[] sources = string[types.len()](fill: "");
+    string[] labels = string[types.len()](fill: "");
+    for (i32 i = 0; i < types.len(); i++) {
+      string ty = types[i];
+      // Each form's slot is the operand's own type, so a mismatch cannot stand in for the operator.
+      // `a!` on a nullable answers the non-null form, which widens back into the nullable slot.
+      string body = f == 0 ? ty + " r = -a;"
+                  : (f == 1 ? "bool r = !a;"
+                  : (f == 2 ? ty + " r = ~a;" : ty + " r = a!;"));
+      sources[i] = prelude + "export void f(" + ty + " a) { " + body + " }";
+      labels[i] = ty;
+    }
+    Grid g = gridOf(t, cli, sources, labels);
+    t.isTrue(g.cells >= types.len() - 2, forms[f] + ": only " + itoa(g.cells) + " cells");
+    t.eqI32(g.alarmsN, 0, forms[f] + ": " + itoa(g.alarmsN) +
+                          " we refuse and the reference accepts: " + g.alarms);
+    t.eqI32(g.silentN, 0, forms[f] + ": " + itoa(g.silentN) +
+                          " the reference rejects and we say nothing about: " + g.silent);
+  }
+  return t.report();
+}
+
+/**
+ * **A packed type in every position it can be written in.**
+ *
+ * `u8 i8 u16 i16` exist as array elements and struct fields and nowhere else: no slot is one byte
+ * wide, so a packed value has no representation of its own to be held in. `checkParams` says exactly
+ * that in a comment — "it exists as an array element and nowhere else" — and enforced it for
+ * parameters only. A local, a return type and a cast target are the other three positions, and a grid
+ * over the four types by the places a type can be written found all of them.
+ *
+ * ## This one asks for completeness, which the other rungs deliberately do not
+ *
+ * Rung 3's contract is soundness and position: everything we report, the reference reports in the
+ * same place, and nothing more is demanded, because demanding everything would fail until the whole
+ * checker is finished. Here the rule is small enough to finish, so the assertion is the stronger one
+ * — every position the reference complains at, we complain at too. A rule claimed to be implemented
+ * in four positions and tested in one is how this got missed.
+ */
+export string test_rung3_a_packed_type_in_every_position(Core core, Cli cli) {
+  T t = T.create();
+  string[] packed = string[]("u8", "i8", "u16", "i16");
+  string[] places = string[]("parameter", "local", "return", "cast target", "struct field",
+                             // **The only positions a packed type is legal in.** A struct field is
+                             // not one — it is above — and that was assumed until this grid said
+                             // otherwise, which is the second time in one afternoon that reading a
+                             // rule's own words ("an array element and nowhere else") would have
+                             // been quicker than reasoning about it.
+                             "array element", "array field");
+  string[] sources = string[places.len() * packed.len()](fill: "");
+  string[] labels = string[places.len() * packed.len()](fill: "");
+  bool[] legal = bool[places.len() * packed.len()]();
+  i32 n = 0;
+  for (i32 p = 0; p < places.len(); p++) {
+    for (i32 k = 0; k < packed.len(); k++) {
+      string ty = packed[k];
+      string src = p == 0 ? "export void f(" + ty + " a) { }"
+                 : (p == 1 ? "export void f() { " + ty + " r = 0; }"
+                 : (p == 2 ? "export " + ty + " f() { return 0; }"
+                 : (p == 3 ? "export void f(i32 n) { i32 r = (n as " + ty + ") as i32; }"
+                 : (p == 4 ? "struct S { " + ty + " v; } export void f(S s) { }"
+                 : (p == 5 ? "export void f(" + ty + "[] a) { }"
+                           : "struct S { " + ty + "[] v; } export void f(S s) { }")))));
+      sources[n] = src;
+      labels[n] = places[p] + " " + ty;
+      legal[n] = p >= 5;
+      n = n + 1;
+    }
+  }
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (legal[i]) {
+      t.eqI32(r.count(i), 0,
+              labels[i] + ": the reference now refuses this, so the grid's premise moved");
+      assertQuiet(t, r, i, labels[i] + ": a position packed types exist for");
+      continue;
+    }
+    t.isTrue(r.count(i) > 0,
+             labels[i] + ": the reference accepts it, so this case is no longer a rule");
+    assertComplete(t, r, i, labels[i]);
+  }
   return t.report();
 }

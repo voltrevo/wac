@@ -237,6 +237,43 @@ export void decidedByReference(T t, Cli cli, string[] sources, string what) {
   }
 }
 
+/**
+ * The **completeness** direction: every position the reference reports, we report too.
+ *
+ * Rung 3 does not ask for this in general — the checker is a subset by design, and demanding it
+ * everywhere would fail until the whole rung is finished. It is asked where a rule is small enough
+ * to be finished, and a rule claimed to be implemented in four positions and tested in one is how
+ * the packed-type family got missed.
+ */
+export void assertComplete(T t, Ref r, i32 i, string what) {
+  string[] mine = ours(r.sources[i]);
+  string[] theirs = splitCommas(r.at[i]);
+  for (i32 k = 0; k < theirs.len(); k++) {
+    bool got = false;
+    for (i32 m = 0; m < mine.len(); m++) { if (mine[m] == theirs[k]) { got = true; } }
+    if (got) { continue; }
+    t.fail(what + ": the reference reports at " + theirs[k] + " — " + r.said[i] +
+           " — and we report at " + (mine.len() == 0 ? "nowhere" : joinedWith(mine, ", ")));
+  }
+}
+
+/** `a,b,c` as three strings; empty for "". */
+export string[] splitCommas(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == ",") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != ",") { continue; }
+    out[k] = s.slice(at, i);
+    k = k + 1;
+    at = i + 1;
+  }
+  return out;
+}
+
 /** The no-false-alarm half: the reference accepted this program, so we must be silent. */
 export void assertQuiet(T t, Ref r, i32 i, string what) {
   string[] mine = ours(r.sources[i]);
