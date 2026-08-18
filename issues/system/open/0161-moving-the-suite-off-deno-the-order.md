@@ -1255,3 +1255,30 @@ means the property that test asserts is false on the binary.
 The general shape: a conversion is blocked either by something the CLI cannot express, or by
 something that turns out not to work on the host the CLI uses. The second kind is worth more than the
 conversion.
+
+### `packages/wacc`'s tests convert better than anything else — 2026-08-18
+
+Worth stating plainly, because it changes where the remaining effort should go: `waccApi()` is
+TypeScript reaching into wacc through a wasm binding, and in wac the same thing is an **import**.
+`import { diagnoseGraph } from "../../src/api.wac"` — no subprocess, no binding, no harness. The
+compiler is a wac library and the test is a wac program. `checkGraph` (7 cases) was a straight lift on
+that basis.
+
+Where the four remaining siblings stand, so nobody re-derives it:
+
+- **`renderDiag.test.ts` is portable and not yet done.** Its oracle is the *reference's* `wacDiag`,
+  which is right — the claim is that the two halves of the toolchain explain themselves the same way
+  — so the oracle stays TypeScript and wants a batched script, the same shape `packages/json` and
+  `packages/tls` grew. A real port rather than a lift.
+- **`scoping.test.ts` is half-portable.** `diagnoseFiles` and `emitFiles` lift; the last assertion
+  instantiates the module and calls `run()`, expecting 2. wac cannot instantiate. `wac validate`
+  covers "the engine accepts it" — which is what `duplicateExports` needed — but not "it answers 2",
+  and the fixture's module imports a callback bridge, so running it out needs a manifest rather than
+  a bare `wac mod.wasm`.
+- **`jsxBoundary.test.ts` stays.** A JSX tree built in wac is walked by a renderer *written in
+  JavaScript*, using glue generated from the module's own metadata — two pieces of code that share
+  nothing but the compiler, agreeing on a value. The JavaScript is half the differential, so
+  translating it would delete the claim. Same category as `trapMessage`'s built-app case and
+  `packages/stream`.
+- **`manifest.test.ts` and `jsBindgen.test.ts`** were already rejected earlier for the same kind of
+  reason — a cargo build and JS glue as the subject.
