@@ -22,7 +22,7 @@
 // contribute **both halves** — a fold that kept only the low word would agree about two values that
 // differ above bit 32, which is exactly where these operations go wrong.
 //
-// test-lane: heavy — 173s, the whole corpus emitted three times
+// test-lane: heavy — 140s, measured, the whole corpus emitted twice (and every twentieth a third time)
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -201,26 +201,46 @@ export string test_the_in_range_answers_are_the_same_either_way(Core core, Cli c
   return t.report();
 }
 
-export string test_with_the_flag_off_not_a_byte_moves_over_the_whole_corpus(Core core, Cli cli) {
+/**
+ * Over the whole corpus: the flag adds code everywhere, and the emitter is deterministic.
+ *
+ * **This was called "with the flag off, not a byte moves", and it could not have seen that.** Both sides
+ * of its comparison were `emitFiles` — today's default build against today's default build, in the same
+ * process — so what it can fail on is the emitter being nondeterministic, and *not* on the default build
+ * having changed. The stronger claim needs an oracle the default build cannot be: a recorded checksum per
+ * corpus file, which is a baseline that a legitimate emitter change invalidates on purpose, i.e. a file
+ * to re-record on most compiler commits. That is a real cost and it is why there is none; what is not
+ * worth having is a name claiming it.
+ *
+ * So the two things it does check are what it now says, and the determinism half is **sampled**. It was
+ * a third full emit of every file — 340 of them — to test a property that does not vary by file: a pure
+ * function called twice in one process either agrees or the emitter has state. Every twentieth file is
+ * enough to notice that, and it took a 203s file to 140s, measured both times.
+ */
+export string test_the_flag_adds_code_over_the_whole_corpus_and_the_emitter_is_deterministic(
+    Core core, Cli cli) {
   T t = T.create();
   Corpus c = loadCorpus(cli, "checked_test");
   t.isTrue(c.ok, "the corpus loaded — " + c.error);
   if (!c.ok) { return t.report(); }
 
   i32 compared = 0;
+  i32 determinism = 0;
   string[] differ = string[16](fill: "");
   i32 nDiffer = 0;
   for (i32 f = 0; f < c.paths.len(); f++) {
     u8[] a = emitFiles(c.paths, c.sources, c.paths[f]);
     u8[] b = emitFilesChecked(c.paths, c.sources, c.paths[f]);
-    // The checked build is *allowed* to differ — that is the point — so what is asserted is the
-    // other direction: the default build is what it always was. A second `emitFiles` is the
-    // comparison, which also says the emitter is deterministic.
-    u8[] again = emitFiles(c.paths, c.sources, c.paths[f]);
     compared = compared + 1;
-    if (!equal(a, again) && nDiffer < differ.len()) {
-      differ[nDiffer] = c.paths[f] + ": two default builds differ";
-      nDiffer = nDiffer + 1;
+    // Determinism, on every twentieth file: two calls of a pure function in one process either agree or
+    // the emitter has state, and state does not hide in one file out of twenty.
+    if (f % 20 == 0) {
+      determinism = determinism + 1;
+      u8[] again = emitFiles(c.paths, c.sources, c.paths[f]);
+      if (!equal(a, again) && nDiffer < differ.len()) {
+        differ[nDiffer] = c.paths[f] + ": two default builds differ";
+        nDiffer = nDiffer + 1;
+      }
     }
     if (b.len() < a.len() && a.len() > 8 && nDiffer < differ.len()) {
       differ[nDiffer] = c.paths[f] + ": the checked build is smaller";
@@ -229,6 +249,10 @@ export string test_with_the_flag_off_not_a_byte_moves_over_the_whole_corpus(Core
   }
 
   t.isTrue(compared >= 100, "only " + itoa(compared) + " files compared");
+  // The sample is a sample of something: a stride that stopped selecting anything would leave the
+  // determinism half asserting nothing, silently.
+  t.isTrue(determinism >= 5,
+           "the determinism check ran on " + itoa(determinism) + " file(s) of " + itoa(compared));
   string[] said = string[nDiffer](fill: "");
   for (i32 i = 0; i < nDiffer; i++) { said[i] = differ[i]; }
   t.eqI32(nDiffer, 0, itoa(nDiffer) + " module(s) differ: " + joined(said, "; "));
