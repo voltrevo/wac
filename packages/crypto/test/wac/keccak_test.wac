@@ -266,6 +266,51 @@ export string test_peeking_does_not_end_the_hash() {
   return t.report();
 }
 
+/**
+ * `clone` gives an *independent* copy, which is the whole of what it promises.
+ *
+ * **Untested in this package until 2026-08-18, and live in another one.**
+ * `packages/tor/src/relay.wac` takes a trial digest with `hop.backwardDigest3.clone()` on every cell
+ * it tries to recognise: if the copy shared the sponge, the trial would advance the real digest and
+ * the circuit would desynchronise — a failure that arrives three packages away, as a relay that stops
+ * recognising its own stream, and says nothing about a copy. So the contract belongs in a test where
+ * the method lives.
+ *
+ * `peek` spells its own copy out inline rather than calling this, which is why nine tests over this
+ * file left `clone` at zero: the coverage ledger named three of its lines and nothing else did.
+ */
+export string test_a_clone_is_independent_of_the_hash_it_came_from() {
+  T t = T.create();
+  u8[] shared = "shared prefix".toBytes();
+  u8[] mine = " only mine".toBytes();
+
+  Sha3_256 h = Sha3_256.create();
+  h.update(shared);
+  Sha3_256 copy = h.clone();
+
+  // The copy starts where the original was: same absorbed bytes, same answer.
+  t.isTrue(sameBytes(copy.peek(), h.peek()), "a fresh clone does not agree with its original");
+
+  // Absorbing into the copy must leave the original alone — this is the property tor depends on.
+  copy.update(mine);
+  t.isTrue(sameBytes(h.peek(), sha3_256(shared)),
+           "absorbing into the clone changed the original: the copy shares its sponge");
+
+  u8[] both = u8[shared.len() + mine.len()]();
+  for (i32 i = 0; i < shared.len(); i++) { both[i] = shared[i]; }
+  for (i32 i = 0; i < mine.len(); i++) { both[shared.len() + i] = mine[i]; }
+  t.isTrue(sameBytes(copy.peek(), sha3_256(both)),
+           "the clone did not carry the prefix it was cloned from");
+
+  // And the other direction, because a copy that aliases would fail this and not the one above:
+  // absorbing into the *original* must not reach the copy.
+  u8[] beforeOriginalMoves = copy.peek();
+  h.update("into the original".toBytes());
+  t.isTrue(sameBytes(copy.peek(), beforeOriginalMoves),
+           "absorbing into the original changed the clone");
+  return t.report();
+}
+
 bool sameBytes(u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }
   for (i32 i = 0; i < a.len(); i++) {

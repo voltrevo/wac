@@ -121,3 +121,53 @@ over the *whole closure*, so a ratchet consuming it has to select the package's 
 also reports `packages/fmt/src/ftoa.wac` at 0/91, which says nothing about `fmt`. And `--coverage` keeps the
 per-file build path rather than the shared one (`issues/system/0192`), because counters are per module, so
 measuring this way costs a build per test file.
+
+## Green — 2026-08-18, and two of the four reasons were not what this issue said
+
+`deno task coverage:crypto` exits 0. It had been red on every gate run for days, printing "pushing
+anyway, and this is not fine", which is the state that makes a check worthless. What it took, and the
+corrections matter more than the result:
+
+**1. mlkem's 48 points were the measurement gap this issue describes, and are now measured rather than
+excused.** `packages/crypto/cov.ts` carries a `MEASURED_BY_THE_BINARY` entry that *runs*
+`wac test --coverage` on `mlkem_test.wac` — 0.9s — and requires 125 of 132. Fifty `UNREACHED` entries
+would have been the wrong fix: that list means "no test reaches this", and the tests exist, pass and
+reach almost all of it. The floor works in both directions, so a rise fails with the number to raise it
+to; a ratchet that only loosens is a ledger.
+
+**2. keccak's five remaining points are *not* a measurement gap, and this issue said they were.** It
+claimed they were "reached only by the two tests that compare against the host". Measured:
+`wac test --coverage` on `keccak_test.wac`, which runs all nine tests with a host, reads **32 of 37** —
+exactly what the Deno driver reads. So the host was never the reason.
+
+Three of the five were `Sha3_256.clone`, which **no test in this package called**. It is not dead code:
+`packages/tor/src/relay.wac` takes a trial digest with `hop.backwardDigest3.clone()` on every cell it
+tries to recognise, and `peek` spells its own copy out inline rather than calling it (the checker rule
+`sha1.wac:145` records), so nine tests over the file left it at zero. There is a test now, and the
+canary is a shallow clone — which fails it on the *second* direction only: writing into the clone
+advances a shared `pending` past the original's `pendingLen`, so the original's digest does not move,
+and only writing into the original afterwards clobbers what the clone had. One direction would have
+passed a broken copy.
+
+The other two are guards, with entries and arguments: `rotl`'s zero side is unreachable because the
+function is private and every call site is a literal offset in 1..62, and `sponge`'s rate guard is
+unreachable because all five callers pass a constant.
+
+**3. rsa's six points were the signing half, which the package that owns it never ran.** Every rsa test
+here verifies; none signed, because signing needs a private exponent and the openssl-driven tests
+generate their keys inside the oracle. So `rsaSignPss` — what `packages/tls/src/server.wac` and
+`packages/quic/src/server.wac` sign handshakes with — and the success path of `rsaRecoverPkcs1` — what
+`packages/tor/src/consensus.wac` reads descriptors with — were reached by nothing. Three tests now sign:
+a 1024-bit key generated once with `openssl genrsa` and written into the file, because a key is the one
+input those paths cannot be given any other way, and 15ms of `modPow` for the pair of them. Each carries
+its own canary: a wrong message, a flipped bit, a corrupted block.
+
+**What is left is the seven points in `mlkem.wac` that the binary also does not reach**, which is
+ordinary coverage debt and now the only kind here.
+
+The larger question this issue asks — whether the ratchets should take their numbers from
+`wac test --coverage` generally — is still open, and the answer got cheaper: `prog.cov` already holds the
+per-point table, and `native/v8/src/main.rs` reads it out of a temp directory that the run then deletes.
+A flag that wrote it out would let any driver *union* the binary's measurement with its own instead of
+choosing between them, which is what a whole-package answer needs — on `rsa.wac` the Deno driver reaches
+125 where the binary's own run of `rsa_test.wac` reaches 115, so neither is a superset.

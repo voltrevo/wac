@@ -422,6 +422,28 @@ for (let n = 0; n <= 32; n++) padTo16(n);
  */
 const UNREACHED: { file: string; line: number; snippet: string; why: string }[] = [
   {
+    file: "packages/crypto/src/keccak.wac",
+    line: 61,
+    snippet: "n == 0 ? x",
+    why:
+      "**No call site passes zero, and the set is closed.** `rotl` is private to this file, so its " +
+      "arguments are enumerable: every one is a literal — 1 in the θ step, and 6, 8, 44, 45, 55, 56, " +
+      "61, 62 and the rest in ρ. The lane whose ρ offset *is* zero is not rotated at all rather than " +
+      "rotated by nothing, which is why the zero never arrives. No test can reach this side without " +
+      "exporting the function to trip it.",
+  },
+  {
+    file: "packages/crypto/src/keccak.wac",
+    line: 194,
+    snippet: "if (rate <= 0 || rate > 200) { trap; }",
+    why:
+      "**Every caller in the repository passes a constant rate**: 136 for `keccak256`, `sha3_256` and " +
+      "`shake256`, 72 for `sha3_512`, 168 for `shake128`. `sponge` is exported, so the guard is for a " +
+      "caller outside this repository and is worth keeping; reaching it from a test would mean writing " +
+      "one whose only purpose is to trip a trap, which is what the `fieldp.wac` entries below say about " +
+      "the same shape.",
+  },
+  {
     file: "packages/crypto/src/rsa.wac",
     line: 272,
     snippet: "if (unusedBits > 0)",
@@ -941,7 +963,89 @@ for (const u of UNREACHED) {
     console.log(`\nexcluded as unreached: ${where}  ${u.snippet}\n  ${u.why}`);
   }
 }
-const unexpected = [...missed].filter(m => !UNREACHED.some(u => `${u.file}:${u.line}` === m));
+/**
+ * Files this driver cannot measure at all, and the binary that can — **measured every run, not
+ * remembered.**
+ *
+ * All five of `mlkem_test.wac`'s tests take `(Core core, Cli cli)`: they read their KAT vectors, and
+ * neither `instrument` nor `wacBind` can supply a capability, because a `Cli` is built by the wac side
+ * against a shared-memory bridge that only a real host sets up. So this driver runs none of them and
+ * calls fifty of `mlkem.wac`'s points uncovered, while `wac test --coverage`, which does build a host,
+ * reads **125 of 132**. `issues/system/0200` is that measurement, and until 2026-08-18 it left
+ * `deno task coverage:crypto` permanently red — which is worse than either answer, because a check
+ * that is always red is a check nobody reads.
+ *
+ * **Fifty `UNREACHED` entries would have been the wrong fix.** That list means "no test reaches this",
+ * each entry carries the argument for why, and both are false here: the tests exist, they pass, and
+ * they reach almost all of it. An entry saying "covered elsewhere, trust me" is the remembered-coverage
+ * failure this whole ledger exists to prevent.
+ *
+ * So the claim is checked by taking the measurement. One `wac test --coverage` of the file's own test
+ * is 0.9s, and the floor works in both directions: below it fails, and *above* it fails too, with the
+ * number to raise it to — a ratchet that only ever loosens is a ledger.
+ */
+const MEASURED_BY_THE_BINARY: { file: string; by: string; covered: number; of: number; why: string }[] = [
+  {
+    file: "packages/crypto/src/mlkem.wac",
+    by: "packages/crypto/test/wac/mlkem_test.wac",
+    covered: 125,
+    of: 132,
+    why:
+      "Its five tests all take `(Core core, Cli cli)` to read their KAT vectors, so this driver " +
+      "cannot call any of them. The seven points still uncovered there are the remainder to work on; " +
+      "issues/system/0200.",
+  },
+];
+
+const WAC_BIN = "native/v8/target/release/wac";
+/** Files whose points this driver must not judge, once the binary has been asked about them. */
+const measuredElsewhere = new Set<string>();
+for (const m of MEASURED_BY_THE_BINARY) {
+  measuredElsewhere.add(m.file);
+  const have = await Deno.stat(WAC_BIN).then(() => true).catch(() => false);
+  if (!have) {
+    // The honest skip: say so on standard error, because a silent one reads as coverage.
+    console.error(
+      `
+SKIPPING the check on ${m.file}: no binary at ${WAC_BIN}, so its ${m.covered}/${m.of} is ` +
+        `unverified in this run. Build it with \`deno task seed\`.`,
+    );
+    continue;
+  }
+  const r = await new Deno.Command(WAC_BIN, {
+    args: ["test", "--coverage", "--allow-read", "--allow-write", "--allow-run", m.by],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const text = (new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr))
+    .replace(/\x1b\[[0-9;]*m/g, "");
+  const row = text.split("\n").find(l => l.trimEnd().endsWith(m.file));
+  const got = row?.match(/(\d+)\s*\/\s*(\d+)/);
+  if (got === null || got === undefined) {
+    console.log(`\n${m.file}: \`${WAC_BIN} test --coverage ${m.by}\` reported no coverage for it.`);
+    console.log("  Either the run failed or the table's shape changed — this check cannot be skipped quietly.");
+    failed = true;
+    continue;
+  }
+  const covered = Number(got[1]);
+  const of = Number(got[2]);
+  if (of !== m.of) {
+    console.log(`\n${m.file} now holds ${of} points, not ${m.of} — update the entry.`);
+    failed = true;
+  } else if (covered < m.covered) {
+    console.log(`\n${m.file} fell to ${covered}/${of} from ${m.covered} — measured by ${m.by}.`);
+    failed = true;
+  } else if (covered > m.covered) {
+    console.log(`\n${m.file} now reaches ${covered}/${of}, above the recorded ${m.covered}. Raise it.`);
+    failed = true;
+  } else {
+    console.log(`\nmeasured by the binary: ${m.file} ${covered}/${of} via ${m.by}\n  ${m.why}`);
+  }
+}
+
+const unexpected = [...missed]
+  .filter(m => !UNREACHED.some(u => `${u.file}:${u.line}` === m))
+  .filter(m => !measuredElsewhere.has(m.slice(0, m.lastIndexOf(":"))));
 if (unexpected.length > 0) {
   console.log(`\n${unexpected.length} branch point(s) uncovered:`);
   for (const m of unexpected.sort()) console.log(`  ${m}`);
