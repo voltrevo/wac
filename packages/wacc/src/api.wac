@@ -204,6 +204,23 @@ export string manifestFiles(u8[] wasm, string[] paths, string[] sources, string 
 }
 
 /**
+ * The same manifest, given the metadata directly rather than a program to derive it from.
+ *
+ * **`manifestFiles` above builds two more front ends** — `bindTypesLinked` and `exportSigsLinked` —
+ * and a caller that has just run `buildFiles` already holds both answers, from a front end it has
+ * already paid for. That caller was `wacc build`, which walked the graph five times to produce one
+ * module: diagnose, blocked, emit, bind types, export sigs.
+ *
+ * `bindgenWire` is the same idea for the other consumer of that metadata, and this is its twin —
+ * `wire` is `bindTypesFiles`'s format and `sigs` is `exportSigsFiles`'s, in that order, as
+ * `describeFiles` hands them over.
+ */
+export string manifestWire(u8[] wasm, string wire, string sigs, string entry,
+                           string wasmName, i32 grants) {
+  return manifestOf(wasm, wire, sigs, entry, wasmName, grants);
+}
+
+/**
  * The glue a host calls this module through — `packages/wacc/tools/waccBindgen.ts` in wac.
  *
  * `lang` is `"ts"` or `"js"`. The module is a parameter for the same reason `manifestFiles` takes

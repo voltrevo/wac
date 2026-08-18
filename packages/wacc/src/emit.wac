@@ -2939,11 +2939,51 @@ export Built buildLinked(string[] paths, string[] sources, string entry) {
     return Built(bareModule(),
                  linkFailure(paths, sources, entry) + describeSep() + describeSep());
   }
-  string blocked = blockedOf(f!);
   string sigs = exportSigsOf(f!);
   string types = bindTypesOf(f!);
-  return Built(emitModuleOfFront(f!, false, false),
-               blocked + describeSep() + sigs + describeSep() + types);
+  // **The dry run only happens when the real one failed.** `blockedOf` asks `canEmit` of every
+  // function and every method — a walk of every body, which is why it costs about what emitting
+  // costs and, on a program that compiles, returns the empty string. `packages/box`'s shell measured
+  // **1 480 ms of it against 712 ms for the emit itself**, to be told nothing was wrong.
+  //
+  // Nothing has to be asked in advance, because emitting records the same fact: `declineFor` sets
+  // `env.full` and `env.fullWhy`, which is exactly what `emitDeclineLinked` reads. So the module is
+  // emitted, and the speculative walk runs only if a decline happened — where its *message* is worth
+  // the second front end it needs, since `fullWhy` names the seventh call in a chain and `blockedOf`
+  // names the declaration (`issues/lang/0106`).
+  //
+  // A front that arrived already full is refused before emitting, as it was before: `frontOf` runs
+  // `settleEmittable`, so a table that overflowed during collection is known here.
+  if (f!.env.full) {
+    return Built(bareModule(),
+                 blockedAgain(paths, sources, entry, f!.env) + describeSep() + sigs +
+                 describeSep() + types);
+  }
+  u8[] wasm = emitModuleOfFront(f!, false, false);
+  if (f!.env.full) {
+    return Built(bareModule(),
+                 blockedAgain(paths, sources, entry, f!.env) + describeSep() + sigs +
+                 describeSep() + types);
+  }
+  return Built(wasm, "" + describeSep() + sigs + describeSep() + types);
+}
+
+/**
+ * The blocked report, from a front end of its own.
+ *
+ * Emitting mutates the `Env` heavily, so the one that just emitted cannot answer this — and a caller
+ * that has reached here is failing the build anyway, which is the one place a second whole-graph walk
+ * is worth its cost. `fullWhy` is the fallback when the fresh walk finds nothing, which happens when
+ * the decline is one only the emit path can see (`emitDeclineLinked`'s whole reason for existing).
+ */
+string blockedAgain(string[] paths, string[] sources, string entry, Env spent) {
+  Front? again = frontOf(paths, sources, entry);
+  if (again is not null) {
+    string said = blockedOf(again!);
+    if (said != "") { return said; }
+  }
+  if (spent.fullWhy != "") { return spent.fullWhy; }
+  return "declined with no reason recorded";
 }
 
 string exportSigsOf(Front f) {
