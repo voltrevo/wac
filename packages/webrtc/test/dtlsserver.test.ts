@@ -16,6 +16,7 @@
 // decoder in `x509.wac` has existed for a long time and nothing had ever needed the encoder.
 
 import { wacBind } from "../../../harness/wacBind.ts";
+import { saidUntil, startSClient, stopSClient } from "./sclient.ts";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   if (got !== want) {
@@ -66,6 +67,8 @@ const cat = (...parts: Uint8Array[]) => {
 };
 
 const SUITE = 0xC02B;        // ECDHE-ECDSA-AES128-GCM-SHA256
+/** What `s_client` prints when the handshake completed — the marker each test reads until. */
+const CIPHER_LINE = "Cipher is ECDHE-ECDSA-AES128-GCM-SHA256";
 const X25519 = 0x001D;
 const ECDSA_SHA256 = 0x0403;
 const SERVER_RANDOM = Uint8Array.from({ length: 32 }, (_, i) => (i * 5 + 11) & 0xFF);
@@ -129,11 +132,9 @@ Deno.test({
     const send = (b: Uint8Array) =>
       sock.send(b, { hostname: peer!.hostname, port: peer!.port, transport: "udp" });
 
-    const client = new Deno.Command("sh", {
-      args: ["-c", `sleep 25 | openssl s_client -dtls1_2 -cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key -connect 127.0.0.1:${ourPort} 2>&1`],
-      stdout: "piped",
-      stderr: "null",
-    }).spawn();
+    // `sleep N | openssl` held the client's stdin open and cost the test the whole of N — see
+    // `sclient.ts`, which holds the pipe from here instead.
+    const client = startSClient(ourPort);
 
     try {
       // ── Their first hello, and our cookie ──────────────────────────────────────────────────────
@@ -214,10 +215,8 @@ Deno.test({
           // **Ask the client why.** It writes its alerts and its reasons to stdout, and a test that
           // reported only "nothing arrived" would be the third time in this package a diagnostic
           // said less than the tool it was wrapping.
-          try {
-            client.kill("SIGKILL");
-          } catch { /* gone */ }
-          const said = new TextDecoder().decode((await client.output()).stdout);
+          const said = await saidUntil(client, "\u0000never", 250);
+          await stopSClient(client);
           throw new Error(`no flight from s_client after our ServerHelloDone ` +
             `(cke ${clientKey !== null}, ccs ${sawCcs}). It said:\n${said.slice(0, 1200)}`);
         }
@@ -277,17 +276,16 @@ Deno.test({
       await send(Uint8Array.from(ours.sealedRecord(serverWriteKey, serverIv, 1, 0n, 22, ourFinished)));
 
       // ── And what s_client says about all that ─────────────────────────────────────────────────
-      const out = new TextDecoder().decode((await client.output()).stdout);
-      assertEquals(out.includes("Cipher is ECDHE-ECDSA-AES128-GCM-SHA256"), true,
+      // Read until it says so rather than until it exits: it will not exit while its stdin is held,
+      // and holding stdin is what keeps it alive for the handshake.
+      const out = await saidUntil(client, CIPHER_LINE, 10_000);
+      assertEquals(out.includes(CIPHER_LINE), true,
         `s_client did not report a completed handshake. Its output:\n${out.slice(0, 1200)}`);
       assertEquals(out.includes("Verify return code: 0 (ok)") || out.includes("verify error"), true,
         "and it reached certificate verification, which means the handshake got that far");
     } finally {
       sock.close();
-      try {
-        client.kill("SIGKILL");
-      } catch { /* gone */ }
-      await client.status.catch(() => {});
+      await stopSClient(client);
     }
   },
 });
@@ -318,11 +316,9 @@ Deno.test({
 
     const sock = Deno.listenDatagram({ hostname: "127.0.0.1", port: 0, transport: "udp" });
     const ourPort = (sock.addr as Deno.NetAddr).port;
-    const client = new Deno.Command("sh", {
-      args: ["-c", `sleep 30 | openssl s_client -dtls1_2 -cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key -connect 127.0.0.1:${ourPort} 2>&1`],
-      stdout: "piped",
-      stderr: "null",
-    }).spawn();
+    // `sleep N | openssl` held the client's stdin open and cost the test the whole of N — see
+    // `sclient.ts`, which holds the pipe from here instead.
+    const client = startSClient(ourPort);
 
     let dropped = 0;
     const sequences: string[] = [];
@@ -365,15 +361,14 @@ Deno.test({
         `a record sequence number was reused: ${sequences.join(", ")} — a peer's replay window ` +
           "drops the repeat, which looks exactly like the retransmission being lost as well");
 
-      const out = new TextDecoder().decode((await client.output()).stdout);
-      assertEquals(out.includes("Cipher is ECDHE-ECDSA-AES128-GCM-SHA256"), true,
+      // Read until it says so rather than until it exits: it will not exit while its stdin is held,
+      // and holding stdin is what keeps it alive for the handshake.
+      const out = await saidUntil(client, CIPHER_LINE, 10_000);
+      assertEquals(out.includes(CIPHER_LINE), true,
         `s_client did not report a completed handshake:\n${out.slice(0, 900)}`);
     } finally {
       sock.close();
-      try {
-        client.kill("SIGKILL");
-      } catch { /* gone */ }
-      await client.status.catch(() => {});
+      await stopSClient(client);
     }
   },
 });
