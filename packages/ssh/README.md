@@ -474,7 +474,7 @@ that fails without the reset.
 
 Three oracles, because no one of them sees enough.
 
-**A real OpenSSH server** for the client (`test/transport.test.ts`, `test/cli.test.ts`) and **a
+**A real OpenSSH server** for the client (`test/wac/live_test.wac`, `test/cli.test.ts`) and **a
 real OpenSSH client** for the server (`test/server.test.ts`). That reversal is the point: every
 other test here runs our code against theirs, and the server tests run theirs against ours, which
 reaches the paths nothing else does — offering lists rather than choosing from them, signing an

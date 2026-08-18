@@ -1,0 +1,103 @@
+// Key exchange: the derivation, the host key check, and the low-order point refusal.
+//
+// Two of these have their oracle written down. RFC 4253 §7.2 defines the derivation and
+// `../kdf_oracle.ts` transcribes it against WebCrypto; RFC 8731 §3 requires aborting on a low-order
+// peer point, and nothing later in the protocol notices if you do not — the session simply works,
+// with a secret every session shares.
+//
+// The host key case is the one with no oracle but the sharpest failure: the blob and the signature
+// each name their algorithm, and the bytes below are all the right *lengths*, so only the name check
+// stands between a relabelled key and being handed to Ed25519 verification.
+//
+// Host-side until 2026-08-18, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { deriveKey, ephemeralPublic, sharedSecret, verifyEd25519Host } from "../../src/kex.wac";
+import { cat, str, strOf, ramp, filled } from "./build.wac";
+
+const string ORACLE = "packages/ssh/test/kdf_oracle.ts";
+
+export string test_key_derivation_extends_by_hashing_the_accumulated_output(Core core, Cli cli) {
+  // Written out against the RFC rather than round-tripped, because the interesting rule only
+  // appears for keys longer than one hash: the extension hashes **everything produced so far**,
+  // not just the previous block.
+  T t = T.create();
+
+  // Shared secrets chosen to exercise the mpint rules: a plain one, one with the top bit set so a
+  // zero byte is prepended, and one with leading zeroes to strip.
+  u8[][] secrets = u8[][3](fill: u8[0]());
+  secrets[0] = ramp(32, 1, 1);
+  secrets[1] = ramp(32, 1, 0);
+  secrets[1][0] = 0xff;
+  secrets[2] = ramp(32, 1, 0);
+  secrets[2][0] = 0;
+  secrets[2][1] = 0;
+
+  u8[] h = ramp(32, 7, 0);
+  u8[] sid = ramp(32, 11, 0);
+  i32[] letters = i32[]('A', 'C', 'F');
+  i32[] lengths = i32[](1, 16, 32, 33, 64, 100);
+
+  // One batch: 54 cells, and through `Cli.exec` a call per cell would be 54 processes.
+  Lines lines = Lines.create();
+  for (i32 s = 0; s < secrets.len(); s++) {
+    for (i32 l = 0; l < letters.len(); l++) {
+      for (i32 n = 0; n < lengths.len(); n++) {
+        u8[] got = deriveKey(secrets[s], h, sid, letters[l], lengths[n]);
+        t.eqI32(got.len(), lengths[n], "asked for " + itoa(lengths[n]) + " bytes");
+        lines.add("derive " + hex(secrets[s]) + " " + hex(h) + " " + hex(sid) + " " +
+                  itoa(letters[l]) + " " + itoa(lengths[n]) + " " + hex(got));
+      }
+    }
+  }
+  check(t, cli, "deno", string[]("run", "--no-check", ORACLE), lines, "RFC 4253 §7.2");
+  return t.report();
+}
+
+export string test_a_host_key_blob_that_names_the_wrong_algorithm_is_refused() {
+  // A well-formed Ed25519 key and signature, relabelled. The bytes are all the right lengths, so
+  // only the name check stands between this and being handed to Ed25519 verification.
+  T t = T.create();
+  u8[] pub = filled(32, 2);
+  u8[] sig = filled(64, 3);
+  u8[] h = filled(32, 4);
+
+  u8[] goodKey = cat(u8[][](strOf("ssh-ed25519"), str(pub)));
+  u8[] goodSig = cat(u8[][](strOf("ssh-ed25519"), str(sig)));
+  // Not asserting this verifies — the bytes are made up. Only that the name checks reject.
+  t.isFalse(verifyEd25519Host(cat(u8[][](strOf("ssh-rsa"), str(pub))), goodSig, h),
+            "a host key naming ssh-rsa was accepted as Ed25519");
+  t.isFalse(verifyEd25519Host(goodKey, cat(u8[][](strOf("ssh-rsa"), str(sig))), h),
+            "a signature naming ssh-rsa was accepted as Ed25519");
+  // Right names, wrong sizes.
+  t.isFalse(verifyEd25519Host(cat(u8[][](strOf("ssh-ed25519"), str(u8[31]()))), goodSig, h),
+            "a 31-byte public key was accepted");
+  t.isFalse(verifyEd25519Host(goodKey, cat(u8[][](strOf("ssh-ed25519"), str(u8[63]()))), h),
+            "a 63-byte signature was accepted");
+  t.isFalse(verifyEd25519Host(u8[0](), goodSig, h), "an empty host key was accepted");
+  return t.report();
+}
+
+export string test_a_low_order_peer_point_is_rejected_rather_than_shared() {
+  T t = T.create();
+  u8[] secret = ramp(32, 1, 1);
+  // The all-zero point: X25519 with it yields an all-zero secret, which every session would
+  // share. RFC 8731 §3 requires aborting, and nothing later in the protocol notices.
+  t.isTrue(sharedSecret(secret, u8[32]()) is null, "the all-zero point produced a shared secret");
+
+  // A point of order 8, likewise.
+  u8[] orderEight = u8[32]();
+  orderEight[0] = 1;
+  t.isTrue(sharedSecret(secret, orderEight) is null, "a low-order point produced a shared secret");
+
+  // A real peer key does work, so the check is not simply refusing everything.
+  u8[] peerSecret = u8[32]();
+  for (i32 i = 0; i < 32; i++) { peerSecret[i] = (200 - i) & 255; }
+  u8[]? shared = sharedSecret(secret, ephemeralPublic(peerSecret));
+  t.isTrue(shared is not null, "a valid point was rejected");
+  if (shared is not null) { t.eqI32(shared!.len(), 32, "the shared secret is the wrong size"); }
+  return t.report();
+}

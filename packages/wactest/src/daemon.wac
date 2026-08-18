@@ -61,6 +61,37 @@ export i32 freePort(Cli cli) {
 }
 
 /**
+ * A port that is still *held* — bound by us until `release`, so nothing else can take it.
+ *
+ * `freePort` closes immediately and hands over a number, which is fine when the next statement is
+ * the bind and wrong when it is not. A server that needs a config file naming its port cannot bind
+ * first: something has to generate keys and write the file, and that is hundreds of milliseconds
+ * during which the number `freePort` returned belongs to nobody. wac-mono 0069 is that race, and it
+ * arrives as a server that failed to start for no visible reason.
+ *
+ * So: bind zero, keep the listener open while the caller prepares, and `release` immediately before
+ * the spawn. The window shrinks from "however long setup takes" to the gap between two statements.
+ * `port` is -1 when nothing could be bound.
+ */
+export struct Held {
+  i32 port;
+  i32 handle;
+
+  Held take(Cli cli) {
+    Socket s = cli.listen("127.0.0.1", 0).wait();
+    if (s.handle < 0) { return Held(-1, -1); }
+    return Held(s.port, s.handle);
+  }
+
+  /** Give the port up. Idempotent, so a caller may release on the failure path as well. */
+  void release(this, Cli cli) {
+    if (this.handle < 0) { return; }
+    cli.closeSocket(this.handle);
+    this.handle = -1;
+  }
+}
+
+/**
  * Run `line` in the background and answer with its pid.
  *
  * `line` is a shell line, not an argument vector — the whole point here is the backgrounding, which

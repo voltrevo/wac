@@ -1,0 +1,291 @@
+// The whole client handshake against a real server, up to an authenticated connection.
+//
+// This is the only thing in the package that can say the *rules were read correctly*. Everything in
+// `transport_test.wac` and `cipher_test.wac` says the reading was implemented consistently, which a
+// self-consistent misreading also satisfies. A server that dislikes anything about our framing
+// closes the connection instead of answering, so reaching SSH_MSG_USERAUTH_SUCCESS means every layer
+// below it — version exchange, packet framing, KEXINIT, X25519, the exchange hash, key derivation,
+// chacha20-poly1305 and the signature — is right in both directions.
+//
+// Every intermediate value is returned rather than only the result, so the test that exists to
+// *verify* the handshake can assert over them while the tests that merely need a session ignore
+// them. Only the checks a caller could not continue past are made here; the rest are the caller's,
+// because a helper that asserted them would be deciding what its callers are about.
+//
+// ## Reading is a loop over a buffer, not a read per packet
+//
+// `recv` answers with whatever arrived, which is not a packet — it may be half of one or three of
+// them. So every read appends to `buf` and every parse asks the framer whether a whole packet is
+// there yet. Getting this wrong produces a test that passes on a loopback socket and fails against
+// anything slower, because loopback usually delivers a small write whole.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Socket } from "../../../platform/src/platform.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Framed, Status, frame, minBlock, paddingFor, unframe } from "../../src/packet.wac";
+import { Opened, Plain, aeadPaddingFor, keyLength, open, seal } from "../../src/cipher.wac";
+import { Version, clientVersion, clientVersionLine, scanVersion } from "../../src/version.wac";
+import { clientProposal, encode as encodeKexInit } from "../../src/kexinit.wac";
+import { EcdhReply, deriveKey, ecdhInit, ephemeralPublic, exchangeHash, parseEcdhReply,
+         sharedSecret, verifyEd25519Host } from "../../src/kex.wac";
+import { PrivateKey, readEd25519 } from "../../src/privatekey.wac";
+import { msgServiceAccept, msgUserAuthFailure, msgUserAuthSuccess, publicKeyRequest,
+         serviceRequest } from "../../src/auth.wac";
+import { ramp, slice } from "./build.wac";
+
+/** A connection with the bytes that have arrived but not yet been parsed. */
+export struct Conn {
+  i32 handle;
+  u8[] buf;
+  /** The sequence numbers, which are per-direction and reset at NEWKEYS under strict KEX. */
+  i32 outSeq;
+  i32 inSeq;
+  u8[] keyOut;
+  u8[] keyIn;
+  bool ok;
+  string error;
+
+  Conn dial(Cli cli, string host, i32 port) {
+    Socket s = cli.connect(host, port).wait();
+    if (s.handle < 0) {
+      return Conn(-1, u8[0](), 0, 0, u8[0](), u8[0](), false, "connect: " + s.error);
+    }
+    return Conn(s.handle, u8[0](), 0, 0, u8[0](), u8[0](), true, "");
+  }
+
+  /** Pull once, appending to the buffer. False once nothing more can arrive. */
+  bool pull(this, Cli cli) {
+    if (!this.ok) { return false; }
+    match (cli.recv(this.handle).wait()) {
+      case Data(bytes): {
+        Buf next = Buf.create();
+        next.pushAll(this.buf);
+        next.pushAll(bytes);
+        this.buf = next.take();
+        return true;
+      }
+      case End: {
+        this.ok = false;
+        this.error = "the server closed the connection";
+        return false;
+      }
+      case Failed(why): {
+        this.ok = false;
+        this.error = "recv: " + why;
+        return false;
+      }
+    }
+  }
+
+  void write(this, Cli cli, u8[] bytes) {
+    if (!this.ok) { return; }
+    if (!cli.send(this.handle, bytes).wait()) {
+      this.ok = false;
+      this.error = "send failed";
+    }
+  }
+
+  /** Drop `n` bytes from the front, once a packet has been taken off it. */
+  void consumed(this, i32 n) { this.buf = slice(this.buf, n, this.buf.len()); }
+
+  void close(this, Cli cli) {
+    if (this.handle >= 0) { cli.closeSocket(this.handle); }
+    this.handle = -1;
+  }
+
+  /**
+   * The next plaintext packet's payload, reading until one is whole.
+   *
+   * `tries` bounds the loop rather than a clock: every iteration is a blocking `recv`, so a server
+   * that has stopped talking ends at `End` rather than spinning here.
+   */
+  u8[] nextPlain(this, Cli cli) {
+    for (i32 i = 0; i < 4096 && this.ok; i++) {
+      Framed f = unframe(this.buf, 0, this.buf.len());
+      match (f.status) {
+        case Ok: {
+          this.consumed(f.used);
+          return f.payload;
+        }
+        case Incomplete: { this.pull(cli); }
+        else: {
+          this.ok = false;
+          this.error = "a packet could not be framed";
+          return u8[0]();
+        }
+      }
+    }
+    if (this.ok) { this.ok = false; this.error = "no plaintext packet arrived"; }
+    return u8[0]();
+  }
+
+  /** Frame and send one plaintext packet. */
+  void sendPlain(this, Cli cli, u8[] payload) {
+    i32 block = minBlock();
+    this.write(cli, frame(payload, ramp(paddingFor(payload.len(), block), 37, 11), block));
+  }
+
+  /** Seal and send one packet, advancing the outgoing sequence number. */
+  void send(this, Cli cli, u8[] payload) {
+    i32 block = minBlock();
+    this.write(cli, seal(this.keyOut, this.outSeq, payload,
+                         ramp(aeadPaddingFor(payload.len(), block), 23, 7), block));
+    this.outSeq = this.outSeq + 1;
+  }
+
+  /** The next encrypted packet's payload, advancing the incoming sequence number. */
+  u8[] next(this, Cli cli) {
+    for (i32 i = 0; i < 200000 && this.ok; i++) {
+      Plain p = open(this.keyIn, this.inSeq, this.buf, 0, this.buf.len(), MAX_PACKET);
+      match (p.status) {
+        case Ok: {
+          this.consumed(p.used);
+          this.inSeq = this.inSeq + 1;
+          return p.payload;
+        }
+        case Incomplete: { this.pull(cli); }
+        else: {
+          this.ok = false;
+          this.error = "encrypted packet " + itoa(this.inSeq) + " did not open";
+          return u8[0]();
+        }
+      }
+    }
+    if (this.ok) { this.ok = false; this.error = "no encrypted packet arrived"; }
+    return u8[0]();
+  }
+}
+
+/** What a peer may send in one packet. OpenSSH's default, and what `open` is asked to enforce. */
+export const i32 MAX_PACKET = 35000;
+
+/** Everything the handshake produced, for the test whose subject is the handshake itself. */
+export struct Session {
+  bool ok;
+  string error;
+  Conn conn;
+  u8[] serverVersion;
+  u8[] ourKexInit;
+  u8[] serverKexInit;
+  u8[] hostKeyBlob;
+  u8[] signature;
+  u8[] qc;
+  u8[] qs;
+  u8[] h;
+  u8[] publicBlob;
+  /** Whether the server sent EXT_INFO, which it only does if it decrypted our ext-info-c. */
+  bool sawExtInfo;
+}
+
+Session failed(Conn c, string why) {
+  return Session(false, why, c, u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](),
+                 u8[0](), u8[0](), false);
+}
+
+/**
+ * Connect, exchange versions and keys, and authenticate with the key in `dir/clientkey`.
+ *
+ * `user` is the account to attempt; the fixture's sshd runs as this user and so can only
+ * authenticate this one. A caller must check `ok` before reading anything else.
+ */
+export Session handshake(Cli cli, string dir, i32 port, string user) {
+  Conn c = Conn.dial(cli, "127.0.0.1", port);
+  if (!c.ok) { return failed(c, c.error); }
+
+  // Our version line goes first; SSH does not wait for the peer's.
+  c.write(cli, clientVersionLine());
+  u8[] serverVersion = u8[0]();
+  for (i32 i = 0; i < 100 && c.ok; i++) {
+    Version v = scanVersion(c.buf, 0, c.buf.len());
+    match (v.status) {
+      case Ok: { serverVersion = v.line; c.consumed(v.used); }
+      case Incomplete: { c.pull(cli); continue; }
+      else: { return failed(c, "the server's version line was rejected"); }
+    }
+    break;
+  }
+  if (!c.ok) { return failed(c, c.error); }
+  if (serverVersion.len() == 0) { return failed(c, "no version line arrived"); }
+
+  // KEXINIT, both sides sending without waiting.
+  u8[] ourKexInit = encodeKexInit(clientProposal(), ramp(16, 61, 5));
+  c.sendPlain(cli, ourKexInit);
+  u8[] serverKexInit = c.nextPlain(cli);
+  if (!c.ok) { return failed(c, c.error); }
+  if (serverKexInit.len() == 0 || serverKexInit[0] != 20) {
+    return failed(c, "expected KEXINIT, got message " +
+                     itoa(serverKexInit.len() == 0 ? -1 : serverKexInit[0]));
+  }
+
+  // Key exchange.
+  u8[] secret = ramp(32, 47, 13);
+  u8[] qc = ephemeralPublic(secret);
+  c.sendPlain(cli, ecdhInit(qc));
+  u8[] replyBytes = c.nextPlain(cli);
+  if (!c.ok) { return failed(c, c.error); }
+  EcdhReply? reply = parseEcdhReply(replyBytes);
+  if (reply is null) { return failed(c, "the server's KEX_ECDH_REPLY did not parse"); }
+  u8[]? sharedOrNull = sharedSecret(secret, reply!.serverPublic);
+  if (sharedOrNull is null) { return failed(c, "the shared secret was rejected as low-order"); }
+  u8[] shared = sharedOrNull!;
+
+  u8[] h = exchangeHash(clientVersion(), serverVersion, ourKexInit, serverKexInit,
+                        reply!.hostKey, qc, reply!.serverPublic, shared);
+  if (!verifyEd25519Host(reply!.hostKey, reply!.signature, h)) {
+    return failed(c, "the server's host key signature did not verify over our exchange hash");
+  }
+
+  // NEWKEYS. Both sides advertised strict KEX, so the sequence numbers reset to zero here.
+  u8[] newKeys = u8[1]();
+  newKeys[0] = 21;
+  c.sendPlain(cli, newKeys);
+  u8[] theirNewKeys = c.nextPlain(cli);
+  if (!c.ok) { return failed(c, c.error); }
+  if (theirNewKeys.len() == 0 || theirNewKeys[0] != 21) {
+    return failed(c, "expected NEWKEYS, got message " +
+                     itoa(theirNewKeys.len() == 0 ? -1 : theirNewKeys[0]));
+  }
+
+  // 'C' is client-to-server and 'D' server-to-client, RFC 4253 §7.2. The session id is H for the
+  // first exchange, which is the only one these tests perform.
+  c.keyOut = deriveKey(shared, h, h, 'C', keyLength());
+  c.keyIn = deriveKey(shared, h, h, 'D', keyLength());
+  c.outSeq = 0;
+  c.inSeq = 0;
+
+  c.send(cli, serviceRequest());
+  bool sawExtInfo = false;
+  bool accepted = false;
+  for (i32 i = 0; i < 8 && !accepted && c.ok; i++) {
+    u8[] p = c.next(cli);
+    if (p.len() == 0) { continue; }
+    if (p[0] == 7) { sawExtInfo = true; }
+    if (p[0] == msgServiceAccept()) { accepted = true; }
+  }
+  if (!c.ok) { return failed(c, c.error); }
+  if (!accepted) { return failed(c, "never received SSH_MSG_SERVICE_ACCEPT"); }
+
+  // Authenticate, reading the private key with our own code.
+  PrivateKey key = readEd25519(cli.readFile(dir + "/clientkey").wait().bytes, u8[0]());
+  match (key.error) {
+    case Ok: {}
+    else: { return failed(c, "could not read the client private key"); }
+  }
+  c.send(cli, publicKeyRequest(h, user.toBytes(), key.publicBlob, key.seed));
+
+  bool authed = false;
+  for (i32 i = 0; i < 8 && !authed && c.ok; i++) {
+    u8[] p = c.next(cli);
+    if (p.len() == 0) { continue; }
+    if (p[0] == msgUserAuthFailure()) {
+      return failed(c, "the server rejected our signature");
+    }
+    if (p[0] == msgUserAuthSuccess()) { authed = true; }
+  }
+  if (!c.ok) { return failed(c, c.error); }
+  if (!authed) { return failed(c, "never received SSH_MSG_USERAUTH_SUCCESS"); }
+
+  return Session(true, "", c, serverVersion, ourKexInit, serverKexInit, reply!.hostKey,
+                 reply!.signature, qc, reply!.serverPublic, h, key.publicBlob, sawExtInfo);
+}
