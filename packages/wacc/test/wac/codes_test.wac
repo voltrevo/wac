@@ -1,0 +1,155 @@
+// **Error codes, checked by value.** `issues/system/0005`'s largest single finding.
+//
+// Sixteen of wacc's twenty surviving mutants are error-code constants: replace `errUnexpectedChar`'s
+// body with `return 0` and the whole suite stays green. The reason is written in `lex_test.wac`
+// already — "the wac side reports codes rather than messages, so the mapping is checked by the order
+// they occur in" — so positions and counts are compared against the reference and the codes are not.
+// Two distinct errors could share a code, or every code could be zero, and nothing would notice.
+//
+// That matters more than it sounds. A code is the one field wacc uses to say *what went wrong*;
+// `diag.wac` turns it into the sentence a person reads, and the rungs that compare diagnostics
+// against the reference compare position and order. So the field the message is derived from is the
+// field nothing checks.
+//
+// ## Why a table of programs rather than asserting the constants
+//
+// Asserting `errUnexpectedChar() == 1` would kill the mutants and prove nothing: it restates the
+// constant. What is worth pinning is the **mapping** — this program produces that code — because that
+// is what a reader of a diagnostic depends on and what a mutant silently breaks.
+//
+// So each row below is the smallest program that provokes one diagnostic, and the assertion is which
+// code came out. A mutant that returns 0 from any of these constants makes some row report 0.
+//
+// ## And the property that catches the shared-code mistake
+//
+// A table alone cannot see two *different* faults sharing one code, because each row only looks at
+// its own. One test asserts the codes across the whole table are distinct, which is the shape
+// `one code, two faults` describes: a shared code makes a message name one rule while the other fault
+// is what happened.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `wacBind` becomes an import. The three dumps are `api.wac`'s, called in process, so there is no
+// host anywhere in this file — which suits it, since what it measures is a constant inside the
+// compiler and every layer between would only be somewhere for the answer to be laundered.
+//
+// The codes stay written as numbers rather than read from the constants, for the reason the
+// host-side version gave: reading them back from `errUndefinedName()` would make this table agree
+// with whatever the constant says, **including with a mutant that made it zero** — which is the
+// entire failure being closed here. The constant's name is in a comment beside each, so a reader can
+// find the declaration without the test being able to follow it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { dumpErrors, dumpParseErrors, dumpTypeErrors } from "../../src/api.wac";
+
+/** The code of the first diagnostic a dump reports, or -1 when it reported none. */
+i32 firstCode(i32[] out) { return out.len() >= 3 ? out[0] : -1; }
+
+/**
+ * Lexer rows. `dumpErrors` reports the lexer's first and then the parser's, so a row here has to be
+ * something `lex` itself refuses — an unterminated literal, an unknown escape — rather than merely a
+ * character the parser then chokes on. `@` is the latter: it lexes fine and fails at code 20.
+ */
+string[] lexWhat() { return string[]("a string with no closing quote"); }
+string[] lexSrc() {
+  return string[]("export i32 f() { string s = \"oops; return 0; }");
+}
+i32[] lexCode() { return i32[](2); }   // errUnterminatedString
+
+string[] parseWhat() {
+  return string[]("a type name where a type must be", "nothing where an expression must be");
+}
+string[] parseSrc() {
+  return string[](
+    "export i32 f() { 3 x = 1; return x; }",
+    "export i32 f() { return 1 + ; }");
+}
+i32[] parseCode() { return i32[](20, 22); }   // perrExpected, perrBadPrimary
+
+string[] checkWhat() {
+  return string[](
+    "a name nothing declares",
+    "assigning to a const variable",
+    "a call with the wrong number of arguments",
+    "a field the struct does not have",
+    "a match on something that is not an enum",
+    "an arm binding more names than the variant has");
+}
+string[] checkSrc() {
+  return string[](
+    "export i32 f() { return nope; }",
+    "export i32 f() { const i32 k = 1; k = 2; return k; }",
+    "void g(i32 a) {} export i32 f() { g(); return 0; }",
+    "struct S { i32 v; } export i32 f() { S s = S(1); return s.w; }",
+    "export i32 f(i32 n) { match (n) { else: { return 0; } } return 1; }",
+    "enum E { A, C(i32 p) } export i32 f(E e) { " +
+    "return match (e) { case A: 0, case C(p, q): q }; }");
+}
+// errUndefinedName, errConstVariable, errCallArity, errNoSuchField, errMatchNotEnum, errArmBindArity
+i32[] checkCode() { return i32[](35, 10, 32, 39, 72, 76); }
+
+export string test_each_lexer_diagnostic_carries_the_code_it_is_supposed_to() {
+  T t = T.create();
+  string[] what = lexWhat();
+  string[] src = lexSrc();
+  i32[] code = lexCode();
+  for (i32 i = 0; i < what.len(); i++) {
+    t.eqI32(firstCode(dumpErrors(src[i].toBytes())), code[i], what[i] + ": " + src[i]);
+  }
+  return t.report();
+}
+
+export string test_each_parser_diagnostic_carries_the_code_it_is_supposed_to() {
+  T t = T.create();
+  string[] what = parseWhat();
+  string[] src = parseSrc();
+  i32[] code = parseCode();
+  for (i32 i = 0; i < what.len(); i++) {
+    t.eqI32(firstCode(dumpParseErrors(src[i].toBytes())), code[i], what[i] + ": " + src[i]);
+  }
+  return t.report();
+}
+
+export string test_each_checker_diagnostic_carries_the_code_it_is_supposed_to() {
+  T t = T.create();
+  string[] what = checkWhat();
+  string[] src = checkSrc();
+  i32[] code = checkCode();
+  for (i32 i = 0; i < what.len(); i++) {
+    t.eqI32(firstCode(dumpTypeErrors(src[i].toBytes())), code[i], what[i] + ": " + src[i]);
+  }
+  return t.report();
+}
+
+export string test_and_the_codes_within_one_phase_are_distinct() {
+  // The property a per-row table cannot see. Two faults sharing a code means a reader gets a sentence
+  // naming one rule when the other is what happened — and the row for each would still pass, because
+  // each row only ever looks at its own answer.
+  T t = T.create();
+  string[] phases = string[]("lex", "parse", "check");
+  for (i32 p = 0; p < phases.len(); p++) {
+    string[] what = p == 0 ? lexWhat() : (p == 1 ? parseWhat() : checkWhat());
+    i32[] code = p == 0 ? lexCode() : (p == 1 ? parseCode() : checkCode());
+    for (i32 i = 0; i < code.len(); i++) {
+      for (i32 j = i + 1; j < code.len(); j++) {
+        if (code[i] != code[j]) { continue; }
+        t.fail(phases[p] + ": \"" + what[j] + "\" and \"" + what[i] + "\" both report code " +
+               itoa(code[i]));
+      }
+    }
+  }
+  return t.report();
+}
+
+export string test_a_program_with_nothing_wrong_reports_nothing_in_every_phase() {
+  // The control. Without it, a compiler that reported code 1 for everything would pass every row
+  // above that happens to expect 1 — and a compiler that reported *nothing* would fail them all,
+  // which is the direction that already fails loudly. This is the other direction.
+  T t = T.create();
+  string fine = "export i32 f() { i32 x = 1; return x + 1; }";
+  t.eqI32(dumpErrors(fine.toBytes()).len(), 0, "the lexer");
+  t.eqI32(dumpParseErrors(fine.toBytes()).len(), 0, "the parser");
+  t.eqI32(dumpTypeErrors(fine.toBytes()).len(), 0, "the checker");
+  return t.report();
+}
