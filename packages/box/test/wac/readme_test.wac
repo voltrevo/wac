@@ -1,0 +1,251 @@
+// The README states the applet count the dispatcher actually has — and the list, and the spelling.
+//
+// Prose numbers drift silently. This one said fifty-nine when there were sixty, and forty-two in a
+// paragraph further down, both written by someone who had just counted.
+//
+// **This never needed a process**, and in `box.test.ts` it sat among tests that build and spawn — it reads
+// two files and compares four things about them. Nothing else changes in the move.
+//
+// Three counts are reachable and only two used to be tied together: the files in `src/applets/`, the names
+// in the usage message, and the branches in the dispatcher. `help` is dispatched and has no file, which is
+// how it came to be dispatched and unlisted — `box help` worked and the only way to find out was to read
+// the dispatcher.
+
+import { Cli, Core, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+
+string dispatchPath() { return "packages/box/src/box.wac"; }
+string readmePath() { return "packages/box/README.md"; }
+
+export string test_the_readme_states_the_applet_count_the_dispatcher_has(Core core, Cli cli) {
+  T t = T.create();
+  string dispatch = readText(cli, dispatchPath());
+  string readme = readText(cli, readmePath());
+  t.isTrue(dispatch.len() > 0, "cannot read " + dispatchPath());
+  t.isTrue(readme.len() > 0, "cannot read " + readmePath());
+  if (dispatch.len() == 0 || readme.len() == 0) { return t.report(); }
+
+  string[] dispatched = sortedOf(quotedAfter(dispatch, "if (applet == \""));
+  t.isTrue(dispatched.len() > 50, "only " + itoa(dispatched.len()) +
+                                  " dispatched names — is the dispatcher being read?");
+  i32 claimed = numberBefore(readme, " applets");
+  t.eqI32(claimed, dispatched.len(),
+          "the README says " + itoa(claimed) + " applets, box.wac dispatches " + itoa(dispatched.len()));
+
+  // And the list the usage message prints must be the same list. It was not: `help` was dispatched and
+  // unlisted, so `box help` worked and nothing said so.
+  string names = between(dispatch, "string[] appletNames() {", "\n}");
+  string[] listed = sortedOf(quotedIn(names));
+  t.eqStr(joinWith(listed, " "), joinWith(dispatched, " "),
+          "the usage message and the dispatcher disagree about which applets exist");
+  return t.report();
+}
+
+/**
+ * The README's own list, which nothing checked at all.
+ *
+ * The count is tied to the dispatcher three ways above; the fence under the commands is the same fact
+ * written out, and it was two names short — `id` and `whoami` were dispatched, listed in the usage message
+ * and missing here, which is what a checked number beside an unchecked list produces. The first line says
+ * the fence is the *tools*, so `help` is the one name that belongs only in the count.
+ */
+export string test_the_readmes_list_is_the_list_the_dispatcher_has(Core core, Cli cli) {
+  T t = T.create();
+  string dispatch = readText(cli, dispatchPath());
+  string readme = readText(cli, readmePath());
+  if (dispatch.len() == 0 || readme.len() == 0) {
+    t.isTrue(false, "cannot read the sources");
+    return t.report();
+  }
+  string[] dispatched = sortedOf(quotedAfter(dispatch, "if (applet == \""));
+  string fence = between(readme, "```\nbase32", "```");
+  t.isTrue(fence.len() > 0, "the README's fence of tools has moved or gone");
+  string[] inReadme = sortedOf(wordsIn("base32" + fence));
+
+  string want = "";
+  for (i32 i = 0; i < dispatched.len(); i++) {
+    if (dispatched[i] == "help") { continue; }
+    want = want + (want == "" ? "" : " ") + dispatched[i];
+  }
+  t.eqStr(joinWith(inReadme, " "), want, "the README's list of applets is not the list the dispatcher has");
+  return t.report();
+}
+
+/**
+ * The aside in the `bin/` section, which drifted independently of the first line.
+ *
+ * This used to check for one spelling — "with sixty entry points" — which meant the check itself had to be
+ * edited every time the count changed, and an edit that forgot it left the assertion passing against a
+ * word nobody had written since. The README says why a digit is the right shape here; enforcing *that*
+ * stops the check needing maintenance at all.
+ */
+export string test_the_count_is_written_as_a_digit(Core core, Cli cli) {
+  T t = T.create();
+  string readme = readText(cli, readmePath());
+  if (readme.len() == 0) {
+    t.isTrue(false, "cannot read " + readmePath());
+    return t.report();
+  }
+  // **Searched from the phrase, not from the word.** Looking up each spelling and checking its first
+  // occurrence would miss a second one further down — and "sixty" is an ordinary English word that may
+  // appear anywhere. Every "entry points" is found instead, and what precedes it is what must be a digit.
+  string[] spellings = string[]("forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+                                "twenty", "thirty", "hundred");
+  i32 found = 0;
+  i32 at = 0;
+  for (i32 guard = 0; guard < 64; guard++) {
+    i32 rel = readme.slice(at, readme.len()).indexOf("entry points");
+    if (rel < 0) { break; }
+    i32 hit = at + rel;
+    found = found + 1;
+    // The sentence up to the phrase; a spelled-out number would be the word just before it.
+    i32 from = hit > 40 ? hit - 40 : 0;
+    string before = readme.slice(from, hit);
+    for (i32 i = 0; i < spellings.len(); i++) {
+      t.isTrue(before.indexOf(spellings[i]) < 0,
+               "the count before \"entry points\" is spelled out in \"" + before + "\" — write it as a " +
+               "digit, for the reason the README gives");
+    }
+    at = hit + 12;
+  }
+  // The canary: a README that stopped saying "entry points" would satisfy every assertion above by
+  // having none to make.
+  t.isTrue(found > 0, "the README no longer says \"entry points\" — has the section moved?");
+  return t.report();
+}
+
+string readText(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+/** Every string literal that follows `marker`, in order. */
+string[] quotedAfter(string src, string marker) {
+  string all = "";
+  i32 at = 0;
+  for (i32 guard = 0; guard < 512; guard++) {
+    i32 rel = src.slice(at, src.len()).indexOf(marker);
+    if (rel < 0) { break; }
+    i32 from = at + rel + marker.len();
+    i32 end = from;
+    while (end < src.len() && src.slice(end, end + 1) != "\"") { end = end + 1; }
+    // **Only what can be an applet name.** `box.wac` has a line of documentation whose quoted text is an
+    // ellipsis, and taking every quoted string after the marker counted it as a sixty-sixth applet. The
+    // TypeScript this replaces spelled the same restriction as `[a-z0-9-]+` inside its regular
+    // expression, where it was easy to read past.
+    string name = src.slice(from, end);
+    if (isName(name)) { all = all + (all == "" ? "" : " ") + name; }
+    at = end + 1;
+  }
+  return splitOn(all, " ");
+}
+
+/** A name a dispatcher can match: lower-case letters, digits and hyphens, and not empty. */
+bool isName(string s) {
+  if (s.len() == 0) { return false; }
+  for (i32 i = 0; i < s.len(); i++) {
+    u8[] b = s.slice(i, i + 1).toBytes();
+    if (b.len() != 1) { return false; }
+    i32 c = b[0];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) { return false; }
+  }
+  return true;
+}
+
+/** Every string literal in a block of source. */
+string[] quotedIn(string src) {
+  string all = "";
+  i32 at = 0;
+  for (i32 guard = 0; guard < 512; guard++) {
+    i32 rel = src.slice(at, src.len()).indexOf("\"");
+    if (rel < 0) { break; }
+    i32 from = at + rel + 1;
+    i32 end = from;
+    while (end < src.len() && src.slice(end, end + 1) != "\"") { end = end + 1; }
+    all = all + (all == "" ? "" : " ") + src.slice(from, end);
+    at = end + 1;
+  }
+  return splitOn(all, " ");
+}
+
+/** The text between the first `open` and the next `close` after it, or "". */
+string between(string src, string open, string close) {
+  i32 at = src.indexOf(open);
+  if (at < 0) { return ""; }
+  i32 from = at + open.len();
+  string rest = src.slice(from, src.len());
+  i32 end = rest.indexOf(close);
+  return end < 0 ? "" : rest.slice(0, end);
+}
+
+/** The number immediately before `suffix`, reading digits backwards, or -1. */
+i32 numberBefore(string src, string suffix) {
+  i32 at = src.indexOf(suffix);
+  if (at <= 0) { return 0 - 1; }
+  i32 from = at;
+  while (from > 0 && isDigitAt(src, from - 1)) { from = from - 1; }
+  if (from == at) { return 0 - 1; }
+  i32 v = 0;
+  for (i32 i = from; i < at; i++) { v = v * 10 + (src.slice(i, i + 1).toBytes()[0] - '0'); }
+  return v;
+}
+
+bool isDigitAt(string s, i32 i) {
+  u8[] b = s.slice(i, i + 1).toBytes();
+  if (b.len() != 1) { return false; }
+  i32 c = b[0];
+  return c >= '0' && c <= '9';
+}
+
+/** Whitespace-separated words. */
+string[] wordsIn(string text) {
+  string all = "";
+  i32 at = 0;
+  while (at < text.len()) {
+    while (at < text.len() && isBlank(text.slice(at, at + 1))) { at = at + 1; }
+    i32 from = at;
+    while (at < text.len() && !isBlank(text.slice(at, at + 1))) { at = at + 1; }
+    if (at > from) { all = all + (all == "" ? "" : " ") + text.slice(from, at); }
+  }
+  return splitOn(all, " ");
+}
+
+bool isBlank(string ch) { return ch == " " || ch == "\n" || ch == "\t" || ch == "\r"; }
+
+string[] splitOn(string text, string sep) {
+  if (text == "") { return string[0](); }
+  i32 n = 1;
+  for (i32 i = 0; i + sep.len() <= text.len(); i++) {
+    if (text.slice(i, i + sep.len()) == sep) { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  i32 from = 0;
+  for (i32 i = 0; i + sep.len() <= text.len(); i++) {
+    if (text.slice(i, i + sep.len()) != sep) { continue; }
+    out[k] = text.slice(from, i);
+    k = k + 1;
+    from = i + sep.len();
+  }
+  out[k] = text.slice(from, text.len());
+  return out;
+}
+
+string[] sortedOf(string[] xs) {
+  string[] out = string[xs.len()](fill: "");
+  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string held = out[i];
+    i32 k = i - 1;
+    while (k >= 0 && out[k] > held) { out[k + 1] = out[k]; k = k - 1; }
+    out[k + 1] = held;
+  }
+  return out;
+}
+
+string joinWith(string[] xs, string sep) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : sep) + xs[i]; }
+  return out;
+}

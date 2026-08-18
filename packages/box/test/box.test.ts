@@ -2234,52 +2234,5 @@ Deno.test("nc -l takes one connection", async () => {
   }
 });
 
-Deno.test("the README states the applet count the dispatcher actually has", async () => {
-  // Prose numbers drift silently. This one said fifty-nine when there were sixty, and
-  // forty-two in a paragraph further down, both written by someone who had just counted.
-  const dispatch = await Deno.readTextFile("packages/box/src/box.wac");
-  const readme = await Deno.readTextFile("packages/box/README.md");
-  const dispatched = [...dispatch.matchAll(/if \(applet == "([a-z0-9-]+)"/g)].map((m) => m[1]).sort();
-  const actual = dispatched.length;
-  const claimed = Number(readme.match(/^(\d+) applets/m)?.[1] ?? 0);
-  assertEquals(claimed, actual, `the README says ${claimed} applets, box.wac dispatches ${actual}`);
-
-  // And the list the usage message prints must be the same list. It was not: `help` was dispatched and
-  // unlisted, so `box help` worked and the only way to find out was to read the dispatcher. Three counts
-  // were reachable — 57 files in `src/applets/`, 59 names in the usage, 60 branches here — and the test
-  // above only tied two of them together.
-  const listed = (dispatch.match(/string\[\] appletNames\(\) \{[\s\S]*?\n\}/)?.[0] ?? "")
-    .match(/"[a-z0-9-]+"/g)?.map((q) => q.slice(1, -1)).sort() ?? [];
-  assertEquals(
-    listed.join(" "),
-    dispatched.join(" "),
-    "the usage message and the dispatcher disagree about which applets exist",
-  );
-  // **And the list the README prints, which nothing checked at all.** The count is tied to the
-  // dispatcher three ways above; the fence under the commands is the same fact written out, and it
-  // was two names short — `id` and `whoami` were dispatched, listed in the usage message, and
-  // missing from the README, which is what a checked number beside an unchecked list produces. The
-  // first line says the fence is the *tools*, so `help` is the one name that belongs only in the
-  // count.
-  const fence = readme.match(/```\n(base32[\s\S]*?)```/)?.[1] ?? "";
-  const inReadme = fence.split(/\s+/).filter((w) => w.length > 0).sort();
-  assertEquals(
-    inReadme.join(" "),
-    dispatched.filter((n) => n !== "help").join(" "),
-    "the README's list of applets is not the list the dispatcher has",
-  );
-
-  // And the aside in the `bin/` section, which drifted independently of the first line. This used to
-  // check for one spelling — "with sixty entry points" — which meant the check itself had to be edited
-  // every time the count changed, and an edit that forgot it left the assertion passing against a word
-  // nobody had written since. The README says why a digit is the right shape here; enforce that instead,
-  // and the check stops needing maintenance at all.
-  const spelled = readme.match(/\b(forty|fifty|sixty|seventy|eighty|ninety)(-[a-z]+)?\s+entry points/);
-  assertEquals(
-    spelled,
-    null,
-    `the count is spelled out in "${spelled?.[0]}" — write it as a digit, for the reason the README gives`,
-  );
-});
 
 
