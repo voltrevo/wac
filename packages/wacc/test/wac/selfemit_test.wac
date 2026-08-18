@@ -10,9 +10,20 @@
 // is asserted only as a floor, so a slot that adds a feature cannot quietly lose one.
 //
 //
-// **6.4s: fifteen entries out of five hundred files, emitted.** Measured 2026-08-18. It already avoids
-// the obvious waste — `runModule` rather than `runEmitted`, so the graph is not type-checked fifteen
-// times to answer a question about the emitter — and what is left is the emitting, which is the test.
+// **2.6s: sixteen entries out of five hundred files, built.** Measured 2026-08-18, and it was 6.4s
+// with the same assertions. It already avoided the obvious waste — `runModule` rather than
+// `runEmitted`, so the graph is not type-checked sixteen times to answer a question about the
+// emitter — and the sentence here used to say the rest was the emitting. It was not. Split:
+//
+//     emit    3577ms      ← `emitFilesSelfDescribing` is *three* front ends
+//     run      101ms        the sixteen modules, written out and loaded by the binary
+//     blocked 2688ms      ← a fourth
+//
+// `emitFilesSelfDescribing` is `emitLinked` plus `manifestFiles`, and `manifestFiles` derives the
+// bind types and the export signatures with a front end each; `blockedFiles` built another. Four
+// walks of the same graph, three of them for answers the first walk already had. `buildFiles`
+// returns them together (`issues/lang/0129`) and is what `example/wacc.wac` uses for a real build,
+// so this now costs one front end per entry — which is the emitting, and now really is.
 // ## Host-side until 2026-08-17, `issues/system/0161`
 //
 // The TypeScript asked `WebAssembly.validate`. Nothing in wac validates bytes without running them,
@@ -31,7 +42,9 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
-import { emitFilesSelfDescribing, blockedFiles } from "../../src/api.wac";
+import { buildFiles, manifestWire, describeSeparator } from "../../src/api.wac";
+import { Built } from "../../src/emit.wac";
+import { withManifestSection } from "../../src/manifest.wac";
 import { Corpus, loadCorpus, waccSources } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
 
@@ -61,9 +74,33 @@ export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) 
   string[] rejected = string[own.len()](fill: "");
   i32 nRejected = 0;
 
+  // **One front end per entry, which is what `buildFiles` exists for** — `issues/lang/0129`, and the
+  // same call `packages/wacc/example/wacc.wac` makes for a real build. This loop used to ask four
+  // times over: `emitFilesSelfDescribing` is an emit plus `manifestFiles`, which builds
+  // `bindTypesLinked` and `exportSigsLinked` as two more, and `blockedFiles` below was a fourth. The
+  // blocked answer is the first field of the description this already has.
   for (i32 i = 0; i < own.len(); i++) {
     string name = baseName(own[i]);
-    u8[] wasm = emitFilesSelfDescribing(c.paths, c.sources, own[i], name, 0);
+    Built b = buildFiles(c.paths, c.sources, own[i]);
+    string sep = describeSeparator();
+    i32 firstAt = b.described.indexOf(sep);
+    string blocked = firstAt < 0 ? b.described : b.described.slice(0, firstAt);
+    string rest = firstAt < 0 ? "" : b.described.slice(firstAt + sep.len(), b.described.len());
+    i32 secondAt = rest.indexOf(sep);
+    string sigs = secondAt < 0 ? rest : rest.slice(0, secondAt);
+    string types = secondAt < 0 ? "" : rest.slice(secondAt + sep.len(), rest.len());
+    // **The split has to be checked, because nothing below can check it.** `blocked` is empty for
+    // every one of wacc's sources today, so a split that answered `""` whatever it was given would
+    // leave `whole` at its full count and this test green — the same shape as reading the blocked
+    // answer from a call that was never made. Two separators is what a description that parsed looks
+    // like; a front end that failed produces `sep + sep` and still has them.
+    t.isTrue(firstAt >= 0 && secondAt >= 0,
+             name + ": the description did not carry two separators — " +
+             itoa(b.described.len()) + " bytes");
+    // Self-describing, as before: the module carries its own manifest, which is what lets the binary
+    // load it as one artefact. `manifestWire` is `manifestFiles` given the metadata rather than
+    // re-deriving it.
+    u8[] wasm = withManifestSection(b.wasm, manifestWire(b.wasm, types, sigs, own[i], name, 0));
     Ran r = runModule(cli, wasm, dir, "selfemit_" + name + ".wasm", string[0](fill: ""));
     if (!r.ok || wasRejected(r)) {
       invalid = invalid + 1;
@@ -71,7 +108,7 @@ export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) 
       nRejected = nRejected + 1;
       continue;
     }
-    string why = blockedFiles(c.paths, c.sources, own[i]);
+    string why = blocked;
     if (why == "") {
       whole = whole + 1;
     } else {
