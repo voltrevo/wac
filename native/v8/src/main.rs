@@ -1098,6 +1098,14 @@ fn main() {
     if SEED.is_some() && stem == "test" {
         std::process::exit(test_command(&args[2..]));
     }
+    // **Whether the engine accepts a module, without running it.** `WebAssembly.validate` has no
+    // equivalent in wac, so a test that emits modules and wants to know they are well-formed had to
+    // run each one — a fork per module. `packages/wacc/test/wac/corpusemit_test.wac` compiles the
+    // whole repository and paid 543 of them, which is 142s of the 193s it took. Taking a list is the
+    // whole point: the isolate is built once and every module is compiled inside it.
+    if SEED.is_some() && stem == "validate" {
+        std::process::exit(validate_command(&args[2..]));
+    }
     if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
         start_v8();
         std::process::exit(run_seed(&args[1..]));
@@ -1178,6 +1186,51 @@ struct AsChild {
     /// reads as "there is no parent to ask" and takes the host's filesystem for. issues/system/0157.
     fs_req: Option<Arc<Stream>>,
     fs_rep: Option<Arc<Stream>>,
+}
+
+/// `wac validate a.wasm b.wasm …` — whether the engine accepts each module, in one process.
+///
+/// **Only the failures are named, and then a count.** That is the shape every batched oracle in this
+/// repository uses, and for the same reason: a run that stopped halfway reports no rejections, which
+/// is indistinguishable from one where nothing was wrong. The last line says how many were looked at
+/// so a caller can check it against what it asked for.
+fn validate_command(paths: &[String]) -> i32 {
+    if paths.is_empty() {
+        eprintln!("usage: wac validate <module.wasm> […]");
+        return 2;
+    }
+    start_v8();
+    let isolate = &mut v8::Isolate::new(Default::default());
+    v8::scope!(let handle_scope, isolate);
+    let context = v8::Context::new(handle_scope, Default::default());
+    let scope = &mut v8::ContextScope::new(handle_scope, context);
+
+    let mut bad = 0;
+    for p in paths {
+        match std::fs::read(p) {
+            Err(e) => {
+                println!("unreadable {p} — {e}");
+                bad += 1;
+            }
+            Ok(bytes) => {
+                // **A `TryCatch` per module, and it is not optional.** A rejected module leaves an
+                // exception on the isolate, and the next `compile` walks into V8's own check that a
+                // null result and a pending exception agree — `Check failed: maybe_compiled.is_null()
+                // == i_isolate->has_exception()` — which aborts the process with SIGABRT rather than
+                // returning. Nothing else in this file needs one because nothing else compiles twice.
+                // `tools/testCli.test.ts` puts a good module *after* a bad one for exactly this.
+                let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                let mut tc = tc.init();
+                if v8::WasmModuleObject::compile(&tc, &bytes).is_none() {
+                    println!("rejected {p}");
+                    bad += 1;
+                }
+                tc.reset();
+            }
+        }
+    }
+    println!("{} module(s): {bad} rejected", paths.len());
+    if bad > 0 { 1 } else { 0 }
 }
 
 fn run(m: &Manifest, wasm: &[u8], manifest_text: &str) -> i32 {

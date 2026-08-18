@@ -20,6 +20,8 @@
 import { diagnoseGraph, emitFiles, bindgenFiles, bindgenDeclinedFiles,
          emitFilesSelfDescribing, wireHasErrors } from "../../src/api.wac";
 import { Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { has, splitLines, startsWith, trimmed } from "../../../wactest/src/strings.wac";
 
 /** What a host is handed: the module, and the glue that calls into it. */
 export struct Artifacts {
@@ -161,6 +163,59 @@ export Ran runModule(Cli cli, u8[] wasm, string dir, string name, string[] args)
   if (!r.ran()) { return notRun("the wac binary did not run " + path + " — " + r.error); }
   string err = string.fromBytes(r.stderr);
   return Ran(true, "", r.status, err.indexOf(" trapped") >= 0, string.fromBytes(r.stdout), err);
+}
+
+/** What `wac validate` said about a batch of modules. */
+export struct Validated {
+  bool ok;
+  /** Why not, when `ok` is false. Empty otherwise. */
+  string error;
+  /** Paths the engine refused, or could not read. */
+  string[] rejected;
+}
+
+/**
+ * Ask the engine about many modules in **one** process.
+ *
+ * `wasRejected` costs a fork per module, because the only way to find out whether the engine accepts
+ * a module used to be to run it. `wac validate a.wasm b.wasm …` builds one isolate and compiles each
+ * module inside it, which took `corpusemit_test.wac` from 193s to a fraction of that.
+ *
+ * **The count is checked**, as it is for every batched oracle here: the command's last line says how
+ * many modules it looked at, and a run that stopped halfway would otherwise report no rejections and
+ * be indistinguishable from a clean one.
+ */
+export Validated validateAll(Cli cli, string[] paths) {
+  if (paths.len() == 0) { return Validated(true, "", string[0](fill: "")); }
+  string[] argv = string[paths.len() + 1](fill: "");
+  argv[0] = "validate";
+  for (i32 i = 0; i < paths.len(); i++) { argv[i + 1] = paths[i]; }
+
+  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+  if (!r.ran()) {
+    return Validated(false, "wac validate did not run — " + r.error, string[0](fill: ""));
+  }
+  string[] lines = splitLines(string.fromBytes(r.stdout));
+  if (lines.len() == 0) {
+    return Validated(false, "wac validate said nothing — " + string.fromBytes(r.stderr),
+                     string[0](fill: ""));
+  }
+
+  string[] bad = string[paths.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (startsWith(lines[i], "rejected ")) { bad[n] = trimmed(lines[i].slice(9, lines[i].len())); n = n + 1; }
+    else if (startsWith(lines[i], "unreadable ")) { bad[n] = trimmed(lines[i].slice(11, lines[i].len())); n = n + 1; }
+  }
+  string want = itoa(paths.len()) + " module(s): " + itoa(n) + " rejected";
+  if (lines[lines.len() - 1] != want) {
+    return Validated(false, "wac validate checked something other than what it was given — said \"" +
+                            lines[lines.len() - 1] + "\", wanted \"" + want + "\"",
+                     string[0](fill: ""));
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = bad[i]; }
+  return Validated(true, "", out);
 }
 
 /**

@@ -16,9 +16,9 @@
 //
 // ## Host-side until 2026-08-17, `issues/system/0161`
 //
-// The TypeScript called `tools/waccBindgen.ts`'s `generate` with structured objects. This calls
-// `src/bindgen.wac`'s `bindgenOf`, which is the same generator in wac and takes the metadata as the
-// compiler's own wire text — so the objects become two hand-written lines. **The subject moves from
+// The TypeScript called `packages/wacc/tools/waccBindgen.ts`'s `generate` with structured objects.
+// This calls `src/bindgen.wac`'s `bindgenOf`, which is the same generator in wac and takes the
+// metadata as the compiler's own wire text — so the objects become two hand-written lines. **The subject moves from
 // one generator to the other**, and that is not a gap: the two outputs are compared byte for byte,
 // which `bindgenOf`'s own header says is why the file names `waccBindgen.ts` in both.
 //

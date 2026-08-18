@@ -162,13 +162,16 @@ against the whole corpus**, because that is exactly what the lane holds: `checke
 file through the checker, `corpusemit_test.wac` every file through the emitter, `names.test.ts` 176,210
 functions across 364 modules.
 
-**That lane got more expensive on 2026-08-17, and the reason is worth knowing before anyone prices it
-again.** `corpusEmit.test.ts` became `test/wac/corpusemit_test.wac` (`issues/system/0161`) and went
-from **51s to 193s** — not because it compiles more, but because `WebAssembly.validate` has no
-equivalent in wac, so each of the 543 modules is written out and run as a process to find out whether
-the engine accepts it. `issues/system/0184` is the missing capability, and five more of this
-package's tests validate the same way. Anyone re-measuring this trade should count that as a cost of
-0184 rather than a cost of the lane.
+**That lane got more expensive on 2026-08-17, and the first explanation given for it was wrong.**
+`corpusEmit.test.ts` became `test/wac/corpusemit_test.wac` (`issues/system/0161`) and went from a
+recorded **51s to 193s**. That was attributed to `WebAssembly.validate` having no equivalent in wac,
+so each of 543 modules being run as a process — and `wac validate`, which takes a list and compiles
+them in one isolate, changed the total by **one second**. The forks were ~13s of it.
+
+Two thirds of the regression was a manifest being built per file that nothing then read; without it
+the test is **128s**. The remainder is the emitter itself, and the gap against 51s is not understood
+— that figure was recorded elsewhere, under unknown load, on a box three agents share, so it should
+not be treated as a like-for-like baseline. `issues/system/0184` carries the breakdown.
 
 So the shape of the trade is: 3m35s, and it is the only thing that would have caught a broad emitter
 regression from a day's work on the emitter. A push gate cannot afford it; something on a slower

@@ -12,10 +12,10 @@
 //
 // ## Host-side until 2026-08-17, `issues/system/0161`
 //
-// **`WebAssembly.validate` becomes a process.** There is no capability to validate bytes from wac,
-// so each module is written out and the binary asked to load it, and a module the engine refuses says
-// so (`issues/system/0184`). That is one process per corpus file, and it is the whole reason this
-// file is slower than the TypeScript it replaces — the emitting is unchanged.
+// **`WebAssembly.validate` became `wac validate`.** wac cannot ask whether bytes are a well-formed
+// module, so the first version of this file wrote each one out and ran it — 543 files, 543 forks,
+// 193s against the TypeScript's 51s. The binary takes a list now and compiles each module inside one
+// isolate, so this is one fork per chunk. `issues/system/0184` has the numbers.
 //
 // **What the source declares is read by scanning it, not by parsing it.** The TypeScript asked the
 // *reference* parser, which is unavailable here; asking wacc's own would make this symmetric — a
@@ -29,9 +29,9 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
-import { emitFilesSelfDescribing, blockedFiles, namesFiles } from "../../src/api.wac";
+import { emitFiles, blockedFiles, namesFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
-import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
+import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";
 
 /** The word after `export`, when the declaration is a plain function. */
 string exportedFunctionOn(string line) {
@@ -118,47 +118,70 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   // more files than the entry needs costs nothing — what is emitted is the closure of its imports —
   // and it is the only honest way to ask, since resolving the closure here would be this test
   // grading its own homework.
-  for (i32 f = 0; f < c.paths.len(); f++) {
-    u8[] wasm = emitFilesSelfDescribing(c.paths, c.sources, c.paths[f], "corpus.wasm", 0);
-    Ran r = runModule(cli, wasm, dir, "corpusemit.wasm", string[0](fill: ""));
-    if (!r.ok || wasRejected(r)) {
-      invalid = invalid + 1;
-      // **Named, not just counted.** This once said "1 corpus file(s) produced an invalid module"
-      // and nothing else while holding the name, so finding out which of 419 meant bisecting by hand.
-      if (nInvalid < invalidNames.len()) {
-        invalidNames[nInvalid] = c.paths[f];
-        nInvalid = nInvalid + 1;
-      }
-      continue;
+  //
+  // **In chunks, because validating is a process.** `wac validate` takes a list and compiles each
+  // module inside one isolate, so the cost is one fork per chunk rather than one per file — which is
+  // what took this from 193s. The chunk is small enough that the modules for it are the only ones on
+  // disk at a time; the whole corpus at once is hundreds of megabytes of wasm.
+  i32 CHUNK = 64;
+  for (i32 base = 0; base < c.paths.len(); base = base + CHUNK) {
+    i32 n = c.paths.len() - base < CHUNK ? c.paths.len() - base : CHUNK;
+    string[] wrote = string[n](fill: "");
+    for (i32 j = 0; j < n; j++) {
+      // **`emitFiles`, not `emitFilesSelfDescribing`.** Validating compiles the module and never
+      // looks at a manifest, and building one costs two more link passes over the whole graph per
+      // file — which is where this test's time actually went, not the forks it was blamed on.
+      u8[] wasm = emitFiles(c.paths, c.sources, c.paths[base + j]);
+      string at = dir + "/corpusemit" + itoa(j) + ".wasm";
+      cli.writeFile(at, wasm).wait();
+      wrote[j] = at;
     }
 
-    string why = blockedFiles(c.paths, c.sources, c.paths[f]);
-    if (why != "") {
-      partial = partial + 1;
-      if (!has(reasonSeen, why) && reasons < reasonSeen.len()) {
-        reasonSeen[reasons] = why;
-        reasons = reasons + 1;
-      }
-      continue;
-    }
-    whole = whole + 1;
+    Validated v = validateAll(cli, wrote);
+    t.isTrue(v.ok, "the engine was asked about this chunk — " + v.error);
+    if (!v.ok) { return t.report(); }
 
-    // **"Whole" used to mean "the emitter did not say it was blocked", which is not the same thing.**
-    // `packages/json/src/json.wac` reported nothing blocked and was missing three of its four
-    // exported functions, so the count was measuring the emitter's opinion of itself. This asks the
-    // *source*: every `export` it declares has to be a function in the module.
-    string[] want = declaredExports(c.sources[f]);
-    totalWant = totalWant + want.len();
-    if (want.len() == 0) { continue; }
-    string[] got = splitLines(namesFiles(c.paths, c.sources, c.paths[f]));
-    for (i32 i = 0; i < want.len(); i++) {
-      if (has(got, want[i])) { continue; }
-      short_ = short_ + 1;
-      if (nShort < shortNames.len()) {
-        shortNames[nShort] = c.paths[f] + " is missing " + want[i];
-        nShort = nShort + 1;
+    for (i32 j = 0; j < n; j++) {
+      i32 f = base + j;
+      if (has(v.rejected, wrote[j])) {
+        invalid = invalid + 1;
+        // **Named, not just counted.** This once said "1 corpus file(s) produced an invalid module"
+        // and nothing else while holding the name, so finding out which of 419 meant bisecting by hand.
+        if (nInvalid < invalidNames.len()) {
+          invalidNames[nInvalid] = c.paths[f];
+          nInvalid = nInvalid + 1;
+        }
+        continue;
       }
-      i = want.len();   // one report per file is enough to name it
+
+      string why = blockedFiles(c.paths, c.sources, c.paths[f]);
+      if (why != "") {
+        partial = partial + 1;
+        if (!has(reasonSeen, why) && reasons < reasonSeen.len()) {
+          reasonSeen[reasons] = why;
+          reasons = reasons + 1;
+        }
+        continue;
+      }
+      whole = whole + 1;
+
+      // **"Whole" used to mean "the emitter did not say it was blocked", which is not the same
+      // thing.** `packages/json/src/json.wac` reported nothing blocked and was missing three of its
+      // four exported functions, so the count was measuring the emitter's opinion of itself. This
+      // asks the *source*: every `export` it declares has to be a function in the module.
+      string[] want = declaredExports(c.sources[f]);
+      totalWant = totalWant + want.len();
+      if (want.len() == 0) { continue; }
+      string[] got = splitLines(namesFiles(c.paths, c.sources, c.paths[f]));
+      for (i32 i = 0; i < want.len(); i++) {
+        if (has(got, want[i])) { continue; }
+        short_ = short_ + 1;
+        if (nShort < shortNames.len()) {
+          shortNames[nShort] = c.paths[f] + " is missing " + want[i];
+          nShort = nShort + 1;
+        }
+        i = want.len();   // one report per file is enough to name it
+      }
     }
   }
 

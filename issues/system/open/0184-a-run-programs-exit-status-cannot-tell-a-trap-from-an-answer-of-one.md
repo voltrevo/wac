@@ -58,24 +58,33 @@ tests instantiate the module they emitted and call an export, and the conversion
 read the status. Every one of those tests that asserts a refusal has to read stderr for the word
 `trapped` instead, which is a message rather than a contract and will break the day it is reworded.
 
-## What the missing half costs, measured
+## What the missing half costs, measured — and what it does not
 
 There is no way to ask whether a module is well-formed without running it, so `WebAssembly.validate`
-becomes a process. `packages/wacc/test/wac/corpusemit_test.wac` compiles every file in the repository
-and validates each one:
+had to become a fork per module. `packages/wacc/test/wac/corpusemit_test.wac` compiles every file in
+the repository and validates each one, and it came out at **193s against the TypeScript's recorded
+51s**.
 
-| | |
+**The forks were not the cause, and this issue said they were.** Adding `wac validate <module…>` —
+one isolate, a list of modules, one process per chunk — moved that test from 193s to **194s**. The
+time was somewhere else entirely:
+
+| what | cost |
 |---|---|
-| `corpusEmit.test.ts`, with `WebAssembly.validate` | **51s** |
-| `corpusemit_test.wac`, one process per file | **193s** |
+| building a manifest per file (`emitFilesSelfDescribing` over `emitFiles`) | **~66s** |
+| `namesFiles`, a further link per whole file | ~18s |
+| a fork per module, which this issue blamed | ~13s |
+| the emitting itself | ~95s |
 
-543 files, 543 processes. The emitting is unchanged and is not the difference; the difference is that
-a question answered in microseconds by a function call is answered in milliseconds by a fork. Five
-more of `packages/wacc`'s tests validate the same way — `coverage`, `checked`, `fixpointEmit`,
-`names`, `selfHostEmit` — so this is not a one-file cost.
+Validating never needs a manifest, so dropping it took the test to **128s**. The rest is the emitter.
 
-A `wac validate prog.wasm` that exits 0 or non-zero would remove most of it, and would also give
-`wasRejected` a contract instead of a message to match on.
+The command is still worth having and is still the right shape — it is one fork per chunk rather than
+per module, and it gives `wasRejected` a contract instead of a message to match on. It is just not
+where the time was, and the correction is the useful part of this section.
+
+**The remaining gap is not understood.** 128s here against a recorded 51s for the same work under
+Deno, on a box three agents share, comparing against a number measured elsewhere under unknown load.
+That is not a like-for-like comparison and should not be quoted as one.
 
 ## And it is eight bits wide
 
