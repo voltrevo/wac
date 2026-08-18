@@ -1,6 +1,6 @@
 // A local `openssl s_client` speaking DTLS 1.2, for the tests that check our *server* role.
 //
-// The companion to `sserver.ts`, and it exists for the same two reasons that file gives — plus one of
+// The companion to `test/wac/openssl.wac`, and it exists for the same two reasons that file gives — plus one of
 // its own, which is what the tests were actually paying.
 //
 // ## What a `sleep` was costing
@@ -20,7 +20,7 @@
 //
 // ## Why Deno holds stdin rather than a `sleep`
 //
-// The argument is `sserver.ts`'s, and it applies here unchanged: with `sh -c` the child is **`sh`**, so
+// The argument is `test/wac/openssl.wac`'s, and it applies here unchanged: with `sh -c` the child is **`sh`**, so
 // `kill()` kills the wrapper and leaves `openssl` reparented to init. That module found 294 abandoned
 // servers on this machine, the oldest nine days old. `stdin: "piped"` does the same job with no
 // wrapper — Deno holds the pipe, the process spawned is `openssl` itself, and killing the child kills
