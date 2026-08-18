@@ -83,7 +83,7 @@ wacc cannot compile … — a lambda inside a generic, which is emitted once per
 real walk into a throwaway `Env`, so nothing it finds reaches the emitter's tables and there is no
 second traversal to disagree with the first — and `frontOf` declines when the answer is yes.
 
-**All three declaration forms**, pinned in `packages/wacc/test/lambda.test.ts`, asserting the message
+**All three declaration forms**, pinned in `packages/wacc/test/wac/lambda_test.wac`, asserting the message
 *names the generic*: "failed to load" was the symptom of the bug and would satisfy a test that only
 asked for a refusal. It says to invert itself when instantiation-aware keys land.
 
@@ -176,7 +176,7 @@ walk runs at both, and the second run records only what the first could not have
 
 **A generic taking a funcref parameter** — `T twice<T>(T v, fn[T(T)] f)` — is still declined, with the
 same message before this work and after it. There is no lambda in it at all; the funcref arrives as a
-parameter. `packages/wacc/test/lambda.test.ts` pins it as its own case so the two are not confused.
+parameter. `packages/wacc/test/wac/lambda_test.wac` pins it as its own case so the two are not confused.
 
 ### What it was for
 

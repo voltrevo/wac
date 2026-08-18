@@ -253,7 +253,7 @@ export i32 errMatchNotEnum() { return 72; }
  * Its own code because it is the one lambda mistake the ordinary mismatch machinery cannot report:
  * a lambda has no type of its own, `typeOfExpr` answers unknown for one, and unknown is assignable
  * to everything. So the caller's `assignable` agrees and says nothing — which is how all five of the
- * wrong programs in `test/lambda.test.ts` were accepted before `checkLambda` existed.
+ * wrong programs in `test/wac/lambda_test.wac` were accepted before `checkLambda` existed.
  */
 export i32 errLambdaNoTarget() { return 73; }
 /** A lambda whose parameters do not match the funcref it is being used as, in count or in type. */

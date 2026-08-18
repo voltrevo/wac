@@ -1,0 +1,866 @@
+// Rung 4's oracle, first slice: **run what both compilers emit and compare the answers.**
+//
+// The README argues at length that byte identity is the wrong oracle for this rung — it pins the type
+// section's dedup order, index assignment, LEB widths and a name section, none of which is the
+// language. What it proposes instead is the oracle already sitting in this repository for nothing:
+// compile a program and *run* it.
+//
+// So this asks each program of both compilers and compares what comes back. Nothing here asserts an
+// expected answer: a hand-written `5` would be a third opinion, and the point of a differential test
+// is that there are only two.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The reference is TypeScript and unreachable from wac, so it answers through `test/reference.ts` —
+// one process for every question, in the shape every oracle here uses.
+//
+// **The reference's answer is then compiled into the driver as a literal**, and the driver returns 7
+// or 0. That is what keeps this to one run per program: an exit status is eight bits
+// (`issues/system/0184`), so a test that carried the *answer* out would need four runs per case and
+// could not carry an `f64` at all. Comparing inside the module carries anything.
+//
+// **One spelling of an argument serves both sides**: `true` and `false` for a `bool`, and an `n`
+// suffix on an `i64` which the driver strips and the oracle reads as a `bigint`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { joined, splitLines, startsWith, contains, trimmed } from "../../../wactest/src/strings.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Lines, Answers, ask, hex } from "../../../wactest/src/oracle.wac";
+import { Ran, runEmittedOne, scratchDir, Validated,
+         validateAll } from "./artifacts_probe.wac";
+import { emitFiles } from "../../src/api.wac";
+
+const string ENTRY = "/main.wac";
+const string ORACLE = "packages/wacc/test/reference.ts";
+
+/** One program, and the calls to ask of it — `name arg…`, several separated by `;`. */
+string[] sources() {
+  return string[](
+    "export i32 answer() { return 42; }",
+    "export i32 add(i32 a, i32 b) { return a + b; }",
+    "export i32 sub(i32 a, i32 b) { return a - b; }",
+    "export i32 mul(i32 a, i32 b) { return a * b; }",
+    "export i32 mix(i32 a, i32 b) { return a * 2 + b - 1; }",
+    "export i32 second(i32 a, i32 b) { return b; }",
+    // More than one function, so the index assignment and the export table have to line up.
+    "export i32 one() { return 1; } export i32 two(i32 a) { return a + a; }",
+    // A literal wide enough to need more than one LEB byte, in both signs.
+    "export i32 big() { return 100000; }",
+    "export i32 neg() { return 0 - 100000; }",
+    // ── Locals and assignment ──────────────────────────────────────────────────
+    "export i32 f(i32 a) { i32 x = a + 1; return x * x; }",
+    "export i32 f(i32 a) { i32 x = a; x = x + 10; x = x * 2; return x; }",
+    "export i32 f(i32 a) { i32 x = a; x += 5; x -= 2; x *= 3; return x; }",
+    // Two locals, so the indices have to be assigned in declaration order after the parameters.
+    "export i32 f(i32 a, i32 b) { i32 x = a * 2; i32 y = b * 3; return x + y; }",
+    // ── The rest of the i32 operators, signedness included ──────────────────────
+    "export i32 f(i32 a, i32 b) { return a / b; }",
+    "export i32 f(i32 a, i32 b) { return a % b; }",
+    "export i32 f(i32 a, i32 b) { return (a & b) + (a | b) + (a ^ b); }",
+    "export i32 f(i32 a, i32 b) { return a << b; }",
+    // `>>` is arithmetic here because everything in this slice is `i32`. The logical twin needs an
+    // unsigned operand to be reached at all, and an unsigned *type* is what this slice does not have —
+    // so `>>>` is deliberately not exercised rather than exercised wrongly.
+    "export i32 f(i32 a) { return a >> 1; }",
+    "export i32 f(i32 a) { return -a; }",
+    "export i32 f(i32 a) { return ~a; }",
+    // ── Comparisons and the boolean operators ──────────────────────────────────
+    "export bool f(i32 a, i32 b) { return a < b; }",
+    "export bool f(i32 a, i32 b) { return a == b || a > b; }",
+    "export bool f(i32 a, i32 b) { return a != b && a <= b; }",
+    "export bool f(bool a) { return !a; }",
+    // Short-circuit is observable: if `||` evaluated its right side, this would divide by zero and trap.
+    "export bool f(i32 a) { return a == 0 || 10 / a > 1; }",
+    // ── Control flow ───────────────────────────────────────────────────────────
+    "export i32 f(i32 a) { if (a > 0) { return 1; } return 0; }",
+    "export i32 f(i32 a) { if (a > 0) { return 1; } else { return 2; } }",
+    "export i32 f(i32 n) { i32 total = 0; i32 i = 0; while (i < n) { total = total + i; i = i + 1; } return total; }",
+    // A loop whose body has an `if` in it, so the labels have to nest correctly.
+    "export i32 f(i32 n) { i32 c = 0; i32 i = 0; while (i < n) { if (i % 2 == 0) { c = c + 1; } i = i + 1; } return c; }",
+    "export i32 f(bool c, i32 a, i32 b) { return c ? a : b; }",
+    // ── Calls ──────────────────────────────────────────────────────────────────
+    "i32 twice(i32 a) { return a * 2; } export i32 f(i32 a) { return twice(a) + twice(1); }",
+    // A call to something declared *after* it, which is why the names are collected in a pass of
+    // their own.
+    "export i32 f(i32 a) { return later(a); } i32 later(i32 a) { return a + 100; }",
+    // Recursion, which is a call that has to work before the function it is in is finished.
+    "export i32 fact(i32 n) { if (n <= 1) { return 1; } return n * fact(n - 1); }",
+    // ── Unsigned: the same 32 bits, and different opcodes to read them ──────────
+    // Every one of these is the half a signed opcode gets wrong, so the earlier slice would have agreed
+    // on small arguments and been silently wrong here.
+    "export u32 f(u32 a, u32 b) { return a / b; }",
+    "export u32 f(u32 a, u32 b) { return a % b; }",
+    "export u32 f(u32 a) { return a >> 1; }",
+    "export bool f(u32 a, u32 b) { return a < b; }",
+    "export bool f(u32 a, u32 b) { return a >= b; }",
+    // ── i64, a different opcode block entirely ─────────────────────────────────
+    "export i64 f(i64 a, i64 b) { return a + b; }",
+    "export i64 f(i64 a, i64 b) { return a * b; }",
+    "export i64 f(i64 a, i64 b) { return a / b; }",
+    "export i64 f(i64 a) { return a << 40; }",
+    "export i64 f(i64 a) { i64 x = a; x += 1; return x * 2; }",
+    "export bool f(i64 a, i64 b) { return a < b; }",
+    "export u64 f(u64 a, u64 b) { return a / b; }",
+    "export i64 f(i64 n) { i64 t = 0; i64 i = 0; while (i < n) { t = t + i; i = i + 1; } return t; }",
+    // A literal takes the other side's type, which is what makes this an i64 addition.
+    "export i64 f(i64 a) { return a + 1; }",
+    // ── Floats, whose opcodes are a block of their own ─────────────────────────
+    "export f64 f(f64 a, f64 b) { return a + b; }",
+    "export f64 f(f64 a, f64 b) { return a / b; }",
+    "export f64 f(f64 a) { return -a; }",
+    "export bool f(f64 a, f64 b) { return a < b; }",
+    "export f64 f() { f64 x = 1.5; return x * 2.0; }",
+    "export f32 f(f32 a, f32 b) { return a * b; }",
+    "export f64 f(f64 a) { f64 t = 0.0; i32 i = 0; while (i < 4) { t = t + a; i = i + 1; } return t; }",
+    // ── Conversions, including the one that is nothing at all ──────────────────
+    "export u32 f(i32 a) { return a as@ u32; }",
+    "export i32 f(u32 a) { return a as@ i32; }",
+    "export i64 f(i32 a) { return a as i64; }",
+    "export i64 f(u32 a) { return a as i64; }",
+    // `as~` from a wider integer **saturates**, so the out-of-range cases are the whole point: both
+    // bounds, both directions, and the in-range value that must still pass straight through.
+    "export i32 f(i64 a) { return a as~ i32; }",
+    "export u32 f(i64 a) { return a as~ u32; }",
+    "export u32 f(u64 a) { return a as~ u32; }",
+    "export f64 f(i32 a) { return a as f64; }",
+    "export f64 f(u32 a) { return a as f64; }",
+    // Rounded, not truncated: `as~` reads like C's truncation and is not it. The ties are asked about
+    // too, because half-to-even and half-away-from-zero differ exactly there and both are defensible.
+    "export i32 f(f64 a) { return a as~ i32; }",
+    "export f64 f(f32 a) { return a as f64; }",
+    "export f32 f(f64 a) { return a as~ f32; }",
+    // ── The rest of control flow, where a wrong label validates and jumps elsewhere ──
+    "export i32 f(i32 n) { i32 t = 0; for (i32 i = 0; i < n; i++) { t = t + i; } return t; }",
+    "export i32 f(i32 n) { i32 t = 0; i32 i = 0; do { t = t + i; i = i + 1; } while (i < n); return t; }",
+    "export i32 f(i32 n) { i32 t = 0; i32 i = 0; while (true) { if (i >= n) { break; } t = t + i; i = i + 1; } return t; }",
+    "export i32 f(i32 n) { i32 t = 0; for (i32 i = 0; i < n; i++) { if (i % 2 == 0) { continue; } t = t + i; } return t; }",
+    // Nested loops: the inner `break` leaves the inner loop only, which is what the relative depth is.
+    "export i32 f(i32 n) { i32 t = 0; for (i32 i = 0; i < n; i++) { for (i32 j = 0; j < n; j++) { if (j > i) { break; } t = t + 1; } } return t; }",
+    // A `break` under an `if` under a loop: one more label between it and what it means.
+    "export i32 f(i32 n) { i32 i = 0; while (i < n) { if (i == 3) { break; } i = i + 1; } return i; }",
+    "export i32 f(i32 a) { switch (a) { case 1: { return 10; } case 2: { return 20; } default: { return 0; } } }",
+    "export i32 f(i32 a) { i32 r = 0; switch (a) { case 1: { r = 10; break; } case 2: { r = 20; break; } default: { r = -1; } } return r; }",
+    // ── Arrays: the first wasm GC type ─────────────────────────────────────────
+    "export i32 f() { i32[] a = i32[3](); a[0] = 7; return a[0] + a.len(); }",
+    "export i32 f() { i32[] a = i32[4](fill: 9); return a[2] + a.len(); }",
+    "export i32 f() { i32[] a = i32[](4, 5, 6); return a[1] * a.len(); }",
+    // An array cannot cross the JS boundary as an argument — it is a reference — so the array is built
+    // inside and the index is what comes in.
+    "i32 at(i32[] a, i32 i) { return a[i]; } export i32 f(i32 i) { return at(i32[](7, 8, 9), i); }",
+    "export i32 f() { i32[] a = i32[5](); i32 t = 0; for (i32 i = 0; i < a.len(); i++) { a[i] = i * i; } for (i32 i = 0; i < a.len(); i++) { t = t + a[i]; } return t; }",
+    // A packed element: the getter has to zero-extend, which is the half a signed one gets wrong.
+    "export i32 f() { u8[] b = u8[3](); b[0] = 200; return b[0]; }",
+    "export i32 f() { i8[] b = i8[3](); b[0] = 200; return b[0]; }",
+    "export i32 f() { u8[] b = u8[](1, 2, 250); return b[2] + b.len(); }",
+    // Wider elements, so the array type's storage type is not always i32.
+    "export i64 f() { i64[] a = i64[2](); a[1] = 4294967296; return a[1]; }",
+    "export f64 f() { f64[] a = f64[2](fill: 1.5); return a[0] + a[1]; }",
+    // Two array types in one module, so the indices have to be distinct and stable.
+    "export i32 f() { i32[] a = i32[2](fill: 3); u8[] b = u8[2](fill: 4); return a[0] + b[0]; }",
+    // An array through a call, which puts a reference type in a signature.
+    "i32 first(i32[] xs) { return xs[0]; } export i32 f() { return first(i32[](11, 22)); }",
+    // ── Structs: the second GC type ────────────────────────────────────────────
+    "struct P { i32 x; i32 y; } export i32 f() { P p = P(3, 4); return p.x + p.y; }",
+    "struct P { i32 x; i32 y; } export i32 f() { P p = P(3, 4); p.x = 9; return p.x * p.y; }",
+    // A method: the receiver is the first parameter, which is the whole of what a method is here.
+    "struct P { i32 x; i32 dbl(const this) { return this.x * 2; } } export i32 f() { P p = P(5); return p.dbl(); }",
+    "struct P { i32 x; i32 plus(const this, i32 n) { return this.x + n; } } export i32 f(i32 n) { P p = P(5); return p.plus(n); }",
+    // A method that writes through `this`, so the receiver is not merely read.
+    "struct C { i32 n; void bump(this) { this.n = this.n + 1; } i32 get(const this) { return this.n; } } export i32 f() { C c = C(0); c.bump(); c.bump(); return c.get(); }",
+    // Fields of every width, so the struct's field types are not all i32.
+    "struct S { i64 a; f64 b; } export f64 f() { S s = S(4294967296, 1.5); return (s.a as~ f64) + s.b; }",
+    // A struct holding an array, and an array of a wider type beside it.
+    "struct S { i32[] xs; } export i32 f() { S s = S(i32[](7, 8)); return s.xs[1] + s.xs.len(); }",
+    // A struct crossing a call, and one nested in another.
+    "struct P { i32 x; } i32 take(P p) { return p.x; } export i32 f() { return take(P(11)); }",
+    "struct Inner { i32 v; } struct Outer { Inner i; } export i32 f() { Outer o = Outer(Inner(6)); return o.i.v; }",
+    "struct Inner { i32 v; } struct Outer { Inner i; } export i32 f() { Outer o = Outer(Inner(6)); o.i.v = 9; return o.i.v; }",
+    // Two structs, so the type indices have to be distinct and follow the arrays.
+    "struct A { i32 a; } struct B { i32 b; } export i32 f() { A x = A(2); B y = B(3); return x.a * y.b; }",
+    // A struct in a loop, mutated each time round.
+    "struct C { i32 n; } export i32 f(i32 k) { C c = C(0); for (i32 i = 0; i < k; i++) { c.n = c.n + i; } return c.n; }",
+    // ── Module-level constants, inlined at each use ────────────────────────────
+    "const i32 K = 7; export i32 f() { return K; }",
+    "const i32 K = 7; export i32 f(i32 n) { return K * n + K; }",
+    // Arithmetic in the initialiser, which wasm would not accept as a constant expression and which
+    // inlining makes ordinary — the substituted expression sits in a function body like any other.
+    "const i32 K = 3 * 4 + 1; export i32 f() { return K; }",
+    "const i64 W = 4294967296; export i64 f() { return W + 1; }",
+    "const f64 P = 1.5; export f64 f() { return P * 2.0; }",
+    "const bool T = true; export bool f() { return !T; }",
+    // A local of the same name is nearer and wins.
+    "const i32 K = 7; export i32 f() { i32 K = 2; return K; }",
+    // Two constants, and one used inside a loop where it is substituted every time round.
+    "const i32 A = 2; const i32 B = 5; export i32 f() { i32 t = 0; for (i32 i = 0; i < B; i++) { t = t + A; } return t; }",
+    // ── Constants with identity, which live in a global ────────────────────────
+    "const i32[] T = i32[](4, 5, 6); export i32 f() { return T[1] + T.len(); }",
+    "const u8[] B = u8[](1, 2, 250); export i32 f(i32 i) { return B[i]; }",
+    "const i64[] W = i64[2](fill: 4294967296); export i64 f() { return W[0] + W[1]; }",
+    "const i32[] Z = i32[4](); export i32 f() { return Z[3] + Z.len(); }",
+    // One array, not one per use: read twice in the same expression and once from a loop.
+    "const i32[] T = i32[](1, 2, 3); export i32 f() { i32 t = 0; for (i32 i = 0; i < T.len(); i++) { t = t + T[i]; } return t + T[0]; }",
+    // A struct constant, whose initialiser is `struct.new` — also a constant expression.
+    "struct P { i32 x; i32 y; } const P O = P(3, 4); export i32 f() { return O.x * O.y; }",
+    // Two of them, so the global indices have to be distinct and stable.
+    "const i32[] A = i32[](1, 2); const i32[] B = i32[](30, 40); export i32 f() { return A[1] + B[1]; }",
+    // A scalar beside an array, so the inlined and the global paths coexist.
+    "const i32 K = 5; const i32[] T = i32[](7, 8); export i32 f() { return K + T[0]; }",
+    // ── A ternary of two literals, which takes the slot's type ─────────────────
+    "export i32 f(bool c) { return c ? 1 : 2; }",
+    "export i64 f(bool c) { return c ? 4294967296 : 1; }",
+    "export f64 f(bool c) { return c ? 1.5 : 2.5; }",
+    "export i64 f(bool c) { i64 x = c ? 1 : 2; return x + 4294967296; }",
+    // Nested, so the inner one has to take the outer's slot too.
+    "export i64 f(bool a, bool b) { return a ? (b ? 1 : 2) : 3; }",
+    // ── Static method calls, where the receiver names a type ───────────────────
+    "struct P { i32 x; P make(i32 v) { return P(v); } } export i32 f(i32 v) { return P.make(v).x; }",
+    "struct P { i32 x; i32 zero() { return 0; } } export i32 f() { return P.zero(); }",
+    // A static and an instance method of the same name on the same struct are different functions.
+    "struct P { i32 x; i32 get(const this) { return this.x; } P of(i32 v) { return P(v); } } export i32 f(i32 v) { return P.of(v).get(); }",
+    // A local shadowing the struct's name makes the receiver a value again.
+    "struct P { i32 x; i32 get(const this) { return this.x; } } export i32 f() { P P2 = P(6); return P2.get(); }",
+    // ── Strings, which are an i8 array in the emitted module ───────────────────
+    "export i32 f() { string s = \"hi\"; return s.len(); }",
+    "export i32 f() { return \"hello\".len(); }",
+    "export i32 f() { string s = \"\"; return s.len(); }",
+    "export i32 f() { return \"a\\nb\".len(); }",
+    "export i32 f() { return \"a\\tb\\\\c\".len(); }",
+    "export i32 f() { return \"say \\\"hi\\\"\".len(); }",
+    // Multi-byte UTF-8: `.len()` is bytes, not characters, which is the whole reason it is an i8 array.
+    "export i32 f() { return \"é\".len(); }",
+    // A string crossing a call, and one in a struct field.
+    "i32 size(string s) { return s.len(); } export i32 f() { return size(\"abcd\"); }",
+    "struct S { string name; } export i32 f() { S s = S(\"wacc\"); return s.name.len(); }",
+    // A string constant, which has identity and so lives in a global.
+    "const string G = \"global\"; export i32 f() { return G.len(); }",
+    // An array of strings, so the element type is itself a reference.
+    "export i32 f() { string[] xs = string[](\"ab\", \"cde\"); return xs[1].len() + xs.len(); }",
+    // ── String equality, which is a generated helper rather than an instruction ─
+    "export bool f() { return \"abc\" == \"abc\"; }",
+    "export bool f() { return \"abc\" == \"abd\"; }",
+    "export bool f() { return \"abc\" == \"ab\"; }",
+    "export bool f() { return \"\" == \"\"; }",
+    "export bool f() { return \"abc\" != \"abd\"; }",
+    "export bool f(bool c) { string a = c ? \"yes\" : \"no\"; return a == \"yes\"; }",
+    // A difference in the last byte only, which a length check alone would miss.
+    "export bool f() { return \"abcd\" == \"abce\"; }",
+    // Multi-byte, where equality is over bytes and not characters.
+    "export bool f() { return \"é\" == \"é\"; }",
+    "const string G = \"wac\"; export bool f() { return G == \"wac\"; }",
+    // ── Concatenation and the byte conversions, all generated helpers ──────────
+    "export i32 f() { string s = \"ab\" + \"cde\"; return s.len(); }",
+    "export bool f() { return \"ab\" + \"cd\" == \"abcd\"; }",
+    "export bool f() { return \"\" + \"x\" == \"x\"; }",
+    "export bool f() { return \"x\" + \"\" == \"x\"; }",
+    // Three joined, so the result of one concatenation is the operand of the next.
+    "export bool f() { return \"a\" + \"b\" + \"c\" == \"abc\"; }",
+    "export i32 f(bool c) { string s = \"n\" + (c ? \"yes\" : \"no\"); return s.len(); }",
+    // Multi-byte on both sides, since the join is over bytes.
+    "export i32 f() { return (\"é\" + \"é\").len(); }",
+    // The two conversions, and a round trip through them.
+    "export i32 f() { u8[] b = \"abc\".toBytes(); return b.len() + b[0]; }",
+    "export i32 f() { u8[] b = u8[](104, 105); string s = string.fromBytes(b); return s.len(); }",
+    "export bool f() { return string.fromBytes(\"hi\".toBytes()) == \"hi\"; }",
+    "export i32 f() { return string.fromBytes(u8[0]()).len(); }",
+    // A concatenation in a loop, which allocates each time round.
+    "export i32 f(i32 n) { string s = \"\"; for (i32 i = 0; i < n; i++) { s = s + \"ab\"; } return s.len(); }",
+    // ── copyFrom, which is array.copy with the operands in a different order ───
+    "export i32 f() { i32[] a = i32[4](); i32[] b = i32[](7, 8); a.copyFrom(b, 0, 0, 2); return a[0] + a[1] + a[3]; }",
+    // Into the middle, which is what the offsets are for — and the reason their order matters.
+    "export i32 f() { i32[] a = i32[4](); i32[] b = i32[](7, 8); a.copyFrom(b, 0, 2, 2); return a[2] * 10 + a[0]; }",
+    // From the middle.
+    "export i32 f() { i32[] a = i32[2](); i32[] b = i32[](1, 2, 3); a.copyFrom(b, 1, 0, 2); return a[0] * 10 + a[1]; }",
+    "export i32 f() { u8[] a = u8[3](); u8[] b = u8[](200, 201); a.copyFrom(b, 0, 1, 2); return a[1] + a[2]; }",
+    // A zero-length copy, which must touch nothing.
+    "export i32 f() { i32[] a = i32[](5, 6); i32[] b = i32[](9, 9); a.copyFrom(b, 0, 0, 0); return a[0] + a[1]; }",
+    // Overlapping within one array, where a naive forward loop would smear.
+    "export i32 f() { i32[] a = i32[](1, 2, 3, 4); a.copyFrom(a, 0, 1, 3); return a[0] * 1000 + a[1] * 100 + a[2] * 10 + a[3]; }",
+    "export i64 f() { i64[] a = i64[2](); i64[] b = i64[](4294967296, 2); a.copyFrom(b, 0, 0, 2); return a[0] + a[1]; }",
+    // ── Literals that are not plain decimal ────────────────────────────────────
+    // Every one of these was silently wrong: the reader took decimal digits and stopped, so `0xff` was
+    // 0 and `1_000` was 1. Nothing caught it because every literal in every case above is plain.
+    "export i32 f() { return 0xff; }",
+    "export i32 f() { return 0xDEAD; }",
+    "export i32 f() { return 1_000_000; }",
+    "export i32 f() { return 0xff_ff; }",
+    "export i64 f() { return 0xdeadbeef; }",
+    "export i64 f() { return 0x7fffffffffffffff; }",
+    "export i32 f() { return 0x0; }",
+    "export i32 f(i32 n) { return n & 0xff; }",
+    "const i32 M = 0xffff; export i32 f(i32 n) { return n & M; }",
+    "export i32 f() { i32[] a = i32[](0x10, 0x20); return a[0] + a[1]; }");
+}
+
+/** The calls, aligned with `sources()`. */
+string[] calls() {
+  return string[](
+    "answer",
+    "add 2 3;add -1 1;add 2147483647 1",
+    "sub 3 10",
+    "mul 6 7;mul -3 5",
+    "mix 10 4",
+    "second 8 9",
+    // More than one function, so the index assignment and the export table have to line up.
+    "one;two 21",
+    // A literal wide enough to need more than one LEB byte, in both signs.
+    "big",
+    "neg",
+    // ── Locals and assignment ──────────────────────────────────────────────────
+    "f 4",
+    "f 3",
+    "f 1",
+    // Two locals, so the indices have to be assigned in declaration order after the parameters.
+    "f 5 7",
+    // ── The rest of the i32 operators, signedness included ──────────────────────
+    "f 7 2;f -7 2",
+    "f 7 3;f -7 3",
+    "f 12 10",
+    "f 1 10",
+    // `>>` is arithmetic here because everything in this slice is `i32`. The logical twin needs an
+    // unsigned operand to be reached at all, and an unsigned *type* is what this slice does not have —
+    // so `>>>` is deliberately not exercised rather than exercised wrongly.
+    "f -8",
+    "f 5",
+    "f 5",
+    // ── Comparisons and the boolean operators ──────────────────────────────────
+    "f 1 2;f 2 1;f -1 1",
+    "f 3 3;f 4 3;f 2 3",
+    "f 1 2;f 2 2",
+    "f 1;f 0",
+    // Short-circuit is observable: if `||` evaluated its right side, this would divide by zero and trap.
+    "f 0",
+    // ── Control flow ───────────────────────────────────────────────────────────
+    "f 5;f -5",
+    "f 1;f -1",
+    "f 5;f 0;f 100",
+    // A loop whose body has an `if` in it, so the labels have to nest correctly.
+    "f 10",
+    "f 1 7 9;f 0 7 9",
+    // ── Calls ──────────────────────────────────────────────────────────────────
+    "f 10",
+    // A call to something declared *after* it, which is why the names are collected in a pass of
+    // their own.
+    "f 1",
+    // Recursion, which is a call that has to work before the function it is in is finished.
+    "fact 1;fact 5;fact 10",
+    // ── Unsigned: the same 32 bits, and different opcodes to read them ──────────
+    // Every one of these is the half a signed opcode gets wrong, so the earlier slice would have agreed
+    // on small arguments and been silently wrong here.
+    "f 4294967288 2",
+    "f 4294967288 3",
+    "f 4294967288",
+    "f 4294967288 1",
+    "f 1 4294967288",
+    // ── i64, a different opcode block entirely ─────────────────────────────────
+    "f 2n 3n",
+    "f 4294967296n 3n",
+    "f -9n 2n",
+    "f 1n",
+    "f 10n",
+    "f -1n 1n",
+    "f 18446744073709551608n 2n",
+    "f 10n",
+    // A literal takes the other side's type, which is what makes this an i64 addition.
+    "f 4294967295n",
+    // ── Floats, whose opcodes are a block of their own ─────────────────────────
+    "f 1.5 2.25",
+    "f 1 3",
+    "f 2.5",
+    "f 1.5 2.5",
+    "f",
+    "f 1.5 3",
+    "f 0.25",
+    // ── Conversions, including the one that is nothing at all ──────────────────
+    "f -8",
+    "f 4294967288",
+    "f -5",
+    "f 4294967288",
+    // `as~` from a wider integer **saturates**, so the out-of-range cases are the whole point: both
+    // bounds, both directions, and the in-range value that must still pass straight through.
+    "f 7n;f -7n;f 4294967303n;f -4294967303n;f 2147483647n;f -2147483648n;f 9223372036854775807n;f -9223372036854775808n",
+    "f 7n;f -7n;f 4294967295n;f 4294967296n",
+    "f 7n;f 18446744073709551615n",
+    "f -3",
+    "f 4294967288",
+    // Rounded, not truncated: `as~` reads like C's truncation and is not it. The ties are asked about
+    // too, because half-to-even and half-away-from-zero differ exactly there and both are defensible.
+    "f 3.9;f 3.4;f -3.9;f 2.5;f 3.5",
+    "f 1.5",
+    "f 1.5",
+    // ── The rest of control flow, where a wrong label validates and jumps elsewhere ──
+    "f 5;f 0",
+    "f 5;f 0",
+    "f 5",
+    "f 10",
+    // Nested loops: the inner `break` leaves the inner loop only, which is what the relative depth is.
+    "f 4",
+    // A `break` under an `if` under a loop: one more label between it and what it means.
+    "f 10;f 2",
+    "f 1;f 2;f 7",
+    "f 1;f 2;f 9",
+    // ── Arrays: the first wasm GC type ─────────────────────────────────────────
+    "f",
+    "f",
+    "f",
+    // An array cannot cross the JS boundary as an argument — it is a reference — so the array is built
+    // inside and the index is what comes in.
+    "f 0;f 2",
+    "f",
+    // A packed element: the getter has to zero-extend, which is the half a signed one gets wrong.
+    "f",
+    "f",
+    "f",
+    // Wider elements, so the array type's storage type is not always i32.
+    "f",
+    "f",
+    // Two array types in one module, so the indices have to be distinct and stable.
+    "f",
+    // An array through a call, which puts a reference type in a signature.
+    "f",
+    // ── Structs: the second GC type ────────────────────────────────────────────
+    "f",
+    "f",
+    // A method: the receiver is the first parameter, which is the whole of what a method is here.
+    "f",
+    "f 7",
+    // A method that writes through `this`, so the receiver is not merely read.
+    "f",
+    // Fields of every width, so the struct's field types are not all i32.
+    "f",
+    // A struct holding an array, and an array of a wider type beside it.
+    "f",
+    // A struct crossing a call, and one nested in another.
+    "f",
+    "f",
+    "f",
+    // Two structs, so the type indices have to be distinct and follow the arrays.
+    "f",
+    // A struct in a loop, mutated each time round.
+    "f 5",
+    // ── Module-level constants, inlined at each use ────────────────────────────
+    "f",
+    "f 3",
+    // Arithmetic in the initialiser, which wasm would not accept as a constant expression and which
+    // inlining makes ordinary — the substituted expression sits in a function body like any other.
+    "f",
+    "f",
+    "f",
+    "f",
+    // A local of the same name is nearer and wins.
+    "f",
+    // Two constants, and one used inside a loop where it is substituted every time round.
+    "f",
+    // ── Constants with identity, which live in a global ────────────────────────
+    "f",
+    "f 0;f 2",
+    "f",
+    "f",
+    // One array, not one per use: read twice in the same expression and once from a loop.
+    "f",
+    // A struct constant, whose initialiser is `struct.new` — also a constant expression.
+    "f",
+    // Two of them, so the global indices have to be distinct and stable.
+    "f",
+    // A scalar beside an array, so the inlined and the global paths coexist.
+    "f",
+    // ── A ternary of two literals, which takes the slot's type ─────────────────
+    "f 1;f 0",
+    "f 1;f 0",
+    "f 1",
+    "f 1",
+    // Nested, so the inner one has to take the outer's slot too.
+    "f 1 1;f 1 0;f 0 0",
+    // ── Static method calls, where the receiver names a type ───────────────────
+    "f 9",
+    "f",
+    // A static and an instance method of the same name on the same struct are different functions.
+    "f 4",
+    // A local shadowing the struct's name makes the receiver a value again.
+    "f",
+    // ── Strings, which are an i8 array in the emitted module ───────────────────
+    "f",
+    "f",
+    "f",
+    "f",
+    "f",
+    "f",
+    // Multi-byte UTF-8: `.len()` is bytes, not characters, which is the whole reason it is an i8 array.
+    "f",
+    // A string crossing a call, and one in a struct field.
+    "f",
+    "f",
+    // A string constant, which has identity and so lives in a global.
+    "f",
+    // An array of strings, so the element type is itself a reference.
+    "f",
+    // ── String equality, which is a generated helper rather than an instruction ─
+    "f",
+    "f",
+    "f",
+    "f",
+    "f",
+    "f 1;f 0",
+    // A difference in the last byte only, which a length check alone would miss.
+    "f",
+    // Multi-byte, where equality is over bytes and not characters.
+    "f",
+    "f",
+    // ── Concatenation and the byte conversions, all generated helpers ──────────
+    "f",
+    "f",
+    "f",
+    "f",
+    // Three joined, so the result of one concatenation is the operand of the next.
+    "f",
+    "f 1;f 0",
+    // Multi-byte on both sides, since the join is over bytes.
+    "f",
+    // The two conversions, and a round trip through them.
+    "f",
+    "f",
+    "f",
+    "f",
+    // A concatenation in a loop, which allocates each time round.
+    "f 0;f 3",
+    // ── copyFrom, which is array.copy with the operands in a different order ───
+    "f",
+    // Into the middle, which is what the offsets are for — and the reason their order matters.
+    "f",
+    // From the middle.
+    "f",
+    "f",
+    // A zero-length copy, which must touch nothing.
+    "f",
+    // Overlapping within one array, where a naive forward loop would smear.
+    "f",
+    "f",
+    // ── Literals that are not plain decimal ────────────────────────────────────
+    // Every one of these was silently wrong: the reader took decimal digits and stopped, so `0xff` was
+    // 0 and `1_000` was 1. Nothing caught it because every literal in every case above is plain.
+    "f",
+    "f",
+    "f",
+    "f",
+    "f",
+    "f",
+    "f",
+    "f 4660",
+    "f 123456",
+    "f");
+}
+
+/** The declared return type of `name` in `src`, or `""`. */
+string returnTypeOf(string src, string name) {
+  i32 at = 0;
+  while (at >= 0) {
+    at = src.indexOf("export ");
+    if (at < 0) { return ""; }
+    string rest = src.slice(at + 7, src.len());
+    i32 sp = rest.indexOf(" ");
+    if (sp < 0) { return ""; }
+    string ty = rest.slice(0, sp);
+    string after = rest.slice(sp + 1, rest.len());
+    i32 open = after.indexOf("(");
+    if (open >= 0 && after.slice(0, open) == name) { return ty; }
+    src = after;
+  }
+  return "";
+}
+
+/**
+ * The declared parameter types of `name` in `src`, in order.
+ *
+ * **The arguments carry no type of their own.** The case table records them as they were written —
+ * `1`, `0`, `1.5` — and a `1` for a `bool` parameter, a `1` for an `f64` one and a `1` for an `i64`
+ * one are three different literals in wac and three different values on the wire. The declaration is
+ * where that is written down, so both spellings are derived from it rather than stored twice.
+ */
+string[] paramTypes(string src, string name) {
+  string rest = src;
+  while (true) {
+    i32 at = rest.indexOf("export ");
+    if (at < 0) { return string[0](fill: ""); }
+    rest = rest.slice(at + 7, rest.len());
+    i32 sp = rest.indexOf(" ");
+    if (sp < 0) { return string[0](fill: ""); }
+    string after = rest.slice(sp + 1, rest.len());
+    i32 open = after.indexOf("(");
+    if (open < 0) { return string[0](fill: ""); }
+    if (after.slice(0, open) != name) { continue; }
+    i32 close = after.indexOf(")");
+    if (close < 0 || close < open) { return string[0](fill: ""); }
+    string inside = after.slice(open + 1, close);
+    if (trimmed(inside) == "") { return string[0](fill: ""); }
+    // `i32 a, i32 b` → the type of each, which is the word before the name.
+    i32 n = 1;
+    for (i32 i = 0; i < inside.len(); i++) { if (inside.slice(i, i + 1) == ",") { n = n + 1; } }
+    string[] out = string[n](fill: "");
+    i32 k = 0;
+    i32 from = 0;
+    for (i32 i = 0; i <= inside.len(); i++) {
+      if (i < inside.len() && inside.slice(i, i + 1) != ",") { continue; }
+      out[k] = word(trimmed(inside.slice(from, i)), 0);
+      k = k + 1;
+      from = i + 1;
+    }
+    return out;
+  }
+  return string[0](fill: "");
+}
+
+/** The table records a 64-bit argument as `2n`; the suffix is the dump's, not the value's. */
+string bare(string a) {
+  return a.len() > 1 && a.slice(a.len() - 1, a.len()) == "n" ? a.slice(0, a.len() - 1) : a;
+}
+
+bool isFloat(string ty) { return ty == "f64" || ty == "f32"; }
+bool isWide(string ty) { return ty == "i64" || ty == "u64"; }
+
+/** The argument as wac spells it: `true` for a `bool`, `1.0` where an `f64` is wanted. */
+string wacArg(string ty, string raw) {
+  string a = bare(raw);
+  if (ty == "bool") { return a == "0" ? "false" : "true"; }
+  if (isFloat(ty) && !contains(a, ".") && !contains(a, "e")) { return a + ".0"; }
+  return a;
+}
+
+/** The same argument for the oracle: `true`, and an `n` suffix where the parameter is 64 bits. */
+string refArg(string ty, string raw) {
+  string a = bare(raw);
+  if (ty == "bool") { return a == "0" ? "false" : "true"; }
+  if (isWide(ty)) { return a + "n"; }
+  return a;
+}
+
+/** The `n`th space-separated word of `s`, or `""`. */
+string word(string s, i32 n) {
+  i32 from = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != " ") { continue; }
+    if (seen == n) { return s.slice(from, i); }
+    seen = seen + 1;
+    from = i + 1;
+  }
+  return "";
+}
+
+i32 wordCount(string s) {
+  i32 n = 0;
+  while (word(s, n) != "") { n = n + 1; }
+  return n;
+}
+
+/** `s` cut at every `;`, empties dropped. */
+string[] parts(string s) {
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    i32 at = 0;
+    from = 0;
+    for (i32 i = 0; i <= s.len(); i++) {
+      if (i < s.len() && s.slice(i, i + 1) != ";") { continue; }
+      if (i > from) { at = at + 1; }
+      from = i + 1;
+    }
+    if (pass == 0) { n = at; }
+  }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != ";") { continue; }
+    if (i > from) { out[k] = s.slice(from, i); k = k + 1; }
+    from = i + 1;
+  }
+  return out;
+}
+
+/** `f 1 3` against `f(f64, f64)` → `f(1.0, 3.0)`: the same call, spelled for wac. */
+string callExpr(string src, string call) {
+  string name = word(call, 0);
+  string[] tys = paramTypes(src, name);
+  string out = name + "(";
+  i32 n = wordCount(call);
+  for (i32 i = 1; i < n; i++) {
+    string ty = i - 1 < tys.len() ? tys[i - 1] : "";
+    out = out + (i == 1 ? "" : ", ") + wacArg(ty, word(call, i));
+  }
+  return out + ")";
+}
+
+/** The same call as a line for the oracle. */
+string refCall(string src, string call) {
+  string name = word(call, 0);
+  string[] tys = paramTypes(src, name);
+  string out = name;
+  i32 n = wordCount(call);
+  for (i32 i = 1; i < n; i++) {
+    string ty = i - 1 < tys.len() ? tys[i - 1] : "";
+    out = out + " " + refArg(ty, word(call, i));
+  }
+  return out;
+}
+
+/**
+ * The reference's answer, spelled as a wac literal of `ty`.
+ *
+ * **The unsigned fixup.** A `u32` export returns wasm's `i32` and a host reads those bits as signed,
+ * so `4294967295` arrives as `-1`. wac's `u32` will not compare against a negative literal, and
+ * writing one would make the case fail for a reason that is not about the emitter.
+ */
+string literalFor(string ty, string answer, i32[] okOut) {
+  okOut[0] = 1;
+  if (ty == "bool") {
+    // A `bool` export is an `i32` on the wire, so the reference answers 0 or 1.
+    if (answer == "0") { return "false"; }
+    if (answer == "1") { return "true"; }
+    okOut[0] = 0;
+    return answer;
+  }
+  if ((ty == "u32" || ty == "u64") && startsWith(answer, "-")) {
+    // Only `u32` is reachable this way in this corpus: a `u64` wide enough to read as negative does
+    // not fit a wac literal either, and no case here produces one.
+    if (ty == "u64") { okOut[0] = 0; return answer; }
+    i64 v = 0;
+    for (i32 i = 1; i < answer.len(); i++) { v = v * 10 + (answer.toBytes()[i] - '0'); }
+    return itoa64(4294967296 - v);
+  }
+  return answer;
+}
+
+export string test_rung_4_what_wacc_emits_runs_and_answers_what_the_references_does(
+    Core core, Cli cli) {
+  T t = T.create();
+  string[] src = sources();
+  string[] call = calls();
+  t.eqI32(src.len(), call.len(), "a call list per program");
+  if (src.len() != call.len()) { return t.report(); }
+
+  // One process for every question.
+  Lines lines = Lines.create();
+  i32 asked = 0;
+  for (i32 i = 0; i < src.len(); i++) {
+    string[] cs = parts(call[i]);
+    for (i32 j = 0; j < cs.len(); j++) {
+      lines.add("runfn " + hex(src[i].toBytes()) + " " + refCall(src[i], trimmed(cs[j])));
+      asked = asked + 1;
+    }
+  }
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                  "the reference");
+  if (!a.ok) { return t.report(); }
+  t.eqI32(a.lines.len(), asked, "an answer per question");
+  if (a.lines.len() != asked) { return t.report(); }
+
+  string dir = scratchDir(cli);
+  i32 at = 0;
+  i32 compared = 0;
+  string[] wrong = string[16](fill: "");
+  i32 nWrong = 0;
+
+  for (i32 i = 0; i < src.len(); i++) {
+    string[] cs = parts(call[i]);
+    for (i32 j = 0; j < cs.len(); j++) {
+      string answer = a.lines[at];
+      at = at + 1;
+      // `runfn ERR …` means the reference would not compile it, which is a broken case rather than a
+      // disagreement — and `runfn TRAP …` is an answer this slice does not compare yet.
+      if (startsWith(answer, "runfn ERR") || startsWith(answer, "runfn TRAP")) {
+        if (nWrong < wrong.len()) {
+          wrong[nWrong] = trimmed(cs[j]) + ": the reference said " + answer;
+          nWrong = nWrong + 1;
+        }
+        continue;
+      }
+      string value = answer.slice(6, answer.len());
+      string name = word(trimmed(cs[j]), 0);
+      string ty = returnTypeOf(src[i], name);
+      if (ty == "") {
+        if (nWrong < wrong.len()) {
+          wrong[nWrong] = name + ": no exported function of that name in the program";
+          nWrong = nWrong + 1;
+        }
+        continue;
+      }
+      i32[] ok = i32[1]();
+      string lit = literalFor(ty, value, ok);
+      if (ok[0] != 1) {
+        if (nWrong < wrong.len()) {
+          wrong[nWrong] = name + ": cannot spell " + value + " as a " + ty;
+          nWrong = nWrong + 1;
+        }
+        continue;
+      }
+
+      string driver = src[i] + "\nexport i32 main() { return " + callExpr(src[i], trimmed(cs[j])) +
+                      " == " + lit + " ? 7 : 0; }\n";
+      Ran r = runEmittedOne(cli, ENTRY, driver, dir, "emitcase.wasm");
+      compared = compared + 1;
+      if (!r.ok || r.trapped || r.status != 7) {
+        if (nWrong < wrong.len()) {
+          wrong[nWrong] = trimmed(cs[j]) + " is not " + value + " from us, for " + src[i] +
+                          (r.ok ? (r.trapped ? " — it trapped" : "") : " — " + r.error);
+          nWrong = nWrong + 1;
+        }
+      }
+    }
+  }
+
+  // **Every question asked was answered and compared.** A differential harness that called nothing
+  // would report that everything agrees, and one that skipped the cases it could not spell would
+  // report the same — so the count is checked against what went to the oracle rather than against a
+  // floor that a tenth of the corpus would satisfy.
+  t.isTrue(asked >= 200, "only " + itoa(asked) + " calls in the table");
+  t.eqI32(compared, asked, "asked " + itoa(asked) + " and compared " + itoa(compared));
+  string[] said = string[nWrong](fill: "");
+  for (i32 i = 0; i < nWrong; i++) { said[i] = wrong[i]; }
+  t.eqI32(nWrong, 0, itoa(nWrong) + " disagreement(s): " + joined(said, "; "));
+  return t.report();
+}
+
+export string test_rung_4_the_module_is_well_formed_on_its_own_terms(Core core, Cli cli) {
+  // A second opinion about the bytes that is not the reference's — a module can run the one function
+  // a test calls and still be malformed elsewhere.
+  T t = T.create();
+  string[] src = sources();
+  string dir = scratchDir(cli);
+
+  // In chunks, because asking the engine is a process: `wac validate` takes a list and compiles each
+  // module inside one isolate.
+  i32 CHUNK = 64;
+  i32 bad = 0;
+  string[] wrongHeader = string[8](fill: "");
+  i32 nHeader = 0;
+  for (i32 base = 0; base < src.len(); base = base + CHUNK) {
+    i32 n = src.len() - base < CHUNK ? src.len() - base : CHUNK;
+    string[] wrote = string[n](fill: "");
+    for (i32 j = 0; j < n; j++) {
+      u8[] wasm = emitFiles(string[](ENTRY), string[](src[base + j]), ENTRY);
+      // The magic and version, which every later section is written after.
+      if (wasm.len() < 8 || wasm[0] != 0 || wasm[1] != 97 || wasm[2] != 115 || wasm[3] != 109 ||
+          wasm[4] != 1 || wasm[5] != 0 || wasm[6] != 0 || wasm[7] != 0) {
+        if (nHeader < wrongHeader.len()) {
+          wrongHeader[nHeader] = src[base + j];
+          nHeader = nHeader + 1;
+        }
+      }
+      string at = dir + "/emitwf" + itoa(j) + ".wasm";
+      cli.writeFile(at, wasm).wait();
+      wrote[j] = at;
+    }
+    Validated v = validateAll(cli, wrote);
+    t.isTrue(v.ok, "the engine was asked about this chunk — " + v.error);
+    if (!v.ok) { return t.report(); }
+    bad = bad + v.rejected.len();
+  }
+
+  string[] said = string[nHeader](fill: "");
+  for (i32 i = 0; i < nHeader; i++) { said[i] = wrongHeader[i]; }
+  t.eqI32(nHeader, 0, "a wrong header in: " + joined(said, "; "));
+  t.eqI32(bad, 0, itoa(bad) + " of " + itoa(src.len()) +
+                  " programs emit something that is not a valid module");
+  return t.report();
+}
