@@ -21,7 +21,7 @@ are the actual question.
 
 | test | what it asserts | state |
 |---|---|---|
-| `selfHostEmit.test.ts` | wacc compiled by wacc compiles wacc to the same bytes | **fixed** |
+| `selfhostemit_test.wac` | wacc compiled by wacc compiles wacc to the same bytes | **fixed** |
 | `bootstrapEmit.test.ts` | wacc compiled by wacc answers what wacc answers | **fixed** |
 | `fixpointEmit.test.ts` | both stages emit the same bytes | **fixed** |
 | `lex.test.ts` | agrees with the reference on every `.wac` file in the repo | open |

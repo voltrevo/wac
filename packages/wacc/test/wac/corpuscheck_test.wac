@@ -34,95 +34,10 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
+import { closureOf } from "./source_probe.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
 import { dumpTypeErrors, dumpTypeErrorsFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
-
-/** The most files one entry's import closure is expected to reach. */
-const i32 CLOSURE_CAP = 512;
-
-/** `/a/b/c.wac` → `/a/b`. */
-string dirOf(string path) {
-  for (i32 i = path.len() - 1; i >= 0; i--) {
-    if (path.slice(i, i + 1) == "/") { return path.slice(0, i); }
-  }
-  return "";
-}
-
-/** `/a/b` + `../c.wac` → `/a/c.wac`. A `..` that climbs past the root is dropped, as it is in JS. */
-string resolved(string dir, string rel) {
-  string joinedPath = dir + "/" + rel;
-  string[] parts = string[64](fill: "");
-  i32 n = 0;
-  i32 from = 0;
-  for (i32 i = 0; i <= joinedPath.len(); i++) {
-    if (i < joinedPath.len() && joinedPath.slice(i, i + 1) != "/") { continue; }
-    string part = joinedPath.slice(from, i);
-    from = i + 1;
-    if (part == "" || part == ".") { continue; }
-    if (part == "..") { if (n > 0) { n = n - 1; } continue; }
-    if (n >= parts.len()) { return ""; }
-    parts[n] = part;
-    n = n + 1;
-  }
-  string out = "";
-  for (i32 i = 0; i < n; i++) { out = out + "/" + parts[i]; }
-  return out;
-}
-
-/** Where `path` sits in `paths`, or -1. */
-i32 indexOfPath(string[] paths, string path) {
-  for (i32 i = 0; i < paths.len(); i++) {
-    if (paths[i] == path) { return i; }
-  }
-  return -1;
-}
-
-/**
- * `entry` and everything it imports, transitively.
- *
- * By scanning for `from "…"` rather than by parsing, which is what the TypeScript did: the closure
- * only has to be a superset of what the checker needs, and a name it cannot resolve is one the
- * checker will report on anyway.
- */
-i32[] closureOf(string[] keys, string[] sources, i32 entry) {
-  i32[] found = i32[CLOSURE_CAP]();
-  i32 n = 0;
-  i32[] queue = i32[CLOSURE_CAP]();
-  i32 head = 0;
-  i32 tail = 0;
-  queue[tail] = entry;
-  tail = tail + 1;
-
-  while (head < tail) {
-    i32 at = queue[head];
-    head = head + 1;
-    bool seen = false;
-    for (i32 i = 0; i < n; i++) { if (found[i] == at) { seen = true; } }
-    if (seen) { continue; }
-    if (n >= CLOSURE_CAP) { break; }
-    found[n] = at;
-    n = n + 1;
-
-    string src = sources[at];
-    string dir = dirOf(keys[at]);
-    i32 i = 0;
-    while (i + 6 < src.len()) {
-      if (src.slice(i, i + 6) != "from \"") { i = i + 1; continue; }
-      i32 close = i + 6;
-      while (close < src.len() && src.slice(close, close + 1) != "\"") { close = close + 1; }
-      string rel = src.slice(i + 6, close);
-      i = close + 1;
-      i32 next = indexOfPath(keys, resolved(dir, rel));
-      if (next < 0 || tail >= CLOSURE_CAP) { continue; }
-      queue[tail] = next;
-      tail = tail + 1;
-    }
-  }
-  i32[] out = i32[n]();
-  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
-  return out;
-}
 
 /** Whether the reference compiles `path` cleanly — asked only about a file wacc reported on. */
 bool referenceIsHappy(Cli cli, string path) {

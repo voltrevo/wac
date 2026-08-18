@@ -30,6 +30,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
+import { literalOf, chunkedLiteral } from "./source_probe.wac";
 import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
 import { emitFilesSelfDescribing } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
@@ -47,27 +48,6 @@ string[] targets() { return string[]("packages/wacc/src/kinds.wac", "packages/wa
 const string DRIVER = ".cache/_fixdrive.wac";
 
 /**
- * A wac string literal for a chunk of text, escaping the four escapes this emitter knows.
- *
- * Through a `Buf`: this is handed tens of kilobytes and `out = out + c` in a loop is quadratic.
- */
-string literalOf(string text) {
-  u8[] b = text.toBytes();
-  Buf out = Buf.withCapacity(b.len() + 16);
-  out.push('"');
-  for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
-    if (c == '\\') { out.push('\\'); out.push('\\'); }
-    else if (c == '"') { out.push('\\'); out.push('"'); }
-    else if (c == '\n') { out.push('\\'); out.push('n'); }
-    else if (c == '\t') { out.push('\\'); out.push('t'); }
-    else { out.push(c); }
-  }
-  out.push('"');
-  return string.fromBytes(out.take());
-}
-
-/**
  * The driver, with `main` returning one byte of the fold over all four answers.
  *
  * Chunked at 3,000 characters: a literal is one `array.new_fixed` and an engine caps how many
@@ -76,15 +56,7 @@ string literalOf(string text) {
 string driverFor(string text, i32 shift) {
   Buf out = Buf.create();
   out.pushAll("import { emit, blocked } from \"../packages/wacc/src/api.wac\";\n\nstring target() { return ".toBytes());
-  i32 at = 0;
-  bool first = true;
-  while (at < text.len()) {
-    i32 to = at + 3000 < text.len() ? at + 3000 : text.len();
-    if (!first) { out.pushAll(" +\n    ".toBytes()); }
-    out.pushAll(literalOf(text.slice(at, to)).toBytes());
-    first = false;
-    at = to;
-  }
+  out.pushAll(chunkedLiteral(text).toBytes());
   out.pushAll(("; }\n\n" +
     "i32 sumBytes(u8[] b) {\n" +
     "  i32 h = 7;\n" +
