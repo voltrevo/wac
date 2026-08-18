@@ -1198,6 +1198,9 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let entry = as_child.entry;
     let cov = as_child.cov.clone();
     let only = as_child.only.clone();
+    // Kept because a module with no `main` names the export to call in its first argument, and
+    // that decision is made below where the manifest is known — see `call_named`.
+    let argv = as_child.argv.clone();
     let loud = as_child.loud;
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
@@ -1275,11 +1278,16 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // manifest* — the host's own bookkeeping, about the smallest program that demonstrates the
     // language's central claim. Whether `main` wants a world is knowable here and is asked for below;
     // an undefined placeholder is never passed to a `main` that named one. `tools/runCli.test.ts`.
-    let main_declares_nothing = m
-        .exports
-        .iter()
-        .find(|e| e.name == "main")
-        .is_some_and(|e| e.params.is_empty());
+    //
+    // **And a module with no `main` at all**, which `is_some_and` answered `false` for — so the
+    // named-export path below (`wac run math.wac gcd 48 18`) was refused before it was reached,
+    // with a message about the host's bookkeeping rather than about anything the caller did. A
+    // named export is called with the arguments it declared and never with a world, so the same
+    // "nothing will be handed one" reasoning applies.
+    let main_declares_nothing = match m.exports.iter().find(|e| e.name == "main") {
+        Some(e) => e.params.is_empty(),
+        None => true,
+    };
 
     // **A test file has no world, and must not be asked for one.** A wac test is a pure function
     // answering a report; it declares no capabilities, so its manifest has no `Core` — and building
@@ -1427,9 +1435,16 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
+        // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
+        // `spec/cli/wac.md` documents and which was only ever implemented in the reference CLI.
+        //
+        // `main` wins where it exists, so a program's arguments are never mistaken for a function
+        // name — the ambiguity only arises for a module that has both, and a module with a `main`
+        // is a program rather than a library to poke at.
         None => {
-            eprintln!("wac: {} exports no main", m.entry);
-            return 1;
+            let args: Vec<String> =
+                argv.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+            return call_named(scope, exports, m, &args);
         }
     };
     // **Named, not guessed.** `main(Core, Cli)` is the ordinary shape and this slice cannot serve
@@ -2059,6 +2074,239 @@ fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
             }
         }
     })
+}
+
+/// `wac run <file.wac> <name> [args…]` for a module with no `main`.
+///
+/// The reference CLI had this and the binary did not, which is the gap that kept `wacx` alive.
+/// Arguments are coerced by the **declared parameter type** rather than guessed from the text —
+/// `spec/cli/wac.md` — so `1` is an `i32` where one is declared and the string `"1"` where a
+/// `string` is, and a `string` parameter takes the argument exactly as written, which is the whole
+/// point of a command line.
+fn call_named(
+    scope: &mut v8::PinScope,
+    exports: v8::Local<v8::Object>,
+    m: &Manifest,
+    args: &[String],
+) -> i32 {
+    let callable: Vec<&ExportSig> =
+        m.exports.iter().filter(|e| !e.name.starts_with("$bind$")).collect();
+    let listing = || {
+        let mut names: Vec<String> = callable
+            .iter()
+            .map(|e| format!("{}({})", e.name, e.params.join(", ")))
+            .collect();
+        names.sort();
+        names.join("\n  ")
+    };
+    let Some(name) = args.first() else {
+        eprintln!("wac: {} exports no main, so name the function to run:", m.entry);
+        eprintln!("  {}", listing());
+        return 2;
+    };
+    let Some(sig) = callable.iter().find(|e| &e.name == name) else {
+        eprintln!("wac: {} exports no `{name}`. It exports:", m.entry);
+        eprintln!("  {}", listing());
+        return 2;
+    };
+    let given = &args[1..];
+    if given.len() != sig.params.len() {
+        eprintln!(
+            "wac: {}({}) takes {} argument(s), given {}",
+            sig.name,
+            sig.params.join(", "),
+            sig.params.len(),
+            given.len()
+        );
+        return 2;
+    }
+
+    let mut values: Vec<v8::Local<v8::Value>> = Vec::with_capacity(given.len());
+    for (text, ty) in given.iter().zip(sig.params.iter()) {
+        match coerce_arg(scope, text, ty) {
+            Ok(v) => values.push(v),
+            Err(why) => {
+                eprintln!("wac: {why}");
+                return 2;
+            }
+        }
+    }
+
+    let Some(f) = get_export(scope, exports, name) else {
+        eprintln!("wac: {name} is not callable");
+        return 1;
+    };
+    let Some(result) = f.call(scope, exports.into(), &values) else {
+        // A trap is exit 2 rather than 1: the program ran and stopped, which is a different
+        // outcome from one that never compiled.
+        let said = trap_said(scope, exports);
+        eprintln!("wac: {name} trapped{}", if said.is_empty() { String::new() } else { format!(": {said}") });
+        return 2;
+    };
+    match print_returned(scope, result, &sig.ret) {
+        Ok(()) => 0,
+        Err(why) => {
+            eprintln!("wac: {why}");
+            1
+        }
+    }
+}
+
+/// A numeric array from raw little-endian bytes, through the same staging buffer `write_bytes`
+/// uses and the module's own `$bind$arr_<ty>_from_mem`.
+///
+/// One function for every width rather than one per type: the staging step is identical and only
+/// the helper's name and the element size differ, which is exactly what a second copy per type
+/// would have got subtly wrong.
+fn write_num_array<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    raw: &[u8],
+    count: usize,
+    helper: &str,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let ensure = get_export(scope, exports, "$bind$mem_ensure")?;
+    let want = v8::Integer::new(scope, raw.len() as i32);
+    ensure.call(scope, exports.into(), &[want.into()])?;
+    {
+        let key = v8::String::new(scope, "$bind$mem")?;
+        let mem = exports.get(scope, key.into())?;
+        let mem: v8::Local<v8::WasmMemoryObject> = mem.try_into().ok()?;
+        let buf = mem.buffer();
+        let store = buf.get_backing_store().data()?;
+        // Safety: the buffer was just grown to hold this many bytes and nothing runs between here
+        // and the call below — the same reasoning `write_bytes` states.
+        unsafe {
+            std::ptr::copy_nonoverlapping(raw.as_ptr(), store.as_ptr() as *mut u8, raw.len());
+        }
+    }
+    let from_mem = get_export(scope, exports, helper)?;
+    let n = v8::Integer::new(scope, count as i32);
+    from_mem.call(scope, exports.into(), &[n.into()])
+}
+
+/// One argument, as the declared type. `Err` names the argument rather than the call.
+fn coerce_arg<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    text: &str,
+    ty: &str,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    match ty {
+        // `write_string` and `write_bytes` reach the instance through `HOST`, so they take no
+        // `exports` — the staging buffer belongs to the one instance this process is running.
+        "string" => write_string(scope, text)
+            .ok_or_else(|| "this module cannot take a string argument".to_string()),
+        "bool" => match text {
+            "true" | "1" => Ok(v8::Boolean::new(scope, true).into()),
+            "false" | "0" => Ok(v8::Boolean::new(scope, false).into()),
+            _ => Err(format!("`{text}` is not a bool — write true, false, 1 or 0")),
+        },
+        "i64" | "u64" => text
+            .parse::<i64>()
+            .map(|n| v8::BigInt::new_from_i64(scope, n).into())
+            .map_err(|_| format!("`{text}` is not an {ty}")),
+        "f64" | "f32" => text
+            .parse::<f64>()
+            .map(|n| v8::Number::new(scope, n).into())
+            .map_err(|_| format!("`{text}` is not an {ty}")),
+        "i32" | "u32" | "i8" | "u8" | "i16" | "u16" => text
+            .parse::<i64>()
+            .map(|n| v8::Number::new(scope, n as f64).into())
+            .map_err(|_| format!("`{text}` is not an {ty}")),
+        "u8[]" => {
+            let bytes = parse_list(text)?
+                .iter()
+                .map(|e| e.parse::<u8>().map_err(|_| format!("`{e}` is not a u8")))
+                .collect::<Result<Vec<u8>, String>>()?;
+            write_bytes(scope, &bytes)
+                .ok_or_else(|| "this module cannot take a u8[] argument".to_string())
+        }
+        "i32[]" | "u32[]" => {
+            let xs = parse_list(text)?
+                .iter()
+                .map(|e| e.parse::<i32>().map_err(|_| format!("`{e}` is not an i32")))
+                .collect::<Result<Vec<i32>, String>>()?;
+            let raw: Vec<u8> = xs.iter().flat_map(|v| v.to_le_bytes()).collect();
+            write_num_array(scope, &raw, xs.len(), "$bind$arr_i32_from_mem")
+                .ok_or_else(|| "this module cannot take an i32[] argument".to_string())
+        }
+        "i64[]" | "u64[]" => {
+            let xs = parse_list(text)?
+                .iter()
+                .map(|e| e.parse::<i64>().map_err(|_| format!("`{e}` is not an i64")))
+                .collect::<Result<Vec<i64>, String>>()?;
+            let raw: Vec<u8> = xs.iter().flat_map(|v| v.to_le_bytes()).collect();
+            write_num_array(scope, &raw, xs.len(), "$bind$arr_i64_from_mem")
+                .ok_or_else(|| "this module cannot take an i64[] argument".to_string())
+        }
+        "f64[]" => {
+            let xs = parse_list(text)?
+                .iter()
+                .map(|e| e.parse::<f64>().map_err(|_| format!("`{e}` is not an f64")))
+                .collect::<Result<Vec<f64>, String>>()?;
+            let raw: Vec<u8> = xs.iter().flat_map(|v| v.to_le_bytes()).collect();
+            write_num_array(scope, &raw, xs.len(), "$bind$arr_f64_from_mem")
+                .ok_or_else(|| "this module cannot take an f64[] argument".to_string())
+        }
+        other => Err(format!(
+            "a `{other}` cannot be written on a command line; `wac run` takes numbers, bools, \
+             strings, and arrays of u8, i32, i64 and f64"
+        )),
+    }
+}
+
+/// The elements of a list argument. Brackets are accepted because people type them, and an empty
+/// list is empty rather than one empty element.
+fn parse_list(text: &str) -> Result<Vec<String>, String> {
+    let inner = text.trim();
+    let inner = inner.strip_prefix('[').unwrap_or(inner);
+    let inner = inner.strip_suffix(']').unwrap_or(inner);
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(inner.split(',').map(|e| e.trim().to_string()).collect())
+}
+
+/// What the call answered, printed by its declared return type. `void` prints nothing.
+fn print_returned(
+    scope: &mut v8::PinScope,
+    v: v8::Local<v8::Value>,
+    ret: &str,
+) -> Result<(), String> {
+    match ret {
+        "" | "void" => Ok(()),
+        // A wac `bool` crosses as a number, so this printed `0` and `1` for a function whose
+        // argument the caller had just written as `true`. Printed back in the spelling it is read
+        // in, because a CLI that answers in a different vocabulary from the one it accepts is one
+        // more thing to remember.
+        "bool" => {
+            println!("{}", if v.boolean_value(scope) { "true" } else { "false" });
+            Ok(())
+        }
+        "string" => {
+            println!("{}", read_string(scope, v));
+            Ok(())
+        }
+        "u8[]" => {
+            let bytes = read_bytes(scope, v);
+            println!(
+                "{}",
+                bytes.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(" ")
+            );
+            Ok(())
+        }
+        "i32[]" => {
+            let xs = read_i32_array(scope, v);
+            println!("{}", xs.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "));
+            Ok(())
+        }
+        _ => {
+            println!("{}", v.to_rust_string_lossy(scope));
+            Ok(())
+        }
+    }
 }
 
 fn get_export<'s>(

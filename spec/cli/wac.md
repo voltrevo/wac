@@ -33,6 +33,41 @@ wac test    [path…]                  # every `test*` export under each path
 wac sh      [-c script]              # the shell, sealed unless granted
 ```
 
+### run: a program, or one exported function
+
+`[§wac-cli-run-7jnq2mv]` `wac run main.wac [args…]` compiles the entry into a temporary file and
+runs it. **A module that exports `main` is a program** and everything after the entry is its
+`argv`. A module that does *not* is a library, and the first argument names the export to call:
+
+```sh
+wac run math.wac gcd 48 18
+# 6
+```
+
+`main` winning where it exists is what makes this unambiguous — a module with both is a program,
+and `wac run prog.wac gcd` passes `gcd` to it rather than calling it.
+
+**Arguments are coerced by the declared parameter type**, not guessed from the text. The shell has
+no types, so the signature is the only thing that can supply them: `1` is an `i32` where one is
+declared and the string `"1"` where a `string` is, and a `string` parameter takes the argument
+exactly as written. An `i64` keeps its width — it crosses as a BigInt, so `9007199254740993` is
+that number and not the nearest double. A list is comma-separated, brackets are accepted because
+people type them, and an empty list is empty rather than one empty element.
+
+`i32`, `i64`, `f64`, `bool`, `string` and arrays of `u8`, `i32`, `i64` and `f64` can be written on
+a command line. Anything else is refused **by name** — a struct is not something a shell can hand
+over, and saying which type it was beats a message about the call.
+
+What comes back is printed by its declared return type: a `string` as itself, an array as its
+space-separated elements, a `bool` as `true` or `false` — the same vocabulary it accepts — and a
+`void` function prints nothing at all.
+
+A wrong name lists what the module *does* export, with signatures, because that is the next thing
+anybody asks. A wrong argument count shows the signature. A bad element in a list names **the
+element**, since a message about `1,x,3` sends you looking at the wrong thing. All of those are
+usage mistakes and exit 2; so does a trap, which repeats what `trap "…"` said. A file that does not
+compile is exit 1, because it never ran.
+
 ### Grants, and which side of the entry they go
 
 A grant is a promise made when the program is *packaged*: `--allow-read` and its four siblings are
