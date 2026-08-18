@@ -187,6 +187,46 @@ The verifiable facts, and they are the only ones worth planning against:
   - **The host is one import away.** `gzip/gzip_fixed.test.ts` looks clean and imports `gunzip` from
     `./util.ts`, which spawns the system gunzip — the right oracle, since a self-round-trip cannot
     catch a wrong bit order.
+  - **What is left, split by what actually blocks it — 2026-08-18.** 44,490 lines of `.test.ts`
+    remain under `packages/`:
+
+    | | lines |
+    |---|---:|
+    | needs a live child (`issues/system/0165`) | 12,132 |
+    | needs a live TLS or QUIC **peer** wac cannot be | 3,425 |
+    | needs a browser | 3,355 |
+    | nominally convertible | 25,578 |
+
+    **Take about 2,000 off that last row.** Three categories fooled a grep in turn, and each cost a
+    re-measurement:
+
+      - a file whose oracle is a *runtime peer* — `Deno.QuicEndpoint`, `listenTls` — is not
+        convertible however little it spawns. wac has UDP and no QUIC peer to be. Sixteen files.
+      - a file whose *subject* is TypeScript never moves: `platform/host/marshal.test.ts` sits beside
+        the `marshal.ts` it tests, the three `*_model.test.ts` check a TS model, and
+        `platform/test/browser.test.ts` — which needs no browser at all — drives the browser handler
+        mapping with an in-memory double. ~2,000 lines.
+      - `crypto.subtle` is *not* in either category: WebCrypto is reachable as an oracle process
+        (`capture-hkdfcap.wac` asks it through `deno eval`), because that question is a computation
+        and not a conversation.
+
+    So roughly **23,500 lines** are genuinely convertible wac-subject work, concentrated in `wacc`
+    (8,582, of which `typecheck.test.ts` alone is 3,078) and `platform` (8,418). `wacpkg` and `sh`
+    are convertible and belong to other agents.
+
+  - **What the reference oracle now answers**, for whoever takes the rungs on:
+    `packages/wacc/test/reference.ts` is the batched TypeScript half of rungs 1, 2 and 4 —
+    `runfn` (compile, instantiate, call an export), `parsehash`/`parsedump`, `lexhash`/`lexdump`,
+    `lexerrs` (it adjudicates our triples rather than handing back a table), `lexkinds`, `lexcodes`.
+    `typecheck.test.ts` will want a `checkpos`; it was written and then reverted rather than
+    committed with no caller.
+
+  - **Two files that look easy and are not.** `specAccept` and `specCheck` read `specCorpus.ts`,
+    which extracts programs by *reading* `compiler/wacSpec.test.ts` — the exact thing
+    `tools/specCases.ts` exists to avoid, and which its own header records as having produced three
+    disagreeing answers. Pointing them at the generated `specCases.json` instead would merge two
+    corpora, which is a decision about coverage rather than a translation.
+
   - **New TypeScript arrives while this runs.** On 2026-08-17 alone, seventeen `.test.ts` files were
     added by other agents — 1,908 lines still present — against roughly 800 lines converted away the
     same day. Some of it is genuinely host-side (`packages/wacpkg`'s transport and cache), and some
