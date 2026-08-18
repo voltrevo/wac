@@ -35,6 +35,13 @@ and not which names came from which. A directory whose test files are linked int
 declares a private one, a third file exports one, and a file that names none of them cannot be resolved.
 Whether the linker should qualify further rather than refuse is the decision left here.
 
+**Five other packages are one file away from it**, which is worth weighing: a struct name declared both in
+a package's `test/wac/` and in its `src/` is `Repo` in `git`, `Conn` in `ssh`, `Line` in `tty`, and `Block`
+and `LitHeader` in `zstd`. All of them build today — the test file declares its own and uses it, and no
+third file reaches for the name — so none is a defect. But each becomes one the day a second test file in
+that directory declares the same name, and the directory is linked as a unit. Refusing is safe; refusing
+*this often* is an argument for qualifying.
+
 ## Reproduction
 
 Seven lines, in `packages/wacc/test/wac/`:
