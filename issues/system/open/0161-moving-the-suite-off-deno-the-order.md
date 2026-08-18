@@ -1227,3 +1227,31 @@ rather than a test conversion — and there is no `packages/server/example/` to 
 `http/host/client.ts` against `server/host/serve.ts`, so half the grid is host bindings. Both belong
 with `packages/stream/test/stream.test.ts` in the list of files whose subject is the JavaScript, not
 files waiting for a capability.
+
+### Two build features the CLI does not have, and one host divergence — 2026-08-18
+
+Three `packages/platform` files that look convertible are not, and the reasons are worth recording
+because each looks like a missing test rather than a missing feature.
+
+**`test/optimize.test.ts` needs `--optimize`, which only `buildApp` has.** `wac build` answers
+`unknown flag '--optimize' — --allow-read, --allow-write, --allow-net, --allow-env, --allow-run`. The
+flag is a TypeScript build option, so the test cannot ask the binary for the thing it measures.
+
+**`test/producer.test.ts` needs to choose the compiler, which the binary cannot.** Its property is
+*both markers, and different*: a module built by wacc says `processed-by: wacc` and one built by the
+reference says `wac-reference`, and a marker on one compiler only would make absence ambiguous.
+`WAC_APP_FROM=reference wac build` produces a module stamped `wacc` — measured, not assumed: the
+variable is read by `native.ts`, and the binary embeds wacc. Porting half of it would delete the
+comparison that is the whole test, so it stays whole.
+
+**`test/frame.test.ts` found a real bug instead**, filed as `issues/system/0199`. It is a
+differential between the host frame and a substitute built from lambdas, and it passes under
+`deno test`. Run the same two programs with `wac run` and they disagree: the native host does not
+apply a pushed child's `cwd`, so the child is told `note.txt: No such file or directory` in the
+directory that has it. Both spellings of the directory fail, so it is not `issues/system/0194`. The
+divergence was invisible while one host ran both halves — which is what a differential is for, and it
+means the property that test asserts is false on the binary.
+
+The general shape: a conversion is blocked either by something the CLI cannot express, or by
+something that turns out not to work on the host the CLI uses. The second kind is worth more than the
+conversion.
