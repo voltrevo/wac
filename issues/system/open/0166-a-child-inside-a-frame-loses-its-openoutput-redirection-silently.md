@@ -154,3 +154,42 @@ replay's count assertion rises by one, which is how the fix announces itself.
 It also makes the case for fixing rather than documenting: the more of the suite moves to pure wac
 in-process testing, the more this gap costs, and it is invisible from the spawned side by construction.
 
+## It is four applets, it is silent, and it reaches the browser — 2026-08-18
+
+`split` was the first victim found. It is not the only one. Everything that writes through
+`lib/safe.wac`'s streaming form takes the same path — `cp`, `sponge`, `split`, `wget` — and on the
+in-process route each of them **writes an empty file and exits 0**:
+
+    $ wac sh --allow-read --allow-write -c 'cp src copy; echo status=$?; wc -c copy'
+    some bytes to copy      <- the contents, on standard output
+    status=0                <- reported success
+    0 copy                  <- and an empty file
+
+    $ … 'cat src | sponge s1; wc -c s1'   ->  0 s1
+    $ … 'split -l 1 src p;   wc -c paa'   ->  0 paa
+
+The shell's *own* redirection is unaffected — `echo x > r1` writes its eleven bytes — so this is the
+applets' `openOutput`, not redirection in general.
+
+**The route this breaks is the one the website runs.** `packages/box/example/boxsh.wac` is the shell with
+spawning turned off, `site/tools/site.test.ts` drives the front page's commands through it, and
+`routes.test.ts` exists to say that route and the spawned one are one program. For these four applets they
+are not, and the difference is a copy that silently produces nothing.
+
+**And the sentence in `frame.wac` is wrong.** It reads:
+
+> **`openOutput` does not escape the capture**, which is the host's behaviour too
+
+The host's behaviour is to write the file. Measured above: spawned, `cp` copies; in process, it does not.
+Whatever is decided about the fix, that clause should go, because it is the reason this was filed rather
+than changed.
+
+## What a fix has to decide
+
+A `Frame` would need output-redirection state: `openOutput(p)` sends subsequent writes to `p` instead of
+the capture, `openOutput("")` puts the capture back, and something has to flush a redirect the child never
+closed. `lib/safe.wac` does close its own (`openOutput("")` on both the success and failure paths), so the
+common case is covered, but "the child exited mid-redirect" needs an answer rather than an assumption.
+
+That is a change to a platform contract, so it is written down here rather than made in passing.
+

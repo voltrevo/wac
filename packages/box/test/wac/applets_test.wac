@@ -116,3 +116,75 @@ export string test_seq_refuses_a_zero_step(Core core, Cli cli) {
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * `mkdir`, `rm`, `rmdir`, `mv`, `touch` — the mutation tier.
+ *
+ * `writeFile` was the only mutation the world had, which meant an application could create a file but
+ * never remove or move one — so it could not write safely either. These are what `cp` needs in order to
+ * write beside its target and rename into place.
+ *
+ * **What stayed in `box.test.ts`** is the paragraph at the end of the test this came from: that none of it
+ * happens without the write grant, whatever the arguments say. That is a claim about a *built* program's
+ * manifest and the host that enforces it, and this process holds grants of its own.
+ */
+export string test_boxs_mutation_tier(Core core, Cli cli) {
+  T t = T.create();
+  string root = caseDir(cli);
+  t.isTrue(layFixtures(cli, root, Fixture[0]()), "cannot make " + root);
+
+  t.eqI32(runCase(core, cli, root, "mkdir -p a/b/c").status, 0, "mkdir -p");
+  t.isTrue(cli.stat(root + "/a/b/c").wait().isDir, "mkdir -p made the parents");
+  // Without -p a missing parent is an error, which is the difference between them.
+  t.eqI32(runCase(core, cli, root, "mkdir x/y").status, 1, "mkdir without -p needs the parent");
+
+  t.eqI32(runCase(core, cli, root, "touch a/b/c/f").status, 0, "touch");
+  t.isTrue(cli.stat(root + "/a/b/c/f").wait().size == 0, "touch made it empty");
+  t.isTrue(cli.writeFile(root + "/a/b/c/f", "kept".toBytes()).wait().ok(), "cannot write the fixture");
+  t.eqI32(runCase(core, cli, root, "touch a/b/c/f").status, 0, "touch again");
+  t.eqStr(string.fromBytes(cli.readFile(root + "/a/b/c/f").wait().bytes), "kept",
+          "touch left an existing file alone");
+
+  t.eqI32(runCase(core, cli, root, "mv a/b/c/f moved").status, 0, "mv");
+  t.isTrue(!cli.stat(root + "/a/b/c/f").wait().exists, "mv left nothing behind");
+  t.eqStr(string.fromBytes(cli.readFile(root + "/moved").wait().bytes), "kept", "mv kept the contents");
+
+  // `rmdir` is never recursive; that distinction is the reason it is its own command.
+  t.isTrue(cli.writeFile(root + "/a/b/c/g", "x".toBytes()).wait().ok(), "cannot write the fixture");
+  t.eqI32(runCase(core, cli, root, "rmdir a/b/c").status, 1, "rmdir refuses a non-empty directory");
+  t.eqI32(runCase(core, cli, root, "rm a/b/c/g").status, 0, "rm");
+  t.eqI32(runCase(core, cli, root, "rmdir a/b/c").status, 0, "rmdir takes an empty one");
+
+  // Absence is an error unless you say it is not, as `rm -f` says.
+  t.eqI32(runCase(core, cli, root, "rm never").status, 1, "rm of what is not there");
+  t.eqI32(runCase(core, cli, root, "rm -f never").status, 0, "rm -f of what is not there");
+  t.eqI32(runCase(core, cli, root, "rm a").status, 1, "rm needs -r for a directory");
+  t.eqI32(runCase(core, cli, root, "rm -r a").status, 0, "rm -r");
+  t.isTrue(!cli.stat(root + "/a").wait().exists, "rm -r took the tree");
+
+  // The point of the tier: `cp` writes beside its target and renames, so the destination is never seen
+  // half-written and no temporary name survives a successful copy.
+  t.isTrue(cli.writeFile(root + "/src", "some bytes to copy\n".toBytes()).wait().ok(), "fixture");
+  t.eqI32(runCase(core, cli, root, "cp src copy").status, 0, "cp");
+  t.eqStr(string.fromBytes(cli.readFile(root + "/copy").wait().bytes), "some bytes to copy\n",
+          "cp copied it");
+  t.eqStr(sortedJoin(cli.readDir(root).wait()), "copy moved src", "a temporary file survived");
+  cli.remove(root, true).wait();
+  return t.report();
+}
+
+/** A listing, in order, as one string — so "what is left in the directory" reads as one assertion. */
+string sortedJoin(string[]? entries) {
+  if (entries is null) { return "(absent)"; }
+  string[] names = string[entries!.len()](fill: "");
+  for (i32 i = 0; i < entries!.len(); i++) { names[i] = entries![i]; }
+  for (i32 i = 1; i < names.len(); i++) {
+    string held = names[i];
+    i32 k = i - 1;
+    while (k >= 0 && names[k] > held) { names[k + 1] = names[k]; k = k - 1; }
+    names[k + 1] = held;
+  }
+  string out = "";
+  for (i32 i = 0; i < names.len(); i++) { out = out + (i == 0 ? "" : " ") + names[i]; }
+  return out;
+}
