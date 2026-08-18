@@ -9,7 +9,7 @@
 //   deno task coverage:std
 //   deno task coverage:std --verbose
 
-import { instrument, report } from "../../harness/wacCoverage.ts";
+import { instrument, report, runTestExports } from "../../harness/wacCoverage.ts";
 
 const verbose = Deno.args.includes("--verbose");
 
@@ -20,11 +20,7 @@ for (const entry of [
   "packages/std/test/wac/option_test.wac",
 ]) {
   const run = await instrument(entry);
-  for (const [name, fn] of Object.entries(run.mod)) {
-    if (!name.startsWith("test") || typeof fn !== "function") continue;
-    const failure = (fn as () => string)();
-    if (failure !== "") throw new Error(`${name} failed during coverage: ${failure}`);
-  }
+  runTestExports(run, entry);
   runs.push(run);
 }
 

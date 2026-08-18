@@ -7,16 +7,12 @@
 //   deno task coverage:bytes
 //   deno task coverage:bytes --verbose
 
-import { instrument, report } from "../../harness/wacCoverage.ts";
+import { instrument, report, runTestExports } from "../../harness/wacCoverage.ts";
 
 const verbose = Deno.args.includes("--verbose");
 
 const run = await instrument("packages/bytes/test/wac/buf_test.wac");
-for (const [name, fn] of Object.entries(run.mod)) {
-  if (!name.startsWith("test") || typeof fn !== "function") continue;
-  const failure = (fn as () => string)();
-  if (failure !== "") throw new Error(`${name} failed during coverage: ${failure}`);
-}
+runTestExports(run, "buf_test.wac");
 
 /**
  * The bounds fixture is a second entry point.

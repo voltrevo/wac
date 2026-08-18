@@ -15,7 +15,7 @@
 //   deno task coverage:crypto
 //   deno task coverage:crypto --verbose
 
-import { instrument, report } from "../../harness/wacCoverage.ts";
+import { instrument, report, runTestExports } from "../../harness/wacCoverage.ts";
 import { ref } from "./test/rsaOracle.ts";
 
 const verbose = Deno.args.includes("--verbose");
@@ -840,12 +840,17 @@ const rsaTests = await instrument("packages/crypto/test/wac/rsa_test.wac");
 {
   const names = Object.keys(rsaTests.mod).filter(n => n.startsWith("test_"));
   if (names.length === 0) throw new Error("rsa_test.wac exported no test_ functions");
-  for (const n of names) {
-    const failure = (rsaTests.mod[n] as (r: typeof ref) => string)(ref);
-    // An empty string is a pass. Reported rather than swallowed: a failing test here would otherwise
-    // show up only as coverage that stopped early, which reads as a driver problem.
-    if (failure !== "") throw new Error(`rsa_test.wac ${n} failed under instrumentation: ${failure}`);
-  }
+  // **These took a TypeScript oracle and now take a host.** Nine of the twelve are
+  // `(Core core, Cli cli)` — they drive openssl through `Cli.exec` rather than being handed a
+  // reference implementation from here — and this loop went on passing them `ref` as `core`,
+  // leaving `cli` undefined. The failure was `Cannot read properties of undefined (reading
+  // '$ref')`, thrown from generated glue with the coverage task's name on it, and it made
+  // `deno task coverage:crypto` red for a package with nothing wrong with it.
+  //
+  // `runTestExports` runs the three that need nothing and names the nine it cannot call. Their
+  // lines are reached by `wac test`, which can build a host; what this driver can honestly claim is
+  // what it can honestly run.
+  runTestExports(rsaTests, "rsa_test.wac");
 }
 
 // **`ct_test.wac` is a unit for the same reason `rsa_test.wac` is**, and its absence had the effect
@@ -861,11 +866,9 @@ const ctTests = await instrument("packages/crypto/test/wac/ct_test.wac");
 {
   const names = Object.keys(ctTests.mod).filter(n => n.startsWith("test_"));
   if (names.length === 0) throw new Error("ct_test.wac exported no test_ functions");
-  const noBytes = () => new Uint8Array();
-  for (const n of names) {
-    const failure = (ctTests.mod[n] as (r: () => Uint8Array) => string)(noBytes);
-    if (failure !== "") throw new Error(`ct_test.wac ${n} failed under instrumentation: ${failure}`);
-  }
+  // The stand-in oracle these were handed is gone: all three take nothing now, and compare against
+  // themselves as the paragraph above says they do.
+  runTestExports(ctTests, "ct_test.wac");
 }
 
 // **The guards that trap, as a unit of their own** — `packages/std/cov.ts`'s shape. A trap aborts the

@@ -9,7 +9,7 @@
 //   deno task coverage:bignum
 //   deno task coverage:bignum --verbose
 
-import { instrument, report } from "../../harness/wacCoverage.ts";
+import { instrument, report, runTestExports } from "../../harness/wacCoverage.ts";
 
 const verbose = Deno.args.includes("--verbose");
 const enc = new TextEncoder();
@@ -242,10 +242,6 @@ for (const bad of ["", "1.5", "-"]) {
  * host-facing probe alone shows it dead when it is in fact tested.
  */
 const testRun = await instrument("packages/bignum/test/wac/big_test.wac");
-for (const [name, fn] of Object.entries(testRun.mod)) {
-  if (!name.startsWith("test") || typeof fn !== "function") continue;
-  const failure = (fn as () => string)();
-  if (failure !== "") throw new Error(`${name} failed during coverage: ${failure}`);
-}
+runTestExports(testRun, "big_test.wac");
 
 report([run, testRun], "packages/bignum/", { verbose });

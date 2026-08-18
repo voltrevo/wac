@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0200](open/0200-coverage-crypto-is-red-mlkem-and-keccak-lost-their-driver.md) | `coverage:crypto` is red: 127 points uncovered, 48 of them in `mlkem.wac` | bug | wrong answer |
 | [0199](open/0199-the-native-host-ignores-a-pushed-childs-cwd-so-the-two-hosts-disagree.md) | the native host ignores a pushed child's `cwd`, so the same program answers differently on the two hosts | bug | wrong answer |
 | [0198](open/0198-allow-run-also-grants-allow-env-because-exec-inherits-the-whole-environment.md) | `--allow-run` also grants `--allow-env`: `Cli.exec` inherits the host's whole environment, 37 variables including the proxy | bug | no error |
 | [0197](open/0197-a-built-app-costs-107ms-to-start-and-the-same-program-costs-15ms.md) | a built app costs 107 ms to start and the same program through the `wac` binary costs 15 ms | performance | no error |

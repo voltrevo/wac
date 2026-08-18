@@ -101,6 +101,43 @@ export async function instrument(entry: string): Promise<Instrumented> {
  * dependencies — `bytes` is measured by its own run, not incidentally by json's.
  */
 /**
+ * Run a wac test file's `test*` exports as a coverage workload, and say what could not be run.
+ *
+ * **A test that declares capabilities cannot be called from here.** `instrument` gives back a bound
+ * module and nothing else; a `test_x(Core core, Cli cli)` needs a host to hand it those, which is
+ * what `wac test` is for. Called with no arguments it does not fail cleanly — it reaches into an
+ * undefined `core` and throws `Cannot read properties of undefined`, from inside generated glue,
+ * with the *coverage* task's name on it.
+ *
+ * That is not hypothetical: eight `cov.ts` files looped over these exports and called each one
+ * blindly, so the day `packages/crypto` gained an RSA test taking `(Core, Cli)` its coverage task
+ * started failing with a message about `$ref` — and `fmt` went the same way. Neither had anything
+ * wrong with it. The arity is right there on the function, so this asks.
+ *
+ * **What is skipped is printed, not dropped.** A coverage workload that silently stops running half
+ * a file still reports a number, and the number goes down for a reason nobody can see. The lines
+ * those tests reach are covered by `wac test` instead — `report()` counts a package, not a lane.
+ */
+export function runTestExports(run: Instrumented, label: string): void {
+  const skipped: string[] = [];
+  for (const [name, fn] of Object.entries(run.mod)) {
+    if (!name.startsWith("test") || typeof fn !== "function") continue;
+    if (fn.length > 0) {
+      skipped.push(name);
+      continue;
+    }
+    const failure = (fn as () => string)();
+    if (failure !== "") throw new Error(`${label} ${name} failed during coverage: ${failure}`);
+  }
+  if (skipped.length > 0) {
+    console.log(
+      `  ${label}: ${skipped.length} test(s) not run here — they take a host ` +
+        `(${skipped.join(", ")})`,
+    );
+  }
+}
+
+/**
  * A coverage report is about the package, so the tests themselves are not in it.
  *
  * Running a `test/wac/*_test.wac` as an entry point — which is how a migrated package covers the

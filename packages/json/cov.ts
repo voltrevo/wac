@@ -8,7 +8,7 @@
 //   deno task coverage:json
 //   deno task coverage:json --verbose
 
-import { instrument, report } from "../../harness/wacCoverage.ts";
+import { instrument, report, runTestExports } from "../../harness/wacCoverage.ts";
 
 const verbose = Deno.args.includes("--verbose");
 const enc = new TextEncoder();
@@ -114,11 +114,7 @@ for (const d of [1, 399, 400, 500]) {
  * which every other exercise in this file does.
  */
 const indexRun = await instrument("packages/json/test/wac/json_test.wac");
-for (const [name, fn] of Object.entries(indexRun.mod)) {
-  if (!name.startsWith("test") || typeof fn !== "function") continue;
-  const failure = (fn as () => string)();
-  if (failure !== "") throw new Error(`${name} failed during coverage: ${failure}`);
-}
+runTestExports(indexRun, "json_test.wac");
 
 /** Containers big enough to grow several times, and lookup hits and misses. */
 canonicalize(enc.encode(`[${Array.from({ length: 200 }, (_, i) => i).join(",")}]`));
