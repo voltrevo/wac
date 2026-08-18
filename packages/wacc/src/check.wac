@@ -2810,7 +2810,7 @@ export string typeOfExpr(C c, Expr e) {
     // **A `match` used as an expression**, by exactly the rule one arm up: every arm agrees and that
     // is the type, or they do not and this says nothing rather than guessing. There was no arm here
     // at all, so `string got = match (o) { … };` over arms that all answer `i32` went unreported —
-    // the mutation sweep's second-to-last miss, in `packages/std/test/wac/option_test.wac`.
+    // the mutation sweep's second-to-last miss, in `core/test/option_test.wac`.
     //
     // A *statement* arm has no value and a match containing one is not an expression, so an arm
     // without one ends the question. Unknown is contagious for the same reason it is in `Ternary`:
@@ -4528,7 +4528,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   // **A funcref parameter is not judged.** `mapOption<T, U>(Option<T> o, fn[U(T)] f)` binds `U`
   // through the *shape* of a function type, and `bindTypeParams` decomposes arrays, nullables and
   // generic instances but not `fn(…) -> …`. Reporting an unbound `U` here refused
-  // `packages/std/test/wac/option_test.wac`, which is correct code. Silence until the binder can
+  // `core/test/option_test.wac`, which is correct code. Silence until the binder can
   // read a funcref, which is the direction to be wrong in.
   for (i32 i = 0; i < args.len(); i++) {
     if (startsWithFn(c.funcParamTypes[c.funcParamAt[at] + i])) { return; }

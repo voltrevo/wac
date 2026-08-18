@@ -17,8 +17,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Vec } from "../../src/vec.wac";
-import { Option } from "../../src/option.wac";
-import { Result } from "../../src/result.wac";
+import { Option } from "core/option.wac";
+import { Result } from "core/result.wac";
 
 Vec<i32> oneElement() {
   Vec<i32> v = Vec.create();

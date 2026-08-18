@@ -106,7 +106,7 @@ await wacTestRun("packages/gzip/test/wac/huffman_test.wac", "huffman");
 await wacTestRun("packages/json/test/wac/json_test.wac", "json");
 await wacTestRun("packages/std/test/wac/hash_test.wac", "hash");
 await wacTestRun("packages/std/test/wac/map_test.wac", "map");
-await wacTestRun("packages/std/test/wac/option_test.wac", "option");
+await wacTestRun("core/test/option_test.wac", "option");
 await wacTestRun("packages/std/test/wac/vec_test.wac", "vec");
 await wacTestRun("packages/url/test/wac/url_test.wac", "url");
 await wacTestRun("packages/tor/test/wac/rendrelay_test.wac", "rendrelay");

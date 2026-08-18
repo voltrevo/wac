@@ -30,6 +30,7 @@
     "coverage:bignum": "deno run -A packages/bignum/cov.ts",
     "coverage:bytes": "deno run -A packages/bytes/cov.ts",
     "coverage:codec": "deno run -A packages/codec/cov.ts",
+    "coverage:core": "deno run -A core/cov.ts",
     "coverage:crypto": "deno run -A packages/crypto/cov.ts",
     "coverage:datetime": "deno run -A packages/datetime/cov.ts",
     "coverage:fmt": "deno run -A packages/fmt/cov.ts",

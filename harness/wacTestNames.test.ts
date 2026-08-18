@@ -42,7 +42,7 @@ Deno.test("the registered name is the label and the test name without its prefix
 Deno.test("a call written with a variable is counted, not dropped", () => {
   const src = [
     'await wacTestRun("packages/std/test/wac/map_test.wac", "map");',
-    'await wacTestRun("packages/std/test/wac/option_test.wac");',
+    'await wacTestRun("core/test/option_test.wac");',
     'await wacTestRun("packages/crypto/test/wac/aes_test.wac", "aes", [ref]);',
     "await wacTestRun(path);",
   ].join("\n");

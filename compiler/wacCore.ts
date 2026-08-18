@@ -42,4 +42,149 @@ export enum Read {
   Failed(string why)
 }
 `,
+
+  /**
+   * The tree's siblings, keyed by the specifier that names them.
+   *
+   * `core` is the root module above; these are files *in* the tree, each its own module, reached as
+   * `import { Option } from "core/option.wac";`. The key is the specifier exactly as written, which
+   * is what makes the reservation checkable: a resolver consults this before the filesystem, so a
+   * project's own `core/` directory cannot shadow a built-in — `design/lang/0009` D4.
+   */
+  files: {
+    "core/option.wac": `\
+// Option<T> — a value that may be absent, without using null.
+//
+// wac has \`T?\`, and it works for every T including a primitive (wac issue 0045). For a
+// reference it is also cheaper — one word, no allocation — so \`Point?\` is the right thing to
+// write and \`Option<Point>\` is not. Option earns its place on two narrower grounds:
+//
+//   - **a nested absence.** \`T??\` does not exist, so a container of nullables cannot
+//     distinguish "no entry" from "an entry holding null". \`Option<T?>\` can, which is why
+//     \`Map.get\` returns one: \`Map<string, JsonValue?>\` is a real shape and \`null\` would be
+//     ambiguous in it.
+//   - **an absent case that is a compile error to forget.** \`match\` is exhaustive. A missing
+//     \`case\` is refused; a missing null check is not.
+//
+// A nullable primitive is boxed, and so is an Option, so between \`i32?\` and \`Option<i32>\`
+// there is nothing to choose on cost — pick by which of the two reasons above applies.
+
+export enum Option<T> {
+  Some(T v), None
+
+  bool isSome(const this) {
+    return match (this) { case Some(_): true, case None: false };
+  }
+
+  bool isNone(const this) {
+    return match (this) { case Some(_): false, case None: true };
+  }
+
+  /** The value, or \`d\` if there is none. */
+  T orElse(const this, T d) {
+    return match (this) { case Some(v): v, case None: d };
+  }
+
+  /**
+   * The value, or a trap.
+   *
+   * For the case where absence is a bug rather than a possibility — the parallel of \`x!\`
+   * on a nullable. \`trap\` carries no message, so prefer \`match\` where the caller can say
+   * something useful.
+   */
+  T unwrap(const this) {
+    match (this) {
+      case Some(v): return v;
+      case None: trap;
+    }
+  }
+}
+
+/**
+ * \`f\` applied to the value, if there is one.
+ *
+ * A free function rather than a method because a method cannot introduce a type parameter
+ * of its own: \`U\` is not the enum's. Inference reads \`T\` from the Option and \`U\` from the
+ * function's return type, so the call site names neither.
+ */
+export Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) {
+  return match (o) {
+    case Some(v): Option.Some(f(v)),
+    case None: Option.None,
+  };
+}
+`,
+    "core/result.wac": `\
+// Result<T, E> — a value or an error, as a type rather than a convention.
+//
+// wac has \`trap\`, which carries no message and cannot be caught, so a function that can
+// fail has had three options: trap, return a sentinel, or return a bool and write the real
+// answer through an out-parameter struct. json's parser uses the third and it costs a
+// struct per call site.
+//
+// \`E\` is a type parameter rather than a fixed error type because the useful error differs:
+// a parser wants a message and a position, an arithmetic routine wants a code, and a
+// caller that only branches wants nothing but the fact of failure — \`Result<T, bool>\`.
+
+import { Option } from "./option.wac";
+
+export enum Result<T, E> {
+  Ok(T v), Err(E e)
+
+  bool isOk(const this) {
+    return match (this) { case Ok(_): true, case Err(_): false };
+  }
+
+  bool isErr(const this) {
+    return match (this) { case Ok(_): false, case Err(_): true };
+  }
+
+  /** The value, or \`d\` if this is an error. */
+  T orElse(const this, T d) {
+    return match (this) { case Ok(v): v, case Err(_): d };
+  }
+
+  /** The value, or a trap. For when an error here means the program is wrong. */
+  T unwrap(const this) {
+    match (this) {
+      case Ok(v): return v;
+      case Err(_): trap;
+    }
+  }
+
+  /** The value if there is one, discarding the error — for when only presence matters. */
+  Option<T> ok(const this) {
+    return match (this) {
+      case Ok(v): Option.Some(v),
+      case Err(_): Option.None,
+    };
+  }
+
+  /** The error if there is one. */
+  Option<E> err(const this) {
+    return match (this) {
+      case Ok(_): Option.None,
+      case Err(e): Option.Some(e),
+    };
+  }
+}
+`,
+  } as Record<string, string>,
 } as const;
+
+/**
+ * Does this specifier name a module inside the compiler rather than a file on disk?
+ *
+ * **Every resolver has to ask, and there are three.** `compiler/wacResolve.ts`'s `importKey` joins a
+ * quoted path to the importing file's directory, `harness/wacFiles.ts`'s `resolveFrom` does the same
+ * for the graph reader, and `wacCompile` injects the tree. A built-in that only one of them knows
+ * about is a module the graph can read and the resolver cannot find — which reports as the type not
+ * existing, several steps from the cause.
+ *
+ * The set is the tree's own keys, not the prefix `core/`. `design/lang/0009` D4 reserves the prefix,
+ * and this repository keeps the tree's *source* at `core/` — so the literal rule makes
+ * `core/test/option_test.wac` unreadable, a real file swallowed by the namespace it lives in.
+ */
+export function isBuiltinSpecifier(spec: string): boolean {
+  return spec === "core" || spec === "std" || spec in CORE.files;
+}

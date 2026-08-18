@@ -12,7 +12,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Map } from "../../src/map.wac";
 import { Vec } from "../../src/vec.wac";
-import { Option } from "../../src/option.wac";
+import { Option } from "core/option.wac";
 import { hashString, stringEq, hashI32, i32Eq, hashI64, i64Eq, hashBytes, bytesEq } from "../../src/hash.wac";
 
 /** Every key in one slot. Legal, and the worst case a hash may be. */

@@ -46,10 +46,21 @@ globalThis.addEventListener("unload", () => doneHeavy());
 const verbose = Deno.args.includes("--verbose");
 const startedAll = performance.now();
 
-const PACKAGES = [
-  "bignum", "bytes", "codec", "crypto", "datetime", "fmt", "fs", "gzip", "http", "json",
-  "regex", "server", "sh", "ssh", "std", "stream", "unicode", "url", "zstd",
-];
+/**
+ * Every `coverage:*` task there is, read from `deno.json` rather than listed here.
+ *
+ * **It was a literal, and it had drifted.** Nineteen names against twenty-one tasks: `raster` and
+ * `wacpkg` existed, were never swept, and so had ratchets that nothing enforced — a sweep that
+ * silently covers less than it claims reads exactly like one that covers everything, until the
+ * package it skipped regresses. Both passed when this was found, which is the only reason it cost
+ * nothing. Deriving it means adding a task is the whole of adding it to the sweep.
+ */
+const PACKAGES = Object.keys(
+  (JSON.parse(Deno.readTextFileSync("deno.json")) as { tasks: Record<string, string> }).tasks,
+)
+  .filter((t) => t.startsWith("coverage:") && t !== "coverage:all")
+  .map((t) => t.slice("coverage:".length))
+  .sort();
 
 type Result = { pkg: string; code: number; ms: number; output: string };
 

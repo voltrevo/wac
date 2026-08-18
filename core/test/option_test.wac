@@ -1,9 +1,9 @@
 // Option and Result. Written in wac because the values never need to cross the wasm
 // boundary — an `Option<i32>` has no JS representation worth defining.
 
-import { T } from "../../../wactest/src/assert.wac";
-import { Option, mapOption } from "../../src/option.wac";
-import { Result } from "../../src/result.wac";
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Option, mapOption } from "../option.wac";
+import { Result } from "../result.wac";
 
 i32 double(i32 x) { return x * 2; }
 string describe(i32 x) { return x > 0 ? "pos" : "neg"; }

@@ -303,7 +303,7 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
   const FIXTURE = [
     `import { wacTestRun } from "../harness/wacTestRun.ts";`,
     `await wacTestRun("packages/quic/test/wac/varint_test.wac", "quic");`,
-    `await wacTestRun("packages/std/test/wac/option_test.wac", "option");`,
+    `await wacTestRun("core/test/option_test.wac", "option");`,
     ``,
   ].join("\n");
   const reg = wacTestRegistrations(FIXTURE);
@@ -370,7 +370,7 @@ Deno.test("a file that also declares host tests is left to Deno", async () => {
   // invisible to the test walk that would otherwise try to run it.
   const FIXTURE = [
     `import { wacTestRun } from "../harness/wacTestRun.ts";`,
-    `await wacTestRun("packages/std/test/wac/option_test.wac", "option");`,
+    `await wacTestRun("core/test/option_test.wac", "option");`,
     `Deno.test("a host-side test declared in the same file", () => {});`,
     ``,
   ].join("\n");

@@ -1,3 +1,4 @@
+import { isBuiltinSpecifier } from "wac/wacCore.ts";
 // wacFiles — read a .wac entry file and everything it imports, transitively.
 //
 // wacCompile takes a path -> source map and does no I/O of its own, so someone
@@ -24,6 +25,9 @@ import { wacLex } from "wac/wacLex.ts";
  * One rule with one caller is the fix; `issues/lang/0150` is the same shape on the wac side.
  */
 export function resolveFrom(fromPath: string, spec: string): string {
+  // A built-in is already the key it is looked up by. Joining it to the importing file's directory
+  // would make `core/option.wac` into packages/json/src/core/option.wac — a path, and a missing one.
+  if (isBuiltinSpecifier(spec)) return spec;
   const dir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : ".";
   const joined = `${dir}/${spec}`;
   // Collapse `a/./b` and `a/b/../c` so the same file is never keyed two ways.
@@ -90,6 +94,7 @@ export function wacFilesIn(all: Map<string, string>, entry: string): Map<string,
   while (queue.length > 0) {
     const path = queue.shift()!;
     if (files.has(path)) continue;
+    if (isBuiltinSpecifier(path)) continue;
     const src = all.get(path);
     if (src === undefined) continue;
     files.set(path, src);
@@ -170,7 +175,12 @@ export async function wacFiles(entry: string): Promise<Map<string, string>> {
   // as its depth rather than its size.
   let wave = [entry];
   while (wave.length > 0) {
-    const fresh = wave.filter((p, i) => !files.has(p) && wave.indexOf(p) === i);
+    // A built-in has no file to read, and does not go in the map: `wacCompile` injects the tree's
+    // modules from the copy embedded in the compiler, so what the caller is handed stays a map of
+    // the caller's own files.
+    const fresh = wave.filter((p, i) =>
+      !files.has(p) && wave.indexOf(p) === i && !isBuiltinSpecifier(p)
+    );
     const texts = await Promise.all(fresh.map((p) => Deno.readTextFile(p)));
     const next: string[] = [];
     for (let i = 0; i < fresh.length; i++) {

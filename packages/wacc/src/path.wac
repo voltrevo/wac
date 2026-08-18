@@ -23,7 +23,16 @@
  * path keeps its leading slash — normalising that away turns it into a relative one, and the read
  * then fails somewhere far from the cause.
  */
+import { isBuiltinSpec } from "./coretext.wac";
+
 export string resolveFrom(string fromPath, string spec) {
+  // **A built-in is its own key, decided before any path arithmetic.** `core/option.wac` names a
+  // module inside the compiler, so joining it to the importing file's directory looks for
+  // packages/std/src/core/option.wac. Both callers get the reservation from here — `gather` in
+  // `example/wacc.wac`, which reads files, and `resolveImport` in `emit.wac`, which links them —
+  // because putting it in one and not the other is a module the graph reads and the linker cannot
+  // find. `design/lang/0009` D4.
+  if (isBuiltinSpec(spec)) { return spec; }
   i32 cut = -1;
   for (i32 i = 0; i < fromPath.len(); i++) {
     if (fromPath.slice(i, i + 1) == "/") { cut = i; }
