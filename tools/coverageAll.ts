@@ -93,9 +93,35 @@ const failed = results.filter((r) => r.code !== 0);
 // the time taken — reporting it as elapsed would make a 4x speedup look like no change at all.
 const total = results.reduce((n, r) => n + r.ms, 0) / 1000;
 const elapsed = (performance.now() - startedAll) / 1000;
+/**
+ * How many of these can actually fail — and it is four of twenty-one.
+ *
+ * **The line below used to read `19/19 passed`, which is not what happened.** Only `crypto`, `fs`,
+ * `gzip` and `zstd` end their driver with a failure path; the other seventeen finish with `report(...)`
+ * and exit 0 whatever they measured. So a run where a package lost half its coverage says `passed`
+ * about it, and the paragraph `tools/push.sh` prints underneath — "a package above is below its
+ * recorded coverage" — is true of four of them.
+ *
+ * Counted by looking for a failure path in each driver rather than hardcoded, so the number follows the
+ * drivers instead of aging into another wrong figure. Whether the other seventeen *should* assert a
+ * floor is a decision about each package, not something to infer here; naming the count is what stops
+ * the summary from claiming it either way.
+ */
+const kinds = await Promise.all(results.map(async (r) => {
+  const src = await Deno.readTextFile(`packages/${r.pkg}/cov.ts`).catch(() => "");
+  if (!/Deno\.exit\(1\)/.test(src)) return "reports";
+  // The two shapes differ in what they hold you to. One fails when a point nothing reaches has no
+  // entry — a coverage floor. The others fail only when an entry they already carry has drifted onto
+  // the wrong line, which is rot-proofing for the ledger and says nothing about whether coverage fell.
+  return /branch point\(s\) uncovered/.test(src) ? "floor" : "entries";
+}));
+const count = (k: string) => kinds.filter((x) => x === k).length;
+
 console.log(
-  `\n${results.length - failed.length}/${results.length} passed in ${elapsed.toFixed(0)}s ` +
-    `(${total.toFixed(0)}s of work at ${WORKERS} workers)`,
+  `\n${results.length - failed.length}/${results.length} ran in ${elapsed.toFixed(0)}s ` +
+    `(${total.toFixed(0)}s of work at ${WORKERS} workers) — ${count("floor")} hold a coverage floor, ` +
+    `${count("entries")} only check their own exemptions have not drifted, ${count("reports")} report ` +
+    `and cannot fail`,
 );
 
 for (const r of failed) {
