@@ -1,0 +1,21 @@
+// What a read answered.
+//
+// The shape exists because the obvious answer, `u8[]`, has a hole in it: an empty array means both
+// "the input finished" and "the read failed". Filters that treated the second as the first exited 0
+// having written half their output, and a gzip stream produced a *valid* archive of half its input
+// with a CRC to match. A companion `inputError()` to ask afterwards was tried first and left the
+// ordinary path looking exactly as correct as it had been, so anyone who forgot to ask got the old
+// behaviour back. This cannot be forgotten: `match` is exhaustive, and a caller that ignores
+// `Failed` does not compile.
+//
+// It is in `core` rather than in a package because both ends of a stream have to name it and no
+// adapter can join two copies — see the note at the top of compiler/wacCore.ts.
+
+export enum Read {
+  /** Bytes, and never zero of them — an empty answer is `End`. */
+  Data(u8[] bytes),
+  /** The input finished. Not a failure. */
+  End,
+  /** It did not finish, and this is the host's own message. */
+  Failed(string why)
+}

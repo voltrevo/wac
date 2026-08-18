@@ -7,7 +7,7 @@
 //   deno task coverage:url
 //   deno task coverage:url --verbose
 
-import { instrument, report } from "../../harness/wacCoverage.ts";
+import { instrument, report, runTestExports } from "../../harness/wacCoverage.ts";
 
 const verbose = Deno.args.includes("--verbose");
 const enc = new TextEncoder();
@@ -140,10 +140,6 @@ for (let i = 0; i < 4000; i++) {
  * nothing the host can send exercises `SET_COMPONENT` or an IPv6 host built by hand.
  */
 const testRun = await instrument("packages/url/test/wac/url_test.wac");
-for (const [name, fn] of Object.entries(testRun.mod)) {
-  if (!name.startsWith("test") || typeof fn !== "function") continue;
-  const failure = (fn as () => string)();
-  if (failure !== "") throw new Error(`${name} failed during coverage: ${failure}`);
-}
+runTestExports(testRun, "url_test.wac");
 
 report([run, testRun], "packages/url/", { verbose });

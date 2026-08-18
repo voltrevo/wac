@@ -9,7 +9,7 @@
 //   deno task coverage:fmt
 //   deno task coverage:fmt --verbose
 
-import { instrument, report } from "../../harness/wacCoverage.ts";
+import { instrument, report, runTestExports } from "../../harness/wacCoverage.ts";
 
 const verbose = Deno.args.includes("--verbose");
 const enc = new TextEncoder();
@@ -102,10 +102,6 @@ for (const n of [0, 1, -1, 9, 10, 99, 100, 2147483647, -2147483648, -12345]) ito
  * dead when they are covered.
  */
 const testRun = await instrument("packages/fmt/test/wac/ftoa_test.wac");
-for (const [name, fn] of Object.entries(testRun.mod)) {
-  if (!name.startsWith("test") || typeof fn !== "function") continue;
-  const failure = (fn as () => string)();
-  if (failure !== "") throw new Error(`${name} failed during coverage: ${failure}`);
-}
+runTestExports(testRun, "ftoa_test.wac");
 
 report([run, testRun], "packages/fmt/", { verbose });

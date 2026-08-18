@@ -16,8 +16,9 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          describeLinked, describeSep, buildLinked, Built,
-         sourceOf, tokenTextOf, resolveImport, numText, coreSource,
+         sourceOf, tokenTextOf, resolveImport, numText,
          emitDeclineLinked, lambdaReportLinked } from "./emit.wac";
+import { coreSource } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, resolveFrom } from "./files.wac";

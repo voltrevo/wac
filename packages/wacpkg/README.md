@@ -3,7 +3,7 @@
 Where a wac project says its dependencies come from: `wac.json5`, read and checked.
 
 ```sh
-deno test -A packages/wacpkg/test/     # the tests
+wac test packages/wacpkg/test/wac/     # the tests, all of them wac
 deno task coverage:wacpkg              # branch coverage
 ```
 

@@ -27,7 +27,7 @@ string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-operands"; }
 /**
  * Cases the shell answers instead of the applet, by name and with the reason.
  *
- * **`issues/system/0200`**. `packages/sh` has its own `mkdir` and `rm` builtins, and they shadow box's
+ * **`issues/system/0201`**. `packages/sh` has its own `mkdir` and `rm` builtins, and they shadow box's
  * applets of the same name — so `mkdir` in a shell refuses in one line where `box mkdir` gives GNU's two.
  * Both spawned, so it is not the in-process route; it is that nothing had ever compared *the shell's*
  * answer for a name that is both a builtin and an applet.
@@ -74,10 +74,10 @@ export string test_an_operand_error_says_what_the_real_tool_says(Core core, Cli 
   cli.remove(dir, true).wait();
 
   // Two short of the list, and both are named: `mkdir` and `rm` are answered by shell builtins rather
-  // than by the applets — `issues/system/0200`. A bare `ran == list.len()` would have to be relaxed
+  // than by the applets — `issues/system/0201`. A bare `ran == list.len()` would have to be relaxed
   // silently.
   t.eqI32(ran, list.len() - 2, "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
-                               " vectors, and two skipped for issues/system/0200");
+                               " vectors, and two skipped for issues/system/0201");
   t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded invocation — `cases.wac` " +
                       "changed, so `wac run --allow-read --allow-write --allow-run " +
                       "tools/wac/appletvectors.wac` is what makes this file mean anything again");

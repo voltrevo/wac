@@ -7,7 +7,7 @@
 //   deno task coverage:wacpkg
 //   deno task coverage:wacpkg --verbose
 
-import { instrument, report } from "../../harness/wacCoverage.ts";
+import { instrument, report, runTestExports } from "../../harness/wacCoverage.ts";
 
 const verbose = Deno.args.includes("--verbose");
 const enc = new TextEncoder();
@@ -286,11 +286,7 @@ refToCommit(["refs/heads/main"], ["nope"], "main");      // not a sha
 const wacTests = [];
 for (const f of ["manifest", "root", "cache", "lock", "update", "entry"]) {
   const t = await instrument(`packages/wacpkg/test/wac/${f}_test.wac`);
-  for (const [name, fn] of Object.entries(t.mod)) {
-    if (!name.startsWith("test") || typeof fn !== "function") continue;
-    const said = (fn as () => string)();
-    if (said !== "") throw new Error(`${f}_test.wac ${name}: ${said}`);
-  }
+  runTestExports(t, `${f}_test.wac`);
   wacTests.push(t);
 }
 

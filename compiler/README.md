@@ -45,7 +45,7 @@ second copy does.
 
 | feature | reference | wacc | notes |
 |---|---|---|---|
-| `Node` and `Attr` in `core` | no | yes | the tree JSX builds. `design/lang/0004`, `spec/cases/0120` |
+| `Node` and `Attr` in `core` | no | yes | the tree JSX builds. `design/lang/0004`, `spec/cases/0120`; the omission is `core/jsx.wac` not being in this compiler's list in `tools/genCore.ts` |
 | JSX expressions | no | yes | `<p>hello <b>{kid}</b></p>` builds that tree, text and all. `spec/cases/0121`–`0124` |
 | JSX text as text | no | yes | a lexer mode, so `it's here` between tags is text. `spec/cases/0130` |
 | JSX components | no | yes | a tag naming a struct is `Card { … }.render(kids)`. `design/lang/0005`, `spec/cases/0131`–`0134` |

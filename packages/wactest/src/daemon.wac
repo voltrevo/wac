@@ -44,37 +44,39 @@ export struct Daemon {
   bool ok(const this) { return this.pid > 0; }
 }
 
+/** A port, or why there is not one. */
+export struct Port {
+  i32 port;       // -1 when it could not be had
+  string error;   // why, and empty when it could
+}
+
 /**
  * A port nothing is using, from the kernel rather than from a guess.
  *
  * Bind zero, read back what was bound, close it. There is a race between the close and whoever binds
  * it next, and it is the same race every test framework accepts for the same reason: the alternative
  * is a hardcoded number, which collides with the *other agent* running the same suite on this box.
- * Returns -1 if a port could not be had at all.
+ *
+ * **The reason travels, because -1 meant two things and the wrong one was convincing.** `cli.listen`
+ * needs `--allow-net`; without it the handle is negative and this answered -1, so five tests
+ * reported *"no free port"* on a machine with twenty-eight thousand of them free. That message is
+ * plausible enough to be believed: it reads as contention on a shared box, which is what I took it
+ * for, and the tests had in fact never run in the suite at all — the wac lane granted read, write,
+ * run and env, and not this. A capability that is missing and a kernel that is full are not the
+ * same fact and must not be the same answer.
  */
-export i32 freePort(Cli cli) {
+export Port freePortOr(Cli cli) {
   Socket s = cli.listen("127.0.0.1", 0).wait();
-  // **Two failures, and they were one answer.** A refused grant and a machine with no port left both
-  // arrived as -1, so every caller reported "no free port" — which sent me looking at the machine when
-  // the suite's `wac test` lane simply did not pass `--allow-net`. `NOT_GRANTED` is a distinct answer
-  // now, and `whyNoPort` turns either into a sentence a caller can print.
-  if (s.handle < 0) { return s.error.indexOf("granted") >= 0 ? notGranted() : 0 - 1; }
+  if (s.handle < 0) {
+    return Port(-1, s.error == "" ? "listen failed and said nothing" : s.error);
+  }
   i32 port = s.port;
   cli.closeSocket(s.handle);
-  return port;
+  return Port(port, "");
 }
 
-/** What `freePort` answers when the *grant* is missing rather than the port. */
-export i32 notGranted() { return 0 - 2; }
-
-/** Why there is no port, in words, for a caller that is about to fail. */
-export string whyNoPort(i32 port) {
-  if (port == notGranted()) {
-    return "this run was not granted --allow-net, so no socket could be opened — a wac test that needs " +
-           "one is skipped by `wac test` only if it declares the capability, and fails here otherwise";
-  }
-  return "the kernel had no free port to give";
-}
+/** The port alone, for a caller that has nowhere to put the reason. */
+export i32 freePort(Cli cli) { return freePortOr(cli).port; }
 
 /**
  * A port that is still *held* — bound by us until `release`, so nothing else can take it.

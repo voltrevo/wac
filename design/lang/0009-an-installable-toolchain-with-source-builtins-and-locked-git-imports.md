@@ -168,7 +168,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | step | state |
 | --- | --- |
 | 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
-| 2. de-duplicate `core` (D3) | not started, and **it is not a copy-paste job** — the two embeddings differ *by design* and neither compiler can read a file at runtime. See below |
+| 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `deno task gen:core` writes `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
 | 3. `core` and `std` as embedded trees (D3, D4) | not started — `packages/std` is `hash, map, option, result, vec` and moves whole |
 | 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
 | 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
@@ -203,6 +203,129 @@ rather than by two people maintaining two files.
 That makes step 2 larger than it reads and couples it to how omissions are represented, which is
 `compiler/README.md`'s table today. Worth settling that before writing the generator, because the
 generator is where the answer gets encoded.
+
+*(2026-08-18: settled and built. **The file is the unit of omission** — `core/read.wac` goes to both
+compilers, `core/jsx.wac` to wacc alone, and `tools/genCore.ts` holds the two lists. The alternative
+was a marker inside one shared file, which is a third thing to invent, to parse and to keep true for
+a distinction a directory already draws; and D3 makes `core` a source tree regardless, so this is on
+that path rather than beside it.*
+
+*Two things worth knowing before step 3 does the same for `std`. The reference's embedded text is
+**byte-identical** to what it replaced, which is the check worth having — the reference sees exactly
+the source it saw before. And wacc's copy gains the comments it had deliberately been written
+without: the seed went 777,000 to 782,937 bytes, **5.9 KB rather than the ~800 bytes the text alone
+would suggest**, because the generated file spends code on a per-line concatenation as well as the
+strings. It is still a fixed point after one round. If step 3 multiplies that by the whole of
+`packages/std`, the concatenation is the thing to reconsider, not the comments.)*
+
+## Step 3 is a provider seam, and there is not one yet — measured 2026-08-18
+
+Read before starting it, the way step 2's section was.
+
+**`core` is one module with one key, in both compilers.** The reference special-cases it in
+`wacCompile.ts` — `wantsCore` looks for an import whose prefix is `CORE.key`, parses `CORE.source`
+under that key and adds it to the program map. wacc does the same with the key `" core"`, in
+`emit.wac`'s `linkFiles` and `api.wac`'s `corePath()`. Everything else is the filesystem, reached by
+path arithmetic in `compiler/wacResolve.ts` and `packages/wacc/src/files.wac`, with the *caller*
+(`wacc.wac`'s `gather`) doing the reading.
+
+So there is **no seam where a specifier becomes a source**. There is a special case for `core` and a
+default of "open the file". D3 asks for `core` and `std` to be "reached through the same provider
+interface as the filesystem and Git", and that interface does not exist to be reached through.
+
+**Step 3's work is that interface, not moving five files.** `packages/std` is
+`hash, map, option, result, vec` and moves whole; the part that does not move whole is
+`core/option.wac` needing to be a *separately nameable module*, which one key cannot express. That
+means a per-file key, per-file name mangling (`core$Read` is keyed on the single core today), and
+both compilers' walkers calling the same thing.
+
+**It is the same seam step 7 needs**, which is the argument for doing it once and properly.
+`packages/wacpkg` already answers "which repository, which ref, which repository-relative path" for
+a mapped specifier — `matchSpecifier`, `locate`, D9's confinement — and *nothing asks it*. A
+provider interface with three implementations (embedded, filesystem, Git) is what connects the work
+that is already done to the compiler that cannot yet use it.
+
+### A collision step 4 introduces, worth knowing now
+
+Today `import { Read } from core;` reaches the embedded module, and
+`import { Read } from "core/read.wac";` is **a filesystem path** — it answers
+`cannot read core/read.wac` in a directory with no `core/`. After D5 quotes every specifier, one
+spelling has to mean one of the two.
+
+D4 already decides it: `core`, `core/`, `std` and `std/` are reserved and cannot be remapped, so the
+built-in wins and a project's own `core/` directory becomes unreachable by that name. Two
+consequences to carry into step 4 rather than discover in it:
+
+- **This repository now has a top-level `core/`** — step 2's source tree. It is benign, because the
+  embedded copy is generated from exactly those files and a check keeps them in step, but the same
+  spelling will name two things whose identity is a build step rather than a rule.
+- The reserved names have to be reserved *by the resolver*, before the filesystem is consulted.
+  Doing it after is the failure where a directory that happens to be called `core` shadows the
+  built-ins in one project and not another.
+
+### What `"core"` names once the tree has files, and the feature it does not need
+
+D4 shows both spellings together:
+
+```wac
+import { Read } from "core";
+import { Option } from "core/option.wac";
+```
+
+which only works if `"core"` is *something*. Three readings, and the choice decides whether step 3
+depends on an unbuilt language feature:
+
+- **A facade that re-exports.** `core`'s entry would say `export { Read } from "./read.wac";` —
+  and wac has no re-export. That is `issues/lang/0073`, open and unclaimed since 2026-08-05. This
+  reading makes step 3 wait on it.
+- **The union of the tree.** `"core"` gives everything in it. No feature needed, and it costs: a
+  program importing `Read` embeds `Vec`, `Map` and the hashing, in a built-in that is compiled into
+  every binary.
+- **A root module, with the collections as siblings** — `"core"` is the file at the root of the
+  tree, `"core/option.wac"` is a file in it, and neither is reachable through the other. This is
+  what D4's two lines actually show: `Option` is fetched by path *because* it is not in `"core"`.
+
+**The third.** It needs nothing that does not exist, it keeps the built-in small for the program
+that wants one type out of it, and it is what step 2 already built — `tools/genCore.ts` concatenates
+the root files per compiler, and `read.wac` and `jsx.wac` are two files only so the wacc-only
+omission has somewhere to live. Step 3 adds siblings beside them rather than changing what the root
+is.
+
+Worth writing down because the facade reading is the intuitive one, and taking it would have made
+step 3 block on `issues/lang/0073` for no gain.
+
+### The move list, counted
+
+`packages/std` is five files, and they are not equal work — importers, counted 2026-08-18:
+
+| file | importers | note |
+|---|---:|---|
+| `result.wac` | 0 | imports `option.wac`, so it cannot move alone |
+| `option.wac` | 2 | `json/src/value.wac`, `sh/src/exec.wac` |
+| `map.wac` | 6 | |
+| `hash.wac` | 9 | |
+| `vec.wac` | 64 | the one that makes this a sweep |
+
+So `option` + `result` are the pair to move first — eight files touched including the four
+`packages/std/test/wac/*_test.wac` that name them, `compiler/wapyPrint.ts` and `packages/std/cov.ts`
+— and they exercise the interesting case on the way: `result.wac` imports `./option.wac`, so a
+sibling resolving a sibling inside the tree is proved by the first move rather than the last.
+
+**One decision that move forces: where a built-in tree's tests live.** `option_test.wac` is under
+`packages/std/test/wac/` and its subject would be `core/option.wac`. Either the tests move with the
+source — `core/test/` — or a package keeps tests for code it no longer contains. The first is
+tidier and makes `core/` a package like any other, which is what D3 says it becomes; the second
+avoids inventing a test root inside a tree whose whole point is to be embedded. Not settled here,
+because it is cheap to settle when somebody is holding the files.
+
+### Ordering
+
+The note's stated reason for 3 before 4 is that the migration is mechanical only once the trees are
+real. That holds for `packages/std`'s 73 importers. It does not address that `core/option.wac` is
+**unspellable** until 4 — unquoted `core/read.wac` is a parse error, and quoted means the
+filesystem. So step 3 can make the trees real and multi-keyed while the only specifier that reaches
+them is still the bare `core`; step 4 then adds the spelling. Worth stating in the plan, because
+"make `core/option.wac` importable" reads like one step and is two.
 
 ## Two things that make a byte comparison lie, found building step 1
 

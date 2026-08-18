@@ -1,4 +1,4 @@
-# 0200 — a shell builtin shadows a box applet and refuses in fewer words than the applet does
+# 0201 — a shell builtin shadows a box applet and refuses in fewer words than the applet does
 
 - **Status:** open
 - **Reported by:** agent-c
