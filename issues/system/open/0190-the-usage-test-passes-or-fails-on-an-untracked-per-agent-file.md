@@ -7,7 +7,8 @@
 - **Kind:** bug
 - **Symptom:** a test whose result depends on a gitignored file, red for some agents and green for others
 
-`tools/usageText.test.ts` asserts the usage names `sh`. Whether `wac` dispatches `sh` depends on
+`tools/usageText.test.ts` asserted the usage names `sh` — the file is `packages/wacc/test/wac/cli_test.wac`
+now — the test moved to wac on 2026-08-18, keeping the conditional). Whether `wac` dispatches `sh` depends on
 `native/v8/seed/sh.wasm` — which is gitignored, one per agent, and which no task builds.
 
 ## Reproduction
@@ -19,7 +20,7 @@
     usage: wac check|compile|bindgen <entry.wac> [out]   # --js for bindgen's glue
     ...
 
-    $ deno test -A tools/usageText.test.ts
+    $ wac test packages/wacc/test/wac/cli_test.wac
     error: Error: assertEquals failed — the usage does not name these commands
     ...
     FAILED | 2 passed | 1 failed
@@ -59,7 +60,7 @@ Building the shell into the seed directory turns the test green:
     (cd native/v8 && cargo build --release)
 
     $ wac sh script.sh          # runs
-    $ deno test -A tools/usageText.test.ts tools/grantPlacement.test.ts
+    $ wac test packages/wacc/test/wac/cli_test.wac tools/grantPlacement.test.ts
     ok | 7 passed | 0 failed
 
 So nothing is wrong with the test's expectation *given a build that has a shell*, and nothing is

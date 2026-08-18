@@ -1,0 +1,94 @@
+// The `wac` command line, checked by running it.
+//
+// **In wac rather than in a `.test.ts`**, which is where these started life earlier tonight: the suite
+// is moving off Deno (`issues/system/0161`) and a new host-side test is work somebody has to undo. The
+// binary is driven through `Cli.exec`, the same way `selfhost_test.wac` beside this drives it.
+//
+// What is asserted here is the *surface*: the usage text naming every command the binary dispatches,
+// and each of those commands answering rather than being a word in a string. The behaviour behind them
+// — grants, trap messages — is in the files named after those subjects.
+
+import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+
+/** The binary running this test. */
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** Run it and answer stdout and stderr together — a usage line goes to stderr. */
+string say(Cli cli, string[] args) {
+  Exec r = cli.exec(binary(cli), args, u8[0]()).wait();
+  if (!r.ran()) { return "the binary would not start: " + r.error; }
+  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+bool holds(string haystack, string needle) { return haystack.indexOf(needle) >= 0; }
+
+/**
+ * Every command the binary dispatches is named in its usage.
+ *
+ * `sh` is conditional: it exists only when `native/v8/seed/sh.wasm` was built into the binary, which no
+ * task produces (`issues/system/0190`), so it is asserted only when that file is there. Skipping it
+ * silently would be the failure this file exists to prevent, so the test says which case it took.
+ */
+export string test_the_usage_names_every_command(Core core, Cli cli) {
+  T t = T.create();
+  string out = say(cli, string[]());
+  string[] always = string[]("check", "compile", "build", "bindgen", "run", "test");
+  for (i32 i = 0; i < always.len(); i++) {
+    t.isTrue(holds(out, always[i]), "the usage does not name `" + always[i] + "`");
+  }
+  bool hasShell = cli.stat("native/v8/seed/sh.wasm").wait().exists;
+  if (hasShell) {
+    t.isTrue(holds(out, "sh"), "this build carries a shell and the usage does not name it");
+  } else {
+    core.log("    `sh` not asserted: this build carries no seed/sh.wasm — issues/system/0190");
+  }
+  return t.report();
+}
+
+/**
+ * The flags a command cannot be used without.
+ *
+ * `-o` is how `build` says where to write, and `--allow-run` is a grant of its own that appeared in none
+ * of the lines listing the other four — a flag missing from the usage is a flag nobody finds.
+ */
+export string test_the_usage_names_the_flags_that_matter(Core core, Cli cli) {
+  T t = T.create();
+  string out = say(cli, string[]());
+  t.isTrue(holds(out, "-o"), "the usage does not name `-o`");
+  string[] lines = splitLines(out);
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (!holds(lines[i], "--allow-read")) { continue; }
+    t.isTrue(holds(lines[i], "--allow-run"),
+             "a usage line lists grants and not --allow-run: " + lines[i]);
+  }
+  return t.report();
+}
+
+/** Each of the compiler's four commands answers, rather than being a word in a usage string. */
+export string test_every_command_in_the_usage_is_answered(Core core, Cli cli) {
+  T t = T.create();
+  string[] commands = string[]("check", "compile", "build", "bindgen");
+  for (i32 i = 0; i < commands.len(); i++) {
+    string out = say(cli, string[](commands[i], "no-such-file.wac"));
+    t.isTrue(!holds(out, "unknown command"),
+             "`wac " + commands[i] + "` is in the usage and is not a command: " + out);
+  }
+  return t.report();
+}
+
+string[] splitLines(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 1;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    out[at] = s.slice(start, i);
+    at = at + 1;
+    start = i + 1;
+  }
+  return out;
+}

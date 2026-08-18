@@ -1,0 +1,132 @@
+// Where a grant flag goes on the command line, and what happens when it is in the other place.
+//
+// `wac build` read its entry as the argument at a fixed position, so `wac build --allow-read p.wac`
+// answered *cannot read --allow-read* — a sentence about a file, about a command line. `wac run` took
+// grants only before the entry and handed anything after it to the program, so the flag arrived as
+// `argv[0]`: the program ran **without the capability it asked for** and complained about the bogus
+// argument. Nothing pointed at the command line. `issues/system/0177`.
+//
+// Both take grants on either side now, `run` refuses one among the program's arguments, and `--` is the
+// escape for a program that genuinely wants the string.
+//
+// **The probe lives under the repository**, because an import specifier is relative: a program in `/tmp`
+// cannot reach `packages/platform` at all, and a test written there passes on a *compile failure*
+// instead of on the behaviour it is about.
+
+// `3qm7wv2` in the names is `[§wac-cli-grants-3qm7wv2]`, the spec claim these check —
+// `spec/cli/wac.md`. A wac export cannot hold the bracketed spelling, so the suffix carries it.
+import { Change, Cli, Core, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** Its own directory per agent, so two checkouts running at once cannot overwrite each other. */
+string probeDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  i32 at = -1;
+  for (i32 i = 0; i < cwd.len(); i++) { if (cwd.slice(i, i + 1) == "/") { at = i; } }
+  return ".cache/wac-grants" + (at < 0 ? "" : "-" + cwd.slice(at + 1, cwd.len()));
+}
+
+/**
+ * The program the grants are asked about: it answers 7 when its first argument is the string
+ * `--allow-read`, which is what tells a flag that was *passed through* from one that was *granted*.
+ */
+string probeSource() {
+  return "import { Cli, Core } from \"../../packages/platform/src/platform.wac\";\n" +
+         "\n" +
+         "export i32 main(Core core, Cli cli) {\n" +
+         "  i32 n = cli.argCount().wait();\n" +
+         "  string first = n > 0 ? string.fromBytes(cli.arg(0).wait()) : \"\";\n" +
+         "  core.log(\"first=\" + first);\n" +
+         "  return first == \"--allow-read\" ? 7 : 0;\n" +
+         "}\n";
+}
+
+struct Ran {
+  i32 status;
+  string out;
+  bool started;
+}
+
+Ran run(Cli cli, string[] args) {
+  Exec r = cli.exec(binary(cli), args, u8[0]()).wait();
+  if (!r.ran()) { return Ran(-1, r.error, false); }
+  return Ran(r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr), true);
+}
+
+bool holds(string haystack, string needle) { return haystack.indexOf(needle) >= 0; }
+
+/** Writes the probe and answers its path, or "" when the directory could not be made. */
+string writeProbe(Cli cli) {
+  string dir = probeDir(cli);
+  Change made = cli.mkdir(dir, true).wait();   // `mkdir -p`
+  if (!made.ok()) { return ""; }
+  string path = dir + "/p.wac";
+  Change wrote = cli.writeFile(path, probeSource().toBytes()).wait();
+  return wrote.ok() ? path : "";
+}
+
+void cleanUp(Cli cli, string path) {
+  // Not recursive: each file by name, because the recursive form is the one that can destroy something
+  // it was not pointed at — the platform's own words for why it is an argument rather than a default.
+  cli.remove(path, false).wait();
+  cli.remove(probeDir(cli) + "/p.wasm", false).wait();
+  cli.remove(probeDir(cli) + "/p.json", false).wait();
+}
+
+export string test_grants_3qm7wv2_build_takes_a_grant_before_the_entry(Core core, Cli cli) {
+  T t = T.create();
+  string path = writeProbe(cli);
+  t.isTrue(path != "", "could not write the probe under " + probeDir(cli));
+  if (path == "") { return t.report(); }
+  string stem = probeDir(cli) + "/p";
+  Ran r = run(cli, string[]("build", "--allow-read", path, "-o", stem, "--quiet"));
+  t.eqI32(r.status, 0, "build with the grant first: " + r.out);
+  // The old failure was about the flag as a *file*: "wacc: cannot read --allow-read".
+  t.isTrue(!holds(r.out, "cannot read --allow-read"), "the flag was read as the entry: " + r.out);
+  // And the grant reaches the artefact, which is the half a position-only fix would miss: the scans for
+  // grants started at argument 2 because argument 1 was the entry by position.
+  FileResult m = cli.readFile(stem + ".json").wait();
+  t.isTrue(m.ok, "no manifest beside the module");
+  if (m.ok) {
+    string text = string.fromBytes(m.bytes);
+    // Read as text rather than parsed: this file's subject is the command line, and pulling in a JSON
+    // parser to confirm one boolean would make the test about something else.
+    t.isTrue(holds(text, "\"read\":true") || holds(text, "\"read\": true"),
+             "the manifest does not carry the read grant: " + text);
+  }
+  cleanUp(cli, path);
+  return t.report();
+}
+
+export string test_grants_3qm7wv2_run_refuses_a_grant_after_the_entry(Core core, Cli cli) {
+  T t = T.create();
+  string path = writeProbe(cli);
+  t.isTrue(path != "", "could not write the probe");
+  if (path == "") { return t.report(); }
+  Ran r = run(cli, string[]("run", path, "--allow-read", "X"));
+  // The silent case: the program ran, without the grant, and answered 7 because its first argument was
+  // the flag it had asked to be built with.
+  t.eqI32(r.status, 2, "expected a usage refusal: " + r.out);
+  t.isTrue(!holds(r.out, "first="), "the program ran anyway: " + r.out);
+  t.isTrue(holds(r.out, "--allow-read"), "the refusal does not name the flag: " + r.out);
+  t.isTrue(holds(r.out, "--"), "the refusal does not name the way out: " + r.out);
+  cleanUp(cli, path);
+  return t.report();
+}
+
+export string test_grants_3qm7wv2_after_a_double_dash_the_argument_is_the_programs(Core core, Cli cli) {
+  T t = T.create();
+  string path = writeProbe(cli);
+  t.isTrue(path != "", "could not write the probe");
+  if (path == "") { return t.report(); }
+  Ran r = run(cli, string[]("run", path, "--", "--allow-read"));
+  // 7 is the probe saying its first argument is the string — so `--` was consumed and the flag was
+  // passed through rather than granted.
+  t.eqI32(r.status, 7, "expected the program's own answer, got " + itoa(r.status) + ": " + r.out);
+  t.isTrue(holds(r.out, "first=--allow-read"), "the program did not receive the string: " + r.out);
+  cleanUp(cli, path);
+  return t.report();
+}
