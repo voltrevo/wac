@@ -18,7 +18,7 @@ import { Daemon } from "../../../wactest/src/daemon.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Said, Wacsshd, buildClient, buildServer, ourSsh, realSsh, reapSelectsServers,
-         startWacsshd, stopWacsshd, typedInto } from "./wacsshd.wac";
+         startWacsshd, stopWacsshd, typedInto, typedIntoWatching } from "./wacsshd.wac";
 import { copyPreserving, haveSshd, keygen, publicBlobText, restrict, scratch, wouldReap }
   from "./fixture.wac";
 
@@ -124,7 +124,10 @@ export string test_with_a_pty_the_server_does_the_line_editing(Core core, Cli cl
 
   // `echo hX<DEL>i` — typed wrong and corrected, which only works if this end is editing.
   // `\004` on an empty line ends the session.
-  Said r = typedInto(cli, s, string[]("-tt"), "printf 'echo hX\\177i\\n'; sleep 1; printf '\\004'");
+  // `seen` rather than `sleep 1`: what the pause is waiting for is this line having run, and the
+  // line's own output says so.
+  Said r = typedIntoWatching(cli, s, string[]("-tt"),
+                             "printf 'echo hX\\177i\\n'; seen '^hi'; printf '\\004'");
 
   // The echo, with the erase in it: three bytes back for the one that was typed.
   // Spelled from bytes because wac has no `\b`: `echo hX`, backspace, space, backspace, `i`, CR LF.
@@ -159,13 +162,29 @@ export string test_control_c_ends_a_running_command_and_the_session_carries_on(C
   // was read at the *prompt*, which is the case that already worked:
   //
   //   `yes > /dev/null`  the server has no write grant, so the redirection failed instantly
-  //   `yes | wc -l`      ended at exactly 4194304 lines — `yes` hit the 8 MiB queue cap (0038)
+  //   `yes | wc -l`      ended at exactly 4194304 lines — `yes` hit the 8 MiB queue cap (0038), and
+  //                      since 0127 it does not even get that far: the shell refuses the producer
   //
-  // This one has no output, no filesystem and no cap to reach. The 1.5s pause is so the command is
-  // genuinely running when the interrupt arrives.
-  Said r = typedInto(cli, s, string[]("-tt"),
-    "printf 'while true; do :; done\\n'; sleep 1.5; printf '\\003'; sleep 0.5; " +
-    "printf 'echo alive=$?\\n'; sleep 0.5; printf '\\004'");
+  // This one has no output, no filesystem and no cap to reach.
+  //
+  // **This is the one pause here that stays a `sleep`, and the reason is a fact about the server.**
+  // While a channel's command is running, this server sends nothing back — not the command's output,
+  // and not even the *echo* of what is typed at it. Two attempts to wait for evidence instead of
+  // sleeping both expired: `echo running` placed before the loop never arrived until the `^C` had
+  // already ended it, and neither did the echo of the typed line. Each cost ten silent seconds and
+  // the case passed anyway on the transcript it read at the end.
+  //
+  // So there is nothing to wait for between typing the line and interrupting it, and 1.5s is the
+  // honest way to say "it is running by now". `issues/system/0205` is the streaming itself.
+  //
+  // **The 0.5s after the `^C` stays, and is not a duration nobody measured.** A `^C` flushes the
+  // input queue, so a line already sitting in it is discarded: sending the next line immediately is
+  // a race whose loser is a discarded command, and there is no output to wait for in between. The
+  // *last* pause is a wait, though — `alive=` is the line having run.
+  Said r = typedIntoWatching(cli, s, string[]("-tt"),
+    "printf 'while true; do :; done\\n'; sleep 1.5; " +
+    "printf '\\003'; sleep 0.5; " +
+    "printf 'echo alive=$?\\n'; seen '^alive='; printf '\\004'");
 
   // **The loop must not have ended itself.** `while true` used to stop at 100000 iterations with
   // status 2 — a bound put there because a shell that could not be interrupted must not hang the
@@ -222,11 +241,25 @@ export string test_a_line_typed_while_a_command_is_running_is_still_a_command(Co
   Wacsshd s = server(t, cli, "wacsshd-typeahead", string[0](fill: ""), false);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
-  // `yes | wc -l` runs for about a second on its own — `yes` stops at the 8 MiB queue cap — so the
-  // next line is genuinely typed while it is still going. The long pause before `^D` is because the
-  // command has to have *finished* before the session is asked to end.
-  Said r = typedInto(cli, s, string[]("-tt"),
-    "printf 'yes | wc -l\\n'; sleep 0.2; printf 'echo typed-ahead\\n'; sleep 6; printf '\\004'");
+  // **The command this used to type was `yes | wc -l`, and it stopped working without failing.** It
+  // ran for about a second because `yes` hit the 8 MiB output cap and answered 4194304 (0125); the
+  // fix for 0127 made that route *refuse* an unbounded producer instead, so the session now says "yes:
+  // output exceeded what this shell can hold" and the command ends at once. Two things followed, both
+  // silent: nothing was running when the next line was typed, so the case stopped being about
+  // type-ahead — and the ordering assertion below compared `indexOf("4194304")`, which is **-1** when
+  // the number is absent and therefore ≤ everything. A premise died and every assertion still passed.
+  //
+  // A counting loop runs in the shell itself with nothing to cap, prints its answer, and is the same
+  // command the EOF case above uses. 200,000 iterations is about a second and a half.
+  //
+  // The pauses are events rather than durations — `sleep 6` was here, and six seconds is what a
+  // duration costs when it has to be safe on a loaded machine. `done=200000` is the command
+  // finishing; `typed-ahead` twice is the echo *and* the line having run, and waiting for one
+  // occurrence would end the pause on the echo, which happens while the command is still going.
+  Said r = typedIntoWatching(cli, s, string[]("-tt"),
+    "printf 'i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done; echo done=$i\\n'; " +
+    "sleep 0.2; printf 'echo typed-ahead\\n'; " +
+    "seen 'done=200000'; seen typed-ahead 2; printf '\\004'");
 
   t.isTrue(contains(r.stdout, "typed-ahead"),
            "a line typed during a command was lost: " + tail(r.stdout, 300));
@@ -236,7 +269,11 @@ export string test_a_line_typed_while_a_command_is_running_is_still_a_command(Co
   // the **echo** of the line as it was typed — which happens during the command and is exactly
   // right, since a terminal in raw mode shows you what you type when you type it. An `indexOf`
   // comparison called that an ordering failure and was wrong about correct behaviour.
-  t.isTrue(r.stdout.indexOf("4194304") <= lastIndexOf(r.stdout, "typed-ahead"),
+  // **And the marker has to be there**, or the comparison below is -1 against anything — which is how
+  // this assertion spent its life passing after its command stopped printing.
+  t.isTrue(contains(r.stdout, "done=200000"),
+           "the command did not finish, so there is no ordering to check: " + tail(r.stdout, 400));
+  t.isTrue(r.stdout.indexOf("done=200000") <= lastIndexOf(r.stdout, "typed-ahead"),
            "type-ahead ran before the command it was typed during: " + tail(r.stdout, 400));
 
   stopWacsshd(cli, s);
