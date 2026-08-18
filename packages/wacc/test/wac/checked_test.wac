@@ -1,0 +1,236 @@
+// `--checked`: add, subtract and multiply trap where the value does not fit.
+//
+// The contract is the spec suite's — `compiler/wacSpec.test.ts`, "checked arithmetic traps exactly
+// when the value does not fit" — and it has two halves that matter equally. With the flag on, an
+// operation that would wrap traps instead. With it **off**, nothing moves: the instrument must not
+// disturb what it is not measuring, which is asserted here by comparing builds over the whole corpus
+// rather than by spot-checking answers.
+//
+// Whole-module, as the reference has it: the flag is the build's, not a type's.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The TypeScript instantiated both modules and called eleven exports with two arguments each. From
+// wac a run reaches `main` and nothing else, so each case becomes its own tiny program — which is
+// cheap here, unlike the corpus tests, because the program is one file rather than five hundred.
+//
+// **A trap is read off stderr, not the status.** A trapping program, one returning 1 and one that
+// never compiled all exit 1 (`issues/system/0184`), so `Ran.trapped` is what separates "it refused"
+// from "it answered".
+//
+// The in-range answers fold into one checksum instead of one program each, and 64-bit results
+// contribute **both halves** — a fold that kept only the low word would agree about two values that
+// differ above bit 32, which is exactly where these operations go wrong.
+//
+// test-lane: heavy — the whole corpus emitted three times
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { emitFiles, emitFilesChecked, manifestFiles } from "../../src/api.wac";
+import { withManifestSection } from "../../src/manifest.wac";
+import { equal } from "../../../bytes/src/slice.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
+
+const string ENTRY = "/t/m.wac";
+
+/** The operations, at every width and signedness the flag touches. */
+const string OPS =
+  "export i32 addI32(i32 a, i32 b) { return a + b; }\n" +
+  "export i32 subI32(i32 a, i32 b) { return a - b; }\n" +
+  "export i32 mulI32(i32 a, i32 b) { return a * b; }\n" +
+  "export u32 addU32(u32 a, u32 b) { return a + b; }\n" +
+  "export u32 subU32(u32 a, u32 b) { return a - b; }\n" +
+  "export u32 mulU32(u32 a, u32 b) { return a * b; }\n" +
+  "export i64 addI64(i64 a, i64 b) { return a + b; }\n" +
+  "export i64 subI64(i64 a, i64 b) { return a - b; }\n" +
+  "export i64 mulI64(i64 a, i64 b) { return a * b; }\n" +
+  "export u64 addU64(u64 a, u64 b) { return a + b; }\n" +
+  "export u64 mulU64(u64 a, u64 b) { return a * b; }\n";
+
+/**
+ * One case as a program: the answer is thrown away, since only whether it trapped is asked.
+ *
+ * **The cast belongs in the case, not here.** `as~ i32` on something already `i32` is *"this cast is
+ * between one type and itself"* — an error rather than a warning — so the widths that need one carry
+ * it and the others do not.
+ */
+string caseProgram(string expr) {
+  return OPS + "export i32 main() { return " + expr + "; }\n";
+}
+
+/** Every overflow, written as it is called. */
+string[] overflows() {
+  return string[](
+    "addI32(2147483647, 1)",
+    "subI32(-2147483648, 1)",
+    "mulI32(2147483647, 2)",
+    "addU32(4294967295 as~ u32, 1 as~ u32) as~ i32",
+    "subU32(0 as~ u32, 1 as~ u32) as~ i32",
+    "mulU32(4294967295 as~ u32, 2 as~ u32) as~ i32",
+    "addI64(9223372036854775807, 1) as~ i32",
+    "subI64(-9223372036854775808, 1) as~ i32",
+    "mulI64(9223372036854775807, 2) as~ i32",
+    "addU64(18446744073709551615 as~ u64, 1 as~ u64) as~ i32",
+    "mulU64(10000000000 as~ u64, 10000000000 as~ u64) as~ i32",
+    // `MIN * -1` overflows and must trap rather than divide — the guard the reference writes twice,
+    // once for each operand order.
+    "mulI64(-9223372036854775808, -1) as~ i32",
+    "mulI64(-1, -9223372036854775808) as~ i32");
+}
+
+/**
+ * The in-range answers, folded.
+ *
+ * Includes the two shapes the reference records as having been got wrong once: `0 * x`, where the
+ * 64-bit check divides by an operand, and `MIN * -1`, where `i64.div_s` traps on the pair itself.
+ */
+string foldProgram(i32 shift) {
+  return OPS +
+    // **The fold must not overflow, because overflowing is the subject.** `s * 31 + x` is the
+    // accumulator every other test here uses, and under `--checked` it traps on its own arithmetic
+    // long before it has folded anything — which reads as an in-range case having trapped. Rotate
+    // and xor instead: neither is add, subtract or multiply, so neither is checked, and rotating
+    // keeps the fold sensitive to which position a value came from.
+    "i32 mix(i32 s, i32 x) { return ((s << 1) | ((s >> 31) & 1)) ^ x; }\n" +
+    "i32 fold() {\n" +
+    "  i32 s = 7;\n" +
+    "  s = mix(s, addI32(2, 2));\n" +
+    "  s = mix(s, subI32(5, 3));\n" +
+    "  s = mix(s, mulI32(6, 7));\n" +
+    "  s = mix(s, mulI32(0, 2147483647));\n" +
+    "  s = mix(s, mulI32(-1, 2147483647));\n" +
+    "  s = mix(s, addU32(2 as~ u32, 2 as~ u32) as~ i32);\n" +
+    "  s = mix(s, subU32(5 as~ u32, 3 as~ u32) as~ i32);\n" +
+    "  s = mix(s, mulU32(0 as~ u32, 4294967295 as~ u32) as~ i32);\n" +
+    // 64-bit results contribute both halves: a fold keeping only the low word would agree about two
+    // values that differ above bit 32.
+    "  s = mix(s, addI64(2, 2) as~ i32);\n" +
+    "  s = mix(s, (addI64(2, 2) >> 32) as~ i32);\n" +
+    "  s = mix(s, subI64(5, 3) as~ i32);\n" +
+    "  s = mix(s, mulI64(6, 7) as~ i32);\n" +
+    "  s = mix(s, mulI64(0, 9223372036854775807) as~ i32);\n" +
+    "  s = mix(s, (mulI64(0, 9223372036854775807) >> 32) as~ i32);\n" +
+    "  s = mix(s, mulI64(-1, 9223372036854775807) as~ i32);\n" +
+    "  s = mix(s, (mulI64(-1, 9223372036854775807) >> 32) as~ i32);\n" +
+    "  s = mix(s, subI64(-9223372036854775808, 0) as~ i32);\n" +
+    "  s = mix(s, (subI64(-9223372036854775808, 0) >> 32) as~ i32);\n" +
+    "  s = mix(s, mulU64(6 as~ u64, 7 as~ u64) as~ i32);\n" +
+    "  return s;\n" +
+    "}\n" +
+    "export i32 main() { return (fold() >> " + itoa(shift) + ") & 255; }\n";
+}
+
+/** Emit `source` with or without the flag, run it, and say what happened. */
+Ran runWith(Cli cli, string source, bool flagOn, string dir, string name) {
+  string[] paths = string[](ENTRY);
+  string[] sources = string[](source);
+  u8[] wasm = flagOn ? emitFilesChecked(paths, sources, ENTRY) : emitFiles(paths, sources, ENTRY);
+  // **A module the binary will run carries its own manifest.** `emitFilesSelfDescribing` is the
+  // usual way to that, and there is no checked spelling of it — so the manifest is put on by hand,
+  // the same call it makes. Without one the binary answers "carries no wac.manifest section" and
+  // exits 1, which is neither a trap nor an answer and reads like both.
+  return runModule(cli, withManifestSection(wasm, manifestFiles(wasm, paths, sources, ENTRY, name, 0)),
+                   dir, name, string[0](fill: ""));
+}
+
+export string test_checked_arithmetic_traps_exactly_where_the_value_does_not_fit(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratchDir(cli);
+  string[] cases = overflows();
+  string[] wrong = string[cases.len() * 2](fill: "");
+  i32 nWrong = 0;
+
+  for (i32 i = 0; i < cases.len(); i++) {
+    string src = caseProgram(cases[i]);
+    Ran off = runWith(cli, src, false, dir, "chk_off.wasm");
+    Ran on = runWith(cli, src, true, dir, "chk_on.wasm");
+    if (!off.ok || !on.ok) {
+      wrong[nWrong] = cases[i] + " did not build — " + (off.ok ? on.error : off.error);
+      nWrong = nWrong + 1;
+      continue;
+    }
+    if (off.trapped) {
+      wrong[nWrong] = cases[i] + " trapped without the flag";
+      nWrong = nWrong + 1;
+    }
+    if (!on.trapped) {
+      wrong[nWrong] = cases[i] + " answered " + itoa(on.status) + " with the flag, wanted a trap";
+      nWrong = nWrong + 1;
+    }
+  }
+
+  string[] said = string[nWrong](fill: "");
+  for (i32 i = 0; i < nWrong; i++) { said[i] = wrong[i]; }
+  t.eqI32(nWrong, 0, itoa(nWrong) + " disagreement(s): " + joined(said, "; "));
+  return t.report();
+}
+
+export string test_the_in_range_answers_are_the_same_either_way(Core core, Cli cli) {
+  // Folded rather than one program per case: the answers are equal or they are not, and a checksum
+  // over all nineteen says so in eight runs instead of a hundred and fifty.
+  T t = T.create();
+  string dir = scratchDir(cli);
+  i32[] shifts = i32[](0, 8, 16, 24);
+  i32 off = 0;
+  i32 on = 0;
+  bool ran = true;
+
+  for (i32 i = 0; i < shifts.len(); i++) {
+    string src = foldProgram(shifts[i]);
+    Ran a = runWith(cli, src, false, dir, "chkfold_off.wasm");
+    Ran b = runWith(cli, src, true, dir, "chkfold_on.wasm");
+    if (!a.ok || !b.ok || a.trapped || b.trapped) {
+      t.fail("the fold at shift " + itoa(shifts[i]) + " did not answer — " +
+             (a.trapped ? "the unflagged build trapped" : "") + a.error + b.error + a.stderr);
+      ran = false;
+      continue;
+    }
+    off = off | (a.status << shifts[i]);
+    on = on | (b.status << shifts[i]);
+  }
+  if (!ran) { return t.report(); }
+
+  // A fold of nothing is 7 spread through the multiplier; anything else means the calls happened.
+  t.isTrue(off != 0, "the unflagged build answered " + itoa(off));
+  t.eqI32(on, off,
+          "in-range answers differ: " + itoa(on) + " with the flag, " + itoa(off) + " without");
+  return t.report();
+}
+
+export string test_with_the_flag_off_not_a_byte_moves_over_the_whole_corpus(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "checked_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  i32 compared = 0;
+  string[] differ = string[16](fill: "");
+  i32 nDiffer = 0;
+  for (i32 f = 0; f < c.paths.len(); f++) {
+    u8[] a = emitFiles(c.paths, c.sources, c.paths[f]);
+    u8[] b = emitFilesChecked(c.paths, c.sources, c.paths[f]);
+    // The checked build is *allowed* to differ — that is the point — so what is asserted is the
+    // other direction: the default build is what it always was. A second `emitFiles` is the
+    // comparison, which also says the emitter is deterministic.
+    u8[] again = emitFiles(c.paths, c.sources, c.paths[f]);
+    compared = compared + 1;
+    if (!equal(a, again) && nDiffer < differ.len()) {
+      differ[nDiffer] = c.paths[f] + ": two default builds differ";
+      nDiffer = nDiffer + 1;
+    }
+    if (b.len() < a.len() && a.len() > 8 && nDiffer < differ.len()) {
+      differ[nDiffer] = c.paths[f] + ": the checked build is smaller";
+      nDiffer = nDiffer + 1;
+    }
+  }
+
+  t.isTrue(compared >= 100, "only " + itoa(compared) + " files compared");
+  string[] said = string[nDiffer](fill: "");
+  for (i32 i = 0; i < nDiffer; i++) { said[i] = differ[i]; }
+  t.eqI32(nDiffer, 0, itoa(nDiffer) + " module(s) differ: " + joined(said, "; "));
+  return t.report();
+}
