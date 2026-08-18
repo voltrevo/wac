@@ -32,7 +32,7 @@ anything at all.
 | packages/git/test/commit.test.ts | `GIT_AUTHOR_DATE` | `gitci` honours it so two runs of one tree name the same commit. Without it the clock is used and the content-addressing assertion — commit twice, get the same sha — cannot be made. |
 | packages/git/test/lsremote.test.ts | `HTTP_PROXY` | Measured, not inferred: `wac run … gitls.wac -- https://github.com/…` lists the refs with the variable set and fails with `failed to lookup address information` without it. This container reaches nothing except through Squid. |
 | `packages/git/test/clone.test.ts` | `HTTP_PROXY` | Same, one layer up. |
-| `packages/git/test/fetchlive.test.ts` | `HTTP_PROXY` | Same. |
+| packages/git/test/fetchlive.test.ts | `HTTP_PROXY` | Same. |
 
 The third is the one that shows the shape of the problem best. `gitci` reads `GIT_AUTHOR_DATE`
 because **git does**, and it does that so a commit is reproducible. Adding a `--date` flag to `gitci`
