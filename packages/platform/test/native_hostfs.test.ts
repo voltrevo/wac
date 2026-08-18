@@ -36,7 +36,7 @@ import "../../../harness/spawnRetry.ts";
 // Memoised, and answered by `stat` when the crate has not moved — a bare `cargo build` is 2.6s even
 // with nothing to do, and this file asks more than once.
 import { nativeBinary } from "../../../harness/nativeHost.ts";
-import { appRunner } from "../../../harness/appRun.ts";
+import { appRunner, runBounded } from "../../../harness/appRun.ts";
 
 const ENTRY = "packages/box/src/bin/sh.wac";
 
@@ -117,18 +117,13 @@ await buildApp(ENTRY, deno, { read: true, write: true, env: true });
  */
 const denoWorker = await appRunner(ENTRY, { read: true, write: true, env: true });
 async function runDeno(script: string): Promise<{ out: string; err: string; code: number }> {
-  const ran = denoWorker.run(["-c", `cd tree; ${script}`], {
-    cwd: tmp,
-    env: HOST_ENV,
-  });
-  const timer = new Promise<null>((r) => setTimeout(() => r(null), DEFAULT_SECONDS * 1000));
-  const answer = await Promise.race([ran, timer]);
-  if (answer === null) {
-    throw new Error(
-      `the deno host did not finish ${JSON.stringify(script)} in ${DEFAULT_SECONDS}s — see issue 0128`,
-    );
-  }
-  return { out: answer.out, err: answer.err, code: answer.code };
+  return await runBounded(
+    denoWorker,
+    ["-c", `cd tree; ${script}`],
+    { cwd: tmp, env: HOST_ENV },
+    DEFAULT_SECONDS,
+    JSON.stringify(script),
+  );
 }
 await buildNative(ENTRY, `${tmp}/wacsh`, { read: true, write: true, env: true });
 const manifest = `${tmp}/wacsh.json`;

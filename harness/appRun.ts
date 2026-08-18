@@ -103,6 +103,39 @@ export type AppRunner = {
   run(args: string[], opts?: RunOptions): Promise<RunResult>;
 };
 
+/**
+ * `run`, with a wall-clock bound — for the two-host tests, which had one and must keep it.
+ *
+ * A process run gets its bound from `harness/bounded.ts`, which kills the child; a worker run has no
+ * timeout of its own, so a program that wedges here would hang the whole suite with nothing said. This
+ * races the run against a timer and throws naming `what` instead, which is the same thing `hangReport`
+ * does for a process: **a bound that fired is not an answer, it is a report** (issue 0128).
+ *
+ * The runner is not reusable after a throw — the wedged run still holds the worker — but a test that
+ * gets here is over, so nothing depends on that. Unlike `boundedAgain` this does *not* retry: retrying
+ * costs another full bound, and the callers that want one are running against a second host that has
+ * already answered, so the comparison is lost either way.
+ */
+export async function runBounded(
+  runner: AppRunner,
+  args: string[],
+  opts: RunOptions,
+  seconds: number,
+  what: string,
+): Promise<RunResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), seconds * 1000);
+  });
+  try {
+    const answer = await Promise.race([runner.run(args, opts), bound]);
+    if (answer === null) throw new Error(`the deno host did not finish ${what} in ${seconds}s — issue 0128`);
+    return answer;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
