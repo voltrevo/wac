@@ -581,6 +581,13 @@ const WAC_DRIVER = "harness/wac/hostless.test.ts";
  */
 const spent: { lane: string; ms: number; note: string }[] = [];
 
+/**
+ * Seconds, with a decimal below ten.
+ *
+ * Three lines of `0s` say less than nothing on a targeted run, where a lane is a fraction of one.
+ */
+const secs = (ms: number) => ms < 10_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 1000)}s`;
+
 const parallelStarted = Date.now();
 const parallel = await run(
   // `site` is in `deno.json`'s `exclude`, but a `--ignore` on the command line *replaces* the
@@ -761,14 +768,30 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   let next = 0;
   const codes: number[] = [];
   const blocks: string[] = [];
+  /**
+   * What each run in this lane cost.
+   *
+   * **Because this lane turned out to be the largest one**, at 104s of a 229s suite against the Deno
+   * pass's 89s — which was not what anyone assumed, and could not be read off a saved log at all: the
+   * per-test durations a log carries are Deno's, and nothing here goes through Deno. A queue's wall
+   * clock cannot beat its longest single item, so the useful thing to print is which item that is.
+   */
+  const took: { what: string; ms: number }[] = [];
+  /** A chunk names the directory it came from; a whole directory names itself. */
+  const label = (targets: string[]) =>
+    targets.length === 1 && !targets[0].endsWith("_test.wac")
+      ? targets[0]
+      : `${targets[0].slice(0, targets[0].lastIndexOf("/"))} — ${targets.length} of its files`;
   const worker = async () => {
     while (next < items.length) {
       const targets = items[next++];
+      const started = Date.now();
       const r = await new Deno.Command(WAC_BIN, {
         args: [...queueFlags, ...targets],
         stdout: "piped",
         stderr: "piped",
       }).output();
+      took.push({ what: label(targets), ms: Date.now() - started });
       const text = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
       blocks.push(text);
       codes.push(r.code);
@@ -786,17 +809,29 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
       console.log(`     ${e.file} — ${e.why}`);
     }
     for (const file of alone) {
+      const started = Date.now();
       const r = await new Deno.Command(WAC_BIN, {
         args: [...flags, file],
         stdout: "piped",
         stderr: "piped",
       }).output();
+      took.push({ what: `${file} (alone)`, ms: Date.now() - started });
       const text = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
       blocks.push(text);
       codes.push(r.code);
       console.log(text.trimEnd());
     }
   }
+  if (took.length > 1) {
+    const work = took.reduce((n, t) => n + t.ms, 0);
+    const slowest = [...took].sort((a, b) => b.ms - a.ms).slice(0, 3);
+    console.log(
+      `\n   ${secs(work)} of work at ${wacJobs} workers — the queue cannot finish before its ` +
+        `longest run, so these are the floor:`,
+    );
+    for (const t of slowest) console.log(`     ${secs(t.ms).padStart(6)}  ${t.what}`);
+  }
+
   // **The lane's own count, because a summary per directory is not a summary.** Thirty-nine blocks
   // each saying "6 files: 6 ok" is how a lane that stopped running half its directories would read as
   // fine. If the arithmetic does not add up, that is said rather than papered over.
@@ -848,9 +883,6 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
 
 if (spent.length > 1) {
   const total = spent.reduce((n, s) => n + s.ms, 0);
-  // A decimal below ten seconds, because a targeted run's lanes are fractions of one and three lines
-  // of `0s` say less than nothing.
-  const secs = (ms: number) => ms < 10_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 1000)}s`;
   console.log("\n── where the time went");
   for (const s of spent) {
     const share = Math.round((s.ms / total) * 100);
