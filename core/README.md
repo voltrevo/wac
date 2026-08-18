@@ -42,3 +42,22 @@ it was recorded before this directory existed.
 
 The alternative was a marker inside one shared file. That is a third thing to invent, to parse and
 to keep true, for a distinction a directory already draws.
+
+## This directory and the specifier `core` are not the same thing
+
+`core/read.wac` here is the **source**. What a program imports is the copy embedded in whichever
+compiler is running, which `tools/genCore.ts` writes from this directory and
+`tools/wac/genCore_test.wac` keeps in step.
+
+Today the two cannot be confused, because the only specifier that reaches the embedded tree is the
+bare `core` and a quoted `"core/read.wac"` is an ordinary relative path — in a directory with no
+`core/` it answers *cannot read core/read.wac*. After `design/lang/0009` D5 quotes every specifier
+that changes: `"core/read.wac"` has to mean the built-in, because D4 reserves `core`, `core/`, `std`
+and `std/` and says they cannot be remapped. A project with its own `core/` directory then cannot
+name it, which is what "reserved" costs and is the intended trade.
+
+Worth knowing here because **this repository is such a project**. From the root, that spelling will
+name the embedded copy rather than these files. It is benign — the embedded copy is generated from
+exactly these files and the check fails if it drifts — but the identity is a build step rather than
+a rule, and the reservation has to happen in the resolver *before* the filesystem is consulted or it
+holds in one project and not another.

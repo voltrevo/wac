@@ -218,6 +218,60 @@ would suggest**, because the generated file spends code on a per-line concatenat
 strings. It is still a fixed point after one round. If step 3 multiplies that by the whole of
 `packages/std`, the concatenation is the thing to reconsider, not the comments.)*
 
+## Step 3 is a provider seam, and there is not one yet — measured 2026-08-18
+
+Read before starting it, the way step 2's section was.
+
+**`core` is one module with one key, in both compilers.** The reference special-cases it in
+`wacCompile.ts` — `wantsCore` looks for an import whose prefix is `CORE.key`, parses `CORE.source`
+under that key and adds it to the program map. wacc does the same with the key `" core"`, in
+`emit.wac`'s `linkFiles` and `api.wac`'s `corePath()`. Everything else is the filesystem, reached by
+path arithmetic in `compiler/wacResolve.ts` and `packages/wacc/src/files.wac`, with the *caller*
+(`wacc.wac`'s `gather`) doing the reading.
+
+So there is **no seam where a specifier becomes a source**. There is a special case for `core` and a
+default of "open the file". D3 asks for `core` and `std` to be "reached through the same provider
+interface as the filesystem and Git", and that interface does not exist to be reached through.
+
+**Step 3's work is that interface, not moving five files.** `packages/std` is
+`hash, map, option, result, vec` and moves whole; the part that does not move whole is
+`core/option.wac` needing to be a *separately nameable module*, which one key cannot express. That
+means a per-file key, per-file name mangling (`core$Read` is keyed on the single core today), and
+both compilers' walkers calling the same thing.
+
+**It is the same seam step 7 needs**, which is the argument for doing it once and properly.
+`packages/wacpkg` already answers "which repository, which ref, which repository-relative path" for
+a mapped specifier — `matchSpecifier`, `locate`, D9's confinement — and *nothing asks it*. A
+provider interface with three implementations (embedded, filesystem, Git) is what connects the work
+that is already done to the compiler that cannot yet use it.
+
+### A collision step 4 introduces, worth knowing now
+
+Today `import { Read } from core;` reaches the embedded module, and
+`import { Read } from "core/read.wac";` is **a filesystem path** — it answers
+`cannot read core/read.wac` in a directory with no `core/`. After D5 quotes every specifier, one
+spelling has to mean one of the two.
+
+D4 already decides it: `core`, `core/`, `std` and `std/` are reserved and cannot be remapped, so the
+built-in wins and a project's own `core/` directory becomes unreachable by that name. Two
+consequences to carry into step 4 rather than discover in it:
+
+- **This repository now has a top-level `core/`** — step 2's source tree. It is benign, because the
+  embedded copy is generated from exactly those files and a check keeps them in step, but the same
+  spelling will name two things whose identity is a build step rather than a rule.
+- The reserved names have to be reserved *by the resolver*, before the filesystem is consulted.
+  Doing it after is the failure where a directory that happens to be called `core` shadows the
+  built-ins in one project and not another.
+
+### Ordering
+
+The note's stated reason for 3 before 4 is that the migration is mechanical only once the trees are
+real. That holds for `packages/std`'s 73 importers. It does not address that `core/option.wac` is
+**unspellable** until 4 — unquoted `core/read.wac` is a parse error, and quoted means the
+filesystem. So step 3 can make the trees real and multi-keyed while the only specifier that reaches
+them is still the bare `core`; step 4 then adds the spelling. Worth stating in the plan, because
+"make `core/option.wac` importable" reads like one step and is two.
+
 ## Two things that make a byte comparison lie, found building step 1
 
 Both cost a wrong answer before they were noticed, and both matter again at D8.
