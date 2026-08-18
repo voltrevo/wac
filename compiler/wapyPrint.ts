@@ -369,7 +369,15 @@ function expr(e: Expr): string {
     // Stays an expression. Python's `match` is a statement, and folding this into one would
     // make the reverse direction guess at intent — see the header.
     case "matchExpr": {
-      const arms = e.arms.map((a) => `case ${pattern(a)}: ${a.value ? expr(a.value) : "..."}`);
+      // **The `else` arm takes no `case`, in either language.** wac writes
+      // `match (x) { case A(v): e, else: e }` and wapy the same without the parentheses; printing
+      // `case else:` produced text neither parser accepts, so a match *expression* with an else arm
+      // could not round-trip. Nothing in `packages/` used the construct — all three occurrences were
+      // in comments — so the round-trip stayed green until `tokenOfExpr` in `check.wac` became the
+      // first real use of it on 2026-08-18.
+      const arms = e.arms.map((a) =>
+        `${a.variant === null ? "else" : `case ${pattern(a)}`}: ${a.value ? expr(a.value) : "..."}`
+      );
       return `match ${expr(e.subject)} { ${arms.join(", ")} }`;
     }
 
