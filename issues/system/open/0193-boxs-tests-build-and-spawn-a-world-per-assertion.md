@@ -58,3 +58,25 @@ merging test files together.
 
 **Measurement discipline for anything claimed here**: the same file measured 59 s cold and 27 s warm on
 the same night. A saving is only a saving if the two runs are in the same cache state.
+
+## Done: the compile no longer depends on the grants — 2026-08-18
+
+`waccArtifacts` — the whole-program compile that `buildApp`, `wacTestRun` and `wacCoverage` all sit on —
+takes no grants and never did; only the *application* cache key included them, so the same 180 files
+compiled once per grant set. It is cached now on what it actually reads: the sources, the entry, and
+whether the build is instrumented or optimised.
+
+    {"read":true}                                      5 702 ms   (a real compile)
+    {"read":true,"write":true}                           641 ms
+    {"net":true}                                         528 ms
+    {"read":true,"write":true,"net":true,"env":true}     560 ms
+
+against **5 378 ms** for a fresh grant set before. Canaried against staleness, which is the only way this
+change can be wrong: warm and unchanged is 212 ms, touching one of the 180 files costs 4 675 ms and
+produces a new entry, and restoring the file returns to 118 ms.
+
+**A cost to keep an eye on**: this is a second on-disk cache — 17 MB so far against `.cache/app`'s 105 MB —
+and nothing prunes either. `tools/prune-deno-cache.sh` sweeps Deno's transpile cache and not this. One
+entry per *source set* rather than per source-set-times-grant-set, so it grows more slowly than the cache
+it saves work for, but it grows.
+

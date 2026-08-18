@@ -10,6 +10,7 @@
 // `wacBind` with `WAC_BIND_FROM=reference`.
 
 import { wacBind } from "./wacBind.ts";
+import { cached as cacheFile, compilerKeyParts, contentKey, filesParts } from "./buildCache.ts";
 import {
   generate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, unsupported,
 } from "../packages/wacc/tools/waccBindgen.ts";
@@ -113,7 +114,102 @@ export type WaccArtifacts = {
  * a signature the generator declined are different failures, and a caller handed an empty artifact
  * for either would report neither.
  */
+/**
+ * The compile, cached on what it actually depends on — **and grants are not among them**.
+ *
+ * `buildApp` caches the finished application, whose key includes the grants because they are baked into
+ * the launcher. The *compile* underneath it does not take grants at all: `packages/box`'s tests ask for
+ * the same program with seven different sets, and each one paid a full whole-program compile — 5.4 s of
+ * the same 180 files, seven times, in one test file. Two builds differing only in grants are byte
+ * identical up to the manifest section, which is appended.
+ *
+ * So the wasm, the glue and the coverage table are cached here, keyed on the sources, the entry, and
+ * whether this is a coverage or an optimised build. `wacTestRun` and `wacCoverage` call this too, so
+ * they get the same reuse. `issues/system/0193`.
+ */
 export async function waccArtifacts(
+  files: Map<string, string>,
+  entry: string,
+  opts: { coverage?: boolean; optimize?: (wasm: Uint8Array) => Promise<Uint8Array> } = {},
+): Promise<WaccArtifacts> {
+  const cacheKey = await compileKey(files, entry, opts.coverage === true, opts.optimize !== undefined);
+  if (cacheKey !== null) {
+    const hit = await readCompiled(cacheKey);
+    if (hit !== null) return hit;
+  }
+  const made = await compileArtifacts(files, entry, opts);
+  if (cacheKey !== null) await writeCompiled(cacheKey, made);
+  return made;
+}
+
+/** The key: everything the compile reads, and nothing it does not. Null when the compiler is unknown. */
+async function compileKey(
+  files: Map<string, string>,
+  entry: string,
+  coverage: boolean,
+  optimize: boolean,
+): Promise<string | null> {
+  const compiler = await compilerKeyParts();
+  if (compiler === null) return null;
+  return await contentKey([
+    "wacc-artifacts 1",
+    entry,
+    coverage ? "coverage" : "plain",
+    optimize ? "optimized" : "asis",
+    ...compiler,
+    ...filesParts(files),
+  ]);
+}
+
+/** Everything but the module, which is kept beside it as bytes rather than encoded into this. */
+type Stored = {
+  glue: string;
+  covLines: string[];
+  covPoints: CovPoint[];
+  exports: string[];
+};
+
+/**
+ * The module is its own file.
+ *
+ * Base64 in the JSON would be the obvious shape and costs a third more bytes, a dependency this
+ * container cannot reach — jsr.io is not on the proxy's allowlist, as `harness/deadline.test.ts` says —
+ * and an encode and decode of 900 KB on every hit.
+ */
+async function readCompiled(key: string): Promise<WaccArtifacts | null> {
+  try {
+    const meta = `.cache/wacc-artifacts/${key}.json`;
+    const wasmPath = `.cache/wacc-artifacts/${key}.wasm`;
+    const stored = JSON.parse(await Deno.readTextFile(meta)) as Stored;
+    const wasm = await Deno.readFile(wasmPath);
+    // Touched so pruning drops what is unused rather than what was built first.
+    await Deno.utime(meta, new Date(), new Date()).catch(() => {});
+    await Deno.utime(wasmPath, new Date(), new Date()).catch(() => {});
+    return { ...stored, wasm };
+  } catch {
+    return null;
+  }
+}
+
+async function writeCompiled(key: string, a: WaccArtifacts): Promise<void> {
+  const stored: Stored = {
+    glue: a.glue,
+    covLines: a.covLines,
+    covPoints: a.covPoints,
+    exports: a.exports,
+  };
+  // Through `cached`, which writes to a temporary name and renames: two runs missing the same key
+  // write the same path at once, and the bytes are identical by construction so the only hazard is a
+  // reader seeing half a file. The module goes first, so a reader that finds the metadata finds both.
+  await cacheFile("wacc-artifacts", key, ".wasm", async (tmp) => {
+    await Deno.writeFile(tmp, a.wasm);
+  }).catch(() => {});
+  await cacheFile("wacc-artifacts", key, ".json", async (tmp) => {
+    await Deno.writeTextFile(tmp, JSON.stringify(stored));
+  }).catch(() => {});
+}
+
+async function compileArtifacts(
   files: Map<string, string>,
   entry: string,
   opts: { coverage?: boolean; optimize?: (wasm: Uint8Array) => Promise<Uint8Array> } = {},
