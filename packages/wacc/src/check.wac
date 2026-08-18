@@ -1861,6 +1861,25 @@ export struct C {
     if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
   }
 
+  /**
+   * The same, keeping the caller's position and taking **only the width** from a token.
+   *
+   * `reportTok` moves the report to the token, which is wrong wherever the position was chosen
+   * deliberately: `x += 1.5;` is reported at `x`, and the first version of the span work handed
+   * `reportTok` the literal's token and moved it to `1.5` — the reference says 1:26, we said 1:31, and
+   * rung 3 failed on the difference. Position and width are separate decisions, so they are separate
+   * arguments.
+   */
+  void reportWidthOf(this, i32 code, i32 line, i32 col, string note, i32 tok) {
+    i32 before = this.errorCount;
+    this.report(code, line, col);
+    if (this.errorCount == before) { return; }
+    if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
+    if (before < this.errorWidths.len()) {
+      this.errorWidths[before] = this.toks[tok * tokenStride() + 2];
+    }
+  }
+
   /** The same, positioned *at a token* — which is what makes a width knowable. */
   void reportTok(this, i32 code, i32 tok, string note) {
     i32 before = this.errorCount;
@@ -2063,13 +2082,55 @@ void checkCharLiteral(C c, Expr e) {
   }
 }
 
+/**
+ * The token an expression is written at, or -1 where it is not a single one.
+ *
+ * **This is what makes a caret's width knowable.** `reportTok` reads the width out of the token table;
+ * `reportWith` takes a line and a column and records `span: 0`, which the wire means as *"nothing
+ * measured a width"* — so a rendered diagnostic puts one caret under the first character of the
+ * offending expression instead of under the whole of it. `spec/spec/errors.md` states the width for
+ * particular programs — `span: 1` for `if (x)` under `§wac-diag-bool-r8kn4wp` and `span: 4` for
+ * `3.14` under `§wac-diag-assign-j3qm7xf` — so these are clauses rather than presentation.
+ *
+ * Only the leaves carry a token: an `Ident` and the three literal kinds. A compound expression has no
+ * single token and answers -1, which is honest — its width is a question about where it ends, and the
+ * parser does not record that today.
+ */
+i32 tokenOfExpr(Expr e) {
+  return match (e.kind) {
+    case Ident(tok): tok,
+    case IntLit(tok): tok,
+    case FloatLit(tok): tok,
+    case StrLit(tok): tok,
+    else: -1
+  };
+}
+
+/** `reportWith`, positioned at the expression's own token when it has one. */
+void reportExpr(C c, i32 code, Expr e, string note) {
+  i32 tok = tokenOfExpr(e);
+  if (tok >= 0) {
+    c.reportWidthOf(code, e.line, e.col, note, tok);
+    return;
+  }
+  c.reportWith(code, e.line, e.col, note);
+}
+
 void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   checkCharLiteral(c, e);
   if (literalFits(c, want, e)) { return; }
   if (!acceptsLiteral(want, litFamily(c, e))) {
     // The literal's own family is what it was found to be: `1.5` in an `i32` slot is a float where an
     // integer was wanted, and saying so is the whole of the complaint.
-    c.reportWith(mismatch, line, col, expectedFound(want, foundType(c, e)));
+    // **At the literal's token where there is one**, which is what gives `3.14` a caret four wide
+    // rather than one — `§wac-diag-assign-j3qm7xf` states that width. The line and column arguments
+    // stay for the compound case, where no single token holds the expression.
+    i32 tok = tokenOfExpr(e);
+    if (tok >= 0) {
+      c.reportWidthOf(mismatch, line, col, expectedFound(want, foundType(c, e)), tok);
+    } else {
+      c.reportWith(mismatch, line, col, expectedFound(want, foundType(c, e)));
+    }
     return;
   }
   // A range complaint names the **literal**, where a family mismatch names the whole expression:
@@ -3413,9 +3474,8 @@ void checkExpr(C c, Expr e) {
       checkExpr(c, els);
       // The condition is the `if` rule in expression position, and lands on the condition itself.
       if (notBool(c, cond)) {
-    c.reportWith(errNotBool(), cond.line, cond.col,
-                 expectedFound("bool", foundType(c, cond)));
-  }
+        reportExpr(c, errNotBool(), cond, expectedFound("bool", foundType(c, cond)));
+      }
       // The branches have to agree, because the whole expression is one type. A literal branch takes
       // the other's type, as everywhere, so only two known and different types are a complaint — and
       // it names the node rather than either branch, neither being more wrong than the other.
@@ -6591,8 +6651,8 @@ bool isVariantConstruction(C c, Expr e) {
  */
 void checkCond(C c, Expr cond) {
   if (notBool(c, cond)) {
-    c.reportWith(errNotBool(), cond.line, cond.col,
-                 expectedFound("bool", foundType(c, cond)));
+    // At the condition's own token: `if (x)` wants a caret of one under `x` — `§wac-diag-bool-r8kn4wp`.
+    reportExpr(c, errNotBool(), cond, expectedFound("bool", foundType(c, cond)));
   }
   checkExpr(c, cond);
 }
@@ -6711,7 +6771,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (nullableIntoNonNull(wantTo, gotTo)) {
         c.report(errNullableToNonNull(), rhs.line, rhs.col);
       } else if (!assignable(c, wantTo, gotTo)) {
-        c.reportWith(errInitTypeMismatch(), rhs.line, rhs.col, expectedFound(wantTo, gotTo));
+        reportExpr(c, errInitTypeMismatch(), rhs, expectedFound(wantTo, gotTo));
       }
     }
     // The same question one position over: a declared type, and something that has to fit it.
@@ -6735,7 +6795,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (nullableIntoNonNull(wantVar, gotVar)) {
         c.report(errNullableToNonNull(), init.line, init.col);
       } else if (!assignable(c, wantVar, gotVar)) {
-        c.reportWith(errInitTypeMismatch(), init.line, init.col, expectedFound(wantVar, gotVar));
+        reportExpr(c, errInitTypeMismatch(), init, expectedFound(wantVar, gotVar));
       }
       c.expected = wantVar;
       checkExpr(c, init);

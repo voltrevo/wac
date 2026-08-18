@@ -231,12 +231,24 @@ export string test_how_many_of_waccs_diagnostics_carry_their_operands(Core core,
            "a real span on " + itoa(spanned) + " (" + itoa(pctSpanned) + "%)");
 
   // **A ratchet, because a number nobody holds is a number that drifts.** These were 73/24/54, then
-  // 79/42/59, and on 2026-08-15 help reached 46 (six more codes got a hint that says something the
-  // message does not) and the span 66 (`undefined type`, the largest spanless group at 47 of 264,
-  // reports at its token). The floors are a few points under, so ordinary movement does not fail the
-  // suite and a *regression* does. Raise them when you raise the numbers.
+  // 79/42/59, and the span reached 66 when `undefined type` — the largest spanless group at 47 of 264
+  // — began reporting at its token. On 2026-08-18 it reached **71**: `reportLiteral` and the two
+  // non-bool-condition sites now report at the offending expression's own token, so a literal that
+  // does not fit gets a caret as wide as it is. `spec/spec/errors.md` states two of those widths as
+  // clauses — `span: 1` for `if (x)`, `span: 4` for `3.14` — and `diagspans_test.wac` names them; this
+  // file holds the share, which no per-clause test can.
+  //
+  // **The 46 for help recorded here came from the host-side version and a different corpus**, so the
+  // 43 below is not a fall: `f09626a8`'s own message is about a rounding bug that read as a
+  // regression, and the count has been the same on both sides since. Help is *at* its floor rather
+  // than above it, and the reason is measurable: 282 of the 402 hintless diagnostics are one family,
+  // `unexpected token`, whose specifics already travel in the annotation (`expected '=', found ';'`).
+  // A generic help line there would be noise, which is why the number has not been pushed.
+  //
+  // The floors are a few points under, so ordinary movement does not fail the suite and a *regression*
+  // does. Raise them when you raise the numbers.
   t.isTrue(pctAnnotated >= 76, "operands: " + itoa(pctAnnotated) + "%, was at least 76%");
   t.isTrue(pctHinted >= 43, "help: " + itoa(pctHinted) + "%, was at least 43%");
-  t.isTrue(pctSpanned >= 63, "a real span: " + itoa(pctSpanned) + "%, was at least 63%");
+  t.isTrue(pctSpanned >= 68, "a real span: " + itoa(pctSpanned) + "%, was at least 68%");
   return t.report();
 }
