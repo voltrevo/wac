@@ -25,7 +25,13 @@ ending a running command with `^C`, [works on both](#c-ends-a-running-command-in
 
 Every rule is read off **the kernel's own line discipline** — `script -qec cat /dev/null` puts a pty
 between the test and `cat`, and `example/ttycat.wac` is the same arrangement with our `Line` in place of
-the pty. Thirty-eight sequences, byte for byte, in `test/line.test.ts`.
+the pty. 44 sequences, byte for byte, in `test/wac/line_test.wac`.
+
+The kernel is asked **once**, by `tools/wac/ttyvectors.wac`, and its answers live in
+`test/kernel-vectors.txt`; the tests replay them against `ttycatBytes` in process. Asking it every run
+meant three processes a case in each of three modes, which was 23s of the suite. Re-run the capture after
+adding a case — a case with no vector fails by name — and each test keeps one live pty case per mode, so
+a kernel that starts answering differently is still noticed.
 
 That is not a formality. Three of the rules are not what you would write down:
 
