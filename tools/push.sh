@@ -282,6 +282,32 @@ for attempt in 1 2 3; do
   fi
   echo "== doc checks passed =="
 
+  # **The site, which the suite does not look at at all.** `site/` is in `deno.json`'s `exclude` and named
+  # again in the parallel pass's `--ignore`, for a real reason: its sources are vite-resolved TypeScript
+  # that Deno's resolver refuses. So `site/tools/site.test.ts` needs two flags, and its TypeScript needs
+  # the checker that agrees with the bundler — `npx tsc -b`, in `site/`. Neither ran anywhere automatic.
+  #
+  # **It was red when this was added.** The page said "372 of its claims carry a tag" and `spec/` had 375,
+  # in a section titled "A specification that cannot drift". Nothing had noticed because nothing looked,
+  # and the site deploys on every push — which is what `issues/system/0146` already cost once, when the
+  # published playground quietly compiled with the reference for a while.
+  #
+  # 6s for both.
+  if ! deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts > "$log.site" 2>&1; then
+    echo "== the site's own tests are red — not pushing =="
+    echo "   \`deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts\` runs them:"
+    grep -E "FAILED|error:" "$log.site" | head -10
+    echo "-- full output: $log.site --"
+    exit 1
+  fi
+  if ! (cd site && npx tsc -b) >> "$log.site" 2>&1; then
+    echo "== the site does not type-check — not pushing =="
+    echo "   \`cd site && npx tsc -b\` is the checker that agrees with the bundler:"
+    tail -20 "$log.site"
+    exit 1
+  fi
+  echo "== the site passes its own tests and type-checks =="
+
   # **The coverage ratchets, after the suite and before the push.** Nineteen packages, 38 seconds
   # against the suite's two hundred — twelve now that they run four at a time — so the cost is small for
   # the thing the suite cannot
