@@ -44,6 +44,7 @@ const doneHeavy = announceHeavy("coverage:all");
 globalThis.addEventListener("unload", () => doneHeavy());
 
 const verbose = Deno.args.includes("--verbose");
+const startedAll = performance.now();
 
 const PACKAGES = [
   "bignum", "bytes", "codec", "crypto", "datetime", "fmt", "fs", "gzip", "http", "json",
@@ -52,24 +53,50 @@ const PACKAGES = [
 
 type Result = { pkg: string; code: number; ms: number; output: string };
 
+/**
+ * Four at a time, because nineteen packages one after another is 38s of every push.
+ *
+ * `tools/push.sh` runs this after the suite and before the push, so nothing else is on the machine —
+ * and each of these is one `deno run` over one package's probes, not the gigabyte-scale builds the
+ * heavy lane holds back. Four is the width measured for the suite's own passes; the same number here
+ * needs no separate argument.
+ *
+ * **Each line is printed when its package finishes, so they arrive out of order.** That is why the
+ * package name was already on every line: the order was never what identified them. The summary and the
+ * failure reports below read `results`, which is sorted back into `PACKAGES` order, so what a reader
+ * scans for a red is stable even though the log is not.
+ */
+const WORKERS = 4;
 const results: Result[] = [];
-for (const pkg of PACKAGES) {
-  const started = performance.now();
-  const cmd = new Deno.Command("deno", {
-    args: ["task", `coverage:${pkg}`],
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const { code, stdout, stderr } = await cmd.output();
-  const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
-  const ms = performance.now() - started;
-  results.push({ pkg, code, ms, output });
-  console.log(`${code === 0 ? "ok  " : "FAIL"}  coverage:${pkg}  ${(ms / 1000).toFixed(1)}s`);
-}
+let next = 0;
+const worker = async () => {
+  while (next < PACKAGES.length) {
+    const pkg = PACKAGES[next++];
+    const started = performance.now();
+    const cmd = new Deno.Command("deno", {
+      args: ["task", `coverage:${pkg}`],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { code, stdout, stderr } = await cmd.output();
+    const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+    const ms = performance.now() - started;
+    results.push({ pkg, code, ms, output });
+    console.log(`${code === 0 ? "ok  " : "FAIL"}  coverage:${pkg}  ${(ms / 1000).toFixed(1)}s`);
+  }
+};
+await Promise.all(Array.from({ length: Math.min(WORKERS, PACKAGES.length) }, () => worker()));
+results.sort((a, b) => PACKAGES.indexOf(a.pkg) - PACKAGES.indexOf(b.pkg));
 
 const failed = results.filter((r) => r.code !== 0);
+// **Summed, not elapsed, and it says so.** These overlap now, so the sum is the work done rather than
+// the time taken — reporting it as elapsed would make a 4x speedup look like no change at all.
 const total = results.reduce((n, r) => n + r.ms, 0) / 1000;
-console.log(`\n${results.length - failed.length}/${results.length} passed in ${total.toFixed(0)}s`);
+const elapsed = (performance.now() - startedAll) / 1000;
+console.log(
+  `\n${results.length - failed.length}/${results.length} passed in ${elapsed.toFixed(0)}s ` +
+    `(${total.toFixed(0)}s of work at ${WORKERS} workers)`,
+);
 
 for (const r of failed) {
   // The reason, not just the fact: a bare "FAIL" is the same silence this file exists to end. Each of
