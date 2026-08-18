@@ -15,6 +15,10 @@
 // `emit.wac` writes its `else` arm first and this emitter used to emit an arm's body where the arm
 // stood — so the default ran unconditionally and no `case` was ever reached.
 //
+//
+// **4.2s, one source file through two stages.** Measured 2026-08-18. The cheaper half of the pair:
+// `selfhostemit_test.wac` puts the *compiler* through the same two stages for 9.6s, and this one
+// exists because a single file failing the fixed point is a much smaller thing to debug.
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
 // The two stages were instantiated and asked four questions each. From wac the reference answers

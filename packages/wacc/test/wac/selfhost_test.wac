@@ -5,6 +5,10 @@
 // wacc can build wacc, and only *useful* while the result is stable — a compiler that produced a
 // different compiler each time would still work and would make every artefact unreproducible.
 //
+// **3.0s, two builds of the compiler.** Measured 2026-08-18. `deno task seed` does the same thing and
+// checks the same property; this is the version that runs in the suite, so a fixed point that stops
+// holding fails a push rather than waiting for somebody to reseed.
+//
 // So this asserts the fixed point. Compile wacc with the seed the binary carries, then compile it
 // again with the same binary, and require the two to be byte-identical.
 //

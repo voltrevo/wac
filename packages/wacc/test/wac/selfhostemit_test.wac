@@ -15,6 +15,13 @@
 // produces must equal the bytes the *test* gets from `emitFiles` directly, which is the number
 // `test/wac/selfemit_test.wac` and the corpus test are measuring all along.
 //
+//
+// **9.6s, and it is two compilers.** Measured 2026-08-18, the most expensive single test in the
+// `wac test` lane. Stage A builds `wacc` with the reference and stage B builds it with stage A's
+// output; comparing the two means both exist, and each is the whole compiler. There is nothing to
+// amortise across the ladder's other rungs either: they run in the same process but wac has no
+// module-level state to hold a built stage in, and writing one to disk to be reused is the cache
+// `issues/system/0204` is about, with the staleness question that comes with it.
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
 // The reference answers through `referenceRun.ts <driver> <export…>`, which prints a whole `i32`;

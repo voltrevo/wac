@@ -14,6 +14,10 @@
 // not: `this.pos++` on a field emitted nothing, so the lexer never advanced, and every **character
 // literal** compiled to 0, so `isSpace(c)` asked whether the byte was NUL.
 //
+//
+// **3.8s, and it is a compiler built and then run.** Measured 2026-08-18. The rung below
+// `fixpointemit_test.wac`: that one compares emitted bytes, this one runs what was emitted and compares
+// answers, which needs the build plus a process.
 // ## Host-side until 2026-08-17, `issues/system/0161`
 //
 // The TypeScript instantiated both modules and called eight exports on each. From wac neither half
