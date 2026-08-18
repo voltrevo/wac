@@ -32,6 +32,7 @@ import { joined, splitLines, contains, startsWith } from "../../../wactest/src/s
 import { Core, Cli } from "../../../platform/src/platform.wac";
 import { diagnoseGraph, lambdaReportFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { closureOf } from "./source_probe.wac";
 import { Ran, runEmitted, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
 
 const string ENTRY = "/m.wac";
@@ -517,11 +518,30 @@ export string test_a_lambda_in_a_module_that_also_imports_a_real_package(Core co
                "export i32 f() {\n  Vec<i32> v = Vec.create();\n  v.push(20);\n  i32 n = 1;\n" +
                "  fn[i32()] g = () => n + 21;\n  n = n + 0;\n  return v.get(0) + g();\n}\n" +
                "export i32 main() { return f(); }\n";
-  string[] paths = string[c.paths.len() + 1](fill: "");
-  string[] sources = string[c.paths.len() + 1](fill: "");
-  for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
-  paths[c.paths.len()] = entry;
-  sources[c.paths.len()] = src;
+  string[] all = string[c.paths.len() + 1](fill: "");
+  string[] allSrc = string[c.paths.len() + 1](fill: "");
+  for (i32 i = 0; i < c.paths.len(); i++) { all[i] = c.paths[i]; allSrc[i] = c.sources[i]; }
+  all[c.paths.len()] = entry;
+  allSrc[c.paths.len()] = src;
+
+  // **The closure, not the corpus — 8.2s to a fraction of it.** `runEmitted` type-checks every file it
+  // is handed before emitting, so passing the whole repository to compile one program that imports
+  // `Vec` checked five hundred files to answer a question about nine string builtins. This test was
+  // the whole of `lambda_test.wac`'s cost: every other test in the file is 60-150ms.
+  //
+  // **`/`-prefixed keys**, because `resolved` answers with a leading slash — the same recipe
+  // `selfhostemit_test.wac` records, and passing plain paths resolves every import to a key that is
+  // not in the table, which comes back as the entry alone.
+  string[] keys = string[all.len()](fill: "");
+  for (i32 i = 0; i < all.len(); i++) { keys[i] = "/" + all[i]; }
+  i32[] near = closureOf(keys, allSrc, all.len() - 1);
+  t.isTrue(near.len() >= 2,
+           "the closure is " + itoa(near.len()) + " file(s) — the import did not resolve, so this " +
+           "would be testing a lambda with no package around it");
+  if (near.len() < 2) { return t.report(); }
+  string[] paths = string[near.len()](fill: "");
+  string[] sources = string[near.len()](fill: "");
+  for (i32 i = 0; i < near.len(); i++) { paths[i] = all[near[i]]; sources[i] = allSrc[near[i]]; }
 
   Ran r = runEmitted(cli, paths, sources, entry, scratchDir(cli), "lambda0138.wasm", 0,
                      string[0](fill: ""));
