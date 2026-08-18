@@ -27,7 +27,7 @@ anything at all.
 
 | test | what it needs | why an argument will not do |
 |---|---|---|
-| `packages/git/test/configchain.test.ts` | `HOME`, `XDG_CONFIG_HOME` | The subject *is* which config file git reads. The fixture makes four levels disagree and walks down them; naming the files on a command line would test a different program. |
+| packages/git/test/configchain.test.ts | `HOME`, `XDG_CONFIG_HOME` | The subject *is* which config file git reads. The fixture makes four levels disagree and walks down them; naming the files on a command line would test a different program. |
 | packages/git/test/status.test.ts's `core.excludesFile` | `HOME` | `~/.gitignore_global` — expanding the `~` is what proves the `env` grant is real, and the test says so. |
 | `packages/git/test/commit.test.ts` | `GIT_AUTHOR_DATE` | `gitci` honours it so two runs of one tree name the same commit. Without it the clock is used and the content-addressing assertion — commit twice, get the same sha — cannot be made. |
 | `packages/git/test/lsremote.test.ts` | `HTTP_PROXY` | Measured, not inferred: `wac run … gitls.wac -- https://github.com/…` lists the refs with the variable set and fails with `failed to lookup address information` without it. This container reaches nothing except through Squid. |
@@ -94,7 +94,7 @@ with **no environment at all**. That is deliberate" — describes the design and
 So the table above is wrong in every row, including the three it was most confident about. The proxy
 variable is inherited, so `lsremote`, `clone` and `fetchlive` reach the network exactly as the
 host-side versions do; `HOME` is inherited, so status.test.ts's `core.excludesFile` and
-`configchain.test.ts` work; `GIT_AUTHOR_DATE` can be *declared* rather than inherited, because
+configchain.test.ts work; `GIT_AUTHOR_DATE` can be *declared* rather than inherited, because
 `/bin/sh -c 'GIT_AUTHOR_DATE=… prog'` sets it for the child, which the last measured line shows
 working. That last route is the one the `exec` doc itself points at — "a caller who wants a shell
 asks for one by name" — and it is the one to use, because it keeps working after the leak is closed.

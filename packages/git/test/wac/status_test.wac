@@ -29,6 +29,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { withHome } from "./env_probe.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -280,30 +281,6 @@ export string test_a_mode_change_with_no_content_change_is_reported_both_directi
 // this file: the environment is declared on a `/bin/sh -c` line rather than inherited, which is what
 // `Cli.exec`'s own documentation points a caller at and what keeps working after
 // `issues/system/0198` is fixed.
-
-/** A value as one shell word, so a path is never re-split and a `~` is never expanded here. */
-string shQuoted(string s) {
-  string out = "'";
-  for (i32 i = 0; i < s.len(); i++) {
-    string c = s.slice(i, i + 1);
-    out = out + (c == "'" ? "'\\''" : c);
-  }
-  return out + "'";
-}
-
-/**
- * `prog args…` with `HOME` set, and nothing else changed.
- *
- * **Declared, not inherited.** `Cli.exec` hands the child the host's whole environment today, so
- * `HOME` would arrive on its own and point at the agent's real home — which is the developer's
- * `~/.gitconfig` deciding a test's answer. Setting it on the command line overrides that, and is
- * the only spelling that still works once `exec` stops inheriting.
- */
-Exec withHome(Cli cli, string home, string prog, string[] args) {
-  string line = "HOME=" + shQuoted(home) + " exec " + shQuoted(prog);
-  for (i32 i = 0; i < args.len(); i++) { line = line + " " + shQuoted(args[i]); }
-  return cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
-}
 
 /** `git -C dir` with an identity and a `HOME`, since a commit needs one and the fixture needs both. */
 Exec gitAt(Cli cli, string home, string dir, string[] args) {

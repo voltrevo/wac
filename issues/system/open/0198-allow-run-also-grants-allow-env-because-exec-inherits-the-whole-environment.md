@@ -65,7 +65,7 @@ Two documents describe a limit that does not exist, and both drove real decision
   that they want the environment "for a reason nothing in the repository can work around, because
   the proxy is how this container reaches anything at all". The proxy variable is inherited today,
   so those three are not blocked. Corrected there.
-- packages/git/test/status.test.ts and `configchain.test.ts` carry headers saying they stayed
+- packages/git/test/status.test.ts and configchain.test.ts carry headers saying they stayed
   host-side for this reason.
 
 The security question and the migration question point in opposite directions here, which is worth
