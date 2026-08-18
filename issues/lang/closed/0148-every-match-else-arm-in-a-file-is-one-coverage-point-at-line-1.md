@@ -150,7 +150,7 @@ two defaults in one file are two points at their own lines, measured.
 measured. The reference emits a `loop` point for it and wacc emitted none — found only because the
 neighbours were being checked, and worth saying why the test `issues/lang/0112` asked for would not
 have caught it: it compares the *kinds* both compilers emit, and any `while` in the same file supplies
-the `loop` kind, so the set matched while the count fell. `packages/wacc/test/covPointPositions.test.ts`
+the `loop` kind, so the set matched while the count fell. `packages/wacc/test/wac/covpointpositions_test.wac`
 compares the `loop` and `case` *counts* against the reference for exactly that reason.
 
 The repository has one `do { … } while` — `spec/tour.wac` — so no package's ledger moves for that. The
