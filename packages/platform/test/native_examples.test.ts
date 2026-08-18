@@ -32,6 +32,9 @@ import { buildNative } from "../native.ts";
 import { type Bounded, boundedInputAgain, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
+// Memoised, and answered by `stat` when the crate has not moved — a bare `cargo build` is 2.6s even
+// with nothing to do, and this file asks more than once.
+import { nativeBinary } from "../../../harness/nativeHost.ts";
 
 const CRATE = "native";
 
@@ -58,25 +61,6 @@ async function run(cmd: string, args: string[], stdin: string, where: string): P
   return await boundedInputAgain(DEFAULT_SECONDS, cmd, args, stdin, { cwd: where });
 }
 
-async function nativeBinary(): Promise<string | null> {
-  try {
-    const built = await new Deno.Command("cargo", {
-      args: ["build", "--release", "--quiet"],
-      cwd: CRATE,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    if (built.code !== 0) throw new Error(new TextDecoder().decode(built.stderr));
-  } catch (e) {
-    console.warn(
-      `SKIPPING the native half: cargo did not build ${CRATE}.\n` +
-        `  ${e instanceof Error ? e.message.split("\n")[0] : e}\n` +
-        `  The Deno half below still runs. See issues/closed/0087.`,
-    );
-    return null;
-  }
-  return `${Deno.cwd()}/${CRATE}/target/release/wacland`;
-}
 
 /** One example: what to build it with, what to run it with, and what it reads. */
 type Case = {

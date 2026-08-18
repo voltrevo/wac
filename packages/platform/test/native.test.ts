@@ -30,6 +30,9 @@ import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
+// Memoised, and answered by `stat` when the crate has not moved — a bare `cargo build` is 2.6s even
+// with nothing to do, and this file asks more than once.
+import { nativeBinary } from "../../../harness/nativeHost.ts";
 
 const ENTRY = "packages/platform/example/wacland.wac";
 const CRATE = "native";
@@ -58,28 +61,6 @@ async function runIt(cmd: string, args: string[]): Promise<Run> {
   return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
 }
 
-/** The native binary, built if cargo is here, or null with the reason said out loud. */
-async function nativeBinary(): Promise<string | null> {
-  try {
-    const built = await new Deno.Command("cargo", {
-      args: ["build", "--release", "--quiet"],
-      cwd: CRATE,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    if (built.code !== 0) {
-      throw new Error(new TextDecoder().decode(built.stderr));
-    }
-  } catch (e) {
-    console.warn(
-      `SKIPPING the native half of the arrival test: cargo did not build ${CRATE}.\n` +
-        `  ${e instanceof Error ? e.message.split("\n")[0] : e}\n` +
-        `  The Deno half below still runs. See issues/closed/0087.`,
-    );
-    return null;
-  }
-  return `${CRATE}/target/release/wacland`;
-}
 
 const tmp = await Deno.makeTempDir({ prefix: "wac-native-" });
 globalThis.addEventListener("unload", () => {
