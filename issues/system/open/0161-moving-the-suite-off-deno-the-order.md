@@ -1508,11 +1508,29 @@ was the obvious hope. Measured on `packages/codec`, they answer different questi
                                           79 / 84    packages/codec/src/base32.wac
 
 `--coverage` counts per file; `cov.ts` **names the points nothing reached**, which is the output
-somebody acts on. So converting these needs the naming first — `covTableFiles` already keys a position
-per counter and `wac covdump` already prints the counts, so the pieces exist and nothing joins them.
-That is one command, roughly the shape `ctcompare` turned out to be, and then twenty small ports.
+somebody acts on.
 
-Not started here: it is a distinct project and it is not a test.
+**And it needs no new command, which is the correction to the sentence that was here an hour ago.**
+I wrote "that is one command, roughly the shape `ctcompare` turned out to be". It is zero. A coverage
+journal is one count per point rather than one entry per event — hundreds of numbers, not millions —
+so unlike a trace it can be shipped out and joined in wac: `wac build --coverage` writes `stem.cov`
+keyed by counter index, `wac covdump` prints `<index>\t<count>`, and naming the zeros is a loop. The
+reason `ctcompare` had to be a command was the *size* of a trace, and that reason does not apply here.
+
+**What the work actually is**, having looked rather than assumed:
+
+  - Each package's exercises become a wac program whose `main` calls the probe's exports — the same
+    shape the trace drivers took. That part is mechanical.
+  - **The ledgers are not.** `packages/crypto/cov.ts` is 1,100 lines and most of it is a reasoned list
+    of points that *cannot* be reached and why, one entry at a time; `packages/gzip/cov.ts` has its
+    own. That is content, not boilerplate, and it has to move with the exercises rather than be
+    regenerated.
+  - `tools/coverageAll.ts` greps the output for `branch point(s) uncovered`, `no longer holds` and
+    `is listed as unreached but was covered`, so the phrasing is a contract between twenty producers
+    and one consumer.
+
+Not started here: it is a distinct project, it is not a test, and the ledgers are the kind of thing
+that should move deliberately rather than in a sweep.
 
 Filed on the way: `issues/lang/0162`. `ct.wac` declared a `struct Stat` for `tracestat`'s three
 numbers, and a program that declares a struct `platform.wac` also declares compiles cleanly and will
