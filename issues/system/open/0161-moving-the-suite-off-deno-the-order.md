@@ -1413,9 +1413,29 @@ The other eight that do *not* use the reference, and what each is actually waiti
 | `jsBindgen` (113), `jsxBoundary` (97) | JavaScript is half the differential. Stay. |
 | `nativeBinary` (510) | see above. |
 
-So the count blocked on the reference decision is nine, and the count that is simply unstarted work is
-**one** — `bindHelpers`. Every other line of this table was checked by opening the file, after the
-`bindgen` row above was written from its import list and turned out to be wrong.
+So the count blocked on the reference decision is nine, and `wacc`'s unstarted work is now none.
+Every line of this table was checked by opening the file, after the `bindgen` row above was written
+from its import list and turned out to be wrong.
+
+### `packages/platform`, read the same way — 2026-08-19
+
+`platform` is the next block by size, and the same discriminator sorts it. What is **already
+recorded above** is that `marshal.test.ts`, the three `*_model.test.ts` and `browser.test.ts` never
+move: their subject is the TypeScript beside them. Four more were opened and three of those stay:
+
+| file | verdict |
+| --- | --- |
+| `inside` (94) | **moved**, whole. `native_examples_test.wac` already runs this example on both hosts, but what it checks is that the hosts *agree* — which two hosts that had both lost the child's standard error would also do. The port pins the transcript itself and the parent's own streams staying empty. |
+| `pipeline` (114) | **half.** The stdin→child→child→stdout test moved. The socket one cannot: the client must signal EOF and then read the reply, and wac has `closeSocket` and no half-close. Filed as `issues/system/0215`, whose argument is already written one capability over — `closeFeed`'s doc comment makes exactly this case for a child's stdin, with `wc` as the example. |
+| `aliasing` (161) | **stays**, and says so itself: it drives the world's handlers directly because a first attempt through a wac program *passed with the bug deliberately put back*. Nothing about running a wac program makes two reads pending simultaneously, which is what the race needs. |
+| `trapMessage` (72) | **stays**, already argued in its own header: three of its four cases moved in August, and the one left is the JavaScript route — `bindgen`'s `$trapped` guard and `host/entry.ts`, both TypeScript. |
+| `timeout` (209) | **mixed, and mostly stays.** Two end-to-end tests build `patience.wac` and run it; three drive `newBridge`/`submit`/`waitAny`/`collect` and assert on slot statuses in the control block, which is `host/layout.ts` and `host/call.ts`. Splitting it buys ~55 lines. |
+| `platform.test.ts` (554) | **mixed.** Of its seventeen tests, the end-to-end ones (a wac application agreeing with `wc`, a withheld capability, env unset-vs-empty, a filter, `stat`/`readDir` gating, the Deno/Node agreement) are portable; the bridge ones (`hostCall` against an unknown opcode, a capability that throws, a response larger than the buffer) poke the TypeScript host and stay. The biggest single remaining item in `platform`, and the one worth doing next. |
+
+**The lesson this block repeats:** three of these six carry their own verdict in their own header,
+written by whoever last thought about them. Reading the header first would have saved opening four
+files — and `aliasing`'s says not just *that* it stays but that the obvious port was tried and
+passed against a reinstated bug, which is the part no classifier would have derived.
 
 **The nine that do use the reference as an oracle.** On 2026-08-19 the operator deleted the whole-repository lex and
 parse differentials and every `// only: wacc` marker, on the grounds that **the reference's only job
