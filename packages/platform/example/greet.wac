@@ -3,7 +3,7 @@
 //   greet <address> <port>        # "" as the address means every interface
 //
 // Small on purpose: it is the shortest program that uses all three of `listen`'s address, `accept`'s
-// peer, and `send`. `platform/test/node_net.test.ts` builds it for Deno *and* for Node and compares
+// peer, and `send`. `platform/test/wac/node_net_test.wac` builds it for Deno *and* for Node and compares
 // what the two say, which is the only way to notice that a change to one runtime's socket shim broke
 // the other — the Node network path had no test at all until this existed, and the shim was edited
 // three times before anybody looked at it with a client attached.
