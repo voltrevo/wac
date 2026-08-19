@@ -11,7 +11,50 @@ The goal is no Deno or TypeScript after bootstrapping, except where a JS interac
 This is the measured shape of that, and the order the steps have to happen in — recorded because I
 got the order wrong twice from reasoning about it.
 
-## Where this stands, and what is actually blocking — 2026-08-17, second pass
+## Where this stands — 2026-08-19
+
+**18,317 lines of `.test.ts` under `packages/`, and every one of them is accounted for.** Not
+"looked at": each has a determination in this issue, and the four I had left as header-reading were
+opened on 2026-08-19 because one of those guesses turned out wrong.
+
+| where | lines | what it is |
+|---|---|---|
+| `box`, `sh` | 7,235 | another agent's packages |
+| `platform` | 6,610 | **swept — nothing convertible left.** The subject is TypeScript in every one |
+| `wacc` | 2,694 | **nine wait on a decision that is the operator's**, four stay |
+| `webrtc`, `tor`, `raster`, `stream` | 1,778 | a real browser, a C tor this machine has not got, a real canvas, a `TransformStream` |
+
+`crypto` reached zero on 2026-08-19, which is the first package to do so that needed a new command
+rather than a new test.
+
+**The nine in `wacc` are the whole of what is blocked and not by a missing feature**: `tour`,
+`sweep`, `linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `mutateCheck`, `corpusMutate`,
+`parse_errors` all use the reference compiler as an oracle. On 2026-08-19 the operator deleted the
+whole-repository lex and parse differentials and every `// only: wacc` marker, on the grounds that
+**the reference's only job is bootstrapping**. That principle reaches `parse_errors` — which compares
+diagnostics by position — more clearly than it reaches `corpusMutate` and `mutateCheck`, which use it
+to *generate* known-bad programs and only ask whether wacc notices. Porting them would entrench an
+arrangement that may be about to go, and deleting them is not mine to decide.
+
+### The mistake this issue kept making, in one place
+
+Six files were recorded here as blocked, each with its own reason, and **five of the reasons were the
+same mistake**: they ended "…which the CLI cannot do" or "…which wac cannot express". Every one was
+true of the *binary* or of the *language*, and neither was ever the only thing available.
+
+  - `optimize`, `producer` — a wac test reaches `deno` through `Cli.exec`, and `build.ts` and
+    `native.ts` are ordinary programs. The flags were always there.
+  - `frame` — the bug behind it is real (`issues/system/0199`), and it blocks a *stronger* test than
+    the one being converted. The TypeScript ran both halves on the Deno host; so does the port.
+  - `server/live` — "three independent clients" is an argument for keeping the clients, and they were
+    kept. It is not an argument about who runs the test.
+  - `constanttime` — "wac has no capability to instantiate wasm" is true of the language. `wac covdump`
+    is a program that does, and `ctcompare` is now the one that compares.
+
+The question that would have caught all five: **not "can wac do this", but "is there a program that
+does this, and can a wac test run it?"**
+
+## Where this stood, and what was blocking — 2026-08-17, second pass
 
 The native lane is **125 files, 115 ok**, from 77/23 when this began and 104/94 this morning.
 `deno task seed` and `deno task map` are wac; `deno task docs` is five wac files and two Deno
@@ -912,10 +955,20 @@ in-process, false of one that is a subprocess and can carry forty lines of permu
 
 ### What stays, restated
 
-`packages/raster/test/{hosts,live}.test.ts` and `packages/server/test/live.test.ts` join
-`packages/stream/test/stream.test.ts` in the list. Each has a **host** for a subject: two hosts
-compared byte for byte, pixels read back out of chromium, three independent HTTP clients against a
-real socket. Moving any of them would mean not testing the thing they exist for.
+`packages/raster/test/live.test.ts` joins `packages/stream/test/stream.test.ts` in the list. Each has
+a **host** for a subject: pixels read back out of chromium, a `TransformStream` in `host/bridge.ts`.
+Moving either would mean not testing the thing it exists for.
+
+**Two names in this paragraph were wrong by 2026-08-19 and are corrected here.**
+`packages/raster/test/hosts.test.ts` no longer exists. And `packages/server/test/live.test.ts`
+**moved** — the sentence that kept it said "three independent HTTP clients against a real socket", and
+that is an argument for keeping the *clients*, which is what happened: `fetch` and Node's `http` are
+still their own runtimes, one script each, because being somebody else's implementation is the whole
+of what they contribute. What moved is the harness and the raw-socket half, which was never anyone
+else's implementation — it was Deno standing in for a socket wac has. The same conflation is in
+`issues/system/0199` about `frame`, corrected the same day: *whose implementation is the oracle* and
+*who runs the test* are different questions, and a rule written about the first will read as a rule
+about the second.
 
 ### `packages/http` — 2026-08-17, and what two of its files are blocked on
 
