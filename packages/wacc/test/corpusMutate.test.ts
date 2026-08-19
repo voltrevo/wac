@@ -57,6 +57,7 @@
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 import { loadCorpus } from "./corpus.ts";
+import { cached, compilerKeyParts, contentKey } from "../../../harness/buildCache.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
 const dumpTypeErrorsFiles = mod.dumpTypeErrorsFiles as
@@ -142,25 +143,106 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
   let crashed = 0;
   /** The mutants nothing was reported on, by name — the queue this instrument exists to produce. */
   const misses: string[] = [];
+  /**
+   * What the reference said about one mutant — everything this sweep reads from it.
+   *
+   * A record rather than the diagnostics themselves, because only these fields are used: whether it
+   * compiled, whether it threw, the phases (a parse or all-resolve answer is skipped), the first
+   * message (the category key and the named miss) and the first position with the count (the
+   * contradiction check).
+   */
+  type RefAnswer =
+    | { kind: "ok" }
+    | { kind: "threw" }
+    | {
+      kind: "diags";
+      phases: (string | undefined)[];
+      message: string;
+      line: number;
+      col: number;
+      count: number;
+    };
+
+  /** Every mutant this run will judge, before any of them is compiled. */
+  const mutants: { at: number; name: string; mutated: string }[] = [];
   for (let i = 0; i < entries.length; i++) {
     const [name, src] = entries[i];
     const [, mutate] = MUTATIONS[i % MUTATIONS.length];
     const mutated = mutate(src);
-    if (mutated === null) continue;
+    if (mutated !== null) mutants.push({ at: i, name, mutated });
+  }
 
-    let diags: { line: number; col: number; message: string; phase?: string }[];
-    try {
-      const r = wacCompile(closureOf(`/${name}`).set(`/${name}`, mutated), `/${name}`);
-      if (r.ok) continue;
-      diags = r.diagnostics;
-    } catch {
+  /**
+   * **The reference's half, cached — it was 12.6s of this test's 13.0s.**
+   *
+   * Measured 2026-08-19: the reference compiling 341 mutants is 12 639ms and our checker judging them
+   * is 776ms. The mutants are deterministic — mutation `i % 26` applied to corpus file `i` — so the
+   * reference's answers are a pure function of the corpus, the mutations and `compiler/`. That makes
+   * them cacheable on exactly those things.
+   *
+   * **Ours is not cached and must not be**: it runs on every mutant on every pass. A differential with
+   * one remembered side is still a differential; one with two is nothing. And the sweep's own floor is
+   * the canary — an empty or wrong set of answers leaves `broken` at zero, which throws "no mutant was
+   * measurable" rather than passing quietly.
+   */
+  async function referenceAnswers(): Promise<RefAnswer[]> {
+    const compiler = await compilerKeyParts();
+    const compute = (): RefAnswer[] =>
+      mutants.map(({ name, mutated }) => {
+        try {
+          const r = wacCompile(closureOf(`/${name}`).set(`/${name}`, mutated), `/${name}`);
+          if (r.ok) return { kind: "ok" };
+          const d = r.diagnostics;
+          return {
+            kind: "diags",
+            phases: d.map((x) => x.phase),
+            message: d[0].message,
+            line: d[0].line,
+            col: d[0].col,
+            count: d.length,
+          };
+        } catch {
+          return { kind: "threw" };
+        }
+      });
+    // No compiler identity means no key that could be trusted, so the answers are computed. The
+    // alternative — keying on the sources alone — would serve a stale reference's opinion after a
+    // change to `compiler/`, which is the one thing this test is comparing against.
+    if (compiler === null) return compute();
+    const key = await contentKey([
+      "corpus-mutants 1",
+      ...compiler,
+      ...entries.flatMap(([name, src]) => [name, src]),
+      ...mutants.flatMap((m) => [m.name, m.mutated]),
+    ]);
+    const path = await cached("corpus-mutants", key, ".json", async (at) => {
+      await Deno.writeTextFile(at, JSON.stringify(compute()));
+    });
+    return JSON.parse(await Deno.readTextFile(path)) as RefAnswer[];
+  }
+
+  const answers = await referenceAnswers();
+  if (answers.length !== mutants.length) {
+    throw new Error(
+      `the reference answered ${answers.length} of ${mutants.length} mutants — a cache entry from a ` +
+        `different corpus would look like this, so nothing below was judged`,
+    );
+  }
+
+  for (let m = 0; m < mutants.length; m++) {
+    const { at: i, name, mutated } = mutants[m];
+    const answer = answers[m];
+    if (answer.kind === "ok") continue;
+    if (answer.kind === "threw") {
       // The reference threw rather than answering — `issues/lang/0087`. Counted, not asserted:
       // this rung compares checkers, and a crash is somebody else's bug rather than a miss.
       crashed++;
       continue;
     }
-    if (diags.some((d) => d.phase === "parse")) continue;
-    if (diags.every((d) => d.phase === "resolve")) continue;
+    const diags = [{ line: answer.line, col: answer.col, message: answer.message }];
+    const phases = answer.phases;
+    if (phases.some((p) => p === "parse")) continue;
+    if (phases.length > 0 && phases.every((p) => p === "resolve")) continue;
     broken++;
 
     const clos = closureOf(`/${name}`);
@@ -184,7 +266,7 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
     }
     cat.set(key, e);
 
-    if (diags.length !== 1) continue;
+    if (answer.count !== 1) continue;
     const only = `${diags[0].line}:${diags[0].col}`;
     for (const p of mine) {
       if (p !== only && contradictions.length < 5) {
