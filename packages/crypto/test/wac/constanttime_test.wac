@@ -1,0 +1,349 @@
+// Does any of this behave differently for different secrets?
+//
+// A traced build records an ordered journal of branches *and array indices*, and `wac ctcompare`
+// says where two runs' journals first part. Two runs that differ only in a secret must not part. Read
+// `spec/cli/wac.md`'s `ctcompare` clause for what a pass does and does not mean — in short, a pass is
+// evidence for the inputs tested, a failure is definite.
+//
+// The package is not constant-time and does not claim to be. These tests exist so that claim is a
+// *measurement* rather than a disclaimer: what is uniform is pinned so it stays uniform, and what
+// leaks is named at the line it leaks on.
+//
+// ## Host-side until 2026-08-19, `issues/system/0161`
+//
+// `0161` had this file down as **the one shape a wac program cannot express at all**, because
+// `harness/ctTrace.ts` instantiates a module and walks its journal in process. The premise was about
+// the language and not the toolchain: `wac build --trace` and `wac ctcompare` are two commands now,
+// and the comparison happens where the modules are. `p256PublicKey` produces about three million
+// events, so shipping both journals out as text to be compared here would be tens of megabytes for
+// one number; `ctcompare` answers in a line, in about half a second.
+//
+// **A run is a program, not a call.** The TypeScript instantiated once and called an export with each
+// secret. `ctcompare` runs `main`, so each secret is its own module — and the drivers must therefore
+// differ *only in their data*. `main`'s own points are in the journal, so a pair written with
+// different shapes parts at event 1, which is the driver rather than the routine. Every driver here
+// comes from one template with one array literal substituted.
+//
+// **`same` is checked to carry a count.** Two journals of nothing match perfectly, and a mistyped
+// export name is a call that never happens.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+string binary(Cli cli) { return root(cli) + "/native/v8/target/release/wac"; }
+
+/**
+ * Structured secrets, not random ones: a leak shows at the extremes first.
+ *
+ * `keyOf(n)` is the `n`th of four — all zero, all 0xFF, a stride, and one bit set — at `len` bytes,
+ * which for 32 is the 16-byte key written twice, as the TypeScript's `KEYS32` was.
+ */
+i32[] keyOf(i32 which, i32 len) {
+  i32[] out = i32[len]();
+  for (i32 i = 0; i < len; i++) {
+    i32 j = i % 16;
+    if (which == 0) { out[i] = 0; }
+    else if (which == 1) { out[i] = 255; }
+    else if (which == 2) { out[i] = (j * 37) & 255; }
+    else { out[i] = j == 0 ? 128 : 0; }
+  }
+  return out;
+}
+
+/** `0, 1, 2, …` — the block the keyed routines are given, which is not a secret. */
+i32[] block16() {
+  i32[] out = i32[16]();
+  for (i32 i = 0; i < 16; i++) { out[i] = i; }
+  return out;
+}
+
+string literal(i32[] v) {
+  string out = "u8[](";
+  for (i32 i = 0; i < v.len(); i++) { out = out + (i > 0 ? ", " : "") + itoa(v[i]); }
+  return out + ")";
+}
+
+string scratchDir(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/ct-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+/**
+ * Build one traced driver: `main` builds the secret and calls the routine, and nothing else.
+ *
+ * `body` is the call, written once per routine with `$KEY` where the literal goes — so the two
+ * programs of a comparison are the same source with different digits.
+ */
+string driver(T t, Cli cli, string dir, string name, string src, string body, i32[] key) {
+  i32 at = -1;
+  for (i32 i = 0; i + 4 <= body.len() && at < 0; i++) {
+    if (body.slice(i, i + 4) == "$KEY") { at = i; }
+  }
+  string call = at < 0 ? body
+                       : body.slice(0, at) + literal(key) + body.slice(at + 4, body.len());
+  string program = "import { " + name + " } from \"../../" + src + "\";\n" +
+                   "export i32 main() {\n" +
+                   "  return " + call + ".len();\n" +
+                   "}\n";
+  return program;
+}
+
+/** Write a driver, build it traced, and answer with its stem. */
+string built(T t, Cli cli, string dir, string tag, string program) {
+  string entry = dir + "/" + tag + ".wac";
+  Change wrote = cli.writeFile(entry, program.toBytes()).wait();
+  t.isTrue(wrote.ok(), tag + ": writing the driver — " + wrote.message);
+  if (!wrote.ok()) { return ""; }
+  Exec r = cli.exec(binary(cli),
+                    string[]("build", entry, "--trace", "-o", dir + "/" + tag, "--quiet"),
+                    u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           tag + ": the traced build — " + r.error + string.fromBytes(r.stderr));
+  return (r.ran() && r.status == 0) ? dir + "/" + tag : "";
+}
+
+/** `wac ctcompare`, whole answer trimmed. */
+string compared(T t, Cli cli, string a, string b, bool all) {
+  string[] argv = all ? string[]("ctcompare", "--all", a + ".wasm", b + ".wasm")
+                      : string[]("ctcompare", a + ".wasm", b + ".wasm");
+  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0, "ctcompare ran — " + r.error + string.fromBytes(r.stderr));
+  return (r.ran() && r.status == 0) ? trimmed(string.fromBytes(r.stdout)) : "<did not run>";
+}
+
+/** Digits to an integer; -1 when it is not one. */
+i32 numberOf(string s) {
+  u8[] b = trimmed(s).toBytes();
+  if (b.len() == 0) { return -1; }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < 48 || b[i] > 57) { return -1; }
+    v = v * 10 + (b[i] - 48);
+  }
+  return v;
+}
+
+/** The `n`th space-separated word of a line. */
+string word(string line, i32 n) {
+  i32 at = 0;
+  string cur = "";
+  for (i32 i = 0; i <= line.len(); i++) {
+    string c = i < line.len() ? line.slice(i, i + 1) : " ";
+    if (c == " ") {
+      if (cur.len() > 0) {
+        if (at == n) { return cur; }
+        at = at + 1;
+      }
+      cur = "";
+    } else {
+      cur = cur + c;
+    }
+  }
+  return "";
+}
+
+/** `kind@file:line` for a site, out of the table the build wrote beside the module. */
+string siteAt(Cli cli, string stem, i32 site) {
+  FileResult f = cli.readFile(stem + ".trace").wait();
+  if (!f.ok) { return "<no table: " + f.error + ">"; }
+  string[] rows = splitLines(string.fromBytes(f.bytes));
+  string want = itoa(site) + "\t";
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (!startsWith(rows[i], want)) { continue; }
+    string[] parts = string[5](fill: "");
+    i32 n = 0;
+    string cur = "";
+    for (i32 k = 0; k <= rows[i].len(); k++) {
+      string c = k < rows[i].len() ? rows[i].slice(k, k + 1) : "\t";
+      if (c == "\t") { if (n < 5) { parts[n] = cur; n = n + 1; } cur = ""; }
+      else { cur = cur + c; }
+    }
+    // **Relative to the repository**, because the table records the path the build was given and the
+    // drivers are written to an absolute one. An assertion naming a line of `aes.wac` should not also
+    // be naming whose checkout it is in.
+    string file = parts[4];
+    string here = root(cli) + "/";
+    if (startsWith(file, here)) { file = file.slice(here.len(), file.len()); }
+    return n >= 5 ? parts[3] + "@" + file + ":" + parts[1] : "<short row>";
+  }
+  return "<no such site>";
+}
+
+/**
+ * Every secret in `keys` produces the journal the first one does.
+ *
+ * The empty-journal case is a failure rather than a pass, which is what `same` carrying its count is
+ * for: a routine that never ran agrees with another routine that never ran.
+ */
+void noSecretDependence(T t, Cli cli, string label, string src, string name, string body,
+                        i32[] which, i32 len) {
+  string dir = scratchDir(cli, label);
+  string base = built(t, cli, dir, "k0", driver(t, cli, dir, name, src, body, keyOf(which[0], len)));
+  if (base == "") { cli.remove(dir, true).wait(); return; }
+  for (i32 i = 1; i < which.len(); i++) {
+    string other = built(t, cli, dir, "k" + itoa(i),
+                         driver(t, cli, dir, name, src, body, keyOf(which[i], len)));
+    if (other == "") { continue; }
+    string said = compared(t, cli, base, other, false);
+    t.isTrue(startsWith(said, "same "),
+             label + ": behaviour depends on the secret — #0 against #" + itoa(i) + ": " + said +
+             (startsWith(said, "differs ") ? " at " + siteAt(cli, base, numberOf(word(said, 2))) : ""));
+    t.isTrue(startsWith(said, "same ") && numberOf(word(said, 1)) > 0,
+             label + ": recorded no events at all — did the call actually happen? " + said);
+  }
+  cli.remove(dir, true).wait();
+}
+
+export string test_sha256_does_not_vary_with_its_inputs_content(Core core, Cli cli) {
+  T t = T.create();
+  noSecretDependence(t, cli, "sha256", "packages/crypto/src/sha256.wac", "sha256",
+                     "sha256($KEY)", i32[](0, 1, 2, 3), 16);
+  return t.report();
+}
+
+export string test_chacha20s_block_function_does_not_vary_with_the_key(Core core, Cli cli) {
+  T t = T.create();
+  noSecretDependence(t, cli, "chacha", "packages/crypto/src/chacha20.wac", "chachaBlock",
+                     "chachaBlock($KEY, 1, u8[12](fill: 1))", i32[](0, 1, 2, 3), 32);
+  return t.report();
+}
+
+export string test_poly1305_does_not_vary_with_the_key(Core core, Cli cli) {
+  T t = T.create();
+  noSecretDependence(t, cli, "poly1305", "packages/crypto/src/poly1305.wac", "poly1305",
+                     "poly1305($KEY, " + literal(block16()) + ")", i32[](0, 1, 2, 3), 32);
+  return t.report();
+}
+
+export string test_x25519s_ladder_does_not_vary_with_the_scalar(Core core, Cli cli) {
+  // The expensive one — about 1.6 million events per run, which is also the answer to "is the ladder
+  // really uniform": it is, over every one of them. Two secrets rather than four, as the TypeScript
+  // had it: each is a compile and a run of the ladder.
+  T t = T.create();
+  noSecretDependence(t, cli, "x25519", "packages/crypto/src/x25519.wac", "x25519Base",
+                     "x25519Base($KEY)", i32[](0, 1), 32);
+  return t.report();
+}
+
+// ── Known leaks ───────────────────────────────────────────────────────────────
+// Asserted as leaks so that fixing one fails here and forces the README to change with it. A README
+// that describes yesterday's side channels is worse than none.
+
+export string test_ghash_branches_on_the_bits_of_h_known_leak(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratchDir(cli, "ghash");
+  const string SRC = "packages/crypto/src/ghash.wac";
+  string a = built(t, cli, dir, "a",
+                   driver(t, cli, dir, "ghash", SRC,
+                          "ghash($KEY, " + literal(block16()) + ")", keyOf(0, 16)));
+  string b = built(t, cli, dir, "b",
+                   driver(t, cli, dir, "ghash", SRC,
+                          "ghash($KEY, " + literal(block16()) + ")", keyOf(1, 16)));
+  if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
+
+  string said = compared(t, cli, a, b, false);
+  t.isTrue(startsWith(said, "differs "),
+           "ghash no longer leaks — update the README and delete this test: " + said);
+  // A *branch* leak, not an index one: the two runs part rather than standing at one point with
+  // different values. `--all` says which, because that is the distinction it is built to draw.
+  if (startsWith(said, "differs ")) {
+    string all = compared(t, cli, a, b, true);
+    t.isTrue(startsWith(all, "split "),
+             "expected a branch leak, got: " + all + " — " +
+             siteAt(cli, a, numberOf(word(said, 2))));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_weierstrass_ladder_branches_on_the_scalar_known_leak(Core core, Cli cli) {
+  // **The first asymmetric routine measured here, and it leaks.** `jacMul` in `weierstrass.wac` is
+  // double-and-add with the add taken only when the bit is set:
+  //
+  //     for (i32 i = 0; i < bits; i++) {
+  //       acc = jacDouble(c, acc);
+  //       i32 bit = (scalar[i / 8] >> (7 - (i % 8))) & 1;
+  //       if (bit == 1) { acc = jacAdd(c, acc, p); }     // <- weierstrass.wac:120
+  //     }
+  //
+  // The scalar is the private key in `curvePublicKey` and `curveEcdh`, and the *nonce* in ECDSA
+  // signing, where a partial leak is key recovery rather than key disclosure. Every caller of P-256
+  // and P-384 in this repository goes through it, which is `packages/tls`'s certificate chains and
+  // `packages/ssh`'s host keys.
+  //
+  // The journals overflow — about three million events against room for two — and it does not affect
+  // the verdict, because the traces part at the first differing bit and `ctcompare` only refuses to
+  // answer when *nothing* diverged inside what both kept.
+  T t = T.create();
+  string dir = scratchDir(cli, "p256");
+  const string SRC = "packages/crypto/src/p256.wac";
+  // Not the all-zero key: `curvePublicKey` traps on a scalar of zero or one past the group order, so
+  // the secrets here have to be valid keys as well as different.
+  string a = built(t, cli, dir, "a",
+                   driver(t, cli, dir, "p256PublicKey", SRC, "p256PublicKey($KEY)", keyOf(2, 32)));
+  string b = built(t, cli, dir, "b",
+                   driver(t, cli, dir, "p256PublicKey", SRC, "p256PublicKey($KEY)", keyOf(3, 32)));
+  if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
+
+  string said = compared(t, cli, a, b, false);
+  t.isTrue(startsWith(said, "differs "),
+           "the ladder no longer leaks — update the README and delete this test: " + said);
+  if (startsWith(said, "differs ")) {
+    // The expected place, in one constant used by both the check and the message — a message that
+    // spells the position a second time can say "expected 120, got 120" when it is wrong.
+    const string WANT = "then@packages/crypto/src/weierstrass.wac:120";
+    string got = siteAt(cli, a, numberOf(word(said, 2)));
+    string other = siteAt(cli, b, numberOf(word(said, 4)));
+    // One run stood on the taken side and the other on the untaken one; which of the two this names
+    // is not the claim, so both are accepted and both are shown.
+    t.isTrue(got == WANT || got == "else@packages/crypto/src/weierstrass.wac:120",
+             "the README says weierstrass.wac:120 leaks; the trace says " + got + " and " + other);
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratchDir(cli, "aes");
+  const string SRC = "packages/crypto/src/aes.wac";
+  string call = "aesEncrypt($KEY, " + literal(block16()) + ")";
+  string a = built(t, cli, dir, "a", driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(0, 16)));
+  string b = built(t, cli, dir, "b", driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(1, 16)));
+  if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
+
+  string said = compared(t, cli, a, b, false);
+  t.isTrue(startsWith(said, "differs "),
+           "aes no longer leaks — update the README and delete this test: " + said);
+  if (!startsWith(said, "differs ")) { cli.remove(dir, true).wait(); return t.report(); }
+
+  // The point of the whole exercise: this one has no branch to find. Counting branches reports AES's
+  // S-box lookup as perfectly uniform, so the two runs stand at *the same site* with different
+  // indices — which `--all` reports as `site` and a branch leak reports as `split`.
+  string all = compared(t, cli, a, b, true);
+  t.isTrue(startsWith(all, "site "),
+           "expected an index leak, got: " + all + " — " + siteAt(cli, a, numberOf(word(said, 2))));
+
+  // The README names these lines. Asserting them here is what stops the table drifting away from the
+  // code — a published measurement nothing checks is the failure this package already has an issue
+  // open about elsewhere.
+  string[] rows = splitLines(all);
+  string found = "";
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (!startsWith(rows[i], "site ")) { continue; }
+    found = found + siteAt(cli, a, numberOf(word(rows[i], 2))) + " ";
+  }
+  i32[] lines = i32[](113, 114, 115, 116, 149);
+  for (i32 i = 0; i < lines.len(); i++) {
+    string want = "index@packages/crypto/src/aes.wac:" + itoa(lines[i]);
+    t.isTrue(contains(found, want),
+             "README says " + want + " leaks; the trace no longer agrees. found: " + found);
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

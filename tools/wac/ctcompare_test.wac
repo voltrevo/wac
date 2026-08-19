@@ -172,10 +172,16 @@ export string test_a_routine_that_does_not_look_at_its_secret_says_same_6knq4wp(
   string a = built(t, cli, dir, "a", uniform(0));
   string b = built(t, cli, dir, "b", uniform(255));
   if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
-  t.eqStr(compared(t, cli, a, b, false), "same", "two runs that observe nothing");
+  // **`same 24`, not `same`.** The count is the difference between agreement and a comparison of two
+  // empty journals — a mistyped export calls nothing, records nothing, and matches perfectly. Both
+  // forms are asserted, and the number is asserted to be a number greater than nothing.
+  string said = compared(t, cli, a, b, false);
+  t.isTrue(startsWith(said, "same "), "two runs that observe nothing: " + said);
+  t.isTrue(atoiOf(said.slice(5, said.len())) > 0,
+           "`same` over no events at all is not agreement: " + said);
   // And `--all` says so out loud rather than printing nothing, which is what a command that never ran
   // also prints.
-  t.eqStr(compared(t, cli, a, b, true), "same", "--all on an identical pair");
+  t.isTrue(startsWith(compared(t, cli, a, b, true), "same "), "--all on an identical pair");
   cli.remove(dir, true).wait();
   return t.report();
 }

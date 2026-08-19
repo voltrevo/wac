@@ -8,7 +8,7 @@
 // silently, which is what `issues/open/0007` is about, and this file exists so that does
 // not happen to these ones.
 //
-// `test/constanttime.test.ts` asserts the *conclusions* — what is uniform, and where the
+// `test/wac/constanttime_test.wac` asserts the *conclusions* — what is uniform, and where the
 // known leaks are. This prints the numbers behind them.
 
 import { allDivergentSites, ctModule, type CtModule, traceOf } from "../../harness/ctTrace.ts";

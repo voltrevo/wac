@@ -136,7 +136,7 @@ and each is now written where the next person to touch that code will read it.
 - `tools/docSignatures.test.ts` is portable — `bindTypesFiles` exposes struct fields and method
   signatures — but it swaps the oracle from the reference compiler to wacc. That is arguably better
   and it is a change in what is claimed, so it wants the side-by-side treatment.
-- `packages/crypto/test/constanttime.test.ts` needs the compiler's **trace mode**, through
+- `packages/crypto/test/wac/constanttime_test.wac` needs the compiler's **trace mode**, through
   `harness/ctTrace.ts`. ~~wacc has no equivalent, so this is a compiler feature rather than a
   port.~~ **Stale as of 2026-08-18, and the blocker is smaller than this says.** wacc has
   instrumented since `issues/lang/0105` closed and is now the *default* — `harness/ctTrace.ts` says
@@ -1405,10 +1405,23 @@ events per run — the number is in the TypeScript's own comment — and `covdum
 per slot. Parsing 20 MB of text per run in wac, twice per comparison, is the wrong shape: the format
 is fine for the hundreds of events `cttrace_test.wac` reads and wrong for a million.
 
-So the route exists and the cost is in the wire format. The fix is a command that does the comparison
-where the modules are — `wac ctcompare <a.wasm> <b.wasm>`, answering with the first divergent site —
-rather than shipping both journals out to be compared. That is a design decision and a new command,
-which is why this is still here; it is no longer "a wac program cannot express it".
+**Built, and it moved — later the same day.** `wac build --trace` and `wac ctcompare [--all]` are the
+two commands, `spec/cli/wac.md` states their contract, `tools/wac/ctcompare_test.wac` holds them to it,
+and `packages/crypto/test/wac/constanttime_test.wac` is the port. It reproduces all three existing
+measurements: AES at `aes.wac` 113–116 and 149, every one an index and no branch to find; p256's
+ladder at `weierstrass.wac:120`; x25519 uniform over 1.6 million events. Two things it taught:
+
+  - **Truncation is checked after the walk, not before.** The first version refused to compare when
+    either journal had overflowed, which would have made exactly the expensive routines unmeasurable —
+    they are the ones that overflow. p256 overflows at 3.07M events and parts at event 382, and a
+    difference found inside the prefix both journals kept is real.
+  - **The two drivers must differ only in their data.** `main`'s own points are in the journal, so a
+    pair written with different shapes parts at event 1 — the driver rather than the routine. That
+    cost a measurement before it was noticed.
+
+`harness/ctTrace.ts` stays, and not for the test: `packages/crypto/ct.ts` regenerates the README's
+side-channel table from it. That tool could be a wac program over `ctcompare --all` now, which is
+worth doing and is not a test conversion.
 
 **`tor/ctor_live.test.ts` is not blocked, it is unverifiable here**: there is no C tor on this machine,
 so a port could only be shown to take its skip path. Worth doing by someone who can run it, and not

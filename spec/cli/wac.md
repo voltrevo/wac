@@ -208,15 +208,19 @@ so the comparison happens where the modules are and one line comes back:
 
 | line | meaning |
 |---|---|
-| `same` | the two journals are identical |
+| `same <n>` | the two journals are identical, over `n` events |
 | `differs <i> <sa> <va> <sb> <vb>` | at event `i`, where each side stood; `-1 -1` means that run had ended |
 | `truncated <a> <b>` | **nothing diverged, and a journal was too small to be sure** — each side's event count |
 
 `--all` replaces the first line with one per divergent site — `site <i> <site> <va> <vb>`, once per
 site — and stops at `split <i> <sa> <sb>`, where the two runs are at *different* points rather than at
 one point with different values. Past a split the journals are not aligned and every later difference
-is an artefact of the misalignment. It prints `same` when nothing diverged, because no output at all
-is also what a command that never ran produces.
+is an artefact of the misalignment. It prints `same <n>` when nothing diverged, because no output at
+all is also what a command that never ran produces.
+
+**`same` carries the event count**, because agreement over nothing is not agreement: a mistyped
+export name calls nothing and records nothing, and two empty journals match perfectly. A caller that
+did not check the number would be told every routine it asked about is constant-time.
 
 **Truncation is checked after the walk, not before it.** A difference found inside the prefix both
 journals kept is real — the events are aligned up to there, and what was dropped cannot un-differ

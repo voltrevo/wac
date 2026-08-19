@@ -1935,7 +1935,7 @@ fn covdump_command(rest: &[String]) -> i32 {
 /// output is the wrong wire for it: a caller would parse tens of megabytes twice to learn one number.
 /// This prints one line.
 ///
-///     same                      the two journals are identical
+///     same <n>                  the two journals are identical, over `n` events
 ///     differs <i> <sa> <va> <sb> <vb>   at event `i`, where each side stood
 ///     truncated <a> <b>         a side recorded fewer events than happened, so the answer is not
 ///                               a comparison — the journal was sized too small for the run
@@ -2018,7 +2018,7 @@ fn ctcompare_command(rest: &[String]) -> i32 {
             if overflowed {
                 println!("truncated {want_a} {want_b}");
             } else {
-                println!("same");
+                println!("same {}", n_a.min(n_b));
             }
         }
         return 0;
@@ -2049,7 +2049,10 @@ fn ctcompare_command(rest: &[String]) -> i32 {
     if overflowed {
         println!("truncated {want_a} {want_b}");
     } else {
-        println!("same");
+        // **The count, because `same` over nothing is not agreement.** A mistyped export name calls
+        // nothing and records nothing, and two empty journals match perfectly — which would report
+        // every routine in the repository as constant-time. A caller checks the number.
+        println!("same {}", n_a.min(n_b));
     }
     0
 }

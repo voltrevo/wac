@@ -489,7 +489,7 @@ broken compilation.
 
 ## Side channels
 
-`test/constanttime.test.ts` runs each routine twice with different secrets and the same
+`test/wac/constanttime_test.wac` runs each routine twice with different secrets and the same
 public input, and compares the ordered sequence of **branches taken and memory indices
 used**. Both matter: a secret-dependent branch is the obvious leak, and a secret-dependent
 *index* has no branch at all — `SBOX[key_byte]` touches a cache line chosen by the key,
