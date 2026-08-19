@@ -28,17 +28,33 @@ Four ways to run the same program, from a shell:
 
 `proj/wac.json5` exists in every one of them.
 
-## Why
+## Why — and it is not that the upward search is missing
 
-`projectRootOf` in `packages/wacc/example/wacc.wac` asks `candidateRoots(path, boundary)` for the
-directories to try, with `boundary` being `/` for an absolute path and `.` for a relative one.
-`candidateRoots` is a pure function of the *string* — deliberately, so the resolver does no I/O and
-can run in a browser — so for `main.wac` it yields exactly `["."]`. There is no component above `.`
-in a relative path, so the walk stops at the working directory and never reaches the real parent.
+**The upward walk exists and works.** `candidateRoots` in `packages/wacpkg/src/root.wac` is a proper
+loop from the file's directory to the boundary, with a fixed-point exit and a `..` guard. It climbs
+as many levels as it is given: a file at `a/b/c/main.wac` with the manifest at the root resolves
+`@/lib.wac` correctly, walking `a/b/c` → `a/b` → `a` → `.`.
 
-From `proj/` the relative spelling `src/main.wac` happens to work, because `.` *is* the project root.
-That is why nothing caught it: every test in the suite runs from a directory where the relative walk
-lands on the answer in one step.
+**The walk is lexical.** It walks the components of the path string it was handed, and the working
+directory is never consulted. `projectRootOf` sets `boundary` to `/` for an absolute path and `.` for
+a relative one, so a relative path can climb only as far as the path *as typed* spells out.
+
+That is the whole of it: `wac run src/main.wac` from `proj/` and `wac run main.wac` from `proj/src/`
+name the same file, and the first spells one parent component while the second spells none. So the
+first climbs to `.` and finds the manifest; the second is already at its boundary before it starts.
+
+Two spellings fail for two different reasons, which is worth knowing before changing anything:
+
+- `main.wac`, `./main.wac` — `dirOf` is `.`, which is also the boundary, so the chain is exactly
+  `["."]` and only the working directory is examined.
+- `../main.wac` — `candidateRoots` returns **empty** by an explicit check. The comment there says
+  why: `..` and an ordinary directory name look identical to a lexical walk, so a file that climbed
+  out of the project would otherwise be reported as inside it. That guard is correct for what it can
+  see; it is only wrong because the path never became absolute.
+
+From `proj/` the relative spelling happens to work because `.` *is* the project root. That is why
+nothing caught it: every test in the suite runs from a directory where the walk lands on the answer
+in one step.
 
 ## Why it matters
 
@@ -64,9 +80,9 @@ Three ways out, and the third is the recommendation:
    moves. The cost is that `candidateRoots` stops being the whole of the rule: the caller now does
    part of it, and the part it does is the part that needs a filesystem.
 3. **Give `candidateRoots` the working directory.** It stays pure — the cwd is data, passed in — and
-   it can then yield the real chain for a relative path. The boundary argument already exists to say
-   where to stop, so this is one more input of the same kind, and D7's order and stopping rule stay
-   in the one tested place. This looks right.
+   it can then yield the real chain for a relative path, and tell `..` from a directory name instead
+   of refusing. The boundary argument already exists to say where to stop, so this is one more input
+   of the same kind, and D7's order and stopping rule stay in the one tested place. This looks right.
 
 Whichever is taken, the case to add is a fixture run from a subdirectory: everything here passes
 today because the suite runs at a root.
