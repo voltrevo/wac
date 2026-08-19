@@ -55,6 +55,14 @@ export i32 indexOfPath(string[] paths, string path) {
  * By scanning for `from "…"` rather than by parsing, which is what the TypeScript did: the closure
  * only has to be a superset of what the checker needs, and a name it cannot resolve is one the
  * checker will report on anyway.
+ *
+ * **A built-in is not in it, and that is right.** `"core/option.wac"` names a module inside the
+ * compiler (`design/lang/0009` D4), so it resolves against nothing here and is skipped — and the
+ * compiler injects it, so the closure being without it is correct rather than short. What is *not*
+ * safe is treating the size of the answer as "how many packages this program pulls in": a caller
+ * that asserts a count is asserting how many *supplied files* it reached, and an import that moved
+ * into the tree lowers it without the program getting any smaller. `lambda_test.wac` was written
+ * that way and its guard fired when `Vec` moved, which is the guard doing its job.
  */
 export i32[] closureOf(string[] keys, string[] sources, i32 entry) {
   i32[] found = i32[CLOSURE_CAP]();

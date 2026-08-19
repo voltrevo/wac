@@ -1,6 +1,6 @@
 {
   "source": "compiler/wacSpec.test.ts",
-  "sha256": "460e4567cb053e5708778617acb4916c5c0b40437d8a596bb55b0d36e6422cd0",
+  "sha256": "2b3fe8a37a5f4e9d39351fcbc982ec1b1f0366632c75050fcb72977d0da8c01b",
   "cases": [
     {
       "test": "[§wac-int32-dfkqg8u] int32() returns 42",
@@ -2723,8 +2723,12 @@
       "entry": "main.wac",
       "files": [
         [
+          "helper.wac",
+          "import { Read } from core;\nexport Read end() { return Read.End; }"
+        ],
+        [
           "main.wac",
-          "\n    import { Read } from \"core\";\n    import { Read as R2 } from core;\n    i32 take(R2 r) { return match (r) { case End: 1, else: 0 }; }\n    export i32 run() { Read r = Read.End; return take(r); }\n  "
+          "\n      import { Read } from \"core\";\n      import { end } from \"./helper.wac\";\n      export i32 run() { Read r = end(); return match (r) { case End: 1, else: 0 }; }\n    "
         ]
       ],
       "ok": true,
