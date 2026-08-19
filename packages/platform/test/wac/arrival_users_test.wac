@@ -33,6 +33,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { Daemon, Held, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { keygen, restrict, publicLine } from "../../../wactest/src/keys.wac";
+import { builtProgram, builtByDeno } from "../../../wactest/src/built.wac";
 
 const string ENTRY = "packages/ssh/src/sshd.wac";
 
@@ -62,30 +63,24 @@ string nativeBinary(Core core, Cli cli) {
   return path;
 }
 
-string buildOne(Cli cli, bool native, string out) {
-  string[] grants = string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env");
-  if (native) {
-    string[] args = string[4 + grants.len()](fill: "");
-    args[0] = "build";
-    args[1] = ENTRY;
-    for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
-    args[2 + grants.len()] = "-o";
-    args[3 + grants.len()] = out;
-    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
-    if (!r.ran() || r.status != 0) {
-      return "wac build sshd: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
-    }
-    return "";
-  }
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", ENTRY);
-  string[] args = string[head.len() + grants.len() + 2](fill: "");
-  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
-  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
-  args[head.len() + grants.len()] = "-o";
-  args[head.len() + grants.len() + 1] = out;
-  Exec r = cli.exec("deno", args, u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { return "build.ts sshd: " + string.fromBytes(r.stderr); }
-  return "";
+/**
+ * The two `sshd` binaries, built once and kept.
+ *
+ * **This test was 15s and 12.2s of it was one `wac build`.** `sshd` reaches most of the repository —
+ * `packages/ssh`, `platform`, `fs`, `crypto` — and the binary compiles all of it every time it is
+ * asked, where `packages/platform/build.ts` keys a build on the content of what it read and answers a
+ * warm one in 0.26s. Nothing else here is close: four `ssh-keygen`s together are 0.01s.
+ *
+ * So both halves go through `wactest/src/built.wac`, which keeps the artefact in `.cache/built-<name>`
+ * and rebuilds it when anything under `trees` — or the `wac` binary itself — is newer. `packages` is
+ * the whole tree rather than the six directories `sshd` happens to reach today: under-naming a tree is
+ * how a test comes to assert against a binary built from code that has since changed, and a directory
+ * walk is cheap against a 12s compile.
+ */
+const string[] TREES = string[]("packages");
+
+string[] SSHD_GRANTS() {
+  return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env");
 }
 
 struct Said {
@@ -163,10 +158,10 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
   cli.remove(tmp, true).wait();
   cli.mkdir(tmp, true).wait();
 
-  string denoBin = tmp + "/sshd-deno";
-  string why = buildOne(cli, false, denoBin);
-  t.eqStr(why, "", "the Deno sshd built");
-  if (why != "") { return t.report(); }
+  string denoBin = builtByDeno(cli, ENTRY, "sshd-arrival-deno", SSHD_GRANTS(), "deno", false, TREES);
+  t.isTrue(denoBin != "" && cli.stat(denoBin).wait().exists,
+           "the Deno sshd built — see .cache/built-sshd-arrival-deno");
+  if (denoBin == "") { return t.report(); }
 
   string[] keys = string[]("hostkey", "admin", "ada", "grace");
   for (i32 i = 0; i < keys.len(); i++) {
@@ -213,12 +208,14 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
 
   string native = nativeBinary(core, cli);
   if (native == "") { cli.remove(tmp, true).wait(); return t.report(); }
-  why = buildOne(cli, true, tmp + "/sshd");
-  t.eqStr(why, "", "the native sshd built");
-  if (why != "") { cli.remove(tmp, true).wait(); return t.report(); }
+  string mod = builtProgram(cli, ENTRY, "sshd-arrival", SSHD_GRANTS(), TREES);
+  string manifest = mod.slice(0, mod.len() - 5) + ".json";
+  t.isTrue(cli.stat(mod).wait().exists && cli.stat(manifest).wait().exists,
+           "the native sshd built — see .cache/built-sshd-arrival");
+  if (!cli.stat(mod).wait().exists) { cli.remove(tmp, true).wait(); return t.report(); }
 
   // ── …and the host with no JavaScript in it serves the same file ─────────
-  Server second = serve(core, cli, tmp, native, string[](tmp + "/sshd.json"), image,
+  Server second = serve(core, cli, tmp, native, string[](manifest), image,
                         tmp + "/native.log");
   t.eqStr(second.error, "", "the native sshd is up");
   if (second.port <= 0) { cli.remove(tmp, true).wait(); return t.report(); }
