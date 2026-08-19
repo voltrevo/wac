@@ -1,0 +1,280 @@
+// **The arrival test.** One image, two substantially different hosts.
+//
+// design/0001, in its own words: "load the same image in two substantially different hosts and
+// demonstrate the same users, files, installed programs, shell behaviour and system services in both,
+// with no implicit access to either host" — where substantially different means **one JavaScript host
+// and one that is not** (D9), because two JavaScript hosts share the transport, the worker model and
+// the event loop and prove nothing.
+//
+// The program is `packages/box/src/bin/imaged.wac`, built twice: once for Deno and once for
+// `native/`, the wasmtime runtime. The *image* is one file on disk that both of them open.
+//
+// ## What this covers, and what it does not
+//
+// Covered: **files, installed programs and shell behaviour.** A session on one host writes; a session
+// on the other reads what it wrote, runs the same sixty applets over it, and writes back.
+//
+// **Users and system services** are `arrival_users_test.wac`'s half — `Fs.user` is set by
+// `packages/ssh`'s server, so that one needs the network. `/etc/passwd` crosses as a *file* here,
+// which is what design/0001 D5 says it is.
+//
+// Also worth knowing, because it is easy to read this file as covering more than it does: **the host
+// capability surface exercised here is `readFile` and `writeFile` and nothing else.** Everything the
+// session does to files goes through `packages/fs`'s VFS *inside* the image, which is the whole point
+// of the design — so a host `readDir` that answered in the wrong order changes nothing here, and that
+// was checked, because a canary that does not fire is worth more than one that does. The host's
+// directory and metadata capabilities are exercised by `packages/fs/test/wac/host_test.wac`.
+//
+// ## The strongest assertion here is the last one
+//
+// Two hosts agreeing about a file they both wrote is worth something. Two hosts producing **byte
+// identical images** after a session that changed nothing is worth more: it says the format carries no
+// trace of the machine that wrote it — no ordering that came from a directory listing, no timestamp
+// from a clock, no padding from an allocator. That is what "an image moves between hosts carrying its
+// state" has to mean to be true.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Ran, boundedAgain, hangReport } from "./hostfs.wac";
+
+const string ENTRY = "packages/box/src/bin/imaged.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/** The native host binary — `wacland`, built when its sources are newer than it. */
+string nativeBinary(Core core, Cli cli) {
+  string path = root(cli) + "/native/target/release/wacland";
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c",
+      "if [ -x '" + path + "' ] && " +
+      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer '" + path +
+      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
+      "cd native && cargo build --release --quiet"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0 || !cli.stat(path).wait().isFile) {
+    core.warn("arrival: SKIPPING the native half — cargo did not build `native`");
+    return "";
+  }
+  return path;
+}
+
+string buildOne(Cli cli, bool native, string out) {
+  string[] grants = string[]("--allow-read", "--allow-write");
+  if (native) {
+    string[] args = string[4 + grants.len()](fill: "");
+    args[0] = "build";
+    args[1] = ENTRY;
+    for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
+    args[2 + grants.len()] = "-o";
+    args[3 + grants.len()] = out;
+    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
+    if (!r.ran() || r.status != 0) {
+      return "wac build imaged: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    }
+    return "";
+  }
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", ENTRY);
+  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
+  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
+  args[head.len() + grants.len()] = "-o";
+  args[head.len() + grants.len() + 1] = out;
+  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return "build.ts imaged: " + string.fromBytes(r.stderr); }
+  return "";
+}
+
+/** The two builds, and the directory they and every image live in. */
+struct World {
+  bool ok;
+  string error;
+  string dir;
+  string deno;
+  string manifest;
+}
+
+World world(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/arrival-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string why = buildOne(cli, false, dir + "/imaged-deno") + buildOne(cli, true, dir + "/imaged");
+  return World(why == "", why, dir, dir + "/imaged-deno", dir + "/imaged.json");
+}
+
+/** One session over `image`, from the world's directory, bounded and asked twice if it wedges. */
+Ran session(Core core, Cli cli, World w, string cmd, string[] extra, string image, string script) {
+  string[] args = string[extra.len() + 3](fill: "");
+  for (i32 i = 0; i < extra.len(); i++) { args[i] = extra[i]; }
+  args[extra.len()] = image;
+  args[extra.len() + 1] = "-c";
+  args[extra.len() + 2] = script;
+  return boundedAgain(core, cli, w.dir, w.dir, cmd, args, u8[0](), () => { });
+}
+
+/** The non-empty lines of `text`. */
+string[] linesOf(string text) {
+  u8[] b = text.toBytes();
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == '\n') { if (i > at) { count = count + 1; } at = i + 1; }
+  }
+  string[] out = string[count](fill: "");
+  i32 n = 0;
+  at = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == '\n') {
+      if (i > at) { out[n] = text.slice(at, i); n = n + 1; }
+      at = i + 1;
+    }
+  }
+  return out;
+}
+
+export string test_an_image_written_on_one_host_is_the_same_system_on_the_other(
+    Core core, Cli cli) {
+  T t = T.create();
+  World w = world(cli, "same");
+  t.isTrue(w.ok, "imaged built for both hosts — " + w.error);
+  if (!w.ok) { return t.report(); }
+  const string IMG = "home.wacimg";
+
+  // **One.** The JavaScript host makes a system: a home directory, a file, and a file of numbers.
+  Ran made = session(core, cli, w, w.deno, string[0](fill: ""), IMG,
+    "mkdir -p /home/ada /etc; " +
+    "echo hello from deno > /home/ada/note; " +
+    "seq 1 5 > /home/ada/n; " +
+    "printf 'root:x:0:0::/root:/bin/sh\\nada:x:1000:1000::/home/ada:/bin/sh\\n' > /etc/passwd; " +
+    "ls /home/ada");
+  t.eqStr(made.out, "n\nnote\n", made.err);
+  // The canary for the whole file: an image nobody wrote to would make every read below pass by
+  // agreeing about nothing.
+  Stat s = cli.stat(w.dir + "/" + IMG).wait();
+  t.isTrue(s.size > (100 as i64), "the image is " + itoa(s.size as~ i32) + " bytes — nothing written");
+
+  string native = nativeBinary(core, cli);
+  if (native == "") { cli.remove(w.dir, true).wait(); return t.report(); }
+
+  // **Two.** The host with no JavaScript in it opens the same file: the same names, the same bytes,
+  // and `sort` and `head` — two of `packages/box`'s applets — over the numbers the other host wrote.
+  Ran read = session(core, cli, w, native, string[](w.manifest), IMG,
+    "ls /home/ada; cat /home/ada/note; sort -nr /home/ada/n | head -1; wc -l < /etc/passwd");
+  t.eqStr(read.out, "n\nnote\nhello from deno\n5\n2\n", read.err);
+
+  // **Two and a half: the system's *services*, from the same file.** design/0001 step 7 — what runs at
+  // boot is `/etc/init` in the image, so `init` on the other host starts what this one wrote down.
+  // Everything about it crosses: the parsing, the spawning, the relayed output and the statuses.
+  Ran wroteInit = session(core, cli, w, w.deno, string[0](fill: ""), IMG,
+    "printf 'echo from the init file\nfalse\n' > /etc/init; wc -l < /etc/init");
+  t.eqStr(wroteInit.out, "2\n", wroteInit.err);
+  Ran booted = session(core, cli, w, native, string[](w.manifest), IMG, "init; echo status=$?");
+  t.eqStrArray(linesOf(booted.out), string[](
+    "init: started echo",
+    "init: started false",
+    "from the init file",
+    "init: echo exited 0",
+    "init: false exited 1",
+    // The system ends when its last service does — design/0001 step 7's trigger, decided 2026-08-12.
+    // Worth having on *this* side of the comparison: the line is printed by the wasmtime host here,
+    // which is the half that would be missing if only the JavaScript one said it.
+    "init: all services have stopped",
+    "status=1"), booted.err);
+
+  // **Three.** And back the other way, which is the half that would be missing if only one host could
+  // write: the format is not "what Deno emits and wasmtime tolerates".
+  Ran wrote = session(core, cli, w, native, string[](w.manifest), IMG,
+    "echo written by wasmtime > /home/ada/back; ls /home/ada");
+  t.eqStr(wrote.out, "back\nn\nnote\n", wrote.err);
+  Ran back = session(core, cli, w, w.deno, string[0](fill: ""), IMG,
+    "cat /home/ada/back; ls /home/ada");
+  t.eqStr(back.out, "written by wasmtime\nback\nn\nnote\n", back.err);
+  cli.remove(w.dir, true).wait();
+  return t.report();
+}
+
+export string test_a_session_that_changes_nothing_writes_the_same_bytes_on_either_host(
+    Core core, Cli cli) {
+  T t = T.create();
+  string native = nativeBinary(core, cli);
+  if (native == "") { return t.report(); }
+  World w = world(cli, "twice");
+  t.isTrue(w.ok, "imaged built for both hosts — " + w.error);
+  if (!w.ok) { return t.report(); }
+
+  Ran made = session(core, cli, w, w.deno, string[0](fill: ""), "twice.wacimg",
+                     "mkdir -p /a/b; echo x > /a/b/c; seq 1 20 > /a/n; ls /a");
+  t.eqStr(made.out, "b\nn\n", made.err);
+
+  cli.exec("/bin/sh", string[]("-c",
+    "cd '" + w.dir + "' && cp twice.wacimg js.wacimg && cp twice.wacimg rs.wacimg"),
+    u8[0]()).wait();
+  Ran a = session(core, cli, w, w.deno, string[0](fill: ""), "js.wacimg", "true");
+  Ran b = session(core, cli, w, native, string[](w.manifest), "rs.wacimg", "true");
+  string stuck = hangReport("the session that changes nothing",
+                            string[]("one host", "the other"), Ran[](a, b));
+  if (stuck != "") { t.fail(stuck); cli.remove(w.dir, true).wait(); return t.report(); }
+  t.eqI32(a.code, 0, a.err);
+  t.eqI32(b.code, 0, b.err);
+
+  FileResult js = cli.readFile(w.dir + "/js.wacimg").wait();
+  FileResult rs = cli.readFile(w.dir + "/rs.wacimg").wait();
+  t.isTrue(js.ok && rs.ok, "both images are readable");
+  if (!js.ok || !rs.ok) { cli.remove(w.dir, true).wait(); return t.report(); }
+  // Byte for byte. Anything that differed here would be the machine leaking into the image: a
+  // directory order, a clock, an allocator's padding.
+  t.eqBytes(rs.bytes, js.bytes, "the two hosts wrote different images");
+  // The canary again, and it is not the same one: an image of zero bytes is also byte-identical.
+  t.isTrue(js.bytes.len() > 100, "the image is " + itoa(js.bytes.len()) + " bytes");
+  cli.remove(w.dir, true).wait();
+  return t.report();
+}
+
+export string test_neither_host_reaches_the_disk_except_through_the_grants_the_image_needs(
+    Core core, Cli cli) {
+  // `imaged` is granted read and write **because it has an image to open**, and that is all it uses
+  // them for: the session's own filesystem is the image. So a path that exists on this machine
+  // resolves inside the image instead, on both hosts.
+  //
+  // Asserted by *shadowing* rather than by absence. "The file is not there" would also be the answer
+  // if the shell were broken, and an assertion that a broken shell passes is not an assertion. So the
+  // image gets an `/etc/hostname` of its own, with contents this machine's cannot have, and both hosts
+  // have to read that one.
+  T t = T.create();
+  string native = nativeBinary(core, cli);
+  if (native == "") { return t.report(); }
+  World w = world(cli, "sealed");
+  t.isTrue(w.ok, "imaged built for both hosts — " + w.error);
+  if (!w.ok) { return t.report(); }
+  const string IMG = "sealed.wacimg";
+
+  FileResult h = cli.readFile("/etc/hostname").wait();
+  string theirs = h.ok ? trimmed(string.fromBytes(h.bytes)) : "";
+  session(core, cli, w, w.deno, string[0](fill: ""), IMG,
+          "mkdir -p /etc; echo inside-the-image > /etc/hostname");
+
+  string[] names = string[]("deno", "native");
+  for (i32 i = 0; i < 2; i++) {
+    string cmd = i == 0 ? w.deno : native;
+    string[] extra = i == 0 ? string[0](fill: "") : string[](w.manifest);
+    Ran r = session(core, cli, w, cmd, extra, IMG, "cat /etc/hostname");
+    t.eqStr(r.out, "inside-the-image\n", names[i] + ": " + r.out + r.err);
+    if (theirs.len() > 0) {
+      t.isFalse(contains(r.out, theirs), names[i] + " read the machine's hostname");
+    }
+  }
+  cli.remove(w.dir, true).wait();
+  return t.report();
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\n" || c == "\t" || c == "\r"; }

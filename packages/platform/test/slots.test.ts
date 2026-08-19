@@ -6,7 +6,7 @@
 // guest would keep watching twelve sockets on a ring of 128, or — far worse in the other direction —
 // submit more calls than there are slots and park for ever with the held slots unable to complete.
 //
-// Checked by reading the wac source as text, the way `order.test.ts` checks the field order it depends on.
+// Checked by reading the wac source as text, the way `test/wac/order_test.wac` checks the field order it depends on.
 // A compile would be a heavier way to learn the same thing.
 
 import { SLOTS } from "../host/layout.ts";

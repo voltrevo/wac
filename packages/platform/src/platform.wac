@@ -1311,7 +1311,7 @@ export const i32 CALL_SLOTS = 128;
  * Standard input's handle, so that `waitAny` can watch it beside a socket and a child.
  *
  * Reserved rather than allocated: a host's handle counter starts past the reserved ones, so this
- * can never name anything else. `test/handles.test.ts` is what holds the hosts to that.
+ * can never name anything else. `test/wac/handles_test.wac` is what holds the hosts to that.
  */
 export const i32 STDIN = 0;
 

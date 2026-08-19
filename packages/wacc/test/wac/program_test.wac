@@ -27,7 +27,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult, Stat } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles } from "../../src/api.wac";
-import { importSpecs, resolveFrom } from "../../src/files.wac";
+import { Graph, graphOf } from "./graph.wac";
 
 const string SOURCE = "packages/wacc/example/wacc.wac";
 const string GLUERUN = "packages/wacc/test/gluerun.ts";
@@ -102,38 +102,6 @@ Exec runProgram(Cli cli, string program, string[] args) {
 }
 
 /** The import graph of `entry`, walked the way the program walks it. */
-struct Graph {
-  string[] paths;
-  string[] sources;
-  bool ok;
-  string error;
-}
-
-Graph graphOf(Cli cli, string entry) {
-  string[] paths = string[64](fill: "");
-  string[] sources = string[64](fill: "");
-  i32 n = 0;
-  paths[0] = entry;
-  n = 1;
-  for (i32 i = 0; i < n; i++) {
-    FileResult f = cli.readFile(paths[i]).wait();
-    if (!f.ok) { return Graph(paths, sources, false, "cannot read " + paths[i]); }
-    sources[i] = string.fromBytes(f.bytes);
-    string[] specs = importSpecs(f.bytes);
-    for (i32 s = 0; s < specs.len(); s++) {
-      string resolved = resolveFrom(paths[i], specs[s]);
-      bool seen = false;
-      for (i32 k = 0; k < n; k++) { if (paths[k] == resolved) { seen = true; } }
-      if (seen || n >= paths.len()) { continue; }
-      paths[n] = resolved;
-      n = n + 1;
-    }
-  }
-  string[] p = string[n](fill: "");
-  string[] s = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { p[i] = paths[i]; s[i] = sources[i]; }
-  return Graph(p, s, true, "");
-}
 
 export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(
     Core core, Cli cli) {

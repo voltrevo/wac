@@ -1,7 +1,7 @@
 // **The arrival test's last two words: users and system services.**
 //
 // design/0001 asks for "the same users, files, installed programs, shell behaviour and system
-// services" in two substantially different hosts. `arrival.test.ts` covers files, programs and shell
+// services" in two substantially different hosts. `arrival_test.wac` covers files, programs and shell
 // behaviour by moving an image between them. This is the other half, and it needs a *service*: the
 // users only exist once something logs in as them.
 //

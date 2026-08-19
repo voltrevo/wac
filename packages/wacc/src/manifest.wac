@@ -6,7 +6,7 @@
 // This is that half, in wac. `design/lang/0003` step 4.
 //
 // **Byte-identical output, not merely equivalent.** The two derivations are checked against each
-// other with `cmp` — `packages/wacc/test/manifest.test.ts` — and a manifest that only *parsed* the
+// other with `cmp` — `packages/wacc/test/wac/manifest_test.wac` — and a manifest that only *parsed* the
 // same would leave the rebuilt seed a different file from the built one, so the interesting question
 // (is this the same artefact?) would have no cheap answer. That is why the layout below reproduces
 // `JSON.stringify(m, null, 2)` exactly, down to `[]` for an empty array.

@@ -1,0 +1,185 @@
+// The reserved handles, which five hosts and the wac side all have to agree about.
+//
+// A handle is a number and nothing else — that is the point of it, and what lets `waitAny` watch a
+// socket, a child's output and standard input in one call. Two of those numbers are *reserved* rather
+// than allocated: 0 is standard input, and 1 is a child's end of its filesystem channel (`PARENT_FS`,
+// wac-mono 0116). Nothing hands them out, and every host's counter has to start past them.
+//
+// It was very nearly not caught. The JavaScript hosts counted allocated handles from 1 and reserved
+// only 0, which was correct while there was one reserved number; the native host counted from **0**,
+// because its table is a `Vec` and the first `push` is index zero. So on that host the first child a
+// program spawned *was* handle 0 — the number that means standard input everywhere else. Nothing had
+// noticed, because `Cap::Recv` consults the handle table before it considers standard input: a program
+// that spawned before it read got its child, and one that read first got a refusal. Both are wrong and
+// neither says so.
+//
+// Adding a second reserved number is exactly the change that would have made that permanent, so the
+// numbers are read out of the files that declare them and compared. A constant in one file is a
+// constant the others copy.
+//
+// ## And then it happened again, in the host this did not read
+//
+// This test was written against four hosts. `native/v8` is a fifth — the same runtime on V8 rather
+// than wasmtime — and it declared none of these constants, so the loop walked straight past it. Its
+// allocator started at 1, and the first handle it ever handed out was `PARENT_FS`: before a spawn, a
+// child asking its parent for a filesystem got a throw, so every `box` applet trapped; after one it
+// would have been handed the child's *output queue* under the number that means "ask my parent".
+// `issues/system/0148`, and the second time this exact class of bug has been found.
+//
+// A guard for a class of rot is only as wide as the files it opens. This one names every host that
+// allocates a handle, and a sixth has to be added here as well as written.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. Every lookup below is asserted to have *found*
+// its constant before it is compared: an absent one answering -1 would agree with another absent one,
+// which is the shape this file exists to catch.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { contains, splitLines, startsWith, trimmed } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+string sourceOf(T t, Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  t.isTrue(f.ok, path + " is readable — " + f.error);
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+/** The digits at `from`, or -1 when there are none. */
+i32 digitsAt(string s, i32 from) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  i32 count = 0;
+  i32 i = from;
+  while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
+    n = n * 10 + (b[i] - '0');
+    count = count + 1;
+    i = i + 1;
+  }
+  return count == 0 ? -1 : n;
+}
+
+/**
+ * One `<prefix><name><mid><number>;` declaration, whatever the language's spelling of it is.
+ *
+ * -1 when the line is not there, which every caller checks before comparing.
+ */
+i32 declared(string src, string prefix, string name, string mid) {
+  string want = prefix + name + mid;
+  string[] lines = splitLines(src);
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (!startsWith(lines[i], want)) { continue; }
+    return digitsAt(lines[i], want.len());
+  }
+  return -1;
+}
+
+/** Every right-hand side of `let nextHandle = …;` in a host. */
+string[] nextHandleStarts(string src) {
+  string[] lines = splitLines(src);
+  string[] found = string[8](fill: "");
+  i32 n = 0;
+  const string MARK = "let nextHandle = ";
+  for (i32 i = 0; i < lines.len() && n < found.len(); i++) {
+    string l = trimmed(lines[i]);
+    if (!startsWith(l, MARK)) { continue; }
+    string rest = l.slice(MARK.len(), l.len());
+    i32 semi = rest.indexOf(";");
+    found[n] = semi < 0 ? rest : rest.slice(0, semi);
+    n = n + 1;
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
+}
+
+export string test_the_reserved_handles_are_the_same_numbers_on_the_wac_side_and_in_every_host(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The wac side: `export const i32 NAME = N;`
+  string wacSrc = sourceOf(t, cli, "packages/platform/src/platform.wac");
+  i32 stdinWac = declared(wacSrc, "export const i32 ", "STDIN", " = ");
+  i32 parentWac = declared(wacSrc, "export const i32 ", "PARENT_FS", " = ");
+  // The shared host module, which both reserved numbers and the counter's floor live in.
+  string jsSrc = sourceOf(t, cli, "packages/platform/host/children.ts");
+  i32 parentJs = declared(jsSrc, "export const ", "PARENT_FS_HANDLE", " = ");
+  i32 floorJs = declared(jsSrc, "export const ", "FIRST_FREE_HANDLE", " = ");
+  // The two hosts with no JavaScript in them, which each declare all three because neither has an
+  // import to share. Their `FIRST_FREE_HANDLE` differs in type — a `usize` indexes wasmtime's `Vec` of
+  // slots, an `i32` is the V8 host's counter — so the number is read separately from the name.
+  string rsSrc = sourceOf(t, cli, "native/src/main.rs");
+  i32 stdinRs = declared(rsSrc, "const ", "STDIN_HANDLE", ": i32 = ");
+  i32 parentRs = declared(rsSrc, "const ", "PARENT_FS_HANDLE", ": i32 = ");
+  i32 floorRs = declared(rsSrc, "const ", "FIRST_FREE_HANDLE", ": usize = ");
+  string v8Src = sourceOf(t, cli, "native/v8/src/main.rs");
+  i32 stdinV8 = declared(v8Src, "const ", "STDIN_HANDLE", ": i32 = ");
+  i32 parentV8 = declared(v8Src, "const ", "PARENT_FS_HANDLE", ": i32 = ");
+  i32 floorV8 = declared(v8Src, "const ", "FIRST_FREE_HANDLE", ": i32 = ");
+
+  // **Found, before compared.** Two constants that are both missing answer -1 and agree perfectly.
+  string[] names = string[]("platform.wac STDIN", "platform.wac PARENT_FS",
+                            "children.ts PARENT_FS_HANDLE", "children.ts FIRST_FREE_HANDLE",
+                            "main.rs STDIN_HANDLE", "main.rs PARENT_FS_HANDLE",
+                            "main.rs FIRST_FREE_HANDLE", "v8 STDIN_HANDLE",
+                            "v8 PARENT_FS_HANDLE", "v8 FIRST_FREE_HANDLE");
+  i32[] values = i32[](stdinWac, parentWac, parentJs, floorJs, stdinRs, parentRs, floorRs,
+                       stdinV8, parentV8, floorV8);
+  for (i32 i = 0; i < names.len() && i < values.len(); i++) {
+    t.neI32(values[i], -1, names[i] + " is not declared where this expects it");
+  }
+
+  t.eqI32(stdinWac, 0, "standard input's handle is 0 in platform.wac");
+  t.eqI32(parentWac, 1, "the filesystem channel's handle is 1 in platform.wac");
+  t.eqI32(parentJs, parentWac, "children.ts and platform.wac disagree");
+  t.eqI32(stdinRs, stdinWac, "main.rs and platform.wac disagree about standard input");
+  t.eqI32(parentRs, parentWac, "main.rs and platform.wac disagree about PARENT_FS");
+  t.eqI32(stdinV8, stdinWac, "native/v8 and platform.wac disagree about standard input");
+  t.eqI32(parentV8, parentWac, "native/v8 and platform.wac disagree about PARENT_FS");
+
+  // **The floor is above every reserved number**, which is the property the two constants exist for.
+  i32 highest = stdinWac > parentWac ? stdinWac : parentWac;
+  t.isTrue(floorJs > highest,
+           "FIRST_FREE_HANDLE is " + itoa(floorJs) + ", which is not past " + itoa(highest));
+  t.eqI32(floorRs, floorJs, "the native host's first free handle is not the JavaScript hosts'");
+  t.eqI32(floorV8, floorJs,
+          "native/v8's first free handle is not the JavaScript hosts' — 0148 was exactly this");
+  return t.report();
+}
+
+export string test_every_hosts_allocation_counter_starts_at_the_floor_rather_than_at_a_number(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The three JavaScript hosts allocate from a counter. Read rather than trusted, because the way this
+  // went wrong before was a literal that was right when it was written: `let nextHandle = 1` is correct
+  // for one reserved number and silently wrong for two.
+  string[] hosts = string[]("deno.ts", "node.ts", "browser.ts");
+  for (i32 i = 0; i < hosts.len(); i++) {
+    string src = sourceOf(t, cli, "packages/platform/host/" + hosts[i]);
+    string[] starts = nextHandleStarts(src);
+    t.eqStrArray(starts, string[]("FIRST_FREE_HANDLE"),
+                 hosts[i] + " starts its handle counter at a literal");
+  }
+
+  // The native host has no counter — its table is a `Vec` and a handle is an index — so what it
+  // reserves is *slots*, and the check is that it makes as many of them as there are reserved numbers
+  // rather than that it counts from somewhere.
+  string rs = sourceOf(t, cli, "native/src/main.rs");
+  t.isTrue(contains(rs, "slots: vec![None; FIRST_FREE_HANDLE]"),
+           "the native handle table does not reserve FIRST_FREE_HANDLE slots, so an allocated handle " +
+           "can be one");
+
+  // The V8 host *does* have a counter, so it is read the same way the JavaScript ones are. It began at
+  // the literal 1 — correct for one reserved number, and 0148 for two.
+  //
+  // Stated as the property rather than as a list of matches: `next_handle: i32,` is the struct's field
+  // declaration and `next_handle: FIRST_FREE_HANDLE,` is the initialiser, and a check that collected
+  // both spellings was reading the type as if it were a value.
+  string v8 = sourceOf(t, cli, "native/v8/src/main.rs");
+  bool fromDigit = false;
+  for (i32 d = 0; d <= 9; d++) {
+    if (contains(v8, "next_handle: " + itoa(d))) { fromDigit = true; }
+  }
+  t.isFalse(fromDigit, "native/v8 initialises its handle counter from a number — 0148 was the literal 1");
+  t.isTrue(contains(v8, "next_handle: FIRST_FREE_HANDLE,"),
+           "native/v8 does not initialise its handle counter from the shared floor");
+  return t.report();
+}

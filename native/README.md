@@ -115,7 +115,7 @@ That took `cwd`, `readStdin`, `readChunk` with the `Read` enum, `env`, `pushChil
 behind it: without `env` in the manifest it answers *absent* rather than reading the real environment,
 which is not a refusal but the honest answer to "what does this world's environment say".
 
-**The arrival test passes.** `packages/platform/test/arrival.test.ts`: an image written by the Deno
+**The arrival test passes.** `packages/platform/test/wac/arrival_test.wac`: an image written by the Deno
 host is the same system here and back again, and a session that changes nothing writes a byte-identical
 image on either host, with 65 applets run over it in between. The shell's corpus is a separate
 claim and a separate test: `native_shell_test.wac` runs the first 25 scripts through both hosts on

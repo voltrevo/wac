@@ -648,7 +648,7 @@ export function cliOf(
  * The `Page` capabilities, for an interactive application in a browser.
  *
  * Built like `Cli`: positionally, with one hoisted resolver per return shape, and every
- * argument tagged so `order.test.ts` can check this list against `platform.wac`.
+ * argument tagged so `test/wac/order_test.wac` can check this list against `platform.wac`.
  */
 export type PageClasses = {
   // `PendingClass` is the four-argument ticket shape; a struct's `of` takes its own fields.

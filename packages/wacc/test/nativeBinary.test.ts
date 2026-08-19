@@ -15,7 +15,7 @@
 // differ, "one file compiles this repository" stops being one claim and becomes two. The entry is
 // wacc's own API: the heaviest thing here, and the one whose output seeds the next build.
 //
-// **Opt-in**, like `binary.test.ts` and for the same reason: this rebuilds the crate and writes 67 MB.
+// **Opt-in**, like `test/wac/binary_test.wac` and for the same reason: this rebuilds the crate and writes 67 MB.
 //
 //     WAC_V8_SEED=1 deno test -A packages/wacc/test/nativeBinary.test.ts
 //

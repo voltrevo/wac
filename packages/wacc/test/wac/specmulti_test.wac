@@ -1,0 +1,263 @@
+// **The contract, where it takes more than one file to state it.**
+//
+// `specCheck.test.ts` and `specAccept.test.ts` hold this checker to the programs a single file states.
+// They cannot reach the rules that are *about* files — export visibility, re-export, cross-file type
+// identity and type-name scope — because none of those can be written down in one file. Those programs
+// sit in `compiler/wacSpec.test.ts` as `Map`s, and nothing looked at them until the corpus started
+// being recorded rather than read.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The corpus is `specCases.json`, written by
+// `packages/wacc/tools/specCases.ts`; the checker is `packages/wacc/src/api.wac`, imported directly
+// rather than reached through `wacBind`, which is the shorter route and the one a wac program takes.
+//
+// ## The staleness check is the first test for a reason
+//
+// The corpus is a *recording* of what `wacSpec.test.ts` currently states. A recording that has drifted
+// from its source is a corpus that asserts what the spec used to say, and it would go on passing —
+// so the digest of the file it was taken from is stored with it and compared before anything else.
+// Rewording one comment in that file is enough to invalidate it, which is exactly the sensitivity
+// wanted: nothing in it is decoration.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { jsonFile, strOf, arrayOf, boolOf } from "../../../wactest/src/jsonfile.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { sha256 } from "../../../crypto/src/sha256.wac";
+import { encode } from "../../../codec/src/hex.wac";
+import { dumpErrors, dumpTypeErrorsFiles } from "../../src/api.wac";
+
+const string CORPUS = "packages/wacc/test/specCases.json";
+
+/** One recorded program: its files, which one is the entry, and whether the spec calls it legal. */
+struct Case {
+  string key;
+  string entry;
+  string[] paths;
+  string[] sources;
+  bool ok;
+  string message;
+}
+
+string stringIn(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return ""; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { return ""; }
+  }
+}
+
+bool boolIn(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return false; }
+  match (v!) {
+    case Bool(value): { return value; }
+    else: { return false; }
+  }
+}
+
+JsonArray arrayIn(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return JsonArray.create(); }
+  match (v!) {
+    case Array(items): { return items; }
+    else: { return JsonArray.create(); }
+  }
+}
+
+string itemString(JsonValue v) {
+  match (v) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { return ""; }
+  }
+}
+
+/**
+ * Every recorded case, keyed the way the ledgers below name them.
+ *
+ * The key is `<test name>#<nth>`, because one spec clause can state several programs and a bare name
+ * would not say which. `keyed()` in `specCases.ts` builds the same thing for the same reason.
+ */
+Case[] load(Cli cli) {
+  JsonObject top = jsonFile(cli, CORPUS);
+  JsonArray cases = arrayIn(top, "cases");
+  Case[] out = Case[cases.len()](fill: Case("", "", string[0](fill: ""), string[0](fill: ""),
+                                            false, ""));
+  // How many times each test name has been seen, so the nth can be numbered.
+  string[] names = string[cases.len()](fill: "");
+  i32[] counts = i32[cases.len()](fill: 0);
+  i32 nNames = 0;
+
+  for (i32 i = 0; i < cases.len(); i++) {
+    JsonObject c = JsonObject.create();
+    match (cases.get(i)) {
+      case Object(members): { c = members; }
+      else: { continue; }
+    }
+    string test = stringIn(c, "test");
+    i32 nth = 0;
+    bool found = false;
+    for (i32 k = 0; k < nNames; k++) {
+      if (names[k] == test) { nth = counts[k]; counts[k] = counts[k] + 1; found = true; }
+    }
+    if (!found) { names[nNames] = test; counts[nNames] = 1; nNames = nNames + 1; }
+
+    JsonArray files = arrayIn(c, "files");
+    string[] paths = string[files.len()](fill: "");
+    string[] sources = string[files.len()](fill: "");
+    for (i32 k = 0; k < files.len(); k++) {
+      match (files.get(k)) {
+        case Array(pair): {
+          if (pair.len() >= 2) {
+            paths[k] = itemString(pair.get(0));
+            sources[k] = itemString(pair.get(1));
+          }
+        }
+        else: { }
+      }
+    }
+    out[i] = Case(test + "#" + itoa(nth), stringIn(c, "entry"), paths, sources,
+                  boolIn(c, "ok"), stringIn(c, "message"));
+  }
+  return out;
+}
+
+/** The cases that take more than one file to state. */
+Case[] multiFile(Case[] all, bool wantOk) {
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].paths.len() > 1 && all[i].ok == wantOk) { n = n + 1; }
+  }
+  Case[] out = Case[n](fill: all.len() > 0 ? all[0] : Case("", "", string[0](fill: ""),
+                                                           string[0](fill: ""), false, ""));
+  i32 at = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].paths.len() > 1 && all[i].ok == wantOk) { out[at] = all[i]; at = at + 1; }
+  }
+  return out;
+}
+
+/** A program is refused when any phase says no; which phase is not the language's business. */
+bool refuses(Case c) {
+  for (i32 i = 0; i < c.sources.len(); i++) {
+    if (dumpErrors(c.sources[i].toBytes()).len() > 0) { return true; }
+  }
+  return dumpTypeErrorsFiles(c.paths, c.sources, c.entry).len() > 0;
+}
+
+/**
+ * **Empty**, and it started at nine.
+ *
+ * They were two rules rather than nine bugs, and each closed its whole group at once. Four were export
+ * visibility: a name declared without `export`, or one the file merely imports, is not that file's to
+ * give away. Five were `§wac-type-name-scope-8vqk3mn`: writing a type's name requires bringing it into
+ * scope, variants included.
+ */
+string[] knownMisses() { return string[0](fill: ""); }
+
+/**
+ * **Empty.** It held one: two modules each declaring a `Dup`, one imported as `Dup as DupB`. Names
+ * were declared under the name the *declaring* file gave them, so the alias was never a type and the
+ * second module's fields were looked up on the first module's struct.
+ */
+string[] knownFalseAlarms() { return string[0](fill: ""); }
+
+bool listed(string[] ledger, string key) {
+  for (i32 i = 0; i < ledger.len(); i++) { if (ledger[i] == key) { return true; } }
+  return false;
+}
+
+/**
+ * A ledger that names a case the corpus no longer contains is worse than an unnamed one: it reads as
+ * coverage and asserts nothing.
+ */
+void assertKeysExist(T t, string[] ledger, Case[] all, string what) {
+  for (i32 i = 0; i < ledger.len(); i++) {
+    bool live = false;
+    for (i32 k = 0; k < all.len(); k++) { if (all[k].key == ledger[i]) { live = true; } }
+    t.isTrue(live, what + " names a case the corpus does not contain: " + ledger[i]);
+  }
+}
+
+export string test_the_recorded_corpus_is_the_one_the_spec_suite_currently_states(
+    Core core, Cli cli) {
+  T t = T.create();
+  FileResult f = cli.readFile("compiler/wacSpec.test.ts").wait();
+  t.isTrue(f.ok, "wacSpec.test.ts is readable — " + f.error);
+  if (!f.ok) { return t.report(); }
+  string got = string.fromBytes(encode(sha256(f.bytes)));
+  string want = strOf(jsonFile(cli, CORPUS), "sha256");
+  t.eqStr(got, want,
+          "compiler/wacSpec.test.ts has changed since this corpus was taken — regenerate it: " +
+          "deno run -A packages/wacc/tools/specCases.ts");
+  return t.report();
+}
+
+export string test_rung_3_every_multi_file_program_the_spec_calls_illegal_refused(
+    Core core, Cli cli) {
+  T t = T.create();
+  Case[] all = load(cli);
+  Case[] cases = multiFile(all, false);
+  t.isTrue(cases.len() >= 12, "only " + itoa(cases.len()) + " multi-file rejections found");
+  string[] ledger = knownMisses();
+  assertKeysExist(t, ledger, all, "KNOWN_MISSES");
+
+  string[] missed = string[cases.len()](fill: "");
+  i32 nMissed = 0;
+  string[] caught = string[cases.len()](fill: "");
+  i32 nCaught = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    bool refused = refuses(cases[i]);
+    bool known = listed(ledger, cases[i].key);
+    if (!refused && !known) {
+      missed[nMissed] = cases[i].key + " — spec says: " + cases[i].message;
+      nMissed = nMissed + 1;
+    }
+    if (refused && known) { caught[nCaught] = cases[i].key; nCaught = nCaught + 1; }
+  }
+  core.log("    rung 3 across files: " + itoa(cases.len() - nMissed - ledger.len()) + " of " +
+           itoa(cases.len()) + " refused, " + itoa(ledger.len()) + " known misses");
+
+  t.eqI32(nMissed, 0, "the spec calls these illegal and wacc accepts them: " +
+          joined(firstOf(missed, nMissed), " | "));
+  t.eqI32(nCaught, 0, "now refused — take them out of KNOWN_MISSES: " +
+          joined(firstOf(caught, nCaught), " | "));
+  return t.report();
+}
+
+export string test_rung_3_every_multi_file_program_the_spec_calls_legal_accepted(
+    Core core, Cli cli) {
+  T t = T.create();
+  Case[] all = load(cli);
+  Case[] cases = multiFile(all, true);
+  t.isTrue(cases.len() >= 35, "only " + itoa(cases.len()) + " multi-file acceptances found");
+  string[] ledger = knownFalseAlarms();
+  assertKeysExist(t, ledger, all, "KNOWN_FALSE_ALARMS");
+
+  string[] alarms = string[cases.len()](fill: "");
+  i32 nAlarms = 0;
+  string[] silent = string[cases.len()](fill: "");
+  i32 nSilent = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    bool refused = refuses(cases[i]);
+    bool known = listed(ledger, cases[i].key);
+    if (refused && !known) { alarms[nAlarms] = cases[i].key; nAlarms = nAlarms + 1; }
+    if (!refused && known) { silent[nSilent] = cases[i].key; nSilent = nSilent + 1; }
+  }
+  core.log("    rung 3 across files: " + itoa(cases.len() - nAlarms - ledger.len()) + " of " +
+           itoa(cases.len()) + " silent, " + itoa(ledger.len()) + " known false alarms");
+
+  t.eqI32(nAlarms, 0, "the spec calls these legal and wacc refuses them: " +
+          joined(firstOf(alarms, nAlarms), " | "));
+  t.eqI32(nSilent, 0, "now silent — take them out of KNOWN_FALSE_ALARMS: " +
+          joined(firstOf(silent, nSilent), " | "));
+  return t.report();
+}
+
+string[] firstOf(string[] all, i32 n) {
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = all[i]; }
+  return out;
+}

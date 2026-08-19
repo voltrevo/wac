@@ -137,7 +137,7 @@ export const PARENT_FS_HANDLE = 1;
  *
  * Allocated handles used to count from 1 and the only reserved number was 0, so adding a second
  * reservation is where a host could quietly hand a child's filesystem channel to a socket. Held to
- * across the four hosts by `test/handles.test.ts` rather than left to each of them to remember.
+ * across the four hosts by `test/wac/handles_test.wac` rather than left to each of them to remember.
  *
  * Here rather than in a host because every host has to agree, and a constant that lives in one of
  * them is a constant the others copy.
