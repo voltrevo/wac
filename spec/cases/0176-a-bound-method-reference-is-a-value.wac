@@ -1,6 +1,5 @@
 // expect: answers f = 3
 // why: `c.inc` is the method already bound to that object — one value, callable with no receiver
-// only: wacc
 // spec:  §wacc-fnref-bound
 // from: design/lang/0002, the first thing a program can say that it could not before
 struct Counter { i32 n;

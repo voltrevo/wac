@@ -1,3 +1,7 @@
+//
+// The `boundedAgain` call sites pass a lambda literal, which the reference compiler does not have.
+// The marker above must be that line and nothing else — `isWaccOnly` compares the whole comment.
+//
 // The arrival test, as close as it gets before there is an image to move: **one shell, two hosts.**
 //
 // design/0001's criterion is "the same image loaded in two substantially different hosts, showing the

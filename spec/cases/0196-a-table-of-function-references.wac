@@ -13,9 +13,8 @@
 // stored function references in an array was invalid, and a table of continuations — a scheduler,
 // an event dispatcher, a jump table — is exactly that.
 //
-// The reference compiler was right here and wacc was not, so this is a case both meet rather than a
-// `// only: wacc` one. No lambdas for the same reason: the shape under test is the *array*, and
-// named function references are the older spelling of it.
+// The reference compiler was right here and wacc was not, which is why this case exists. No lambdas:
+// the shape under test is the *array*, and named function references are the older spelling of it.
 
 i32 twice(i32 n) { return n * 2; }
 i32 plusOne(i32 n) { return n + 1; }

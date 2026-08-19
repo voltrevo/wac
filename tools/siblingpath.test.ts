@@ -7,7 +7,7 @@
 // points at `/tmp/…/wac`, which does not exist.
 //
 // What makes it worth a check rather than a comment is how differently the two failed.
-// `packages/wacc/test/wac/lex_test.wac` threw, the sweep reported `BASELINE RED: packages/wacc`, and somebody
+// the lexer differential threw, the sweep reported `BASELINE RED: packages/wacc`, and somebody
 // fixed it that day. `packages/wacc/test/corpus.ts` *caught* the read failure and printed a SKIPPED line
 // from a test that then passed — so every mutation run for weeks measured a corpus missing `tour.wac`, the
 // one file written to exercise every feature in the language, and reported the mutants only it reaches as

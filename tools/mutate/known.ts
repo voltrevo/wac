@@ -456,7 +456,7 @@ export const KNOWN_SURVIVORS: KnownSurvivor[] = [
       "the reference lexer, and the file says so in its own `dead-exports: exempt` note. `kBool` has no " +
       "caller because a boolean literal lexes as the keyword `true` or `false` and never as a `bool` " +
       "token — but deleting it would renumber every kind after it and silently misalign " +
-      "`packages/wacc/test/wac/lex_test.wac`, which derives the names from `compiler/wacLex.ts` at run " +
+      "the lexer differential, which derived the names from `compiler/wacLex.ts` at run " +
       "time. What is under test is the *completeness* of the set, which no single member's value can " +
       "carry. wac-mono 0005 and 0009.",
   },

@@ -1,3 +1,8 @@
+//
+// `boundedAgain` takes a `fn[void()]` and the call sites pass a lambda literal, which the reference
+// compiler does not have. The marker above must be that line and nothing else — `isWaccOnly`
+// compares the whole comment.
+//
 // The native host's **filesystem capabilities**, against GNU coreutils and against the Deno host.
 //
 // This surface had no test at all, and I found that out the honest way: a canary in

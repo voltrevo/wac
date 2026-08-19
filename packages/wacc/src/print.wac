@@ -3,7 +3,7 @@
 // The oracle for the parser is the TypeScript implementation, and the two build
 // unrelated data structures — one an object graph with string fields, the other sum
 // types holding token indices. Comparing them means projecting both onto one text
-// form, and this is that form. `test/wac/parse_test.wac` produces the same text from the
+// form, and this is that form. It produced the same text from the
 // reference AST.
 //
 // Shape: `(kind@line:col child child ...)`. Positions are included because they are

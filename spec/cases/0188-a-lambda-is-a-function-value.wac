@@ -1,6 +1,5 @@
 // expect: answers f = 42
 // why: `(i32 a) => a + 1` is a value of the `fn[…]` it is used as, callable like any other
-// only: wacc
 // spec:  §wacc-lambda
 // from: design/lang/0002 tier two — the first thing a program can say that it could not before
 //

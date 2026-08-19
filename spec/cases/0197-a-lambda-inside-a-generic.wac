@@ -1,6 +1,5 @@
 // expect: answers f = 42
 // why: a generic is emitted once per instantiation, so a lambda in one is N hoisted functions
-// only: wacc
 // from: issues/lang/0142
 // spec:  §wacc-lambda-generic
 //

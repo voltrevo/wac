@@ -1,6 +1,5 @@
 // expect: answers f = 12
 // why: each lambda is its own function, so two of them do not collapse into one
-// only: wacc
 // from: design/lang/0002 tier two
 //
 // **The failure this is here to catch is a quiet one.** A lambda is hoisted into an ordinary

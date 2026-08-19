@@ -1,6 +1,5 @@
 // expect: answers f = 42
 // why: a lambda can be handed to a method of a *generic instance*, so continuations can be stored
-// only: wacc
 // from: design/lang/0002 tier two — found building `packages/platform`'s scheduler
 //
 // **A receiver that names an instantiation carries its own `T`.** `0141` made a lambda reach a

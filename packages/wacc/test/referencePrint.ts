@@ -9,7 +9,7 @@
 // Positions are included. They are part of what a parser owes its caller, and rung 3 compares
 // diagnostics by position, so a divergence is much cheaper to find here.
 //
-// It lived in `packages/wacc/test/wac/parse_test.wac` until 2026-08-18, when the *harness* moved to wac
+// It lived in the parse differential until 2026-08-18, when the *harness* moved to wac
 // (`issues/system/0161`) and this stayed: the reference is TypeScript, and a differential against it
 // needs it. `test/reference.ts` is what wac asks.
 

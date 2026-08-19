@@ -1,6 +1,5 @@
 // expect: answers f = 84
 // why: a call through a funcref field is a receiver like any other, so a method on its answer can take a lambda
-// only: wacc
 // spec:  §wacc-lambda-after-a-funcref-call
 // from: found building the scheduler — a continuation worked on `delay`'s ticket and on no other capability's
 //

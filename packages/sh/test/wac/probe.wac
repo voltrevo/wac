@@ -336,10 +336,11 @@ Pending<Captured> fakePopChild() {
 /**
  * No host here, so nothing runs: the shell under test is asked never to reach for one.
  *
- * A named resolver rather than a lambda, following every other fake in this file. Not style: a
- * lambda is wacc-only syntax, so a file containing one has to be marked `// only: wacc` and drops
- * out of the reference differential in `packages/wacc/test/wac/lex_test.wac` — which is the whole of what
- * this file is for.
+ * A named resolver rather than a lambda, following every other fake in this file. That was once
+ * load-bearing — a lambda is syntax the reference does not have, so a file with one had to carry a
+ * `// only: wacc` marker to stay in a whole-repository differential against it. That differential is
+ * gone (the reference's only job is bootstrapping), so this is now style, and kept for consistency
+ * with the rest of the file.
  */
 Exec resolveNoHost(i32 id) { return Exec.of(0, u8[0](), u8[0](), "no host in this probe"); }
 Pending<Exec> fakeExec(string path, string[] args, u8[] stdin) {
