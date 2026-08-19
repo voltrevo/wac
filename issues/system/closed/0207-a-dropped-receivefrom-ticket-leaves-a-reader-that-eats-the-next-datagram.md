@@ -1,6 +1,7 @@
 # 0207 — a dropped `receiveFrom` ticket leaves a reader that eats the next datagram
 
-- **Status:** open
+- **Status:** closed — 2026-08-19, agent-b
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-18
 - **Kind:** bug
@@ -74,14 +75,28 @@ found this. So the bug is invisible to exactly the pattern most callers reach fo
 socket. Poll for readiness on throwaway sockets, and give the real exchange a deadline generous
 enough that a timeout means failure rather than "try again".
 
-**A sketch of the fix**, which is more than a line and is why this is filed rather than done:
+## Fixed
 
-- give each datagram socket a queue of arrived-but-unclaimed datagrams, cleared by `closeSocket`;
-- `Tickets::complete` returns the answer back to the caller when the id was not live, instead of
-  dropping it — and `drop_ticket` likewise, for the race where the datagram lands between the
-  timeout and the drop;
-- `Cap::ReceiveFrom` drains that queue first and only spawns a reader when it is empty, and its
-  thread pushes into the queue whatever `complete` hands back.
+All three parts of the sketch, as written:
+
+- each datagram socket has a queue of arrived-but-unclaimed datagrams, cleared by `closeSocket` —
+  a handle is reused, so a leftover would otherwise be answered to whatever opens next, and this is
+  about not losing packets rather than inventing them;
+- `Tickets::complete` and `drop_ticket` return the answer when nobody took it, instead of dropping
+  it. Both are `#[must_use]`, which is the part worth keeping: it made every one of the twelve other
+  callers state that discarding is right for them, rather than leaving the question unasked;
+- `Cap::ReceiveFrom` drains the queue first and only spawns a reader when it is empty. A read
+  *error* is not queued — it describes a call that no longer exists — and only a non-empty datagram
+  is.
+
+The reproduction above now prints `got it` twice. Two further checks, because a queue has two ways
+to be wrong: a second read drains rather than replaying, and a read with nothing sent still times out
+instead of answering a stale copy.
+
+`packages/webrtc`'s eleven wac tests, `packages/tor`'s `relaycircuit_test.wac`,
+`packages/platform/test/echod.test.ts` and `packages/quic/test/program.test.ts` all pass — which is
+what says the ordinary path still works, since a fix that only ever answered from the queue would
+satisfy the reproduction alone.
 
 The Deno host does not have this, because `submit(b, OP.RECEIVE_FROM, …)` is a request on a ring the
 host answers in order rather than a thread parked in a syscall. So this is the native host's alone,

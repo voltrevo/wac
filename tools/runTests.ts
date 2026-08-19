@@ -430,7 +430,8 @@ const exclusive = laneSplit(passthrough.filter((a) => !a.startsWith("-")), decla
 // is what made pushes lose their own race, so these are excluded here and run by `deno task test:heavy`.
 //
 // **Measured per file, not ranked by duration**, and that changed the list. Attributing the suite
-// log's durations to file headers put `packages/webrtc/test/dtlsserver.test.ts` fourth at 55s — but
+// log's durations to file headers put the DTLS server-role test — now
+// `packages/webrtc/test/wac/dtlsserver_test.wac` — fourth at 55s, but
 // sampling its process tree gives **370 MB and 2.1 CPU-seconds across 58 seconds**, 0.04 of a core.
 // It is not expensive, it is *waiting*, on DTLS retransmission timers. Excluding it would have cost a
 // real handshake test on every push and saved the machine nothing. `packages/box/test/sealed.test.ts`

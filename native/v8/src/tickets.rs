@@ -130,16 +130,22 @@ impl Tickets {
     }
 
     /// Record an outcome and wake anything waiting. Called from whichever thread did the work.
-    pub fn complete(&self, id: i32, answer: Answer) {
+    ///
+    /// **Answers `Some(answer)` when nobody took it** — the ticket was cancelled, or completed
+    /// twice. Dropping it here is right for a *computation*, which can be run again, and wrong for
+    /// anything that was consumed to produce it: a datagram is read off a socket exactly once, and
+    /// discarding it silently loses a packet the peer will not send again. `issues/system/0207` is
+    /// that bug. Callers who have nothing to hand back ignore the result, which is what most do.
+    #[must_use = "an answer nobody took is data; see issues/system/0207"]
+    pub fn complete(&self, id: i32, answer: Answer) -> Option<Answer> {
         let mut inner = self.inner.lock().unwrap();
         if !inner.live.remove(&id) {
-            // Cancelled, or completed twice. Dropping the value is right for the first and the only
-            // safe answer for the second; either way nothing is waiting for it.
-            return;
+            return Some(answer);
         }
         inner.done.insert(id, answer);
         drop(inner);
         self.settled.notify_all();
+        None
     }
 
     /// Block until this ticket has an answer, and take it. Spent afterwards.
@@ -167,10 +173,16 @@ impl Tickets {
 
     /// Stop caring. **Detach, not abort** — the work may already be under way and generally cannot
     /// be interrupted; what this guarantees is that the answer is discarded.
-    pub fn drop_ticket(&self, id: i32) {
+    ///
+    /// **Answers what was already in hand**, for the same reason `complete` does: the work may have
+    /// finished between the caller giving up and this call, and for a datagram that answer is the
+    /// packet itself. `issues/system/0207`.
+    #[must_use = "an answer nobody took is data; see issues/system/0207"]
+    pub fn drop_ticket(&self, id: i32) -> Option<Answer> {
         let mut inner = self.inner.lock().unwrap();
-        inner.done.remove(&id);
+        let had = inner.done.remove(&id);
         inner.live.remove(&id);
+        had
     }
 
     /// The index in `ids` of the first ticket with an answer, or `-1` on the deadline.

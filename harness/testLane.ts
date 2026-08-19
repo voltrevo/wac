@@ -35,7 +35,8 @@ export const LANE = /^\/\/\s*test-lane:\s*exclusive\b\s*(?:[—-]\s*)?(.*)$/m;
  * workers peaking at 7.5 GB on a machine with 11.9 and five being killed, so memory is what bounds
  * this suite. A test that holds a worker for a minute while waiting on a network timer costs a
  * *slot*; a test holding a gigabyte of corpus costs the thing that runs out. Ranking by duration
- * proposed `packages/webrtc/test/dtlsserver.test.ts` — 58 seconds, and 370 MB at 0.04 of a core.
+ * proposed the DTLS server-role test, now `packages/webrtc/test/wac/dtlsserver_test.wac` — 58
+ * seconds, and 370 MB at 0.04 of a core.
  * Sampling the process tree is what tells them apart, and it is worth doing before adding a file.
  *
  * **The reason must name a cost**, because "this is slow" is what every test would say if asked. A

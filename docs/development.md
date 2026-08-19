@@ -58,7 +58,8 @@ They still run in three cases: `deno task test:heavy`, `deno task test <path>` n
 for one command that runs everything.
 
 **Heavy means resident, not slow.** The two look alike in a log and come apart under measurement:
-`packages/webrtc/test/dtlsserver.test.ts` takes 58 seconds and was fourth on a duration ranking, but
+the DTLS server-role test — now `packages/webrtc/test/wac/dtlsserver_test.wac` — took 58 seconds
+and was fourth on a duration ranking, but
 sampling its process tree gives 370 MB and 2.1 CPU-seconds — 0.04 of a core, spent waiting on DTLS
 retransmission timers. It costs a worker *slot*, not the memory that actually bounds this suite, so it
 stays in. Sample before adding a file rather than reading the durations off a suite log.
