@@ -250,9 +250,16 @@ export string test_the_rarer_codings_decode_too_and_are_actually_reached(Core co
   // Both corpora, because the codings live at opposite ends: predefined tables are what a
   // *small* block uses, since it cannot afford to transmit its own, while treeless and repeat
   // need a previous block to inherit from and only appear once a file is large.
-  u8[] json = jsonItems(60000);
+  // **Sized against where the codings stop appearing, not by eye.** These were 60 000 items and
+  // 40 000 lines — about 2 MB apiece — and the reference encoder compressing them twice at level 19
+  // was **5.7s of this test's 7s**. Bisected against the assertions below, which are what makes the
+  // size checkable: at 4 000 items and 2 500 lines the RLE literals section stops appearing, and
+  // below that treeless literals and both repeat and RLE sequence modes go with it. Twelve thousand
+  // and eight thousand is three times that cliff, and the assertions fail loudly rather than quietly
+  // if a future zstd moves it.
+  u8[] json = jsonItems(12000);
   Buf logBuf = Buf.create();
-  for (i32 i = 0; i < 40000; i++) {
+  for (i32 i = 0; i < 8000; i++) {
     logBuf.pushAll(("2026-08-02T10:00:00Z INFO request id=" + itoa(i) +
                     " path=/api/items status=200 ms=" + itoa(i % 97) + "\n").toBytes());
   }
@@ -261,7 +268,7 @@ export string test_the_rarer_codings_decode_too_and_are_actually_reached(Core co
   u8[][] small = corpus();
   string[] smallNames = corpusNames();
   u8[][] wide = u8[][](json, json, logs, logs);
-  string[] wideNames = string[]("json 2MB @9", "json 2MB @19", "logs 2MB @1", "logs 2MB @19");
+  string[] wideNames = string[]("json 12k items @9", "json 12k items @19", "logs 8k lines @1", "logs 8k lines @19");
   i32[] wideLevels = i32[](9, 19, 1, 19);
 
   Lines lines = Lines.create();
