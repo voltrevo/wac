@@ -171,7 +171,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `deno task gen:core` writes `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
 | 3. `core` and `std` as embedded trees (D3, D4) | **`core` is a tree; `std` is untouched** (2026-08-18). `core/` holds `read` and `jsx` as the root and `option`, `result`, `hash`, `map` as siblings, each its own module reached as `"core/option.wac"`, with its own tests under `core/test/` and `deno task coverage:core`. `packages/std/src` is down to `vec.wac`, whose 64 importers are the last move — and the one that retires that package. The seam is in three resolvers and both compilers; see below. `std` as the *capability* tree (D4's half: `Core`, `Cli`, filesystem, network) has not been started |
 | 4. quoted specifiers (D5) | **the compilers accept them** (2026-08-19). `"core"` and `"core/option.wac"` resolve to the modules the compiler carries, in both, and `§wac-core-unquoted-3nqk7vd` now says the root takes either spelling. The bare form still compiles: 65 files use it and the sweep is its own commit, so that nothing has to land atomically across two compilers and 65 files at once. Removing it is what is left, and the sweep has one cost worth knowing before starting it: three of the files are in `packages/platform/src`, which is in the seed's own graph, so every agent who pulls it needs `deno task seed:bootstrap` rather than `deno task seed` — their existing seed refuses the new spelling. Cheapest once everybody's seed already accepts quoted specifiers, which is what this commit gives them. |
-| 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
+| 5. `wac.json5` and `@/` (D6, D7) | **the blocker is discharged and the shape is decided** (2026-08-19) — see *How `@/` gets its root* below. The consolidation this step was waiting on is done: two resolver bodies, one per language. The change is additive rather than a 22-signature sweep, because the hundred-plus call sites have no root to give. What is left to build is the upward search for `wac.json5`, in **both** compilers. **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | not started — see below |
 | 7. Git mappings and `wac.lock` (D9, D10, D11) | **the pure half is done.** `packages/wacpkg` enforces D9's non-overlap, reads and canonicalises `wac.lock`, and `plan` decides USE/CREATE/REFRESH per mapping — including the rule that a moved branch is not a reason to re-resolve. `refToCommit` resolves a ref to a commit, measured against real `git` — an object name, an exact advertised name, then `refs/heads/` or `refs/tags/`, with an ambiguous name refused rather than ranked, and an annotated tag's peel preferred because the two advertised lines name different objects. The cache **layout** is settled too — `cachePath` is `$WAC_HOME/cache/git/<escaped repository>/<commit>`, a function of those two and nothing else, with the repository name escaped reversibly rather than hashed or slugified. Settled before anything fetches on purpose: a cache key lives in people's home directories and cannot be changed later without a migration. **Fetching works**: `packages/wacpkg/example/fetch.wac` resolves, fetches over `packages/git`+`packages/tls`, verifies the commit is in the pack by content address, writes it to the cache and updates the lock — 7.6 MB and 2618 objects from `github.com/voltrevo/wac`, and a second run fetches nothing, which is D11's sentence demonstrated. What is left is reading a `subdir` out of a cached commit and handing those files to the compiler, which is step 5's blocked half |
 | 8. `wac:install`, `wac uninstall` (D1) | **done as tasks.** `tools/install.ts` builds the seed fixpoint-checked, installs `bin/wac`, `cache/git/`, `env` and `install.json5` under `$WAC_HOME`, and adds one marked line to the profiles that exist — replaced rather than left when it points at a different home, which is how a reinstall to a new `$WAC_HOME` works. `wac:uninstall [--keep-cache]` removes those and the profile line, and nothing else. **`wac uninstall` is a subcommand as of 2026-08-19**, which is what D1 asked for and what the task cannot be: the task is a Deno program under `tools/`, so it needs this checkout, and somebody who installed the command has a `$WAC_HOME` and no checkout. The layout is written down twice now — Rust in `native/v8/src/main.rs` and TypeScript in `tools/install.ts`, with nothing to share it through — and `packages/wacc/test/wac/uninstall_test.wac` is what keeps them one list: it builds the same fake install twice, takes one away with each, and compares what survives, with a canary so that two uninstallers that both did nothing cannot agree their way to green. `app:native-binary` is renamed (2026-08-18) |
@@ -518,6 +518,85 @@ rule with a manifest, a provider table and a mapping table in it will not.
 
 A half-wired `@/` is worse than none, which is why the wiring was reverted rather than left behind
 a flag: it reads as a broken import in a program that is correct.
+
+## How `@/` gets its root, decided before writing it — 2026-08-19
+
+**The recommendation above is discharged: the resolvers are consolidated.** `packages/wacc/src/path.wac`
+has been the single wac-side rule since 2026-08-18, and as of 2026-08-19 `harness/wacFiles.ts` is a
+call into `compiler/wacResolve.ts` and `site/src/editor/file-store.ts`'s copy is deleted. Two bodies
+remain, one per language, which is the floor. Consolidating also found the last disagreement between
+them rather than merely tidying — `..` above an absolute root, where the compiler's answer dropped
+the leading slash and produced a relative key — so the exercise paid for itself before `@/` starts.
+
+**The section above says `resolveFrom(fromPath, spec)` gains a third argument. It should, and the
+sweep it implies should not happen.** `api.wac` has **22** exported entry points taking
+`(string[] paths, string[] sources, string entry)`, and they are not evenly used: `emitFiles` alone
+has 44 call sites, `blockedFiles` 25, `diagnoseGraph` 18 — well over a hundred in all, across
+packages several agents are working in. Threading a fourth parameter through every one of them is a
+change whose diff is almost entirely places where the answer is "no project, same as before", which
+is one judgement stamped a hundred times.
+
+So: **additive**. The internals learn a parallel `string[] roots`, the existing 22 keep their
+signatures by passing an empty one, and new entry points carrying roots exist only for callers that
+have a filesystem to find a manifest with — today `example/wacc.wac`'s `gather` and nothing else. A
+call site moves when somebody has a reason to move it, rather than because a parameter list changed
+under it.
+
+The reference needs no such care: `wacCompile(files, entry, options)` already takes an options bag,
+so `roots` is a field in it and no call site changes at all.
+
+### Where the root has to reach, counted rather than guessed
+
+Three places resolve a specifier inside wacc:
+
+- `packages/wacc/example/wacc.wac`'s `gather` — the reader, and the only one with a filesystem, so
+  it is where the upward search for `wac.json5` happens and where the roots are *computed*.
+- `packages/wacc/src/api.wac`'s `closureOf` — the checker's per-file closure, which resolves each
+  file's imports to decide what to check it against.
+- `packages/wacc/src/emit.wac`'s `linkFiles`, through `resolveImport`. Seven functions call it, each
+  an exported `…Linked` that an `api.wac` entry point calls, so the thread is
+  entry point → `…Linked` → `linkFiles`.
+
+That is the whole of it: three resolution points, seven internal call sites for the third. The
+hundred-plus call sites are all *outside*, on the public entry points, and none of them has a root to
+give — which is the argument for leaving their signatures alone.
+
+`packages/wacpkg/src/root.wac` imports exactly one thing, `normalisePath`, so bringing it into the
+compiler's graph costs nothing; the manifest *parser* stays out, as this note already says, because
+`@/` finds a manifest and never reads one. wac allows circular imports, so an edge from the path
+rules to the project rules is not a structural problem — but the tidier arrangement is for the `@/`
+string arithmetic to live in `path.wac` with the rest of the path rules and for `root.wac` to take it
+from there, keeping one definition and leaving `path.wac` a leaf.
+
+### Roots are optional by construction, and that is D7 rather than a convenience
+
+`wacCompile` is also called by the playground, with a synthetic file map and no filesystem at all, so
+"there is no root for this file" has to be an ordinary state rather than an error in the caller. D7
+already says what it means: *no manifest within that boundary is a compile error*. An absent root
+makes `@/` a diagnostic, not a fallback to something relative — which is the one outcome that would
+be silently wrong, because `resolveAt("@/src/a.wac", "")` would otherwise look like `src/a.wac`
+relative to nothing.
+
+### The alternative that was rejected, and why it is worth writing down
+
+`gather` could resolve `@/` at read time and hand the compiler a source with the specifier already
+rewritten. That needs no API change at all — no roots, no new entry points, nothing threaded — and it
+is the first thing anybody will think of on reading the above.
+
+It is wrong because **spans point into the text**. A rewritten specifier is a different length from
+the one the author wrote, so every column on that line after it is off by the difference, and the
+file the compiler reports about is not the file on disk. Import lines do carry diagnostics — a
+specifier naming nothing is reported at the specifier — so this is the case that matters rather than
+a corner. The compiler reading exactly what the author wrote is worth more than the API change costs.
+
+### What is still missing on both sides
+
+The pure half exists: `packages/wacpkg/src/root.wac` has `candidateRoots`, `resolveAt` and
+`isProjectSpecifier`, with tests. What has no implementation on *either* side is the **search** —
+walking up from the importing file to the nearest `wac.json5`, stopping at the provider boundary. The
+reference needs one too, or a program that compiles under `wac build` will not compile under the
+harness: the same "both compilers or neither" rule the `core` work ran into, and the reason this is
+not a wacc-only change.
 
 ## The one to be careful with
 
