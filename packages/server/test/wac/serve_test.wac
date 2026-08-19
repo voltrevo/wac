@@ -5,7 +5,7 @@
 // including the parts that are awkward over a real connection: what happens to a pipelined pair,
 // what a truncated request does, what an HTTP/1.0 client gets.
 //
-// `test/live.test.ts` then runs the same server behind a socket and checks the answers survive
+// `test/wac/live_test.wac` then runs the same server behind a socket and checks the answers survive
 // contact with real clients. Both are needed. This one can reach states a client cannot easily
 // produce; that one catches anything the harness is wrong about, and its subject is the socket, so
 // it stays host-side.

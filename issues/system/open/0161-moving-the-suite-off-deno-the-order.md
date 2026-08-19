@@ -1432,6 +1432,29 @@ move: their subject is the TypeScript beside them. Four more were opened and thr
 | `timeout` (209) | **mixed, and mostly stays.** Two end-to-end tests build `patience.wac` and run it; three drive `newBridge`/`submit`/`waitAny`/`collect` and assert on slot statuses in the control block, which is `host/layout.ts` and `host/call.ts`. Splitting it buys ~55 lines. |
 | `platform.test.ts` (554) | **done — thirteen of seventeen moved**, into `world_test.wac` (the application and `wc`, a withheld capability, a missing file, stdin, env unset-vs-empty, the hexdump filter, `stat`/`readDir` gating), `runtimes_test.wac` (the built executable's shebang and execute bit, three runs, Deno against Node, the whole-filesystem transcript, the ungranted `stat`) and `chunking_test.wac` (a megabyte in both directions through `box`). The four that stay have no wac in them at all: a `Worker` posting to a `SharedArrayBuffer` and `serveHostCalls` answering, which is `host/layout.ts` and `host/call.ts`. Two translation slips the canaries did not catch and the first run did: the example prints a fourth field (the filename), and `splitLines` does not leave JavaScript's empty element after a trailing newline — so `split("\n").length == 2` had to become the two facts it stands for. The `wc` counts are now checked against **coreutils** rather than against arithmetic the test did itself. |
 
+### `packages/server` — 2026-08-19
+
+`live.test.ts` (230, nine tests) **moved whole**. It reads as the hardest kind to move — three
+independent clients against a real socket — and was among the easiest, because the split was already
+clean: the raw-socket cases are wac's own sockets now, and the two client cases became one script
+each, which is what they always were. `fetchclient.ts` and `nodeclient.js` are halves of a
+differential, not harness: being *someone else's implementation* is the whole of what they
+contribute.
+
+Two things came out of it that were not the port:
+
+  - **`host/serve.ts`'s limits could not be set from its command line.** `listen(port, limits)` has
+    taken them since it was written and the only way to choose them was to import the function — so
+    the one test that exercised them had to run in the same process, and anyone actually running the
+    server got `DEFAULT_LIMITS` with no way to say otherwise. `--request-ms`, `--idle-ms` and
+    `--max-connections` are now flags. The 408 case is its own canary: with the default 10s request
+    timeout it would exceed the test's 5s read bound and fail, so a flag that did not reach `listen`
+    could not pass.
+  - **`serve.ts` opens with "wasm has no sockets and no clock", and that is dated.** It predates
+    `packages/platform`; wac has had both for a while. The accept loop could be wac now. Not done
+    here — it is a rewrite of working code rather than a port of a test — but the sentence is the
+    kind of comment that reads as a constraint and is a date.
+
 **The lesson this block repeats:** three of these six carry their own verdict in their own header,
 written by whoever last thought about them. Reading the header first would have saved opening four
 files — and `aliasing`'s says not just *that* it stays but that the obvious port was tried and
