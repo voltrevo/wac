@@ -88,3 +88,25 @@ in `packages/ssh/test/wac/wacsshd.wac`. What is missing is a sweep.
    say that. Against: a retry hides a genuinely intermittent defect, which is exactly what these five might
    be. A middle answer is to retry but *report* it — "passed on the second attempt" is information, and a
    count of those over a week is the same measurement as this issue, taken continuously.
+
+## Two more, 2026-08-19, and both are live-peer tests under a loaded box
+
+Two consecutive gate runs failed on different tests while three agents shared the machine, load average
+around ten, with `WAC_SUITE_ANYWAY=1` so a second suite was running beside mine:
+
+| run | failed | on its own |
+| --- | --- | --- |
+| 361s | `packages/ssh/test/wac/wacsshd_test.wac` — "a line typed while a command is running is still a command" | 12 passed, twice |
+| 250s | `packages/webrtc/test/browser.test.ts` — "Chromium completes ICE against us" | 1 passed |
+
+Neither is one of the five in the table above, and both are the same *kind*: a real peer — an OpenSSH
+client, a Chromium — where the test waits for something that peer does. That is the population this
+issue is about, and it says something the earlier list did not: **the failures track the machine's load
+rather than a particular file.** A run alone on a quiet box has not produced one; two runs beside
+another suite produced two, in tests that had not failed before.
+
+Which sharpens decision 3 above. A retry-and-report would have turned both of these into information —
+"passed on the second attempt, under load" — rather than a red gate that cost two suite runs to
+disbelieve. It would not have hidden anything: neither failure is reproducible on its own, and a count
+of retries over a week is the measurement this issue keeps asking for.
+
