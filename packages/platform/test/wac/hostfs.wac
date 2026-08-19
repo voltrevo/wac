@@ -127,7 +127,7 @@ export bool stale(Cli cli, string artifact) {
  * 2026-08-19 — and these files make about a hundred such runs. `harness/appRunMany.ts` is
  * `harness/appRun.ts`'s worker behind one `exec`: it builds the program once and runs it per request
  * at about 1.25ms. That is what took `native_hostfs.test.ts` from 29s to 9.4s while it was still
- * TypeScript, and `issues/system/0214` is why a wac test could not have it until now.
+ * TypeScript, and `issues/system/0213` is why a wac test could not have it until now.
  *
  * **The comparison is unchanged.** Same entry, same grants, same capability implementations, same
  * environment — `env` is passed explicitly for the same reason `envLine` exists, so a differential

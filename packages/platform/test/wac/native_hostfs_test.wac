@@ -321,7 +321,7 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
   // **The Deno half of every script, in one process.** It was one process each — 133ms of Deno
   // starting against 17ms for the native host and 2ms for bash — and fifty of those was most of this
   // test. `harness/appRunMany.ts` is the same program through the same `appRunner` the TypeScript
-  // version used, behind one `exec`; `issues/system/0214` has the numbers and why a wac test could not
+  // version used, behind one `exec`; `issues/system/0213` has the numbers and why a wac test could not
   // have it until it existed. A tree per script is made up front, exactly as before, so the runs are
   // as isolated as they were when they were separate processes.
   string[] denoTrees = string[scripts.len()](fill: "");
