@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0167a](open/0167a-a-project-can-map-the-reserved-std-and-core-prefixes.md) | a manifest may map `std/` or `core/`, which D4 reserves, and the mapping is consulted for every name the built-in tree does not already hold | bug | wrong answer |
 | [0165a](open/0165a-importing-a-name-from-the-generated-core-module-overflows-waccs-stack.md) | one import line decides whether wacc overflows its stack — same function, same 37-file graph, straight from `coretext.wac` rather than through a re-export | bug | the compiler traps |
 | [0164a](open/0164a-wacc-never-compares-array-types-so-any-array-satisfies-any-slot.md) | any array value satisfies any slot in wacc — argument, assignment, return or field, including a slot that is not an array — so the checker is silent and the engine rejects the module | bug | invalid wasm |
 | [0163](open/0163-one-file-under-two-keys-is-silent-in-the-reference-and-an-invalid-module-in-wacc.md) | one file reached under two keys: the reference reads it twice and runs, wacc's checker stays clean and the engine rejects the module — neither is what D8 says the failure looks like | bug | invalid wasm |
@@ -38,7 +39,7 @@ has been fixed and why.
 
 ## Closed
 
-166 issues, 136 closed.
+167 issues, 136 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

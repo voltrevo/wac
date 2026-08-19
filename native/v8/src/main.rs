@@ -649,11 +649,29 @@ fn update_command(rest: &[String]) -> i32 {
         }
     };
     start_v8();
-    let argv: Vec<Vec<u8>> = if rest.is_empty() {
+    // **The cache directory is the second argument, and it has to be `$WAC_HOME`.**
+    //
+    // `fetch.wac` takes the project as `arg(0)` and the cache root as `arg(1)`, defaulting the second
+    // to the literal `.wac` — which is right for running it as a program from a checkout and wrong
+    // for a command. The compiler reads `$WAC_HOME` (then `$HOME/.wac`), so leaving the default in
+    // place put the fetched tree somewhere nothing would ever look for it: `wac update` said *1
+    // fetched*, a second `wac update` said *nothing to fetch; already locked*, and `wac run` said
+    // *not in the cache — run `wac update`*. Three commands, all truthful, and no way out of it.
+    //
+    // `wac_home` is the same function `uninstall` uses, which is what keeps the two halves of
+    // `$WAC_HOME` agreeing about where it is.
+    let mut argv: Vec<Vec<u8>> = if rest.is_empty() {
         vec![b".".to_vec()]
     } else {
         rest.iter().map(|a| a.as_bytes().to_vec()).collect()
     };
+    if argv.len() < 2 {
+        let Some(home) = wac_home() else {
+            eprintln!("wac: neither WAC_HOME nor HOME is set, so there is nowhere to cache a fetch");
+            return 2;
+        };
+        argv.push(home.into_bytes());
+    }
     let as_child = AsChild { argv, ..Default::default() };
     run_as_with(&manifest, wasm, &text, as_child)
 }

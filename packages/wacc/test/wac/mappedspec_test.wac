@@ -20,7 +20,7 @@ import { withEnv } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { escapeRepo } from "../../../wacpkg/src/cache.wac";
-import { Change, Cli, Core, Exec } from "std/platform.wac";
+import { Change, Cli, Core, Exec, FileResult } from "std/platform.wac";
 
 const string REPO = "https://example.invalid/dep.git";
 const string COMMIT = "0123456789abcdef0123456789abcdef01234567";
@@ -238,5 +238,49 @@ export string test_update_is_the_only_command_that_reaches_the_network(Core core
   }
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
+  return t.report();
+}
+
+/**
+ * `wac update` caches where the *compiler* looks, and says so when it cannot tell where that is.
+ *
+ * **The defect this guards.** `fetch.wac` takes the cache root as `arg(1)` and defaults it to the
+ * literal `.wac`, which is right for running it as a program from a checkout. As a command it left
+ * the fetched tree in `./.wac` while the compiler read `$WAC_HOME` — so `wac update` said *1
+ * fetched*, a second `wac update` said *nothing to fetch; already locked*, and `wac run` said *not in
+ * the cache — run `wac update`*. Three truthful messages and no way out.
+ *
+ * **What this case actually covers, which is less than that.** It drives the branch that resolves
+ * `$WAC_HOME` and asserts the refusal when there is none to resolve. The end-to-end property — that
+ * a fetched tree lands where a later `wac run` finds it — needs the network, so it is checked by
+ * hand rather than here: `wac update` then `wac run` against `github.com/voltrevo/wac` answers 3.
+ * Saying which half is guarded matters, because a green case here is not that demonstration.
+ */
+export string test_update_caches_where_the_compiler_looks(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "updatehome");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+  project(cli, t, dir);
+
+  // Neither variable set, so there is no cache root to derive. Empty rather than absent is the
+  // spelling `withEnv` can express, and `wac_home` treats them the same for exactly this reason.
+  Exec r = withEnv(cli, string[]("WAC_HOME", "HOME"), string[]("", ""),
+                   "/bin/sh",
+                   string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " update"));
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    t.isTrue(r.status != 0, "update with no WAC_HOME and no HOME was accepted: " + said);
+    t.isTrue(contains(said, "nowhere to cache"),
+             "update did not say it had nowhere to cache — " + said);
+  }
+
+  // And it must not have quietly made one beside the project, which is the old behaviour.
+  FileResult stray = cli.readFile(dir + "/.wac/cache").wait();
+  t.isFalse(stray.ok, "update created a cache inside the project rather than under $WAC_HOME");
+  cli.remove(dir, true).wait();
   return t.report();
 }
