@@ -15,7 +15,7 @@ import { DirDocuments, dirRoute, dirResponse, stripDotZ } from "../../src/dirser
 import { encodeUpper, decoded } from "../../../codec/src/hex.wac";
 import { b64Unpadded } from "../../src/routerdesc.wac";
 import { Lines, Answers, ask, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { memberText } from "../../../wactest/src/fixtures.wac";
 import { JsonValue } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";

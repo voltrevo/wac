@@ -23,7 +23,7 @@
 // be careful about are the three things this is careful about, for the same reasons.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 
@@ -264,7 +264,7 @@ string[] providerOrder(T t, string src, string name) {
 export string test_clis_fields_and_the_providers_arguments_are_in_the_same_order(
     Core core, Cli cli) {
   T t = T.create();
-  string wac = sourceOf(cli, "packages/platform/src/platform.wac");
+  string wac = sourceOf(cli, "std/platform.wac");
   string prov = sourceOf(cli, "packages/platform/host/provider.ts");
 
   string[] structs = string[]("Cli", "Core", "Page");

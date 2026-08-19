@@ -36,7 +36,7 @@
 // freshness check rather than a build.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 

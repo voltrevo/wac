@@ -3,7 +3,7 @@
 // Streams, since `packages/crypto` grew `Sha256.create/update/finish`. It was the last
 // applet in this package that buffered for want of an API rather than by nature.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";

@@ -21,7 +21,7 @@ import { equal, slice } from "../../../bytes/src/slice.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 
 const i32 V_CASE = 1;   // authKey(32) encKey(32) clientSec(32) clientPub(32) svcPub(32)
                         // subcred(32) encOut(32) macOut(32) authMac(32) keySeed(32)

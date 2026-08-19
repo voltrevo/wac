@@ -13,7 +13,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { onionAddress, onionPubkey, addressChecksum } from "../../src/onionaddr.wac";
 import {

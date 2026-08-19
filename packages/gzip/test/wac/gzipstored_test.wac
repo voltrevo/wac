@@ -7,7 +7,7 @@
 // in this package. `external.wac` is the one copy now. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { gzipStored } from "../../src/gzip.wac";
 import { roundTrip } from "./external.wac";

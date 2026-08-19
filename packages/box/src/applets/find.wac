@@ -6,7 +6,7 @@
 // is worse than an error, because the caller's next step is to act on it: `find | xargs rm` on a
 // truncated list deletes the wrong set.
 
-import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Stat } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

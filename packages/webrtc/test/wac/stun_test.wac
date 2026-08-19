@@ -38,7 +38,7 @@
 // and a dropped datagram.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Core, Cli, Datagram, Pending, Socket } from "std/platform.wac";
 import { Lines, Answers, ask, check, hex, word } from "../../../wactest/src/oracle.wac";
 import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";

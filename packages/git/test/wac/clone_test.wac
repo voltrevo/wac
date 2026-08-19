@@ -25,7 +25,7 @@
 // `Stat`, which is exactly why the assertion below cannot be made any other way.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { hex } from "../../../wactest/src/oracle.wac";

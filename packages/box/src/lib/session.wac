@@ -16,7 +16,7 @@
 // a screen that only grows. `feedLine` is the whole of the contract: hand it what the user typed and
 // the screen afterwards is `screen`.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Shell, runScript } from "../../../sh/src/exec.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Vec } from "core/vec.wac";

@@ -22,7 +22,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 Deno.test("platform.wac's CALL_SLOTS is the ring's real size", async () => {
-  const src = await Deno.readTextFile("packages/platform/src/platform.wac");
+  const src = await Deno.readTextFile("std/platform.wac");
   const m = /export const i32 CALL_SLOTS = (\d+);/.exec(src);
   if (m === null) throw new Error("platform.wac no longer declares CALL_SLOTS");
   assertEquals(

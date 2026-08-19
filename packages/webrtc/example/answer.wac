@@ -29,7 +29,7 @@
 // candidate, and it takes the address to advertise on the command line rather than enumerating
 // interfaces — so it works on a known address and would not traverse a NAT.
 
-import { Cli, Core, Datagram, Socket } from "../../platform/src/platform.wac";
+import { Cli, Core, Datagram, Socket } from "std/platform.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { selfSignedP256 } from "../../tls/src/x509gen.wac";
 import { Association } from "../src/sctp.wac";

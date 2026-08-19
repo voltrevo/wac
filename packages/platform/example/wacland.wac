@@ -20,7 +20,7 @@
 // resolved every ticket immediately would pass the types and fail stage 3, which is why the out-of-order
 // clause is in the criteria rather than a single request.
 
-import { Child, Cli, Core, FAULT_NOT_GRANTED, FileResult, GRANT_ENV, GRANT_NONE, GRANT_READ, Pending } from "../src/platform.wac";
+import { Child, Cli, Core, FAULT_NOT_GRANTED, FileResult, GRANT_ENV, GRANT_NONE, GRANT_READ, Pending } from "std/platform.wac";
 import { Read } from "core";
 
 export i32 main(Core core, Cli cli) {

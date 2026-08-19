@@ -128,7 +128,7 @@ Deno.test("wac run: a main naming something this host cannot build still says so
     const path = `${dir}/p.wac`;
     await Deno.writeTextFile(
       path,
-      `import { Page } from "../../packages/platform/src/platform.wac";\n` +
+      `import { Page } from "std/platform.wac";\n` +
         `export i32 main(Page page) { return 0; }\n`,
     );
     const r = run(["run", path]);

@@ -27,7 +27,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { emitFiles, emitFilesChecked, manifestFiles } from "../../src/api.wac";
 import { withManifestSection } from "../../src/manifest.wac";
 import { equal } from "../../../bytes/src/slice.wac";

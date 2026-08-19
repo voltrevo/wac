@@ -1,7 +1,7 @@
 // Encoded, with a trailing newline — or **decoded** with `-d`, which it used to ignore, exactly as
 // `base64` did (wac-mono 0105).
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Buf } from "../../../bytes/src/buf.wac";

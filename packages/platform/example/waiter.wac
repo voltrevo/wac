@@ -14,7 +14,7 @@
 // The first line matters as much as the sleeping. A test that only killed the launcher could not tell
 // "the child was reaped" from "the child never started", and both look like a passing test.
 
-import { Cli, Core } from "../src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   core.log("waiter: running");

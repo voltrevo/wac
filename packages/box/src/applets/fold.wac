@@ -1,6 +1,6 @@
 // Lines wrapped at a width, eighty by default: `fold -w 40`, or `fold -40`.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";

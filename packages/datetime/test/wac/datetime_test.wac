@@ -29,7 +29,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { Civil, isLeap, daysInMonth, isValidDate, daysFromCivil, civilFromDays, weekday,

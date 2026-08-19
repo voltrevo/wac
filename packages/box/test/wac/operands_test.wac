@@ -13,7 +13,7 @@
 //
 // Five cases stay live at the bottom as the drift canary.
 
-import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { operandCases, operandFixtures } from "./cases.wac";

@@ -8,7 +8,7 @@
 // the connection is served to its end before the next is taken. That is the honest limit
 // of a synchronous capability world and it is written here rather than hidden.
 
-import { Cli, Core, Socket } from "../../../platform/src/platform.wac";
+import { Cli, Core, Socket } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

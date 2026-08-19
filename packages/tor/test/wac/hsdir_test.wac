@@ -39,7 +39,7 @@ import {
 } from "../../src/hsdir.wac";
 import { Relay, parseConsensus, attachMicrodescriptors, base64NoPad } from "../../src/directory.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import {
   candidateCount, candidateEd, caseBlinded, caseCount, caseHsdirCount, caseHsdirEd, caseHsdirIndex,
   casePeriodLength, caseSrv, caseTimePeriod, caseUsedCurrentSrv, consensusDocument, microdescriptors,

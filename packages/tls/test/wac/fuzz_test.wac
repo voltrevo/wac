@@ -32,7 +32,7 @@ import { tlsClientInit, tlsClientFeed, tlsClientFailure, tlsClientPhase, tlsClie
   from "../../src/client.wac";
 import { parseCert, verifyChain, Cert } from "../../src/x509.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Tampered, sweepTampering } from "./certtamper.wac";
 

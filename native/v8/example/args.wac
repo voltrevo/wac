@@ -4,7 +4,7 @@
 // path the host has to serve: a ticket handed over, a resolver funcref the guest calls with it, and
 // a value marshalled back through the module's own memory.
 
-import { Cli, Core } from "../../../packages/platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   i32 n = cli.argCount().wait();

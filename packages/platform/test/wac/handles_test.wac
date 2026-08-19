@@ -34,7 +34,7 @@
 // which is the shape this file exists to catch.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { contains, splitLines, startsWith, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -96,7 +96,7 @@ export string test_the_reserved_handles_are_the_same_numbers_on_the_wac_side_and
     Core core, Cli cli) {
   T t = T.create();
   // The wac side: `export const i32 NAME = N;`
-  string wacSrc = sourceOf(t, cli, "packages/platform/src/platform.wac");
+  string wacSrc = sourceOf(t, cli, "std/platform.wac");
   i32 stdinWac = declared(wacSrc, "export const i32 ", "STDIN", " = ");
   i32 parentWac = declared(wacSrc, "export const i32 ", "PARENT_FS", " = ");
   // The shared host module, which both reserved numbers and the counter's floor live in.

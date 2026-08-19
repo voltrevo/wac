@@ -11,7 +11,7 @@
 // The sweep itself is `corruption.wac`, shared with the sample, so this is a size rather than a second
 // implementation of the same test.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Swept, assertSwept, sweepCorruptions } from "./corruption.wac";
 

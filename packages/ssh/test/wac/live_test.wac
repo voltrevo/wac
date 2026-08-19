@@ -15,7 +15,7 @@
 // OpenSSH is now wac end to end — the last piece of this package that was not.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { ALPHABET_STANDARD, decode as b64Decode } from "../../../codec/src/base64.wac";

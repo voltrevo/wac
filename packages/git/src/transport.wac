@@ -28,7 +28,7 @@
 // that way, so what decides is whether the body arrived. `gets` reported "handshake failed" on every
 // successful fetch before that was understood.
 
-import { Cli, Core, FileResult, Socket } from "../../platform/src/platform.wac";
+import { Cli, Core, FileResult, Socket } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { slice } from "../../bytes/src/slice.wac";
 import { Store, pemBundle } from "../../tls/src/roots.wac";

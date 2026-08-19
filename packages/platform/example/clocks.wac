@@ -24,7 +24,7 @@
 // **Deliberately no upper bounds.** A sleep that takes far longer than it asked for is a loaded
 // machine, not a broken host, and a test that called that a failure would be measuring the machine —
 // which is the mistake `harness/bounded.ts` exists to avoid. Only the floors are promises.
-import { Cli, Core } from "../src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 
 /** Milliseconds at 2026-01-01T00:00:00Z, a moment this program is certainly running after. */
 i64 WELL_PAST() { return 1767225600000; }

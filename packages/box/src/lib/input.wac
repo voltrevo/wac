@@ -3,7 +3,7 @@
 // That an applet works in a pipe at all is this file: without `readStdin` every one of
 // them would be a file-to-file tool.
 
-import { Change, Cli, Core, FileResult, readReason, reasonOf } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, FileResult, readReason, reasonOf } from "std/platform.wac";
 import { Args } from "./args.wac";
 import { Feed, Line, Lines, Sink, nextLine } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";

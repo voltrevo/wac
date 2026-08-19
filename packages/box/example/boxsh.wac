@@ -9,7 +9,7 @@
 //
 // The wiring below is `term.wac`'s, minus the screen.
 
-import { Core, Cli } from "../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { Shell } from "../../sh/src/exec.wac";
 import { shellMain } from "../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../src/shrun.wac";

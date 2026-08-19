@@ -13,7 +13,7 @@
 // Ephemeral keys come from `randomBytes`, so the world's one unprivileged source of
 // entropy is what a handshake's secrecy rests on. Worth knowing.
 
-import { Cli, Core, FileResult, readReason, Socket } from "../../../platform/src/platform.wac";
+import { Cli, Core, FileResult, readReason, Socket } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

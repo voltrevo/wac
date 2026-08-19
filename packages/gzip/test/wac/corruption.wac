@@ -16,7 +16,7 @@
 // The sizes are the *only* difference between the two callers. Everything a caller asserts is a field
 // below, so a sweep that quietly stopped running cases cannot pass either of them.
 
-import { Cli, Core, Change, Exec, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Change, Exec, Stat } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { gzipBest } from "../../src/gzip.wac";

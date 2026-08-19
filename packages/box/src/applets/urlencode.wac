@@ -6,7 +6,7 @@
 // approximates, and it is also the only set that escapes `%`, so the hand-rolled pre-pass that used
 // to do that here is gone with it.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, readAll } from "../lib/input.wac";

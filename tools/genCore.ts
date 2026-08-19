@@ -53,6 +53,42 @@ const WACC_ROOT = [READ, JSX];
  */
 const SIBLINGS = ["core/option.wac", "core/result.wac", "core/hash.wac", "core/map.wac", "core/vec.wac"];
 
+/**
+ * `std` — the capability half of the built-ins, `design/lang/0009` D4.
+ *
+ * **One file, and D4 is what says so**: `std` is "`Core`, `Cli`, filesystem, network, processes,
+ * environment, terminal, clocks, randomness, page", which is `platform.wac` and names nothing else.
+ * `frame.wac` and `stream.wac` sit next to it in `packages/platform` and are *not* in it — they are
+ * library code written over the capabilities rather than capabilities, and they stay a package.
+ *
+ * That distinction is also the one the mechanism can enforce. **A built-in cannot import a package**,
+ * because the compiler carries its text and there is no `../../bytes/src/buf.wac` inside a wasm
+ * module. `platform.wac` imports `"core"` and nothing else, so it embeds exactly; both of the others
+ * import `Buf` from `packages/bytes`, so neither could, whatever D4 had said.
+ *
+ * Siblings only, with no root module: D4's own example reaches it by path
+ * (`import { Core, Cli } from "std/platform.wac";`) and there is no declaration that wants to be in
+ * a `std` root. `"std"` is still reserved, so a project cannot define one and have it mean something
+ * other than a built-in.
+ */
+const STD = ["std/platform.wac"];
+
+/**
+ * Which of those the reference compiler gets, and the answer is none of them.
+ *
+ * **`platform.wac` uses lambdas and the reference frontend has none.** Measured rather than assumed:
+ * `compiler/wacParse.ts` gives 19 errors on it, every one cascading from the single
+ * `(i32 id) => { … }` at `platform.wac:286`. So `std` is wacc-only in full — the same mechanism as
+ * `core/jsx.wac` above, a file the reference does not get expressed by which list it is in, and a
+ * documented omission rather than a bug (`compiler/README.md` carries the row).
+ *
+ * The reference refuses it **by name**, with the reason, rather than by failing to find it: "unknown
+ * module" would send a reader looking for a typo in a specifier that is in fact correct.
+ */
+const REFERENCE_STD: string[] = [];
+/** The rest of `STD`, which the reference refuses by name. Derived, so the two cannot drift. */
+const REFERENCE_STD_ABSENT = STD.filter((f) => !REFERENCE_STD.includes(f));
+
 const REF_OUT = "compiler/wacCore.ts";
 const WACC_OUT = "packages/wacc/src/coretext.wac";
 
@@ -137,8 +173,21 @@ ${(await Promise.all(SIBLINGS.map(async (f) =>
  * and this repository keeps the tree's *source* at \`core/\` — so the literal rule makes
  * \`core/test/option_test.wac\` unreadable, a real file swallowed by the namespace it lives in.
  */
+/**
+ * \`std\` in the reference compiler: reserved, and empty.
+ *
+ * Its one file uses lambdas and this frontend has none, so there is nothing here to carry — see
+ * \`REFERENCE_STD\` in \`tools/genCore.ts\` for the measurement behind that. The names are still listed,
+ * because a resolver that cannot find \`std/platform.wac\` must say *why* rather than report an
+ * unknown module: the specifier is correct and the compiler is the thing that is short.
+ */
+export const STD_ABSENT: Record<string, string> = {
+${REFERENCE_STD_ABSENT.map((f) =>
+  `  ${JSON.stringify(f)}: "it uses lambdas, which this compiler's frontend does not have",`).join("\n")}
+};
+
 export function isBuiltinSpecifier(spec: string): boolean {
-  return spec === "core" || spec === "std" || spec in CORE.files;
+  return spec === "core" || spec === "std" || spec in CORE.files || spec in STD_ABSENT;
 }
 `;
 }
@@ -176,9 +225,28 @@ ${(await Promise.all(SIBLINGS.map(async (f) =>
  * one resolver knows about and the other does not is a module the graph reads and the linker cannot
  * find. Both are generated from the same list, which is the point of generating them.
  */
+/**
+ * A file of the \`std\` tree by the specifier that names it, or "" when there is no such file.
+ *
+ * The capability half of the built-ins — \`design/lang/0009\` D4. Separate from \`coreFile\` because the
+ * two trees admit different things and the admission tests are different: \`core\` needs no capability
+ * and \`std\` is nothing but capability. \`""\` on a miss for the same reason as \`coreFile\`.
+ */
+export string stdFile(string path) {
+${(await Promise.all(STD.map(async (f) =>
+  `  if (path == ${JSON.stringify(f)}) {\n${asWac(await read([f])).replace(/^/gm, "  ")}\n  }`
+))).join("\n")}
+  return "";
+}
+
+/** Every \`std\` specifier, so a caller can reserve them without guessing the list. */
+export string[] stdFiles() {
+  return string[](${STD.map((f) => JSON.stringify(f)).join(", ")});
+}
+
 export bool isBuiltinSpec(string spec) {
   if (spec == "core" || spec == "std") { return true; }
-  return coreFile(spec) != "";
+  return coreFile(spec) != "" || stdFile(spec) != "";
 }
 
 /** Every sibling's specifier, so a caller can reserve them without guessing the list. */

@@ -4,7 +4,7 @@
 // works where `box sort f > f` cannot: the shell truncates `f` before `sort` has read it,
 // and this does not touch the target until every byte has arrived.
 
-import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";

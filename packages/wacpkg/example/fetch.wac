@@ -26,7 +26,7 @@
 // **A mapping the lock already covers is not fetched and not consulted.** That is `plan`'s rule and
 // the whole point of a lockfile; the loop below skips a `USE` step before it looks at the network.
 
-import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
+import { Change, Cli, Core, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 // `decode` as well as `encode`: the first version of this had its own `hexBytes` and `nib`,
 // which is a third implementation of a rule `packages/codec` already owns.

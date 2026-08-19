@@ -24,7 +24,7 @@
 // So what this is: the compiler, self-hosted, running on what you give it. The size and the SHA-256
 // of the module it emits are checkable against `waccx emit` on the same input, on your machine.
 
-import { Cli, Core, Event, Page, Pending, Picked } from "../../platform/src/platform.wac";
+import { Cli, Core, Event, Page, Pending, Picked } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Vec } from "core/vec.wac";

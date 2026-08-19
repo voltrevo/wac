@@ -29,7 +29,7 @@
 // Either answer is worth having in one place, which is why this is an example rather than a scratch
 // file: it is the smallest program that distinguishes them.
 
-import { Core, Cli, Socket, Pending } from "../src/platform.wac";
+import { Core, Cli, Socket, Pending } from "std/platform.wac";
 import { Read } from "core";
 
 export i32 main(Core core, Cli cli) {

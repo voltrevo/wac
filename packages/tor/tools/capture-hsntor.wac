@@ -40,7 +40,7 @@
 // with us by construction and quietly stop being evidence. `packages/crypto` is imported here for
 // SHA-256 and SHA3-256 only, which the vectors do not test.
 
-import { Core, Cli, Exec, FileResult, Stat } from "../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { sha3_256 } from "../../crypto/src/keccak.wac";
 import { decoded } from "../../codec/src/hex.wac";

@@ -22,7 +22,7 @@
 // containing them is the point of the seam, and this file is what the seam looks like from the other
 // side.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
 import { Shell } from "./exec.wac";
 import { shellMain } from "./entry.wac";

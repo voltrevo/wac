@@ -28,7 +28,7 @@
 // still works on the day `exec` stops inheriting.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 import { withHome } from "../../../wactest/src/childenv.wac";
 

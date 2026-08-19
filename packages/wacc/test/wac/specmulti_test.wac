@@ -19,7 +19,7 @@
 // wanted: nothing in it is decoration.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { jsonFile, strOf, arrayOf, boolOf } from "../../../wactest/src/jsonfile.wac";

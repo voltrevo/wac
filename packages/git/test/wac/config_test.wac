@@ -17,7 +17,7 @@
 // another's fixture.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, Stat } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, Stat } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
 import { Setting, parseConfig, configOf, hasConfig } from "../../src/config.wac";
 

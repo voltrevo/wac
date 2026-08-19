@@ -9,7 +9,7 @@
 // what every applet in this package does with a letter it does not know, and for `ls` that is the
 // difference between "hidden files are not shown" and "you asked for them and were not told no".
 
-import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Stat } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { cmpBytes, mergeSortWith } from "../lib/lines.wac";

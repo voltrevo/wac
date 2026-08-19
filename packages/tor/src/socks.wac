@@ -42,7 +42,7 @@
 // rather than at it, because exceeding the ring does not degrade — it deadlocks, with the held
 // slots unable to complete.
 
-import { Core, Cli, Socket, Pending, FileResult, CALL_SLOTS } from "../../platform/src/platform.wac";
+import { Core, Cli, Socket, Pending, FileResult, CALL_SLOTS } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
 import { Network, Guard, Building, bootstrap, connectGuard, startCircuit, advanceCircuit,
          circuitReady, circuitFailed } from "./bootstrap.wac";

@@ -4,7 +4,7 @@
 // out. Two documents that mean the same thing come out byte-identical, which is the
 // property that makes this worth having on a pipe rather than a pretty-printer.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, readAll } from "../lib/input.wac";

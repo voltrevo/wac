@@ -12,7 +12,7 @@
 // wired in `boxRun` would import `box.wac` back. A `bin/` entry is imported by nothing, so the
 // cycle does not arise.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxApplet, boxNames, boxRun } from "../shrun.wac";

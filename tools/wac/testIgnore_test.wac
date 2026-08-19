@@ -18,7 +18,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { Core, Cli, Exec, Change } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
 
 /** Three trivially passing test files, so the counts below are about the flag and nothing else. */
 string ONE() { return "export string test_one() { return \"\"; }\n"; }

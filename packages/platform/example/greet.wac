@@ -12,7 +12,7 @@
 // connected, rate-limit by source, or refuse a connection that did not come from this machine, which
 // is the check that makes binding every interface survivable. wac-mono issue 0025.
 
-import { Cli, Core, Socket } from "../src/platform.wac";
+import { Cli, Core, Socket } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 2) {

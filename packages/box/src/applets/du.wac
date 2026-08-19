@@ -5,7 +5,7 @@
 // answer and was not. Anything that could not be counted is now said out loud and the status is
 // nonzero, while the partial figure is still printed — which is what GNU's does.
 
-import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Stat } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";

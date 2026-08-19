@@ -659,6 +659,18 @@ export struct Vec<T> {
  * and this repository keeps the tree's *source* at `core/` — so the literal rule makes
  * `core/test/option_test.wac` unreadable, a real file swallowed by the namespace it lives in.
  */
+/**
+ * `std` in the reference compiler: reserved, and empty.
+ *
+ * Its one file uses lambdas and this frontend has none, so there is nothing here to carry — see
+ * `REFERENCE_STD` in `tools/genCore.ts` for the measurement behind that. The names are still listed,
+ * because a resolver that cannot find `std/platform.wac` must say *why* rather than report an
+ * unknown module: the specifier is correct and the compiler is the thing that is short.
+ */
+export const STD_ABSENT: Record<string, string> = {
+  "std/platform.wac": "it uses lambdas, which this compiler's frontend does not have",
+};
+
 export function isBuiltinSpecifier(spec: string): boolean {
-  return spec === "core" || spec === "std" || spec in CORE.files;
+  return spec === "core" || spec === "std" || spec in CORE.files || spec in STD_ABSENT;
 }

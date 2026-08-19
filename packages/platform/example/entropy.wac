@@ -21,7 +21,7 @@
 // not constant: 4 KiB of a CSPRNG has a probability of about 2^-32768 of being all one byte, so a
 // false failure here is not the risk. What it catches is a host that allocated and never filled,
 // which is exactly what a chunked implementation gets wrong when a loop bound is off.
-import { Core, Cli } from "../src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 
 /** Web Crypto's per-call cap, which is the boundary this program exists to cross. */
 i32 CAP() { return 65536; }

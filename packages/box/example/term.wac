@@ -67,7 +67,7 @@
 // So: the vocabulary is shared, the discipline is not yet, and the cost of sharing it is written down
 // here rather than discovered by whoever tries.
 
-import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
+import { Cli, Core, Event, Page } from "std/platform.wac";
 import { Shell, runScript } from "../../sh/src/exec.wac";
 // `fmt`'s, not a fourth copy: this file had one, and the copies had already drifted — the i32-minimum
 // bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.

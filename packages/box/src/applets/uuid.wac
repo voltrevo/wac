@@ -3,7 +3,7 @@
 // Sixteen bytes from `randomBytes` with the six bits the specification pins down. The
 // only applet whose whole job is a capability nothing else called.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Fs } from "../../../fs/src/fs.wac";

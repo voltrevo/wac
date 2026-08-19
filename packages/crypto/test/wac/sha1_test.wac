@@ -21,7 +21,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { sha1, Sha1 } from "../../src/sha1.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";

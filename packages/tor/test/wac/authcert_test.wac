@@ -28,7 +28,7 @@ import { equal } from "../../../bytes/src/slice.wac";
 import { jsonFile, strOf, num64Of } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
 const string ORACLE = "packages/tor/test/oracle.mjs";

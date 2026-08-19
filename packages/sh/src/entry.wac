@@ -8,7 +8,7 @@
 // once with `Unknown heap type -34`. Here it is exported for wac to import and `sh.wac` exports
 // only `main`, which binds cleanly. wac issue 0062, filed by agent-b the day before this hit it.
 
-import { Cli, Core, FileResult, readReason } from "../../platform/src/platform.wac";
+import { Cli, Core, FileResult, readReason } from "std/platform.wac";
 import { Shell, runScript } from "./exec.wac";
 
 /**

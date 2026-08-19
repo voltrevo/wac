@@ -16,7 +16,7 @@
 // two things being compared, and the whole point is that the wac side can now do what it does.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { splitLines } from "../../../wactest/src/strings.wac";
 import { Graph, graphOf } from "./graph.wac";

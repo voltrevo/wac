@@ -31,7 +31,7 @@
 // `hsdir_interval` entirely when `TestingTorNetwork` is set, so a client computing 1440 minutes
 // against chutney asks for a period nobody is in and gets a 404 with nothing to say why.
 
-import { Core, Cli, FileResult } from "../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { Network, Session, bootstrap, buildCircuitTo } from "./bootstrap.wac";
 import { fetchOverCircuit, itoa } from "./link.wac";
 import { itoa64 } from "../../wactest/src/itoa64.wac";

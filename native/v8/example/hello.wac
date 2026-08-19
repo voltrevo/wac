@@ -5,7 +5,7 @@
 // the module's own `$bind$fnref_<j>`, a struct built by its `of`, a call back into Rust through
 // `wac.cb<j>`, and a wac string read out of the module's memory.
 
-import { Core } from "../../../packages/platform/src/platform.wac";
+import { Core } from "std/platform.wac";
 
 export i32 main(Core core) {
   core.log("hello from a Rust host on V8");

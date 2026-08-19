@@ -14,7 +14,7 @@
 // script is an ordinary value.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Pending, Sched } from "../../src/platform.wac";
+import { Core, Pending, Sched } from "std/platform.wac";
 
 /**
  * A `Core` whose `waitAny` answers with the indices in `script`, in order, then `-1` for ever.

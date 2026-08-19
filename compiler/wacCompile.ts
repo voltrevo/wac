@@ -5,7 +5,7 @@
 // Each phase runs in order; later phases are skipped on earlier errors.
 
 import { EXTENSIONS, FRONTENDS, frontendFor } from "./wacFrontend.ts";
-import { CORE, isBuiltinSpecifier } from "./wacCore.ts";
+import { CORE, isBuiltinSpecifier, STD_ABSENT } from "./wacCore.ts";
 import type { Import, Program } from "./wacParse.ts";
 import {
   wacResolve, resolvePath, resolveSpecifier, funcParams, funcReturnType, type ResolveResult,
@@ -311,6 +311,25 @@ export function wacCompile(
         const key = isBuiltinSpecifier(spec)
           ? spec
           : resolveSpecifier(path, spec, options.roots?.get(path));
+        // **A built-in this compiler does not carry, refused by name.** `std/platform.wac` is a
+        // correct specifier that resolves to nothing here, because the reference frontend has no
+        // lambdas and that file uses them — `tools/genCore.ts` holds the measurement. Saying so is
+        // the whole point of the list: without it the import is skipped, `Core` and `Cli` come back
+        // undeclared, and the reader is sent to look for a typo in a specifier that is right.
+        if (key in STD_ABSENT) {
+          diagnostics.push({
+            span: 1,
+            phase: "resolve",
+            message:
+              `\`${key}\` is a built-in this compiler does not carry: ${STD_ABSENT[key]}. ` +
+              `The wac compiler (\`packages/wacc\`) has it; \`compiler/README.md\` records the omission.`,
+            file: path,
+            line: item.line ?? 1,
+            col: item.col ?? 1,
+            severity: "error",
+          });
+          continue;
+        }
         if (!(key in CORE.files) || programs.has(key)) continue;
         const frontend = FRONTENDS.get(CORE.extension)!;
         const { program: builtin, errors } = frontend(CORE.files[key], key);

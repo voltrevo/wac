@@ -22,7 +22,7 @@
 // serves an error rather than the file. The handler cannot exceed what this program hands it — and
 // what it hands over is the `GRANT_NONE` below, which is where to change that.
 
-import { Child, Cli, Core, FileResult, GRANT_NONE, Pending, Socket } from "../src/platform.wac";
+import { Child, Cli, Core, FileResult, GRANT_NONE, Pending, Socket } from "std/platform.wac";
 import { argvOf } from "../src/stream.wac";
 import { Read } from "core";
 

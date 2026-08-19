@@ -42,7 +42,7 @@
 // and the three answers a case compares run concurrently over three trees rather than in turn.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult, Pending } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult, Pending } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";

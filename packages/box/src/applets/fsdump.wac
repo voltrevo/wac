@@ -10,7 +10,7 @@
 // It prints the metadata as well as the tree, because exact metadata was the argument for the format in
 // the first place, and a listing that hides it does not show what was paid for.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";

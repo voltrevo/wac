@@ -36,7 +36,7 @@
 //     messages differ by design: bash names the offending token and the line, ours says `syntax error`.
 //     Generating them buries the real findings under a class that is already understood.
 
-import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wac";
+import { Change, Cli, Core, Exec } from "std/platform.wac";
 import { Buf } from "../../packages/bytes/src/buf.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Frame, childCli, childCore } from "../../packages/platform/src/frame.wac";

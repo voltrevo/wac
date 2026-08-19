@@ -37,7 +37,7 @@
 // what `issues/system/0211` had to be fixed for.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Pending } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Pending } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Held } from "../../../wactest/src/daemon.wac";

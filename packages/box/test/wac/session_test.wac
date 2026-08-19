@@ -12,7 +12,7 @@
 // `sealed.test.ts` keep the ones that run a program with a stated grant set, and `issues/system/0193`
 // lists the boundary. What is still worth asserting here is that the session's world is its own.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runSealed, show } from "./replay.wac";

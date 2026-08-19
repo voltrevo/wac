@@ -4,7 +4,7 @@
 // reason the modulo below is done the careful way: taking a 32-bit value mod `i + 1`
 // favours the low end unless the values that would skew it are rejected.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, readInput } from "../lib/input.wac";

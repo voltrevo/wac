@@ -17,7 +17,7 @@
 // against a PNG encoder's CRC tables and deflate, and every image tool reads it. The alpha channel
 // is dropped, which is honest for a screenshot: the desktop is opaque by construction.
 
-import { Change, Cli, Core, FAULT_NONE } from "../../platform/src/platform.wac";
+import { Change, Cli, Core, FAULT_NONE } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Desk } from "../src/desk.wac";
 import { Surface } from "../src/surface.wac";

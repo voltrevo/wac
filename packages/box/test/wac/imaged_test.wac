@@ -10,7 +10,7 @@
 // sealed session does not — is `backingsprocess_test.wac`'s canary, which still spawns, and is what stops all of
 // this being three identical things agreeing with each other.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runImaged, show } from "./replay.wac";

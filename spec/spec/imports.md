@@ -105,6 +105,37 @@ export enum Read {
 `match` is exhaustive, so a caller that ignores `Failed` does not compile.
 
 
+### `std`
+
+```wac
+import { Cli, Core } from "std/platform.wac";
+```
+
+The other built-in tree, and the split is by capability: `core` is what needs nothing from the host,
+`std` is what is nothing but host — `Core`, `Cli`, the filesystem, the network, processes, the
+environment, the terminal, clocks, randomness, the page.
+
+`[§wac-std-reserved-5kt8nqw]` `std` and `std/` are reserved exactly as `core` is: a project's own
+`std/platform.wac` does not shadow the built-in, and a `std` specifier never appears in `wac.lock`.
+Its version is the toolchain's.
+
+`[§wac-std-no-root-2vp6xmk]` `std` has **no root module** — every name in it is reached by path.
+`import { Core } from "std";` is an error naming the file to write instead. `core` has a root because
+`Read` is in it; nothing wants to be in a `std` root, and an empty one would only be a second spelling
+for the same thing.
+
+`[§wac-std-imports-core-7hn3qrz]` A file in a built-in tree may import `core` and nothing else. Both
+compilers carry these trees as **text** — one bundles into a browser with no filesystem, the other
+keeps them inside a wasm module — so a relative path out of the tree has nothing to resolve against
+at the far end. This is why `frame.wac` and `stream.wac` are packages rather than `std` files: both
+import `Buf` from `packages/bytes`.
+
+> **`std` is not in every compiler, and that is the only built-in that is not.** `platform.wac` uses
+> lambdas, which the reference frontend does not have, so the reference carries none of this tree and
+> refuses the specifier *by name* with that reason. `compiler/README.md` records it as the ninth
+> omission. The practical edge of it: the playground compiles `core` and cannot compile a program
+> that uses a capability — which was already true, since a browser tab has no filesystem to grant.
+
 ### `@/` — the project root
 
 ```wac

@@ -18,7 +18,7 @@
 // the merged order is a behaviour rather than a libc artefact; and for one case only that we said
 // *something*, since GNU's sentence there describes neither the fault nor its own convention.
 
-import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { ErrCase, operandErrorCases, operandErrorFixtures } from "./cases.wac";

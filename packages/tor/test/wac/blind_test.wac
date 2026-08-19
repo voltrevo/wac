@@ -5,7 +5,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { BLIND_PREFIX_STRING, blindedSecretKey } from "../../src/hsblind.wac";
 import {
   ed25519ExpandedSecret, ed25519PublicKeyExpanded, ed25519SignExpanded, ed25519Verify,

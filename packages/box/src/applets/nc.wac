@@ -13,7 +13,7 @@
 // flight and a park on whichever answers. That is the whole loop, and it is why stdin was
 // given a handle rather than a second ticket-returning read of its own.
 
-import { Cli, Core, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Cli, Core, Pending, Socket } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { atoi, itoa } from "../../../fmt/src/itoa.wac";

@@ -12,7 +12,7 @@
 // added is measured by running it rather than by reading it.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
-import { coreFile, coreSource } from "./coretext.wac";
+import { coreFile, coreSource, stdFile } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Res, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
@@ -2428,6 +2428,12 @@ string joinDir(string dir, string r) {
  */
 export string sourceOf(string[] paths, string[] sources, string path) {
   string builtin = coreFile(path);
+  if (builtin != "") { return builtin; }
+  // `std` is the other embedded tree — the capability half, `design/lang/0009` D4. Asked here rather
+  // than at the call sites for the same reason `core` is: this is the one function that answers "what
+  // is the text of this path", so a tree wired in here is a tree the checker, the linker and the
+  // closure walker all see at once.
+  builtin = stdFile(path);
   if (builtin != "") { return builtin; }
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == path) { return sources[i]; }

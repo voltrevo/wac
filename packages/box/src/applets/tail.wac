@@ -10,7 +10,7 @@
 // instead of all but the first — a different answer rather than a missing one, which is the shape of
 // mistake this repo keeps finding.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, badNumberMessage, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";

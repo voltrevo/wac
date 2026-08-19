@@ -18,7 +18,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { joined, contains } from "../../../wactest/src/strings.wac";
-import { Change, Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, Exec } from "std/platform.wac";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
 
 /** Only the entry. Whatever the tree contributes has to come from inside the compiler. */

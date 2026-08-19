@@ -8,7 +8,7 @@
 // The fields differ in return type on purpose, because a `Pending<T>` is monomorphised per `T`: a
 // struct with ten fields all answering `i32` would measure something cheaper than a real one.
 
-import { Pending } from "../src/platform.wac";
+import { Pending } from "std/platform.wac";
 
 export struct Cap20 {
   fn[Pending<i32>()] f0;

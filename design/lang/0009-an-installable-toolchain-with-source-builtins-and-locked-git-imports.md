@@ -169,16 +169,25 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | --- | --- |
 | 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
 | 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `deno task gen:core` writes `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
-| 3. `core` and `std` as embedded trees (D3, D4) | **`core` is a tree; `std` is untouched** (2026-08-18). `core/` holds `read` and `jsx` as the root and `option`, `result`, `hash`, `map` as siblings, each its own module reached as `"core/option.wac"`, with its own tests under `core/test/` and `deno task coverage:core`. `vec` moved with the rest and **`packages/std` is gone** — `core/` is `read`, `jsx`, `option`, `result`, `hash`, `map` and `vec`. The seam is in three resolvers and both compilers; see below. `std` as the *capability* tree (D4's half: `Core`, `Cli`, filesystem, network) has not been started |
+| 3. `core` and `std` as embedded trees (D3, D4) | **done** (2026-08-19). `core/` holds `read.wac`, `jsx.wac` and the five collections; `std/` holds `platform.wac`, embedded in wacc and refused by name in the reference, which has no lambdas. The sweep was 515 edges across 512 files. **+107,419 bytes of seed for 105,318 of source — 1.02x, against the 384 KB this was costed at** before `issues/lang/0162` made a string literal a data segment. `frame.wac` and `stream.wac` stay packages: both import `packages/bytes`, and a built-in cannot import a package. |
 | 4. quoted specifiers (D5) | **done** (2026-08-19). Every specifier is a quoted path, `core` included: both compilers accept `"core"` and `"core/option.wac"`, the 54 files using the bare form were swept, and the bare form is now an error — `core` gets its own message telling you to quote it, anything else is `unknown module`. `§wac-core-unquoted-3nqk7vd` states the removal and `§wac-core-one-key-5jm2qhx` keeps the property the old clause was really about: however the root is reached it is one module, which nominal types make load-bearing. `spec/spec/grammar.md`'s `source` is `STRING` now. wapy is untouched — a Python-shaped `from X import` names its module bare whatever X is, so the two surfaces still agree about the module and differ only in syntax each already had. |
 | 5. `wac.json5` and `@/` (D6, D7) | **`@/` works, in both compilers** (2026-08-19), with `§wac-import-project-4hq7mnv` and a differential that compiles every fixture with each of them. The upward search for `wac.json5` lives with whichever caller already reads files — `harness/wacFiles.ts` and `gather` — and finds a manifest without reading one, so the JSON parser stays out of the compiler's graph. What is left of D6 is the manifest's *contents*: mappings are D9-D11. The shape was decided first — see *How `@/` gets its root* below. The consolidation this step was waiting on is done: two resolver bodies, one per language, and the change was additive rather than a 22-signature sweep because the hundred-plus call sites have no root to give. **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | not started — see below |
 | 7. Git mappings and `wac.lock` (D9, D10, D11) | **the pure half is done.** `packages/wacpkg` enforces D9's non-overlap, reads and canonicalises `wac.lock`, and `plan` decides USE/CREATE/REFRESH per mapping — including the rule that a moved branch is not a reason to re-resolve. `refToCommit` resolves a ref to a commit, measured against real `git` — an object name, an exact advertised name, then `refs/heads/` or `refs/tags/`, with an ambiguous name refused rather than ranked, and an annotated tag's peel preferred because the two advertised lines name different objects. The cache **layout** is settled too — `cachePath` is `$WAC_HOME/cache/git/<escaped repository>/<commit>`, a function of those two and nothing else, with the repository name escaped reversibly rather than hashed or slugified. Settled before anything fetches on purpose: a cache key lives in people's home directories and cannot be changed later without a migration. **Fetching works**: `packages/wacpkg/example/fetch.wac` resolves, fetches over `packages/git`+`packages/tls`, verifies the commit is in the pack by content address, writes it to the cache and updates the lock — 7.6 MB and 2618 objects from `github.com/voltrevo/wac`, and a second run fetches nothing, which is D11's sentence demonstrated. **Done** (2026-08-19): the fetch checks the tree out as files beside the pack — reusing the `Pack` the commit verification already opened rather than indexing the same objects twice — and `wac build` resolves a mapped specifier to `cachePath(repo, commit)` plus the repository-relative path and opens it. Demonstrated end to end against `github.com/voltrevo/wac`: 8 MB and 2725 objects fetched, tree checked out, and a program importing `dep/cases/0001-….wac` through a `subdir: "spec"` mapping compiled and answered 3. `§wac-import-mapped-6np2rkq`, `packages/wacc/test/wac/mappedspec_test.wac`. The **whole** tree is written rather than the mapping's `subdir`, deliberately: the cache is keyed by repository and commit alone, so two mappings with different subdirs share one checkout, and extracting per mapping would make the cache a function of three things and quietly break the identity D8 rests on. **`wac update` is a command** (2026-08-19): `seed/update.wasm` is the fetcher embedded the way the compiler and the shell are, so the binary answers `update` with it. `wac update` then `wac run` then `wac update` again, against a real repository: fetched, answered 3, and *nothing to fetch; 1 mapping(s) already locked* — D10's rule that a locked mapping stays locked even when its branch moves, demonstrated rather than asserted. **This is the only command that reaches the network, and structurally so**: the fetcher is a separate payload, so there is no code path from `wac build` to a socket. `§wac-cli-update-2rq7knp`. **Step 7 is done** |
 | 8. `wac:install`, `wac uninstall` (D1) | **done as tasks.** `tools/install.ts` builds the seed fixpoint-checked, installs `bin/wac`, `cache/git/`, `env` and `install.json5` under `$WAC_HOME`, and adds one marked line to the profiles that exist — replaced rather than left when it points at a different home, which is how a reinstall to a new `$WAC_HOME` works. `wac:uninstall [--keep-cache]` removes those and the profile line, and nothing else. **`wac uninstall` is a subcommand as of 2026-08-19**, which is what D1 asked for and what the task cannot be: the task is a Deno program under `tools/`, so it needs this checkout, and somebody who installed the command has a `$WAC_HOME` and no checkout. The layout is written down twice now — Rust in `native/v8/src/main.rs` and TypeScript in `tools/install.ts`, with nothing to share it through — and `packages/wacc/test/wac/uninstall_test.wac` is what keeps them one list: it builds the same fake install twice, takes one away with each, and compares what survives, with a canary so that two uninstallers that both did nothing cannot agree their way to green. `app:native-binary` is renamed (2026-08-18) |
 
-Nothing has landed. The counts above were read on 2026-08-17 and are the reason the order is what it
-is: 2 before 3 because otherwise five more files get duplicated, 3 before 4 because the migration is
-mechanical only once the trees are real.
+**All eight steps have landed** (2026-08-19). That sentence read *"nothing has landed"* when the
+table was written and is kept here in its shape, because the ordering argument beside it is what the
+work went on to confirm: the counts above were read on 2026-08-17 and are the reason the order is
+what it is — 2 before 3 because otherwise five more files get duplicated, 3 before 4 because the
+migration is mechanical only once the trees are real.
+
+Both halves of that held. Step 2's generator is what made step 3 a list change rather than a second
+hand-maintained copy, and step 4's sweep was mechanical exactly as predicted. The order was also
+wrong about one thing, which is worth more than the two it got right: **3 turned out to depend on
+`issues/lang/0162`**, an emitter bug in a different tree that nothing in this plan mentions, and the
+step sat at "untouched" for a day because the price of doing it was four times what it should have
+been. An ordering argument over the steps of a design cannot see that; only measuring the step can.
 
 ## Step 2 is not the copy-paste it looks like
 
@@ -332,14 +341,18 @@ is.
 Worth writing down because the facade reading is the intuitive one, and taking it would have made
 step 3 block on `issues/lang/0073` for no gain.
 
-### `std`'s half of step 3 costs about 384 KB of seed, and that wants deciding first
+### `std`'s half of step 3 was costed at 384 KB of seed — it came to 107 KB
+
+**Settled 2026-08-19, and the section below is kept as the record of why it waited.** The
+recommendation was to attack the emitter rather than pay the price or drop the step; that is
+`issues/lang/0162`, now closed, and the number afterwards is at the end of this section.
 
 `core` is done and cost what it was measured to cost. `std` — D4's capability half — is a different
 size of thing, counted 2026-08-18 with `core` already moved:
 
 | file | bytes | importers |
 |---|---:|---:|
-| `packages/platform/src/platform.wac` | 105,318 | **437** |
+| packages/platform/src/platform.wac — now `std/platform.wac` | 105,318 | **437** (515 edges by the time it moved) |
 | `packages/platform/src/frame.wac` | 17,206 | 10 |
 | `packages/platform/src/stream.wac` | 14,748 | 28 |
 
@@ -368,6 +381,38 @@ Recommendation: **do not move `platform.wac` on the strength of D4 alone.** Rese
 specifier, move `frame` and `stream` if they are wanted, and treat the big file as its own decision
 with the 384 KB in front of whoever takes it. Doubling the compiler is not a thing to discover after
 the sweep.
+
+**What happened.** `issues/lang/0162` was fixed first — a string literal is a data segment and an
+`array.new_data` now, not one `i32.const` per byte — and the move was then measured across it rather
+than estimated:
+
+| | bytes |
+|---|---:|
+| `std/platform.wac`, source | 105,318 |
+| seed before | 850,281 |
+| seed after | 957,700 |
+| **delta** | **+107,419**, or **1.02x** the source |
+
+So the estimate above was high by 3.6x, and the reason is the whole of what 0162 changed. The seed is
+a fixed point after one round, so this is the settled size rather than a first pass at it.
+
+**Two of the three bullets survived the move and one did not.** "It is mostly one file" held, and
+harder than it reads: 515 import edges across 512 files, all of them `platform.wac`. "2.8x is a
+measurement of one emitter choice" held exactly — 140 KB predicted through a data segment against
+107 KB measured. The bullet that did not survive is the parenthetical in the second: **`frame` and
+`stream` could not have moved even if they were wanted**, because both import `Buf` from
+`packages/bytes` and a built-in tree is carried as text with no package to reach at the far end. That
+is a mechanical limit rather than a preference, and it is now written where it will be found — in
+`std/README.md`, as the admission test for anything else that wants to be in the tree. D4's list
+names neither file, so the design was already right and the reasoning here was what was loose.
+
+**And the reference does not carry the tree at all.** `platform.wac` uses lambdas; the reference has
+none, so parsing it gives 19 errors cascading from one `(i32 id) => …`. That is the ninth omission in
+`compiler/README.md`, and the reference refuses `std/platform.wac` by name with the reason rather
+than reporting an unknown module. Worth saying plainly because it is a real narrowing of the shared
+subset rather than a detail: **the playground cannot compile a program that uses a capability.** It
+could not before this either — it had no filesystem to give one — so the move records the limit where
+a reader will meet it instead of moving it.
 
 ### The move list, counted
 

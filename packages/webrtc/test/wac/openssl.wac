@@ -29,7 +29,7 @@
 // which is the whole argument of wac-mono 0073.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Core, Cli, Datagram, Exec, Pending, Socket } from "std/platform.wac";
 import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

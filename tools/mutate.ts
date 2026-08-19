@@ -469,7 +469,7 @@ const brokenBaseline = brokenBaselineAll.filter((f) => !refBlind.has(f));
 if (brokenBaseline.length > 0) {
   // **Name the compiler that said so.** This baseline is `wasmHash`, which calls the *reference* —
   // and the reference has not been able to parse a lambda since they landed in
-  // `packages/platform/src/platform.wac`, so every file whose import graph reaches the capability
+  // `std/platform.wac`, so every file whose import graph reaches the capability
   // layer arrives here. 125 of the 361 sources under `packages/*/src` are in that state, `box`'s 78
   // among them, and `wac build` compiles every one of them. "Does not compile" pointed at the file;
   // the file is fine. `issues/system/0183`.

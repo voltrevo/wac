@@ -11,7 +11,7 @@
 // because it predates that capability.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Cli, Core, Pending } from "../../platform/src/platform.wac";
+import { Cli, Core, Pending } from "std/platform.wac";
 import { Framed, Status, frame, maxPacket, minBlock, paddingFor, unframe } from "./packet.wac";
 import { Opened, Plain, aeadPaddingFor, open, seal } from "./cipher.wac";
 import { Read } from "core";

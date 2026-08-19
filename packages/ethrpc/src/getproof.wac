@@ -9,7 +9,7 @@
 // rather than guessed at, because guessing means a nibble-shifted 32-byte root that verifies against
 // nothing and looks like a bad proof.
 
-import { Cli } from "../../platform/src/platform.wac";
+import { Cli } from "std/platform.wac";
 import { call, Answer } from "./rpc.wac";
 import { JsonValue } from "../../json/src/value.wac";
 import { memberOf, memberData, hexArray, fromHexData, isNull, stringOf as jsonString } from "./jsonhex.wac";

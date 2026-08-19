@@ -26,7 +26,7 @@ import { Reader } from "../../src/wire.wac";
 Reader readerOver(u8[] bytes) { return Reader(bytes, bytes.len(), 0, false, ""); }
 
 import { FAULT_DENIED, FAULT_EXISTS, FAULT_IS_DIR, FAULT_NONE, FAULT_NOT_A_DIR, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FAULT_UNSUPPORTED, FileResult, Change, Stat }
-  from "../../../platform/src/platform.wac";
+  from "std/platform.wac";
 
 export string test_a_file_written_reads_back() {
   T t = T.create();

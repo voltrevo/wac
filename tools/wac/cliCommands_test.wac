@@ -21,7 +21,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { Core, Cli, Exec, Change, FileResult, Stat } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, Stat } from "std/platform.wac";
 
 string MATH() { return "export i32 gcd(i32 a, i32 b) { return b == 0 ? a : gcd(b, a % b); }\n"; }
 string BAD()  { return "export i32 f() { return \"x\"; }\n"; }

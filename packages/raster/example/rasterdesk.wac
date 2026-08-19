@@ -15,7 +15,7 @@
 // click in, and what is worth checking here is the *geometry* — the event routing is already driven
 // by `desk.wac`'s own tests, which can press and drag without a page at all.
 
-import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
+import { Cli, Core, Event, Page } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Desk, barHeight } from "../src/desk.wac";

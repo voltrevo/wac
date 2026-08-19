@@ -18,7 +18,7 @@
 // drops it, because there is no name to print. The comment described `wc -l < f` and the code was written
 // to match the comment.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandAt, operandCount } from "../lib/input.wac";
@@ -27,7 +27,7 @@ import { Scalar, decode, TRUNCATED } from "../../../unicode/src/utf8.wac";
 import { isPrintable } from "../../../unicode/src/printable.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
-import { Stat } from "../../../platform/src/platform.wac";
+import { Stat } from "std/platform.wac";
 import { Feed } from "../../../platform/src/stream.wac";
 
 /** One file's counts. */

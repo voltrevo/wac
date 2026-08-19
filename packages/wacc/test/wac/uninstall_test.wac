@@ -22,7 +22,7 @@ import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Change, Cli, Core, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, Exec, FileResult } from "std/platform.wac";
 
 /** `$WAC_HOME` as `tools/install.test.ts`'s `fakeInstall` leaves it, plus a profile that sources it. */
 string fakeInstall(Cli cli, T t, string dir) {

@@ -18,7 +18,7 @@
 // boundary is `spawn`, a separate worker with its own grants, which a browser cannot do yet
 // (issue 0030).
 
-import { Captured, Cli, Core, FileResult } from "../src/platform.wac";
+import { Captured, Cli, Core, FileResult } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 1) {

@@ -43,7 +43,7 @@
 // **No directory publication**, so nothing puts this relay in a consensus. A client reaches it by
 // being told, which is what a `Bridge` line is.
 
-import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS } from "../../platform/src/platform.wac";
+import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS } from "std/platform.wac";
 import { Read } from "core";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Parsed, parseRequest } from "../../http/src/request.wac";

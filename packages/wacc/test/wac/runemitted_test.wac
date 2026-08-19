@@ -16,7 +16,7 @@
 // already uses.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Change } from "../../../platform/src/platform.wac";
+import { Core, Cli, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 import { Ran, runEmitted, runEmittedOne, scratchDir } from "./artifacts_probe.wac";

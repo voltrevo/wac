@@ -18,7 +18,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { gunzipBytes, inflate } from "../../src/inflate.wac";
 import { gzipStored, gzipFixed, gzipDynamic, gzipBest } from "../../src/gzip.wac";

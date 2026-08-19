@@ -750,7 +750,7 @@ fn write_aggregate(
 ) -> Option<(String, Vec<usize>)> {
     let up = "../".repeat(to.parent()?.components().count());
     let mut imports = vec![format!(
-        "import {{ Cli, Core }} from \"{up}packages/platform/src/platform.wac\";"
+        "import {{ Cli, Core }} from \"std/platform.wac\";"
     )];
     let mut wrappers = Vec::new();
     // Which files ended up in it, by index into `files`: one with no tests contributes nothing, and
@@ -1661,7 +1661,7 @@ struct AsChild {
     ///
     /// Two queues rather than one because it is a conversation: the child *asks* on `fs_req` and
     /// *reads answers* on `fs_rep`, and a single queue would let it read back its own request.
-    /// `packages/platform/src/platform.wac` describes the same pair from the wac side —
+    /// `std/platform.wac` describes the same pair from the wac side —
     /// `recv(fsHandle)` in the parent reads a request and `send(fsHandle, …)` answers it.
     ///
     /// `None` is a child that was spawned with `serveFs` false, and every program that was not
@@ -5077,7 +5077,7 @@ fn build_socket<'s>(
     ctor.call(scope, exports.into(), &[h.into(), err, who, p.into()])
 }
 
-/// `STDIN`, in `packages/platform/src/platform.wac`. A channel number, never a socket.
+/// `STDIN`, in `std/platform.wac`. A channel number, never a socket.
 ///
 /// **Declared but not read here, deliberately.** `packages/platform/test/wac/handles_test.wac` reads this
 /// name out of every host's source and checks the five of them agree, so the declaration is the
@@ -5094,7 +5094,7 @@ fn build_socket<'s>(
 #[allow(dead_code)]
 const STDIN_HANDLE: i32 = 0;
 
-/// `PARENT_FS`, in `packages/platform/src/platform.wac` — the channel a spawned program asks its
+/// `PARENT_FS`, in `std/platform.wac` — the channel a spawned program asks its
 /// parent for a filesystem on. `packages/platform/host/children.ts` calls the same number `n_HANDLE`
 /// and checks for it *before* looking anything up in its socket table.
 ///

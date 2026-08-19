@@ -23,7 +23,7 @@
 // It was tools/map.ts. The one definition of "a program" it shares with the compile check is
 // `tools/wac/programs.wac`, ported first for that reason. `issues/system/0161`.
 
-import { Core, Cli, Change, FileResult, Stat } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Change, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "./programs.wac";
 

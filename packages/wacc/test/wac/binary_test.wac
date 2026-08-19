@@ -15,7 +15,7 @@
 // wac test calls it as one.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Graph, graphOf } from "./graph.wac";
 import { emitFiles } from "../../src/api.wac";

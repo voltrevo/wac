@@ -30,7 +30,7 @@
 // remembered string.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { ParsedTag, Tag, parseTag } from "../../src/commit.wac";
 import { encode as hexOf } from "../../../codec/src/hex.wac";
 

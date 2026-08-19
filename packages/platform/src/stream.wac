@@ -29,7 +29,7 @@
 // answers "keep going", and a sink that has been refused once stays `broken` — a producer that ignored
 // the answer would fill memory with output nobody is going to read.
 
-import { Cli } from "./platform.wac";
+import { Cli } from "std/platform.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Read } from "core";
 

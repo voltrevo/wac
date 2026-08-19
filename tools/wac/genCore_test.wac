@@ -15,7 +15,7 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
-import { Core, Cli, Exec, FileResult } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 
 export string test_the_embeddings_are_in_step_with_the_core_tree(Core core, Cli cli) {
   T t = T.create();

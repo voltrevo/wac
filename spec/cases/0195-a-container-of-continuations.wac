@@ -9,7 +9,7 @@
 // was *expected T, found a lambda*.
 //
 // That is the difference between a table of continuations being expressible and not, which is the
-// whole of what a scheduler is: `packages/platform/src/platform.wac`'s `Sched` holds a
+// whole of what a scheduler is: `std/platform.wac`'s `Sched` holds a
 // table of them and dispatches whichever the host answered.
 
 /**

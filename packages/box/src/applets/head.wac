@@ -9,7 +9,7 @@
 // asked for it stops reading, so `head -1` of a huge file costs one chunk. Nothing else
 // here can do that, and it is the reason `head` no longer shares `pick` with `tail`.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, badNumberMessage, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, labelAt, openStream, operandCount, readFailed } from "../lib/input.wac";

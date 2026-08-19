@@ -10,7 +10,7 @@
 //
 // wacc only, as JSX is: `design/lang/0004` and `compiler/README.md`'s omissions table.
 
-import { Cli, Core } from "../src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Attr, Node } from "core";
 
 /**

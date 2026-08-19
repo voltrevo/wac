@@ -16,7 +16,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, askDeno, ask, check, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { poly1305 } from "../../src/poly1305.wac";
 import { aeadDecrypt, aeadEncrypt, aeadTag } from "../../src/aead.wac";

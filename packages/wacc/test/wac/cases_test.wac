@@ -26,7 +26,7 @@
 // directions the TypeScript had: the case is allowed to fail, *and* it must still fail — a list of
 // tolerated misses with nothing checking whether they are still missed is how one becomes permanent.
 
-import { Change, Cli, Core } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { trimmed } from "../../../wactest/src/strings.wac";

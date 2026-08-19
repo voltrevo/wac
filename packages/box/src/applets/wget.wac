@@ -4,7 +4,7 @@
 // where `cli.write` goes, so the fetch itself is unchanged and does not know. Switching
 // back to standard output at the end is what closes the file.
 
-import { Captured, Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Captured, Change, Cli, Core, reasonOf } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";

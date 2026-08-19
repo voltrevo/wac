@@ -14,7 +14,7 @@
 //
 // The loop is `x >= 0` rather than `true` so that nothing has to decide whether code after an
 // endless loop is reachable. It ends after 2^63 additions, which is not a duration.
-import { Child, Cli, Core, GRANT_NONE } from "../src/platform.wac";
+import { Child, Cli, Core, GRANT_NONE } from "std/platform.wac";
 import { Read } from "core";
 import { argvOf } from "../src/stream.wac";
 

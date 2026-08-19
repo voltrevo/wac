@@ -40,7 +40,7 @@
 // one uses, so `ls`, `ps`, a pipeline of spawned applets and `^C` all behave as they do everywhere
 // else in this repository.
 
-import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
+import { Cli, Core, Event, Page } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Vec } from "core/vec.wac";
 import { boxApplet } from "../src/shrun.wac";

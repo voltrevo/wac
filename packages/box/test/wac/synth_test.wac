@@ -16,7 +16,7 @@
 // why. What is still true here, and is the interesting half, is that the session's filesystem is
 // `Fs.inMemory`: nothing it can name reaches the host, whatever this process may hold.
 
-import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Ran, runSealed, show } from "./replay.wac";

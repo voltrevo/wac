@@ -25,7 +25,7 @@ import { equal } from "../../../bytes/src/slice.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonMember } from "../../../json/src/value.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { FixedBig } from "../../../fmt/src/bigint.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 

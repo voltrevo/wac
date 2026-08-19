@@ -23,7 +23,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { importSpecs, resolveFrom } from "../../src/files.wac";
 

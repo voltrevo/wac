@@ -21,7 +21,7 @@
 // test keeps a live case per mode as a canary — a wholesale change of environment trips those, and a
 // subtler one is caught when somebody re-runs this and reads the diff.
 
-import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wac";
+import { Change, Cli, Core, Exec } from "std/platform.wac";
 import { Buf } from "../../packages/bytes/src/buf.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { SHARED, modeCases, modes, show, typed } from "../../packages/tty/test/wac/cases.wac";

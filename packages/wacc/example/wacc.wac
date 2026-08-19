@@ -18,7 +18,7 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
+import { Change, Cli, Core, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
@@ -106,6 +106,20 @@ struct Sources {
 /** What `Sources.missing` says for a `@/` the importing file has no project for — D7. */
 string noProject(string spec, string from) {
   return spec + " needs a project: no " + MANIFEST_NAME() + " above " + from;
+}
+
+/**
+ * What `Sources.why` says for a bare `"std"` — D4, and `§wac-std-no-root-2vp6xmk`.
+ *
+ * **`std` is reserved but has no root module**, so this specifier is neither a file to read nor a
+ * built-in to serve, and the honest answer names the one thing that would work. Without it the
+ * reader falls through to path arithmetic and reports *cannot read std* — a sentence about a file,
+ * for a word that was never going to be one, which sends the reader looking in the wrong place.
+ *
+ * `core` does have a root, so `from "core"` stays correct and this says nothing about it.
+ */
+string noStdRoot() {
+  return "\"std\" has no root module: import from one of its files, such as \"std/platform.wac\"";
 }
 
 /**
@@ -334,6 +348,9 @@ Sources gather(Fs fs, Cli cli, string entry) {
           }
           continue;
         }
+      }
+      if (specs[i] == "std") {
+        return Sources(paths, texts, roots, mapFrom, mapSpec, mapTo, mapN, n, "", noStdRoot());
       }
       string next = resolveFromIn(path, specs[i], roots[at]);
       // **A `@/` with no project stops the walk, and saying so is the whole point.** D7 makes it a

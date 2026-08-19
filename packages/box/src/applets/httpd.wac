@@ -12,7 +12,7 @@
 // rather than resolved: resolving is where directory-traversal bugs live, and this program
 // has no need to be clever about it.
 
-import { Cli, Core, FileResult, Stat, Socket } from "../../../platform/src/platform.wac";
+import { Cli, Core, FileResult, Stat, Socket } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";

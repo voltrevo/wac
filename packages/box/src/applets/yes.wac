@@ -4,7 +4,7 @@
 // that shows `write` reporting a closed pipe. `yes | head -3` ends because `head` exits
 // and the next write fails — without that answer this would spin.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Fs } from "../../../fs/src/fs.wac";

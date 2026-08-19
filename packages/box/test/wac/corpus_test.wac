@@ -8,7 +8,7 @@
 // `routes.test.ts` asserts that this route and the spawned one are one program, and that they really are
 // two routes. That is what makes replaying in-process a change of cost rather than of subject.
 
-import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";

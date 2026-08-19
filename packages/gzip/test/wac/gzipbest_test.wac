@@ -12,7 +12,7 @@
 // against each other, which is a property rather than an oracle. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { gzipBest, gzipStored } from "../../src/gzip.wac";
 

@@ -9,7 +9,7 @@
 // rewriting assertions rather than inventing machinery. `routes.test.ts` already asserts that the
 // in-process route and the spawned one are the same program, which is what makes the move safe.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";

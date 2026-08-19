@@ -26,7 +26,7 @@ import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { verifyPath, parseCert, Cert, certMatchesHost, keyP256, keyP384, keyRsa,
          sigEcdsaSha256, sigEcdsaSha384 } from "../../src/x509.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 
 // Fixture numbering. The names are here now, not on the host side.

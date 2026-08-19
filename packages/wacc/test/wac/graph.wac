@@ -14,7 +14,7 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, FileResult } from "std/platform.wac";
 import { importSpecs, resolveFrom } from "../../src/files.wac";
 
 /** An entry and everything it reaches, in the order they were found. */

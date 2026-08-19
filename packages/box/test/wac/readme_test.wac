@@ -11,7 +11,7 @@
 // how it came to be dispatched and unlisted — `box help` worked and the only way to find out was to read
 // the dispatcher.
 
-import { Cli, Core, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 
