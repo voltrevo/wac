@@ -59,11 +59,31 @@ Pending<Exec> submitBuild(Cli cli, string stem) {
                   u8[0]());
 }
 
-/** Its error, or "". */
+/** A message on one line, because a report that stops at the first newline loses the rest. */
+string oneLine(string s) {
+  string out = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    out = out + (c == "\n" || c == "\r" ? " | " : c);
+  }
+  return out;
+}
+
+/**
+ * Its error, or "".
+ *
+ * **Flattened, because the interesting part was below the fold.** A gate on 2026-08-19 failed here with
+ * `wac build exited 1: wac: packages/wacc/example/wacc.wac trapped` and nothing after it: the build's
+ * stderr was in the message all along, and the report shows a failure's first line. A trap the compiler
+ * wrote a reason for is exactly what `issues/system/0203` needs the next time this happens.
+ */
 string built(Pending<Exec> p) {
   Exec r = p.wait();
   if (!r.ran()) { return "the binary would not start: " + r.error; }
-  if (r.status != 0) { return "wac build exited " + itoa(r.status) + ": " + string.fromBytes(r.stderr); }
+  if (r.status != 0) {
+    return "wac build exited " + itoa(r.status) + ": " + oneLine(string.fromBytes(r.stderr))
+           + " -- and stdout: " + oneLine(string.fromBytes(r.stdout));
+  }
   return "";
 }
 
