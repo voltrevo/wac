@@ -55,9 +55,19 @@ missing struct, and the struct is there.
 ## The check for this already exists and nothing drives it
 
 `packages/platform/test/wac/native_manifest_test.wac` asserts exactly this property — *every funcref
-field names a signature the manifest has a dispatcher for* — and the program above fails it. What it
-does not have is a case with a colliding struct name: it builds `example/wc.wac`, which declares
-nothing that clashes. One more case would have caught this.
+field names a signature the manifest has a dispatcher for*. Run that check by hand over the manifest
+above and it fails three times:
+
+```
+unresolved funcref fields: 3
+Cli.stat:       fn[Pending<Stat__packages_platform_src_platform>(string)]
+Cli.linkStat:   fn[Pending<Stat__packages_platform_src_platform>(string)]
+Pending<Stat__packages_platform_src_platform>.resolve: fn[Stat__…(i32)]
+```
+
+What the test does not have is a case with a colliding struct name: it builds `example/wc.wac`, which
+declares nothing that clashes. One more case would have caught this — and the case is not added here,
+because a red test in the tree is worse than a note in an issue while this is open.
 
 ## Notes
 
