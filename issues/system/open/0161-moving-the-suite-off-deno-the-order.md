@@ -1392,8 +1392,31 @@ wac program cannot express at all.
 so a port could only be shown to take its skip path. Worth doing by someone who can run it, and not
 worth shipping blind.
 
-**The `packages/wacc` remainder is a question rather than a queue.** Seventeen of its `.test.ts` use
-the reference compiler as an oracle. On 2026-08-19 the operator deleted the whole-repository lex and
+**The `packages/wacc` remainder — and the number I first gave for it was wrong.** I sorted these by
+grepping for `wacCompile|wacLex|wacParse|reference` and called seventeen of them reference-oracle
+tests. That counted the *word* "reference" in prose. Read by their imports instead, **nine** import
+`wac/wac*`: `tour`, `sweep`, `linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `mutateCheck`,
+`corpusMutate`, `parse_errors`.
+
+`specSingle.test.ts` was on my wrong list and has since moved — it imported `wacBind` and
+`specCases.ts`, exactly what `specMulti` imported. A count of a word is not a reading of a file, which
+is the same lesson as the two rejections corrected above, made by me this time.
+
+The other eight that do *not* use the reference, and what each is actually waiting on:
+
+| file | what it needs |
+| --- | --- |
+| `bindHelpers` (178) | a wasm section walker in wac — LEB128, type/function/export sections. `emit.wac` has a writer, not a reader, so this is a second parser rather than a reuse. Portable, not blocked. |
+| `bindgen` (392) | the same oracle shape `bindgenwac_test.wac` now has. Portable, not blocked. |
+| `ctTrace` (195) | *reads* as portable; its subject is `harness/ctTrace.ts`'s trace mode, so check what it measures before believing that. |
+| `specCheck` (68), `specAccept` (66) | `specCorpus.ts`, the text extractor. A second reader of one corpus is the trap named above — and `specCases.json` already records what these read, so the honest move may be to delete them rather than port them. |
+| `jsBindgen` (113), `jsxBoundary` (97) | JavaScript is half the differential. Stay. |
+| `nativeBinary` (510) | see above. |
+
+So the count blocked on the reference decision is nine, and the count that is simply unstarted work is
+three or four.
+
+**The nine that do use the reference as an oracle.** On 2026-08-19 the operator deleted the whole-repository lex and
 parse differentials and every `// only: wacc` marker, on the grounds that **the reference's only job
 is bootstrapping** — holding it up as a second implementation made it a constraint on the language.
 That principle reaches `parse_errors` (which compares diagnostics by position) more clearly than it
