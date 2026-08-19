@@ -24,7 +24,11 @@
 // JavaScript half now runs in a worker — the launcher half of the same built program — so a case is
 // the native host's 74ms and about a millisecond. That is the 800-odd corpus in a minute rather than
 // three, which is still not a thing to put in front of every push.
-// test-lane: heavy — 989 MB and 66s, and it builds the Rust host: cargo, then a shell on both hosts
+// **Heavy until 2026-08-19, and no longer.** It declared `test-lane: heavy — 989 MB and 66s`, so the
+// only test that runs the sealed system on a host with no JavaScript in it ran every few hours rather
+// than on every push. It is **794 MB and 10s** now: the JavaScript half of each comparison is a worker,
+// cargo is asked by `stat` rather than run, and the native bind wire is cached across processes. The
+// Rust host is still built when its sources have moved, which is the one cost that can still spike.
 
 import { buildNative } from "../native.ts";
 import { CORPUS } from "../../sh/test/corpus.ts";
