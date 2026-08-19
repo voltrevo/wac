@@ -1,0 +1,121 @@
+// The bridge chunks in both directions.
+//
+// It only chunked responses. A `readFile` of ten megabytes worked and a `writeFile` of two threw
+// `request of 2000000 bytes exceeds the 1048576-byte buffer` — so every applet whose output is its
+// input died above a megabyte, and `cp` turned that into "cannot write", blaming the destination for
+// a limit in the transport.
+//
+// Sizes straddle the 1MB buffer deliberately: just under, just over, and several multiples, plus an
+// exact multiple where the last chunk is empty.
+//
+// **Driven through `box`**, because the applets are what actually cross a megabyte — `cat` sends the
+// whole file out through `write`, `cp` sends it in through `writeFile`, and `gzip | gunzip` exercises
+// the request and response halves against each other rather than each against a fixture. This test
+// only runs the package; it does not change it.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string BOX = "packages/box/src/box.wac";
+const i32 MB = 1048576;
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/** A pattern, not random: a truncation or a doubled chunk would visibly break it. */
+u8[] pattern(i32 size) {
+  u8[] data = u8[size]();
+  for (i32 i = 0; i < size; i++) { data[i] = (i * 31 + (i >> 13)) & 0xFF; }
+  return data;
+}
+
+/**
+ * Where two byte arrays first differ, or the empty string.
+ *
+ * The length alone is not enough — a truncation and a doubled chunk can produce the same length —
+ * and for a compressor the byte offset is the only useful thing to be told.
+ */
+string firstDifference(u8[] got, u8[] want) {
+  i32 n = got.len() > want.len() ? got.len() : want.len();
+  for (i32 i = 0; i < n; i++) {
+    if (i >= got.len() || i >= want.len() || got[i] != want[i]) {
+      string g = i < got.len() ? itoa(got[i]) : "<end>";
+      string w = i < want.len() ? itoa(want[i]) : "<end>";
+      return "first difference at byte " + itoa(i) + ": got " + g + ", want " + w +
+             " (lengths " + itoa(got.len()) + " and " + itoa(want.len()) + ")";
+    }
+  }
+  return "";
+}
+
+export string test_the_bridge_chunks_in_both_directions(Core core, Cli cli) {
+  T t = T.create();
+  string dir = root(cli) + "/.cache/chunking";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string app = dir + "/box";
+  string src = dir + "/src.bin";
+  string dst = dir + "/dst.bin";
+
+  Exec built = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/build.ts", BOX,
+             "--allow-read", "--allow-write", "-o", app), u8[0]()).wait();
+  t.isTrue(built.ran() && built.status == 0,
+           "box built — " + string.fromBytes(built.stderr) + string.fromBytes(built.stdout));
+  if (!built.ran() || built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  i32[] sizes = i32[](MB - 1, MB, MB + 1, 3 * MB, 2 * MB);
+  for (i32 k = 0; k < sizes.len(); k++) {
+    i32 size = sizes[k];
+    u8[] data = pattern(size);
+    cli.writeFile(src, data).wait();
+
+    // Out through `write`: the whole file crosses as the request payload.
+    Exec cat = cli.exec(app, string[]("cat", src), u8[0]()).wait();
+    t.isTrue(cat.ran() && cat.status == 0,
+             "cat at " + itoa(size) + " bytes — " + string.fromBytes(cat.stderr));
+    if (cat.ran() && cat.status == 0) {
+      string d = firstDifference(cat.stdout, data);
+      t.eqStr(d, "", "cat at " + itoa(size) + " bytes: " + d);
+    }
+
+    // And through `writeFile`, which is where `cp` was failing.
+    cli.remove(dst, false).wait();
+    Exec cp = cli.exec(app, string[]("cp", src, dst), u8[0]()).wait();
+    t.isTrue(cp.ran() && cp.status == 0,
+             "cp at " + itoa(size) + ": " + string.fromBytes(cp.stderr));
+    if (cp.ran() && cp.status == 0) {
+      FileResult back = cli.readFile(dst).wait();
+      t.isTrue(back.ok, "cp at " + itoa(size) + " wrote a file — " + back.error);
+      if (back.ok) {
+        string d = firstDifference(back.bytes, data);
+        t.eqStr(d, "", "cp at " + itoa(size) + " bytes: " + d);
+      }
+    }
+  }
+
+  // Both directions at once, through a compressor. `src` is still the last size written above.
+  FileResult data = cli.readFile(src).wait();
+  t.isTrue(data.ok, "the source is still there — " + data.error);
+  if (data.ok) {
+    Exec gz = cli.exec(app, string[]("gzip", src), u8[0]()).wait();
+    t.isTrue(gz.ran() && gz.status == 0, "gzip ran — " + string.fromBytes(gz.stderr));
+    // Compressed, rather than handed back unchanged — a `gzip` that copied its input would round
+    // trip perfectly and prove nothing about either direction.
+    t.isTrue(gz.ran() && gz.stdout.len() > 0 && gz.stdout.len() < data.bytes.len(),
+             "gzip made it no smaller: " + itoa(gz.stdout.len()) + " from " +
+             itoa(data.bytes.len()));
+    if (gz.ran() && gz.status == 0) {
+      Exec back = cli.exec(app, string[]("gunzip"), gz.stdout).wait();
+      t.isTrue(back.ran() && back.status == 0, "gunzip ran — " + string.fromBytes(back.stderr));
+      if (back.ran() && back.status == 0) {
+        string d = firstDifference(back.stdout, data.bytes);
+        t.eqStr(d, "", "gzip and back at " + itoa(data.bytes.len()) + " bytes: " + d);
+      }
+    }
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

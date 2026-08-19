@@ -1,0 +1,319 @@
+// The world, end to end: a wac application with no TypeScript of its own, run on a worker, calling
+// capabilities the host answers asynchronously.
+//
+// The central claim is that an `await` on the main thread is invisible from wac. These tests are what
+// makes that a measurement — `readFile` really is `await Deno.readFile`, and the wac side really does
+// call it as a function.
+//
+// **The counts are checked against the system `wc`**, which the TypeScript did not do: it split the
+// file in JavaScript and compared against its own arithmetic. Asking coreutils is a real second
+// implementation and one process, and it is what the program is named after.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. `platform.test.ts` keeps the four tests whose
+// subject is the bridge itself — `newBridge`, `serveHostCalls` and a `Worker` calling `hostCall` —
+// because those drive `host/layout.ts` and `host/call.ts` rather than any wac program.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string WC = "packages/platform/example/wc.wac";
+const string HEXDUMP = "packages/platform/example/hexdump.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/world-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+/** Build one example for the Deno world with the grants named, as `deno task app` does. */
+bool build(T t, Cli cli, string entry, string out, string[] grants) {
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
+  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
+  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
+  args[head.len() + grants.len()] = "-o";
+  args[head.len() + grants.len() + 1] = out;
+  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           entry + " built — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+  return r.ran() && r.status == 0;
+}
+
+string[] none() { return string[0](fill: ""); }
+
+/** The non-empty lines of a stream, which is what the TypeScript's `lines` did. */
+string[] lines(u8[] b) {
+  string[] all = splitLines(string.fromBytes(b));
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) { if (all[i].len() > 0) { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].len() > 0) { out[at] = all[i]; at = at + 1; }
+  }
+  return out;
+}
+
+/** The whitespace-separated fields of one line. */
+string[] fields(string s) {
+  string[] out = string[8](fill: "");
+  i32 n = 0;
+  string cur = "";
+  for (i32 i = 0; i <= s.len(); i++) {
+    string c = i < s.len() ? s.slice(i, i + 1) : " ";
+    if (c == " " || c == "\t") {
+      if (cur.len() > 0 && n < 8) { out[n] = cur; n = n + 1; }
+      cur = "";
+    } else {
+      cur = cur + c;
+    }
+  }
+  string[] r = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { r[i] = out[i]; }
+  return r;
+}
+
+export string test_an_application_written_entirely_in_wac_runs_and_agrees_with_wc(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "wc");
+  string app = dir + "/wc";
+  if (!build(t, cli, WC, app, string[]("--allow-read"))) {
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+
+  Exec r = cli.exec(app, string[](WC), u8[0]()).wait();
+  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
+
+  // Coreutils is the oracle. `wc < path` rather than `wc path`, so the answer is three numbers and
+  // no filename — the same three the example prints, in the same order.
+  Exec oracle = cli.exec("/bin/sh", string[]("-c", "wc < '" + WC + "'"), u8[0]()).wait();
+  t.isTrue(oracle.ran() && oracle.status == 0, "the system wc ran — " + oracle.error);
+  if (!oracle.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string[] mine = lines(r.stdout);
+  t.isTrue(mine.len() > 0, "the example printed nothing");
+  if (mine.len() == 0) { cli.remove(dir, true).wait(); return t.report(); }
+  // Four fields, not three: the example names the file it counted, as `wc` does when given one.
+  // The oracle is asked with a redirect so it prints three, and the fourth is checked to be the path
+  // rather than skipped — the TypeScript destructured the first three and never looked at it.
+  string[] got = fields(mine[0]);
+  string[] want = fields(trimmed(string.fromBytes(oracle.stdout)));
+  t.eqI32(got.len(), 4, "three numbers and the name: " + mine[0]);
+  t.eqI32(want.len(), 3, "the system wc said: " + string.fromBytes(oracle.stdout));
+  if (got.len() != 4 || want.len() != 3) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqStr(got[0], want[0], "lines");
+  t.eqStr(got[1], want[1], "words");
+  t.eqStr(got[2], want[2], "bytes");
+  t.eqStr(got[3], WC, "the name of the file it counted");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_capability_the_build_withholds_is_a_failure_the_application_can_report(
+    Core core, Cli cli) {
+  // Built with no grants, so the world has no filesystem. The application gets an ordinary failed
+  // FileResult rather than an exception, and decides what to do.
+  T t = T.create();
+  string dir = scratch(cli, "nogrant");
+  string app = dir + "/wc";
+  if (!build(t, cli, WC, app, none())) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec r = cli.exec(app, string[](WC), u8[0]()).wait();
+  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqI32(r.status, 1, "the application reported failure");
+  string[] err = lines(r.stderr);
+  t.eqI32(err.len(), 1, "one line of complaint: " + string.fromBytes(r.stderr));
+  t.isTrue(err.len() > 0 && contains(err[0], "not granted"),
+           "got: " + string.fromBytes(r.stderr));
+  t.eqI32(lines(r.stdout).len(), 0, "and printed no counts");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_missing_file_reaches_the_application_as_its_hosts_message(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "missing");
+  string app = dir + "/wc";
+  if (!build(t, cli, WC, app, string[]("--allow-read"))) {
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+  Exec r = cli.exec(app, string[]("no/such/file"), u8[0]()).wait();
+  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqI32(r.status, 1, string.fromBytes(r.stderr));
+  t.isTrue(contains(string.fromBytes(r.stderr), "no/such/file"),
+           "got: " + string.fromBytes(r.stderr));
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_no_arguments_means_standard_input_as_wc_has_always_meant_it(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "stdin");
+  string app = dir + "/wc";
+  if (!build(t, cli, WC, app, none())) { cli.remove(dir, true).wait(); return t.report(); }
+  Exec r = cli.exec(app, none(), "one two\nthree\n".toBytes()).wait();
+  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
+  t.eqStr(trimmed(string.fromBytes(r.stdout)), "2 3 14", "counts of the piped text");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_env_distinguishes_unset_from_empty(Core core, Cli cli) {
+  // An empty value is still *set*, so the timing line appears. A nullable string is what makes the
+  // difference expressible at all — it is why `string?` had to cross.
+  //
+  // Through `/bin/sh` because `Cli.exec` passes no environment of its own: the child inherits this
+  // process's, and `VAR= exec prog` is how one variable is added to that without a second capability.
+  T t = T.create();
+  string dir = scratch(cli, "env");
+  string app = dir + "/wc";
+  if (!build(t, cli, WC, app, string[]("--allow-read", "--allow-env"))) {
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+
+  Exec set = cli.exec("/bin/sh",
+    string[]("-c", "WC_VERBOSE= exec '" + app + "' '" + WC + "'"), u8[0]()).wait();
+  t.isTrue(set.ran(), "the built program ran — " + set.error);
+  if (!set.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  string[] out = lines(set.stdout);
+  t.eqI32(out.len(), 2, "expected the timing line, got: " + string.fromBytes(set.stdout) +
+          string.fromBytes(set.stderr));
+  t.isTrue(out.len() > 1 && startsWith(out[1], "counted in "),
+           out.len() > 1 ? "the second line was: " + out[1] : "there was no second line");
+
+  // Unset: the same program, the same grant, and nothing in the environment. `sh -c` again so the two
+  // runs differ in the variable and in nothing else.
+  Exec unset = cli.exec("/bin/sh",
+    string[]("-c", "unset WC_VERBOSE; exec '" + app + "' '" + WC + "'"), u8[0]()).wait();
+  t.isTrue(unset.ran(), "the built program ran — " + unset.error);
+  if (unset.ran()) {
+    t.eqI32(lines(unset.stdout).len(), 1, "unset means absent: " + string.fromBytes(unset.stdout));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_program_can_be_a_filter_stdin_in_exact_bytes_out(Core core, Cli cli) {
+  // The gap that mattered most. `log` appends a newline and assumes text, so nothing could emit
+  // binary — every compressor and encoder was a file-to-file tool and could not go in a pipe.
+  // `readStdin` and `write` are what change that, and neither needs a grant: what the user pipes in
+  // and what the program prints are the user's own doing.
+  T t = T.create();
+  string dir = scratch(cli, "filter");
+  string app = dir + "/hexdump";
+  if (!build(t, cli, HEXDUMP, app, none())) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec r = cli.exec(app, none(), "hello, wac".toBytes()).wait();
+  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
+  string text = string.fromBytes(r.stdout);
+  t.isTrue(startsWith(text, "00000000  68 65 6c 6c 6f 2c 20 77 61 63"), text);
+  // Exactly one line, ending in a newline — `write` added nothing of its own. Stated as the two
+  // facts rather than as `split("\n").length == 2`, which is the JavaScript spelling of them: wac's
+  // `splitLines` does not leave an empty element after a trailing newline, so the count alone would
+  // be checking a property of the splitter.
+  t.eqI32(splitLines(text).len(), 1, "the output was: " + text);
+  t.isTrue(text.len() > 0 && text.slice(text.len() - 1, text.len()) == "\n",
+           "it did not end in a newline: " + text);
+
+  // Bytes, not text: 0x00 and 0xFF survive, which a string-shaped output would mangle.
+  Exec binary = cli.exec(app, none(), u8[](0, 255, 128)).wait();
+  t.isTrue(binary.ran() && contains(string.fromBytes(binary.stdout), "00 ff 80"),
+           "three raw bytes: " + string.fromBytes(binary.stdout));
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_wc_reads_standard_input_when_given_no_file(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "wcstdin");
+  string app = dir + "/wc";
+  if (!build(t, cli, WC, app, none())) { cli.remove(dir, true).wait(); return t.report(); }
+
+  FileResult f = cli.readFile(WC).wait();
+  t.isTrue(f.ok, "read the example's own source — " + f.error);
+  if (!f.ok) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec r = cli.exec(app, none(), f.bytes).wait();
+  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
+
+  Exec oracle = cli.exec("/bin/sh", string[]("-c", "wc < '" + WC + "'"), u8[0]()).wait();
+  string[] got = fields(trimmed(string.fromBytes(r.stdout)));
+  string[] want = fields(trimmed(string.fromBytes(oracle.stdout)));
+  t.eqI32(got.len(), 3, "three numbers: " + string.fromBytes(r.stdout));
+  t.eqI32(want.len(), 3, "the system wc said: " + string.fromBytes(oracle.stdout));
+  if (got.len() == 3 && want.len() == 3) {
+    t.eqStr(got[0], want[0], "lines");
+    t.eqStr(got[1], want[1], "words");
+    t.eqStr(got[2], want[2], "bytes");
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_stat_and_readdir_reach_the_application_and_are_gated(Core core, Cli cli) {
+  // A directory of this test's own making, listed against what was put in it. It used to list
+  // `packages/platform/src` and expect exactly "platform.wac", which meant adding a second file to
+  // this package — `stream.wac` — failed a test about `readDir`. A fixture that changes when the
+  // source tree changes is testing the source tree.
+  T t = T.create();
+  string dir = scratch(cli, "readdir");
+  string app = dir + "/hexdump";
+  if (!build(t, cli, HEXDUMP, app, string[]("--allow-read"))) {
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+  string listing = dir + "/listing";
+  cli.mkdir(listing, true).wait();
+  cli.writeFile(listing + "/one.txt", "1".toBytes()).wait();
+  cli.writeFile(listing + "/two.txt", "2".toBytes()).wait();
+  cli.mkdir(listing + "/sub", true).wait();
+
+  Exec r = cli.exec(app, string[](listing), u8[0]()).wait();
+  t.isTrue(r.ran(), "the built program ran — " + r.error);
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
+  string[] got = lines(r.stdout);
+  // Compared as a set rather than sorted, because the order a host lists a directory in is not
+  // something either host promises and neither is the subject here.
+  t.eqI32(got.len(), 3, "three entries, got: " + string.fromBytes(r.stdout));
+  string[] want = string[]("one.txt", "two.txt", "sub");
+  for (i32 i = 0; i < want.len(); i++) {
+    bool found = false;
+    for (i32 k = 0; k < got.len(); k++) { if (trimmed(got[k]) == want[i]) { found = true; } }
+    t.isTrue(found, want[i] + " was not listed: " + string.fromBytes(r.stdout));
+  }
+
+  // Without the grant, `stat` reports "does not exist" rather than throwing: an application cannot
+  // tell a withheld capability from an absent file, which is the right amount for it to know.
+  string bare = dir + "/hexdump-bare";
+  if (build(t, cli, HEXDUMP, bare, none())) {
+    Exec denied = cli.exec(bare, string[]("packages/platform/src"), u8[0]()).wait();
+    t.isTrue(denied.ran(), "the ungranted build ran — " + denied.error);
+    if (denied.ran()) {
+      t.eqI32(denied.status, 1, string.fromBytes(denied.stderr));
+      t.isTrue(contains(string.fromBytes(denied.stderr), "not found"),
+               "got: " + string.fromBytes(denied.stderr));
+    }
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

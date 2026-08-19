@@ -78,7 +78,7 @@ takes this does not go looking for one cause:
 
 - `packages/wacc/test/tour.test.ts` — *"wacc computes the tour's answers, and the reference is the
   oracle"* fails at `harness/wacProfile.ts:174`, inside the test rather than at compile.
-- `packages/platform/test/platform.test.ts` — *"an application builds to one executable file and runs
+- `packages/platform/test/wac/runtimes_test.wac` — *"an application builds to one executable file and runs
   repeatedly"*, 16 passed 1 failed. An instrumented build is a different artifact, and this asserts
   on the artifact.
 
@@ -121,7 +121,7 @@ while every count stayed plausible.
 passes now — its subject was compiled by the reference under profiling, and the test's own name says
 the reference is the *oracle*, which is what made the failure look like a disagreement rather than a
 build. Eight of the nine files that failed under `WAC_PROFILE` are fixed. The ninth,
-`packages/platform/test/platform.test.ts`'s *"an application builds to one executable file and runs
+`packages/platform/test/wac/runtimes_test.wac`'s *"an application builds to one executable file and runs
 repeatedly"*, is genuinely the other cause: an instrumented build is a different artifact and that
 test asserts on the artifact. Worth a look by whoever owns it; it is not this.
 
