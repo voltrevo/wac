@@ -1931,6 +1931,15 @@ fn dispatch(
                 );
                 return settle_now(caller, Kind::Exec, refused, results);
             }
+            // **On a thread, with a live ticket — like `accept` and `receiveFrom` above.** All of
+            // this used to run here, inline, and `settle_now` handed back a ticket that was already
+            // answered: so the caller blocked *before* it had an id, `waitAny` could not bound it,
+            // and two `exec` calls could not overlap however they were written. Three one-second
+            // sleeps submitted together took 3007ms to submit and 0ms to wait; the Deno host, which
+            // had it right, submits in 8ms and waits 1001ms. `issues/system/0209`.
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            std::thread::spawn(move || {
             // An argument *vector*, never a shell line: a value containing a space or a semicolon
             // arrives whole. A caller who wants a shell names `/bin/sh -c`.
             let mut cmd = std::process::Command::new(&path);
@@ -1990,7 +1999,11 @@ fn dispatch(
                     }
                 }
             };
-            return settle_now(caller, Kind::Exec, outcome, results);
+                // Nobody waiting is nothing to keep: the child has already run, and its output
+                // describes a call that no longer exists.
+                table.complete(id, outcome);
+            });
+            return pending_for(caller, Kind::Exec, id, results);
         }
         Cap::SetExecutable => {
             let path = read_string(caller, &params[1])?;

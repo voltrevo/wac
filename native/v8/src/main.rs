@@ -3978,9 +3978,30 @@ fn dispatch(
                 .collect();
             let stdin = read_bytes(scope, args.get(3));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.run));
-            let answer = if !granted {
-                Answer::Exec(0, Vec::new(), Vec::new(), "Not granted to this application".into())
-            } else {
+            // A refusal is known now and answers now — there is nothing to wait for.
+            if !granted {
+                return match ticket_for(
+                    scope,
+                    "Exec",
+                    Answer::Exec(0, Vec::new(), Vec::new(), "Not granted to this application".into()),
+                ) {
+                    Some(v) => rv.set(v),
+                    None => throw(scope, "this program has no Pending<Exec> to answer exec with"),
+                };
+            }
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            // **On a thread, with a live ticket — like `recv` and `receiveFrom`, and for the same
+            // reason.** All of this used to run here, inline, and the ticket was built from the
+            // finished answer: so the caller blocked *before* it had an id, `waitAny` could not bound
+            // it, and two `exec` calls could not overlap however they were written. Three one-second
+            // sleeps submitted together took 3012ms to submit and 1ms to wait; on the Deno host, which
+            // had it right, the same program submits in 8ms and waits 1001ms. A test that runs two
+            // programs at once is expressible under one host and not the other, and nothing said so.
+            // `issues/system/0209`.
+            std::thread::spawn(move || {
+                let answer = {
                 // `args` is an argument *vector*. Nothing here builds a shell line, so a value
                 // containing a space or a semicolon arrives whole and is never re-split — a caller
                 // who wants a shell asks for `/bin/sh -c` by name.
@@ -4041,8 +4062,12 @@ fn dispatch(
                         }
                     }
                 }
-            };
-            match ticket_for(scope, "Exec", answer) {
+                };
+                // Nobody waiting is nothing to keep: the child has already run, and its output
+                // describes a call that no longer exists.
+                let _ = worker.complete(id, answer);
+            });
+            match ticket_pending(scope, "Exec", id) {
                 Some(v) => rv.set(v),
                 None => throw(scope, "this program has no Pending<Exec> to answer exec with"),
             }

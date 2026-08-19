@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0209](closed/0209-exec-blocks-at-the-call-on-both-rust-hosts-so-two-programs-cannot-overlap.md) | `exec` ran the child inside the call on both Rust hosts, so three one-second sleeps submitted together took 3012ms to submit and 1ms to wait — fixed | bug | wrong answer |
 | [0208](open/0208-nothing-owns-the-wasmtime-hosts-build-so-five-callers-do-it-themselves.md) | nothing owns the wasmtime host's build, so five callers each do it themselves | missing feature | not implemented |
 | [0205](open/0205-fifteen-of-nineteen-coverage-tasks-cannot-fail.md) | fifteen of nineteen coverage drivers end with `report(...)` and cannot fail, while the summary read "19/19 passed" — two hold a floor, two only check their own exemptions | missing feature | no error |
 | [0204](open/0204-wac-test-recompiles-every-directory-on-every-run.md) | `wac test` has no build cache, so every run recompiles every test directory — measured at 9% of the lane's biggest chunks, so worth ~8s of wall rather than the 104s it looked like | performance | no error |
@@ -68,4 +69,4 @@ trackers. It did not read this one until 2026-08-09, and the first thing it foun
 thirteen numbers used twice and five issues written in a third header format — neither of
 which anything would have noticed, because the rows above happened to be right.
 
-214 issues, 164 closed.
+215 issues, 165 closed.
