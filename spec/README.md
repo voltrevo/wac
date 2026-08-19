@@ -49,7 +49,23 @@ what that changes about how a claim here is checked.
 
 ## CLI
 
-- [cli/wac.md](cli/wac.md) — the `wac` command (check, compile, build, bindgen, run, test, sh)
+- [cli/wac.md](cli/wac.md) — the `wac` command (check, compile, build, bindgen, run, test, sh,
+  uninstall)
+
+## Adding a clause
+
+A `[§wac-…-…]` tag makes a sentence checkable, and two things then have to be true of it, in two
+places that are easy to miss because neither is in this directory:
+
+- **Something outside `compiler/` has to name the tag.** `packages/wacc/test/wac/spectags_test.wac`
+  walks `spec/spec` and `spec/cli` and fails with the list of any tag held only by the reference's
+  own tests — a clause wacc could break with nothing noticing. Name it in a wac test, or add a
+  `// spec:` line to the `spec/cases/` file that holds it.
+- **The site states how many tagged claims there are, and the number is checked.**
+  `site/src/next/Checked.tsx` says it in a sentence and `site/tools/site.test.ts` counts the tags in
+  `spec/` and compares. So adding a clause is a two-file change. That test runs in the push gate and
+  **not** in `deno task test` or `deno task docs`, which is thirteen minutes between writing the
+  clause and finding out — so it is worth changing the number while the clause is in front of you.
 
 ## Verification
 
