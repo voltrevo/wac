@@ -618,6 +618,14 @@ It deserves a differential rather than cases somebody thought to write: the same
 `./foo.wac`, by `@/src/foo.wac`, by a whole-repository mapping and by a `subdir` mapping, asserted to
 be one module — and two mappings at different commits asserted to be two.
 
+*(2026-08-19: two of those four spellings exist now, and asking the question of them found that **the
+paragraph above describes a failure neither compiler has**. With one file under two keys the
+reference reads it twice and runs fine; wacc's checker stays clean and the *engine* rejects the
+module, blaming the compiler. Not two incompatible copies in one program, but one compiler tolerating
+what the other cannot load. `issues/lang/0163`. Nothing a user can write produces two keys today —
+it took a perturbed resolver to make one — but D9-D11 are exactly what makes "the same file under two
+names" expressible from a manifest, so this is due before the mappings rather than after.)*
+
 ## Acceptance
 
 The upstream issue's checklist is the acceptance criteria and is not copied here, because a list in
