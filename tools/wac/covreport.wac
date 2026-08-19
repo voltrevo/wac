@@ -27,7 +27,7 @@
 // It is also what places the exercises: `packages/<pkg>/test/cov_exercise.wac` is skipped by the same
 // rule that skips the probe, so a driver's own branches never appear in the package's number.
 
-import { Core, Cli, Exec, Change, FileResult } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 /** One instrumented point: where it is and what kind. */

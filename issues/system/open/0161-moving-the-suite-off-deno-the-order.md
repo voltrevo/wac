@@ -1532,7 +1532,7 @@ reason `ctcompare` had to be a command was the *size* of a trace, and that reaso
 Not started here: it is a distinct project, it is not a test, and the ledgers are the kind of thing
 that should move deliberately rather than in a sweep.
 
-Filed on the way: `issues/lang/0162`. `ct.wac` declared a `struct Stat` for `tracestat`'s three
+Filed on the way: `issues/lang/0162b`. `ct.wac` declared a `struct Stat` for `tracestat`'s three
 numbers, and a program that declares a struct `platform.wac` also declares compiles cleanly and will
 not start — the linker qualifies the platform one, `Cli.stat`'s funcref signature carries the
 qualified spelling, no dispatcher is emitted under it, and the host says "the manifest describes no
