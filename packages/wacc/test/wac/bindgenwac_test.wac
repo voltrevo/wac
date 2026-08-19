@@ -74,26 +74,38 @@ string askOracle(T t, Cli cli, string[] args, string what, string[] inputs) {
                        string[]("compiler", "harness"), inputs);
 }
 
-/** One inline program, written where both generators can be pointed at the same path. */
-struct Case {
+/**
+ * One inline program, written where both generators can be pointed at the same path.
+ *
+ * **Not `Case`**, which is what this was called: `speccases.wac` exports a `Case` and
+ * `diagnosticgap_test.wac` declared a third, so `wac test`'s shared build for this directory could
+ * not emit — `the name Case, which more than one file declares` — and all 53 files were built one at
+ * a time instead. `issues/lang/0162` is the same collision arriving as something much worse.
+ *
+ * **It did not make the lane faster, which is worth saying.** Measured either side: 616s with the
+ * shared build restored against a run that had not finished at 580s without it. The fallback is real
+ * and the warning is gone, but the cost here is not compiling — `corpusemit` 217s, `checked` 176s and
+ * `names` 128s are 521s of the 616, and they are doing their own work.
+ */
+struct Program {
   string what;
   string src;
 }
 
-Case[] cases() {
-  return Case[](
-    Case("a scalar and nothing else",
+Program[] cases() {
+  return Program[](
+    Program("a scalar and nothing else",
          "export i32 add(i32 a, i32 b) { return a + b; }\n"),
-    Case("a string, both ways",
+    Program("a string, both ways",
          "export string greet(string who) { return \"hello \" + who; }\n"),
-    Case("a struct with a method",
+    Program("a struct with a method",
          "struct Point {\n" +
          "  i32 x;\n" +
          "  i32 y;\n" +
          "  i32 sum(const this) { return this.x + this.y; }\n" +
          "}\n" +
          "export Point origin(i32 x, i32 y) { return Point(x, y); }\n"),
-    Case("an enum built and matched",
+    Program("an enum built and matched",
          "enum Shape { Circle(i32 r), Square(i32 s) }\n" +
          "export i32 area(Shape s) {\n" +
          "  match (s) {\n" +
@@ -101,15 +113,15 @@ Case[] cases() {
          "    case Square(q): return q * q;\n" +
          "  }\n" +
          "}\n"),
-    Case("a numeric array in both directions",
+    Program("a numeric array in both directions",
          "export i32[] doubled(i32[] xs) {\n" +
          "  i32[] out = i32[xs.len()]();\n" +
          "  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i] * 2; }\n" +
          "  return out;\n" +
          "}\n"),
-    Case("an array of strings, whose elements are references",
+    Program("an array of strings, whose elements are references",
          "export string[] echo(string[] xs) { return xs; }\n"),
-    Case("everything at once",
+    Program("everything at once",
          "struct Point {\n" +
          "  i32 x;\n" +
          "  i32 y;\n" +
@@ -153,7 +165,7 @@ void compare(T t, Cli cli, string dir, string what, string entry, string[] paths
 export string test_the_two_generators_write_the_same_glue_for_each_shape(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "cases");
-  Case[] all = cases();
+  Program[] all = cases();
   for (i32 i = 0; i < all.len(); i++) {
     // Both generators are pointed at the *same path*, because the module's own name is in the output:
     // comparing across two names always differs and says nothing.
