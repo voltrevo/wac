@@ -1,0 +1,290 @@
+// The Node host's sockets, against the Deno host's, with a real client attached.
+//
+// **This path had no test.** `platform.test.ts` builds the same program for both runtimes and compares
+// them, which is the right shape — but the program it uses is `wc`, so it covers the filesystem and
+// stdio and nothing else. `NODE_NET` in `build.ts` is a shim generated into every networked Node build,
+// and it has been edited for `listen`'s address and for `accept`'s peer without anything but a manual
+// check ever connecting to it.
+//
+// `example/greet.wac` is the shortest program that uses all three of the address, the peer and `send`.
+// Built for both targets and driven by a real client: what the two runtimes say has to match, and the
+// address has to reach the kernel, which `ss` alone cannot tell you about a program that also has to
+// answer.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The client is `cli.connect` now rather than
+// Deno's — this is `packages/platform`, so a wac socket reading a wac server is the whole stack, and
+// the thing under test is on the *server* side either way.
+//
+// **The exit status of a backgrounded job is captured, not inferred.** `greet` serves one connection
+// and stops, so it cannot be run with `exec` — a client has to connect while it is alive — and a pid
+// that has already gone tells you nothing about how. The shell line writes `EXIT=` to a file, which is
+// the only place the answer exists once the process is reaped.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult, Socket } from "../../../platform/src/platform.wac";
+import { Read } from core;
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { Held } from "../../../wactest/src/daemon.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+bool haveNode(Cli cli) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", "command -v node >/dev/null"), u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/nodenet-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+string build(Cli cli, string out, string target) {
+  Exec r = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/greet.wac",
+             "--allow-net", "--target", target, "-o", out), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    return "greet.wac for " + target + " did not build: " + string.fromBytes(r.stderr);
+  }
+  return "";
+}
+
+/** A server that is running, its log, and where its exit status will appear. */
+struct Server {
+  i32 pid;
+  string log;
+  string status;
+  string error;
+}
+
+/**
+ * Start a built server in the background, keeping both its output and its eventual exit status.
+ *
+ * Two things about the shell line, and getting either wrong hangs the caller for ever.
+ *
+ * `exec` inside the group would replace it, and then `$?` has nowhere to be written — so this is the
+ * one place a subshell is wanted rather than avoided, where `daemon.wac` deliberately uses `exec`.
+ *
+ * **The redirection covers the whole group, not the program.** Redirecting only the program leaves the
+ * subshell's own standard output attached to the pipe `exec` is reading, so the pipe never reaches end
+ * of file and `exec` waits for a child that has already gone. That is the hazard `daemon.wac`'s header
+ * describes, met here from the other direction — and it presents as a test that hangs rather than one
+ * that fails.
+ */
+Server start(Cli cli, string dir, string name, string prog, string[] args) {
+  string log = dir + "/" + name + ".log";
+  string status = dir + "/" + name + ".status";
+  string line = quoted(prog);
+  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c", "( " + line + "; echo EXIT=$? > " + quoted(status) + " ) >" + quoted(log) +
+                   " 2>&1 & echo $!"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    return Server(-1, log, status, "the shell did not start it — " + string.fromBytes(r.stderr));
+  }
+  u8[] b = r.stdout;
+  i32 pid = 0;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] - '0'); } }
+  return Server(pid, log, status, pid > 0 ? "" : "no pid from the shell");
+}
+
+string readOr(Cli cli, string path, string fallback) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : fallback;
+}
+
+/** The digits after `marker`, or -1. */
+i32 numberAfter(string text, string marker) {
+  i32 at = text.indexOf(marker);
+  if (at < 0) { return -1; }
+  u8[] b = text.toBytes();
+  i32 i = at + marker.len();
+  i32 n = 0;
+  i32 digits = 0;
+  while (i < b.len() && b[i] >= '0' && b[i] <= '9') { n = n * 10 + (b[i] - '0'); digits = digits + 1; i = i + 1; }
+  return digits == 0 ? -1 : n;
+}
+
+/**
+ * Wait for the server to say its port.
+ *
+ * Waiting for the line rather than for a timeout is the difference between a test and a coin flip: a
+ * server mid-bind is a server a client cannot reach, and `greet.wac` prints that line for this reason.
+ * The port comes out of the line because the server was started on port 0 — the kernel chose, and
+ * `Socket.port` is how a program can say what it chose.
+ */
+i32 waitForPort(Core core, Cli cli, Server s, i32 millis) {
+  i64 deadline = core.nowMillis().wait() + (millis as i64);
+  for (i32 guard = 0; guard < 100000; guard++) {
+    i32 port = numberAfter(readOr(cli, s.log, ""), "listening on ");
+    if (port > 0) { return port; }
+    if (core.nowMillis().wait() >= deadline) { return -1; }
+    core.sleepMillis(20).wait();
+  }
+  return -1;
+}
+
+/** Connect, read what the server sends, and close. */
+string greetedBy(Core core, Cli cli, i32 port) {
+  Socket s = cli.connect("127.0.0.1", port).wait();
+  if (s.handle < 0) { return "connect failed: " + s.error; }
+  string said = "";
+  match (cli.recv(s.handle).wait()) {
+    case Data(bytes): { said = string.fromBytes(bytes); }
+    case End: { }
+    case Failed(why): { said = "recv failed: " + why; }
+  }
+  cli.closeSocket(s.handle);
+  return said;
+}
+
+/** The `EXIT=` the shell wrote once the job was over, or -1 while it is still running. */
+i32 exitStatus(Core core, Cli cli, Server s, i32 millis) {
+  i64 deadline = core.nowMillis().wait() + (millis as i64);
+  for (i32 guard = 0; guard < 100000; guard++) {
+    i32 code = numberAfter(readOr(cli, s.status, ""), "EXIT=");
+    if (code >= 0) { return code; }
+    if (core.nowMillis().wait() >= deadline) { return -1; }
+    core.sleepMillis(20).wait();
+  }
+  return -1;
+}
+
+void kill(Cli cli, Server s) {
+  if (s.pid <= 0) { return; }
+  cli.exec("/bin/sh", string[]("-c", "kill -9 " + itoa(s.pid) + " 2>/dev/null; true"), u8[0]()).wait();
+}
+
+/** What one runtime's server said to a client, and what it logged. */
+struct Greeted {
+  string said;
+  string logged;
+  i32 code;
+  string error;
+}
+
+Greeted greet(Core core, Cli cli, string dir, string name, string prog, string[] args) {
+  Server s = start(cli, dir, name, prog, args);
+  if (s.error != "") { return Greeted("", "", -1, s.error); }
+  i32 port = waitForPort(core, cli, s, 30000);
+  if (port < 0) {
+    kill(cli, s);
+    return Greeted("", readOr(cli, s.log, ""), -1, "the server never said its port");
+  }
+  string said = greetedBy(core, cli, port);
+  i32 code = exitStatus(core, cli, s, 30000);
+  kill(cli, s);
+  return Greeted(said, readOr(cli, s.log, ""), code, "");
+}
+
+export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_client(
+    Core core, Cli cli) {
+  T t = T.create();
+  if (!haveNode(cli)) {
+    core.warn("node_net: skipped — no node on this machine, so there is no second runtime");
+    return t.report();
+  }
+  string dir = scratch(cli, "greet");
+  string denoOut = dir + "/greet-deno";
+  string nodeOut = dir + "/greet-node";
+  string why = build(cli, denoOut, "deno") + build(cli, nodeOut, "node");
+  t.eqStr(why, "", "greet built for both runtimes");
+  if (why != "") { return t.report(); }
+
+  // Loopback, so the peer is knowable: whatever address the client comes from is the one the server
+  // must report, and on loopback that is `127.0.0.1` on both runtimes.
+  Greeted onDeno = greet(core, cli, dir, "deno", denoOut, string[]("127.0.0.1", "0"));
+  Greeted onNode = greet(core, cli, dir, "node", "node", string[](nodeOut, "127.0.0.1", "0"));
+  t.eqStr(onDeno.error, "", "the Deno server ran");
+  t.eqStr(onNode.error, "", "the Node server ran");
+
+  t.eqStr(onDeno.said, "hello 127.0.0.1\n", "deno: " + onDeno.logged);
+  t.eqStr(onNode.said, onDeno.said, "node said something else: " + onNode.logged);
+  t.eqI32(onNode.code, 0, onNode.logged);
+  t.eqI32(onDeno.code, 0, onDeno.logged);
+
+  // And the program's own view of it, which is what `Socket.fromLoopback` is for.
+  t.isTrue(contains(onDeno.logged, "peer 127.0.0.1 (loopback)"), onDeno.logged);
+  t.isTrue(contains(onNode.logged, "peer 127.0.0.1 (loopback)"), onNode.logged);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_interface(
+    Core core, Cli cli) {
+  // The address has to reach the kernel, and the only witness is the socket table: a server that
+  // answers on `127.0.0.1` answers there whether it bound loopback or the world. `ss` is asked rather
+  // than a second interface, because a container may have only one and the bind is the claim.
+  T t = T.create();
+  if (!haveNode(cli)) {
+    core.warn("node_net: skipped — no node on this machine");
+    return t.report();
+  }
+  string dir = scratch(cli, "bind");
+  string nodeOut = dir + "/greet-node";
+  string why = build(cli, nodeOut, "node");
+  t.eqStr(why, "", "greet built for node");
+  if (why != "") { return t.report(); }
+
+  // A port from the kernel rather than a literal, and **held until the statement before the child is
+  // started**: the window between letting it go and the child's bind is wac-mono 0069's race, and a
+  // fixed number shared with every other suite on this machine is the larger one.
+  for (i32 attempt = 1; attempt <= 3; attempt++) {
+    Held held = Held.take(cli);
+    t.isTrue(held.port > 0, "a free port was bound");
+    if (held.port < 0) { break; }
+    i32 port = held.port;
+    held.release(cli);
+
+    Server s = start(cli, dir, "bind" + itoa(attempt), "node",
+                     string[](nodeOut, "127.0.0.1", itoa(port)));
+    t.eqStr(s.error, "", "node started");
+    if (s.error != "") { break; }
+    i32 got = waitForPort(core, cli, s, 30000);
+    string log = readOr(cli, s.log, "");
+    if (got < 0) {
+      kill(cli, s);
+      // A bind failure is retried, and only that: the child's own words are kept so `Address already
+      // in use` can be told from a real failure rather than guessed at.
+      if (contains(log, "Address already in use") || contains(log, "EADDRINUSE")) {
+        if (attempt < 3) { continue; }
+      }
+      t.fail("the server never listened on " + itoa(port) + ": " + log);
+      break;
+    }
+
+    Exec ss = cli.exec("ss", string[]("-ltn"), u8[0]()).wait();
+    t.isTrue(ss.ran(), "ss ran — " + ss.error);
+    string table = string.fromBytes(ss.stdout);
+    string line = "";
+    string[] rows = linesOf(table);
+    for (i32 i = 0; i < rows.len(); i++) {
+      if (contains(rows[i], itoa(port))) { line = rows[i]; }
+    }
+    t.isTrue(contains(line, "127.0.0.1:" + itoa(port)),
+             "bound elsewhere: " + (line == "" ? table : line) +
+             (log == "" ? "" : " | node said: " + log));
+    // Tidy: the server is waiting for a connection nobody is going to make.
+    kill(cli, s);
+    break;
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+string[] linesOf(string text) {
+  u8[] b = text.toBytes();
+  i32 count = 1;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { count = count + 1; } }
+  string[] out = string[count](fill: "");
+  i32 n = 0;
+  i32 at = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '\n') { out[n] = text.slice(at, i); n = n + 1; at = i + 1; }
+  }
+  out[n] = text.slice(at, text.len());
+  return out;
+}

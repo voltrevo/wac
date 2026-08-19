@@ -1,0 +1,283 @@
+// `Cli` and `Core` are constructed positionally, so the field order in `platform.wac` and the
+// argument order in `provider.ts` have to agree exactly.
+//
+// Nothing else checks that, and getting it wrong does not fail to compile — it silently wires every
+// capability after the mistake to its neighbour. It has cost an hour twice: once adding `waitAny`,
+// where three type errors pointed at the capabilities either side of the one that moved, and once
+// adding `spawn`, where the symptom was `Cannot read properties of undefined (reading 'ref')` from a
+// program that built cleanly.
+//
+// This reads both files and compares the two lists by name. It is a text comparison, which is crude,
+// and it is the only thing standing between an append in one file and an afternoon.
+//
+// **It has to check that each marker is attached to the argument it names, not merely that the
+// markers appear in the right order.** The first version checked the order alone, and the markers
+// went in the right sequence on the wrong lines — scattered through the resolver helpers above the
+// call, where they annotated nothing. It passed for two commits, including one that inserted a
+// capability in the middle of `Core`, while proving only that a list of comments was sorted. So the
+// parser below splits the actual argument list and requires every argument to begin with its own
+// marker: a stray marker or an untagged argument is a failure.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The scanner is written out rather than reached
+// for as a regex, which wac does not have here — and the three things the TypeScript's regexes had to
+// be careful about are the three things this is careful about, for the same reasons.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+
+string sourceOf(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) { trap; }
+  return string.fromBytes(f.bytes);
+}
+
+bool isWordByte(i32 c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+/** What a split produced, and where the closing bracket was. */
+struct Split {
+  string[] parts;
+  i32 end;
+}
+
+/**
+ * Split a call's argument list at depth zero.
+ *
+ * Strings and comments are skipped rather than scanned, because both contain commas: a parameter type
+ * like `fn[bool(string, u8[])]` has one inside brackets, and the prose above `spawn` has one in a line
+ * comment. A scan that ignored either produces phantom capabilities named `string` and `i32`.
+ */
+Split splitArgs(string src, i32 open) {
+  u8[] b = src.toBytes();
+  string[] found = string[256](fill: "");
+  i32 n = 0;
+  i32 depth = 0;
+  i32 at = open + 1;
+  i32 i = open + 1;
+  while (i < b.len()) {
+    i32 c = b[i];
+    if (c == '/' && i + 1 < b.len() && b[i + 1] == '/') {
+      i32 nl = src.slice(i, src.len()).indexOf("\n");
+      if (nl < 0) { break; }
+      i = i + nl;
+      continue;
+    }
+    if (c == '/' && i + 1 < b.len() && b[i + 1] == '*') {
+      i32 close = src.slice(i, src.len()).indexOf("*/");
+      if (close < 0) { break; }
+      i = i + close + 1;
+      continue;
+    }
+    if (c == '"' || c == '\'' || c == '`') {
+      i = i + 1;
+      while (i < b.len() && b[i] != c) {
+        if (b[i] == '\\') { i = i + 1; }
+        i = i + 1;
+      }
+      i = i + 1;
+      continue;
+    }
+    if (c == '(' || c == '[' || c == '{') {
+      depth = depth + 1;
+    } else if (c == ')' || c == ']' || c == '}') {
+      if (depth == 0) {
+        if (n < found.len()) { found[n] = src.slice(at, i); n = n + 1; }
+        break;
+      }
+      depth = depth - 1;
+    } else if (c == ',' && depth == 0) {
+      if (n < found.len()) { found[n] = src.slice(at, i); n = n + 1; }
+      at = i + 1;
+    }
+    i = i + 1;
+  }
+  // A trailing comma leaves an empty final part.
+  if (n > 0 && trimmed(found[n - 1]) == "") { n = n - 1; }
+  string[] parts = string[n](fill: "");
+  for (i32 k = 0; k < n; k++) { parts[k] = found[k]; }
+  return Split(parts, i);
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\n" || c == "\t" || c == "\r"; }
+
+/** The trailing identifier of `<type> <name>`. */
+string trailingName(string part) {
+  string s = trimmed(part);
+  u8[] b = s.toBytes();
+  i32 end = b.len();
+  if (end == 0) { return ""; }
+  i32 start = end;
+  while (start > 0 && isWordByte(b[start - 1])) { start = start - 1; }
+  return s.slice(start, end);
+}
+
+/** The parameter names of `<Struct> of(...)` in platform.wac, in order. */
+string[] wacOrder(string src, string name) {
+  i32 at = src.indexOf("  " + name + " of(");
+  if (at < 0) { trap; }
+  Split s = splitArgs(src, src.slice(at, src.len()).indexOf("(") + at);
+  string[] out = string[s.parts.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < s.parts.len(); i++) {
+    string id = trailingName(s.parts[i]);
+    if (id.len() > 0) { out[n] = id; n = n + 1; }
+  }
+  string[] names = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { names[i] = out[i]; }
+  return names;
+}
+
+/** The marker at the head of `part` — `slash-star= name star-slash` — or "" when there is none. */
+string headMarker(string part) {
+  string s = trimmed(part);
+  const string OPEN = "/*= ";
+  if (s.len() < OPEN.len() || s.slice(0, OPEN.len()) != OPEN) { return ""; }
+  i32 close = s.indexOf(" */");
+  if (close < 0) { return ""; }
+  return s.slice(OPEN.len(), close);
+}
+
+/** Every `OP.NAME` in `part`, deduplicated. */
+string[] opsIn(string part) {
+  string[] found = string[16](fill: "");
+  i32 n = 0;
+  i32 at = 0;
+  while (at < part.len()) {
+    i32 hit = part.slice(at, part.len()).indexOf("OP.");
+    if (hit < 0) { break; }
+    i32 start = at + hit + 3;
+    u8[] b = part.toBytes();
+    i32 end = start;
+    while (end < b.len() && ((b[end] >= 'A' && b[end] <= 'Z') || b[end] == '_')) { end = end + 1; }
+    if (end > start) {
+      string op = part.slice(start, end);
+      bool seen = false;
+      for (i32 k = 0; k < n; k++) { if (found[k] == op) { seen = true; } }
+      if (!seen && n < found.len()) { found[n] = op; n = n + 1; }
+    }
+    at = start;
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
+}
+
+/**
+ * The capability name an opcode implies.
+ *
+ * Two do not follow, and both earn it: the opcodes say which stream they write, and the capabilities
+ * are named after what a program calls them — `write` and `writeErr`. `waitAny` submits no opcode at
+ * all (the wait is in the worker's own memory), so it is checked by position and marker alone.
+ */
+string nameOfOp(string op) {
+  if (op == "WRITE_STDOUT") { return "write"; }
+  if (op == "WRITE_STDERR") { return "writeErr"; }
+  string out = "";
+  bool upNext = false;
+  u8[] b = op.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '_') { upNext = true; continue; }
+    if (upNext) { out = out + op.slice(i, i + 1); upNext = false; continue; }
+    u8[] one = u8[1](fill: 0);
+    one[0] = (b[i] >= 'A' && b[i] <= 'Z') ? b[i] + 32 : b[i];
+    out = out + string.fromBytes(one);
+  }
+  return out;
+}
+
+/** Markers anywhere outside the call, which could pair with an argument by position. */
+string[] straysOutside(string src, i32 from, i32 to) {
+  string outside = src.slice(0, from) + src.slice(to, src.len());
+  string[] found = string[32](fill: "");
+  i32 n = 0;
+  i32 at = 0;
+  while (at < outside.len() && n < found.len()) {
+    i32 hit = outside.slice(at, outside.len()).indexOf("/*= ");
+    if (hit < 0) { break; }
+    i32 start = at + hit + 4;
+    i32 close = outside.slice(start, outside.len()).indexOf(" */");
+    if (close < 0) { break; }
+    found[n] = outside.slice(start, start + close);
+    n = n + 1;
+    at = start + close;
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
+}
+
+/**
+ * The order the provider passes them in, taken from the marker at the head of each argument.
+ *
+ * Read from markers rather than inferred from the code because the closures are anonymous and several
+ * are indistinguishable by shape — `(path: string) => T.stat(…)` and its neighbours differ only in the
+ * opcode. Requiring the marker to *lead* the argument is what makes this a check rather than a
+ * decoration: a marker that has drifted onto a helper is no longer at the head of anything, so it
+ * fails instead of quietly still matching.
+ */
+string[] providerOrder(T t, string src, string name) {
+  string call = "return cls." + name + ".of(";
+  i32 at = src.indexOf(call);
+  t.isTrue(at >= 0, "no cls." + name + ".of in provider.ts");
+  if (at < 0) { return string[0](fill: ""); }
+  Split s = splitArgs(src, src.slice(at, src.len()).indexOf("(") + at);
+
+  // Nothing outside the argument list may carry a marker, or a stray could pair with an argument by
+  // position and hide exactly the drift this is looking for.
+  string[] strays = straysOutside(src, at, s.end);
+
+  string[] out = string[s.parts.len()](fill: "");
+  for (i32 i = 0; i < s.parts.len(); i++) {
+    string marker = headMarker(s.parts[i]);
+    if (marker == "") {
+      t.fail(name + " argument " + itoa(i) + " has no marker at its head: " +
+             trimmed(s.parts[i]).slice(0, 90) +
+             (strays.len() > 0 ? " | markers found outside the call: " + joined(strays, ", ") : ""));
+      continue;
+    }
+    // The marker is what the author *says* this argument is. The opcode inside it is what the argument
+    // actually does, and comparing the two is the only part of this test that checks the wiring rather
+    // than a label: swapping two argument bodies and leaving the markers alone would otherwise pass,
+    // which is the same mistake as before wearing a different hat.
+    string[] ops = opsIn(s.parts[i]);
+    if (ops.len() == 1) {
+      string expected = nameOfOp(ops[0]);
+      t.eqStr(expected, marker,
+              name + " argument " + itoa(i) + " is marked " + marker + " but submits OP." + ops[0]);
+    }
+    out[i] = marker;
+  }
+  return out;
+}
+
+export string test_clis_fields_and_the_providers_arguments_are_in_the_same_order(
+    Core core, Cli cli) {
+  T t = T.create();
+  string wac = sourceOf(cli, "packages/platform/src/platform.wac");
+  string prov = sourceOf(cli, "packages/platform/host/provider.ts");
+
+  string[] structs = string[]("Cli", "Core", "Page");
+  for (i32 i = 0; i < structs.len(); i++) {
+    string[] declared = wacOrder(wac, structs[i]);
+    string[] passed = providerOrder(t, prov, structs[i]);
+    t.eqStr(joined(passed, ","), joined(declared, ","),
+            structs[i] + " is built positionally and the two orders disagree. platform.wac: " +
+            joined(declared, ", ") + " | provider.ts: " + joined(passed, ", "));
+    // A guard against the parser silently finding nothing and the comparison passing on two empty
+    // lists. Core has six capabilities, Page seven, Cli twenty-five.
+    t.isTrue(declared.len() >= 5,
+             "only " + itoa(declared.len()) + " parsed for " + structs[i]);
+  }
+  return t.report();
+}

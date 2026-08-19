@@ -494,7 +494,7 @@ cmp /tmp/re/wacc.wasm seed/wacc.wasm      # identical
 `$bind$` export builds `Core` and in what order its funcrefs go, so an application is a module *and*
 a manifest. That derivation was `packages/platform/native.ts` and is now also
 `packages/wacc/src/manifest.wac` — checked against the TypeScript one byte for byte on three
-programs, `packages/wacc/test/manifest.test.ts`. So the bundler is in the loop only for producing the
+programs, `packages/wacc/test/wac/manifest_test.wac`. So the bundler is in the loop only for producing the
 *first* seed, and this binary can produce every one after it.
 
 The stem matters: a manifest names the file it sits beside, so a rebuild under another name is a

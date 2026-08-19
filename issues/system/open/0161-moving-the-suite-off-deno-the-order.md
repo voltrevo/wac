@@ -1312,8 +1312,14 @@ Where the four remaining siblings stand, so nobody re-derives it:
   nothing but the compiler, agreeing on a value. The JavaScript is half the differential, so
   translating it would delete the claim. Same category as `trapMessage`'s built-app case and
   `packages/stream`.
-- **`manifest.test.ts` and `jsBindgen.test.ts`** were already rejected earlier for the same kind of
-  reason — a cargo build and JS glue as the subject.
+- **`jsBindgen.test.ts`** was already rejected earlier for the same kind of reason — JS glue as the
+  subject.
+- **`manifest.test.ts` was rejected with it and should not have been**, and it moved on 2026-08-19.
+  The reason given was "a cargo build and JS glue as the subject", and neither is true of it: it runs
+  no cargo, and there is no glue in it. What it compares is `packages/platform/native.ts`'s manifest
+  against `packages/wacc/src/manifest.wac`'s, byte for byte — two derivations of the same JSON, one of
+  which is wac. `native.ts` is not the subject, it is the other half of a differential, and it stays
+  exactly where it is. The mistake looks like a rejection written for the pair rather than for each.
 
 ### What is actually left, classified — 2026-08-18 (agent-c)
 

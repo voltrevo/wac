@@ -569,7 +569,7 @@ they find real rules cheaply. What they no longer are is a definition of correct
 | oracle | input | what it asserts |
 |---|---|---|
 | `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 303 of 304 illegal refused, 367 of 367 legal silent, the one left named |
-| `specMulti.test.ts` | the spec's 56 programs that take more than one file | **the contract** — all 15 illegal refused, all 41 legal silent |
+| `test/wac/specmulti_test.wac` | the spec's programs that take more than one file | **the contract** — all 15 illegal refused, all 42 legal silent |
 | `specCheck.test.ts` | the **100** illegal programs read out of the text | 100 of 100 refused, no exceptions at all |
 | `specAccept.test.ts` | the **263** legal programs read out of the text | 263 of 263 silent, from the accepting side |
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; **100%** recall (9,120 of 9,127), held by a 97% floor |
@@ -581,7 +581,7 @@ they find real rules cheaply. What they no longer are is a definition of correct
 **The rules that need two files now have an oracle, and it is the honest one.** Export visibility,
 re-export, cross-file type identity and type-name scope cannot be stated in a single file, so the 56
 spec programs that state them sat outside every test here — `§wac-no-reexport-f7kn4wq` had nothing
-measuring it at all, and a rule written to satisfy it would have been unmeasurable. `specMulti.test.ts`
+measuring it at all, and a rule written to satisfy it would have been unmeasurable. `specmulti_test.wac`
 holds them now, and **every one of the 15 the spec calls illegal is refused**, with no exceptions —
 the same shape the single-file contract has. The list of known misses started at nine and is empty.
 

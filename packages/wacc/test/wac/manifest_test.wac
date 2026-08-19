@@ -1,0 +1,175 @@
+// The manifest, derived twice: by `packages/platform/native.ts` and by the compiler itself.
+//
+// A native host cannot run a module without one — it says which `$bind$` export builds `Core`, what
+// order that struct's funcrefs go in, and which dispatcher serves which callback signature. It had
+// always been written by TypeScript, which is why `native/v8` could compile wac in a single file and
+// still not rebuild the file it carries: the module it emits is right, and the section that makes a
+// module self-describing was on the other side of the language boundary. `src/manifest.wac` is that
+// section, in wac, and this is the check that the two derivations agree.
+//
+// **Byte for byte, not field for field.** Comparing meaning would leave two derivations to keep in
+// step and a difference that only shows in a host; comparing the text means a difference is a bug in
+// one of them and is found at the character. That is how `run` arrived: `manifest.wac` grew the field
+// and `native.ts` had not, and the diff was a trailing comma on the `net` line.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. `native.ts` stays where it is — it is one of the
+// two things being compared, and the whole point is that the wac side can now do what it does.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { splitLines } from "../../../wactest/src/strings.wac";
+import { Graph, graphOf } from "./graph.wac";
+import { manifestFiles, emitFilesSelfDescribing } from "../../src/api.wac";
+import { jsonFile } from "../../../wactest/src/jsonfile.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+
+/**
+ * The same grants the `app:native` command line sets, so both sides carry every key.
+ *
+ * `grants` is the bitmask `platform.wac` uses: 1 read, 2 write, 4 net, 8 env. Read and write here,
+ * which is what the flags below ask `native.ts` for.
+ */
+const i32 BITS = 3;
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/manifest-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+/** `native.ts`'s derivation: the bundler's manifest for `entry`, written beside its module. */
+string bundlerManifest(T t, Cli cli, string dir, string entry) {
+  Exec r = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/native.ts", entry,
+             "--allow-read", "--allow-write", "-o", dir + "/prog"), u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           "native.ts built " + entry + " — " + string.fromBytes(r.stderr));
+  if (!r.ran() || r.status != 0) { return ""; }
+  FileResult f = cli.readFile(dir + "/prog.json").wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+/** Where two long JSON texts first differ, as a line rather than an offset. */
+string firstDifference(string a, string b) {
+  string[] x = splitLines(a);
+  string[] y = splitLines(b);
+  i32 n = x.len() > y.len() ? x.len() : y.len();
+  for (i32 i = 0; i < n; i++) {
+    string xi = i < x.len() ? x[i] : "<no line>";
+    string yi = i < y.len() ? y[i] : "<no line>";
+    if (xi != yi) {
+      return "line " + itoa(i + 1) + ": native.ts: " + xi + " | manifest.wac: " + yi;
+    }
+  }
+  return "no line differs, only the length";
+}
+
+JsonArray arrayIn(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return JsonArray.create(); }
+  match (v!) {
+    case Array(items): { return items; }
+    else: { return JsonArray.create(); }
+  }
+}
+
+bool namesOne(JsonArray items, string want) {
+  for (i32 i = 0; i < items.len(); i++) {
+    match (items.get(i)) {
+      case Object(members): {
+        JsonValue? n = members.getStr("name");
+        if (n is not null) {
+          match (n!) {
+            case Str(bytes): { if (string.fromBytes(bytes) == want) { return true; } }
+            else: { }
+          }
+        }
+      }
+      else: { }
+    }
+  }
+  return false;
+}
+
+/** One entry, both ways. */
+void bothWays(T t, Core core, Cli cli, string entry, string name) {
+  string dir = scratch(cli, name);
+  string ts = bundlerManifest(t, cli, dir, entry);
+  if (ts == "") { cli.remove(dir, true).wait(); return; }
+
+  Graph g = graphOf(cli, entry);
+  t.isTrue(g.ok, "the import graph of " + entry + " — " + g.error);
+  if (!g.ok) { cli.remove(dir, true).wait(); return; }
+  // The graph is asserted to be a graph rather than an entry: a walker that stopped at the first file
+  // would produce a manifest for a smaller program, which is a difference in the text and not
+  // obviously one in the reason.
+  t.isTrue(g.paths.len() >= 1, entry + "'s graph is empty");
+
+  FileResult wasm = cli.readFile(dir + "/prog.wasm").wait();
+  t.isTrue(wasm.ok, "the bundler's module is there");
+  if (!wasm.ok) { cli.remove(dir, true).wait(); return; }
+
+  string wac = manifestFiles(wasm.bytes, g.paths, g.sources, entry, "prog.wasm", BITS);
+  t.eqStr(wac, ts, "the two derivations differ for " + entry + " — " + firstDifference(ts, wac));
+
+  // **Asserted, not merely compared.** Two empty strings are equal, and a manifest that described
+  // nothing would pass the line above while describing nothing on both sides.
+  cli.writeFile(dir + "/wac.json", wac.toBytes()).wait();
+  JsonObject m = jsonFile(cli, dir + "/wac.json");
+  t.isTrue(namesOne(arrayIn(m, "structs"), "Core"),
+           entry + ": no Core in a manifest for a program whose main takes one");
+  t.isTrue(namesOne(arrayIn(m, "exports"), "main"), entry + ": no main");
+  cli.remove(dir, true).wait();
+}
+
+export string test_the_compiler_writes_the_same_manifest_as_the_bundler(Core core, Cli cli) {
+  T t = T.create();
+  bothWays(t, core, cli, "native/v8/example/hello.wac", "hello");
+  bothWays(t, core, cli, "packages/platform/example/wc.wac", "wc");
+  bothWays(t, core, cli, "packages/wacc/example/wacc.wac", "wacc");
+  return t.report();
+}
+
+export string test_and_the_module_it_writes_section_and_all_is_the_artefact_the_bundler_writes(
+    Core core, Cli cli) {
+  // The manifest agreeing is one thing; the *file* is what a host is handed and what a rebuilt seed
+  // would have to be. `emitFilesSelfDescribing` is the whole of `app:native` in wac — emit, derive,
+  // append — so this is the comparison that says the binary could produce its own payload.
+  T t = T.create();
+  const string ENTRY = "packages/platform/example/wc.wac";
+  string dir = scratch(cli, "selfdescribing");
+  Exec r = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/native.ts", ENTRY,
+             "--allow-read", "--allow-write", "-o", dir + "/prog"), u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0, "native.ts built it — " + string.fromBytes(r.stderr));
+  if (!r.ran() || r.status != 0) { return t.report(); }
+  FileResult want = cli.readFile(dir + "/prog.wasm").wait();
+  t.isTrue(want.ok, "the bundler's module is there");
+  if (!want.ok) { return t.report(); }
+
+  Graph g = graphOf(cli, ENTRY);
+  t.isTrue(g.ok, "the import graph — " + g.error);
+  if (!g.ok) { cli.remove(dir, true).wait(); return t.report(); }
+
+  u8[] got = emitFilesSelfDescribing(g.paths, g.sources, ENTRY, "prog.wasm", BITS);
+  t.eqI32(got.len(), want.bytes.len(),
+          "the compiler wrote " + itoa(got.len()) + " bytes, the bundler " +
+          itoa(want.bytes.len()));
+  if (got.len() == want.bytes.len()) {
+    i32 differs = -1;
+    for (i32 i = 0; i < got.len() && differs < 0; i++) {
+      if (got[i] != want.bytes[i]) { differs = i; }
+    }
+    t.eqI32(differs, -1, differs < 0 ? "" :
+            "byte " + itoa(differs) + " differs: " + itoa(got[differs]) + " vs " +
+            itoa(want.bytes[differs]));
+  }
+  core.log("    self-describing: " + itoa(got.len()) + " bytes for " + ENTRY +
+           ", identical to the bundler's");
+  cli.remove(dir, true).wait();
+  return t.report();
+}

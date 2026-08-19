@@ -1,0 +1,85 @@
+// The toolchain as one executable.
+//
+// `deno task app:binary packages/wacc/example/wacc.wac --allow-read --allow-write -o wac` is the
+// sanctioned way to build a wac toolchain that needs nothing installed (design/lang/0003). What has to
+// stay true is that wrapping the program in a runtime changes nothing about what it emits.
+//
+// **Opt-in, and skipped out loud rather than absent.** Not for time — it is about a second with the
+// build cache warm — but for **disk**: each run writes a 105 MB executable, and the shared machine
+// this suite runs on has hit 100% more than once. `test/wac/program_test.wac` already runs the same
+// wac program and compares its output byte for byte; `deno compile` only puts a runtime around it.
+// `WAC_BINARY=1` runs it, and the line every other run prints is the reminder that it exists.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. `emitFiles` is imported from `src/api.wac`
+// directly rather than reached through `wacBind`: the library half of this comparison is wac, so a
+// wac test calls it as one.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Graph, graphOf } from "./graph.wac";
+import { emitFiles } from "../../src/api.wac";
+
+const string TOOLCHAIN = "packages/wacc/example/wacc.wac";
+const string ENTRY = "packages/json/src/json.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+bool askedFor(Cli cli) {
+  u8[]? v = cli.env("WAC_BINARY").wait();
+  return (v is not null) && string.fromBytes(v!) == "1";
+}
+
+export string test_the_built_executable_compiles_what_the_library_compiles_byte_for_byte(
+    Core core, Cli cli) {
+  T t = T.create();
+  if (!askedFor(cli)) {
+    core.warn("wacc binary test: skipped — set WAC_BINARY=1 to run it. Each run writes a 105 MB " +
+              "executable, and this machine is shared; `program_test.wac` already compares the same " +
+              "program's output byte for byte without one.");
+    return t.report();
+  }
+
+  string dir = root(cli) + "/.cache/waccbinary";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string exe = dir + "/wac";
+
+  Exec built = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/binary.ts", TOOLCHAIN,
+             "--allow-read", "--allow-write", "-o", exe), u8[0]()).wait();
+  t.isTrue(built.ran() && built.status == 0,
+           "the executable built — " + string.fromBytes(built.stderr));
+  if (!built.ran() || built.status != 0) { return t.report(); }
+
+  string out = dir + "/out.wasm";
+  Exec r = cli.exec(exe, string[]("compile", ENTRY, out), u8[0]()).wait();
+  t.eqI32(r.status, 0, "compile failed: " + string.fromBytes(r.stderr));
+  if (r.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Graph g = graphOf(cli, ENTRY);
+  t.isTrue(g.ok, "the import graph — " + g.error);
+  if (!g.ok) { cli.remove(dir, true).wait(); return t.report(); }
+  u8[] want = emitFiles(g.paths, g.sources, ENTRY);
+  FileResult got = cli.readFile(out).wait();
+  t.isTrue(got.ok, "the executable wrote a module — " + got.error);
+  if (!got.ok) { cli.remove(dir, true).wait(); return t.report(); }
+
+  t.eqI32(got.bytes.len(), want.len(),
+          "the executable wrote " + itoa(got.bytes.len()) + " bytes, the library " + itoa(want.len()));
+  if (got.bytes.len() == want.len()) {
+    i32 differs = -1;
+    for (i32 i = 0; i < want.len() && differs < 0; i++) {
+      if (got.bytes[i] != want[i]) { differs = i; }
+    }
+    t.eqI32(differs, -1, differs < 0 ? "" : "byte " + itoa(differs) + " differs");
+  }
+  // A module of nothing is byte-identical to a module of nothing, so the size is stated as well.
+  t.isTrue(want.len() > 1000, "the library emitted " + itoa(want.len()) + " bytes, which is not a module");
+
+  Stat s = cli.stat(exe).wait();
+  core.log("    binary: " + itoa((s.size / (1048576 as i64)) as~ i32) + " MB, " +
+           itoa(got.bytes.len()) + " bytes out, identical");
+  cli.remove(dir, true).wait();
+  return t.report();
+}

@@ -204,7 +204,7 @@ export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(
     if (f.ok) { namedByCase(string.fromBytes(f.bytes), ours); }
   }
   // **And the recorded corpus, which is where most of the coverage actually is.** `specCases.json` holds
-  // the spec's own programs with their tags, and `specSingle.test.ts` and `specMulti.test.ts` run every
+  // the spec's own programs with their tags, and `specSingle.test.ts` and `specmulti_test.wac` run every
   // one of them *against wacc* — 671 single-file and 56 multi-file. Leaving it out made this read 365
   // unheld clauses where the number is 9, which is the difference between a guard and an alarm.
   FileResult corpus = cli.readFile("packages/wacc/test/specCases.json").wait();

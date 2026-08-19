@@ -1,0 +1,59 @@
+// The import graph of an entry, read off the disk.
+//
+// `harness/wacFiles.ts` has walked this for every build this repository has ever done; the pieces on
+// the wac side are `src/files.wac`'s `importSpecs` and `resolveFrom`, and this is the breadth-first
+// walk over them. Every caller that wants to hand `paths` and `sources` to `buildFiles`,
+// `manifestFiles` or `emitFilesSelfDescribing` needs it.
+//
+// **It grows rather than stopping at a number.** The version this was lifted out of held 64 paths and
+// dropped anything past them — `if (seen || n >= paths.len()) { continue; }` — which is correct for
+// the small entries it was written for and silently wrong for `packages/wacc/example/wacc.wac`, whose
+// graph is closer to two hundred files. A truncated graph is not an error anywhere: it is a smaller
+// program that compiles, and what it produces is compared against something derived from the whole
+// one. `issues/system/0161` step 4 is full of that shape.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { Cli, FileResult } from "../../../platform/src/platform.wac";
+import { importSpecs, resolveFrom } from "../../src/files.wac";
+
+/** An entry and everything it reaches, in the order they were found. */
+export struct Graph {
+  string[] paths;
+  string[] sources;
+  bool ok;
+  string error;
+}
+
+export Graph graphOf(Cli cli, string entry) {
+  string[] paths = string[32](fill: "");
+  string[] sources = string[32](fill: "");
+  i32 n = 0;
+  paths[0] = entry;
+  n = 1;
+  for (i32 i = 0; i < n; i++) {
+    FileResult f = cli.readFile(paths[i]).wait();
+    if (!f.ok) { return Graph(paths, sources, false, "cannot read " + paths[i]); }
+    sources[i] = string.fromBytes(f.bytes);
+    string[] specs = importSpecs(f.bytes);
+    for (i32 s = 0; s < specs.len(); s++) {
+      string resolved = resolveFrom(paths[i], specs[s]);
+      bool seen = false;
+      for (i32 k = 0; k < n; k++) { if (paths[k] == resolved) { seen = true; } }
+      if (seen) { continue; }
+      if (n == paths.len()) {
+        string[] p2 = string[paths.len() * 2](fill: "");
+        string[] s2 = string[sources.len() * 2](fill: "");
+        for (i32 k = 0; k < n; k++) { p2[k] = paths[k]; s2[k] = sources[k]; }
+        paths = p2;
+        sources = s2;
+      }
+      paths[n] = resolved;
+      n = n + 1;
+    }
+  }
+  string[] p = string[n](fill: "");
+  string[] s = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { p[i] = paths[i]; s[i] = sources[i]; }
+  return Graph(p, s, true, "");
+}
