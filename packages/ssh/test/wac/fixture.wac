@@ -30,6 +30,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Core, Exec, FileResult } from "../../../platform/src/platform.wac";
 import { Daemon, Held, start, stop, waitForPortWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
+import { copyPreserving, keygen, publicBlobText, restrict }
+  from "../../../wactest/src/keys.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** Everything a test needs from a running sshd, so the setup is written once. */
@@ -53,46 +55,6 @@ export string scratch(Cli cli, string name) {
 }
 
 /** `chmod 600`, which sshd requires of a host key and `Fs` has no word for. */
-export bool restrict(Cli cli, string path) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", "chmod 600 " + quoted(path)), u8[0]()).wait();
-  return r.ran() && r.status == 0;
-}
-
-/** `cp -p`, preserving the mode — an `ssh-keygen` key copied any other way loses its 0600. */
-export bool copyPreserving(Cli cli, string from, string to) {
-  Exec r = cli.exec("/bin/sh", string[]("-c", "cp -p " + quoted(from) + " " + quoted(to)),
-                    u8[0]()).wait();
-  return r.ran() && r.status == 0;
-}
-
-/** Generate an Ed25519 key pair at `path`, failing `t` if `ssh-keygen` will not. */
-export bool keygen(T t, Cli cli, string path) {
-  Exec r = cli.exec("ssh-keygen", string[]("-t", "ed25519", "-f", path, "-N", "", "-q"),
-                    u8[0]()).wait();
-  t.isTrue(r.ran(), "ssh-keygen ran — " + r.error);
-  t.eqI32(r.status, 0, "ssh-keygen for " + path + ": " + string.fromBytes(r.stderr));
-  return r.ran() && r.status == 0;
-}
-
-/**
- * The base64 blob out of a `.pub` file — the second field, which is the key as it goes on the wire.
- *
- * Empty when the file cannot be read or has no second field, which every caller checks: an empty
- * expected blob would make a `known_hosts` comparison pass against anything.
- */
-export string publicBlobText(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  if (!f.ok) { return ""; }
-  string text = string.fromBytes(f.bytes);
-  i32 first = text.indexOf(" ");
-  if (first < 0) { return ""; }
-  string rest = text.slice(first + 1, text.len());
-  i32 second = rest.indexOf(" ");
-  string blob = second < 0 ? rest : rest.slice(0, second);
-  i32 nl = blob.indexOf("\n");
-  return nl < 0 ? blob : blob.slice(0, nl);
-}
-
 /**
  * The abandoned sshds of runs that were killed, cleared before starting another.
  *
