@@ -87,11 +87,17 @@ string dirOfPath(string path) {
 /**
  * `spec` resolved against the file that wrote it, with `.` and `..` folded out.
  *
- * Repo-relative on the way in and on the way out — these paths are handed to `cli.stat`, so a leading
- * slash would make every one of them miss.
+ * **A leading slash is kept if there was one.** The first version dropped it, on the reasoning that
+ * these paths go to `cli.stat` and are repo-relative — true of every caller that names an entry in the
+ * tree, and false of the one that generates its entry: `constanttime_test.wac` writes its drivers to an
+ * *absolute* `.cache/ct-…` path, so every import resolved to `home/claude/…` with no root, missed the
+ * `stat`, and left each driver as a closure of one. The cache then never noticed a change to the
+ * routine under test — which the test's own canary caught by rebuilding nothing when
+ * `packages/crypto/src/sha256.wac` was touched.
  */
 string resolvedFrom(string fromPath, string spec) {
   string joinedPath = dirOfPath(fromPath) + "/" + spec;
+  bool rooted = joinedPath.len() > 0 && joinedPath.slice(0, 1) == "/";
   string[] parts = string[64](fill: "");
   i32 n = 0;
   i32 from = 0;
@@ -107,7 +113,7 @@ string resolvedFrom(string fromPath, string spec) {
   }
   string out = "";
   for (i32 i = 0; i < n; i++) { out = (i == 0 ? parts[i] : out + "/" + parts[i]); }
-  return out;
+  return rooted ? "/" + out : out;
 }
 
 /** How many files one program's closure is allowed to reach. `sshd` is the largest here at 190. */
@@ -230,6 +236,24 @@ export string builtByDeno(Cli cli, string entry, string name, string[] grants, s
   Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
   if (!r.ran() || r.status != 0) { return ""; }
   return out;
+}
+
+/**
+ * Write `bytes` to `path` only if they are not already there, and answer whether the file now holds them.
+ *
+ * **For a generated entry, this is what makes a cache possible at all.** A test that writes its driver
+ * every run gives it a new mtime every run, so `builtProgram` below rebuilds every run however little
+ * changed — `packages/crypto/test/wac/constanttime_test.wac` generates fourteen drivers that differ only
+ * in an array literal and are byte-identical between runs. Comparing first costs one read.
+ */
+export bool writeIfDifferent(Cli cli, string path, u8[] bytes) {
+  FileResult had = cli.readFile(path).wait();
+  if (had.ok && had.bytes.len() == bytes.len()) {
+    bool same = true;
+    for (i32 i = 0; i < bytes.len() && same; i++) { if (had.bytes[i] != bytes[i]) { same = false; } }
+    if (same) { return true; }
+  }
+  return cli.writeFile(path, bytes).wait().ok();
 }
 
 /** `from` to `to`, since `Cli` has no copy. Answers whether it landed. */

@@ -51,6 +51,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult, Pending } from "std/platform.wac";
 import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { builtProgram, writeIfDifferent } from "../../../wactest/src/built.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 string binary(Cli cli) { return root(cli) + "/native/v8/target/release/wac"; }
@@ -86,9 +87,17 @@ string literal(i32[] v) {
   return out + ")";
 }
 
+/**
+ * The per-case directory, **kept between runs** rather than wiped.
+ *
+ * It used to be removed on the way in and on the way out, which made every driver and every module new
+ * on every run. The drivers are byte-identical between runs — one array literal apart from each other —
+ * so keeping them is what lets `builtProgram` answer without compiling. Nothing here reads a stale file
+ * by accident: each case's drivers are written by name, and `writeIfDifferent` rewrites one the moment
+ * its bytes change.
+ */
 string scratchDir(Cli cli, string name) {
   string dir = root(cli) + "/.cache/ct-" + name;
-  cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   return dir;
 }
@@ -122,22 +131,31 @@ string driver(T t, Cli cli, string dir, string name, string src, string body, i3
  * hold more than one child since `issues/system/0211`, where both Rust hosts ran the child to
  * completion inside `exec` and handed back a ticket that had already settled.
  */
-Pending<Exec> submitBuild(T t, Cli cli, string dir, string tag, string program) {
+/**
+ * The driver written, built traced, and kept — the stem of what came out, or `""`.
+ *
+ * **Twenty-eight traced builds a run, for fourteen programs that are the same every time.** This file
+ * was 12.4s of CPU with almost all of it here. What it asks is whether two runs of a routine part
+ * company, so the modules are inputs to that question: `wactest/src/built.wac` keeps each one until the
+ * driver or the routine it imports changes, and `writeIfDifferent` is what keeps the driver's mtime
+ * still when its bytes have not moved. The `.trace` table lands beside the module, which is where
+ * `siteAt` reads it.
+ *
+ * The builds were submitted together before this and are serial now, which costs a slower first pass —
+ * `issues/system/0211` is why concurrency was available at all, and it is still what the *runs* use.
+ */
+string builtDriver(T t, Cli cli, string dir, string label, string tag, string program) {
   string entry = dir + "/" + tag + ".wac";
-  Change wrote = cli.writeFile(entry, program.toBytes()).wait();
-  t.isTrue(wrote.ok(), tag + ": writing the driver — " + wrote.message);
-  return cli.exec(binary(cli),
-                  string[]("build", entry, "--trace", "-o", dir + "/" + tag, "--quiet"),
-                  u8[0]());
+  t.isTrue(writeIfDifferent(cli, entry, program.toBytes()), tag + ": writing the driver");
+  string mod = builtProgram(cli, entry, "ct-" + label + "-" + tag,
+                            string[]("--trace", "--quiet"));
+  if (!cli.stat(mod).wait().exists) {
+    t.fail(tag + ": the traced build produced nothing — see " + mod);
+    return "";
+  }
+  return mod.slice(0, mod.len() - 5);
 }
 
-/** The stem a submitted build produced, or `""` — asserted here so a failure names its tag. */
-string collectBuild(T t, Cli cli, string dir, string tag, Pending<Exec> p) {
-  Exec r = p.wait();
-  t.isTrue(r.ran() && r.status == 0,
-           tag + ": the traced build — " + r.error + string.fromBytes(r.stderr));
-  return (r.ran() && r.status == 0) ? dir + "/" + tag : "";
-}
 
 /** `wac ctcompare`, started. Every comparison of one routine is against the same first module. */
 Pending<Exec> submitCompare(Cli cli, string a, string b, bool all) {
@@ -222,12 +240,9 @@ string siteAt(Cli cli, string stem, i32 site) {
  * The same reason as `noSecretDependence`: two programs differing in one literal, two independent
  * `wac build` processes, and no order between them.
  */
-string[] pair(T t, Cli cli, string dir, string nameA, string progA, string progB) {
-  Pending<Exec> pa = submitBuild(t, cli, dir, "a", progA);
-  Pending<Exec> pb = submitBuild(t, cli, dir, "b", progB);
-  string a = collectBuild(t, cli, dir, "a", pa);
-  string b = collectBuild(t, cli, dir, "b", pb);
-  return string[](a, b);
+string[] pair(T t, Cli cli, string dir, string label, string progA, string progB) {
+  return string[](builtDriver(t, cli, dir, label, "a", progA),
+                  builtDriver(t, cli, dir, label, "b", progB));
 }
 
 /**
@@ -241,16 +256,15 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
   string dir = scratchDir(cli, label);
   i32 n = which.len();
 
-  // **All of them at once.** The builds do not depend on each other, and the wall time of a routine is
-  // then its slowest build rather than the sum of four.
-  Pending<Exec>[] builds = Pending<Exec>[n]();
-  for (i32 i = 0; i < n; i++) {
-    builds[i] = submitBuild(t, cli, dir, "k" + itoa(i),
-                            driver(t, cli, dir, name, src, body, keyOf(which[i], len)));
-  }
+  // **Kept, not rebuilt.** Four drivers a routine, each the same bytes as last time unless the routine
+  // or the secrets changed — so this is four cache hits in the ordinary case. The *comparisons* below
+  // are what still run every time, and they are what this test is about.
   string[] stems = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { stems[i] = collectBuild(t, cli, dir, "k" + itoa(i), builds[i]); }
-  if (stems[0] == "") { cli.remove(dir, true).wait(); return; }
+  for (i32 i = 0; i < n; i++) {
+    stems[i] = builtDriver(t, cli, dir, label, "k" + itoa(i),
+                           driver(t, cli, dir, name, src, body, keyOf(which[i], len)));
+  }
+  if (stems[0] == "") { return; }
 
   // The comparisons are all against `stems[0]`, so they wait for the builds and then run together too.
   Pending<Exec>[] cmps = Pending<Exec>[n]();
@@ -267,7 +281,6 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
     t.isTrue(startsWith(said, "same ") && numberOf(word(said, 1)) > 0,
              label + ": recorded no events at all — did the call actually happen? " + said);
   }
-  cli.remove(dir, true).wait();
 }
 
 export string test_sha256_does_not_vary_with_its_inputs_content(Core core, Cli cli) {
@@ -315,7 +328,7 @@ export string test_ghash_branches_on_the_bits_of_h_known_leak(Core core, Cli cli
                      driver(t, cli, dir, "ghash", SRC, call, keyOf(1, 16)));
   string a = ab[0];
   string b = ab[1];
-  if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
+  if (a == "" || b == "") { return t.report(); }
 
   string said = compared(t, cli, a, b, false);
   t.isTrue(startsWith(said, "differs "),
@@ -328,7 +341,6 @@ export string test_ghash_branches_on_the_bits_of_h_known_leak(Core core, Cli cli
              "expected a branch leak, got: " + all + " — " +
              siteAt(cli, a, numberOf(word(said, 2))));
   }
-  cli.remove(dir, true).wait();
   return t.report();
 }
 
@@ -360,7 +372,7 @@ export string test_the_weierstrass_ladder_branches_on_the_scalar_known_leak(Core
                      driver(t, cli, dir, "p256PublicKey", SRC, "p256PublicKey($KEY)", keyOf(3, 32)));
   string a = ab[0];
   string b = ab[1];
-  if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
+  if (a == "" || b == "") { return t.report(); }
 
   string said = compared(t, cli, a, b, false);
   t.isTrue(startsWith(said, "differs "),
@@ -376,7 +388,6 @@ export string test_the_weierstrass_ladder_branches_on_the_scalar_known_leak(Core
     t.isTrue(got == WANT || got == "else@packages/crypto/src/weierstrass.wac:120",
              "the README says weierstrass.wac:120 leaks; the trace says " + got + " and " + other);
   }
-  cli.remove(dir, true).wait();
   return t.report();
 }
 
@@ -390,7 +401,7 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
                      driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(1, 16)));
   string a = ab[0];
   string b = ab[1];
-  if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
+  if (a == "" || b == "") { return t.report(); }
 
   string said = compared(t, cli, a, b, false);
   t.isTrue(startsWith(said, "differs "),
@@ -419,6 +430,5 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
     t.isTrue(contains(found, want),
              "README says " + want + " leaks; the trace no longer agrees. found: " + found);
   }
-  cli.remove(dir, true).wait();
   return t.report();
 }
