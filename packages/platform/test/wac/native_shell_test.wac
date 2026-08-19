@@ -29,19 +29,16 @@
 // so the whole corpus is minutes; this takes the first `SAMPLE` and says so. The full sweep is a
 // `deno task`, not a gate.
 // **Not heavy**, for the reason `native_hostfs_test.wac` gives at greater length: a heavy file does
-// not run on a push, and a two-host comparison that is not in the gate is not doing its job. **4s
-// warm** (20s cold) against 66s and 989 MB host-side: the six builds are made once behind an mtime
-// check, and every Deno-half script goes through `denoBatch` in one process rather than one each —
-// `issues/system/0213`, which measured a built Deno bundle at 133ms to start against 17ms for the
-// native host.
+// not run on a push, and a two-host comparison that is not in the gate is not doing its job. **9s
+// warm** (27s cold, 6.6 MB) against 66s and 989 MB host-side, because the six builds are made once
+// behind an mtime check.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
-import { Ran, boundedAgain, denoBatch, hangReport, stale, DEFAULT_SECONDS }
-  from "./hostfs.wac";
+import { Ran, boundedAgain, denoBatch, hangReport, stale, DEFAULT_SECONDS } from "./hostfs.wac";
 
 const string SEALED = "packages/box/src/bin/sealedsh.wac";
 const string OPEN = "packages/box/src/bin/sh.wac";
@@ -140,24 +137,23 @@ string scratch(Cli cli, string name) {
  * `boundedAgain`, not a single attempt: a bound that fires on a five-core machine three agents share
  * is a claim about the moment, and the way to tell that from a hang is to ask again. 0128.
  */
+
 /**
- * Every script through the **Deno host in one process**, rather than one process each.
+ * The Deno half of many scripts in one process — `harness/appRunMany.ts` behind one `exec`.
  *
- * A built Deno bundle costs 133ms to start against `wacland`'s 17ms, and this file makes about forty
- * such runs — which is most of it. `denoBatch` is `harness/appRunMany.ts` behind one `exec`, at about
- * 1.25ms a run; `issues/system/0213` has the measurement and why a wac test could not have it until
- * that existed.
- *
- * **The comparison is unchanged**: same entry, same grants, same world. A batch that does not answer
- * marks every case `hung`, which puts each one back through `shell` one process at a time — the retry
- * that was already there.
+ * A built Deno bundle is 133ms to start against the native host's 17ms, and this file runs it
+ * forty-odd times; that was most of its 17s. `hostfs.wac`'s `denoBatch` is the same program through
+ * the same `appRunner`, and `issues/system/0213` is the whole argument. **A sealed session needs no
+ * fixture**, which is what makes it a plain list here: its filesystem is synthesised inside the image,
+ * so every run may share one directory — the reason `native_hostfs_test.wac` builds a tree per script
+ * and this does not.
  */
-Ran[] denoAll(Cli cli, string tmp, string entry, string[] grants, string[] scripts) {
+Ran[] denoAll(Cli cli, string tmp, string[] grants, string[] scripts) {
   string[] cwds = string[scripts.len()](fill: tmp);
-  string[][] argvs = string[][scripts.len()](fill: string[0](fill: ""));
+  string[][] argv = string[][scripts.len()](fill: string[0](fill: ""));
   u8[][] stdins = u8[][scripts.len()](fill: u8[0]());
-  for (i32 i = 0; i < scripts.len(); i++) { argvs[i] = string[]("-c", scripts[i]); }
-  return denoBatch(cli, DEFAULT_SECONDS, entry, grants, tmp, cwds, argvs, stdins);
+  for (i32 i = 0; i < scripts.len(); i++) { argv[i] = string[]("-c", scripts[i]); }
+  return denoBatch(cli, DEFAULT_SECONDS * 2, SEALED, grants, tmp, cwds, argv, stdins);
 }
 
 Ran shell(Core core, Cli cli, string tmp, string cmd, string[] pre, string script) {
@@ -206,18 +202,19 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
   t.eqI32(n, SAMPLE, "the corpus is big enough to take a sample from");
   string[] sample = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { sample[i] = scripts[i]; }
-  Ran[] denoSide = denoAll(cli, tmp, SEALED, string[0](fill: ""), sample);
+  Ran[] denoAnswers = denoAll(cli, tmp, string[0](fill: ""), sample);
+
   for (i32 i = 0; i < n; i++) {
-    // A batch that did not answer marks every case hung; the retry is the process-at-a-time path.
-    Ran a = denoSide[i].hung ? shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), sample[i])
-                             : denoSide[i];
-    Ran c = shell(core, cli, tmp, native, string[](b.sealedManifest), sample[i]);
+    Ran a = denoAnswers[i];
+    // A batch that did not answer marks every case hung; the retry is the process this replaced.
+    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), scripts[i]); }
+    Ran c = shell(core, cli, tmp, native, string[](b.sealedManifest), scripts[i]);
     // **A bound that fired is not an answer.** `timeout` reports 124, which no program chose, so a
     // run that never finished used to be printed as a host that disagreed — `native "" (124)` — and
     // read as a conformance failure. Issue 0128 is what that cost.
-    string hung = hangReport(sample[i], string[]("deno", "native"), Ran[](a, c));
+    string hung = hangReport(scripts[i], string[]("deno", "native"), Ran[](a, c));
     if (hung != "") { t.fail(hung); continue; }
-    t.eqStr(difference(sample[i], a, c), "", "the hosts differ");
+    t.eqStr(difference(scripts[i], a, c), "", "the hosts differ");
   }
   cli.remove(tmp, true).wait();
   return t.report();
@@ -248,10 +245,10 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
     "cat /proc/self/cmdline | wc -c",
     "echo hello | sha256sum",
     "for i in 1 2 3; do echo $i; done | tac");
-  Ran[] denoSide = denoAll(cli, tmp, SEALED, string[0](fill: ""), scripts);
+  Ran[] denoAnswers = denoAll(cli, tmp, string[0](fill: ""), scripts);
   for (i32 i = 0; i < scripts.len(); i++) {
-    Ran a = denoSide[i].hung ? shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), scripts[i])
-                             : denoSide[i];
+    Ran a = denoAnswers[i];
+    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), scripts[i]); }
     Ran c = shell(core, cli, tmp, native, string[](b.sealedManifest), scripts[i]);
     string stuck = hangReport(scripts[i], string[]("deno", "native"), Ran[](a, c));
     if (stuck != "") { t.fail(stuck); continue; }
@@ -372,13 +369,13 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
     "",
     "bin\ndev\nproc\ntmp\n");
 
-  // Granted read, write and env — the seal has to hold *despite* them, which is what makes this a
-  // test rather than a tautology, so the batch is given the same three.
-  string[] rwe = string[]("--allow-read", "--allow-write", "--allow-env");
-  Ran[] denoSide = denoAll(cli, tmp, SEALED, rwe, scripts);
+  // Built *with* read, write and env, which is what makes this a test of the seal rather than of a
+  // build that could not reach anything — so the batch is given the same three grants.
+  string[] granted = string[]("--allow-read", "--allow-write", "--allow-env");
+  Ran[] denoAnswers = denoAll(cli, tmp, granted, scripts);
   for (i32 i = 0; i < scripts.len() && i < wants.len(); i++) {
-    Ran a = denoSide[i].hung ? shell(core, cli, tmp, b.grantedDeno, string[0](fill: ""), scripts[i])
-                             : denoSide[i];
+    Ran a = denoAnswers[i];
+    if (a.hung) { a = shell(core, cli, tmp, b.grantedDeno, string[0](fill: ""), scripts[i]); }
     Ran c = shell(core, cli, tmp, native, string[](b.grantedManifest), scripts[i]);
     string stuck = hangReport(scripts[i], string[]("deno", "native"), Ran[](a, c));
     if (stuck != "") { t.fail(stuck); continue; }
