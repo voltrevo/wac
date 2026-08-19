@@ -96,7 +96,16 @@ Deno.test({
     try {
       await buildApp("packages/box/src/bin/sh.wac", built, { read: true, write: true, env: true }, "node");
 
-      for (const { script, stdin } of CASES) {
+      // **Four cases at a time.** Each has a directory of its own and reads nothing the others write,
+      // so the only thing serialising them was the loop: twenty cases, two process starts apiece, and
+      // node's is the expensive one. **6.7s to 1.8s.**
+      //
+      // Four rather than twenty, and that is measured rather than cautious: all twenty at once ran in
+      // 2.7s and 1.5s on a box three agents share, which is the same number with a wider spread and
+      // twenty node processes on five cores. Four is the width that does not depend on who else is
+      // running.
+      const WIDTH = 4;
+      const oneCase = async ({ script, stdin }: { script: string; stdin?: string }) => {
         // A directory of its own per case: several of these write files, and one leaking into the next
         // would make a passing test depend on the order they happen to run in.
         const run = async (cmd: string, args: string[]) => {
@@ -135,6 +144,10 @@ Deno.test({
         const ours = await run("node", [built, "-c", script]);
         assertEquals(ours.out, theirs.out, `${JSON.stringify(script)}: output`);
         assertEquals(ours.code, theirs.code, `${JSON.stringify(script)}: exit status`);
+      };
+
+      for (let at = 0; at < CASES.length; at += WIDTH) {
+        await Promise.all(CASES.slice(at, at + WIDTH).map(oneCase));
       }
     } finally {
       await Deno.remove(built);
