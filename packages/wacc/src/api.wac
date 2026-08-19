@@ -21,7 +21,7 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
 import { coreSource } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
-import { importSpecs, resolveFrom } from "./files.wac";
+import { importSpecs, resolveFromIn } from "./files.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -477,6 +477,20 @@ string sourceAt(string[] paths, string[] sources, string path) {
 }
 
 /**
+ * The project root recorded for `path`, or "" — the parallel array `roots` keyed by `paths`.
+ *
+ * A shorter `roots` than `paths` is the ordinary case rather than a mistake: only a file that writes
+ * `@/` has a root worth recording, so every caller that does not use project specifiers passes an
+ * empty one and pays nothing. `design/lang/0009` D7.
+ */
+string rootAt(string[] paths, string[] roots, string path) {
+  for (i32 i = 0; i < paths.len() && i < roots.len(); i++) {
+    if (paths[i] == path) { return roots[i]; }
+  }
+  return "";
+}
+
+/**
  * The files `entry` reaches, itself first, into `seen` — and how many there are.
  *
  * `seen` is the caller's because an array is sized where it is made, and the caller already has the
@@ -485,6 +499,11 @@ string sourceAt(string[] paths, string[] sources, string path) {
  * `example/wacc.wac` does, by name, before anything here is asked.
  */
 i32 closureOf(string[] paths, string[] sources, string entry, string[] seen) {
+  return closureOfIn(paths, sources, string[0](fill: ""), entry, seen);
+}
+
+/** `closureOf` with the project roots the graph's files sit in — see `rootAt`. */
+i32 closureOfIn(string[] paths, string[] sources, string[] roots, string entry, string[] seen) {
   i32 n = 0;
   seen[0] = entry;
   n = 1;
@@ -493,7 +512,7 @@ i32 closureOf(string[] paths, string[] sources, string entry, string[] seen) {
     string path = seen[at];
     string[] specs = importSpecs(sourceAt(paths, sources, path).toBytes());
     for (i32 s = 0; s < specs.len(); s++) {
-      string next = resolveFrom(path, specs[s]);
+      string next = resolveFromIn(path, specs[s], rootAt(paths, roots, path));
       bool known = false;
       for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == next) { known = true; } }
       if (!known) { continue; }

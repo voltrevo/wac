@@ -19,7 +19,8 @@ import { Program } from "./ast.wac";
 import { stringLiteralBytes } from "./emit.wac";
 // Re-exported so the four callers that import them from here keep working; the rule itself
 // lives in a module `emit.wac` can also import, which is `issues/lang/0150`.
-import { resolveFrom as pathResolveFrom, normalisePath as pathNormalise } from "./path.wac";
+import { resolveFrom as pathResolveFrom, resolveFromIn as pathResolveIn,
+         normalisePath as pathNormalise } from "./path.wac";
 
 /**
  * The path each `import … from "…"` in `src` names, in source order.
@@ -59,3 +60,8 @@ export string resolveFrom(string fromPath, string spec) { return pathResolveFrom
 
 /** `path.wac`'s, re-exported for the same reason. */
 export string normalisePath(string path) { return pathNormalise(path); }
+
+/** `resolveFrom` for a file whose project root is `root` — `design/lang/0009` D7, see `path.wac`. */
+export string resolveFromIn(string fromPath, string spec, string root) {
+  return pathResolveIn(fromPath, spec, root);
+}

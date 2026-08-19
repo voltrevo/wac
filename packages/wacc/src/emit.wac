@@ -15,7 +15,7 @@ import { lex, Lexed, tokenStride } from "./lex.wac";
 import { coreFile, coreSource } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
-import { resolveFrom } from "./path.wac";
+import { resolveFrom, resolveFromIn } from "./path.wac";
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg,
   Param, Program, Stmt, StmtKind, Ty, TyKind,
@@ -2340,6 +2340,11 @@ i32 lastSlash(string path) {
  */
 export string resolveImport(string from, string rel) { return resolveFrom(from, rel); }
 
+/** `resolveImport` for a file whose project root is `root` — `design/lang/0009` D7. */
+export string resolveImportIn(string from, string rel, string root) {
+  return resolveFromIn(from, rel, root);
+}
+
 /**
  * `dir` (which ends in `/`, or is empty) followed by `r`, with one separator between them.
  *
@@ -2417,6 +2422,17 @@ i32 countLines(string s) {
 
 string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i32[] edges,
                  string[] names, string[] filePaths) {
+  return linkFilesIn(paths, sources, string[0](fill: ""), entry, starts, edges, names, filePaths);
+}
+
+/**
+ * `linkFiles` with the project roots the graph's files sit in.
+ *
+ * A `roots` shorter than `paths` is ordinary: only a file writing `@/` has a root worth recording,
+ * so every caller without project specifiers passes an empty one. `design/lang/0009` D7.
+ */
+string linkFilesIn(string[] paths, string[] sources, string[] roots, string entry, i32[] starts,
+                   i32[] edges, string[] names, string[] filePaths) {
   // **Sized for the largest program here, which is `packages/box` at 168 files and climbing.** These
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
   // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named
@@ -2495,7 +2511,11 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
           string quoted = tokenTextOf(b, lexed, pathTok);
           if (quoted.len() < 2) { continue; }
           if (qn >= queue.len()) { return ""; }
-          string target = resolveImport(path, quoted.slice(1, quoted.len() - 1));
+          string rootHere = "";
+          for (i32 rp = 0; rp < paths.len() && rp < roots.len(); rp++) {
+            if (paths[rp] == path) { rootHere = roots[rp]; }
+          }
+          string target = resolveImportIn(path, quoted.slice(1, quoted.len() - 1), rootHere);
           // **`"core"` and `core` are one module, so they have to be one key.** The prefix form
           // above queues the carried path; a quoted one resolves to the specifier itself, and two
           // keys for one module is not a missing file — it is `Read` declared twice, and
