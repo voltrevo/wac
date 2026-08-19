@@ -1500,7 +1500,7 @@ Twenty packages have one, 6,660 lines between them, each wired to a `deno task c
 is a subsystem rather than a conversion, and it is **not** superseded by `wac test --coverage`, which
 was the obvious hope. Measured on `packages/codec`, they answer different questions:
 
-    deno run -A packages/codec/cov.ts     4 branch points never executed:
+    deno task coverage:codec              4 branch points never executed:
                                             packages/codec/src/base32.wac:44:3  else
                                             packages/codec/src/hex.wac:73:13    entry
                                             ...

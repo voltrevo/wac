@@ -119,7 +119,19 @@ const elapsed = (performance.now() - startedAll) / 1000;
  * the summary from claiming it either way.
  */
 const kinds = await Promise.all(results.map(async (r) => {
-  const src = await Deno.readTextFile(`packages/${r.pkg}/cov.ts`).catch(() => "");
+  // **Either driver, and "neither" is its own answer.** A package's driver is `cov.ts` until it moves
+  // to `test/cov_exercise.wac` (`issues/system/0161`), and reading only the first meant a converted
+  // package fell through `.catch(() => "")` into "reports" — which happens to be right for one with no
+  // failure path and would be a silent wrong answer for one that has it. A task with no driver at all
+  // is a task pointing at nothing, so it says so rather than being counted as harmless.
+  const src = await Deno.readTextFile(`packages/${r.pkg}/cov.ts`).catch(() => null);
+  if (src === null) {
+    // A converted package: the driver is `test/cov_exercise.wac`, which is exercises and nothing else.
+    // It is always "reports" — a coverage *floor* has no wac spelling yet, and guessing one out of a
+    // `return 1;` in unrelated code would be a classification pretending to be a measurement.
+    const wac = await Deno.readTextFile(`packages/${r.pkg}/test/cov_exercise.wac`).catch(() => null);
+    return wac === null ? "no driver" : "reports";
+  }
   if (!/Deno\.exit\(1\)/.test(src)) return "reports";
   // The two shapes differ in what they hold you to. One fails when a point nothing reaches has no
   // entry — a coverage floor. The others fail only when an entry they already carry has drifted onto
@@ -132,7 +144,7 @@ console.log(
   `\n${results.length - failed.length}/${results.length} ran in ${elapsed.toFixed(0)}s ` +
     `(${total.toFixed(0)}s of work at ${WORKERS} workers) — ${count("floor")} hold a coverage floor, ` +
     `${count("entries")} only check their own exemptions have not drifted, ${count("reports")} report ` +
-    `and cannot fail`,
+    `and cannot fail` + (count("no driver") > 0 ? `, ${count("no driver")} have no driver at all` : ""),
 );
 
 for (const r of failed) {

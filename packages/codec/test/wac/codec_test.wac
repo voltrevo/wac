@@ -20,7 +20,7 @@
 // because null cannot cross the bindgen boundary — so it asked "does it accept" and "what does it
 // decode to" as two separate calls and could not tell a rejection from an empty result. Here the
 // decoders' real signatures are in reach and a rejection is `null`. `probe.wac` stays, because
-// `packages/codec/cov.ts` instruments it.
+// `packages/codec/test/cov_exercise.wac` instruments it.
 //
 // `btoa` became one `python3` call over the whole corpus rather than 201 host calls, which is the
 // same oracle at one spawn. The hex reference is now written here, in wac, which is weaker than

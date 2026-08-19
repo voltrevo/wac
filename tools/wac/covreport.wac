@@ -1,0 +1,294 @@
+// Branch coverage for one package: which points nothing reached.
+//
+//   wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac \
+//       -- packages/codec/test/cov_exercise.wac packages/codec/ [--verbose]
+//
+// **This is the shared half of twenty drivers.** Each package's `cov.ts` was exercises plus its own
+// copy of the reporting, through `harness/wacCoverage.ts`; what is left per package is the exercises
+// alone — a wac program whose `main` runs the shapes the tests run — and this reads the counters and
+// says what was missed. `issues/system/0161`.
+//
+// ## Why this needs no new command, which was not the first answer
+//
+// A *trace* had to be compared inside the binary: `p256PublicKey` is three million events and shipping
+// two journals out as text to be walked would be tens of megabytes for one number, which is what
+// `wac ctcompare` exists for. A coverage journal is one count per *point* — hundreds of numbers for a
+// whole package — so it can be shipped out and joined here. `wac build --coverage` writes `stem.cov`
+// keyed by counter index, `wac covdump` prints `<index>\t<count>`, and naming the zeros is a loop.
+//
+// ## What is counted, which is the part with a decision in it
+//
+// A point is counted when its file starts with `prefix` and is **not** a test file — `/test/` in the
+// path, or a `_test.wac` name. That is `harness/wacCoverage.ts`'s rule kept exactly: a test's
+// uncovered branches are its *assertions that did not fire*, which is the outcome you want and not a
+// gap in the package. `packages/url` read 95.7% with fifteen passing checks reported as gaps before
+// that rule existed. The count of skipped files is printed, so this cannot quietly drop a real one.
+//
+// It is also what places the exercises: `packages/<pkg>/test/cov_exercise.wac` is skipped by the same
+// rule that skips the probe, so a driver's own branches never appear in the package's number.
+
+import { Core, Cli, Exec, Change, FileResult } from "../../packages/platform/src/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** One instrumented point: where it is and what kind. */
+struct Point {
+  i32 index;
+  string file;
+  i32 line;
+  i32 col;
+  string kind;
+}
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+string[] linesOf(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  string cur = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\n") { out[at] = cur; at = at + 1; cur = ""; }
+    else { cur = cur + s.slice(i, i + 1); }
+  }
+  out[at] = cur;
+  return out;
+}
+
+/** The tab-separated fields of a row, padded to `want`. */
+string[] fields(string row, i32 want) {
+  string[] out = string[want](fill: "");
+  i32 n = 0;
+  string cur = "";
+  for (i32 i = 0; i <= row.len(); i++) {
+    string c = i < row.len() ? row.slice(i, i + 1) : "\t";
+    if (c == "\t") { if (n < want) { out[n] = cur; n = n + 1; } cur = ""; }
+    else { cur = cur + c; }
+  }
+  return out;
+}
+
+i32 numberOf(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return -1; }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < 48 || b[i] > 57) { return -1; }
+    v = v * 10 + (b[i] - 48);
+  }
+  return v;
+}
+
+bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
+bool endsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p;
+}
+
+bool contains(string s, string p) {
+  for (i32 i = 0; i + p.len() <= s.len(); i++) { if (s.slice(i, i + p.len()) == p) { return true; } }
+  return false;
+}
+
+/** `harness/wacCoverage.ts`'s rule, kept exactly. */
+bool isTest(string file) { return contains(file, "/test/") || endsWith(file, "_test.wac"); }
+
+/** A one-decimal percentage, since the table has always printed one. */
+string pct(i32 c, i32 n) {
+  if (n == 0) { return "100.0"; }
+  i32 tenths = (c * 1000 + n / 2) / n;
+  return itoa(tenths / 10) + "." + itoa(tenths % 10);
+}
+
+void sortStrings(string[] a, i32 n) {
+  for (i32 i = 1; i < n; i++) {
+    string v = a[i];
+    i32 j = i - 1;
+    while (j >= 0 && a[j] > v) { a[j + 1] = a[j]; j = j - 1; }
+    a[j + 1] = v;
+  }
+}
+
+/** A missed row's sort key: the file and the line, and nothing after them. */
+string fileAndLine(string row) {
+  i32 tabs = 0;
+  for (i32 i = 0; i < row.len(); i++) {
+    if (row.slice(i, i + 1) == "\t") {
+      tabs = tabs + 1;
+      if (tabs == 2) { return row.slice(0, i); }
+    }
+  }
+  return row;
+}
+
+/**
+ * By file then line, and **stable**, which is not decoration.
+ *
+ * Two points can share a file, a line and a column — `hex.wac:75:3` is a `then` and an `else` — and
+ * their order is then whichever the emitter numbered first. Sorting the whole row instead puts `else`
+ * before `then` alphabetically, which is a different answer to the same question and a needless
+ * difference from the report this replaces. `>` rather than `>=` is what keeps equal keys in place.
+ */
+void sortMissed(string[] a, i32 n) {
+  for (i32 i = 1; i < n; i++) {
+    string v = a[i];
+    string k = fileAndLine(v);
+    i32 j = i - 1;
+    while (j >= 0 && fileAndLine(a[j]) > k) { a[j + 1] = a[j]; j = j - 1; }
+    a[j + 1] = v;
+  }
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 argc = cli.argCount().wait();
+  if (argc < 2) {
+    core.warn("usage: covreport <exercise.wac> <prefix/> [--verbose]");
+    return 2;
+  }
+  string entry = string.fromBytes(cli.arg(0).wait());
+  string prefix = string.fromBytes(cli.arg(1).wait());
+  bool verbose = false;
+  for (i32 i = 2; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  string dir = cli.cwd().wait() + "/.cache/covreport";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string stem = dir + "/prog";
+
+  Exec built = cli.exec(binary(cli),
+    string[]("build", entry, "--coverage", "-o", stem, "--quiet"), u8[0]()).wait();
+  if (!built.ran() || built.status != 0) {
+    core.warn("covreport: " + entry + " did not build — " + built.error +
+              string.fromBytes(built.stderr));
+    return 1;
+  }
+
+  FileResult table = cli.readFile(stem + ".cov").wait();
+  if (!table.ok) {
+    core.warn("covreport: no coverage table beside the module — " + table.error);
+    return 1;
+  }
+  Exec dumped = cli.exec(binary(cli), string[]("covdump", stem + ".wasm"), u8[0]()).wait();
+  if (!dumped.ran() || dumped.status != 0) {
+    core.warn("covreport: covdump — " + dumped.error + string.fromBytes(dumped.stderr));
+    return 1;
+  }
+
+  // `<index>\t<count>` per counter, then a line saying how many. Anything else is not a dump.
+  string[] dumpRows = linesOf(string.fromBytes(dumped.stdout));
+  i32 nCounts = 0;
+  for (i32 i = 0; i < dumpRows.len(); i++) {
+    string[] f = fields(dumpRows[i], 2);
+    if (numberOf(f[0]) == nCounts && numberOf(f[1]) >= 0) { nCounts = nCounts + 1; }
+  }
+  i32[] counts = i32[nCounts > 0 ? nCounts : 1]();
+  i32 at = 0;
+  for (i32 i = 0; i < dumpRows.len() && at < nCounts; i++) {
+    string[] f = fields(dumpRows[i], 2);
+    if (numberOf(f[0]) == at) { counts[at] = numberOf(f[1]); at = at + 1; }
+  }
+
+  // `index\tline\tcol\tkind\tfile` per counter, in counter order.
+  string[] rows = linesOf(string.fromBytes(table.bytes));
+  Point[] points = Point[rows.len()](fill: Point(0, "", 0, 0, ""));
+  i32 nPoints = 0;
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (rows[i].len() == 0) { continue; }
+    string[] f = fields(rows[i], 5);
+    i32 idx = numberOf(f[0]);
+    if (idx < 0) { continue; }
+    points[nPoints] = Point(idx, f[4], numberOf(f[1]), numberOf(f[2]), f[3]);
+    nPoints = nPoints + 1;
+  }
+  // **Asserted, not assumed.** A table and a dump of different lengths is a module and a table that do
+  // not describe each other, and every count read past the end would be a point reported as missed.
+  if (nPoints != nCounts) {
+    core.warn("covreport: the table has " + itoa(nPoints) + " points and the dump " +
+              itoa(nCounts) + " counters; they do not describe the same module");
+    return 1;
+  }
+  if (nPoints == 0) {
+    core.warn("covreport: no instrumented points at all — was " + entry + " built with coverage?");
+    return 1;
+  }
+
+  // Per file, and the skipped ones named.
+  string[] files = string[nPoints](fill: "");
+  i32[] fileN = i32[nPoints]();
+  i32[] fileC = i32[nPoints]();
+  i32 nFiles = 0;
+  string[] skipped = string[nPoints](fill: "");
+  i32 nSkipped = 0;
+  i32 total = 0;
+  i32 covered = 0;
+  for (i32 i = 0; i < nPoints; i++) {
+    Point p = points[i];
+    if (!startsWith(p.file, prefix)) { continue; }
+    if (isTest(p.file)) {
+      bool seen = false;
+      for (i32 k = 0; k < nSkipped; k++) { if (skipped[k] == p.file) { seen = true; } }
+      if (!seen) { skipped[nSkipped] = p.file; nSkipped = nSkipped + 1; }
+      continue;
+    }
+    i32 slot = -1;
+    for (i32 k = 0; k < nFiles && slot < 0; k++) { if (files[k] == p.file) { slot = k; } }
+    if (slot < 0) { slot = nFiles; files[slot] = p.file; nFiles = nFiles + 1; }
+    fileN[slot] = fileN[slot] + 1;
+    total = total + 1;
+    if (counts[p.index] > 0) { fileC[slot] = fileC[slot] + 1; covered = covered + 1; }
+  }
+
+  core.log("| file | points | covered | % |");
+  core.log("|---|---:|---:|---:|");
+  string[] order = string[nFiles](fill: "");
+  for (i32 i = 0; i < nFiles; i++) { order[i] = files[i]; }
+  sortStrings(order, nFiles);
+  for (i32 i = 0; i < nFiles; i++) {
+    for (i32 k = 0; k < nFiles; k++) {
+      if (files[k] != order[i]) { continue; }
+      core.log("| " + files[k] + " | " + itoa(fileN[k]) + " | " + itoa(fileC[k]) + " | " +
+               pct(fileC[k], fileN[k]) + " |");
+    }
+  }
+  core.log("| **" + prefix + "** | **" + itoa(total) + "** | **" + itoa(covered) + "** | **" +
+           pct(covered, total) + "** |");
+
+  if (nSkipped > 0) {
+    sortStrings(skipped, nSkipped);
+    string names = "";
+    for (i32 i = 0; i < nSkipped; i++) { names = names + (i > 0 ? ", " : "") + skipped[i]; }
+    core.log("");
+    core.log(itoa(nSkipped) + " test file(s) not counted: " + names);
+  }
+
+  i32 nMissed = total - covered;
+  if (nMissed > 0) {
+    // Sorted by file then line, which is the order somebody reads them in.
+    string[] missed = string[nMissed](fill: "");
+    i32 m = 0;
+    for (i32 i = 0; i < nPoints; i++) {
+      Point p = points[i];
+      if (!startsWith(p.file, prefix) || isTest(p.file) || counts[p.index] > 0) { continue; }
+      // Padded so the sort is by line *number* rather than by its spelling — `:9:` after `:10:` is
+      // what an unpadded string sort gives, and a reader takes that for a missing entry.
+      string ln = itoa(p.line);
+      while (ln.len() < 6) { ln = "0" + ln; }
+      missed[m] = p.file + "\t" + ln + "\t" + itoa(p.col) + "\t" + p.kind;
+      m = m + 1;
+    }
+    sortMissed(missed, m);
+    core.log("");
+    core.log(itoa(m) + " branch points never executed:");
+    i32 show = verbose ? m : (m < 20 ? m : 20);
+    for (i32 i = 0; i < show; i++) {
+      string[] f = fields(missed[i], 4);
+      core.log("  " + f[0] + ":" + itoa(numberOf(f[1])) + ":" + f[2] + "  " + f[3]);
+    }
+    if (show < m) {
+      core.log("  ... and " + itoa(m - show) + " more (--verbose for all)");
+    }
+  }
+  cli.remove(dir, true).wait();
+  return 0;
+}
