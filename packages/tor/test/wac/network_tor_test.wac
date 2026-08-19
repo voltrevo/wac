@@ -1,0 +1,269 @@
+// test-lane: exclusive — three relays and an authority, deriving RSA identities on real ports
+//
+// Design 0002's done condition: *`deno task test` stands up a Tor network with no C in it, publishes
+// an onion service on it, fetches a page from that service through a three-hop circuit, and tears it
+// down.* Three relays, an authority, a service and two clients — every layer of it wac, from the TLS
+// record up. The first test here is the network and a document fetched over a circuit; the second is
+// the onion service on that same network.
+//
+// This is the file `test/wac/network_test.wac` deliberately is not. That one tests the launcher
+// against `waiter` and `wc`, so it fails when the *launcher* is wrong; this one fails when anything in
+// the stack is. Both are wanted and they are different questions, which is why they are different
+// files.
+//
+// ## What makes this possible in a suite at all
+//
+// Every relay binds port 0 and announces what it was given, every program writes down the part of the
+// configuration only it knows, and `wait` names the state between listening and serving. So nothing
+// here needs a port, a key or a timestamp agreed in advance — which is what lets two agents run the
+// suite at the same time on one machine.
+//
+// ## The order, which is the whole difficulty
+//
+// A consensus is built from descriptors. A descriptor cannot name a port until its relay has bound
+// one. So the relays necessarily exist before the document that describes them, and the description
+// has to say so in three places: the ready marker is the *descriptor* line rather than the bind, so
+// every relay has written one before the authority runs; the authority is a `run` between the nodes
+// coming up and the client starting; and `wait` holds the client until each relay has found the
+// documents and begun serving them.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. **The wedge that cost eighteen minutes and then
+// twenty-six is answered differently here, and more simply.** wac-mono 0106 was `outputSync` handing
+// back its output only when the child exits, so a case killed by an outside bound discarded every
+// line the network had written — the one place the diagnosis could have come from was the one place
+// thrown away. The TypeScript grew a streaming drain and a module-level slot for the timeout hook to
+// read. This puts `timeout` *inside* the shell line instead: the bound kills the child, the pipes
+// close, and `exec` returns what it had said. There is nothing to stream into, and a wedged network
+// cannot outlive the run because the thing that gave up on it is its own parent.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+
+/** How long a network gets before the bound is called a wedge, in seconds. */
+const i32 BOUND_SECONDS = 330;
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/**
+ * What the machine was doing, for the one fact that decides whether a red gate means "re-run" or
+ * "investigate".
+ *
+ * Issue 0106's third suggestion. Read here rather than in `packages/tor`: a protocol library reaching
+ * into `/proc` to describe its own environment is the wrong layer, and a test already knows it is one.
+ */
+string loadNow(Cli cli) {
+  FileResult f = cli.readFile("/proc/loadavg").wait();
+  if (!f.ok) { return "load unknown"; }
+  string text = string.fromBytes(f.bytes);
+  i32 nl = text.indexOf("\n");
+  return "load " + (nl < 0 ? text : text.slice(0, nl));
+}
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/tornet-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+string build(Cli cli, string entry, string out, string[] grants, bool worker) {
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
+  string[] tail = worker ? string[]("--worker", "-o", out) : string[]("-o", out);
+  string[] args = string[head.len() + grants.len() + tail.len()](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < head.len(); i++) { args[at] = head[i]; at = at + 1; }
+  for (i32 i = 0; i < grants.len(); i++) { args[at] = grants[i]; at = at + 1; }
+  for (i32 i = 0; i < tail.len(); i++) { args[at] = tail[i]; at = at + 1; }
+  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    return entry + " did not build: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+  }
+  return "";
+}
+
+string[] none() { return string[0](fill: ""); }
+
+/** The launcher, the three relays and whatever else a case names — built into one directory. */
+string common(Cli cli, string dir) {
+  return build(cli, "packages/tor/src/network.wac", dir + "/network",
+               string[]("--allow-read", "--allow-write", "--allow-net"), false) +
+         build(cli, "packages/tor/src/relayd.wac", dir + "/relayd.worker.js", none(), true) +
+         build(cli, "packages/tor/src/gendesc.wac", dir + "/gendesc.worker.js", none(), true);
+}
+
+/**
+ * Distinct seeds, so no two relays derive the same identity.
+ *
+ * Random rather than fixed because a fixed one would make two concurrent runs of this suite share
+ * keys — and this file is in the exclusive lane against *itself*, not against the other agent.
+ */
+void seeds(Core core, Cli cli, string dir, string[] names) {
+  for (i32 i = 0; i < names.len(); i++) {
+    cli.writeFile(dir + "/" + names[i], core.randomBytes(32).wait()).wait();
+  }
+}
+
+struct Ran {
+  i32 code;
+  string out;
+  string err;
+  /** The bound fired: there is no answer here, and what follows is what it had reached. */
+  bool wedged;
+}
+
+/**
+ * Run the launcher over `net.txt`, bounded.
+ *
+ * `timeout` is inside the line rather than outside the call, which is what keeps the output: a bound
+ * that kills the child closes its pipes, and `exec` answers with everything written up to then.
+ */
+Ran runNetwork(Cli cli, string dir) {
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c", "cd " + quoted(dir) + " && exec timeout " + itoa(BOUND_SECONDS) + " ./network net.txt"),
+    u8[0]()).wait();
+  if (!r.ran()) { return Ran(-1, "", "the shell did not run — " + r.error, false); }
+  return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status == 124);
+}
+
+/** The last `n` lines, for a message that has to fit in a log. */
+string tail(string text, i32 n) {
+  u8[] b = text.toBytes();
+  i32 seen = 0;
+  for (i32 i = b.len() - 1; i >= 0; i--) {
+    if (b[i] == '\n' && i != b.len() - 1) {
+      seen = seen + 1;
+      if (seen == n) { return text.slice(i + 1, text.len()); }
+    }
+  }
+  return text;
+}
+
+/** What a wedged or failed network had reached, which is the whole diagnosis. */
+string report(Cli cli, Ran r) {
+  return (r.wedged ? "the network did not finish within " + itoa(BOUND_SECONDS) + "s" :
+                     "the network exited " + itoa(r.code)) +
+         " (" + loadNow(cli) + "). What it had said:\n--- stderr ---\n" + tail(r.err, 25) +
+         "\n--- stdout ---\n" + tail(r.out, 25);
+}
+
+const string DOCS = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.desc" +
+                    " -M v.consensus.micro -m v.consensus.mds";
+
+/**
+ * One relay's line.
+ *
+ * The ready marker is the descriptor line, not the bind. A relay logs `listening on` before it writes
+ * its descriptor, so a plan that waited on the bind would run the authority against descriptors that
+ * did not exist yet.
+ */
+string relay(i32 n, string net, string extra) {
+  return "node relay" + itoa(n) + " | -byte descriptor for port | relayd.worker.js s" + itoa(n) +
+         " -p 0 -n " + net + itoa(n) + " --descriptor r" + itoa(n) + ".desc " + extra + DOCS;
+}
+
+void describe(Cli cli, string dir, string[] lines) {
+  string text = "";
+  for (i32 i = 0; i < lines.len(); i++) { text = text + lines[i] + "\n"; }
+  cli.writeFile(dir + "/net.txt", text.toBytes()).wait();
+}
+
+export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "network");
+  string why = common(cli, dir) +
+               build(cli, "packages/tor/src/app.wac", dir + "/torapp.worker.js", none(), true);
+  t.eqStr(why, "", "the network's programs built");
+  if (why != "") { return t.report(); }
+  seeds(core, cli, dir, string[]("s1", "s2", "s3"));
+
+  describe(cli, dir, string[](
+    // Generous: three RSA-1024 prime searches happen at once here, and a busy machine makes that
+    // slow. A default tuned for a quiet one would turn load into a failure.
+    "timeout 300000",
+    relay(1, "wacnet", "--seedline seed.txt "),
+    relay(2, "wacnet", ""),
+    relay(3, "wacnet", ""),
+    "run  vote   |                       | gendesc.worker.js keys.json cert vote v - r1.desc r2.desc r3.desc",
+    "wait relay1 | serving the consensus |",
+    "wait relay2 | serving the consensus |",
+    "wait relay3 | serving the consensus |",
+    "run  fetch  |                       | torapp.worker.js seed.txt cert.fingerprint /tor/status-vote/current/consensus"));
+
+  Ran r = runNetwork(cli, dir);
+  t.eqI32(r.code, 0, "the network did not come up or the fetch failed — " + report(cli, r));
+  if (r.code != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  // Each stage was seen, by name. The launcher's whole claim is that none of these was assumed.
+  t.isTrue(contains(r.err, "all 3 nodes are up"), report(cli, r));
+  t.isTrue(contains(r.err, "relay1 says serving the consensus"), "relay1 reached the serving state");
+  t.isTrue(contains(r.err, "relay3 says serving the consensus"), "and so did the last one");
+  t.isTrue(contains(r.err, "circuit built"), "the client built a circuit through them");
+
+  // And the document came back through it. Checking the first keyword rather than a length: a relay
+  // that answered 404 would give a short body, and a short body is not obviously wrong.
+  t.isTrue(contains(r.out, "network-status-version 3"),
+           "stdout is a consensus, fetched over the circuit");
+  t.isTrue(contains(r.out, "directory-signature "),
+           "signed, and complete to the end of the document");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_an_onion_service_published_on_that_network_and_a_page_fetched_from_it(
+    Core core, Cli cli) {
+  // The rest of design 0002's done condition: *publishes an onion service on it, fetches a page from
+  // that service through a three-hop circuit, and tears it down.*
+  //
+  // The service is a `node` placed after the authority has run and the relays are serving, because it
+  // bootstraps *through* them — it cannot exist before there is a consensus to bootstrap from. That is
+  // what stages are for.
+  //
+  // Its address is not knowable in advance: it is derived from an identity seed inside the process.
+  // The service logs it as the first thing it says, so a `wait` on `hsserviced: ` captures it — a
+  // marker it has long since printed by the time the wait runs.
+  T t = T.create();
+  string dir = scratch(cli, "onion");
+  string why = common(cli, dir) +
+               build(cli, "packages/tor/src/hsserviced.wac", dir + "/hsserviced.worker.js",
+                     none(), true) +
+               build(cli, "packages/tor/src/hsconnect.wac", dir + "/hsconnect.worker.js",
+                     none(), true);
+  t.eqStr(why, "", "the onion service's programs built");
+  if (why != "") { return t.report(); }
+  seeds(core, cli, dir, string[]("s1", "s2", "s3", "hs.seed"));
+
+  describe(cli, dir, string[](
+    "timeout 300000",
+    relay(1, "wacon", "--seedline seed.txt "),
+    relay(2, "wacon", ""),
+    relay(3, "wacon", ""),
+    "run  vote    |                       | gendesc.worker.js keys.json cert vote v - r1.desc r2.desc r3.desc",
+    "wait relay1  | serving the consensus |",
+    "wait relay2  | serving the consensus |",
+    "wait relay3  | serving the consensus |",
+    "node service | waiting for a client  | hsserviced.worker.js seed.txt cert.fingerprint hs.seed --testnet",
+    // A node's own output never reaches the launcher's streams — only a `run`'s does — so the
+    // service's stages are asserted the way the launcher can see them: as markers it was asked to
+    // wait for and reports matching. All three are long since printed by the time the service is
+    // ready, which is the point: they are stages it passed on the way there.
+    "wait service | introduction point established |",
+    "wait service | published to                   |",
+    "wait service | hsserviced:                    |",
+    "run  visit   |                       | hsconnect.worker.js seed.txt cert.fingerprint {service} 80 --testnet"));
+
+  Ran r = runNetwork(cli, dir);
+  t.eqI32(r.code, 0, "the onion service run failed — " + report(cli, r));
+  if (r.code != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  t.isTrue(contains(r.err, "service had already said \"introduction point established\""),
+           "the service claimed an introduction point");
+  t.isTrue(contains(r.err, "service had already said \"published to\""),
+           "and published its descriptor to the directories");
+  t.isTrue(contains(r.out, "hello from behind an onion"),
+           "and the page came back through the rendezvous");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
