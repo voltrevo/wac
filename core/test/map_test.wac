@@ -9,11 +9,11 @@
 // degenerates to a single probe run, which is where insert, lookup, growth and
 // backward-shift deletion all have to agree with each other.
 
-import { T } from "../../../wactest/src/assert.wac";
-import { Map } from "../../src/map.wac";
-import { Vec } from "../../src/vec.wac";
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Map } from "core/map.wac";
+import { Vec } from "../../packages/std/src/vec.wac";
 import { Option } from "core/option.wac";
-import { hashString, stringEq, hashI32, i32Eq, hashI64, i64Eq, hashBytes, bytesEq } from "../../src/hash.wac";
+import { hashString, stringEq, hashI32, i32Eq, hashI64, i64Eq, hashBytes, bytesEq } from "core/hash.wac";
 
 /** Every key in one slot. Legal, and the worst case a hash may be. */
 i32 badHash(i32 k) { return 0; }

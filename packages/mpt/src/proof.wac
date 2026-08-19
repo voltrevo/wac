@@ -49,7 +49,7 @@ import { keccak256 } from "../../crypto/src/keccak.wac";
 // i32-minimum bug was fixed in four copies separately).
 import { itoa } from "../../fmt/src/itoa.wac";
 import { encode as hexBytes } from "../../codec/src/hex.wac";
-import { bytesEq } from "../../std/src/hash.wac";
+import { bytesEq } from "core/hash.wac";
 
 /** What a proof established. */
 export struct Proved {

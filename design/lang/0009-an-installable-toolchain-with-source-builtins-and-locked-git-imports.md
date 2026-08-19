@@ -204,6 +204,13 @@ That makes step 2 larger than it reads and couples it to how omissions are repre
 `compiler/README.md`'s table today. Worth settling that before writing the generator, because the
 generator is where the answer gets encoded.
 
+*(2026-08-18: **every addition to `SIBLINGS` needs `seed:bootstrap`, not `seed`.** The seed carries
+its own copy of the list, so a compiler that does not yet know `core/map.wac` is a built-in resolves
+it against the importing file's directory and reports `cannot read packages/fs/src/core/map.wac`. It
+cannot build its own successor. `seed:bootstrap` goes through the reference, which has the
+regenerated list, and then the normal path works again. Twice now, and it is a property of the
+design rather than a mistake — worth knowing before the third.)*
+
 *(2026-08-18: settled and built. **The file is the unit of omission** — `core/read.wac` goes to both
 compilers, `core/jsx.wac` to wacc alone, and `tools/genCore.ts` holds the two lists. The alternative
 was a marker inside one shared file, which is a third thing to invent, to parse and to keep true for
@@ -216,6 +223,18 @@ reseeding: the generated wac shrank 10,442 to 8,008 bytes and the seed moved 800
 **1,103 bytes, 0.1%.** So the per-line form is reverted, because the reason it was chosen still
 holds — a one-line change to `core/` stays a one-line diff in a generated file that is checked in —
 and it costs almost nothing.*
+
+*(2026-08-18, third measurement, and it corrects the one below: **the text costs about 2.8x, not
+about 1x.** `hash` and `map` moved with the seam already paid, so their delta is purely text —
+11,033 bytes of source against **+31,096 bytes of seed**, 800,077 to 831,173. The paragraph below
+guessed linear from a delta that was mostly one-off machinery, which was the wrong inference from
+the right observation. `vec` at 5,934 bytes should therefore cost about 16 KB, and the whole of
+`packages/std` in `core` is roughly 9% on a seed that began this session at 777 KB.*
+
+*It is not the concatenation — that was measured and reverted at 0.1%. So it is what a wasm module
+costs to carry a string literal: the bytes, plus the code that materialises them. Worth knowing
+before `core` grows past collections, and worth measuring again rather than extrapolating, since
+this is the second extrapolation in this paragraph and the first was wrong.)*
 
 *Which relocates the question. The 5.9 KB step 2 added, and the 17 KB step 3's first move added, are
 mostly the **seam** — `coreFile`'s dispatch, `isBuiltinSpec`, `sourceOf` and `resolveFrom` — which is

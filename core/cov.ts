@@ -18,8 +18,12 @@ import { instrument, report, runTestExports } from "../harness/wacCoverage.ts";
 
 const verbose = Deno.args.includes("--verbose");
 
-const run = await instrument("core/test/option_test.wac");
-runTestExports(run, "core/test/option_test.wac");
+const runs = [];
+for (const entry of ["option", "hash", "map"]) {
+  const run = await instrument(`core/test/${entry}_test.wac`);
+  runTestExports(run, `core/test/${entry}_test.wac`);
+  runs.push(run);
+}
 
-const { total, covered } = report([run], "core/", { verbose });
+const { total, covered } = report(runs, "core/", { verbose });
 if (covered < total) Deno.exit(0); // reporting tool, not a gate
