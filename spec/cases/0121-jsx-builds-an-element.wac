@@ -3,7 +3,7 @@
 // why: `<div>` is an expression, and what it evaluates to is core's tree
 // from: design/lang/0004
 // spec:  §jsx-element-is-an-expression
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 /** Every node in the tree, which needs the children to have actually been put there. */
 i32 count(Node n) {

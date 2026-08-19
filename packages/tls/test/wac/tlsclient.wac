@@ -12,7 +12,7 @@
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
 import { Core, Cli, Socket, Pending } from "../../../platform/src/platform.wac";
-import { Read } from core;
+import { Read } from "core";
 import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
          tlsClientPhase, tlsClientFailure, clientStep, ClientStep } from "../../src/client.wac";
 import { recordsReady } from "../../src/record.wac";

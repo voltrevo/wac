@@ -86,18 +86,18 @@ const cases: [string, Record<string, string>][] = [
   // takes — the quoted `"core"` reaches the same module and is covered by
   // `§wac-core-unquoted-3nqk7vd`.
   ["a capability import", {
-    "/main.wac": `import { Read } from core;\nexport i32 f() { Read r = Read.Data(u8[](1, 2, 3)); ` +
+    "/main.wac": `import { Read } from "core";\nexport i32 f() { Read r = Read.Data(u8[](1, 2, 3)); ` +
       `match (r) { case Data(b): { return b.len(); } case End: { return 0; } case Failed(w): { return -1; } } }`,
   }],
   ["a capability across files", {
-    "/main.wac": `import { Read } from core;\nimport { mk } from "./lib.wac";\n` +
+    "/main.wac": `import { Read } from "core";\nimport { mk } from "./lib.wac";\n` +
       `export i32 f() { match (mk(2)) { case Data(b): { return b.len() * 10; } case End: { return 1; } ` +
       `case Failed(w): { return w.len(); } } }`,
-    "/lib.wac": `import { Read } from core;\nexport Read mk(i32 n) { if (n == 0) { return Read.End; } ` +
+    "/lib.wac": `import { Read } from "core";\nexport Read mk(i32 n) { if (n == 0) { return Read.End; } ` +
       `if (n == 1) { return Read.Failed("io"); } return Read.Data(u8[n]()); }`,
   }],
   ["a capability through a funcref", {
-    "/main.wac": `import { Read } from core;\nRead once() { return Read.Data(u8[](9)); }\n` +
+    "/main.wac": `import { Read } from "core";\nRead once() { return Read.Data(u8[](9)); }\n` +
       `i32 total(fn[Read()] source) { match (source()) { case Data(b): { return b.len(); } ` +
       `case End: { return 0; } case Failed(w): { return -1; } } }\n` +
       `export i32 f() { return total(once); }`,

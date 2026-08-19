@@ -24,7 +24,7 @@ const wacc = await import(`${dir}/wacc-api.js`) as unknown as WaccModule;
 Deno.test("a snippet the reference cannot compile runs in the playground's runner", async () => {
   // JSX, a component and a fragment — three things the seed does not have.
   const files = {
-    "main.wac": `import { Attr, Node } from core;
+    "main.wac": `import { Attr, Node } from "core";
 
 struct Row {
   string label;

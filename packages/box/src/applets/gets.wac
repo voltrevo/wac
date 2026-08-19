@@ -22,7 +22,7 @@ import { recordsReady } from "../../../tls/src/record.wac";
 import { ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
          tlsClientPhase, tlsClientFailure } from "../../../tls/src/client.wac";
 import { Incoming, ParsedResponse, parseResponse } from "../../../http/src/incoming.wac";
-import { Read } from core;
+import { Read } from "core";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 

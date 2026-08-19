@@ -2,7 +2,7 @@
 //
 // This is the claim `design/lang/0004` rests on, and the reason `Node` is in `core` rather than in a
 // package: **neither side declared the type.** The wac program never names it beyond
-// `import { Attr, Node } from core;` — the compiler emits the constructors — and the JavaScript here
+// `import { Attr, Node } from "core";` — the compiler emits the constructors — and the JavaScript here
 // never declares it at all, because the generated glue builds the class from the module's own
 // metadata. Two pieces of code that share nothing but the compiler agree on a value.
 //
@@ -22,7 +22,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const PROGRAM = [
-  "import { Attr, Node } from core;",
+  "import { Attr, Node } from "core";",
   "export Node page(string who) {",
   '  return <div class="page" id={"top"}><h1>hello {Node.Text(who)}</h1><br/></div>;',
   "}",

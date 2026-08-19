@@ -75,7 +75,7 @@
 // because the streaming transforms in `gzip` and `stream` must name it too and have no business
 // depending on a capability world, and because with no closures in the language a second copy of it
 // could never be converted into this one. See wac's `design/0001`.
-import { Read } from core;
+import { Read } from "core";
 
 /** A handler slot that does nothing, so a table can be filled before anything is registered. */
 void schedIdle(i32 id) { }

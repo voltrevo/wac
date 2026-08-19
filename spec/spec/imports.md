@@ -34,19 +34,22 @@ carries the text and serves it. A project cannot shadow these names with a `core
 own, which is the other half of the same property — a built-in that the filesystem could take over
 is not a built-in.
 
-The root is what `core` alone names, and its files are named the way any other file is. `[§wac-core-unquoted-3nqk7vd]`
-The root may be written either way — `from "core"` or `from core` — and both reach the same module,
-so `Read` obtained through one is the same type as `Read` obtained through the other. **Write the
-quoted form.** Every other member of the tree is quoted, and a root that is the one bare word in the
-language is a spelling to remember rather than a rule to know. Any bare word that is *not* `core`
-reports `unknown module 'x'`.
+The root is what `"core"` names, and its files are named the way any other file is.
+`[§wac-core-unquoted-3nqk7vd]` **Every specifier is a quoted path, `core` included.** A bare word
+after `from` is an error: `core` is told to write `from "core"`, and anything else reports
+`unknown module 'x'`.
 
-> The unquoted form was for a while the only accepted one, and the argument was that a quoted
-> specifier says *a file lives at this path* while there was no path here to be right or wrong
+`[§wac-core-one-key-5jm2qhx]` However a file in the tree is reached, it is one module — so `Read`
+obtained in one file is the same type as `Read` obtained in another. That is not a nicety: wac's
+types are nominal, so two modules would be two `Read`s and nothing could convert between them, which
+is the whole reason the tree is embedded rather than copied.
+
+> `core` was written *without* quotes for most of this language's life, and the argument was that a
+> quoted specifier says *a file lives at this path* while there was no path here to be right or wrong
 > about. [design/lang/0009](../../design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md)
-> D4 removed the premise rather than the argument: there are paths now, `core/option.wac` is one,
-> and it is right. D5 accepts both spellings so that the files already using the bare one keep
-> compiling while they are moved over.
+> D4 removed the premise rather than the argument: there are paths now, `core/option.wac` is one, and
+> it is right. D5 then accepted both spellings for exactly as long as it took to move the files using
+> the old one — 54 of them — and removed it.
 
 What belongs in the tree is decided per file. The **root** holds only types that have to cross a
 *repository* boundary through a funcref signature: wac has nominal types and no closures, so two
@@ -60,13 +63,13 @@ is a library and belongs in a package. See `design/0001`.
 
 ```wac
 // producer.wac
-import { Read } from core;
+import { Read } from "core";
 export Read three() { return Read.Data(u8[](7, 7, 7)); }
 ```
 
 ```wac
 // consumer.wac
-import { Read } from core;
+import { Read } from "core";
 export i32 total(fn[Read()] source) {
   match (source()) {
     case Data(bytes): return bytes.len();

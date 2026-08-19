@@ -27,7 +27,7 @@
 // fourth needs more than `QUEUE_CAP` bytes to mean anything, which is why it sends nine megabytes
 // through a queue that holds eight: with fewer, every host passes by never filling anything.
 import { Child, Cli, Core, GRANT_NONE } from "../src/platform.wac";
-import { Read } from core;
+import { Read } from "core";
 import { argvOf } from "../src/stream.wac";
 
 export i32 main(Core core, Cli cli) {

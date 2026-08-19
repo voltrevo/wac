@@ -24,7 +24,7 @@
 // oddly and it is the only way to build a resolved ticket without state.
 
 import { Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Pending, Sched, Socket, Stat } from "../../../platform/src/platform.wac";
-import { Read } from core;
+import { Read } from "core";
 import { Shell, builtinNames, isBuiltin, runScript } from "../../src/exec.wac";
 
 /** A ticket is always ready here, and dropping one does nothing. */

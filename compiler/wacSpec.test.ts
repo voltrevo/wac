@@ -2476,11 +2476,11 @@ Deno.test("[§wac-diamond-79emza1] combined() returns 230", async () => {
 Deno.test("[§wac-core-one-type-8fjm2wq] run() returns 3 — two files, one Read", async () => {
   const files = new Map([
     ["producer.wac", `
-      import { Read } from core;
+      import { Read } from "core";
       export Read three() { return Read.Data(u8[](7, 7, 7)); }
     `],
     ["consumer.wac", `
-      import { Read } from core;
+      import { Read } from "core";
       export i32 total(fn[Read()] source) {
         match (source()) {
           case Data(bytes): return bytes.len();
@@ -2505,7 +2505,7 @@ Deno.test("[§wac-core-one-type-8fjm2wq] a hand-written copy of Read is still a 
   const msg = errMulti(new Map([
     ["copy.wac", `export enum Read { Data(u8[] bytes), End, Failed(string why) }`],
     ["main.wac", `
-      import { Read } from core;
+      import { Read } from "core";
       import { Read as Copy } from "./copy.wac";
       export i32 run(Copy c) { Read r = c; return 0; }
     `],
@@ -2513,36 +2513,43 @@ Deno.test("[§wac-core-one-type-8fjm2wq] a hand-written copy of Read is still a 
   eq(msg, "type mismatch: expected Read, got Copy", "copy vs core");
 });
 
-Deno.test("[§wac-core-unquoted-3nqk7vd] the root takes either spelling; any other bare word does not", async () => {
-  // Quoted `"core"` was an error until D5, and the case is kept rather than deleted because what it
-  // has to show is now the opposite. **Both spellings reach one module**, which is more than "both
-  // compile": a change that gave the quoted form a key of its own would declare `Read` twice and
-  // still pass a test that only asked for the absence of a diagnostic. So one file produces a value
-  // through the bare spelling and the other consumes it through the quoted one. wac has nominal
-  // types, so two keys is a type mismatch here rather than a subtle difference later.
+Deno.test("[§wac-core-unquoted-3nqk7vd] every specifier is quoted, `core` included", () => {
+  // **The clause inverted twice, and the tag stayed with it.** First `"core"` was the error and the
+  // bare word the only spelling; then both were accepted while the files using the bare one were
+  // swept; now the bare one is gone and every specifier is a quoted path. The tag reads oddly
+  // against the rule it now names — that is the cost of an anchor being stable, and the alternative
+  // is retiring a tag that `spec/`, the site's count and this suite all point at.
   //
-  // Two files rather than two imports in one, which was the first shape and is a worse test: it
-  // needed `import { Read as R2 }` beside `import { Read }` to have two names to compare, and wacc
-  // makes an aliased import of an already-imported type a *distinct* type — for any file, not only
-  // this one, and the reference does not (`issues/lang/0161`). That would have made this clause's
-  // case fail for a reason that has nothing to do with the clause. Across two files is also the
-  // shape the repository will actually be in while the sweep is half-done.
+  // `core` gets its own message rather than the generic one, because it is the word anybody will
+  // have typed out of habit and "unknown module 'core'" would be actively misleading about a module
+  // that very much exists.
+  eq(err(`import { Read } from core;  export i32 run() { return 0; }`),
+    '`core` is imported like any other module — write `from "core"`', "bare core");
+  eq(err(`import { Read } from cor;  export i32 run() { return 0; }`),
+    "unknown module 'cor' — a specifier is a quoted path", "any other bare word");
+});
+
+Deno.test("[§wac-core-one-key-5jm2qhx] the root is one module however it is reached", async () => {
+  // Split from the clause above when the bare spelling went: what that case *showed* was that two
+  // spellings reach one module, and with one spelling left there is nothing to compare. The property
+  // still matters — `Read` has to be one type across files, which is the whole reason `core` is
+  // embedded — so it keeps a case of its own rather than disappearing with the syntax that motivated
+  // it. Two files, a value crossing between them: nominal types make two keys a mismatch here
+  // rather than a subtle difference later.
   const inst = await runMulti(new Map([
-    ["helper.wac", `import { Read } from core;\nexport Read end() { return Read.End; }`],
+    ["helper.wac", `import { Read } from "core";\nexport Read end() { return Read.End; }`],
     ["main.wac", `
       import { Read } from "core";
       import { end } from "./helper.wac";
       export i32 run() { Read r = end(); return match (r) { case End: 1, else: 0 }; }
     `],
   ]));
-  eq(inst.call("run", []), 1, "both spellings, one type");
-  eq(err(`import { Read } from cor;  export i32 run() { return 0; }`),
-    "unknown module 'cor' — an unquoted import reads only from `core`", "bare word");
+  eq(inst.call("run", []), 1, "one module, one type");
 });
 
 Deno.test("[§wac-core-read-6kv4pnx] Read distinguishes an empty read from a failed one", async () => {
   const inst = await run(`
-    import { Read } from core;
+    import { Read } from "core";
     i32 size(Read r) {
       match (r) {
         case Data(bytes): return bytes.len();
@@ -2553,7 +2560,7 @@ Deno.test("[§wac-core-read-6kv4pnx] Read distinguishes an empty read from a fai
     export i32 run() { return size(Read.Data(u8[](1, 2))) * 100 + size(Read.End) * 10 - size(Read.Failed("io")); }
   `);
   eq(inst.call("run", []), 201, "run()");
-  eq(errMulti(new Map([["main.wac", `import { Buf } from core;  export i32 run() { return 0; }`]])),
+  eq(errMulti(new Map([["main.wac", `import { Buf } from "core";  export i32 run() { return 0; }`]])),
     "'Buf' is not exported from 'core'", "core holds Read and nothing else yet");
 });
 

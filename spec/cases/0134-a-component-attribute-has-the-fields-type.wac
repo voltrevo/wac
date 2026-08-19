@@ -2,7 +2,7 @@
 // only:   wacc
 // why: an attribute answers to the field's declared type, not to string
 // from: design/lang/0005
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 struct Card {
   i32 count;

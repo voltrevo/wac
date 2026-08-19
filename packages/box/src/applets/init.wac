@@ -58,7 +58,7 @@ import { Vec } from "core/vec.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Read } from core;
+import { Read } from "core";
 
 /** One line of `/etc/init`, as words. Empty for a blank line or a comment. */
 string[] words(string line) {

@@ -1,6 +1,6 @@
 {
   "source": "compiler/wacSpec.test.ts",
-  "sha256": "b525787dca4b4d2be97c2898981843c7759d39cc9658306a20ac8887f164b1c1",
+  "sha256": "cd95275d52ed16e73446f5d430ee83f3ea01036531d7a085cb0c11a1c00fd46c",
   "cases": [
     {
       "test": "[§wac-int32-dfkqg8u] int32() returns 42",
@@ -2688,11 +2688,11 @@
       "files": [
         [
           "producer.wac",
-          "\n      import { Read } from core;\n      export Read three() { return Read.Data(u8[](7, 7, 7)); }\n    "
+          "\n      import { Read } from \"core\";\n      export Read three() { return Read.Data(u8[](7, 7, 7)); }\n    "
         ],
         [
           "consumer.wac",
-          "\n      import { Read } from core;\n      export i32 total(fn[Read()] source) {\n        match (source()) {\n          case Data(bytes): return bytes.len();\n          case End:         return 0;\n          case Failed(why): return -1;\n        }\n      }\n    "
+          "\n      import { Read } from \"core\";\n      export i32 total(fn[Read()] source) {\n        match (source()) {\n          case Data(bytes): return bytes.len();\n          case End:         return 0;\n          case Failed(why): return -1;\n        }\n      }\n    "
         ],
         [
           "main.wac",
@@ -2712,19 +2712,43 @@
         ],
         [
           "main.wac",
-          "\n      import { Read } from core;\n      import { Read as Copy } from \"./copy.wac\";\n      export i32 run(Copy c) { Read r = c; return 0; }\n    "
+          "\n      import { Read } from \"core\";\n      import { Read as Copy } from \"./copy.wac\";\n      export i32 run(Copy c) { Read r = c; return 0; }\n    "
         ]
       ],
       "ok": false,
       "message": "type mismatch: expected Read, got Copy"
     },
     {
-      "test": "[§wac-core-unquoted-3nqk7vd] the root takes either spelling; any other bare word does not",
+      "test": "[§wac-core-unquoted-3nqk7vd] every specifier is quoted, `core` included",
+      "entry": "main.wac",
+      "files": [
+        [
+          "main.wac",
+          "import { Read } from core;  export i32 run() { return 0; }"
+        ]
+      ],
+      "ok": false,
+      "message": "`core` is imported like any other module — write `from \"core\"`"
+    },
+    {
+      "test": "[§wac-core-unquoted-3nqk7vd] every specifier is quoted, `core` included",
+      "entry": "main.wac",
+      "files": [
+        [
+          "main.wac",
+          "import { Read } from cor;  export i32 run() { return 0; }"
+        ]
+      ],
+      "ok": false,
+      "message": "unknown module 'cor' — a specifier is a quoted path"
+    },
+    {
+      "test": "[§wac-core-one-key-5jm2qhx] the root is one module however it is reached",
       "entry": "main.wac",
       "files": [
         [
           "helper.wac",
-          "import { Read } from core;\nexport Read end() { return Read.End; }"
+          "import { Read } from \"core\";\nexport Read end() { return Read.End; }"
         ],
         [
           "main.wac",
@@ -2735,24 +2759,12 @@
       "message": ""
     },
     {
-      "test": "[§wac-core-unquoted-3nqk7vd] the root takes either spelling; any other bare word does not",
-      "entry": "main.wac",
-      "files": [
-        [
-          "main.wac",
-          "import { Read } from cor;  export i32 run() { return 0; }"
-        ]
-      ],
-      "ok": false,
-      "message": "unknown module 'cor' — an unquoted import reads only from `core`"
-    },
-    {
       "test": "[§wac-core-read-6kv4pnx] Read distinguishes an empty read from a failed one",
       "entry": "main.wac",
       "files": [
         [
           "main.wac",
-          "\n    import { Read } from core;\n    i32 size(Read r) {\n      match (r) {\n        case Data(bytes): return bytes.len();\n        case End:         return 0;\n        case Failed(why): return -1;\n      }\n    }\n    export i32 run() { return size(Read.Data(u8[](1, 2))) * 100 + size(Read.End) * 10 - size(Read.Failed(\"io\")); }\n  "
+          "\n    import { Read } from \"core\";\n    i32 size(Read r) {\n      match (r) {\n        case Data(bytes): return bytes.len();\n        case End:         return 0;\n        case Failed(why): return -1;\n      }\n    }\n    export i32 run() { return size(Read.Data(u8[](1, 2))) * 100 + size(Read.End) * 10 - size(Read.Failed(\"io\")); }\n  "
         ]
       ],
       "ok": true,
@@ -2764,7 +2776,7 @@
       "files": [
         [
           "main.wac",
-          "import { Buf } from core;  export i32 run() { return 0; }"
+          "import { Buf } from \"core\";  export i32 run() { return 0; }"
         ]
       ],
       "ok": false,

@@ -3,7 +3,7 @@
 // why: a tag that names a struct in scope is a component, and its attributes are that struct's fields
 // from: design/lang/0005
 // spec:  §jsx-tag-naming-a-struct-is-a-component
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 string textOf(Node n) {
   match (n) {

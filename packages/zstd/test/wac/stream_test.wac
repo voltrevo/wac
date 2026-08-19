@@ -30,7 +30,7 @@ import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
-import { Read } from core;
+import { Read } from "core";
 import { askZstd, compressLine, frameAt } from "./frames.wac";
 import { unzstdStream } from "../../src/stream.wac";
 import { decompress } from "../../src/frame.wac";

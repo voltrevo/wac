@@ -19,7 +19,7 @@ import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { concat } from "../lib/bytes.wac";
 import { Parsed, Request, parseRequest } from "../../../http/src/request.wac";
 import { Response, write as writeResponse } from "../../../http/src/response.wac";
-import { Read } from core;
+import { Read } from "core";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 

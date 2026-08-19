@@ -33,7 +33,7 @@
 import { Captured, Change, Cli, Core, Datagram, FAULT_NONE, FileResult, Pending, Socket, Stat }
   from "./platform.wac";
 import { Buf } from "../../bytes/src/buf.wac";
-import { Read } from core;
+import { Read } from "core";
 
 /**
  * How much a child may write before `write` starts answering false.

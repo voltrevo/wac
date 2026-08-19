@@ -19,7 +19,7 @@
 // reply — a fixed body the test matches on, not something a server should answer.
 
 import { Core, Cli, Socket } from "../../../platform/src/platform.wac";
-import { Read } from core;
+import { Read } from "core";
 import { tlsServerInit, tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsServerClose,
          tlsPhase, tlsRecordNeeded } from "../../src/server.wac";
 import { clientStep, ClientStep } from "../../src/client.wac";

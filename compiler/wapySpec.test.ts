@@ -181,7 +181,7 @@ Deno.test("[§wac-wapy-import-8kd3mqp] either surface imports either extension",
   if (!r.ok) throw new Error(r.diagnostics.map((d) => `${d.file}:${d.line} ${d.message}`).join("\n"));
 });
 
-// ── §wac-wapy-core-5wq8jhn — `core` is unquoted on both surfaces ────────────
+// ── §wac-wapy-core-5wq8jhn — `core` is one module on both surfaces ──────────
 
 Deno.test("[§wac-wapy-core-5wq8jhn] `from core import Read`, and the Read is the same one", () => {
   const graph = {
@@ -201,7 +201,7 @@ Deno.test("[§wac-wapy-core-5wq8jhn] `from core import Read`, and the Read is th
     ].join("\n"),
     // The wac side declares nothing and imports the same core, so a value crossing between them
     // proves one type rather than two that happen to agree.
-    "main.wac": `import { Read } from core;\nimport { size } from "./reader.wapy";\n` +
+    "main.wac": `import { Read } from "core";\nimport { size } from "./reader.wapy";\n` +
       `export i32 run() { return size(Read.Data(u8[](1, 2))); }\n`,
   };
   const r = wacCompile(new Map(Object.entries(graph)), "main.wac");
