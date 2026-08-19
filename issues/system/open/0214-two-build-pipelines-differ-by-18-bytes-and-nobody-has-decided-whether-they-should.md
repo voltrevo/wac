@@ -1,4 +1,4 @@
-# 0214 — an opt-in test has been red, and four of its seven cases are wrong
+# 0214 — two build pipelines differ by 18 bytes, and nobody has decided whether they should
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -6,6 +6,23 @@
 - **Date:** 2026-08-19
 - **Kind:** bug
 - **Symptom:** wrong answer
+
+## The test this was filed about is gone — 2026-08-19
+
+This began as *"an opt-in test has been red, and four of its seven cases are wrong"*, about
+the `nativeBinary` test. The four defects were fixed the day it was filed, and the
+file has since been **deleted** — the operator's call, and the right one. Its cases held the native
+runner up against the Deno harness, or re-asserted a fixpoint that `tools/seed.sh` already refuses a
+seed for. Deno-driven testing is being removed, not kept on as the oracle that validates what replaces
+it. `wac sh` was the one thing it covered that nothing else did, and that moved to
+`tools/wac/sh_test.wac`, against the binary we already have rather than a freshly built one.
+
+**What survives is section 1**, which was never about the test: the two build pipelines differ and
+nobody has decided whether that is a bug. That is the issue now, and the title says so.
+
+The lesson the original title carried is worth keeping in a sentence: a test that must be asked for
+is a test that reports on nothing, and four wrong cases sat in that one for long enough that nobody
+could say how long.
 
 ## What happens
 

@@ -1028,7 +1028,7 @@ says `delete mode` rather than anything about content.
 `grep -rl wacTestRun packages/*/test/*.ts` now returns two files, and neither is a package handing
 its subject a callback: packages/wactest/test/assert.test.ts (unbackticked because it no longer
 exists — see the section below) tests the harness, and
-`packages/wacc/test/nativeBinary.test.ts` tests the binary. Every `*_wac.test.ts` in the repository
+the old `nativeBinary` test tested the binary. Every `*_wac.test.ts` in the repository
 is deleted. Sixteen of them went in one day — four in `crypto`, three in `tls`, nine in `tor` — and
 what they had in common is worth writing down, because the same shapes will come up in the 232
 `.test.ts` files that remain.
