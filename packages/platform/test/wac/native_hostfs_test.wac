@@ -46,7 +46,7 @@ import { Core, Cli, Exec, FileResult, Pending } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { Ran, boundedAgain, denoBatch, hangReport, stale, submit, collect, DEFAULT_SECONDS }
+import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, submit, collect, DEFAULT_SECONDS }
   from "./hostfs.wac";
 
 const string ENTRY = "packages/box/src/bin/sh.wac";
@@ -133,12 +133,14 @@ Shells shells(Cli cli) {
   string[] none = string[0](fill: "");
 
   string why = "";
-  if (stale(cli, s.deno, ENTRY)) { why = why + buildOne(cli, false, s.deno, rw); }
-  if (stale(cli, s.manifest, ENTRY)) { why = why + buildOne(cli, true, dir + "/wacsh", rw); }
-  if (stale(cli, s.wonlyDeno, ENTRY)) { why = why + buildOne(cli, false, s.wonlyDeno, w); }
-  if (stale(cli, s.wonly, ENTRY)) { why = why + buildOne(cli, true, dir + "/wonly", w); }
-  if (stale(cli, s.nograntDeno, ENTRY)) { why = why + buildOne(cli, false, s.nograntDeno, none); }
-  if (stale(cli, s.nogrant, ENTRY)) { why = why + buildOne(cli, true, dir + "/nogrant", none); }
+  // One walk of `sh.wac`'s 190-file closure, not six.
+  i64 newest = newestFor(cli, ENTRY);
+  if (stale(cli, s.deno, newest)) { why = why + buildOne(cli, false, s.deno, rw); }
+  if (stale(cli, s.manifest, newest)) { why = why + buildOne(cli, true, dir + "/wacsh", rw); }
+  if (stale(cli, s.wonlyDeno, newest)) { why = why + buildOne(cli, false, s.wonlyDeno, w); }
+  if (stale(cli, s.wonly, newest)) { why = why + buildOne(cli, true, dir + "/wonly", w); }
+  if (stale(cli, s.nograntDeno, newest)) { why = why + buildOne(cli, false, s.nograntDeno, none); }
+  if (stale(cli, s.nogrant, newest)) { why = why + buildOne(cli, true, dir + "/nogrant", none); }
   if (why != "") { s.ok = false; s.error = why; }
   return s;
 }

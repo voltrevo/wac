@@ -117,19 +117,29 @@ export string hangReport(string what, string[] names, Ran[] runs) {
  * The gate pulls before it runs, so the three files that call this were the top three of every gate log
  * that day at 42–58s each, and they are not slow tests. `issues/system/0217`.
  *
- * `newestInClosure` asks the precise question instead: the newest mtime among `entry` and the files it
- * imports, derived by scanning rather than named by a caller. `packages/box/src/bin/sh.wac` reaches 190
+ * `newest` is what `newestFor` answers: the newest mtime among an entry and the files it imports,
+ * derived by scanning rather than named by a caller, and taken once per program by the caller. `packages/box/src/bin/sh.wac` reaches 190
  * of the tree's 902 `.wac` files, so four edits in five no longer touch these.
  *
  * What this still does not ask about is the **binary**: an artefact built by an older `wac` is not
  * rebuilt when the host is. That was true of the `find` too, so it is left as it was rather than
  * changed in passing — `wactest/src/built.wac` does check it, and the difference is worth knowing.
  */
-export bool stale(Cli cli, string artifact, string entry) {
+export bool stale(Cli cli, string artifact, i64 newest) {
   Stat s = cli.stat(artifact).wait();
   if (!s.isFile) { return true; }
-  return newestInClosure(cli, entry) > s.modifiedMillis;
+  return newest > s.modifiedMillis;
 }
+
+/**
+ * `newestInClosure`, and **once per entry rather than once per artefact.**
+ *
+ * The first version of this took the entry and walked it inside `stale`, which read 190 files six times
+ * over for `native_hostfs_test.wac`'s six shells — 9.4s of self CPU in the gate that landed it, where
+ * that file had been spending 0.3s. The walk is per *program*, so the callers below take it once and
+ * hand the answer to each check.
+ */
+export i64 newestFor(Cli cli, string entry) { return newestInClosure(cli, entry); }
 
 /**
  * Every script through the **Deno host in one process**, rather than one process each.
