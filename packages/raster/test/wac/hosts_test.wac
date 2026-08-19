@@ -23,12 +23,38 @@
 // is lost, and it says so.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 const string ENTRY = "packages/raster/example/deskshot.wac";
 const i32 WIDTH = 320;
 const i32 HEIGHT = 200;
+
+/**
+ * The newest modification time anywhere under `dir`, with `target/` left out.
+ *
+ * `target/` is cargo's own output and holds the binary this is compared against, so walking it would
+ * always answer "newer than the binary" and rebuild every time.
+ */
+i64 newestUnder(Cli cli, string dir) {
+  i64 newest = 0 as i64;
+  string[]? names = cli.readDir(dir).wait();
+  if (names is null) { return 0 as i64; }
+  string[] here = names!;
+  for (i32 i = 0; i < here.len(); i++) {
+    if (here[i] == "target") { continue; }
+    string path = dir + "/" + here[i];
+    Stat s = cli.stat(path).wait();
+    if (!s.exists) { continue; }
+    if (s.isDir) {
+      i64 deep = newestUnder(cli, path);
+      if (deep > newest) { newest = deep; }
+      continue;
+    }
+    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+  }
+  return newest;
+}
 
 string trimmedEnd(string s) {
   i32 n = s.len();
@@ -41,8 +67,15 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   T t = T.create();
   string cwd = cli.cwd().wait();
   string wac = cwd + "/native/v8/target/release/wac";
+  // **The directory is kept, and that is worth three seconds.** It used to be emptied here — and
+  // wasmtime's compiled artefact lives *beside* the module it was compiled from, so wiping the
+  // directory threw it away and the native half paid a cold compile every run: **3081ms, against
+  // 20ms when the artefact is there.** The same module on the v8 host is 19ms cold, so this is
+  // wasmtime's compile rather than anything the program does — measured with a build that draws the
+  // desk and prints nothing, where `Desk.create`, `Surface.create` and `draw` are 0ms apiece on both
+  // hosts. `wac build` is deterministic, so an unchanged program produces the same bytes, the same
+  // cache key and a hit. The images are removed below; the artefacts older than this build are too.
   string dir = cwd + "/.cache/raster-hosts";
-  cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   string stem = dir + "/deskshot";
 
@@ -87,10 +120,23 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   t.isTrue(distinct > 3, "the desktop has " + itoa(distinct) + " colours in it");
 
   // The host with no JavaScript in it, built if cargo is here, or skipped with the reason said aloud.
-  Exec cargo = cli.exec("/bin/sh",
-                        string[]("-c", "cd " + cwd + "/native && cargo build --release --quiet"),
-                        u8[0]()).wait();
-  if (!cargo.ran() || cargo.status != 0) {
+  //
+  // **Asked by `stat` first.** `cargo build --release --quiet` costs 2.6s in `native/` even when there
+  // is nothing to do, and it was 2.6s of every run of this test. A walk of the crate's own files —
+  // `target/` skipped, since that is where the binary being compared against lives — against the
+  // binary's mtime says whether cargo could have work to do. Same rule and same reason as
+  // `harness/nativeHost.ts`, which is the TypeScript twin of this; it covers a source edit, a
+  // `Cargo.toml` change and a lockfile update, and does not cover a toolchain that moved under an
+  // unchanged tree.
+  string wacland = cwd + "/native/target/release/wacland";
+  Stat host = cli.stat(wacland).wait();
+  bool stale = !host.exists || host.modifiedMillis < newestUnder(cli, cwd + "/native");
+  Exec cargo = stale
+      ? cli.exec("/bin/sh",
+                 string[]("-c", "cd " + cwd + "/native && cargo build --release --quiet"),
+                 u8[0]()).wait()
+      : Exec(0, u8[0](), u8[0](), "");
+  if (stale && (!cargo.ran() || cargo.status != 0)) {
     core.warn("SKIPPING the two-host pixel comparison: cargo did not build the native host. " +
               "The JavaScript half above still ran and still asserted. " +
               trimmedEnd(string.fromBytes(cargo.stderr)));
@@ -117,8 +163,40 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
           "the two hosts disagree at byte " + itoa(first) + ": javascript " + itoa(a[first]) +
           ", native " + itoa(b[first]));
 
-  cli.remove(dir, true).wait();
+  // The images go; the module, its manifest and the compiled artefact stay, because they are what
+  // makes the next run 20ms rather than three seconds. Artefacts older than this build are last
+  // run's, and a run that changed the program leaves one behind for every change if nobody sweeps.
+  cli.remove(jsOut, false).wait();
+  cli.remove(nativeOut, false).wait();
+  pruneStale(cli, dir);
   return t.report();
+}
+
+/**
+ * Every compiled artefact in `dir` but the newest, which is the one this run used.
+ *
+ * **Not "older than the module just built", which is what this said first and was wrong.** `wac build`
+ * rewrites the `.wasm` every run so its mtime is always now, while a cache *hit* does not touch the
+ * artefact at all — so that rule deleted the very file it was keeping, and the test alternated
+ * between 0.7s and 3.7s. Newest-wins has no such hole: a run that changed the program writes a new
+ * artefact and last run's goes, and a run that changed nothing keeps the one it just hit.
+ */
+void pruneStale(Cli cli, string dir) {
+  string[]? names = cli.readDir(dir).wait();
+  if (names is null) { return; }
+  string[] here = names!;
+  i64 newest = 0 as i64;
+  for (i32 i = 0; i < here.len(); i++) {
+    if (here[i].indexOf(".cwasm-") < 0) { continue; }
+    Stat s = cli.stat(dir + "/" + here[i]).wait();
+    if (s.exists && s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+  }
+  for (i32 i = 0; i < here.len(); i++) {
+    if (here[i].indexOf(".cwasm-") < 0) { continue; }
+    string path = dir + "/" + here[i];
+    Stat s = cli.stat(path).wait();
+    if (s.exists && s.modifiedMillis < newest) { cli.remove(path, false).wait(); }
+  }
 }
 
 /** `bytes/src/slice.wac`'s `slice`, kept local so this file imports one package fewer. */

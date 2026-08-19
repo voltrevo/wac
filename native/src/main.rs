@@ -549,7 +549,7 @@ fn run_seed(args: &[String]) -> Result<i32, wasmtime::Error> {
     let m: Arc<Manifest> = serde_json::from_str::<Manifest>(json).map(Arc::new)
         .map_err(|e| wasmtime::Error::msg(format!("the built-in manifest: {e}")))?;
     let program_args: Vec<Vec<u8>> = args.iter().map(|a| a.as_bytes().to_vec()).collect();
-    run(m, wasm, None, program_args)
+    run(m, wasm, program_args)
 }
 
 fn main() -> Result<(), wasmtime::Error> {
@@ -589,7 +589,7 @@ fn main() -> Result<(), wasmtime::Error> {
         .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", wasm_path.display())))?;
     let program_args: Vec<Vec<u8>> = argv[2..].iter().map(|a| a.as_bytes().to_vec()).collect();
 
-    let code = run(m, &wasm, Some(&wasm_path), program_args)?;
+    let code = run(m, &wasm, program_args)?;
     std::process::exit(code);
 }
 
@@ -665,23 +665,36 @@ const STOPPED: &str = "wacland: stopped by its parent";
 /// bound and the test reports the two hosts disagreeing (issue 0128). Raising the bound hides it;
 /// not compiling twenty times removes it.
 ///
-/// So the compiled artifact is cached beside the `.wasm`, which is where the tests already put one
-/// build and run it many times. `deserialize_file` is `unsafe` because it trusts the artifact to
-/// have been produced by this exact engine: the guard is that the file is written by this program,
+/// So the compiled artifact is cached. `deserialize_file` is `unsafe` because it trusts the artifact
+/// to have been produced by this exact engine: the guard is that the file is written by this program,
 /// keyed by the wasm's own bytes and this wasmtime's version, and any mismatch recompiles rather
 /// than being repaired.
 ///
 /// Written to a temporary name and renamed, because two of these run at once in the test suite and a
 /// half-written artifact that another process reads is the one failure worse than recompiling.
-fn compiled(engine: &Engine, wasm: &[u8], beside: Option<&Path>) -> Result<Module, wasmtime::Error> {
+///
+/// ## One shared directory, not beside the module
+///
+/// It used to live beside the `.wasm` — "which is where the tests already put one build and run it
+/// many times". True *within* a run and false across them: the tests build into a fresh temporary
+/// directory every time, so the artifact was written where nothing would ever look for it again, and
+/// the first run of each module paid the compile on every suite run. Measured 2026-08-19, `wacsh`
+/// built into a new temp directory twice: **2591ms then 22ms, 2816ms then 19ms.** Five test files
+/// build a native app, several build more than one.
+///
+/// The key is the wasm's own bytes and this wasmtime's version, so the location is free: an artifact
+/// that matches is correct wherever it sits. One shared directory means a program built into a
+/// hundred temporary directories compiles once — and the agents sharing this machine share it too,
+/// which is a hit rather than a race, since the same key means the same bytes and the write is a
+/// rename.
+///
+/// Bounded, because nothing else will do it: 4.8 MB apiece and one per distinct program. `sweep`
+/// keeps the newest `KEEP` and removes the rest, oldest first, after each write.
+fn compiled(engine: &Engine, wasm: &[u8]) -> Result<Module, wasmtime::Error> {
     let key = cache_key(wasm);
-    // Beside the `.wasm` when there is one — which is where the tests build once and run many. An
-    // embedded seed has no file to sit beside, so its artifact goes in the temporary directory under
-    // the same key: the alternative is compiling 411 KB on every invocation of a command-line tool.
-    let cached = match beside {
-        Some(p) => p.with_extension(format!("cwasm-{key:016x}")),
-        None => std::env::temp_dir().join(format!("wac-seed-{key:016x}.cwasm")),
-    };
+    let dir = std::env::temp_dir().join("wac-cwasm");
+    let _ = std::fs::create_dir_all(&dir);
+    let cached = dir.join(format!("{key:016x}.cwasm"));
     if cached.exists() {
         // SAFETY: written below by this program, from this engine, and named after the hash of the
         // wasm it was compiled from — a different module or a different wasmtime gets a different
@@ -694,12 +707,39 @@ fn compiled(engine: &Engine, wasm: &[u8], beside: Option<&Path>) -> Result<Modul
     }
     let module = Module::new(engine, wasm)?;
     if let Ok(bytes) = module.serialize() {
-        let tmp = cached.with_extension(format!("cwasm-{key:016x}.{}", std::process::id()));
+        let tmp = cached.with_extension(format!("cwasm.{}", std::process::id()));
         if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &cached).is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
+        sweep(&dir);
     }
     Ok(module)
+}
+
+/// How many compiled artifacts the shared directory keeps. Roughly 4.8 MB each.
+const KEEP: usize = 40;
+
+/// Keep the newest `KEEP` artifacts and remove the rest.
+///
+/// By modification time, which a hit does not touch — so this is "least recently *written*" rather
+/// than least recently used, and an artifact in daily use can be swept if forty newer ones arrive
+/// first. The cost of being wrong is one recompile, so the simpler rule is the right one; the cost
+/// of not sweeping at all is a temporary directory that grows without limit, which this repository
+/// has paid before (`issues/system/0068`, 23 GB of a cache nobody was watching).
+fn sweep(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut found: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "cwasm"))
+        .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()).map(|t| (t, e.path())))
+        .collect();
+    if found.len() <= KEEP {
+        return;
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in found.into_iter().skip(KEEP) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// The wasmtime this binary was built against, so an upgrade cannot reuse an artifact from the old one.
@@ -719,7 +759,7 @@ fn cache_key(wasm: &[u8]) -> u64 {
     h
 }
 
-fn run(m: Arc<Manifest>, wasm: &[u8], beside: Option<&Path>, args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
+fn run(m: Arc<Manifest>, wasm: &[u8], args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
     let mut config = Config::new();
     // The ABI is made of references — a wac string, a struct and a funcref all cross as one — so the
     // proposals that carry them are not optional here.
@@ -742,7 +782,7 @@ fn run(m: Arc<Manifest>, wasm: &[u8], beside: Option<&Path>, args: Vec<Vec<u8>>)
     config.epoch_interruption(true);
     let engine = Engine::new(&config)?;
     tick_epochs(&engine);
-    let module = compiled(&engine, wasm, beside)?;
+    let module = compiled(&engine, wasm)?;
     let world = Arc::new(World { engine: engine.clone(), module: module.clone(), manifest: m.clone() });
     let mut host = Host::new(m.callbacks.len(), args, m.grants.clone());
     host.world = Some(world);

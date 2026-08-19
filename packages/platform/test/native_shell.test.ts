@@ -26,8 +26,9 @@
 // three, which is still not a thing to put in front of every push.
 // **Heavy until 2026-08-19, and no longer.** It declared `test-lane: heavy — 989 MB and 66s`, so the
 // only test that runs the sealed system on a host with no JavaScript in it ran every few hours rather
-// than on every push. It is **794 MB and 10s** now: the JavaScript half of each comparison is a worker,
-// cargo is asked by `stat` rather than run, and the native bind wire is cached across processes. The
+// than on every push. It is **794 MB and 4.7s** now: the JavaScript half of each comparison is a worker,
+// cargo is asked by `stat` rather than run, the native bind wire is cached across processes, and
+// wasmtime's compiled artefact survives the temporary directory it was written into. The
 // Rust host is still built when its sources have moved, which is the one cost that can still spike.
 
 import { buildNative } from "../native.ts";

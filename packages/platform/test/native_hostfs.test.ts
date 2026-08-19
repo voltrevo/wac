@@ -28,9 +28,10 @@
 // to be, rather than dropped.
 // **Heavy until 2026-08-19, and no longer.** It declared `test-lane: heavy — 1145 MB and 85s`, which
 // meant it ran every few hours rather than on every push — so the two-host comparison, the thing this
-// file exists for, was not part of the gate. It is **477 MB and 15s** now, measured the same way: the
-// Deno half of every script runs in a worker rather than a process, and the native bind wire is cached
-// across processes. That is within what the regular lane already carries, so the declaration is gone
+// file exists for, was not part of the gate. It is **477 MB and 9.4s** now, measured the same way: the
+// Deno half of every script runs in a worker rather than a process, the native bind wire is cached
+// across processes, and wasmtime's compiled artefact is no longer thrown away with the temporary
+// directory it was written into. That is within what the regular lane already carries, so the declaration is gone
 // and this runs with everything else.
 
 import { buildApp } from "../build.ts";
