@@ -1389,10 +1389,26 @@ next file in the lane running whatever payload it built — a `wc`, if that is w
 `CARGO_TARGET_DIR` would avoid the clobber and forces a full rebuild of the V8 crate's dependencies,
 which is minutes. So the port would make the file worse, and it is opt-in either way.
 
-**`crypto/constanttime.test.ts` stays**: `harness/ctTrace.ts` compiles in the compiler's trace mode and
-then *instantiates and traces a wasm module* to compare branch and memory-index sequences. wac has no
-capability to instantiate wasm, so this is not blocked on a flag — it is the one shape on this list a
-wac program cannot express at all.
+**`crypto/constanttime.test.ts` stays — but not for the reason written here.** What this said was:
+`harness/ctTrace.ts` instantiates and traces a wasm module, wac has no capability to instantiate wasm,
+so it is the one shape on this list a wac program cannot express at all.
+
+**The premise is wrong**, and the same way the three above were. wac the *language* cannot instantiate
+a module; `wac covdump` is a program that does, and `cli.exec` reaches it. That is exactly how
+`test/wac/cttrace_test.wac` moved on 2026-08-19 — a traced module reuses `__cov_init`/`__cov_len`/
+`__cov_get` and `covdump` prints the array, so the journal was already reachable. Each secret becomes
+a module whose `main` builds the bytes and calls the routine, which is the trick `coverage_test.wac`
+established.
+
+**What actually blocks it is the size of one journal.** `x25519Base` produces about 1.6 million
+events per run — the number is in the TypeScript's own comment — and `covdump`'s output is one line
+per slot. Parsing 20 MB of text per run in wac, twice per comparison, is the wrong shape: the format
+is fine for the hundreds of events `cttrace_test.wac` reads and wrong for a million.
+
+So the route exists and the cost is in the wire format. The fix is a command that does the comparison
+where the modules are — `wac ctcompare <a.wasm> <b.wasm>`, answering with the first divergent site —
+rather than shipping both journals out to be compared. That is a design decision and a new command,
+which is why this is still here; it is no longer "a wac program cannot express it".
 
 **`tor/ctor_live.test.ts` is not blocked, it is unverifiable here**: there is no C tor on this machine,
 so a port could only be shown to take its skip path. Worth doing by someone who can run it, and not
