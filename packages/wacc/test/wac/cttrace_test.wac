@@ -43,10 +43,12 @@ const string ENTRY = "/t/m.wac";
  *
  * So each run asks for the room it needs. Nothing here is a claim about the default size — the two
  * claims about sizing are in `test_a_journal_too_small_says_how_large_it_needed_to_be`, which names
- * its own sizes, and the default is what `harness/ctTrace.ts` uses on every run of
- * `packages/crypto/test/constanttime.test.ts`. That consumer never pays this, because it reads the
- * live prefix through `__cov_get` rather than serialising the array: **the cost was the text dump, not
- * the journal.**
+ * its own sizes, and the default is what `packages/crypto/test/wac/constanttime_test.wac` traces with
+ * on every run. That consumer never pays this: it asks `wac tracestat`, which prints
+ * `events <n> wanted <w> slots <c>` — the journal read rather than transcribed. **The cost was the text
+ * dump, not the journal**, and `tracestat` is the live-only reader this file wanted from `covdump`.
+ * Sizing is still right here, because what these tests need from the array is its *contents* in order,
+ * which is `covdump`'s question and not `tracestat`'s.
  */
 const i32 SLOTS = 4096;
 
