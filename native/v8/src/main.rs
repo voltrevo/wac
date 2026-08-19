@@ -507,6 +507,15 @@ const SHELL: Option<&[u8]> = Some(include_bytes!(env!("WAC_SHELL_WASM")));
 #[cfg(not(wac_shell))]
 const SHELL: Option<&[u8]> = None;
 
+/// The fetcher, for `wac update`. `design/lang/0009` D10 makes it the *explicit* operation — the one
+/// thing allowed to resolve a ref and move a lock — so an ordinary `wac build` never reaches the
+/// network. It is embedded rather than built on demand for the same reason the compiler is: somebody
+/// who installed the command has a `$WAC_HOME` and no checkout to build a program from.
+#[cfg(wac_update)]
+const UPDATE: Option<&[u8]> = Some(include_bytes!(env!("WAC_UPDATE_WASM")));
+#[cfg(not(wac_update))]
+const UPDATE: Option<&[u8]> = None;
+
 /// Start V8, once. Both the seeded path and the handed-a-module path go through here.
 /// Start V8, once per process however many times this is called.
 ///
@@ -607,6 +616,45 @@ fn run_shell(rest: &[String]) -> i32 {
         env: asked.env && held.env,
         run: asked.run && held.run,
     });
+    run_as_with(&manifest, wasm, &text, as_child)
+}
+
+
+/// `wac update [project]` — resolve what the lock does not cover, fetch it, and write the lock.
+///
+/// **The one command that reaches the network, and that is the whole point of it being one.** D10:
+/// an ordinary command may create a missing lock entry and must never advance an existing one
+/// because a branch moved; `wac update` is where a ref is resolved and a pin moves. Keeping it a
+/// separate command is what lets `wac build` be offline by construction rather than by convention.
+///
+/// The grants are the payload's own rather than this command line's. Unlike `wac sh`, there is no
+/// narrowing to offer: a fetcher that may not read, write, reach the network or find `$WAC_HOME` is
+/// a fetcher that cannot do the one thing it is for, so the flags would be a choice between working
+/// and not.
+fn update_command(rest: &[String]) -> i32 {
+    let Some(wasm) = UPDATE else {
+        eprintln!("wac: this build carries no fetcher — build one into seed/update.wasm from");
+        eprintln!("     packages/wacpkg/example/fetch.wac, see native/v8/README.md");
+        return 1;
+    };
+    let Some(text) = manifest_in(wasm) else {
+        eprintln!("wac: the built-in fetcher carries no wac.manifest section");
+        return 1;
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wac: the built-in fetcher's manifest is not one — {e}");
+            return 1;
+        }
+    };
+    start_v8();
+    let argv: Vec<Vec<u8>> = if rest.is_empty() {
+        vec![b".".to_vec()]
+    } else {
+        rest.iter().map(|a| a.as_bytes().to_vec()).collect()
+    };
+    let as_child = AsChild { argv, ..Default::default() };
     run_as_with(&manifest, wasm, &text, as_child)
 }
 
@@ -1434,6 +1482,11 @@ fn main() {
             );
             eprintln!("                                      the shell, sealed unless granted");
         }
+        if UPDATE.is_some() {
+            eprintln!("       wac update [project]           resolve and fetch what wac.lock does not");
+            eprintln!("                                      cover, and write the lock — the only");
+            eprintln!("                                      command that reaches the network");
+        }
         eprintln!("       wac uninstall [--keep-cache]");
         eprintln!("                                      remove what `deno task wac:install` put under");
         eprintln!("                                      $WAC_HOME, the profile line, and nothing else");
@@ -1496,6 +1549,12 @@ fn main() {
     // message about the wrong half.
     if SHELL.is_some() && stem == "sh" {
         std::process::exit(run_shell(&args[2..]));
+    }
+    // `update` is the host's too, and needs no compiler: the fetcher is already a module. Placed
+    // beside `sh` for the same reason — a build carrying one payload and not another is a perfectly
+    // good command for what it does carry.
+    if UPDATE.is_some() && stem == "update" {
+        std::process::exit(update_command(&args[2..]));
     }
     // **The one command that needs no compiler at all**, and the only one whose reason for being
     // here is what the person typing it does *not* have. `deno task wac:uninstall` does the same

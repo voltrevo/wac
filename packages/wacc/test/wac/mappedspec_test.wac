@@ -1,6 +1,6 @@
 // A Git-mapped specifier resolves from the lockfile and the cache — `design/lang/0009` D9-D11.
 //
-// `[§wac-import-mapped-6np2rkq]`
+// `[§wac-import-mapped-6np2rkq]` `[§wac-cli-update-2rq7knp]`
 //
 // **wacc only, and that is a decision rather than a gap.** Resolving a mapping means reading a
 // manifest, a lockfile and a checkout cache; D11 says package policy does not get a second
@@ -199,6 +199,42 @@ export string test_two_mappings_at_one_commit_are_one_module(Core core, Cli cli)
     t.eqI32(r.status, 7,
             "answered " + itoa(r.status) + ", want 7 — one repository at one commit is one module " +
             "however many mappings name it: " + string.fromBytes(r.stderr));
+  }
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}
+
+export string test_update_is_the_only_command_that_reaches_the_network(Core core, Cli cli) {
+  // `[§wac-cli-update-2rq7knp]` — the half of D10 that can be checked without a network.
+  //
+  // **What this asserts is a refusal, and that is the point.** `wac update` fetching is exercised
+  // against a real repository by hand and cannot be a suite test: it needs the network, a remote
+  // that stays up, and eight megabytes. What *can* be pinned here is the property that makes the
+  // rest reproducible — a mapped import whose commit is not in the cache is a **compile error
+  // naming `update`**, not a compile that quietly goes online. A `wac build` that fetched would
+  // pass every other case in this file.
+  //
+  // The stronger version of this claim is structural rather than testable: the fetcher is a separate
+  // payload in the binary, so there is no code path from compiling to a socket at all. A test can
+  // only show the behaviour; `native/v8/build.rs` is where the absence lives.
+  T t = T.create();
+  string dir = scratch(cli, "mapped-offline");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(dir, true).wait();
+  cli.mkdir(home, true).wait();
+  project(cli, t, dir);
+  t.isTrue(lockAt(cli, dir, COMMIT), "a lock naming a commit nothing has fetched");
+
+  Exec r = wacc(cli, home, dir, "build", "src/main.wac -o " + dir + "/out");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    t.isTrue(r.status != 0, "a build with an unfetched commit succeeded: " + said);
+    t.isTrue(contains(said, "wac update"),
+             "the refusal did not name the command that fetches: " + said);
   }
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();

@@ -24,6 +24,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 | `prog.wasm`, or a stem with `prog.json` beside it | run that program: the module carries its own manifest, or the pair does |
 | `run`, `test`, `sh`, `validate`, `covdump` | this host's own commands — compiling, running, the shell, and the two that ask about a built module |
 | `uninstall` | remove what an install put under `$WAC_HOME`, and the line it added to each shell profile |
+| `update` | resolve and fetch what `wac.lock` does not cover, and write the lock |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` |
 
 A name ending in `.wasm` is a bundle *claim* whether or not the file exists, and is reported as a file
@@ -41,6 +42,7 @@ wac sh      [-c script]              # the shell, sealed unless granted
 wac validate mod.wasm […]            # whether the engine accepts each module, without running it
 wac covdump mod.wasm                 # run `main` under the counters and print each one
 wac uninstall [--keep-cache]         # remove an installed `wac`, and nothing else
+wac update  [project]                # fetch what the lock does not cover, and lock it
 ```
 
 `validate` answers the one question `WebAssembly.validate` answers on a JavaScript host and nothing in
@@ -192,6 +194,20 @@ something wrong", and one code for both makes a red suite indistinguishable from
 where nothing could run because every test wants a capability this run was not granted, or an oracle
 the host cannot supply, and a file where `--filter` matched nothing. Neither is a failure, and neither
 is silence — the summary names the files and says which.
+
+### Fetching a dependency
+
+`[§wac-cli-update-2rq7knp]` `wac update [project]` resolves every mapping the lockfile does not
+already cover, fetches it, checks the commit's tree out into `$WAC_HOME/cache/git/`, and writes
+`wac.lock`. Run twice, the second says `nothing to fetch` — a mapping that is locked stays locked
+even if its branch has moved, which is `design/lang/0009` D10 and the reason a build is reproducible.
+
+**It is the only command that reaches the network.** Not a policy the other commands follow: there is
+no code path from `wac build` to a socket, because the fetcher is a separate payload. A mapped import
+whose commit is not in the cache is a compile error naming this command, rather than a compile that
+quietly goes online.
+
+Moving a pin deliberately is what `update` is for; `wac.lock` is what makes everything else offline.
 
 ### Taking it away
 

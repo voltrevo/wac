@@ -233,6 +233,8 @@ deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \
   -o seed/wacc --allow-read --allow-write
 deno run -A packages/platform/native.ts packages/box/example/boxsh.wac \
   -o seed/sh --allow-read --allow-write --allow-net --allow-env
+deno run -A packages/platform/native.ts packages/wacpkg/example/fetch.wac \
+  -o seed/update --allow-read --allow-write --allow-net --allow-env
 cargo build --release
 
 ./target/release/wac compile packages/wacc/src/api.wac /tmp/api.wasm
@@ -527,6 +529,27 @@ read-only shell could not be talked into writing by any flag.
 
 Unlike `run`, nothing is compiled: the shell is already a module, so these are not build flags being
 passed through to a compiler. They are the world this invocation is handed.
+
+## `wac update` — the fetcher as a third payload
+
+`seed/update.wasm` is `packages/wacpkg/example/fetch.wac`, embedded the same way, and the binary
+answers `update` with it. 0.8 MB, and optional like the others.
+
+**It is the only command that reaches the network, and that is the design rather than a consequence.**
+`design/lang/0009` D10: an ordinary command may create a missing lock entry and must never advance an
+existing one because a branch moved. Keeping the fetch in its own command is what makes `wac build`
+offline *by construction* — there is no code path from compiling to a socket.
+
+```
+$ wac update                    #  resolve what wac.lock does not cover, fetch it, write the lock
+$ wac update                    →  nothing to fetch; 1 mapping(s) already locked
+$ wac build src/main.wac -o m   #  reads the checkout, never the network
+```
+
+**The grants are the payload's own, and there is nothing to narrow.** `wac sh` intersects the command
+line's flags with the payload's because a sealed shell is a useful thing; a fetcher that may not read,
+write, reach the network or find `$WAC_HOME` cannot do the one thing it is for, so a flag there would
+be a choice between working and not.
 
 ## The one line of JavaScript
 
