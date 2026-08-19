@@ -1434,6 +1434,9 @@ fn main() {
             );
             eprintln!("                                      the shell, sealed unless granted");
         }
+        eprintln!("       wac uninstall [--keep-cache]");
+        eprintln!("                                      remove what `deno task wac:install` put under");
+        eprintln!("                                      $WAC_HOME, the profile line, and nothing else");
         std::process::exit(if asked { 0 } else { code });
     }
     // A build with a shell and no compiler still answers `help` — the seed's own usage is the part
@@ -1493,6 +1496,15 @@ fn main() {
     // message about the wrong half.
     if SHELL.is_some() && stem == "sh" {
         std::process::exit(run_shell(&args[2..]));
+    }
+    // **The one command that needs no compiler at all**, and the only one whose reason for being
+    // here is what the person typing it does *not* have. `deno task wac:uninstall` does the same
+    // job, and it is a Deno program under `tools/` — so it needs this repository, and somebody who
+    // installed the command has a `$WAC_HOME` and no checkout. `design/lang/0009` D1.
+    //
+    // No `SEED.is_some()`: a build carrying only a shell can still take itself away.
+    if stem == "uninstall" {
+        std::process::exit(uninstall_command(&args[2..]));
     }
     // **The other thing a person does with a compiler.** 125 files here are wac tests — an export
     // named `test*` answering a `string`, empty for a pass — and every one of them needed a Deno to
@@ -1653,6 +1665,110 @@ fn validate_command(paths: &[String]) -> i32 {
 /// and cannot say how often.
 ///
 /// The module is instantiated with no imports, which is what an instrumented single file needs.
+/// `$WAC_HOME`, or `$HOME/.wac`, with trailing slashes off. `None` when neither is set.
+///
+/// The same rule as `wacHome` in `tools/install.ts`, and it has to be: the two commands install and
+/// remove one tree, so a disagreement about where it is means one of them works on nothing.
+fn wac_home() -> Option<String> {
+    if let Ok(set) = std::env::var("WAC_HOME") {
+        if !set.is_empty() {
+            return Some(set.trim_end_matches('/').to_string());
+        }
+    }
+    let home = std::env::var("HOME").ok()?;
+    if home.is_empty() {
+        return None;
+    }
+    Some(format!("{home}/.wac"))
+}
+
+/// Drop every line carrying the marker from a profile. Returns how many went.
+fn remove_profile_line(profile: &str) -> usize {
+    let Ok(text) = std::fs::read_to_string(profile) else { return 0 };
+    let lines: Vec<&str> = text.split('\n').collect();
+    let kept: Vec<&str> = lines.iter().copied().filter(|l| !l.contains("# wac")).collect();
+    if kept.len() == lines.len() {
+        return 0;
+    }
+    if std::fs::write(profile, kept.join("\n")).is_err() {
+        return 0;
+    }
+    lines.len() - kept.len()
+}
+
+/// **`wac uninstall` — D1's other half, and the half `deno task wac:uninstall` cannot do.**
+///
+/// It removes what the installer wrote and **nothing else**: not a manifest, not a lockfile, not a
+/// source file, not a build product. Those live in projects rather than here, and a package manager
+/// that tidies your working directory is one nobody trusts twice. `$WAC_HOME` itself goes only if it
+/// is empty afterwards — somebody may keep their own things under it, and what is left is *named*
+/// rather than passed over, so "removed" and "found nothing" are never the same line.
+///
+/// The list is duplicated from `tools/install.ts` rather than shared, because there is nothing to
+/// share it through: one is Rust in the binary and the other is TypeScript that needs the checkout.
+/// `packages/wacc/test/wac/uninstall_test.wac` is what keeps them the same list — it builds one fake
+/// install per implementation and compares what survives, so a divergence is a failing test rather
+/// than a surprise in somebody's home directory years later.
+fn uninstall_command(args: &[String]) -> i32 {
+    let mut keep_cache = false;
+    for a in args {
+        match a.as_str() {
+            "--keep-cache" => keep_cache = true,
+            _ => {
+                eprintln!("usage: wac uninstall [--keep-cache]");
+                eprintln!("wac: unknown argument {a}");
+                return 2;
+            }
+        }
+    }
+    let Some(home) = wac_home() else {
+        eprintln!("wac: neither WAC_HOME nor HOME is set, so there is nowhere to uninstall from");
+        return 2;
+    };
+    let mut went: Vec<String> = Vec::new();
+
+    // **The profile line first.** Removing the files and leaving every profile sourcing an `env`
+    // that is gone prints an error on every login, from a command the person has just removed. The
+    // task learned that by being run rather than by being tested, so the order is deliberate here.
+    if let Ok(h) = std::env::var("HOME") {
+        if !h.is_empty() {
+            let mut lines = 0;
+            for p in [".bashrc", ".zshrc", ".profile"] {
+                lines += remove_profile_line(&format!("{h}/{p}"));
+            }
+            if lines > 0 {
+                went.push(format!("{lines} profile line(s)"));
+            }
+        }
+    }
+    for name in ["bin/wac", "env", "install.json5"] {
+        if std::fs::remove_file(format!("{home}/{name}")).is_ok() {
+            went.push(name.to_string());
+        }
+    }
+    let _ = std::fs::remove_dir(format!("{home}/bin")); // only when empty, which is what we want
+    if !keep_cache && std::fs::remove_dir_all(format!("{home}/cache")).is_ok() {
+        went.push("cache".to_string());
+    }
+    if let Ok(entries) = std::fs::read_dir(&home) {
+        let left = entries.count();
+        if left == 0 {
+            let _ = std::fs::remove_dir(&home);
+        } else {
+            went.push(format!(
+                "({left} other entr{} left in {home})",
+                if left == 1 { "y" } else { "ies" }
+            ));
+        }
+    }
+    if went.is_empty() {
+        println!("nothing to remove");
+    } else {
+        println!("{}", went.join(", "));
+    }
+    0
+}
+
 fn covdump_command(rest: &[String]) -> i32 {
     let Some(path) = rest.first() else {
         eprintln!("usage: wac covdump <module.wasm>");

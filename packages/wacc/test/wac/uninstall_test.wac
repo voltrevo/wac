@@ -1,0 +1,192 @@
+// `wac uninstall` removes what an install wrote, and the same things the task removes.
+//
+// `[§wac-cli-uninstall-7kq3mvp]`
+//
+// **Two implementations of one list, and this is what keeps them one list.** `design/lang/0009` D1
+// asks for the subcommand because `deno task wac:uninstall` is a Deno program under `tools/` and
+// therefore needs this repository — which somebody who installed the command does not have. So the
+// layout is written down twice, in `tools/install.ts` and in `native/v8/src/main.rs`, with nothing
+// to share it through: one is TypeScript that needs the checkout and the other is Rust in the
+// binary. A list duplicated with no test between the copies is a list that will differ, and the
+// symptom is somebody's `~/.wac/env` surviving an uninstall and erroring on every login — which is
+// a thing that already happened once to the task, and was found by running it rather than by a test.
+//
+// Nothing here installs anything real: `install()` shells out to a release `cargo build`, which is a
+// minute of work already covered by `tools/seedFresh.test.ts`. What is worth checking is the file
+// arrangement, which is milliseconds — the same argument `tools/install.test.ts` makes, and the same
+// fake install, so that a change to the layout has one more place to be made rather than a place
+// nobody finds.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Change, Cli, Core, Exec, FileResult } from "../../../platform/src/platform.wac";
+
+/** `$WAC_HOME` as `tools/install.test.ts`'s `fakeInstall` leaves it, plus a profile that sources it. */
+string fakeInstall(Cli cli, T t, string dir) {
+  string home = dir + "/.wac";
+  cli.mkdir(home + "/bin", true).wait();
+  cli.mkdir(home + "/cache/git", true).wait();
+  cli.writeFile(home + "/bin/wac", "#!/bin/sh\n".toBytes()).wait();
+  cli.writeFile(home + "/env", "# env\n".toBytes()).wait();
+  cli.writeFile(home + "/install.json5", "{}\n".toBytes()).wait();
+  cli.writeFile(home + "/cache/git/keepme", "a fetched pack\n".toBytes()).wait();
+  // The things D1 says an uninstall must never touch, put where it is working.
+  cli.writeFile(home + "/wac.json5", "{}\n".toBytes()).wait();
+  cli.writeFile(home + "/notes.txt", "mine\n".toBytes()).wait();
+  Change p = cli.writeFile(
+      dir + "/.bashrc",
+      ("export PS1='$ '\n. \"" + home + "/env\"    # wac\nalias l=ls\n").toBytes()).wait();
+  t.isTrue(p.ok(), "could not write the fixture profile — " + p.message);
+  return home;
+}
+
+/** Whether a path is there at all — a file or a directory, since both are removed here. */
+bool present(Cli cli, string path) {
+  return cli.stat(path).wait().exists;
+}
+
+/** Every difference between what survived and what should have. */
+string[] survivors(Cli cli, string home, bool cacheKept) {
+  string[] wrong = string[8](fill: "");
+  i32 n = 0;
+  string[] ours = string[]("bin/wac", "env", "install.json5");
+  for (i32 i = 0; i < ours.len(); i++) {
+    if (present(cli, home + "/" + ours[i])) { wrong[n] = ours[i] + " survived"; n = n + 1; }
+  }
+  bool cache = present(cli, home + "/cache/git/keepme");
+  if (cache != cacheKept) {
+    wrong[n] = cacheKept ? "--keep-cache was given and the cache went anyway" : "the cache survived";
+    n = n + 1;
+  }
+  string[] theirs = string[]("wac.json5", "notes.txt");
+  for (i32 i = 0; i < theirs.len(); i++) {
+    if (!present(cli, home + "/" + theirs[i])) {
+      wrong[n] = theirs[i] + " was removed and is not ours"; n = n + 1;
+    }
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = wrong[i]; }
+  return out;
+}
+
+/** "" when the profile has our line gone and everything else kept, or what went wrong. */
+string profileState(Cli cli, string dir) {
+  FileResult f = cli.readFile(dir + "/.bashrc").wait();
+  if (!f.ok) { return "the profile itself was removed"; }
+  string text = string.fromBytes(f.bytes);
+  if (text.indexOf("# wac") >= 0) { return "the marked line survived"; }
+  if (text.indexOf("alias l=ls") < 0) { return "somebody else's line went with it"; }
+  return "";
+}
+
+/** A fresh fixture under `root`, returning its `$WAC_HOME`. */
+string fixture(Cli cli, T t, string dir) {
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  return fakeInstall(cli, t, dir);
+}
+
+export string test_the_subcommand_removes_what_an_install_wrote(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "uninstall-bin");
+  string home = fixture(cli, t, dir);
+
+  Exec r = withEnv(cli, string[]("WAC_HOME", "HOME"), string[](home, dir),
+                   binaryPath(cli), string[]("uninstall"));
+  t.isTrue(r.ran(), "the command did not run — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "wac uninstall failed: " + string.fromBytes(r.stderr));
+
+  string[] wrong = survivors(cli, home, false);
+  t.eqI32(wrong.len(), 0, joined(wrong, "; "));
+  t.eqStr(profileState(cli, dir), "", "the profile line");
+  // It has to say what it left behind, or a person cannot tell "removed" from "found nothing".
+  t.isTrue(string.fromBytes(r.stdout).indexOf("other entr") >= 0,
+           "it did not say what it left in place: " + string.fromBytes(r.stdout));
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_keep_cache_keeps_the_cache_and_nothing_else(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "uninstall-keep");
+  string home = fixture(cli, t, dir);
+
+  Exec r = withEnv(cli, string[]("WAC_HOME", "HOME"), string[](home, dir),
+                   binaryPath(cli), string[]("uninstall", "--keep-cache"));
+  t.isTrue(r.ran() && r.status == 0,
+           "wac uninstall --keep-cache failed: " + string.fromBytes(r.stderr));
+  string[] wrong = survivors(cli, home, true);
+  t.eqI32(wrong.len(), 0, joined(wrong, "; "));
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_removing_nothing_says_so_rather_than_failing(Core core, Cli cli) {
+  // Running it twice is ordinary — it is what somebody does when they are not sure whether the
+  // first one worked — so the second must not be an error, and must not read like one either.
+  T t = T.create();
+  string dir = scratch(cli, "uninstall-twice");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Exec r = withEnv(cli, string[]("WAC_HOME", "HOME"), string[](dir + "/.wac", dir),
+                   binaryPath(cli), string[]("uninstall"));
+  t.isTrue(r.ran(), "the command did not run — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "uninstalling nothing was an error: " + string.fromBytes(r.stderr));
+  t.isTrue(string.fromBytes(r.stdout).indexOf("nothing to remove") >= 0,
+           "it did not say there was nothing: " + string.fromBytes(r.stdout));
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_two_uninstallers_leave_the_same_tree(Core core, Cli cli) {
+  // **The differential, and the reason this file exists.** Two fake installs, identical; the task
+  // takes one and the subcommand takes the other; what is left has to match, entry for entry. A
+  // list that grows an item in one implementation and not in the other fails here rather than in
+  // somebody's home directory.
+  T t = T.create();
+  string root = scratch(cli, "uninstall-both");
+  cli.remove(root, true).wait();
+  cli.mkdir(root, true).wait();
+  string taskHome = fixture(cli, t, root + "/task");
+  string binHome = fixture(cli, t, root + "/bin");
+
+  Exec a = withEnv(cli, string[]("WAC_HOME", "HOME"), string[](taskHome, root + "/task"),
+                   "/bin/sh",
+                   string[]("-c", "cd " + cli.cwd().wait() + " && exec deno task --quiet wac:uninstall"));
+  t.isTrue(a.ran() && a.status == 0, "the task failed: " + string.fromBytes(a.stderr));
+  Exec b = withEnv(cli, string[]("WAC_HOME", "HOME"), string[](binHome, root + "/bin"),
+                   binaryPath(cli), string[]("uninstall"));
+  t.isTrue(b.ran() && b.status == 0, "the subcommand failed: " + string.fromBytes(b.stderr));
+  if (!a.ran() || !b.ran() || a.status != 0 || b.status != 0) { return t.report(); }
+
+  string[] left = string[]("bin/wac", "env", "install.json5", "cache/git/keepme",
+                           "wac.json5", "notes.txt");
+  string[] differ = string[left.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < left.len(); i++) {
+    bool onTask = present(cli, taskHome + "/" + left[i]);
+    bool onBin = present(cli, binHome + "/" + left[i]);
+    if (onTask != onBin) {
+      differ[n] = left[i] + ": the task " + (onTask ? "kept" : "removed") + " it and the subcommand " +
+                  (onBin ? "kept" : "removed") + " it";
+      n = n + 1;
+    }
+  }
+  string[] said = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { said[i] = differ[i]; }
+  t.eqI32(n, 0, "the two uninstallers disagree: " + joined(said, "; "));
+  t.eqStr(profileState(cli, root + "/task"), "", "task: the profile line");
+  t.eqStr(profileState(cli, root + "/bin"), "", "subcommand: the profile line");
+  // **The canary.** Every assertion above compares two answers, so two uninstallers that both did
+  // nothing agree perfectly. This says at least one thing really went.
+  t.isFalse(present(cli, binHome + "/bin/wac"), "the subcommand removed the binary at all");
+  core.log("    both uninstallers agree on " + itoa(left.len()) + " paths");
+  cli.remove(root, true).wait();
+  return t.report();
+}

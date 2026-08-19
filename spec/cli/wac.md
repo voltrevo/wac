@@ -23,6 +23,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 |---|---|
 | `prog.wasm`, or a stem with `prog.json` beside it | run that program: the module carries its own manifest, or the pair does |
 | `run`, `test`, `sh`, `validate`, `covdump` | this host's own commands — compiling, running, the shell, and the two that ask about a built module |
+| `uninstall` | remove what an install put under `$WAC_HOME`, and the line it added to each shell profile |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` |
 
 A name ending in `.wasm` is a bundle *claim* whether or not the file exists, and is reported as a file
@@ -39,6 +40,7 @@ wac test    [path…] [--ignore p,…]   # every `test*` export under each path
 wac sh      [-c script]              # the shell, sealed unless granted
 wac validate mod.wasm […]            # whether the engine accepts each module, without running it
 wac covdump mod.wasm                 # run `main` under the counters and print each one
+wac uninstall [--keep-cache]         # remove an installed `wac`, and nothing else
 ```
 
 `validate` answers the one question `WebAssembly.validate` answers on a JavaScript host and nothing in
@@ -190,6 +192,27 @@ something wrong", and one code for both makes a red suite indistinguishable from
 where nothing could run because every test wants a capability this run was not granted, or an oracle
 the host cannot supply, and a file where `--filter` matched nothing. Neither is a failure, and neither
 is silence — the summary names the files and says which.
+
+### Taking it away
+
+`[§wac-cli-uninstall-7kq3mvp]` `wac uninstall` removes the binary, the cache, the `env` file, the
+metadata and the marked line in each shell profile — and **nothing else**. Not a manifest, not a
+lockfile, not a source file, not a build product: those live in projects rather than under
+`$WAC_HOME`, and a package manager that tidies your working directory is one nobody trusts twice.
+`$WAC_HOME` itself goes only if it is empty afterwards, and whatever is left in it is named in the
+output rather than passed over, so *removed* and *found nothing* are never the same line.
+`--keep-cache` keeps `cache/git/`, which is the one part that is expensive to refill.
+
+Running it twice is ordinary — it is what somebody does when they are not sure the first one
+worked — so the second prints `nothing to remove` and exits 0. That is not a failure.
+
+It is on the binary as well as being `deno task wac:uninstall`, and the reason is the whole point of
+installing anything: the task is a Deno program under `tools/`, so it needs this repository, and
+somebody who installed the command has a `$WAC_HOME` and no checkout. Asking them to clone the
+compiler in order to remove the compiler is not an answer. The two are held to one list by
+`packages/wacc/test/wac/uninstall_test.wac`, which builds the same fake install twice and takes one
+away with each — duplicated knowledge with a test between the copies being a different thing from
+duplicated knowledge without one.
 
 ### A program that asks for nothing
 
