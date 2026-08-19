@@ -466,7 +466,7 @@ const UNREACHED: { file: string; line: number; snippet: string; why: string }[] 
   },
   {
     file: "packages/crypto/src/ed25519.wac",
-    line: 259,
+    line: 326,
     snippet: "if (byteShift + i < 64)",
     why:
       "The bound holds by construction: this shifts a 32-byte value left within a 64-byte buffer, " +
@@ -486,13 +486,59 @@ const UNREACHED: { file: string; line: number; snippet: string; why: string }[] 
   },
   {
     file: "packages/crypto/src/ed25519.wac",
-    line: 327,
+    line: 394,
     snippet: "if (s[i] != L[i])",
     why:
       "The *continue* side of the canonicity comparison: it needs a scalar that agrees with the " +
       "group order in the byte being compared and differs lower down. Reachable — a crafted " +
       "signature is exactly how it would be reached, and `S = L` is a known malleability probe — " +
       "and not driven here. Worth driving; it is a test to write rather than a branch to excuse.",
+  },
+  // **The five derivations behind ed25519's written-out constants**, added 2026-08-19 when `d`, `2d`,
+  // sqrt(-1) and the base point stopped being computed per call — signing went from 63ms to 2.6ms
+  // because `ptAdd` had been doing a modular inversion per point addition. A literal is a
+  // transcription, so the expressions stay in the source and
+  // `packages/crypto/test/wac/ed25519const_test.wac` holds the constants against them, limb by limb.
+  //
+  // They are covered — by that test, under `wac test`. This driver reaches wac through byte-level
+  // wrappers in `test/wac/curve25519_probe.wac`, and these return field elements and a `Point`, which
+  // is not a shape it can call. Adding five wrappers to make the number go green would be machinery
+  // for the report rather than for the code.
+  {
+    file: "packages/crypto/src/ed25519.wac",
+    line: 70,
+    snippet: "export i64[] curveDDerived()",
+    why:
+      "The definition of `d`, kept so the literal limbs can be checked against it. Driven by " +
+      "`test/wac/ed25519const_test.wac`, which this driver cannot call — see the note above.",
+  },
+  {
+    file: "packages/crypto/src/ed25519.wac",
+    line: 75,
+    snippet: "export i64[] curveD2Derived()",
+    why: "`2 * d` from the definition. Same as `curveDDerived` above.",
+  },
+  {
+    file: "packages/crypto/src/ed25519.wac",
+    line: 107,
+    snippet: "export i64[] sqrtM1Derived()",
+    why:
+      "sqrt(-1) from its exponent, which is the part that goes quietly wrong — an earlier version " +
+      "was one factor of two short. Checked by the same test.",
+  },
+  {
+    file: "packages/crypto/src/ed25519.wac",
+    line: 113,
+    snippet: "export i64[] sqrtM1Used()",
+    why: "The constant `recoverX` reads, exposed so the test compares what the code uses.",
+  },
+  {
+    file: "packages/crypto/src/ed25519.wac",
+    line: 153,
+    snippet: "export Point ptBaseDerived()",
+    why:
+      "The base point from y = 4/5, which exercises `recoverX` on the one point everything depends " +
+      "on — the property its comment claims, now paid for once in a test rather than per signature.",
   },
   {
     file: "packages/crypto/src/weierstrass.wac",

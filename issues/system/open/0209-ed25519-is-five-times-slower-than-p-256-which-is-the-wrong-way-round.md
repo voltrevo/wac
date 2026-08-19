@@ -6,6 +6,29 @@
 - **Kind:** performance
 - **Symptom:** no error
 
+## Answered for ed25519, 2026-08-19 — and the answer was not the curve
+
+`ptAdd` called `curveD2()`, which called `curveD()`, which computed `-121665 * inverse(121666)` — **a
+modular inversion, about 250 field multiplications, on every point addition**, where the addition's
+own arithmetic is nine. Profiled: a `ptAdd` was 287µs against ~5µs of field work, and a scalar
+multiplication 33ms.
+
+`d` and `2d` are literal limbs now, held against the derivation by
+`packages/crypto/test/wac/ed25519const_test.wac`:
+
+| | before | after |
+| --- | ---: | ---: |
+| `ed25519Sign` | 63ms | **2.6ms** |
+| `ed25519Verify` | 61ms | **2.55ms** |
+| `packages/tor/test/wac/hsdescbuild_test.wac` | 8.4s | **0.96s** |
+| `packages/crypto/test/wac/curve25519_test.wac` | 4.5s | **1.6s** |
+
+So the ordering below is no longer inverted, and what remains of this issue is the two rows it does
+not explain: **P-256 at 12ms and RSA at 117ms**. `packages/tor/test/wac/consensus_test.wac` did not
+move at all, which fits — a consensus is signed with RSA.
+
+The original measurement follows.
+
 ## Measured
 
 Twenty operations each, inside wasm under the `wac` binary, on this machine:
