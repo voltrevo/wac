@@ -64,25 +64,25 @@ string askOracle(T t, Cli cli, string[] args, string what) {
 }
 
 /** One inline program, written where both generators can be pointed at the same path. */
-struct Case {
+struct BindCase {
   string what;
   string src;
 }
 
-Case[] cases() {
-  return Case[](
-    Case("a scalar and nothing else",
+BindCase[] cases() {
+  return BindCase[](
+    BindCase("a scalar and nothing else",
          "export i32 add(i32 a, i32 b) { return a + b; }\n"),
-    Case("a string, both ways",
+    BindCase("a string, both ways",
          "export string greet(string who) { return \"hello \" + who; }\n"),
-    Case("a struct with a method",
+    BindCase("a struct with a method",
          "struct Point {\n" +
          "  i32 x;\n" +
          "  i32 y;\n" +
          "  i32 sum(const this) { return this.x + this.y; }\n" +
          "}\n" +
          "export Point origin(i32 x, i32 y) { return Point(x, y); }\n"),
-    Case("an enum built and matched",
+    BindCase("an enum built and matched",
          "enum Shape { Circle(i32 r), Square(i32 s) }\n" +
          "export i32 area(Shape s) {\n" +
          "  match (s) {\n" +
@@ -90,15 +90,15 @@ Case[] cases() {
          "    case Square(q): return q * q;\n" +
          "  }\n" +
          "}\n"),
-    Case("a numeric array in both directions",
+    BindCase("a numeric array in both directions",
          "export i32[] doubled(i32[] xs) {\n" +
          "  i32[] out = i32[xs.len()]();\n" +
          "  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i] * 2; }\n" +
          "  return out;\n" +
          "}\n"),
-    Case("an array of strings, whose elements are references",
+    BindCase("an array of strings, whose elements are references",
          "export string[] echo(string[] xs) { return xs; }\n"),
-    Case("everything at once",
+    BindCase("everything at once",
          "struct Point {\n" +
          "  i32 x;\n" +
          "  i32 y;\n" +
@@ -137,7 +137,7 @@ void compare(T t, Cli cli, string dir, string what, string entry, string[] paths
 export string test_the_two_generators_write_the_same_glue_for_each_shape(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "cases");
-  Case[] all = cases();
+  BindCase[] all = cases();
   for (i32 i = 0; i < all.len(); i++) {
     // Both generators are pointed at the *same path*, because the module's own name is in the output:
     // comparing across two names always differs and says nothing.
