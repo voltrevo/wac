@@ -5,7 +5,8 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0213](open/0213-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
+| [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
+| [0213a](open/0213a-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
 | [0212](open/0212-the-mutation-recall-floor-is-decided-by-filenames-not-by-the-checker.md) | rung 3 pairs each corpus file with `MUTATIONS[i % 7]` over an alphabetical list, so adding one file re-pairs every later one — two gate runs failed under the 97% floor for that reason | bug | wrong answer |
 | [0210](open/0210-the-weierstrass-ladder-branches-on-the-secret-scalar.md) | `jacMul` adds only when the scalar bit is set, so P-256 and P-384 leak the private key — and the ECDSA *nonce* — through control flow; measured with `ctTrace`, one divergent site at `weierstrass.wac:120`, and the README's side-channel table had no asymmetric row at all | bug | no error |
 | [0209](open/0209-ed25519-is-five-times-slower-than-p-256-which-is-the-wrong-way-round.md) | `ed25519Sign` is 63ms and `p256Sign` is 12ms — five times slower on the curve that should be faster, so it is this code rather than the mathematics; `ptDouble` is `ptAdd(p, p)` and there is no precomputed base table | performance | no error |
@@ -66,11 +67,11 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-219 issues, 165 closed.
+220 issues, 165 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
 thirteen numbers used twice and five issues written in a third header format — neither of
 which anything would have noticed, because the rows above happened to be right.
 
-219 issues, 165 closed.
+220 issues, 165 closed.

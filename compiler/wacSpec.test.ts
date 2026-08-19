@@ -8934,8 +8934,19 @@ async function checkIssueTree(dir: URL, tree: string): Promise<void> {
   for (const state of ["open", "closed"]) {
     for await (const f of Deno.readDir(new URL(`${state}/`, dir))) {
       if (!f.isFile || !f.name.endsWith(".md")) continue;
-      const num = f.name.match(/^(\d{4})-/);
-      if (!num) throw new Error(`issues/${tree}/${state}/${f.name}: name must start with a 4-digit number`);
+      // **The optional letter is what makes concurrent filing safe**, and the key below is the whole
+      // stem because of it. Three agents allocate a number by reading the directory and adding one,
+      // against checkouts minutes apart, so two who file within one pull of each other pick the same
+      // one — six times in a single session, `issues/system/0191`, and four more in another,
+      // including two renumbers colliding with each other. A suffix makes that harmless: both take
+      // 0213, one writes `0213a` and the other `0213`, and they are two issues rather than a clash.
+      // Keying on the digits alone would report exactly the case the convention exists to allow.
+      const num = f.name.match(/^(\d{4}[a-z]?)-/);
+      if (!num) {
+        throw new Error(
+          `issues/${tree}/${state}/${f.name}: name must start with a 4-digit number, ` +
+          `optionally with a one-letter suffix`);
+      }
       const where = `${state}/${f.name}`;
       const said = `issues/${tree}/${where}`;
       seen.set(num[1], [...(seen.get(num[1]) ?? []), where]);
@@ -8943,7 +8954,7 @@ async function checkIssueTree(dir: URL, tree: string): Promise<void> {
       // The heading, the directory and the Status line must agree, since each is what
       // some reader trusts.
       const body = await Deno.readTextFile(new URL(where, dir));
-      const heading = body.match(/^# (\d{4}) —/);
+      const heading = body.match(/^# (\d{4}[a-z]?) —/);
       if (!heading) {
         // **Say when it looks like an append to a filename that does not exist.** Three separate
         // commits have added a section to `0161-…-and-what-blocks-each-step.md`, which is not the
@@ -9040,7 +9051,9 @@ async function checkIssueTree(dir: URL, tree: string): Promise<void> {
 
   // Every open issue needs a row, and no closed one may keep its row — a stale row is a
   // link to a file that has moved.
-  const listed = new Set([...index.matchAll(/\| \[(\d{4})\]/g)].map((m) => m[1]));
+  // The whole stem, for the same reason the filename match takes one: `0213` and `0213a` are two
+  // issues, so a row for one is not a row for the other.
+  const listed = new Set([...index.matchAll(/\| \[(\d{4}[a-z]?)\]/g)].map((m) => m[1]));
   const missingRow = open.filter((n) => !listed.has(n)).sort();
   const staleRow = closed.filter((n) => listed.has(n)).sort();
   if (missingRow.length > 0 || staleRow.length > 0) {
