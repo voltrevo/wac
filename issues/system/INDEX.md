@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0209](open/0209-ed25519-is-five-times-slower-than-p-256-which-is-the-wrong-way-round.md) | `ed25519Sign` is 63ms and `p256Sign` is 12ms — five times slower on the curve that should be faster, so it is this code rather than the mathematics; `ptDouble` is `ptAdd(p, p)` and there is no precomputed base table | performance | no error |
 | [0205](open/0205-fifteen-of-nineteen-coverage-tasks-cannot-fail.md) | fifteen of nineteen coverage drivers end with `report(...)` and cannot fail, while the summary read "19/19 passed" — two hold a floor, two only check their own exemptions | missing feature | no error |
 | [0204](open/0204-wac-test-recompiles-every-directory-on-every-run.md) | `wac test` has no build cache, so every run recompiles every test directory — measured at 9% of the lane's biggest chunks, so worth ~8s of wall rather than the 104s it looked like | performance | no error |
 | [0203](open/0203-the-gate-fails-one-run-in-six-and-never-on-the-same-test.md) | the gate failed 5 of 28 runs in one day on five different files — two were real breakage arriving through the merge, two were fixed-wait races, one is unexplained | bug | no error |
@@ -61,7 +62,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-214 issues, 165 closed.
+215 issues, 165 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
