@@ -534,9 +534,13 @@ revealing it. It was measured for the first time on 2026-08-19 — the table abo
 asymmetric row at all until then, and its silence read as "not applicable" rather than
 "not measured", which is the failure this section exists to avoid. `issues/system/0210`.
 
-It is also most of why `p256Sign` is 12ms against `ed25519Sign`'s 63ms: `ed25519.wac`'s
-`ptMul` always adds and selects the result, and this does not. A constant-time fix here
-costs roughly the difference.
+It was also read, for a day, as most of why `p256Sign` was 12ms against `ed25519Sign`'s
+63ms. That turned out to be wrong and the correction is worth keeping: ed25519 was slow
+because `ptAdd` derived the curve constant `2d` — a modular inversion — on **every point
+addition**. Written out as limbs, signing is 2.6ms, and the ordering is the usual one
+again. What the leak buys P-256 is about half its point additions; what it costs is this
+row, and a constant-time fix here would put it near ed25519's number rather than far past
+it.
 
 **AES leaks in five places, not one.** Four are the key schedule's `SubWord` lookups
 (`aes.wac:113`–`116`) and the fifth is `SubBytes` itself (`aes.wac:149`), each indexing

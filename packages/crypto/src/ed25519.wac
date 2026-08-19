@@ -32,13 +32,47 @@ import {
 
 // ── Curve constants ───────────────────────────────────────────────────────────
 
-/** d = -121665/121666, the curve parameter. */
-i64[] curveD() {
+/**
+ * d = -121665/121666, the curve parameter, and 2d, which the addition law uses directly.
+ *
+ * **Written out rather than derived, because deriving it was a modular inversion per point addition.**
+ * The expression these limbs come from is one line — `-121665 * inverse(121666)` — and it was the body
+ * of `curveD`, called by `curveD2`, called by `ptAdd`. A `feInvert` is about 250 field multiplications;
+ * a whole point addition is nine. Measured before the change: **287µs per `ptAdd`, where its field
+ * arithmetic is about 5µs**, and a scalar multiplication — 256 additions and 256 doublings — was 33ms.
+ *
+ * wac has no mutable module-level state, so there is nowhere to memoise a derived value; a `const` of
+ * literal limbs is what the language offers, and it is what every reference implementation does.
+ *
+ * **The derivation is still the authority.** `packages/crypto/test/wac/ed25519const_test.wac` computes
+ * both from the definition and requires these to equal it, so a transcription slip fails a test rather
+ * than producing a curve nobody recognises. They also agree with ref10's published `d` and `d2`, which
+ * is a second opinion this repository did not write.
+ */
+const i64[] D_LIMBS = i64[](
+  -10913610, 13857413, -15372611, 6949391, 114729, -8787816, -6275908, -3247719, -18696448, -12055116);
+const i64[] D2_LIMBS = i64[](
+  -21827239, -5839606, -30745221, 13898782, 229458, 15978800, -12551817, -6495438, 29715968, 9444199);
+
+/**
+ * d = -121665/121666, the curve parameter. A copy, because a caller may carry it in place.
+ *
+ * Exported for one reason: the test that holds the limbs above against the derivation has to be able
+ * to read *what the code uses*, not a second copy of the same numbers. A test comparing two
+ * derivations of a constant, or two transcriptions of it, checks nothing.
+ */
+export i64[] curveD() { return feCopy(D_LIMBS); }
+
+/** 2*d, which the addition law uses directly. Exported for the same reason as `curveD`. */
+export i64[] curveD2() { return feCopy(D2_LIMBS); }
+
+/** The same two from their definition, for the test that keeps the limbs above honest. */
+export i64[] curveDDerived() {
   return feMul(feNeg(feMulSmall(feOne(), 121665)), feInvert(feMulSmall(feOne(), 121666)));
 }
 
-/** 2*d, which the addition law uses directly. */
-i64[] curveD2() { return feMulSmall(curveD(), 2); }
+/** `2 * d`, derived. */
+export i64[] curveD2Derived() { return feMulSmall(curveDDerived(), 2); }
 
 /**
  * sqrt(-1) in the field, needed when recovering x from y.

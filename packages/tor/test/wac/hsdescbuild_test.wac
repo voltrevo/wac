@@ -10,12 +10,12 @@
 // here is the part tor cannot see from outside — that the two lengths move independently, that the
 // name follows the period, and that bad inputs are refused rather than built around.
 //
-// **Why it costs what it costs: ten descriptor builds, and a build is about ten ed25519 operations.**
-// The identity certificate, a certificate pair per introduction point, the outer signature. Measured
-// 2026-08-19, inside wasm: `ed25519Sign` 63ms and `ed25519Verify` 61ms, against `p256Sign` 12ms and
-// `p256Verify` 13ms — which is the wrong way round for those two curves and is `issues/system/0209`,
-// with `0210` for the part of the difference that is P-256 not being constant-time. Nothing in this
-// file is doing more work than it needs to; the number moves when that does.
+// **This file was 8.4s, and the reason was not in it.** Ten descriptor builds, each about ten ed25519
+// operations — the identity certificate, a certificate pair per introduction point, the outer
+// signature — and signing was 63ms because `ptAdd` derived the curve constant `2d` on every point
+// addition, a modular inversion apiece. With `d` and `2d` written out, signing is **2.6ms** and this
+// file is **0.96s**. `issues/system/0209` has the numbers and what is left of them: P-256 is still
+// 12ms and RSA 117ms, and `0210` is P-256 not being constant-time.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

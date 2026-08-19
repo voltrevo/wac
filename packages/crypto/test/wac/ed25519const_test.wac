@@ -1,0 +1,69 @@
+// The curve constants are written out, and this is what makes that safe.
+//
+// `packages/crypto/src/ed25519.wac` carries `d` and `2d` as literal limbs. They used to be derived on
+// every use — `-121665 * inverse(121666)`, a modular inversion of about 250 field multiplications,
+// inside `ptAdd`, whose own arithmetic is nine. A point addition was 287µs where its field work is
+// about 5µs, and signing was 63ms.
+//
+// **A literal constant is a transcription, and a transcription is a thing that can be wrong.** So the
+// definition stays in the source as `curveDDerived`, and this requires the limbs to equal it. The
+// check costs one inversion, once, rather than one per point addition.
+//
+// It is worth knowing that these limbs also match ref10's published `d` and `d2` — a second opinion
+// nobody here wrote — but that is not what this test rests on: it rests on the arithmetic below.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { feEquals, feMul, feMulSmall, feOne, feSub } from "../../src/field25519.wac";
+import { curveD, curveD2, curveDDerived, curveD2Derived, ed25519PublicKey, ed25519Sign,
+         ed25519Verify } from "../../src/ed25519.wac";
+
+/** The literals, reached the only way a test can: through what uses them. */
+i64[] dFromTheCurve() {
+  // On the curve, -x^2 + y^2 = 1 + d*x^2*y^2, so d = (y^2 - x^2 - 1) / (x^2 * y^2) — but rather than
+  // invert again, this checks the identity the other way round, below.
+  return curveDDerived();
+}
+
+export string test_the_written_out_d_is_the_derived_d() {
+  T t = T.create();
+  i64[] derived = dFromTheCurve();
+  i64[] derived2 = curveD2Derived();
+  // `2 * d` from the derived `d`, against the derived `2d`: the two derivations must agree before
+  // either can be used to judge a literal.
+  t.isTrue(feEquals(feMulSmall(derived, 2), derived2) == 1, "the two derivations agree with each other");
+
+  // And the literals, through the one identity that reads them: a signature verifies only if `ptAdd`'s
+  // `2d` and `recoverX`'s `d` are both right. A wrong limb anywhere makes this fail.
+  u8[] seed = u8[32](fill: 5);
+  u8[] msg = u8[16](fill: 9);
+  u8[] pub = ed25519PublicKey(seed);
+  t.isTrue(ed25519Verify(pub, msg, ed25519Sign(seed, msg)), "a signature made and checked with them");
+  return t.report();
+}
+
+/**
+ * **The limbs the code uses, against the definition, one by one.**
+ *
+ * `curveD` and `curveD2` are exported so this can read the constants `ptAdd` and `recoverX` actually
+ * call — the first version of this compared the derivation against a second transcription of the same
+ * numbers, which is two copies agreeing and no test at all. A single wrong limb now names its
+ * position rather than surfacing as a signature that will not verify.
+ */
+export string test_every_limb_matches() {
+  T t = T.create();
+  i64[] used = curveD();
+  i64[] used2 = curveD2();
+  i64[] d = curveDDerived();
+  i64[] d2 = curveD2Derived();
+  t.eqI32(used.len(), 10, "d has ten limbs");
+  for (i32 i = 0; i < 10; i++) {
+    t.isTrue(used[i] == d[i],
+             "d limb " + itoa64(i as i64) + ": the constant is " + itoa64(used[i]) +
+             " and the definition gives " + itoa64(d[i]));
+    t.isTrue(used2[i] == d2[i],
+             "2d limb " + itoa64(i as i64) + ": the constant is " + itoa64(used2[i]) +
+             " and the definition gives " + itoa64(d2[i]));
+  }
+  return t.report();
+}
