@@ -1,0 +1,104 @@
+// A QUIC long header, read against a packet a real implementation actually sent.
+//
+// `design/system/0007` step 2. The fixture is **minted rather than transcribed** — `./minted.wac`
+// says why — so the header this parses is a genuine version-1 Initial from quinn on every run.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { bodyLength, dcidLen, numberAt, packetType, parseOk, scidLen, shortDcidLen, version }
+  from "./packet_probe.wac";
+import { anInitial } from "./minted.wac";
+
+u8[] prefix(u8[] b, i32 n) {
+  u8[] out = u8[n]();
+  out.copyFrom(b, 0, 0, n);
+  return out;
+}
+
+u8[] copyOf(u8[] b) { return prefix(b, b.len()); }
+
+/**
+ * A long header whose *only* fault is the connection id length.
+ *
+ * **Flipping the length byte of a real packet is not this test.** Every later field shifts, the
+ * length check catches the mess, and the assertion passes whether or not the bound exists. The
+ * host-side version was written that way first and the canary — deleting the `dlen > MAX_CID()`
+ * check — kept passing, which is the only reason this synthetic packet exists.
+ */
+u8[] withCid(i32 len) {
+  u8[] out = u8[6 + len + 4]();
+  out[0] = 0xC0;              // long header, fixed bit, Initial
+  out[4] = 1;                 // version 1
+  out[5] = len & 255;         // DCID length
+  for (i32 i = 0; i < len; i++) { out[6 + i] = 0xAB; }
+  out[6 + len] = 0;           // no source id
+  out[6 + len + 1] = 0;       // token length: a one-byte varint of 0
+  out[6 + len + 2] = 1;       // length: one byte follows
+  out[6 + len + 3] = 0;       // and here it is
+  return out;
+}
+
+export string test_a_real_initial_parses_to_the_fields_it_has(Core core, Cli cli) {
+  T t = T.create();
+  u8[] packet = anInitial(t, core, cli, "packet-parse");
+  if (packet.len() == 0) { return t.report(); }
+
+  t.isTrue(packet.len() >= 1200,
+           "an Initial is padded to at least 1200, got " + itoa(packet.len()));
+  t.isTrue(parseOk(packet, false), "the header parses");
+  t.eqI32(version(packet, false), 1, "version 1");
+  t.eqI32(packetType(packet, false), 0, "type 0 is Initial");
+
+  // quinn picks its own connection ids; what matters is that they are within the 20 bytes RFC 9000
+  // allows and that the parse agrees with the length byte the packet itself carries.
+  i32 dlen = dcidLen(packet, false);
+  t.eqI32(dlen, packet[5], "the DCID length matches the packet's own byte");
+  t.isTrue(dlen <= 20, "a connection id is at most 20 bytes, got " + itoa(dlen));
+  t.isTrue(scidLen(packet, false) <= 20, "and so is the source id");
+
+  // Everything the header claims has to be inside the datagram. This is the assertion that would
+  // catch a length read from the wrong offset, which is the failure mode that looks like corruption.
+  i32 at = numberAt(packet, false);
+  t.isTrue(at > 0 && at < packet.len(),
+           "the packet number starts inside the packet: " + itoa(at));
+  t.isTrue(at + bodyLength(packet, false) <= packet.len(),
+           "the length field does not run past what arrived");
+  return t.report();
+}
+
+export string test_a_header_that_cannot_be_read_completely_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  u8[] packet = anInitial(t, core, cli, "packet-truncated");
+  if (packet.len() == 0) { return t.report(); }
+
+  // Every truncation of a real packet, at the places a parser has a decision to make. None may
+  // answer `ok`: a partial header tells a caller nothing it may act on, and returning the fields
+  // that happened to fit is how a length gets read from somebody else's payload.
+  i32[] cuts = i32[](0, 1, 5, 6, 7, 20, 40);
+  for (i32 i = 0; i < cuts.len(); i++) {
+    t.isFalse(parseOk(prefix(packet, cuts[i]), false),
+              "a " + itoa(cuts[i]) + "-byte prefix must not parse");
+  }
+
+  // The fixed bit cleared, **with greasing not allowed**, which is what every call in this file
+  // passes. RFC 9287 makes the bit negotiable and a real server does send a zero — that is
+  // `greased_test.wac` — so this asserts the refusal is available, not that no peer greases.
+  u8[] noFixed = copyOf(packet);
+  noFixed[0] = noFixed[0] & 0xBF;
+  t.isFalse(parseOk(noFixed, false), "a cleared fixed bit is refused");
+
+  t.isTrue(parseOk(withCid(20), false), "twenty bytes is the largest id there is, and parses");
+  t.isFalse(parseOk(withCid(21), false), "twenty-one is refused — RFC 9000 §17.2");
+
+  // A short header is not a long one, and asking for its DCID with a length nobody agreed is the one
+  // thing a short header cannot answer.
+  u8[] short = copyOf(packet);
+  short[0] = short[0] & 0x7F;
+  t.isFalse(parseOk(short, false), "a short header is not a long header");
+  t.eqI32(shortDcidLen(short, 8, false), 8, "a short header's DCID is as long as the receiver says");
+  t.eqI32(shortDcidLen(short, 21, false), 0, "and never longer than 20");
+  return t.report();
+}

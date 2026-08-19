@@ -1,6 +1,6 @@
 // The bookkeeping that turns a packet into a connection.
 //
-// `stream.test.ts` drives this against a real server, which is the right oracle for "did the
+// `stream_test.wac` drives this against a real server, which is the right oracle for "did the
 // retransmission arrive" and nearly blind to everything else: from the far end of a socket, a client
 // that resent the frames once and a client that resent them four times look the same, and so do a
 // client that reused a packet number and one that did not — until the day the reuse loses the key.

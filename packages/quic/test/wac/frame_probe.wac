@@ -20,7 +20,7 @@ import { suiteAes128Gcm } from "../../../tls/src/record.wac";
 
 /** The decrypted payload, or empty if the packet did not open. */
 // `false`: this reads a *client's* first flight, and a client sets the fixed bit — nothing has been
-// negotiated when it is sent, so there is nothing to grease. `test/greased.test.ts` asserts that.
+// negotiated when it is sent, so there is nothing to grease. `test/wac/greased_test.wac` asserts that.
 u8[] payloadOf(u8[] packet) { return openClientInitial(packet, false); }
 
 /** Whether the packet decrypts at all — step 3's claim, restated so a failure here is attributable. */

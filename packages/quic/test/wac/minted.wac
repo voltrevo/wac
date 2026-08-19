@@ -1,0 +1,60 @@
+// One real Initial from another implementation, minted rather than transcribed.
+//
+// **A recorded packet in a file is a fixture of our own making**: it can go stale, and nothing
+// notices when the thing that produced it changes. `../quicclient.ts` points Deno's QUIC client at a
+// socket that never answers and hands over its first flight, which is a genuine version-1 Initial
+// from quinn on every run. That is what makes "our keys open it" a statement about quinn rather than
+// about a file somebody once saved.
+//
+// The socket is bound here and the client is aimed at it, so the datagram arrives on a socket this
+// side owns — there is no listener to speak QUIC back, and none is wanted.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string CLIENT = "packages/quic/test/quicclient.ts";
+
+/**
+ * The first datagram quinn sends, or empty with `t` already told why.
+ *
+ * The client retransmits its flight, so a caller that missed the first datagram gets another —
+ * which is why the read is retried rather than being a single bounded wait.
+ */
+export u8[] anInitial(T t, Core core, Cli cli, string name) {
+  string dir = cli.cwd().wait() + "/.cache/quic/" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) {
+    t.fail("our socket did not bind — " + sock.error);
+    return u8[0]();
+  }
+  Daemon d = start(cli, "deno run -A --unstable-net " + quoted(CLIENT) + " " + itoa(sock.port),
+                   dir + "/client.log");
+  if (!d.ok()) {
+    t.fail("the QUIC client did not start — " + d.error);
+    cli.closeSocket(sock.handle);
+    return u8[0]();
+  }
+
+  u8[] got = u8[0]();
+  for (i32 i = 0; i < 40 && got.len() == 0; i++) {
+    Pending<Datagram> p = cli.receiveFrom(sock.handle);
+    if (core.waitAny(i32[](p.id), 1000) < 0) { p.drop(p.id); continue; }
+    Datagram dg = p.wait();
+    if (dg.error == "" && dg.bytes.len() > 0) { got = dg.bytes; }
+  }
+  if (got.len() == 0) {
+    t.fail("Deno's QUIC client sent no Initial. It said: " +
+           string.fromBytes(cli.readFile(dir + "/client.log").wait().bytes));
+  }
+
+  stop(cli, d);
+  cli.closeSocket(sock.handle);
+  cli.remove(dir, true).wait();
+  return got;
+}

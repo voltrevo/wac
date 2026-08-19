@@ -152,7 +152,8 @@ capability at all.
 ## Notes
 
 **This is not the authority leaking.** `worldFor` hands a program only what it declared, and an
-ungranted `bindDatagram` is refused at the host — `echod.test.ts` asserts that. What leaks is the
+ungranted `bindDatagram` is refused at the host — `packages/platform/test/wac/echod_test.wac`
+asserts that. What leaks is the
 *code*: bindgen monomorphises `Pending<Datagram>` and emits its resolver trio, its constructor and
 its dispatchers for any module that imports `platform.wac`, because the type is mentioned in a field
 of a struct the program does use.

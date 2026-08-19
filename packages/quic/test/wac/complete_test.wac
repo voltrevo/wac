@@ -1,0 +1,160 @@
+// **A QUIC connection, completed with an implementation we did not write.**
+//
+// `design/system/0007` step 4's own words are "our client completes a handshake with Deno's server
+// and both sides agree on the traffic secrets". Everything up to here established the second half by
+// reading — the Handshake packet opens, the server's Finished verifies. This is the first half, and
+// it is the first thing in this package that had to be right in a way only the peer can judge.
+//
+// ## The oracle is `accept()` resolving
+//
+// A `QuicListener`'s `accept()` yields a connection when the handshake completes and never
+// otherwise. It cannot be argued with and it cannot half-happen: quinn either verified our Finished
+// against its own transcript, under a key derived from a Diffie-Hellman we both did, or it did not.
+// `../quicserver.ts` publishes `accepted.json` at exactly that moment.
+//
+// That makes it a sharper instrument than the tests before it. `handshake.test.ts` checks our
+// arithmetic against bytes the server sent, so a mistake made consistently in both directions could
+// survive it. Here the server does the checking, with its own code, and tells us.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Socket } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { clientFinishedPacket, flight, serverChosenId } from "./hello_probe.wac";
+import { Server, pause, receiveWithin, startServer, stopServer } from "./peer.wac";
+
+u8[] dcid() { return decoded("8394c8f03e515708"); }
+u8[] scid() { return decoded("11223344"); }
+
+/** What the exchange produced. `finished` is our second datagram, so a test can say something about it. */
+struct Result {
+  bool ok;
+  string error;
+  bool accepted;
+  u8[] finished;
+  u8[] after;
+}
+
+/**
+ * The whole exchange, with `spoil` choosing how to get the second datagram wrong on purpose.
+ *
+ * `""` sends it as built; `"wrongId"` readdresses it to a connection the server does not have;
+ * `"mangle"` flips a byte of the sealed packet.
+ */
+Result exchange(T t, Core core, Cli cli, string name, string spoil) {
+  Server s = startServer(cli, name, false);
+  if (!s.ok) { return Result(false, s.error, false, u8[0](), u8[0]()); }
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) {
+    stopServer(cli, s);
+    return Result(false, "our socket did not bind — " + sock.error, false, u8[0](), u8[0]());
+  }
+
+  cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid(), scid(), "localhost")).wait();
+  u8[] first = receiveWithin(core, cli, sock, 5000);
+  if (first.len() == 0) {
+    cli.closeSocket(sock.handle);
+    stopServer(cli, s);
+    return Result(false, "the server did not answer our first flight", false, u8[0](), u8[0]());
+  }
+
+  u8[] finished = clientFinishedPacket(first, dcid(), scid(), "localhost");
+  if (spoil == "wrongId") {
+    // The destination id sits at byte 6, after the one-byte length. Both ids here are 4 and 8 bytes,
+    // so this rewrites the field rather than assuming they are the same size.
+    finished = readdressed(finished, serverChosenId(first).len(), scid());
+  } else if (spoil == "mangle") {
+    finished = copyOf(finished);
+    finished[finished.len() - 20] = finished[finished.len() - 20] ^ 0x01;
+  }
+
+  cli.sendTo(sock.handle, "127.0.0.1", s.port, finished).wait();
+  u8[] after = receiveWithin(core, cli, sock, 2500);
+
+  // `accept()` resolves on a task of its own, so give the server a turn before reading the flag.
+  bool accepted = false;
+  for (i32 i = 0; i < 40 && !accepted; i++) {
+    accepted = s.file(cli, "accepted.json") != "";
+    if (!accepted) { pause(cli); }
+  }
+
+  cli.closeSocket(sock.handle);
+  stopServer(cli, s);
+  return Result(true, "", accepted, finished, after);
+}
+
+/** The same packet, addressed to `to` instead of the id the server chose. */
+u8[] readdressed(u8[] packet, i32 oldLen, u8[] to) {
+  i32 tailAt = 6 + oldLen;
+  u8[] out = u8[6 + to.len() + (packet.len() - tailAt)]();
+  out.copyFrom(packet, 0, 0, 5);
+  out[5] = to.len() & 255;
+  out.copyFrom(to, 0, 6, to.len());
+  out.copyFrom(packet, tailAt, 6 + to.len(), packet.len() - tailAt);
+  return out;
+}
+
+u8[] copyOf(u8[] b) {
+  u8[] out = u8[b.len()]();
+  out.copyFrom(b, 0, 0, b.len());
+  return out;
+}
+
+export string test_a_real_quic_server_completes_a_handshake_with_our_client(Core core, Cli cli) {
+  T t = T.create();
+  Result r = exchange(t, core, cli, "complete-ok", "");
+  t.isTrue(r.ok, r.error);
+  if (!r.ok) { return t.report(); }
+
+  t.isTrue(r.finished.len() > 0, "we produced a Finished packet at all");
+  t.isTrue(r.finished.len() < 200,
+           "and did not pad it — a Handshake datagram need not be 1200: " +
+           itoa(r.finished.len()) + " bytes");
+  t.neI32(r.finished[0] & 0x80, 0, "it is a long header");
+  t.eqI32((r.finished[0] >> 4) & 3, 2, "of type 2, Handshake");
+
+  t.isTrue(r.accepted,
+           "the server did not complete the handshake. Our Finished is an HMAC over the transcript " +
+           "through the server's own Finished, keyed by the *client's* handshake secret — so this " +
+           "is that transcript, that secret, the packet's destination id, or the Handshake keys it " +
+           "is sealed under. Every one of them produces a packet the server can open and will not " +
+           "accept.");
+
+  // Having completed, the server moves to the application epoch, whose packets have short headers —
+  // no version, no ids but the destination. Seeing one is how it says the handshake is behind it.
+  if (r.after.len() > 0) {
+    t.eqI32(r.after[0] & 0x80, 0, "the server's next packet is a short header");
+  }
+  return t.report();
+}
+
+export string test_a_finished_sent_to_the_wrong_connection_id_completes_nothing(Core core, Cli cli) {
+  // Identical in every other way: the same transcript, the same secret, the same keys. A connection
+  // is identified by the id its *receiver* chose, and the server told us one in its first flight —
+  // so this is addressed to a connection that does not exist.
+  T t = T.create();
+  Result r = exchange(t, core, cli, "complete-wrongid", "wrongId");
+  t.isTrue(r.ok, r.error);
+  if (!r.ok) { return t.report(); }
+  t.isFalse(r.accepted, "the server has no connection under the id we invented");
+  return t.report();
+}
+
+export string test_a_finished_the_server_did_not_compute_completes_nothing(Core core, Cli cli) {
+  // One byte of the sealed packet, twenty from the end.
+  //
+  // **The host-side version's comment claimed more than its code did.** It said "the packet still
+  // authenticates — we sealed it ourselves after the change", but the byte it flipped was in the
+  // *already-sealed* packet, so the server may refuse it at the AEAD rather than at the verify_data.
+  // Either way it does not complete, which is what is asserted; the sharper claim would need the
+  // handshake message mangled before sealing, and the probe does not expose that seam. Written as
+  // what it checks rather than as what it was said to check.
+  T t = T.create();
+  Result r = exchange(t, core, cli, "complete-mangled", "mangle");
+  t.isTrue(r.ok, r.error);
+  if (!r.ok) { return t.report(); }
+  t.isFalse(r.accepted, "a Finished the server did not agree with is not accepted");
+  return t.report();
+}

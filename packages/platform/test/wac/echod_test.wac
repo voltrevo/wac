@@ -1,0 +1,288 @@
+// A wac program that echoes datagrams, with a foreign UDP peer on the other end.
+//
+// **`datagram_test.wac` is not this test.** That one drives the handler table directly, which proves
+// the host half — the opcodes, the wire, the peer travelling with the payload. Nothing in it goes
+// through `Cli`, so it passed for a day while the three capability fields did not exist and no wac
+// program could bind a socket at all. This is the other half: a real program, built and run,
+// reaching the capability by name. `design/system/0007` step 1 asks for exactly this, "in the suite".
+//
+// The three questions, which are the three a stream socket never has to answer:
+//
+//   1. do the bytes come back exactly, including bytes that are not text and a datagram with none;
+//   2. does *one bound socket* answer two different peers — which is what a server does, and what a
+//      connected socket cannot represent;
+//   3. does the reply reach the peer that sent it, rather than one the socket remembered.
+//
+// ## Three hosts, and why the third is not decoration
+//
+// The three capability fields were wired on every host before any program could reach them, and the
+// V8 host — the primary one — never registered `Pending<Datagram>`'s resolver trio. Its
+// `receiveFrom` handler, its `build_datagram` and its `Cap::ReceiveFrom` were all correct and all
+// unreachable: the first program to call it trapped with "this program has no Pending<Datagram> for
+// receiveFrom". The wasmtime host had the registration. Nothing compared them, because nothing ran.
+//
+// ## Host-side until 2026-08-19, `issues/system/0161`
+//
+// **The peer stays foreign**, which is the one thing about this file that could not be moved. The
+// far end is `../udppeer.ts` — Deno's own datagram socket, holding two of them and nothing else. The
+// first version of this port used wac's own `bindDatagram` for the peer and said so in a comment,
+// which was the wrong way round: the comment was admitting that the test had been weakened rather
+// than keeping it. wac on both ends proves the same thing twice.
+//
+// What crosses that boundary is bytes. The cases, the payloads and every assertion are here.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
+
+const string ENTRY = "packages/platform/example/echod.wac";
+const string PEER = "packages/platform/test/udppeer.ts";
+
+string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
+string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+string scratch(Cli cli) { return cli.cwd().wait() + "/.cache/echod"; }
+
+bool haveNode(Cli cli) {
+  Exec r = cli.exec("node", string[]("--version"), u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+/** Build the example for `target`, with or without the net grant. Empty on failure. */
+string build(T t, Cli cli, string name, string target, bool net) {
+  string dir = scratch(cli);
+  cli.mkdir(dir, true).wait();
+  string out = dir + "/" + name;
+  string[] args = net
+    ? string[]("run", "-A", "packages/platform/build.ts", ENTRY, "--allow-net", "--target", target,
+               "-o", out)
+    : string[]("run", "-A", "packages/platform/build.ts", ENTRY, "--target", target, "-o", out);
+  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  t.isTrue(r.ran(), "deno ran — " + r.error);
+  t.eqI32(r.status, 0, "building the example for " + target + ": " + string.fromBytes(r.stderr));
+  return r.ran() && r.status == 0 ? out : "";
+}
+
+/**
+ * Start the server and wait until it says which port it bound.
+ *
+ * **Port 0 and then reading the line**, rather than a number chosen here: three agents share this
+ * machine and a literal port collides with whatever else is running. Waiting for the line rather
+ * than for a timeout is also the difference between a test and a coin flip — a server mid-bind is a
+ * server no datagram reaches, and unlike a stream there is no connection refused to retry on. A lost
+ * datagram is indistinguishable from a slow one, so this would hang rather than fail.
+ */
+struct Echod {
+  bool ok;
+  string error;
+  i32 port;
+  Daemon daemon;
+  string log;
+}
+
+Echod started(Cli cli, string name, string line) {
+  string log = scratch(cli) + "/" + name + ".log";
+  Daemon d = start(cli, line, log);
+  if (!d.ok()) { return Echod(false, "the echo server did not start — " + d.error, -1, d, log); }
+  for (i32 i = 0; i < 600; i++) {
+    string said = string.fromBytes(cli.readFile(log).wait().bytes);
+    i32 port = portIn(said);
+    if (port > 0) { return Echod(true, "", port, d, log); }
+    cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait();
+  }
+  return Echod(false, "the echo server never said its port: " +
+                      string.fromBytes(cli.readFile(log).wait().bytes), -1, d, log);
+}
+
+/** The port out of a `127.0.0.1:NNNNN` the program printed. */
+i32 portIn(string said) {
+  i32 at = said.indexOf("127.0.0.1:");
+  if (at < 0) { return -1; }
+  string rest = said.slice(at + 10, said.len());
+  i32 v = -1;
+  for (i32 i = 0; i < rest.len(); i++) {
+    i32 b = rest.toBytes()[i];
+    if (b < '0' || b > '9') { break; }
+    v = (v < 0 ? 0 : v) * 10 + (b - '0');
+  }
+  return v;
+}
+
+/** A running `udppeer.ts`, holding the two foreign sockets. */
+struct Peer {
+  bool ok;
+  string error;
+  string dir;
+  Daemon daemon;
+  i32 next;
+}
+
+Peer startPeer(Cli cli, string name) {
+  string dir = scratch(cli) + "/peer-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Daemon d = start(cli, "deno run -A --unstable-net " + quoted(PEER) + " " + quoted(dir),
+                   dir + "/peer.log");
+  if (!d.ok()) { return Peer(false, "the UDP peer did not start — " + d.error, dir, d, 0); }
+  for (i32 i = 0; i < 400; i++) {
+    if (cli.stat(dir + "/ready.json").wait().isFile) { return Peer(true, "", dir, d, 0); }
+    cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait();
+  }
+  return Peer(false, "the UDP peer never became ready — " +
+                     string.fromBytes(cli.readFile(dir + "/peer.log").wait().bytes), dir, d, 0);
+}
+
+/** One datagram there and back, through the foreign socket. `which` picks one of its two. */
+struct Echo {
+  bool ok;
+  u8[] bytes;
+  i32 fromPort;
+}
+
+Echo echoed(Cli cli, Peer p, i32 which, i32 port, u8[] payload) {
+  string n = itoa(p.next);
+  p.next = p.next + 1;
+  cli.writeFile(p.dir + "/send-" + n + ".json",
+                ("{\"peer\": " + itoa(which) + ", \"to\": " + itoa(port) + ", \"hex\": \"" +
+                 hexOf(payload) + "\"}").toBytes()).wait();
+  for (i32 i = 0; i < 600; i++) {
+    FileResult f = cli.readFile(p.dir + "/got-" + n + ".json").wait();
+    if (f.ok) {
+      string said = string.fromBytes(f.bytes);
+      if (said.indexOf("\"error\"") >= 0) { return Echo(false, u8[0](), 0); }
+      return Echo(true, decoded(hexIn(said)), numberIn(said, "fromPort"));
+    }
+    cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait();
+  }
+  return Echo(false, u8[0](), 0);
+}
+
+/** The whole agreement, for one host. */
+void echoAgrees(T t, Core core, Cli cli, string name, string line, string label) {
+  Echod s = started(cli, name, line);
+  t.isTrue(s.ok, s.error);
+  if (!s.ok) { stop(cli, s.daemon); return; }
+
+  Peer p = startPeer(cli, name);
+  t.isTrue(p.ok, p.error);
+  if (!p.ok) { stop(cli, s.daemon); stop(cli, p.daemon); return; }
+
+  string[] what = string[]("text", "arbitrary bytes", "empty", "a kilobyte");
+  u8[][] cases = u8[][4](fill: u8[0]());
+  cases[0] = ("hello").toBytes();
+  // Not text, and not valid UTF-8 in either order. A boundary that decoded on the way through would
+  // return replacement characters and every ASCII case would still pass — which is wac-mono 0065's
+  // bug, in the one place where a QUIC packet lives.
+  cases[1] = u8[](0xff, 0xfe, 0x00, 0x80, 0x41, 0x00);
+  // **An empty datagram is a datagram.** A UDP packet with no payload is a thing a peer can send and
+  // a thing QUIC's padding rules make meaningful; a boundary that reads empty as "nothing arrived"
+  // hangs here rather than answering.
+  cases[2] = u8[0]();
+  // Larger than one MTU's worth, so the host's receive buffer is exercised rather than assumed.
+  cases[3] = u8[1024]();
+  for (i32 i = 0; i < 1024; i++) { cases[3][i] = (i * 7) & 255; }
+
+  for (i32 i = 0; i < cases.len(); i++) {
+    Echo got = echoed(cli, p, 0, s.port, cases[i]);
+    t.isTrue(got.ok, label + ": " + what[i] + " was not answered — " + logOf(cli, s));
+    if (!got.ok) { continue; }
+    t.eqStr(hexOf(got.bytes), hexOf(cases[i]), label + ": " + what[i] + " came back different");
+    // The reply came from the socket the server bound, which is the one it received on: a datagram
+    // socket serves everybody from one port, and a reply from a fresh one is a different design that
+    // would break every NAT between two peers.
+    t.eqI32(got.fromPort, s.port, label + ": " + what[i] + " was answered from another port");
+  }
+
+  // Question 2: one bound socket, a second peer. This is the whole reason the capability exists —
+  // `connect`+`recv` could pass every case above and fail this one.
+  Echo second = echoed(cli, p, 1, s.port, ("second peer").toBytes());
+  t.isTrue(second.ok && string.fromBytes(second.bytes) == "second peer",
+           label + ": the second peer was not answered — " + logOf(cli, s));
+
+  // …and the first peer still works afterwards, addressed correctly rather than to whoever spoke
+  // most recently. A server that overwrote a remembered peer passes everything above this line.
+  Echo back = echoed(cli, p, 0, s.port, ("first again").toBytes());
+  t.isTrue(back.ok && string.fromBytes(back.bytes) == "first again",
+           label + ": the first peer stopped being answered after a second one arrived — " +
+           logOf(cli, s));
+
+  stop(cli, p.daemon);
+  stop(cli, s.daemon);
+  cli.remove(p.dir, true).wait();
+}
+
+string logOf(Cli cli, Echod s) {
+  return string.fromBytes(cli.readFile(s.log).wait().bytes);
+}
+
+/** `"key": 123` out of a flat object. */
+i32 numberIn(string json, string key) {
+  i32 at = json.indexOf("\"" + key + "\"");
+  if (at < 0) { return -1; }
+  string rest = json.slice(at + key.len() + 2, json.len());
+  i32 v = -1;
+  for (i32 i = 0; i < rest.len(); i++) {
+    i32 b = rest.toBytes()[i];
+    if (b >= '0' && b <= '9') { v = (v < 0 ? 0 : v) * 10 + (b - '0'); continue; }
+    if (v >= 0) { break; }
+  }
+  return v;
+}
+
+/** `"hex": "…"` out of a flat object. */
+string hexIn(string json) {
+  i32 at = json.indexOf("\"hex\"");
+  if (at < 0) { return ""; }
+  string rest = json.slice(at + 5, json.len());
+  i32 open = rest.indexOf("\"");
+  if (open < 0) { return ""; }
+  string body = rest.slice(open + 1, rest.len());
+  i32 close = body.indexOf("\"");
+  return close < 0 ? "" : body.slice(0, close);
+}
+
+export string test_a_wac_program_echoes_datagrams_on_the_deno_host(Core core, Cli cli) {
+  T t = T.create();
+  string out = build(t, cli, "echod-deno", "deno", true);
+  if (out == "") { return t.report(); }
+  echoAgrees(t, core, cli, "deno", quoted(out) + " 0", "deno");
+  return t.report();
+}
+
+export string test_and_the_same_program_on_node_answers_the_same_way(Core core, Cli cli) {
+  // The Node host has its own datagram map and its own shim, edited alongside the Deno one and never
+  // reached by a program until this existed.
+  T t = T.create();
+  if (!haveNode(cli)) { return t.report(); }
+  string out = build(t, cli, "echod-node", "node", true);
+  if (out == "") { return t.report(); }
+  echoAgrees(t, core, cli, "node", "node " + quoted(out) + " 0", "node");
+  return t.report();
+}
+
+export string test_and_on_the_host_with_no_javascript(Core core, Cli cli) {
+  // `run <entry.wac>` rather than a built artefact: the V8 host compiles and runs in one step, and
+  // that is the path a person takes. The grant is the same `--allow-net` every other host asks for.
+  T t = T.create();
+  echoAgrees(t, core, cli, "wacv8",
+             quoted(wacBinary(cli)) + " run --allow-net " + quoted(ENTRY) + " 0", "wacv8");
+  return t.report();
+}
+
+export string test_an_ungranted_program_cannot_bind_a_datagram_socket(Core core, Cli cli) {
+  // The grant is checked at `bindDatagram`, not at `sendTo`, so a program with no `--allow-net`
+  // never gets a handle to send from. Built without the grant, the same source must fail to bind and
+  // say so — a capability that refused quietly would look exactly like a lost datagram.
+  T t = T.create();
+  string out = build(t, cli, "echod-nogrant", "deno", false);
+  if (out == "") { return t.report(); }
+  Exec r = cli.exec(out, string[]("0"), u8[0]()).wait();
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.eqI32(r.status, 1, "an ungranted bind should fail: " + said);
+  t.isTrue(contains(said, "cannot bind"),
+           "an ungranted bind should say why rather than hanging: " + said);
+  return t.report();
+}

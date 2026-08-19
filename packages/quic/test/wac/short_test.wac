@@ -1,4 +1,4 @@
-// Sealing a short header and opening it again — the deterministic half of `stream.test.ts`.
+// Sealing a short header and opening it again — the deterministic half of `stream_test.wac`.
 //
 // That test puts a 1-RTT packet on the wire and a real QUIC server reads it, which is the right
 // oracle and is **not reliable for one particular bug**. A short header's first byte is protected

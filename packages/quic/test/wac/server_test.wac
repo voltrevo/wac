@@ -1,0 +1,337 @@
+// **The mirror: Deno's QUIC client against a server written here.**
+//
+// `design/system/0007` step 6. Every other test in this package has our client and somebody else's
+// server; this is the roles swapped, and it is the arrangement that catches a mistake made
+// consistently in both directions. Our client and our server could agree about a wrong transcript, a
+// wrong label, or a wrong parameter, and every other test would pass.
+//
+// ## The oracle, and why it is a hard one
+//
+// `Deno.connectQuic` resolves when the handshake completes and never otherwise. Underneath is quinn
+// and rustls, which means our ServerHello has to parse, our key share has to produce the same
+// secret, our EncryptedExtensions has to carry transport parameters including the
+// `original_destination_connection_id` a client checks, our Certificate has to chain to a root the
+// client was given, our CertificateVerify has to be a valid RSA-PSS signature over the transcript,
+// and our Finished has to be an HMAC the client recomputes. Any one of those wrong is a connection
+// that does not happen. `../quicclient.ts` is that client.
+//
+// `--ca` is what makes it runnable offline: the client is told to trust a CA generated here, so
+// nothing needs the internet or a real name. It dials **127.0.0.1** rather than `localhost` —
+// measured, not assumed: the same certificate against Deno's own QUIC server fails the name check
+// for `localhost` and passes for the address, which is why the leaf carries an IP SAN.
+//
+// ## What this does not establish
+//
+// One handshake, on loopback, with no Retry and no address validation. A server that answers every
+// packet immediately is the shape that amplifies an attack at a spoofed address, and `server.wac`
+// says so where somebody might otherwise take this test as a licence.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, Exec, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
+import { answer, done, flight, readable, streamBytes } from "./srv_probe.wac";
+import { readIfPresent, pause } from "./peer.wac";
+
+const string CLIENT = "packages/quic/test/quicclient.ts";
+
+u8[] scid() { return decoded("a1b2c3d4"); }
+
+/** Fixed randomness, so a failing run is the same failing run twice. */
+u8[] ramp(i32 n, i32 mul, i32 add) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
+  return out;
+}
+u8[] scalar() { return ramp(32, 7, 11); }
+u8[] random() { return ramp(32, 5, 23); }
+
+/**
+ * An RSA identity for `127.0.0.1`: a CA, and a leaf it signed.
+ *
+ * Generated rather than taken from `packages/tls/test/data`, because the shipped leaf's key is
+ * **ed25519** and this server signs RSA-PSS — the scheme that matters for interoperability here,
+ * since a Tor relay's link certificate is RSA.
+ */
+struct Identity {
+  bool ok;
+  string error;
+  string dir;
+  u8[] certDer;
+  u8[] n;
+  u8[] e;
+  u8[] d;
+}
+
+bool openssl(Cli cli, string[] args) {
+  Exec r = cli.exec("openssl", args, u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+Identity identity(Cli cli, string name) {
+  string dir = cli.cwd().wait() + "/.cache/quic/" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  // **A CA and a leaf, not one self-signed certificate.** The first version used `req -x509` for
+  // both roles at once and rustls refused it: `CaUsedAsEndEntity`. A certificate with
+  // `basicConstraints CA:TRUE` may sign others and may not be the end of a chain, and a client that
+  // let one be both would accept any certificate any CA had ever issued as that CA's own identity.
+  if (!openssl(cli, string[]("req", "-x509", "-newkey", "rsa:2048", "-keyout", dir + "/ca.key",
+                             "-out", dir + "/ca.pem", "-days", "1", "-nodes", "-subj",
+                             "/CN=wac-quic-ca", "-addext",
+                             "basicConstraints=critical,CA:TRUE"))) {
+    return Identity(false, "openssl could not make a CA", dir, u8[0](), u8[0](), u8[0](), u8[0]());
+  }
+  if (!openssl(cli, string[]("req", "-newkey", "rsa:2048", "-keyout", dir + "/leaf.key", "-out",
+                             dir + "/leaf.csr", "-nodes", "-subj", "/CN=wac.test"))) {
+    return Identity(false, "openssl could not make a leaf key", dir, u8[0](), u8[0](), u8[0](),
+                    u8[0]());
+  }
+  // The IP SAN is what lets the client dial an address.
+  cli.writeFile(dir + "/ext.cnf",
+                ("subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\n").toBytes()).wait();
+  if (!openssl(cli, string[]("x509", "-req", "-in", dir + "/leaf.csr", "-CA", dir + "/ca.pem",
+                             "-CAkey", dir + "/ca.key", "-CAcreateserial", "-out", dir + "/leaf.pem",
+                             "-days", "1", "-extfile", dir + "/ext.cnf"))) {
+    return Identity(false, "openssl could not sign the leaf", dir, u8[0](), u8[0](), u8[0](),
+                    u8[0]());
+  }
+
+  Exec der = cli.exec("openssl", string[]("x509", "-in", dir + "/leaf.pem", "-outform", "DER"),
+                      u8[0]()).wait();
+  if (!der.ran() || der.status != 0) {
+    return Identity(false, "openssl could not write DER", dir, u8[0](), u8[0](), u8[0](), u8[0]());
+  }
+
+  // The modulus and private exponent, out of `openssl rsa -noout -text`. That is the route
+  // `packages/tls`'s RSA interop test already takes: `crypto.subtle` will not import this key, and
+  // parsing the DER with our own ASN.1 would put our code on both sides of a test whose whole
+  // purpose is that it is not.
+  Exec text = cli.exec("openssl", string[]("rsa", "-in", dir + "/leaf.key", "-noout", "-text"),
+                       u8[0]()).wait();
+  if (!text.ran() || text.status != 0) {
+    return Identity(false, "openssl could not print the key", dir, u8[0](), u8[0](), u8[0](),
+                    u8[0]());
+  }
+  string said = string.fromBytes(text.stdout);
+  u8[] n = fieldOf(said, "modulus:");
+  u8[] d = fieldOf(said, "privateExponent:");
+  if (n.len() == 0 || d.len() == 0) {
+    return Identity(false, "no modulus or privateExponent in the key", dir, u8[0](), u8[0](),
+                    u8[0](), u8[0]());
+  }
+  return Identity(true, "", dir, der.stdout, n, decoded("010001"), d);
+}
+
+/**
+ * One `name:`-headed block of colon-separated hex from `openssl rsa -text`.
+ *
+ * The block runs to the next line that is not indented hex. OpenSSL prints a leading zero on
+ * positive integers whose top bit is set, and it is dropped — a modulus with an extra zero byte is a
+ * different number to everything that consumes it here.
+ */
+u8[] fieldOf(string text, string name) {
+  i32 at = text.indexOf(name);
+  if (at < 0) { return u8[0](); }
+  string rest = text.slice(at + name.len(), text.len());
+  Buf out = Buf.create();
+  i32 nibble = -1;
+  for (i32 i = 0; i < rest.len(); i++) {
+    string c = rest.slice(i, i + 1);
+    if (c == ":" || c == "\n" || c == "\r" || c == " " || c == "\t") { continue; }
+    i32 v = hexValue(c);
+    if (v < 0) { break; }                       // the next field's name
+    if (nibble < 0) { nibble = v; continue; }
+    out.push(nibble * 16 + v);
+    nibble = -1;
+  }
+  u8[] bytes = out.take();
+  if (bytes.len() > 1 && bytes[0] == 0) {
+    u8[] trimmed = u8[bytes.len() - 1]();
+    trimmed.copyFrom(bytes, 1, 0, bytes.len() - 1);
+    return trimmed;
+  }
+  return bytes;
+}
+
+i32 hexValue(string c) {
+  if (c >= "0" && c <= "9") { return c.toBytes()[0] - '0'; }
+  if (c >= "a" && c <= "f") { return c.toBytes()[0] - 'a' + 10; }
+  return -1;
+}
+
+/** The next datagram and its sender, bounded. */
+struct Got {
+  bool ok;
+  u8[] bytes;
+  string peer;
+  i32 port;
+}
+
+Got receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
+  Pending<Datagram> p = cli.receiveFrom(sock.handle);
+  if (core.waitAny(i32[](p.id), ms) < 0) {
+    p.drop(p.id);
+    return Got(false, u8[0](), "", 0);
+  }
+  Datagram d = p.wait();
+  if (d.error != "") { return Got(false, u8[0](), "", 0); }
+  return Got(true, d.bytes, d.peer, d.port);
+}
+
+Daemon dial(Cli cli, Identity id, i32 port, string say) {
+  string line = "deno run -A --unstable-net " + quoted(CLIENT) + " " + itoa(port) +
+                " --dir " + quoted(id.dir) + " --ca " + quoted(id.dir + "/ca.pem") +
+                (say == "" ? "" : " --say " + quoted(say));
+  return start(cli, line, id.dir + "/client.log");
+}
+
+export string test_a_real_quic_client_completes_a_handshake_with_our_server(Core core, Cli cli) {
+  T t = T.create();
+  Identity id = identity(cli, "srv-handshake");
+  t.isTrue(id.ok, id.error);
+  if (!id.ok) { return t.report(); }
+
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
+  if (sock.handle < 0) { return t.report(); }
+
+  Daemon client = dial(cli, id, sock.port, "");
+  t.isTrue(client.ok(), "the client did not start — " + client.error);
+  if (!client.ok()) { cli.closeSocket(sock.handle); return t.report(); }
+
+  // The server loop: one datagram in, one flight out. It runs for the length of the connect attempt
+  // and then stops, which is all a single handshake needs.
+  bool readOk = false;
+  bool answered = false;
+  bool connected = false;
+  for (i32 i = 0; i < 12 && !connected; i++) {
+    Got got = receiveWithin(core, cli, sock, 4000);
+    if (got.ok) {
+      if (readable(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), got.bytes)) {
+        readOk = true;
+      }
+      u8[] out = flight(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), got.bytes);
+      if (out.len() > 0) {
+        answered = true;
+        cli.sendTo(sock.handle, got.peer, got.port, out).wait();
+      }
+    }
+    connected = readIfPresent(cli, id.dir + "/connected.json") != "";
+  }
+
+  t.isTrue(readOk, "the server did not read the client's Initial");
+  t.isTrue(answered, "the server produced no flight");
+  t.isTrue(connected,
+           "the client did not complete the handshake.\n  the server read the client's Initial: " +
+           (readOk ? "yes" : "no") + "\n  the server produced a flight:         " +
+           (answered ? "yes" : "no") + "\n  If it read the Initial and produced nothing, the " +
+           "ClientHello parsed and something after it did not — the key share, or the RSA " +
+           "signature. If it produced a flight and the client refused it, the flight is wrong: the " +
+           "ServerHello, the transport parameters (a client checks " +
+           "original_destination_connection_id), the certificate chain, the CertificateVerify " +
+           "signature, or the Finished. The client said:\n" +
+           readIfPresent(cli, id.dir + "/client.log"));
+
+  stop(cli, client);
+  cli.closeSocket(sock.handle);
+  cli.remove(id.dir, true).wait();
+  return t.report();
+}
+
+export string test_and_a_real_client_opens_a_stream_on_it(Core core, Cli cli) {
+  // **Step 5's test with the roles swapped.** The handshake test above proves the flight. This
+  // proves the epoch after it, which is a different set of keys taken at a different point in the
+  // transcript — through *our* Finished — and a different packet shape, since 1-RTT packets have
+  // short headers with no length and an id length only the receiver knows.
+  //
+  // The server loop is deliberately dumb: it answers the first datagram with a flight and every
+  // later one it can open as a stream. There is no connection state on this side — `connection.wac`
+  // is what counts packets, and a server wants one of those per client, which is the next thing
+  // rather than this one.
+  T t = T.create();
+  Identity id = identity(cli, "srv-stream");
+  t.isTrue(id.ok, id.error);
+  if (!id.ok) { return t.report(); }
+
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
+  if (sock.handle < 0) { return t.report(); }
+
+  Daemon client = dial(cli, id, sock.port, "hello server");
+  t.isTrue(client.ok(), "the client did not start — " + client.error);
+  if (!client.ok()) { cli.closeSocket(sock.handle); return t.report(); }
+
+  u8[] first = u8[0]();
+  string heard = "";
+  i32 number = 0;
+  string reply = "";
+  for (i32 i = 0; i < 60 && reply == ""; i++) {
+    Got got = receiveWithin(core, cli, sock, 2000);
+    if (got.ok) {
+      if (first.len() == 0) {
+        // The client's Initial. Answer it, and remember it: every key on this side derives from the
+        // handshake it started, and `Server.of` is a pure function of that one datagram.
+        first = got.bytes;
+        u8[] out = flight(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), first);
+        if (out.len() > 0) { cli.sendTo(sock.handle, got.peer, got.port, out).wait(); }
+        // HANDSHAKE_DONE, which is what lets a client consider the handshake confirmed.
+        u8[] hd = done(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), first, number);
+        number = number + 1;
+        if (hd.len() > 0) { cli.sendTo(sock.handle, got.peer, got.port, hd).wait(); }
+      } else if ((got.bytes[0] & 0x80) == 0) {   // a long header is still handshake traffic
+        u8[] bytes = streamBytes(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), first,
+                                 got.bytes, 0);
+        if (bytes.len() > 0) {
+          heard = string.fromBytes(bytes);
+          u8[] out = answer(id.certDer, id.n, id.e, id.d, scalar(), random(), scid(), first, 0,
+                            upper(heard).toBytes(), number);
+          number = number + 1;
+          if (out.len() > 0) { cli.sendTo(sock.handle, got.peer, got.port, out).wait(); }
+        }
+      }
+    }
+    reply = readIfPresent(cli, id.dir + "/heard.json");
+  }
+
+  t.eqStr(heard, "hello server", "the server read what the client sent");
+  t.isTrue(reply != "",
+           "the client never read an answer. It said:\n" +
+           readIfPresent(cli, id.dir + "/client.log"));
+  if (reply != "") {
+    t.eqStr(string.fromBytes(decoded(hexIn(reply))), "HELLO SERVER",
+            "and the client read what the server said back");
+  }
+
+  stop(cli, client);
+  cli.closeSocket(sock.handle);
+  cli.remove(id.dir, true).wait();
+  return t.report();
+}
+
+/** `"hex": "…"` out of a flat object. */
+string hexIn(string json) {
+  i32 at = json.indexOf("\"hex\"");
+  if (at < 0) { return ""; }
+  string rest = json.slice(at + 5, json.len());
+  i32 open = rest.indexOf("\"");
+  if (open < 0) { return ""; }
+  string body = rest.slice(open + 1, rest.len());
+  i32 close = body.indexOf("\"");
+  return close < 0 ? "" : body.slice(0, close);
+}
+
+string upper(string s) {
+  string out = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    out = out + (c >= "a" && c <= "z" ? string.fromBytes(u8[](c.toBytes()[0] - 32)) : c);
+  }
+  return out;
+}

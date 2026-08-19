@@ -1,0 +1,149 @@
+// A packet we built, accepted by an implementation we did not write.
+//
+// `design/system/0007` step 4, the writing half. Everything before this **read** — quinn's Initial
+// decrypts, its frames walk, its ClientHello parses. Nothing had produced a packet.
+//
+// The ClientHello inside is borrowed rather than written: quinn's own, lifted out of a minted
+// Initial and resealed into a packet of ours. That isolates the packet layer, which is the point of
+// this file — a server answering means our header, our length field, our padding, our nonce, our
+// header protection and our AEAD are all right, and says nothing about a TLS message we did not
+// compose. `hello_test.wac` is the file where the hello is ours too.
+//
+// What this cannot do is *finish* a handshake: the key share belongs to a quinn client that has
+// since gone away, so the ServerHello is as far as it goes.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { closeCodeIn, closeReasonIn, cryptoOf, handshakeType, handshakeTypeIn, kindsIn, streamLen }
+  from "./frame_probe.wac";
+import { scidOf } from "./packet_probe.wac";
+import { open, openServer, seal } from "./initial_probe.wac";
+import { anInitial } from "./minted.wac";
+import { ask } from "./peer.wac";
+
+/** The frame kinds `kindsIn` reports, as the bits it sets. */
+const i32 HAS_ACK = 4;
+const i32 HAS_CRYPTO = 8;
+const i32 HAS_CLOSE = 16;
+
+/** The destination id we invent. A client picks this before it knows anything about the server. */
+u8[] dcid() { return decoded("8394c8f03e515708"); }
+
+/** quinn's ClientHello, and the source id its transport parameters name. */
+struct Borrowed {
+  bool ok;
+  u8[] hello;
+  u8[] scid;
+}
+
+Borrowed aClientHello(T t, Core core, Cli cli, string name) {
+  u8[] packet = anInitial(t, core, cli, name);
+  if (packet.len() == 0) { return Borrowed(false, u8[0](), u8[0]()); }
+  t.eqI32(handshakeType(packet), 1, "the fixture is a ClientHello");
+  return Borrowed(true, cryptoOf(packet), scidOf(packet, false));
+}
+
+export string test_a_sealed_initial_is_1200_bytes_and_opens_with_our_own_reader(Core core, Cli cli) {
+  T t = T.create();
+  Borrowed b = aClientHello(t, core, cli, "seal-mint1");
+  if (!b.ok) { return t.report(); }
+  u8[] packet = seal(dcid(), b.scid, b.hello, 0);
+
+  t.eqI32(packet.len(), 1200, "padded to the anti-amplification minimum");
+  t.neI32(packet[0] & 0x80, 0, "a long header");
+  t.neI32(packet[0] & 0x40, 0,
+          "with the fixed bit set — a client has negotiated nothing, so there is nothing to grease");
+
+  // Reading back what we wrote is the cheap check, not the real one: both halves share every key, so
+  // agreeing proves they agree and nothing more. It is here to make a failure attributable — when
+  // the server goes silent, this says whether the packet was malformed or merely unacceptable.
+  t.isTrue(open(packet, false).len() > 0, "our own reader opens it");
+  return t.report();
+}
+
+export string test_a_real_quic_server_accepts_a_packet_we_built(Core core, Cli cli) {
+  T t = T.create();
+  Borrowed b = aClientHello(t, core, cli, "seal-mint2");
+  if (!b.ok) { return t.report(); }
+  u8[] packet = seal(dcid(), b.scid, b.hello, 0);
+
+  u8[] reply = ask(t, core, cli, "seal-accept", packet, 5000);
+  t.isTrue(reply.len() > 0,
+           "the server did not answer our Initial. It drops what it cannot open in silence, so " +
+           "this is the AEAD, the nonce, the header protection, the length field or the padding — " +
+           "the packet opens with our own reader either way, which is why that is not the check.");
+  if (reply.len() == 0) { return t.report(); }
+
+  // The reply is addressed to the source id we sent from, which says the server read our header
+  // rather than answering out of a cache: RFC 9000 §17.2 puts the destination id length at byte 5.
+  t.eqI32(reply[5], b.scid.len(), "the reply's destination id is as long as the source we sent");
+  for (i32 i = 0; i < b.scid.len(); i++) {
+    t.eqI32(reply[6 + i], b.scid[i], "byte " + itoa(i) + " of the reply's destination id is ours");
+  }
+
+  // **Both directions, now.** The server's Initial is protected with keys derived from the id *we*
+  // invented — a server's packet does not carry it, which is why `openServer` takes it — so opening
+  // this is the mirror of everything above and needed the same salt, labels, sample offset and AAD.
+  u8[] payload = openServer(reply, dcid(), true);
+  t.isTrue(payload.len() > 0, "the server's Initial opens under the client's original id");
+  if (payload.len() == 0) { return t.report(); }
+
+  i32 kinds = kindsIn(payload);
+  t.neI32(kinds & HAS_ACK, 0, "it acknowledges the packet we sent");
+  t.neI32(kinds & HAS_CRYPTO, 0, "and carries handshake bytes");
+  t.eqI32(kinds & HAS_CLOSE, 0, "and is not a refusal");
+
+  // 2 is `server_hello`. This is the answer to the ClientHello we relayed, which means quinn read
+  // our framing, our padding and our length field and found a whole TLS message where we said.
+  t.eqI32(handshakeTypeIn(payload), 2, "the handshake message is a ServerHello");
+  t.isTrue(streamLen(payload) > 30, "a ServerHello is tens of bytes: " + itoa(streamLen(payload)));
+  return t.report();
+}
+
+export string test_a_source_id_the_borrowed_clienthello_does_not_name_is_refused(Core core, Cli cli) {
+  // **This is what makes the test above mean something.** The server validated a field of the
+  // handshake we relayed, so it did not merely echo: it opened our packet, read the frames, parsed
+  // the ClientHello and compared it against our header.
+  T t = T.create();
+  Borrowed b = aClientHello(t, core, cli, "seal-mint3");
+  if (!b.ok) { return t.report(); }
+  // Ours, not quinn's. Everything else about the packet is what the test above sends.
+  u8[] packet = seal(dcid(), decoded("11223344"), b.hello, 0);
+
+  u8[] reply = ask(t, core, cli, "seal-refuse", packet, 5000);
+  t.isTrue(reply.len() > 0, "the server did not answer at all, so nothing was validated");
+  if (reply.len() == 0) { return t.report(); }
+
+  u8[] payload = openServer(reply, dcid(), true);
+  t.isTrue(payload.len() > 0, "the refusal is itself a protected Initial, and it opens");
+  t.neI32(kindsIn(payload) & HAS_CLOSE, 0, "and it is a CONNECTION_CLOSE");
+
+  // 0x08 is TRANSPORT_PARAMETER_ERROR. The reason quinn writes is "CID authentication failure" —
+  // not asserted, because it is prose a peer may reword, where the code is the protocol's own word.
+  t.eqI32(closeCodeIn(payload), 0x08,
+          "TRANSPORT_PARAMETER_ERROR, reason " + closeReasonIn(payload));
+  return t.report();
+}
+
+export string test_a_packet_that_fails_authentication_gets_silence(Core core, Cli cli) {
+  // The rest of what makes a reply mean something.
+  T t = T.create();
+  Borrowed b = aClientHello(t, core, cli, "seal-mint4");
+  if (!b.ok) { return t.report(); }
+  u8[] packet = seal(dcid(), b.scid, b.hello, 0);
+
+  // One bit of the authentication tag. Everything else — header, length, padding, connection ids —
+  // is exactly the packet the server answered above, so a reply here would mean the oracle reads
+  // something other than the AEAD and the acceptance test proves less than it claims.
+  u8[] tampered = u8[packet.len()]();
+  tampered.copyFrom(packet, 0, 0, packet.len());
+  tampered[tampered.len() - 1] = tampered[tampered.len() - 1] ^ 0x01;
+
+  t.eqI32(ask(t, core, cli, "seal-silence", tampered, 2000).len(), 0,
+          "a packet that fails authentication is answered with nothing at all");
+  return t.report();
+}

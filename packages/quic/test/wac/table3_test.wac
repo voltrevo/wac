@@ -1,7 +1,7 @@
 // **RFC 9000 table 3, both columns.** Every frame type, at its real length, and only in the packet
 // types that may carry it.
 //
-// `frame.test.ts` covers the five an Initial may hold, against a real Initial from quinn. That is the
+// `frame_test.wac` covers the five an Initial may hold, against a real Initial from quinn. That is the
 // right oracle for those and there is no equivalent for the rest: getting a server to send a
 // STREAMS_BLOCKED on demand is a test about provoking quinn, not about reading a frame. So these are
 // hand-encoded from §19, which makes the RFC the oracle directly — each case is the encoding written

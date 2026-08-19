@@ -6,7 +6,7 @@
 // record up. The first test here is the network and a document fetched over a circuit; the second is
 // the onion service on that same network.
 //
-// This is the file `network.test.ts` deliberately is not. That one tests the launcher against
+// This is the file `test/wac/network_test.wac` deliberately is not. That one tests the launcher against
 // `waiter` and `wc`, so it fails when the *launcher* is wrong; this one fails when anything in the
 // stack is. Both are wanted and they are different questions, which is why they are different files.
 //

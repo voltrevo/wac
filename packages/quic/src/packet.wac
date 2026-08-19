@@ -91,7 +91,7 @@ LongHeader no() {
  * packet. RFC 9287 then makes it negotiable: an endpoint that advertises `grease_quic_bit` is
  * telling its peer it may send zero there, precisely so that middleboxes cannot use the bit to
  * recognise QUIC. **A real Deno QUIC server greases about two replies in three** — see
- * `test/greased.test.ts`, which is why this parameter exists rather than a comment claiming no
+ * `test/wac/greased_test.wac`, which is why this parameter exists rather than a comment claiming no
  * version-1 peer sends a zero. One does.
  *
  * Whether a zero is acceptable is therefore connection state — did *we* advertise the parameter? —
