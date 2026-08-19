@@ -133,6 +133,14 @@ export Ran runEmitted(Cli cli, string[] paths, string[] sources, string entry,
   // thing for a test program to provoke — the first one this met was "these types share no
   // ancestor, so this cast always traps", which is the whole point of the program that raised it.
   // Deciding on the string's emptiness refused it as a compile failure.
+  //
+  // **And it runs before the emit, which costs a front end per case and has to.** Emitting first and
+  // diagnosing only when nothing came out would save that — a corpus of programs written to compile
+  // never takes the failure path — and it is wrong: **the emitter answers a whole module for a
+  // program the checker refuses.** `runemitted_test.wac`'s "a program that does not compile is
+  // reported rather than run" is precisely that case, and it fails the moment this is reordered. The
+  // checker is what decides whether a program compiles; the emitter will happily build one that does
+  // not.
   string diagnostics = diagnoseGraph(paths, sources, entry);
   if (wireHasErrors(diagnostics)) { return notRun(entry + " did not compile: " + diagnostics); }
 

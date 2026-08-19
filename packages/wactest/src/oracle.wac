@@ -18,7 +18,7 @@
 // Anything else is a harness problem and is reported as one.
 
 import { T } from "./assert.wac";
-import { Cli, Exec } from "../../platform/src/platform.wac";
+import { Cli, Exec, Stat, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 
@@ -106,7 +106,12 @@ export struct Answers {
 }
 
 export Answers ask(T t, Cli cli, string program, string[] args, Lines lines, string what) {
-  Exec r = cli.exec(program, args, lines.buf.take()).wait();
+  return askBytes(t, cli, program, args, lines.buf.take(), lines.n, what);
+}
+
+/** `ask`, with the payload already taken — what `askCached` needs so it can hash before it sends. */
+Answers askBytes(T t, Cli cli, string program, string[] args, u8[] payload, i32 n, string what) {
+  Exec r = cli.exec(program, args, payload).wait();
   t.isTrue(r.ran(), what + ": the oracle ran — " + r.error);
   if (!r.ran()) { return Answers(false, string[0](fill: "")); }
   t.eqI32(r.status, 0, what + ": the oracle exited zero — " + string.fromBytes(r.stderr));
@@ -136,12 +141,119 @@ export Answers ask(T t, Cli cli, string program, string[] args, Lines lines, str
       t.fail(what + ": " + all[i].slice(5, all[i].len()));
     }
   }
-  t.eqStr(last, "DONE " + itoa(lines.n), what + ": the oracle answered everything it was sent");
-  if (last != "DONE " + itoa(lines.n)) { return Answers(false, string[0](fill: "")); }
+  t.eqStr(last, "DONE " + itoa(n), what + ": the oracle answered everything it was sent");
+  if (last != "DONE " + itoa(n)) { return Answers(false, string[0](fill: "")); }
 
   string[] answers = string[at - 1](fill: "");
   for (i32 i = 0; i < at - 1; i++) { answers[i] = all[i]; }
   return Answers(true, answers);
+}
+
+/**
+ * `ask`, for an oracle whose answers are a **pure function** of the question and of some source
+ * trees — the reference compiler, mostly.
+ *
+ * The suite asks the same oracle the same questions on every run: `typecheck_test.wac` alone called
+ * the reference 48 times, and `emit_test.wac` asks it 222 questions in one go. Those answers move
+ * only when the question moves or when `compiler/` does, so they are cached in `.cache/oracle` on a
+ * checksum of the payload and the newest mtime under `trees`.
+ *
+ * **Opt-in, and it has to be.** `ask` itself must not do this: `packages/crypto`'s RSA oracle
+ * *generates a fresh key* per run, and freezing that would turn a test over many keys into a test
+ * over one. The caller names the trees precisely because only the caller knows what the answer
+ * depends on.
+ *
+ * **One side only.** Whatever this remembers is the *other* implementation's answer; ours is computed
+ * on every run. A differential with one remembered side is still a differential — one with two is
+ * nothing.
+ *
+ * `name` distinguishes oracles in the cache directory, and a stale generation is swept on write: a
+ * key ends with the trees' stamp, so an edit under `compiler/` would otherwise leave every file from
+ * the previous stamp behind for good.
+ */
+export Answers askCached(T t, Cli cli, string program, string[] args, Lines lines, string what,
+                         string name, string[] trees) {
+  u8[] payload = lines.buf.take();
+  i64 newest = 0 as i64;
+  for (i32 i = 0; i < trees.len(); i++) {
+    i64 deep = newestUnder(cli, trees[i]);
+    if (deep > newest) { newest = deep; }
+  }
+  string stamp = itoa((newest / (1000 as i64)) as! i32);
+  string key = name + "-" + itoa(sumOfBytes(payload)) + "-" + itoa(lines.n) + "-" + stamp;
+  string path = ".cache/oracle/" + key + ".txt";
+
+  FileResult held = cli.readFile(path).wait();
+  if (held.ok) { return Answers(true, linesOf(string.fromBytes(held.bytes))); }
+
+  Answers a = askBytes(t, cli, program, args, payload, lines.n, what);
+  if (!a.ok) { return a; }
+  cli.mkdir(".cache/oracle", true).wait();
+  string body = "";
+  for (i32 i = 0; i < a.lines.len(); i++) { body = body + a.lines[i] + "\n"; }
+  cli.writeFile(path, body.toBytes()).wait();
+  sweepOlder(cli, ".cache/oracle", name + "-", "-" + stamp + ".txt");
+  return a;
+}
+
+/** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
+i64 newestUnder(Cli cli, string dir) {
+  i64 newest = 0 as i64;
+  string[]? names = cli.readDir(dir).wait();
+  if (names is null) { return 0 as i64; }
+  string[] here = names!;
+  for (i32 i = 0; i < here.len(); i++) {
+    string at = dir + "/" + here[i];
+    Stat st = cli.stat(at).wait();
+    if (!st.exists) { continue; }
+    if (st.isDir) {
+      i64 deep = newestUnder(cli, at);
+      if (deep > newest) { newest = deep; }
+      continue;
+    }
+    if (st.modifiedMillis > newest) { newest = st.modifiedMillis; }
+  }
+  return newest;
+}
+
+/** Everything in `dir` starting with `prefix` and not ending with `keep` — the older generations. */
+void sweepOlder(Cli cli, string dir, string prefix, string keep) {
+  string[]? names = cli.readDir(dir).wait();
+  if (names is null) { return; }
+  string[] here = names!;
+  for (i32 i = 0; i < here.len(); i++) {
+    string f = here[i];
+    if (f.len() < prefix.len() || f.slice(0, prefix.len()) != prefix) { continue; }
+    if (f.len() >= keep.len() && f.slice(f.len() - keep.len(), f.len()) == keep) { continue; }
+    cli.remove(dir + "/" + f, false).wait();
+  }
+}
+
+/** A checksum of the whole payload, so a different question is a different key. */
+i32 sumOfBytes(u8[] b) {
+  i32 h = 7;
+  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }
+  return h;
+}
+
+/** The non-empty lines of a cached answer file. */
+string[] linesOf(string body) {
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= body.len(); i++) {
+    if (i < body.len() && body.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) { n = n + 1; }
+    from = i + 1;
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  from = 0;
+  for (i32 i = 0; i <= body.len(); i++) {
+    if (i < body.len() && body.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) { out[at] = body.slice(from, i); at = at + 1; }
+    from = i + 1;
+  }
+  return out;
 }
 
 export Answers askDeno(T t, Cli cli, string script, Lines lines, string what) {

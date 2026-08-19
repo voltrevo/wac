@@ -749,6 +749,11 @@ export string test_rung_4_what_wacc_emits_runs_and_answers_what_the_references_d
       asked = asked + 1;
     }
   }
+  // **One process for 222 questions, and not cached.** `askCached` exists and was tried here: the
+  // saving is one `deno run` of a few hundred milliseconds, which did not show above the noise on a
+  // machine three agents share, and the two tree walks a key needs cost something themselves. The
+  // cache pays where a file asks the oracle *many times* — `rung3_probe.wac` asks 48 — not where one
+  // batched call already amortises the process.
   Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
                   "the reference");
   if (!a.ok) { return t.report(); }

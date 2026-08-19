@@ -18,10 +18,11 @@
 // the program it is about is unreadable in a failure.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, Answers, ask, hex } from "../../../wactest/src/oracle.wac";
-import { Cli } from "../../../platform/src/platform.wac";
+import { Lines, Answers, ask, askCached, hex } from "../../../wactest/src/oracle.wac";
+import { Cli, Stat, FileResult, Change } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
+import { splitLines } from "../../../wactest/src/strings.wac";
 import { checkCodeMessage, dumpTypeErrors } from "../../src/api.wac";
 
 const string ORACLE = "packages/wacc/test/reference.ts";
@@ -117,11 +118,17 @@ export Ref referenceTolerant(T t, Cli cli, string[] sources) {
 
 Ref refAsk(T t, Cli cli, string[] sources, bool strict) {
   Lines lines = Lines.create();
+  string[] asked = string[sources.len()](fill: "");
   for (i32 i = 0; i < sources.len(); i++) {
-    lines.add("checkpos " + hex(sources[i].toBytes()));
+    asked[i] = "checkpos " + hex(sources[i].toBytes());
+    lines.add(asked[i]);
   }
-  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
-                  "the reference type checker");
+  // **Cached on the questions and on the reference's own sources.** This is asked 48 times in a run
+  // of `typecheck_test.wac` — once per `referenceFor`, `decidedByReference` and `caughtAndQuiet` —
+  // and every one is the same question about the same fixtures as the run before. 8.6s to 3.2s.
+  // Our checker still runs on every pass; what is remembered is the other implementation's answer.
+  Answers a = askCached(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                        "the reference type checker", "rung3", string[]("compiler", "harness"));
   string[] at = string[sources.len()](fill: "");
   string[] said = string[sources.len()](fill: "");
   bool[] bad = bool[sources.len()]();
