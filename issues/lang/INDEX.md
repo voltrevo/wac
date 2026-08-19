@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0169a](open/0169a-a-mapped-subdir-does-not-confine-what-its-code-can-import.md) | code in a mapped `subdir` can import the rest of the repository, by `@/` and by an ordinary relative path — the one property `subdir` exists to provide | bug | wrong answer |
 | [0168a](open/0168a-at-slash-fails-unless-the-entry-is-absolute-or-you-run-from-the-project-root.md) | `cd src && wac run main.wac` reports *no wac.json5 above main.wac* with the manifest one directory up — the upward search walks a relative string and stops at `.` | bug | a compile error on a correct program |
 | [0167a](open/0167a-a-project-can-map-the-reserved-std-and-core-prefixes.md) | a manifest may map `std/` or `core/`, which D4 reserves, and the mapping is consulted for every name the built-in tree does not already hold | bug | wrong answer |
 | [0165a](open/0165a-importing-a-name-from-the-generated-core-module-overflows-waccs-stack.md) | one import line decides whether wacc overflows its stack — same function, same 37-file graph, straight from `coretext.wac` rather than through a re-export | bug | the compiler traps |
@@ -40,7 +41,7 @@ has been fixed and why.
 
 ## Closed
 
-168 issues, 136 closed.
+169 issues, 136 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

@@ -1,9 +1,20 @@
 // Which directory is `@/` for a given source file — `design/lang/0009` D7.
 //
 // D7: the project root is the nearest directory at or above the *importing file* that contains a
-// `wac.json5`, and the search stops at the provider boundary — the embedded package root, the Git
-// checkout root, the mapped `subdir`, or the local-filesystem boundary. No manifest inside that
-// boundary is a compile error rather than a silent walk out into whatever is above.
+// `wac.json5`, and the search stops at the provider boundary. No manifest inside that boundary is a
+// compile error rather than a silent walk out into whatever is above.
+//
+// **There are two boundaries** (2026-08-19; the list used to have four). The **fetched dependency's
+// root** — where a mapped import's repository was checked out — and the **local-filesystem
+// boundary** for everything else. It was called "the Git checkout root", which reads as though your
+// *own* project's Git root took part; it does not, and nothing about your repository does.
+//
+// Two former entries are gone. "The embedded package root" was never computed and has nothing to
+// mean: `core` and `std` are text inside the compiler. And the mapped `subdir` is **not** a
+// boundary — a dependency's `@/` means its own repository's root, and stopping at the subdirectory
+// somebody else chose to mount would break code that uses `@/` correctly. What a `subdir` does is
+// confine the *resolved* path, which is a different rule in a different place — `issues/lang/0169a`,
+// where it is currently not enforced at all.
 //
 // **Reading a directory is the caller's half, and this is the other one.** Answering "is there a
 // `wac.json5` here" is I/O, and the compiler's resolver does none so that it can run in a browser.

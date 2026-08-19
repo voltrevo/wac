@@ -173,7 +173,7 @@ struct Mapped {
   /** The file, under `$WAC_HOME/cache/git/<repo>/<commit>/`. */
   string path;
   /**
-   * The checkout root the file sits in — D7's provider boundary.
+   * The fetched dependency's root — D7's provider boundary for a mapped file.
    *
    * A `@/` *inside* a dependency means that dependency's own root, not the project that imported it,
    * and the search has to stop at the checkout or it climbs into the cache's own layout and then
@@ -352,7 +352,7 @@ Sources gather(Fs fs, Cli cli, string entry) {
             paths[n] = got.path;
             // A dependency's own `@/` means *its* root, and the search must stop at the checkout
             // rather than climbing into the cache's layout and on into the importing project — D7's
-            // provider boundary, which for a mapped file is where it was checked out.
+            // provider boundary, which for a mapped file is the dependency's own checkout.
             roots[n] = projectRootIn(fs, got.path, got.checkout);
             n = n + 1;
           }
