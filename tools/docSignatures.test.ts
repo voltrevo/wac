@@ -166,6 +166,13 @@ async function declarations(): Promise<Decls> {
   // `core` is not in any package — it ships inside the compiler — but `Read`, `Data`, `End` and
   // `Failed` are named by READMEs all over this repo, and they are the most real names here.
   collect(wacParse(wacLex(CORE.source).tokens, CORE.key).program, out);
+  // **And the tree's siblings.** `core` stopped being one file on 2026-08-18: `Option`, `Result` and
+  // `mapOption` moved out of `packages/std` into `core/option.wac` and `core/result.wac`, which are
+  // modules inside the compiler rather than files under `packages/`. Collecting only the root left
+  // seven README references to names that plainly exist reading as *no declaration*.
+  for (const [key, src] of Object.entries(CORE.files)) {
+    collect(wacParse(wacLex(src).tokens, key).program, out);
+  }
   return out;
 }
 

@@ -9,7 +9,7 @@
 // belongs there; what they do is make the answer to "why is the suite slow?" visible in one place, and
 // stop the reason being the empty string.
 
-import { declaredLaneFiles, exclusiveTests, heavyTests, laneSplit, wacTestDirs } from "../harness/testLane.ts";
+import { declaredLaneFiles, exclusiveTests, heavyTests, laneSplit, wacLaneDirs, wacTestDirs } from "../harness/testLane.ts";
 import { wacTestRegistrations } from "../harness/testRegistrars.ts";
 
 /** Local, because this repo has no third-party dependencies. */
@@ -188,7 +188,7 @@ Deno.test("the wac driver the suite skips registers nothing the wac lane does no
   assertEquals(reg.unresolved, 0, `${driver} has registrations this cannot read`);
   assertEquals(reg.found.length > 20, true, `only ${reg.found.length} registrations found in ${driver}`);
 
-  const dirs = new Set(await wacTestDirs("packages"));
+  const dirs = new Set(await wacLaneDirs());
   const orphans = reg.found
     .map((r) => r.entry)
     .filter((e) => !dirs.has(e.slice(0, e.lastIndexOf("/"))) || !e.endsWith("_test.wac"));

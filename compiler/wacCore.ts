@@ -42,4 +42,456 @@ export enum Read {
   Failed(string why)
 }
 `,
+
+  /**
+   * The tree's siblings, keyed by the specifier that names them.
+   *
+   * `core` is the root module above; these are files *in* the tree, each its own module, reached as
+   * `import { Option } from "core/option.wac";`. The key is the specifier exactly as written, which
+   * is what makes the reservation checkable: a resolver consults this before the filesystem, so a
+   * project's own `core/` directory cannot shadow a built-in — `design/lang/0009` D4.
+   */
+  files: {
+    "core/option.wac": `\
+// Option<T> — a value that may be absent, without using null.
+//
+// wac has \`T?\`, and it works for every T including a primitive (wac issue 0045). For a
+// reference it is also cheaper — one word, no allocation — so \`Point?\` is the right thing to
+// write and \`Option<Point>\` is not. Option earns its place on two narrower grounds:
+//
+//   - **a nested absence.** \`T??\` does not exist, so a container of nullables cannot
+//     distinguish "no entry" from "an entry holding null". \`Option<T?>\` can, which is why
+//     \`Map.get\` returns one: \`Map<string, JsonValue?>\` is a real shape and \`null\` would be
+//     ambiguous in it.
+//   - **an absent case that is a compile error to forget.** \`match\` is exhaustive. A missing
+//     \`case\` is refused; a missing null check is not.
+//
+// A nullable primitive is boxed, and so is an Option, so between \`i32?\` and \`Option<i32>\`
+// there is nothing to choose on cost — pick by which of the two reasons above applies.
+
+export enum Option<T> {
+  Some(T v), None
+
+  bool isSome(const this) {
+    return match (this) { case Some(_): true, case None: false };
+  }
+
+  bool isNone(const this) {
+    return match (this) { case Some(_): false, case None: true };
+  }
+
+  /** The value, or \`d\` if there is none. */
+  T orElse(const this, T d) {
+    return match (this) { case Some(v): v, case None: d };
+  }
+
+  /**
+   * The value, or a trap.
+   *
+   * For the case where absence is a bug rather than a possibility — the parallel of \`x!\`
+   * on a nullable. \`trap\` carries no message, so prefer \`match\` where the caller can say
+   * something useful.
+   */
+  T unwrap(const this) {
+    match (this) {
+      case Some(v): return v;
+      case None: trap;
+    }
+  }
+}
+
+/**
+ * \`f\` applied to the value, if there is one.
+ *
+ * A free function rather than a method because a method cannot introduce a type parameter
+ * of its own: \`U\` is not the enum's. Inference reads \`T\` from the Option and \`U\` from the
+ * function's return type, so the call site names neither.
+ */
+export Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) {
+  return match (o) {
+    case Some(v): Option.Some(f(v)),
+    case None: Option.None,
+  };
+}
+`,
+    "core/result.wac": `\
+// Result<T, E> — a value or an error, as a type rather than a convention.
+//
+// wac has \`trap\`, which carries no message and cannot be caught, so a function that can
+// fail has had three options: trap, return a sentinel, or return a bool and write the real
+// answer through an out-parameter struct. json's parser uses the third and it costs a
+// struct per call site.
+//
+// \`E\` is a type parameter rather than a fixed error type because the useful error differs:
+// a parser wants a message and a position, an arithmetic routine wants a code, and a
+// caller that only branches wants nothing but the fact of failure — \`Result<T, bool>\`.
+
+import { Option } from "./option.wac";
+
+export enum Result<T, E> {
+  Ok(T v), Err(E e)
+
+  bool isOk(const this) {
+    return match (this) { case Ok(_): true, case Err(_): false };
+  }
+
+  bool isErr(const this) {
+    return match (this) { case Ok(_): false, case Err(_): true };
+  }
+
+  /** The value, or \`d\` if this is an error. */
+  T orElse(const this, T d) {
+    return match (this) { case Ok(v): v, case Err(_): d };
+  }
+
+  /** The value, or a trap. For when an error here means the program is wrong. */
+  T unwrap(const this) {
+    match (this) {
+      case Ok(v): return v;
+      case Err(_): trap;
+    }
+  }
+
+  /** The value if there is one, discarding the error — for when only presence matters. */
+  Option<T> ok(const this) {
+    return match (this) {
+      case Ok(v): Option.Some(v),
+      case Err(_): Option.None,
+    };
+  }
+
+  /** The error if there is one. */
+  Option<E> err(const this) {
+    return match (this) {
+      case Ok(_): Option.None,
+      case Err(e): Option.Some(e),
+    };
+  }
+}
+`,
+    "core/hash.wac": `\
+// Hash and equality functions for the key types worth having ready-made.
+//
+// \`Map<K, V>\` takes its hash and equality as funcrefs rather than requiring anything of K,
+// because wac has no traits and no constraints on type parameters. That is not only a
+// workaround: it also lets one key type be hashed two ways — case-insensitively, or on a
+// field of a struct — without a wrapper type.
+//
+// A hash may return any i32. \`Map\` masks it, so a poor low bit distribution costs
+// collisions rather than correctness.
+
+/**
+ * FNV-1a over a byte slice, 32-bit.
+ *
+ * Chosen over anything stronger for the reason a hash table wants: it is a handful of
+ * instructions per byte, and the keys it will see are identifiers and JSON member names
+ * rather than adversarial input. It is not keyed and not collision-resistant — a Map fed
+ * untrusted keys wants a keyed hash passed in instead, which is what the funcref is for.
+ *
+ * Bytes rather than \`string\` is the primitive because that is what \`json\` has: it holds
+ * member names as \`u8[]\` on purpose, so hashing one must not allocate a string first.
+ */
+export i32 hashBytes(u8[] b) {
+  u32 h = 2166136261;
+  for (i32 i = 0; i < b.len(); i++) {
+    h = h ^ (b[i] as@ u32);
+    h = h * 16777619;
+  }
+  return h as@ i32;
+}
+
+/** Byte-wise equality, the companion \`eq\` for a \`u8[]\`-keyed Map. */
+export bool bytesEq(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return false; }
+  }
+  return true;
+}
+
+/**
+ * The same hash over a string's UTF-8 bytes.
+ *
+ * Delegates rather than repeating the loop: FNV-1a was written twice — here and in \`bytes\` —
+ * and two copies of a hash can drift into disagreeing about the same bytes. Nothing would
+ * catch that, because a Map answers every query correctly as long as *one* hash is used per
+ * map; it would surface only where something hashed a key one way and looked it up the other
+ * (wac-mono issue 0004, reported by agent-b).
+ */
+export i32 hashString(string s) { return hashBytes(s.toBytes()); }
+
+export bool stringEq(string a, string b) { return a == b; }
+
+/**
+ * An i32 key, mixed.
+ *
+ * Returning the key unchanged would be a valid hash and a bad one: \`Map\` takes the low bits
+ * of it, and consecutive or aligned integers — array indices, pointers, ids — would then
+ * collide in runs. This is the finaliser from MurmurHash3, which is four multiplies and
+ * gives every input bit a chance to affect the low ones.
+ */
+export i32 hashI32(i32 x) {
+  u32 h = x as@ u32;
+  h = h ^ (h >> 16);
+  h = h * 2246822507;
+  h = h ^ (h >> 13);
+  h = h * 3266489909;
+  h = h ^ (h >> 16);
+  return h as@ i32;
+}
+
+export bool i32Eq(i32 a, i32 b) { return a == b; }
+
+/** The same mixing for a 64-bit key, folded to 32 bits. */
+export i32 hashI64(i64 x) {
+  u64 h = x as@ u64;
+  h = h ^ (h >> 33);
+  h = h * 18397679294719823053;
+  h = h ^ (h >> 29);
+  h = h * 14181476777654086739;
+  h = h ^ (h >> 32);
+  return (h & 4294967295) as@ i32;
+}
+
+export bool i64Eq(i64 a, i64 b) { return a == b; }
+`,
+    "core/map.wac": `\
+// Map<K, V> — a hash map, open-addressed with linear probing.
+//
+// The measured demand: \`json\`'s object lookup is O(n) in the number of members, so a
+// document that reads the same object repeatedly is quadratic. Nothing in this repo could
+// fix that before generics, because a map over \`string -> JsonValue\` written by hand would
+// have been a fourth hand-rolled container.
+//
+// **Hash and equality arrive as funcrefs**, not as a requirement on K. wac has no traits, so
+// there is no \`K: Hash\` to ask for — and the funcrefs turn out to be better than a trait
+// would have been: \`hash.wac\` has the ready-made ones, and a caller who wants
+// case-insensitive keys or hashing on one field of a struct passes their own without
+// wrapping the key type.
+//
+// Linear probing rather than chaining because it needs one array rather than one per bucket,
+// and WasmGC arrays are the only allocation wac gives cheaply. Deletion is backward-shift,
+// not tombstones, so a table that is filled and emptied repeatedly does not degrade.
+
+import { Option } from "core/option.wac";
+
+/**
+ * One slot's contents.
+ *
+ * A struct rather than parallel \`K[]\`/\`V[]\` arrays because an empty slot has to be
+ * representable: \`Entry<K, V>?[]\` is an array of nulls at creation, whereas \`K[n]()\` needs a
+ * default value for K and a struct or enum has none. The nullable is the same trick
+ * \`json\`'s hand-written containers use, and it costs one reference per slot.
+ */
+struct MapEntry<K, V> {
+  K key;
+  V val;
+}
+
+export struct Map<K, V> {
+  MapEntry<K, V>?[] slots;
+  i32 n;
+  fn[i32(K)] hash;
+  fn[bool(K, K)] eq;
+
+  /**
+   * An empty Map.
+   *
+   * \`\`\`wac
+   * Map<string, i32> m = Map.create(hashString, stringEq);
+   * \`\`\`
+   *
+   * The type arguments come from the declared type; the funcrefs say how K behaves.
+   */
+  Map<K, V> create(fn[i32(K)] hash, fn[bool(K, K)] eq) {
+    return Map(MapEntry<K, V>?[8](), 0, hash, eq);
+  }
+
+  /** An empty Map with room for \`capacity\` entries before it has to grow. */
+  Map<K, V> withCapacity(i32 capacity, fn[i32(K)] hash, fn[bool(K, K)] eq) {
+    // Slots are a power of two so the mask replaces a modulo, and the load factor is 3/4, so
+    // the array has to be a third larger than the capacity asked for.
+    // In i64, because both lines wrapped in i32: a large \`capacity\` made \`want\` negative, and once
+    // the doubling passed the ceiling \`size\` went negative and the loop ran for ever. Clamped at the
+    // largest power of two an array can hold, so an impossible request fails on the allocation
+    // rather than hanging before it.
+    i64 want = (capacity as i64) + ((capacity as i64) / 3) + 1;
+    i64 size = 8;
+    while (size < want && size < 1073741824) { size = size * 2; }
+    return Map(MapEntry<K, V>?[size as! i32](), 0, hash, eq);
+  }
+
+  i32 len(const this) { return this.n; }
+
+  bool isEmpty(const this) { return this.n == 0; }
+
+  /** Slots allocated. Interesting only when measuring growth. */
+  i32 capacity(const this) { return this.slots.len(); }
+
+  /**
+   * The slot \`k\` lives in, or the first free slot on its probe sequence.
+   *
+   * One function for lookup and insert, because they walk the same sequence and separating
+   * them means writing the probe loop twice. The caller tells the two cases apart by asking
+   * whether the slot is null.
+   */
+  i32 slotFor(const this, K k) {
+    i32 mask = this.slots.len() - 1;
+    i32 i = this.hash(k) & mask;
+    while (true) {
+      MapEntry<K, V>? e = this.slots[i];
+      if (e is null) { return i; }
+      if (this.eq(e!.key, k)) { return i; }
+      i = (i + 1) & mask;
+    }
+    // Unreachable: the table is never full — \`set\` grows at 3/4 load — so the loop always
+    // finds a null slot. Without a \`return\` here the checker cannot see that.
+    return -1;
+  }
+
+  /** The value for \`k\`, or None. */
+  Option<V> get(const this, K k) {
+    MapEntry<K, V>? e = this.slots[this.slotFor(k)];
+    if (e is null) { return Option.None; }
+    return Option.Some(e!.val);
+  }
+
+  /** The value for \`k\`, or \`d\` — for when absence has an obvious answer. */
+  V getOr(const this, K k, V d) {
+    MapEntry<K, V>? e = this.slots[this.slotFor(k)];
+    return e is null ? d : e!.val;
+  }
+
+  bool has(const this, K k) {
+    MapEntry<K, V>? e = this.slots[this.slotFor(k)];
+    return !(e is null);
+  }
+
+  /** Insert or overwrite. True if \`k\` was already present. */
+  bool set(this, K k, V v) {
+    // Grown before the insert rather than after, so the slot index this computes stays valid.
+    if ((this.n + 1) * 4 > this.slots.len() * 3) { this.grow(); }
+    i32 i = this.slotFor(k);
+    MapEntry<K, V>? e = this.slots[i];
+    if (e is null) {
+      this.slots[i] = MapEntry(k, v);
+      this.n++;
+      return false;
+    }
+    // The key stays as it was first inserted: for a K where equality is looser than identity
+    // — case-insensitive strings — overwriting it would silently change what the caller sees
+    // back from an iteration.
+    e!.val = v;
+    return true;
+  }
+
+  /**
+   * Remove \`k\`. True if it was there.
+   *
+   * Backward-shift deletion: an entry after the hole is moved into it if the hole is at
+   * least as close to where that entry wants to be. That keeps every probe sequence
+   * contiguous without tombstones, which is what stops a table that is filled and emptied
+   * repeatedly from filling with dead slots.
+   */
+  bool remove(this, K k) {
+    i32 mask = this.slots.len() - 1;
+    i32 hole = this.slotFor(k);
+    if (this.slots[hole] is null) { return false; }
+    this.slots[hole] = null;
+    this.n--;
+
+    i32 j = hole;
+    while (true) {
+      j = (j + 1) & mask;
+      MapEntry<K, V>? e = this.slots[j];
+      if (e is null) { return true; }
+      i32 ideal = this.hash(e!.key) & mask;
+      // Move it back only if the hole is on or after its ideal slot, cyclically — which is
+      // exactly "the hole is not inside the run this entry has already probed past".
+      if (!this.cyclicBetween(ideal, hole, j)) {
+        this.slots[hole] = e;
+        this.slots[j] = null;
+        hole = j;
+      }
+    }
+    return true;
+  }
+
+  /** Is \`x\` in the cyclic interval (a, b]? Used only by \`remove\`. */
+  bool cyclicBetween(const this, i32 x, i32 a, i32 b) {
+    if (a < b) { return x > a && x <= b; }
+    return x > a || x <= b;
+  }
+
+  void clear(this) {
+    for (i32 i = 0; i < this.slots.len(); i++) { this.slots[i] = null; }
+    this.n = 0;
+  }
+
+  /**
+   * Every key, in slot order — which is to say an order the caller must not rely on. It
+   * depends on the hash, the capacity, and the insertion history.
+   */
+  K[] keys(const this) {
+    K[] out = K[]();
+    i32 seen = 0;
+    for (i32 i = 0; i < this.slots.len(); i++) {
+      MapEntry<K, V>? e = this.slots[i];
+      if (e is null) { continue; }
+      // The first live entry supplies the fill value, which is why the array is not
+      // allocated before the loop: there is nothing to fill it with until one is found.
+      if (seen == 0) { out = K[this.n](fill: e!.key); }
+      out[seen] = e!.key;
+      seen++;
+    }
+    return out;
+  }
+
+  /** Every value, in the same order as \`keys()\`. */
+  V[] values(const this) {
+    V[] out = V[]();
+    i32 seen = 0;
+    for (i32 i = 0; i < this.slots.len(); i++) {
+      MapEntry<K, V>? e = this.slots[i];
+      if (e is null) { continue; }
+      if (seen == 0) { out = V[this.n](fill: e!.val); }
+      out[seen] = e!.val;
+      seen++;
+    }
+    return out;
+  }
+
+  /** Double the table and reinsert. Private in spirit; wac has no way to say so. */
+  void grow(this) {
+    MapEntry<K, V>?[] old = this.slots;
+    this.slots = MapEntry<K, V>?[old.len() * 2]();
+    this.n = 0;
+    for (i32 i = 0; i < old.len(); i++) {
+      MapEntry<K, V>? e = old[i];
+      if (e is null) { continue; }
+      // Through \`set\` rather than a raw store, so the probe sequence is built by the same
+      // code that reads it. \`set\` cannot recurse into \`grow\` here: the table just doubled.
+      this.set(e!.key, e!.val);
+    }
+  }
+}
+`,
+  } as Record<string, string>,
 } as const;
+
+/**
+ * Does this specifier name a module inside the compiler rather than a file on disk?
+ *
+ * **Every resolver has to ask, and there are three.** `compiler/wacResolve.ts`'s `importKey` joins a
+ * quoted path to the importing file's directory, `harness/wacFiles.ts`'s `resolveFrom` does the same
+ * for the graph reader, and `wacCompile` injects the tree. A built-in that only one of them knows
+ * about is a module the graph can read and the resolver cannot find — which reports as the type not
+ * existing, several steps from the cause.
+ *
+ * The set is the tree's own keys, not the prefix `core/`. `design/lang/0009` D4 reserves the prefix,
+ * and this repository keeps the tree's *source* at `core/` — so the literal rule makes
+ * `core/test/option_test.wac` unreadable, a real file swallowed by the namespace it lives in.
+ */
+export function isBuiltinSpecifier(spec: string): boolean {
+  return spec === "core" || spec === "std" || spec in CORE.files;
+}

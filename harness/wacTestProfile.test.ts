@@ -27,7 +27,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 /** A test file that registers wac-written tests and does nothing else — the shape 64 files have. */
 const SUBJECT = `
 import { wacTestRun } from "${new URL("./wacTestRun.ts", import.meta.url).href}";
-await wacTestRun("packages/std/test/wac/map_test.wac", "map");
+await wacTestRun("core/test/map_test.wac", "map");
 `;
 
 Deno.test("a wac-written test file attributes the library lines it runs", async () => {
@@ -61,7 +61,7 @@ Deno.test("a wac-written test file attributes the library lines it runs", async 
 
     // A line of `hash.wac`, which the map's own tests reach only by constructing a `Map` with it. This
     // is the exact line 0090 was filed about, so the regression it guards is the one that happened.
-    const equality = (l: string) => l.startsWith("packages/std/src/hash.wac:");
+    const equality = (l: string) => l.startsWith("core/hash.wac:");
     assertEquals(
       p.all.some(equality),
       true,
@@ -78,7 +78,7 @@ Deno.test("a wac-written test file attributes the library lines it runs", async 
     // And the library under test, not only the test file: a profile of the test's own lines would
     // select nothing useful, since mutants are made in `src`.
     assertEquals(
-      p.tests[byTest[0]].some((l) => l.startsWith("packages/std/src/map.wac:")),
+      p.tests[byTest[0]].some((l) => l.startsWith("core/map.wac:")),
       true,
       "the test's set has no lines from the module it exercises",
     );

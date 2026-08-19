@@ -5,8 +5,8 @@ Containers and the two sum types every program ends up wanting.
 ```wac
 import { Vec } from "../../std/src/vec.wac";
 import { Map } from "../../std/src/map.wac";
-import { Option } from "../../std/src/option.wac";
-import { Result } from "../../std/src/result.wac";
+import { Option } from "core/option.wac";
+import { Result } from "core/result.wac";
 import { hashString, stringEq } from "../../std/src/hash.wac";
 ```
 

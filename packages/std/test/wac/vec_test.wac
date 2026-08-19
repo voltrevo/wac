@@ -7,7 +7,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Vec } from "../../src/vec.wac";
-import { Option } from "../../src/option.wac";
+import { Option } from "core/option.wac";
 
 struct P { i32 v; }
 

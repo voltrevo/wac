@@ -12,7 +12,7 @@
 // added is measured by running it rather than by reading it.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
-import { coreSource } from "./coretext.wac";
+import { coreFile, coreSource } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import { resolveFrom } from "./path.wac";
@@ -2370,8 +2370,18 @@ string joinDir(string dir, string r) {
  * existing, and are not what a compiler needs.
  */
 
-/** A file's text from the table the caller supplied, or `""` when it was not supplied. */
+/**
+ * A file's text: the caller's table, or the tree embedded in the compiler.
+ *
+ * **Built-ins are checked first and are not in the caller's arrays.** `core/option.wac` is a module
+ * inside the compiler, exactly as the bare `core` is — the difference is only that it is named by
+ * path. Every caller of this function asks "was this supplied", and a built-in is supplied by the
+ * compiler rather than by them, so answering `""` made the linker report *an import of a file that
+ * was not supplied* about a file nobody was ever going to supply. `design/lang/0009` D3.
+ */
 export string sourceOf(string[] paths, string[] sources, string path) {
+  string builtin = coreFile(path);
+  if (builtin != "") { return builtin; }
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == path) { return sources[i]; }
   }

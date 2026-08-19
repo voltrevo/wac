@@ -155,7 +155,8 @@ deno task coverage        # branch coverage of every package, from its wac-nativ
 deno task coverage:bignum # ...and the host-driven exercises, per package
 deno task coverage:bytes
 deno task coverage:codec
-deno task coverage:crypto
+deno task coverage:core
+    deno task coverage:crypto
 deno task coverage:datetime
 deno task coverage:fmt
 deno task coverage:fs

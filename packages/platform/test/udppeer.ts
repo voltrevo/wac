@@ -59,6 +59,12 @@ for (;;) {
     await new Promise((r) => setTimeout(r, 20));
     continue;
   }
+  // **The `catch` above `continue`s, so this is unreachable when the parse failed** — and the flow
+  // analysis does not model that, because the assignment sits inside the `try` and could have
+  // thrown partway. Narrowing it here is the price of catching the read and the parse together,
+  // which is deliberate: a half-written file fails the parse and wants the same retry as a missing
+  // one.
+  if (request === null) continue;
   publish(`got-${n}.json`, await exchange(request.peer, request.to, unhex(request.hex)));
   n++;
 }

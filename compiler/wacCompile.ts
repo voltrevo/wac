@@ -5,9 +5,9 @@
 // Each phase runs in order; later phases are skipped on earlier errors.
 
 import { EXTENSIONS, FRONTENDS, frontendFor } from "./wacFrontend.ts";
-import { CORE } from "./wacCore.ts";
+import { CORE, isBuiltinSpecifier } from "./wacCore.ts";
 import type { Import, Program } from "./wacParse.ts";
-import { wacResolve, funcParams, funcReturnType, type ResolveResult } from "./wacResolve.ts";
+import { wacResolve, resolvePath, funcParams, funcReturnType, type ResolveResult } from "./wacResolve.ts";
 import { wacTypeCheck } from "./wacTypeCheck.ts";
 import { wasmBuildBin, wasmBindMeta } from "./wasmBuildBin.ts";
 import type { CoveragePoint } from "./wacEmitFunc.ts";
@@ -271,6 +271,36 @@ export function wacCompile(
   const wantsCore = [...programs.values()].some((p) =>
     p.items.some((i) => i.tag === "import" && (i as Import).prefix === CORE.key)
   );
+  // **The tree's siblings, reserved before the filesystem.** `core/option.wac` is a module inside the
+  // compiler exactly as `core` is; the caller's file map cannot hold it, and a resolver that fell
+  // through to the disk would let a project's own `core/` directory shadow a built-in — D4 says these
+  // names cannot be remapped. Injected only when imported, like the root, so a program that wants
+  // nothing from the tree carries none of it.
+  // **Resolved, not spelled, and to a fixed point.** A sibling is reached by whatever specifier the
+  // importer wrote: `core/option.wac` from a package, `./option.wac` from `core/result.wac`,
+  // `../option.wac` from a test beside the tree. Keying the injection on the raw text found only the
+  // first, and the other two failed as *'Option' is not generic* — the module was never added, so the
+  // declaration was never found. The loop repeats because a sibling may import a sibling.
+  for (let added = true; added;) {
+    added = false;
+    for (const [path, program] of [...programs]) {
+      for (const item of program.items) {
+        if (item.tag !== "import") continue;
+        const spec = (item as Import).path;
+        if (spec === undefined || (item as Import).prefix !== undefined) continue;
+        const key = isBuiltinSpecifier(spec) ? spec : resolvePath(path, spec);
+        if (!(key in CORE.files) || programs.has(key)) continue;
+        const frontend = FRONTENDS.get(CORE.extension)!;
+        const { program: builtin, errors } = frontend(CORE.files[key], key);
+        for (const e of errors) {
+          diagnostics.push({ span: 1, ...e, file: key, severity: "error" });
+        }
+        programs.set(key, builtin);
+        added = true;
+      }
+    }
+  }
+
   if (wantsCore && !programs.has(CORE.key)) {
     const frontend = FRONTENDS.get(CORE.extension)!;
     const { program, errors } = frontend(CORE.source, CORE.key);

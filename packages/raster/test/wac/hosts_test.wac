@@ -42,9 +42,19 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   string cwd = cli.cwd().wait();
   string wac = cwd + "/native/v8/target/release/wac";
   string dir = cwd + "/.cache/raster-hosts";
-  cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   string stem = dir + "/deskshot";
+  // **The directory is not emptied, and that is worth four seconds.** `wacland` caches the compiled
+  // module beside the `.wasm` as `deskshot.cwasm-<key>`, keyed by content — 4.8 MB that cranelift
+  // takes about four seconds to produce and twenty milliseconds to reuse. Deleting the directory
+  // deleted that too, so every run of this test recompiled a module whose bytes had not changed:
+  // `wac build` is deterministic for a given output stem, so the key is the same one it was last
+  // time. Measured on this box: 4120 ms cold, 17 ms once the cache survives the rebuild.
+  //
+  // What the delete was actually protecting is the comparison — two hosts that both write nothing
+  // agree perfectly on last run's pixels — so the *images* still go, and only they.
+  cli.remove(dir + "/js.ppm", false).wait();
+  cli.remove(dir + "/native.ppm", false).wait();
 
   // One build, both hosts. `--allow-write` because the program writes the image it is asked for.
   Exec built = cli.exec(wac, string[]("build", ENTRY, "-o", stem, "--allow-write", "--quiet"),
@@ -117,7 +127,14 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
           "the two hosts disagree at byte " + itoa(first) + ": javascript " + itoa(a[first]) +
           ", native " + itoa(b[first]));
 
-  cli.remove(dir, true).wait();
+  // **The images go; the compiled module stays.** Removing the directory took
+  // `deskshot.cwasm-<key>` with it — 4.8 MB that cranelift spends about four seconds producing and
+  // twenty milliseconds reusing — so this test recompiled, every run, a module whose bytes had not
+  // changed. `.cache/` is a cache: something already prunes it, and five megabytes there is a fair
+  // price for four seconds off every push. The pixels are what must not survive a run, and they do
+  // not: they are removed before the hosts write them, above.
+  cli.remove(dir + "/js.ppm", false).wait();
+  cli.remove(dir + "/native.ppm", false).wait();
   return t.report();
 }
 
