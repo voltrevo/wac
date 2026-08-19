@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
 | [0215](open/0215-a-socket-can-only-be-closed-outright-so-a-wac-client-cannot-say-it-is-done-speaking.md) | a wac program can `closeSocket` but cannot half-close, so a client that must signal EOF and then read the reply has no call for it; `closeFeed` is the same thing for a child's stdin and its doc comment makes the argument, with the same `wc` example | missing feature | not implemented |
 | [0214](open/0214-an-opt-in-test-has-been-red-and-four-of-its-seven-cases-are-wrong.md) | `nativeBinary.test.ts` fails 3 of 7 — 4 once the first three are fixed — and nothing noticed — it is opt-in and nobody opts in; two are defects in the test, one is the 18-byte pipeline difference `seed.sh` already documents | bug | wrong answer |
@@ -70,7 +71,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-223 issues, 165 closed.
+224 issues, 165 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
