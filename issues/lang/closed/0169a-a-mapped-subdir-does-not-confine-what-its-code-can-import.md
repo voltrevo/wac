@@ -1,7 +1,7 @@
 # 0169a — a mapped `subdir` does not confine what its code can import
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — every specifier from a mapped file is checked against its subdirectory
+- **Fixed in:** the commit this line arrived in
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -94,3 +94,23 @@ This is our own code and a confinement rule that has never been enforced, not a 
 you have to have written the `subdir` mapping yourself, and the code it reaches is code you already
 fetched. It matters because `subdir` is the feature you reach for to take *less* of a repository —
 so the one property it exists to provide is the one it does not have.
+
+## Fixed
+
+`Mapped` gained a `confine` field — the checkout plus the mapping's `subdir` — and `gather` carries a
+`confine[]` parallel to `paths`. A file that arrived through a mapping records it; a file it imports
+inherits it; and **every resolved specifier passes one check**, which is the single point all forms
+meet:
+
+    wacc: @/elsewhere/bad.wac leaves the mapped subdirectory: <file> may import from <dir>
+          and this resolves outside it
+    wacc: ../../elsewhere/bad.wac leaves the mapped subdirectory: …
+
+and `@/a/b/d.wac` from inside `a/b` still answers 5.
+
+**`confine` is deliberately not `checkout`.** They answer different questions and the issue turned on
+not confusing them: `roots[i]` bounds the *search* for a `@/` root, and has to reach the repository
+root because that is what the dependency's author wrote against; `confine[i]` bounds the *answer*.
+Making the subdir the search boundary — the obvious fix — breaks the case that must keep working.
+
+Canaried: with `withinDir` forced to `true` and the seed rebuilt, all four assertions fail.
