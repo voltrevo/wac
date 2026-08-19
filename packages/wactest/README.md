@@ -179,6 +179,51 @@ carries on, Deno shows it ignored.
 `issues/system/0161` step 4 has the reasoning, including why file access came before spawning: of
 the 260 files that bind or register wac, 77 read a file and 42 spawn a process.
 
+## Running a program, or asking an oracle, more than once
+
+A wac test's only way out is `Cli.exec`, so anything outside the module is a
+process — and that is the cost that keeps surprising people. Measured
+2026-08-19, on this machine:
+
+| what | each |
+|---|---:|
+| `bash -c` | 2ms |
+| the native host on a built module (`wacland`) | 17ms |
+| a built Deno bundle | **133ms** |
+| `deno run packages/platform/build.ts …`, artefact already cached | 180-410ms |
+| `wac run <entry>.wac` — a compile, then a run | ~1s for a package's example |
+
+Three helpers exist because three files each found this the hard way. Reach for
+them before writing a loop that runs something:
+
+- **`wactest/src/built.wac`** — `builtProgram` (via `wac build`) and
+  `builtByDeno` (via `build.ts`) keep one artefact per shape under `.cache`,
+  rebuilt when the trees it is made from are newer. Seven `packages/git` tests
+  ran `wac run <example>.wac` per operation: the directory was 36.5s and is
+  12.7s. `spawn_test.wac` started Deno fourteen times for three programs: 10.3s
+  to 2.8s.
+- **`wactest/src/oracle.wac`** — `askCached` is `ask` for an oracle whose answers
+  are a **pure function** of the question and of some source trees, named by the
+  caller. `typecheck_test.wac` asks the reference 48 times a run: 8.6s to 3.2s.
+  It is opt-in on purpose — `packages/crypto`'s RSA oracle generates a fresh key
+  per run, and freezing that would turn a test over many keys into a test over
+  one.
+- **`harness/appRunMany.ts`** — many runs of *one* built program in one Deno
+  process, 1.25ms a run against 195ms, driven from wac by
+  `platform/test/wac/hostfs.wac`'s `denoBatch`. `native_hostfs_test.wac` was 17s
+  and is 10.2s; `native_shell_test.wac` 9.3-17.3s to 4.9s.
+
+**What a cache must never remember is our own answer.** Every one of these keeps
+the *other* implementation's side — the reference compiler's, the host's — and
+recomputes ours on every run. A differential with one remembered side is still a
+differential; one with two is nothing.
+
+**And a batch is not always the same experiment.** `appRunMany` feeds a run by
+pushing onto the child's parent-fed queue, so a test about a program reading its
+own standard input must stay one process per case: batching it would compare a
+queue-fed host against an fd-fed one, which is the difference that fault lived
+in. `native_hostfs_test.wac` says so at the case in question.
+
 ## What this still cannot do
 
 **See a wrong representative.** A value congruent to the right one satisfies
