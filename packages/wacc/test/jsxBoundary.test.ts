@@ -22,7 +22,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const PROGRAM = [
-  "import { Attr, Node } from "core";",
+  'import { Attr, Node } from "core";',
   "export Node page(string who) {",
   '  return <div class="page" id={"top"}><h1>hello {Node.Text(who)}</h1><br/></div>;',
   "}",
