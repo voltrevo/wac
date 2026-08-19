@@ -167,6 +167,26 @@ export string test_coverage_a_counter_says_how_many_times_its_point_ran(Core cor
   return t.report();
 }
 
+/** How many `from "…"` clauses a source has — the cheap stand-in for how deep its closure is. */
+i32 importCount(string src) {
+  i32 n = 0;
+  for (i32 i = 0; i + 6 <= src.len(); i++) {
+    if (src.slice(i, i + 6) == "from \"") { n = n + 1; }
+  }
+  return n;
+}
+
+/** `packages/<name>/…` → `<name>`; anything else is its own group, which `spec/tour.wac` wants. */
+string packageOf(string path) {
+  i32 first = -1;
+  for (i32 i = 0; i < path.len(); i++) {
+    if (path.slice(i, i + 1) != "/") { continue; }
+    if (first < 0) { first = i; continue; }
+    return path.slice(0, i);
+  }
+  return path;
+}
+
 export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_it(
     Core core, Cli cli) {
   T t = T.create();
@@ -179,20 +199,83 @@ export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_i
   i32 instrumented = 0;
   string[] same = string[16](fill: "");
   i32 nSame = 0;
-  string[] wrote = string[40](fill: "");
+  string[] wrote = string[c.paths.len()](fill: "");
   i32 nWrote = 0;
 
-  // **Five seconds, and they are eighty emits of real modules.** Measured 2026-08-18: 2043ms for the
-  // forty plain emits, 3093ms for the forty instrumented ones, 32ms for asking the engine to validate
-  // all forty. Both halves are used — the plain build is the *control* for "instrumenting changed
-  // something", and without it a build that instrumented nothing would pass every assertion here.
+  // **One entry per package, and the middle-sized one.** Both halves of each pair are used — the plain
+  // build is the *control* for "instrumenting changed something", and without it a build that
+  // instrumented nothing would pass every assertion here.
   //
-  // **Passing each entry its own closure instead of the whole corpus does not help, which was worth
-  // finding out**: it is a 3.6× win on a small entry (`packages/json/src/json.wac`, 128ms → 35ms) and
-  // nothing here, because these forty entries are the corpus's own front-matter and their closures are
-  // most of the corpus anyway. Tried and reverted rather than left in for the look of it.
-  i32 upto = c.paths.len() < 40 ? c.paths.len() : 40;
-  for (i32 f = 0; f < upto; f++) {
+  // The sweep used to take the **first forty** entries of a name-sorted corpus, which is a window on
+  // whichever packages sort first. As the corpus doubled — every file ported in `issues/system/0161`
+  // joins it — that window slid until it held **four packages, twenty of its forty entries from `bls`
+  // alone**, and the sweep went from 5s to 25s without anybody touching it. Heavier entries, not more
+  // scope.
+  //
+  // Four samples were measured. The window: 4 packages, 25s. A stride of `n / 40`: 23 packages, **58s**
+  // — better evidence at twice the price. One per package by median source length: 39 packages, **46s**,
+  // because a package's median file often sits on a deep import graph. One per package by fewest
+  // imports, which is this: **39 packages and 15.8s**, above a 5.8s floor for compiling this file and
+  // running nothing — so the sweep itself went from 24.8s to 10s. File *bytes* predicted none of
+  // this and closure bytes predicted it roughly — the entry is cheap or expensive according to what it
+  // pulls in, not according to its own length.
+  //
+  // **The deep end is not lost by choosing shallow entries**: `corpusemit_test.wac` emits *every* file
+  // in the tree with its full closure, which is why it is in the heavy lane. What is asked here is
+  // whether instrumenting is opt-in and leaves a real module valid, and 39 packages answer that better
+  // than four did.
+  //
+  // Sampling by package also stops the cost drifting with unrelated additions, which the window could
+  // not: a new package moves this by one entry, where a hundred new files at the front of the sort used
+  // to move it by forty.
+  //
+  // **The whole corpus is still handed to each emit, and that was re-checked rather than assumed.** The
+  // note here used to say passing each entry its own closure "does not help", measured 2026-08-18 at
+  // 367 files; at 729 the entries reach a mean of 12 files each, so it looked like a missed 60× win. It
+  // is not: `emitFiles` walks the closure from the entry, so extra paths cost lookups rather than
+  // compiles, and with closures passed the sweep measured **31.2s against 31.5s**. What made the first
+  // attempt look like a 4× win was that it was *wrong* — keys have to be `/`-prefixed for `closureOf`,
+  // and without that every closure held only the entry, so 36 of 40 emitted nothing. The `>= 20`
+  // assertion below is what caught it.
+  i32 n = c.paths.len();
+  i32[] picked = i32[n]();
+  i32 nPicked = 0;
+  i32 cursor = 0;
+  while (cursor < n) {
+    // The corpus is name-sorted, so a package's files are contiguous: `packages/<name>/…`.
+    string owner = packageOf(c.paths[cursor]);
+    i32 upto = cursor;
+    while (upto < n && packageOf(c.paths[upto]) == owner) { upto = upto + 1; }
+
+    // **The file with the fewest imports of its own, and the largest source among those.** What this
+    // sweep costs per entry is the entry's *closure*, not the entry — and a local count is the only
+    // cheap proxy for it: computing 729 closures here would cost more than the emits it saves.
+    // Measured over the corpus, closure work in source bytes: the old window 6426 KiB, a stride sample
+    // 6537, the median file per package 6506, and this rule **2144**. The tie-break is what keeps the
+    // entries substantial — a median own source of 9 KiB rather than the 2 KiB that picking the
+    // smallest file per package would give, and a program with almost no branch points is thin
+    // evidence that instrumenting a real module leaves it valid.
+    i32 best = cursor;
+    for (i32 i = cursor; i < upto; i++) {
+      i32 mine = importCount(c.sources[i]);
+      i32 theirs = importCount(c.sources[best]);
+      if (mine < theirs || (mine == theirs && c.sources[i].len() > c.sources[best].len())) {
+        best = i;
+      }
+    }
+    picked[nPicked] = best;
+    nPicked = nPicked + 1;
+    cursor = upto;
+  }
+
+  // **The sample itself is asserted**, because a `packageOf` that answered the whole path would pick
+  // every file — 729 emits rather than 39, which reads as "slower" and not as "broken" — and one that
+  // answered a constant would pick a single file and sail through every assertion below.
+  t.isTrue(nPicked >= 30 && nPicked <= 80,
+           "the sample is one entry per package and there are " + itoa(nPicked) + " of them");
+
+  for (i32 k = 0; k < nPicked; k++) {
+    i32 f = picked[k];
     u8[] plain = emitFiles(c.paths, c.sources, c.paths[f]);
     u8[] cov = emitFilesCovered(c.paths, c.sources, c.paths[f]);
     compared = compared + 1;
