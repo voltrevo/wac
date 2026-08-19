@@ -30,7 +30,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
-import { builtProgram } from "./built.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 
@@ -116,7 +116,8 @@ export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for
   Exec r = withEnv(cli, names, values, wac,
                    string[](builtProgram(cli, "packages/git/example/gitfetch.wac", "gitfetch",
                                          string[]("--allow-net", "--allow-env", "--allow-read",
-                                                  "--quiet")),
+                                                  "--quiet"),
+                              string[]("packages/git/src", "packages/git/example")),
                             REMOTE, "1"));
   string err = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 0, "gitfetch failed: " + err);

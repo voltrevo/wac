@@ -1,26 +1,27 @@
-// One built program per entry, shared by the tests in this package.
+// One built program per entry, for tests that run the same program more than once.
 //
-// **Six files here ran `wac run <example>.wac` per operation, which compiles the git package from
-// source before it runs.** `commit_test.wac` did it seven times and cost 10.2s; built once it is
-// 0.5s. That is not a property of `commit_test` — it is what every one of these files was doing, so
-// the build lives here rather than in six copies of the same fifteen lines.
+// **`wac run <entry>.wac` compiles the program from source before it runs.** Seven files in
+// `packages/git` did that per operation — `commit_test.wac` seven times, at 10.2s — and building once
+// took the directory from 36.5s to 12.7s. `packages/tor`'s capture tools and `packages/quic`'s
+// program test do the same thing, which is why this lives in `wactest` rather than in one package's
+// test directory.
 //
 // It is also closer to what a person does. `wac run` is the shape for a one-off; a test that runs the
-// same program seven times is the case `wac build` exists for, and the grants end up in the module's
+// same program many times is the case `wac build` exists for, and the grants end up in the module's
 // manifest rather than on each command line.
 //
 // ## Freshness
 //
 // mtimes, the rule `tools/seedFresh.test.ts` uses for the seed: the built module is rebuilt when
-// anything under the source trees it is made from — or the binary that builds it — is newer. Coarser
-// than an import walk on purpose, because the failure mode that matters is "somebody edited
-// `packages/git/src` and the test kept using yesterday's build", and a directory mtime scan catches
-// that for the price of a few dozen stats.
+// anything under `trees` — or the binary that builds it — is newer. The caller names those trees
+// because only the caller knows what its program is made of. Coarser than an import walk on purpose,
+// because the failure mode that matters is "somebody edited the package and the test kept using
+// yesterday's build", and a directory mtime scan catches that for the price of a few dozen stats.
 //
 // The cache is `.cache/`, which is per workspace and therefore per agent. Nothing here writes to
 // `/tmp`, where three agents would share a name.
 
-import { Cli, Exec, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Exec, Stat } from "../../platform/src/platform.wac";
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
 export i64 newestUnder(Cli cli, string dir) {
@@ -55,16 +56,18 @@ export string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/
  * Answers the path either way. A build that fails leaves no module, and the caller's first run says
  * so: `wac` reports the missing file and the test's own assertion on the exit status carries it.
  */
-export string builtProgram(Cli cli, string entry, string name, string[] grants) {
+export string builtProgram(Cli cli, string entry, string name, string[] grants, string[] trees) {
   string wac = wacBinary(cli);
   string dir = cli.cwd().wait() + "/.cache/built-" + name;
   cli.mkdir(dir, true).wait();
   string stem = dir + "/" + name;
   Stat have = cli.stat(stem + ".wasm").wait();
 
-  i64 newest = newestUnder(cli, "packages/git/src");
-  i64 example = newestUnder(cli, "packages/git/example");
-  if (example > newest) { newest = example; }
+  i64 newest = 0 as i64;
+  for (i32 i = 0; i < trees.len(); i++) {
+    i64 deep = newestUnder(cli, trees[i]);
+    if (deep > newest) { newest = deep; }
+  }
   Stat bin = cli.stat(wac).wait();
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
   if (have.exists && have.modifiedMillis > newest) { return stem + ".wasm"; }

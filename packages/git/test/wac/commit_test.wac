@@ -25,7 +25,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv, quoted } from "../../../wactest/src/childenv.wac";
-import { builtProgram } from "./built.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
 
 const string DATE = "1700000000 +0000";
 
@@ -139,7 +139,8 @@ struct Repo {
     return withEnv(this.cli, string[]("GIT_AUTHOR_DATE"), string[](DATE), wac,
                    string[](builtProgram(this.cli, "packages/git/example/gitci.wac", "gitci",
                                          string[]("--allow-read", "--allow-write", "--allow-env",
-                                                  "--quiet")),
+                                                  "--quiet"),
+                                         string[]("packages/git/src", "packages/git/example")),
                             this.dir, message));
   }
 

@@ -30,6 +30,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines } from "../../../wactest/src/strings.wac";
 import { Core, Cli, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
 
 /**
  * One capture recipe: the two tools that implement it and the file they must both write.
@@ -158,10 +159,12 @@ export string test_each_capture_tool_writes_the_vectors_that_are_committed(Core 
     t.isTrue(committed.ok, r.name + ": the committed vectors are readable — " + committed.error);
     if (!committed.ok) { continue; }
 
-    string[] argv = string[r.grants.len() + 2](fill: "");
-    argv[0] = "run";
-    for (i32 g = 0; g < r.grants.len(); g++) { argv[g + 1] = r.grants[g]; }
-    argv[r.grants.len() + 1] = r.wac;
+    // **Built rather than `wac run`**, which compiled the tor package from source per recipe. The
+    // module is rebuilt when anything under the trees it is made from has moved; see
+    // `wactest/src/built.wac`.
+    string[] argv = string[1](fill: "");
+    argv[0] = builtProgram(cli, r.wac, "capture-" + r.name, r.grants,
+                           string[]("packages/tor/src", "packages/tor/tools"));
     u8[] fromWac = output(t, cli, r.name, wacBin, argv);
     if (fromWac.len() == 0) { continue; }
 
