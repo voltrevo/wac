@@ -1,0 +1,124 @@
+// `@/` is the root of the project containing the **importing file** — `design/lang/0009` D7.
+//
+// **The reference only, for now, and deliberately.** `@/` needs an upward search for `wac.json5`,
+// which is I/O, so it lives with the caller that already reads files — `harness/wacFiles.ts` — and is
+// handed to `wacCompile` as `options.roots`. wacc's own reader has no such search yet, so a program
+// using `@/` compiles under the harness and not under `wac build`. That is a divergence with a shelf
+// life rather than a design: nothing in this repository writes `@/`, no spec clause claims it, and
+// the wacc half is the next slice. Written now so the semantics are pinned before the second
+// implementation is built against them rather than after.
+//
+// The cases are the three that can each be wrong in a way the others would not catch:
+//
+//   1. it resolves at all, against the project the file is in;
+//   2. **a decoy** at the same relative path under the *entry's* project is not the one found —
+//      which is the whole of D7 and the only case that separates "the importing file's root" from
+//      "the root the compiler was started in";
+//   3. no manifest anywhere is a *compile error* rather than a quiet fall back to something
+//      relative. `resolveAt("@/src/a.wac", "")` would otherwise look like `src/a.wac` against a
+//      directory nobody named, so the program would compile against the wrong file.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Change, Cli, Core, Exec } from "../../../platform/src/platform.wac";
+
+/** `deno run -A harness/<tool>.ts <args…>`, from the repository root. */
+Exec reference(Cli cli, string tool, string[] args) {
+  string line = "cd " + cli.cwd().wait() + " && exec deno run -A harness/" + tool + ".ts";
+  for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
+  return cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+}
+
+/** One file, with its directory made first. */
+bool put(Cli cli, string path, string text) {
+  i32 cut = -1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
+  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
+  return cli.writeFile(path, text.toBytes()).wait().ok();
+}
+
+export string test_a_project_specifier_resolves_against_its_own_project(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "atspec-one");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "wrote the manifest");
+  t.isTrue(put(cli, dir + "/src/lib.wac", "export i32 answer() { return 42; }\n"), "wrote lib");
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { answer } from \"@/src/lib.wac\";\n" +
+               "export i32 main() { return answer(); }\n"), "wrote main");
+
+  Exec r = reference(cli, "referenceRun", string[](dir + "/src/main.wac", "main"));
+  t.isTrue(r.ran(), "the reference did not run — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "it did not compile: " + string.fromBytes(r.stderr));
+  t.isTrue(contains(string.fromBytes(r.stdout), "42"),
+           "answered " + string.fromBytes(r.stdout) + ", want 42");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_root_is_the_importing_files_project_not_the_entrys(Core core, Cli cli) {
+  // **The case that distinguishes D7 from the easy reading of it.** `appA` imports a file from
+  // `libB` by relative path; that file writes `@/deep/five.wac`. Both projects have a
+  // `deep/five.wac`, and they answer different numbers, so which one arrives *is* the test. Taking
+  // the entry's root — or the working directory, or the first manifest found from the top — gives
+  // 999 + 2. Taking the importing file's gives 5 + 2.
+  T t = T.create();
+  string dir = scratch(cli, "atspec-two");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  t.isTrue(put(cli, dir + "/appA/wac.json5", "{}\n"), "appA manifest");
+  t.isTrue(put(cli, dir + "/libB/wac.json5", "{}\n"), "libB manifest");
+  t.isTrue(put(cli, dir + "/libB/deep/five.wac", "export i32 five() { return 5; }\n"), "libB five");
+  // The decoy: same relative path, under the *entry's* project, answering something unmistakable.
+  t.isTrue(put(cli, dir + "/appA/deep/five.wac", "export i32 five() { return 999; }\n"), "the decoy");
+  t.isTrue(put(cli, dir + "/libB/src/b.wac",
+               "import { five } from \"@/deep/five.wac\";\n" +
+               "export i32 seven() { return five() + 2; }\n"), "libB b");
+  t.isTrue(put(cli, dir + "/appA/src/main.wac",
+               "import { seven } from \"../../libB/src/b.wac\";\n" +
+               "export i32 main() { return seven(); }\n"), "appA main");
+
+  Exec r = reference(cli, "referenceRun", string[](dir + "/appA/src/main.wac", "main"));
+  t.isTrue(r.ran(), "the reference did not run — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "it did not compile: " + string.fromBytes(r.stderr));
+  string said = string.fromBytes(r.stdout);
+  t.isTrue(contains(said, "7"), "answered " + said + ", want 7");
+  t.isFalse(contains(said, "1001"),
+            "answered 1001 — `@/` took the entry's project, so the decoy was imported");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_project_specifier_with_no_manifest_is_refused(Core core, Cli cli) {
+  // The canary for both of the above: a change that resolved `@/` against *something* whatever the
+  // situation would pass them and quietly compile this one against `src/lib.wac` relative to
+  // nothing. D7 says it is a compile error, and it has to name the specifier so a reader knows what
+  // to add rather than that a file is missing.
+  T t = T.create();
+  string dir = scratch(cli, "atspec-none");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  t.isTrue(put(cli, dir + "/src/lib.wac", "export i32 answer() { return 42; }\n"), "wrote lib");
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { answer } from \"@/src/lib.wac\";\n" +
+               "export i32 main() { return answer(); }\n"), "wrote main");
+
+  Exec r = reference(cli, "referenceCheck", string[](dir + "/src/main.wac"));
+  t.isTrue(r.ran(), "the reference did not run — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 1, "a `@/` with no project was accepted (exit " + itoa(r.status) + ")");
+  string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+  t.isTrue(contains(said, "needs a project"), "refused for the wrong reason: " + said);
+  t.isTrue(contains(said, "@/src/lib.wac"), "it did not name the specifier: " + said);
+  cli.remove(dir, true).wait();
+  return t.report();
+}

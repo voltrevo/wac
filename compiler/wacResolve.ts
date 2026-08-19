@@ -170,14 +170,43 @@ export type ResolveResult = {
  * `design/0001` falling out rather than being enforced: an embedded module has no directory to be
  * relative to, and a source inside a provider cannot climb out of one it never entered.
  */
-function importKey(baseFile: string, imp: { path: string; prefix?: string }): string {
+function importKey(
+  baseFile: string,
+  imp: { path: string; prefix?: string },
+  roots?: ReadonlyMap<string, string>,
+): string {
   // **A built-in is its own key.** `core/option.wac` is a module inside the compiler, so joining it
   // to the importing file's directory would look for packages/std/src/core/option.wac — and the
   // failure surfaces as *'Option' is not generic*, because the declaration was never found and a
   // stand-in was. Three resolvers have to agree about this; `isBuiltinSpecifier` is the one answer.
   if (imp.prefix === undefined && isBuiltinSpecifier(imp.path)) return imp.path;
-  if (imp.prefix === undefined) return resolvePath(baseFile, imp.path);
+  if (imp.prefix === undefined) return resolveSpecifier(baseFile, imp.path, roots?.get(baseFile));
   return imp.path === "" ? imp.prefix : `${imp.prefix}.${imp.path}`;
+}
+
+/** Whether `spec` is a project reference — `design/lang/0009` D7. */
+export function isProjectSpecifier(spec: string): boolean {
+  return spec.startsWith("@/");
+}
+
+/**
+ * A specifier's key: `@/…` against the importing file's **project root**, anything else against the
+ * importing file's directory.
+ *
+ * `@/` is the root of the project containing the importing file, which is why the root is a
+ * parameter rather than something this could look up: the answer depends on which project the file
+ * is in and not on where the compiler was started, so a graph spanning two projects has two roots.
+ * Finding it is I/O and lives with the caller that already reads files — `harness/wacFiles.ts`.
+ *
+ * **An unknown root answers `""`, and the caller must report it rather than pass it on.** D7 says a
+ * `@/` with no manifest inside the boundary is a compile error, and the alternative is worse than an
+ * error: joining `@/src/a.wac` to nothing gives `src/a.wac`, a real-looking key relative to a
+ * directory nobody named, so a program would compile against the wrong file rather than be refused.
+ */
+export function resolveSpecifier(baseFile: string, spec: string, root?: string): string {
+  if (!isProjectSpecifier(spec)) return resolvePath(baseFile, spec);
+  if (root === undefined || root === "") return "";
+  return resolvePath(`${root}/x`, spec.slice(2));
 }
 
 /** Resolve a relative import path against an absolute base path. */
@@ -468,7 +497,10 @@ type At = { line: number; col: number };
  */
 type NameOrigin = { file: string; name: string };
 
-function buildOrigins(programs: Map<string, Program>): Map<string, Map<string, NameOrigin>> {
+function buildOrigins(
+  programs: Map<string, Program>,
+  roots?: ReadonlyMap<string, string>,
+): Map<string, Map<string, NameOrigin>> {
   const byFile = new Map<string, Map<string, NameOrigin>>();
   for (const [filePath, prog] of programs) {
     const here = new Map<string, NameOrigin>();
@@ -495,7 +527,7 @@ function buildOrigins(programs: Map<string, Program>): Map<string, Map<string, N
     const here = byFile.get(filePath)!;
     for (const item of prog.items) {
       if (item.tag !== "import") continue;
-      const from = importKey(filePath, item);
+      const from = importKey(filePath, item, roots);
       for (const it of item.items) {
         if (here.has(it.alias)) continue;
         here.set(it.alias, { file: from, name: it.name });
@@ -1095,8 +1127,10 @@ export function monomorphise(
   keepFuncs?: { decl: FuncDecl; filePath: string }[],
   /** The generic *enum* templates. Collected for their names, which template checking defers on. */
   keepEnums?: { decl: EnumDecl; filePath: string }[],
+  /** The project root each file sits in, for `@/` — see `resolveSpecifier`. */
+  roots?: ReadonlyMap<string, string>,
 ): void {
-  const origins = buildOrigins(programs);
+  const origins = buildOrigins(programs, roots);
 
   // Templates are keyed by *identity* — declared name plus declaring file — so an alias and its
   // target find the same one, and two same-named templates in different files stay apart.
@@ -1419,7 +1453,7 @@ export function monomorphise(
       for (const it of item.items) {
         // The item names the template as the *importing* file writes it, so resolve through the
         // declaring file to find the template regardless of alias.
-        const tpl = templates.get(`${it.name}__${fileTag(importKey(filePath, item))}`);
+        const tpl = templates.get(`${it.name}__${fileTag(importKey(filePath, item, roots))}`);
         if (tpl === undefined) { rewritten.push(it); continue; }
         for (const mangled of usedIn.get(filePath) ?? []) {
           // Only the instantiations of *this* template, and only if it came from this import.
@@ -1943,7 +1977,7 @@ export function monomorphise(
       const injected = new Set<string>();
       for (const item of prog.items) {
         if (item.tag !== "import") continue;
-        const from = importKey(filePath, item);
+        const from = importKey(filePath, item, roots);
         const extra: typeof item.items = [];
         for (const mangled of funcUsedIn.get(filePath) ?? []) {
           if (funcMadeIn.get(mangled) !== from) continue;
@@ -2053,6 +2087,11 @@ function reportStrayArgs(
 export function wacResolve(
   entryPath: string,
   programs: Map<string, Program>,
+  /**
+   * The project root each file sits in, for `@/` — absent for every file the caller could not find
+   * one for, which is an ordinary state: the playground has no filesystem to search.
+   */
+  roots?: ReadonlyMap<string, string>,
 ): ResolveResult {
   const errors: ResolveError[] = [];
 
@@ -2066,7 +2105,7 @@ export function wacResolve(
   const enumTemplateDecls: { decl: EnumDecl; filePath: string }[] = [];
   monomorphise(programs,
     (msg, file, line, col) => errors.push({ message: msg, file, line, col }),
-    genericDisplay, templateDecls, funcTemplateDecls, enumTemplateDecls);
+    genericDisplay, templateDecls, funcTemplateDecls, enumTemplateDecls, roots);
   const funcs: FuncEntry[] = [];
   const structs: StructEntry[] = [];
   const enums: EnumEntry[] = [];
@@ -2327,7 +2366,19 @@ export function wacResolve(
     // ── Phase 4: process imports (DFS — after locals so circular deps find us) ─
     for (const item of prog.items) {
       if (item.tag !== "import") continue;
-      const importedPath = importKey(filePath, item);
+      const importedPath = importKey(filePath, item, roots);
+      // **`@/` with no project is an error here rather than a lookup that misses.** D7: *no manifest
+      // within that boundary is a compile error*. `resolveSpecifier` answers "" for it, and the
+      // reason this is caught rather than passed on is that the alternative resolves — joining
+      // `@/src/a.wac` to nothing gives `src/a.wac`, a real-looking key relative to a directory
+      // nobody named, so the program would compile against the wrong file instead of being refused.
+      if (importedPath === "" && item.prefix === undefined && isProjectSpecifier(item.path)) {
+        err(
+          `\`${item.path}\` needs a project: no \`wac.json5\` above ${filePath}`,
+          filePath, item.line, item.col,
+        );
+        continue;
+      }
       // A quoted `"core"` joins to the same key core is filed under, which used to be the reason to
       // refuse it: the argument was that a quoted specifier says *a file lives at this path* and
       // there was no path here to be right or wrong about. `design/lang/0009` D4 removed the
