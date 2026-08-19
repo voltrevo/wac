@@ -31,6 +31,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, Exec, Pending, Socket } from "../../../platform/src/platform.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
@@ -41,6 +42,12 @@ import { Server, pause, receiveWithin, startServer, stopServer } from "./peer.wa
 const string ENTRY = "packages/quic/example/handshake.wac";
 
 string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** `example/handshake.wac`, built once with the grant it needs. */
+string handshakeModule(Cli cli) {
+  return builtProgram(cli, ENTRY, "quic-handshake", string[]("--allow-net", "--quiet"),
+                      string[]("packages/quic/src", "packages/quic/example"));
+}
 
 /** What the program and the server each said. */
 struct Ran {
@@ -124,8 +131,10 @@ export string test_and_on_the_host_with_no_javascript_in_it(Core core, Cli cli) 
   // The strongest form of the claim: x25519, HKDF, AES-GCM, the packet layer and the capability
   // boundary, in a process with no JavaScript runtime under them, against quinn.
   T t = T.create();
+  // Built rather than `wac run`: the same program, compiled once instead of per run — see
+  // `wactest/src/built.wac`. The grants go into its manifest, so the module is launched with none.
   assertHandshook(t, against(t, cli, "prog-v8", wacBinary(cli),
-                             string[]("run", "--allow-net", ENTRY, "--")),
+                             string[](handshakeModule(cli))),
                   "wacv8");
   return t.report();
 }
@@ -151,7 +160,7 @@ export string test_a_fresh_key_every_run(Core core, Cli cli) {
     // rather than an `exec` for exactly that reason: `exec` would wait for a program that is parked
     // in `receiveFrom`.
     Daemon d = start(cli,
-      quoted(wacBinary(cli)) + " run --allow-net " + quoted(ENTRY) + " -- 127.0.0.1 " +
+      quoted(wacBinary(cli)) + " " + quoted(handshakeModule(cli)) + " 127.0.0.1 " +
       itoa(sock.port) + " localhost",
       cli.cwd().wait() + "/.cache/quic-fresh-" + itoa(i) + ".log");
     if (!d.ok()) {
