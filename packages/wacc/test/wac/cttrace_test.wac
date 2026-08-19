@@ -32,6 +32,24 @@ import { emitFilesTraced, emitFilesTracedSlots, traceTableFiles } from "../../sr
 
 const string ENTRY = "/t/m.wac";
 
+/**
+ * **The journal these tests ask for, and why it is not the default.**
+ *
+ * The default is 2^22 slots, and `covdump` prints *every slot in index order* — that is its contract,
+ * because for a coverage build every counter is meaningful whether or not it was reached. For a trace
+ * build almost none of it is: the programs below record between two and about twenty events, and the
+ * rest of the array is the zeroes it was initialised with. Dumping it cost **40.8 MB of text and about
+ * four seconds per run**, ten runs of it, which was 56s of the 86s this file took in the suite.
+ *
+ * So each run asks for the room it needs. Nothing here is a claim about the default size — the two
+ * claims about sizing are in `test_a_journal_too_small_says_how_large_it_needed_to_be`, which names
+ * its own sizes, and the default is what `harness/ctTrace.ts` uses on every run of
+ * `packages/crypto/test/constanttime.test.ts`. That consumer never pays this, because it reads the
+ * live prefix through `__cov_get` rather than serialising the array: **the cost was the text dump, not
+ * the journal.**
+ */
+const i32 SLOTS = 4096;
+
 string root(Cli cli) { return cli.cwd().wait(); }
 
 /** One recorded point: what it is and where. */
@@ -200,6 +218,24 @@ bool both(T t, string what, Journal a, Journal b) {
   return a.ok && b.ok;
 }
 
+/**
+ * `both`, and neither run lost an event — which is what makes asking for `SLOTS` safe.
+ *
+ * Two journals truncated at the same point are identical *prefixes*, and "identical journals" is
+ * precisely what `test_a_routine_that_does_not_look_at_its_secret_produces_one_journal` expects to
+ * find. An overflow there would let it pass without ever comparing the part where a leak would show,
+ * so the size these tests chose is checked rather than assumed. `test_a_journal_too_small…` overflows
+ * on purpose and so keeps using `both`.
+ */
+bool whole(T t, string what, Journal a, Journal b) {
+  if (!both(t, what, a, b)) { return false; }
+  t.eqI32(a.sites.len(), a.wanted,
+          what + ": every event fits — " + itoa(a.wanted) + " in " + itoa(a.capacity) + " slots");
+  t.eqI32(b.sites.len(), b.wanted,
+          what + ": every event fits — " + itoa(b.wanted) + " in " + itoa(b.capacity) + " slots");
+  return a.sites.len() == a.wanted && b.sites.len() == b.wanted;
+}
+
 export string test_a_secret_dependent_index_diverges_and_there_is_no_branch_to_find(
     Core core, Cli cli) {
   // The shape of AES's S-box lookup, and the whole reason indices are recorded: `f` has exactly one
@@ -213,9 +249,9 @@ export string test_a_secret_dependent_index_diverges_and_there_is_no_branch_to_f
   Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
   t.isTrue(hasKind(points, "index"), "an index point exists");
 
-  Journal a = traced(cli, "index1", BODY + "export i32 main() { return f(1); }\n", 0);
-  Journal b = traced(cli, "index2", BODY + "export i32 main() { return f(2); }\n", 0);
-  if (both(t, "the S-box lookup", a, b)) {
+  Journal a = traced(cli, "index1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
+  Journal b = traced(cli, "index2", BODY + "export i32 main() { return f(2); }\n", SLOTS);
+  if (whole(t, "the S-box lookup", a, b)) {
     t.eqI32(a.sites.len(), b.sites.len(), "same number of events — no branch differs");
     t.eqStr(divergence(points, a, b), "index@3", "the index at line 3 is where they differ");
   }
@@ -229,13 +265,13 @@ export string test_a_secret_dependent_branch_diverges_at_the_branch(Core core, C
     "  return 0;\n" +
     "}\n";
   Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
-  Journal a = traced(cli, "branch1", BODY + "export i32 main() { return f(1); }\n", 0);
-  Journal b = traced(cli, "branch100", BODY + "export i32 main() { return f(100); }\n", 0);
+  Journal a = traced(cli, "branch1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
+  Journal b = traced(cli, "branch100", BODY + "export i32 main() { return f(100); }\n", SLOTS);
   // `else@2`, not `then@2`: the divergence is named for the point the *first* run stood at, and with
   // `secret = 1` that run took the untaken side. Which of the two it names does not matter to a
   // caller — `firstDivergence` reports the line — and pinning the real answer is worth more than
   // pinning the one that was assumed.
-  if (both(t, "the branch", a, b)) {
+  if (whole(t, "the branch", a, b)) {
     t.eqStr(divergence(points, a, b), "else@2", "where the two journals part");
   }
   return t.report();
@@ -252,9 +288,9 @@ export string test_a_routine_that_does_not_look_at_its_secret_produces_one_journ
     "  return acc;\n" +
     "}\n";
   Point[] points = pointsOf(BODY + "export i32 main() { return f(0); }\n");
-  Journal a = traced(cli, "clean0", BODY + "export i32 main() { return f(0); }\n", 0);
-  Journal b = traced(cli, "clean255", BODY + "export i32 main() { return f(255); }\n", 0);
-  if (both(t, "the clean routine", a, b)) {
+  Journal a = traced(cli, "clean0", BODY + "export i32 main() { return f(0); }\n", SLOTS);
+  Journal b = traced(cli, "clean255", BODY + "export i32 main() { return f(255); }\n", SLOTS);
+  if (whole(t, "the clean routine", a, b)) {
     t.isTrue(a.sites.len() > 0, "something was recorded");
     t.eqStr(divergence(points, a, b), "", "identical journals");
   }
@@ -274,9 +310,9 @@ export string test_the_right_hand_side_of_a_short_circuit_is_a_point(Core core, 
   Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
   t.isTrue(hasKind(points, "and-rhs"), "an and-rhs point exists");
 
-  Journal a = traced(cli, "short1", BODY + "export i32 main() { return f(1); }\n", 0);
-  Journal b = traced(cli, "short9", BODY + "export i32 main() { return f(9); }\n", 0);
-  if (both(t, "the short circuit", a, b)) {
+  Journal a = traced(cli, "short1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
+  Journal b = traced(cli, "short9", BODY + "export i32 main() { return f(9); }\n", SLOTS);
+  if (whole(t, "the short circuit", a, b)) {
     // **The claim, asserted directly**: with `secret = 1` the left operand is false and the right
     // never runs; with `secret = 9` it does. Before this point existed the two runs recorded the same
     // events and the check said the secret had not been observed.
@@ -305,9 +341,9 @@ export string test_the_journal_is_a_journal_order_is_what_it_records(Core core, 
     "  return a + b;\n" +
     "}\n";
   Point[] points = pointsOf(BODY + "export i32 main() { return f(0); }\n");
-  Journal a = traced(cli, "order0", BODY + "export i32 main() { return f(0); }\n", 0);
-  Journal b = traced(cli, "order1", BODY + "export i32 main() { return f(1); }\n", 0);
-  if (both(t, "the ordering", a, b)) {
+  Journal a = traced(cli, "order0", BODY + "export i32 main() { return f(0); }\n", SLOTS);
+  Journal b = traced(cli, "order1", BODY + "export i32 main() { return f(1); }\n", SLOTS);
+  if (whole(t, "the ordering", a, b)) {
     // **The whole sequence, so the wrapper is stated rather than filtered.** Two entries because
     // there are two functions — `main` is one, and the TypeScript that called `f` directly saw only
     // `f`'s. Then the two lookups. The claim is about the lookups, so they are also compared alone:
