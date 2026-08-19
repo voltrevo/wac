@@ -1,0 +1,370 @@
+// The capability layer itself, across two hosts: every runnable example in `example/`.
+//
+// The other native tests drive the boundary through `packages/sh` and `packages/box` — a lot of code
+// above a little of it. These are the programs written *to demonstrate the capabilities*, one idea
+// each: two reads in flight, a filter, a program running inside another with a world of its own, a
+// program that runs itself, a filesystem round trip, what a build is allowed to do. If the two hosts
+// agree on all of them, the agreement is about the boundary rather than about the shell.
+//
+// It found two things the first time it ran, which is why that is recorded here rather than in a note:
+//
+//   1. **`probe` said `net=failed` where Deno said `net=denied`.** The native host answered an
+//      ungranted `connect` with "networking is not implemented", which is a fact about the runtime
+//      and irrelevant to a program that would be refused on every host. "Not granted" outranks "not
+//      implemented", and `probe` is the program that reads the difference.
+//   2. **`overlap` disagrees on purpose**, and the two hosts are both right — see below.
+//
+// ## The one line that is a race, on both hosts
+//
+// `overlap` asks `isDone()` immediately after submitting two reads, and no host promises *when* a
+// read completes. On an idle machine Deno says "one finished already" every time and the native
+// runtime says "both still running" every time — which looks exactly like a property of each host,
+// and is not: under the full suite Deno says "both still running" too.
+//
+// This test pinned the idle answers first and the gate caught it within one run. So the line is
+// **normalised on both sides** rather than expected per host: what is compared is that the two hosts
+// agree about everything else, and that each printed *one of the two* legal answers rather than
+// something else. design/0001's D12 is the decision that would make this deterministic.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. Porting it is what found `issues/system/0209`:
+// the file runs three cases at once, deliberately, and `Cli.exec` blocked at the call on both Rust
+// hosts, so the concurrency below could not be written until that was fixed. It is written the same
+// way here — submit, then collect — because that is what a ticket is for.
+// test-lane: heavy — 11s cold and 37 MB of built artifacts: fourteen examples built and run on two
+// hosts, three at a time. Serially it is 20s, measured — which is what the concurrency buys and
+// what `issues/system/0209` had to be fixed for.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Pending } from "../../../platform/src/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Held } from "../../../wactest/src/daemon.wac";
+import { stale } from "./hostfs.wac";
+
+const string BUILT = ".cache/hostexamples";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/** The native host binary — `wacland`, built when its sources are newer than it. */
+string nativeBinary(Cli cli) {
+  string path = root(cli) + "/native/target/release/wacland";
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c",
+      "if [ -x '" + path + "' ] && " +
+      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer '" + path +
+      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
+      "cd native && cargo build --release --quiet"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return ""; }
+  return cli.stat(path).wait().isFile ? path : "";
+}
+
+/** One example: what to build it with, what to run it with, and what it reads. */
+struct Case {
+  string name;
+  string[] args;
+  string stdin;
+  string[] grants;
+  /**
+   * A line with more than one legal answer, and every answer it may have.
+   *
+   * Normalised away before comparing, and checked to be one of these — which is the difference
+   * between allowing a race and ignoring a line.
+   */
+  string[] racy;
+  /**
+   * This example needs a port, and the runner allocates a free one per run.
+   *
+   * Not a fixed number in `args`: these tests run in a parallel lane, and binding a port somebody
+   * else has taken is a real failure here rather than a theoretical one. The port reaches the program
+   * as its last argument and comes back in its transcript, which is why a mask goes with it.
+   */
+  bool port;
+  /**
+   * A measurement to mask before comparing, as a `prefix` whose following digits are hidden.
+   *
+   * `crowd` prints how long its calls took, which two runs of the *same* host would not agree on
+   * either. Masking is right where the number is a measurement; where it is an answer, masking would
+   * be the test quietly agreeing with itself.
+   */
+  string maskBefore;
+  string maskAfter;
+}
+
+Case caseOf(string name, string[] args, string stdin, string[] grants) {
+  return Case(name, args, stdin, grants, string[0](fill: ""), false, "", "");
+}
+
+string[] none() { return string[0](fill: ""); }
+
+Case[] cases() {
+  Case crowd = caseOf("crowd", string[]("4"), "", none());
+  crowd.maskBefore = "elapsed ";
+  crowd.maskAfter = "ms";
+
+  Case writeread = caseOf("writeread", none(), "", string[]("--allow-net"));
+  writeread.port = true;
+  // The port is the one thing that differs between two runs, by construction.
+  writeread.maskBefore = "connected on port ";
+  writeread.maskAfter = "";
+
+  Case overlap = caseOf("overlap", string[]("in.txt", "in.txt"), "", string[]("--allow-read"));
+  overlap.racy = string[]("one finished already", "both still running");
+
+  return Case[](
+    caseOf("hexdump", none(), "a b c\nd e\n", none()),
+    caseOf("wc", none(), "a b c\nd e\n", none()),
+    caseOf("roundtrip", string[]("hello"), "", string[]("--allow-read", "--allow-write")),
+    caseOf("probe", none(), "", string[]("--allow-read")),
+    caseOf("twin", none(), "", none()),
+    caseOf("inside", string[]("."), "", string[]("--allow-read", "--allow-write")),
+    crowd,
+    // **A child that only computes**, stopped by its parent, on both hosts. Nothing else here needs a
+    // host to *terminate* anything: every other program writes, so ending its queues is enough to make
+    // it notice. Issue 0123 said this had no reproduction in the repository — it does now, and what
+    // makes it one is that the child never writes again after its first line.
+    caseOf("stop", none(), "", none()),
+    // **The three clocks**, which were named gaps because a clock answers differently on every run.
+    // What is comparable is the *shape* `Core` promises — monotonic never goes backwards, a sleep
+    // waits at least as long as it was asked and reports a monotonic reading, the wall clock dates —
+    // so the example prints verdicts rather than measurements and two hosts can agree on all five.
+    caseOf("clocks", none(), "", none()),
+    // **`randomBytes` across its whole documented range**, which is the other capability whose answer
+    // cannot be compared byte for byte — so, again, verdicts. The ledger's entry for it used to rest
+    // on `head -c 16 /dev/urandom`, and sixteen bytes is on the near side of every boundary that
+    // matters: Web Crypto refuses more than 65,536 bytes in one call, so Deno and the browser threw on
+    // anything larger while Node, which chunked, did not (0122). Four sizes, one past the cap.
+    caseOf("entropy", none(), "", none()),
+    // **What `send` answers when the far end has stopped listening**, which is a bool the three
+    // JavaScript hosts were not answering at all: `kid.in.push(...)` with the result discarded and the
+    // promise unawaited, so a send after `closeFeed` claimed success and dropped the bytes (0121) and
+    // never waited for room (0120). The native runtime answered `stream.write` from the start, so this
+    // example is the two of them being asked the same question.
+    caseOf("feed", none(), "", none()),
+    // **The network, which had no two-host comparison at all** — `CONNECT`, `LISTEN` and `ACCEPT` were
+    // three named gaps whose entry said the network is exercised end to end by `arrival_users` over
+    // ssh, but only with the native host as the *server*. This is one program doing all three against
+    // itself on loopback, so both hosts answer the same question.
+    writeread,
+    overlap);
+}
+
+/**
+ * A directory of its own for each run, with the one fixture in it.
+ *
+ * **Not one shared directory**, which is what this had first and which failed on `roundtrip` — it
+ * prints how many entries its `readDir` saw, and the test was writing a `.wasm` and a `.json` for
+ * every case into the same place between the two runs. The hosts agreed perfectly and the directory
+ * had changed underneath them, which reads exactly like a difference and is not one.
+ */
+string workspace(Cli cli, string tmp, string name, string which) {
+  string dir = tmp + "/run/" + name + "-" + which;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  cli.writeFile(dir + "/in.txt", ("a b c\nd e\n").toBytes()).wait();
+  return dir;
+}
+
+/** Digits between `before` and `after` replaced, so a measurement is not compared as an answer. */
+string hide(Case c, string text) {
+  string out = text;
+  if (c.maskBefore != "") {
+    string built = "";
+    i32 at = 0;
+    while (at < out.len()) {
+      i32 found = out.slice(at, out.len()).indexOf(c.maskBefore);
+      if (found < 0) { built = built + out.slice(at, out.len()); break; }
+      i32 start = at + found + c.maskBefore.len();
+      built = built + out.slice(at, start) + "<measured>";
+      i32 end = start;
+      u8[] b = out.toBytes();
+      while (end < b.len() && b[end] >= '0' && b[end] <= '9') { end = end + 1; }
+      if (c.maskAfter != "" && out.slice(end, out.len()).indexOf(c.maskAfter) == 0) {
+        end = end + c.maskAfter.len();
+        built = built + c.maskAfter;
+      }
+      at = end;
+    }
+    out = built;
+  }
+  for (i32 i = 0; i < c.racy.len(); i++) {
+    i32 at = out.indexOf(c.racy[i]);
+    if (at >= 0) {
+      out = out.slice(0, at) + "<either>" + out.slice(at + c.racy[i].len(), out.len());
+    }
+  }
+  return out;
+}
+
+/** A shell line that runs `prog` with `args` from `where`, since `Cli.exec` has no working directory. */
+string lineFor(string where, string prog, string[] args) {
+  string line = "cd '" + where + "' && exec '" + prog + "'";
+  for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
+  return line;
+}
+
+struct Ready {
+  Case c;
+  string denoBin;
+  string manifest;
+  string denoDir;
+  string nativeDir;
+  i32 denoPort;
+  i32 nativePort;
+  string error;
+}
+
+/**
+ * Start a build. **Submitted, not waited for** — the builds dominate this file's wall clock and are
+ * as parallelisable as the runs, which is the whole reason `issues/system/0209` had to be fixed first.
+ */
+Pending<Exec> submitBuild(Cli cli, bool native, string entry, string out, string[] grants) {
+  if (native) {
+    string[] args = string[4 + grants.len()](fill: "");
+    args[0] = "build";
+    args[1] = entry;
+    for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
+    args[2 + grants.len()] = "-o";
+    args[3 + grants.len()] = out;
+    return cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]());
+  }
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
+  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
+  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
+  args[head.len() + grants.len()] = "-o";
+  args[head.len() + grants.len() + 1] = out;
+  return cli.exec("deno", args, u8[0]());
+}
+
+string buildError(string entry, Exec r) {
+  if (r.ran() && r.status == 0) { return ""; }
+  return entry + " did not build: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+}
+
+/**
+ * How many cases are in flight at once.
+ *
+ * Fourteen cases at about half a second each — two process spawns, and in `clocks` and `crowd` a
+ * deliberate sleep — is thirteen seconds of mostly *waiting*, and it was the slowest single test in
+ * the suite. Three at a time rather than all fourteen because this file already runs inside a
+ * four-worker lane on a box three agents share: the point is to stop waiting serially, not to take
+ * the machine.
+ *
+ * **Nothing here becomes load-sensitive that was not already.** The one line with two legal answers
+ * is normalised on both sides for exactly this reason — the header's note that Deno's answer flips
+ * under the full suite is that condition already arriving — `crowd`'s measurement is masked, and
+ * `clocks` compares verdicts a busy machine cannot falsify, since a sleep that is asked for 50ms and
+ * takes 300 still waited at least as long as it was asked.
+ */
+const i32 AT_ONCE = 3;
+
+export string test_the_capability_examples_answer_the_same_on_both_hosts(Core core, Cli cli) {
+  T t = T.create();
+  string native = nativeBinary(cli);
+  string tmp = root(cli) + "/" + BUILT;
+  cli.mkdir(tmp, true).wait();
+
+  Case[] all = cases();
+  for (i32 base = 0; base < all.len(); base = base + AT_ONCE) {
+    i32 upto = base + AT_ONCE;
+    if (upto > all.len()) { upto = all.len(); }
+    i32 n = upto - base;
+
+    // ── Build, three at a time. Submitting first and collecting after is what makes it concurrent;
+    //    `issues/system/0209` is why that had to be fixed in two hosts before it was.
+    Pending<Exec>[] builds = Pending<Exec>[n * 2](fill: cli.exec("/bin/sh", string[]("-c", "true"),
+                                                                 u8[0]()));
+    for (i32 i = 0; i < n; i++) {
+      string entry = "packages/platform/example/" + all[base + i].name + ".wac";
+      builds[i * 2] = submitBuild(cli, false, entry, tmp + "/" + all[base + i].name + "-deno",
+                                  all[base + i].grants);
+      if (native != "") {
+        builds[i * 2 + 1] = submitBuild(cli, true, entry, tmp + "/" + all[base + i].name,
+                                        all[base + i].grants);
+      }
+    }
+    string why = "";
+    for (i32 i = 0; i < n; i++) {
+      string entry = "packages/platform/example/" + all[base + i].name + ".wac";
+      why = why + buildError(entry, builds[i * 2].wait());
+      if (native != "") { why = why + buildError(entry, builds[i * 2 + 1].wait()); }
+    }
+    t.eqStr(why, "", "the examples in this batch built");
+    if (why != "") { continue; }
+
+    // ── Run both hosts for all three cases at once: six programs in flight.
+    Pending<Exec>[] runs = Pending<Exec>[n * 2](fill: cli.exec("/bin/sh", string[]("-c", "true"),
+                                                               u8[0]()));
+    string[] dirsDeno = string[n](fill: "");
+    string[] dirsNative = string[n](fill: "");
+    i32[] ports = i32[n * 2](fill: 0);
+    for (i32 i = 0; i < n; i++) {
+      Case c = all[base + i];
+      dirsDeno[i] = workspace(cli, tmp, c.name, "deno");
+      dirsNative[i] = workspace(cli, tmp, c.name, "native");
+
+      // Held until the moment the program binds — a free number kept open is the difference between
+      // avoiding a collision and reducing the odds of one.
+      Held hd = c.port ? Held.take(cli) : Held(0, -1);
+      Held hn = c.port ? Held.take(cli) : Held(0, -1);
+      ports[i * 2] = hd.port;
+      ports[i * 2 + 1] = hn.port;
+
+      string[] denoArgs = string[c.args.len() + (c.port ? 1 : 0)](fill: "");
+      for (i32 k = 0; k < c.args.len(); k++) { denoArgs[k] = c.args[k]; }
+      if (c.port) { denoArgs[c.args.len()] = itoa(hd.port); }
+
+      string[] nativeArgs = string[1 + c.args.len() + (c.port ? 1 : 0)](fill: "");
+      nativeArgs[0] = tmp + "/" + c.name + ".json";
+      for (i32 k = 0; k < c.args.len(); k++) { nativeArgs[1 + k] = c.args[k]; }
+      if (c.port) { nativeArgs[1 + c.args.len()] = itoa(hn.port); }
+
+      hd.release(cli);
+      hn.release(cli);
+      runs[i * 2] = cli.exec("/bin/sh",
+        string[]("-c", lineFor(dirsDeno[i], tmp + "/" + c.name + "-deno", denoArgs)),
+        c.stdin.toBytes());
+      if (native != "") {
+        runs[i * 2 + 1] = cli.exec("/bin/sh",
+          string[]("-c", lineFor(dirsNative[i], native, nativeArgs)), c.stdin.toBytes());
+      }
+    }
+
+    for (i32 i = 0; i < n; i++) {
+      Case c = all[base + i];
+      Exec js = runs[i * 2].wait();
+      string jsOut = string.fromBytes(js.stdout);
+      string jsErr = string.fromBytes(js.stderr);
+      // Each example is asserted to have *said something* on its own, so a skipped native half still
+      // tests that the Deno side runs — and so that two silent hosts cannot agree. Both streams,
+      // because `crowd` reports through `warn` and the first version of this checked standard output
+      // alone and called a working program silent.
+      t.isTrue(jsOut.len() + jsErr.len() > 0, "deno " + c.name + " printed nothing");
+      if (native == "") { continue; }
+
+      Exec rs = runs[i * 2 + 1].wait();
+      string rsOut = string.fromBytes(rs.stdout);
+      string rsErr = string.fromBytes(rs.stderr);
+
+      // Each host must have printed *one of* the legal answers, not merely something maskable: that
+      // is the difference between allowing a race and ignoring a line.
+      if (c.racy.len() > 0) {
+        bool jsSaid = false;
+        bool rsSaid = false;
+        for (i32 k = 0; k < c.racy.len(); k++) {
+          if (contains(jsOut, c.racy[k])) { jsSaid = true; }
+          if (contains(rsOut, c.racy[k])) { rsSaid = true; }
+        }
+        t.isTrue(jsSaid, "deno " + c.name + " said none of its legal answers: " + jsOut);
+        t.isTrue(rsSaid, "native " + c.name + " said none of its legal answers: " + rsOut);
+      }
+      t.eqStr(hide(c, rsOut), hide(c, jsOut), c.name + ": stdout");
+      t.eqStr(hide(c, rsErr), hide(c, jsErr), c.name + ": stderr");
+      t.eqI32(rs.status, js.status, c.name + ": status");
+    }
+  }
+
+  t.isTrue(native != "", "the native half ran; without cargo only the Deno half above was checked");
+  cli.remove(tmp + "/run", true).wait();
+  return t.report();
+}
