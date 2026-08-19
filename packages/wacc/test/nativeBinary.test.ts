@@ -159,7 +159,7 @@ Deno.test({
       // full compile of the compiler in a test that already rebuilds the crate, for a claim that has
       // an owner. So what is left here is the cheap half: the rebuild happened, it is a compiler, and
       // it is the same artefact as the carried payload to within the known 18. Whether the two
-      // pipelines *should* agree is `issues/system/0213`.
+      // pipelines *should* agree is `issues/system/0214`.
       //
       // The output stem is `wacc` again because a manifest names the file it sits beside, and a
       // rebuild under another name is a different artefact for a good reason.
@@ -179,14 +179,14 @@ Deno.test({
       if (mine.length < 100_000) throw new Error(`the rebuild is ${mine.length} bytes, not a compiler`);
       const seed = await Deno.readFile(seedWasm);
       // **Not byte-equal, and that is the finding rather than the assertion.** These two are 18 bytes
-      // apart — see the note above and `issues/system/0213`. What is checked is that they are the same
+      // apart — see the note above and `issues/system/0214`. What is checked is that they are the same
       // artefact to within that: a rebuild that came out half the size would be a compiler that had
       // lost something, and this is the cheap check that says so without claiming the pipelines agree.
       const drift = Math.abs(mine.length - seed.length);
       if (drift > 64) {
         throw new Error(
           `the binary's rebuild is ${mine.length} bytes and the payload it carries is ${seed.length} — ` +
-            `${drift} apart, where the two pipelines differ by 18 (issues/system/0213)`,
+            `${drift} apart, where the two pipelines differ by 18 (issues/system/0214)`,
         );
       }
       console.log(`    and it rebuilt its own payload: ${mine.length} bytes against the carried ${seed.length}`);
@@ -237,7 +237,7 @@ Deno.test({
     // **3, not 1.** `wac test` distinguishes "ran and failed" from "did not compile", and this asked
     // for the second for a while — so the canary fired on every run, saying "the fixture passed" when
     // the fixture had failed exactly as designed. A canary that cries wolf in the wrong words trains a
-    // reader to disbelieve it. `issues/system/0213`.
+    // reader to disbelieve it. `issues/system/0214`.
     assertEquals(bad.code, 3, `the deliberately failing fixture did not fail as one: ${bad.out}`);
     assertEquals(
       bad.out.includes("deliberate: got 1, want 2"),
@@ -253,7 +253,7 @@ Deno.test({
     // which is what the runner said when this was written and is not what it says now — a fourth
     // stale expectation in a file nobody runs, and the third of them to be a string. The claim is
     // that the skipped tests are *named*, so the test that is skipped is what is checked for.
-    // `issues/system/0213`.
+    // `issues/system/0214`.
     const oracle = await run(wac, ["test", "packages/tor/test/wac/vote_test.wac"]);
     assertEquals(
       oracle.out.includes("test_the_vote_tor_accepted_is_reproduced"),
@@ -338,7 +338,7 @@ Deno.test({
         // copy — so `bounds_test.wac`'s twelve trapping exports scored 4/12 here against both real
         // runners' 16/0, and the disagreement was reported as the *runners'*. The rule is the export
         // name, the same test `harness/wacTestRun.ts` and `native/v8/src/main.rs` both make.
-        // `issues/system/0213`.
+        // `issues/system/0214`.
         const wantsTrap = name.startsWith("test_traps_") || name.startsWith("testTraps");
         try {
           if ((fn as () => string)() === "" && !wantsTrap) pass++;

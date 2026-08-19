@@ -18,7 +18,11 @@
 
 import { Core, Cli, Exec, Stat, Pending } from "../../../platform/src/platform.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { itoa } from "../../../fmt/src/itoa.wac";
+import { itoa, atoi } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { splitLines } from "../../../wactest/src/strings.wac";
 
 /** How long a run gets before the bound is called a hang. Generous on purpose. */
 export const i32 DEFAULT_SECONDS = 60;
@@ -114,4 +118,88 @@ export bool stale(Cli cli, string artifact) {
     string[]("-c", "find packages core spec -name '*.wac' -newer " + quoted(artifact) +
                    " -print -quit 2>/dev/null"), u8[0]()).wait();
   return !r.ran() || r.stdout.len() > 0;
+}
+
+/**
+ * Every script through the **Deno host in one process**, rather than one process each.
+ *
+ * A built Deno bundle costs 133ms to start, against 17ms for `wacland` and 2ms for bash — measured
+ * 2026-08-19 — and these files make about a hundred such runs. `harness/appRunMany.ts` is
+ * `harness/appRun.ts`'s worker behind one `exec`: it builds the program once and runs it per request
+ * at about 1.25ms. That is what took `native_hostfs.test.ts` from 29s to 9.4s while it was still
+ * TypeScript, and `issues/system/0214` is why a wac test could not have it until now.
+ *
+ * **The comparison is unchanged.** Same entry, same grants, same capability implementations, same
+ * environment — `env` is passed explicitly for the same reason `envLine` exists, so a differential
+ * runs against a fixed world rather than the suite's.
+ *
+ * **A batch that does not answer is every case hung, not a silent short answer.** The bound is on the
+ * whole call, and a short or missing answer list makes every request `hung` — which puts each case
+ * into the caller's existing retry, one process apiece, exactly as before this existed. That is the
+ * rule `issues/system/0128` asks for: a bound that fired is a report rather than an answer.
+ */
+export Ran[] denoBatch(Cli cli, i32 seconds, string entry, string[] grants, string home,
+                       string[] cwds, string[][] argvs, u8[][] stdins) {
+  u8[] env = joinedNul(envStrings(cli, home));
+  string body = "";
+  for (i32 i = 0; i < cwds.len(); i++) {
+    body = body + "run " + hex(joinedNul(argvs[i])) + " " + hex(cwds[i].toBytes()) + " " +
+           hex(stdins[i]) + " " + hex(env) + "\n";
+  }
+
+  string line = "exec timeout " + itoa(seconds) + " deno run -A harness/appRunMany.ts " +
+                quoted(entry);
+  for (i32 i = 0; i < grants.len(); i++) { line = line + " " + quoted(grants[i]); }
+  Exec r = cli.exec("/bin/sh", string[]("-c", line), body.toBytes()).wait();
+
+  Ran[] out = Ran[cwds.len()](fill: Ran(0, "", "", false));
+  string[] lines = r.ran() ? splitLines(string.fromBytes(r.stdout)) : string[0](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < lines.len() && at < out.len(); i++) {
+    if (lines[i].len() < 4 || lines[i].slice(0, 4) != "ran ") { continue; }
+    string rest = lines[i].slice(4, lines[i].len());
+    i32 sp1 = rest.indexOf(" ");
+    if (sp1 < 0) { continue; }
+    i32 code = atoi(rest.slice(0, sp1));
+    string tail = rest.slice(sp1 + 1, rest.len());
+    i32 sp2 = tail.indexOf(" ");
+    string outHex = sp2 < 0 ? tail : tail.slice(0, sp2);
+    string errHex = sp2 < 0 ? "" : tail.slice(sp2 + 1, tail.len());
+    out[at] = Ran(code, string.fromBytes(decoded(outHex)), string.fromBytes(decoded(errHex)), false);
+    at = at + 1;
+  }
+  // Short of a full set of answers is the batch having failed, however it failed: every case goes
+  // back to the caller marked hung, and the caller's retry runs it one process at a time.
+  if (at != out.len()) {
+    string why = r.ran() ? string.fromBytes(r.stderr) : r.error;
+    for (i32 i = 0; i < out.len(); i++) {
+      out[i] = Ran(124, "", "the batch answered " + itoa(at) + " of " + itoa(out.len()) + " — " + why,
+                   true);
+    }
+  }
+  return out;
+}
+
+/** The same fixed world `envLine` builds, as `K=V` strings for `appRunMany`. */
+string[] envStrings(Cli cli, string home) {
+  string path = "/usr/bin:/bin";
+  u8[]? p = cli.env("PATH").wait();
+  if (p is not null) { path = string.fromBytes(p!); }
+  return string[]("LC_ALL=C", "PATH=" + path, "HOME=" + home);
+}
+
+/**
+ * The strings with a NUL between them, which is the one separator an argument cannot contain.
+ *
+ * Built as bytes because wac has no escape for a NUL in a string literal — and a string is bytes
+ * here, so nothing is lost by saying so directly.
+ */
+u8[] joinedNul(string[] parts) {
+  Buf b = Buf.create();
+  u8[] zero = u8[1]();
+  for (i32 i = 0; i < parts.len(); i++) {
+    if (i > 0) { b.pushAll(zero); }
+    b.pushAll(parts[i].toBytes());
+  }
+  return b.take();
 }

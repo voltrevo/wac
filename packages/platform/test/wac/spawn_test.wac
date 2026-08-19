@@ -18,6 +18,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 
@@ -36,16 +37,35 @@ string scratch(Cli cli, string name) {
  * `target` is "deno" or "node"; `worker` emits the worker bundle alone — the half that expects a
  * SharedArrayBuffer by postMessage, which is what `spawn` takes and how a wac program becomes a child.
  */
+/**
+ * **Built once per shape, and copied into the case's directory.**
+ *
+ * Fourteen of these across seven tests, and most are the same three programs — `runner.wac` alone is
+ * built six times with the same grants. `build.ts` already caches the *work*; what was being paid
+ * fourteen times was Deno starting, at 180-410ms. `wactest/src/built.wac` keeps one artefact per
+ * shape and this copies it where the case wants it, which keeps the per-test directories that stop
+ * one case reading another's files.
+ *
+ * The name has to carry everything that changes the output — entry, grants, target, worker — or two
+ * shapes would share a cache entry and the second would silently get the first.
+ */
 string build(Cli cli, string entry, string out, string[] grants, string target, bool worker) {
-  string line = "exec env -u WAC_PROFILE deno run -A packages/platform/build.ts " + quoted(entry);
-  for (i32 i = 0; i < grants.len(); i++) { line = line + " " + grants[i]; }
-  line = line + " --target " + target;
-  if (worker) { line = line + " --worker"; }
-  line = line + " -o " + quoted(out);
-  Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
-  if (!r.ran() || r.status != 0) {
-    return entry + " did not build: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+  string base = entry;
+  i32 slash = -1;
+  for (i32 i = 0; i < base.len(); i++) { if (base.slice(i, i + 1) == "/") { slash = i; } }
+  if (slash >= 0) { base = base.slice(slash + 1, base.len()); }
+  if (base.len() > 4 && base.slice(base.len() - 4, base.len()) == ".wac") {
+    base = base.slice(0, base.len() - 4);
   }
+  string name = "spawn-" + base + "-" + target + (worker ? "-worker" : "");
+  for (i32 i = 0; i < grants.len(); i++) {
+    string g = grants[i];
+    name = name + "-" + (g.len() > 8 ? g.slice(8, g.len()) : g);
+  }
+  string made = builtByDeno(cli, entry, name, grants, target, worker,
+                            string[]("packages/platform/src", "packages/platform/example"));
+  if (made == "") { return entry + " did not build"; }
+  if (!copyBuilt(cli, made, out, !worker)) { return entry + ": the build did not copy to " + out; }
   return "";
 }
 
