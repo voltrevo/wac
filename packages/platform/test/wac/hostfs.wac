@@ -16,7 +16,7 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Core, Cli, Exec, Stat } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Stat, Pending } from "../../../platform/src/platform.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -46,14 +46,32 @@ string envLine(Cli cli, string home) {
   return "env -i LC_ALL=C " + quoted("PATH=" + path) + " " + quoted("HOME=" + home);
 }
 
-Ran once(Core core, Cli cli, i32 seconds, string cwd, string home, string prog, string[] args,
-         u8[] stdin) {
+/**
+ * Start a run without waiting for it.
+ *
+ * **Submitted, not waited for**, which is a thing wac could not do until 2026-08-19: both Rust hosts
+ * ran the child to completion inside `exec` and handed back a ticket that was already settled, so
+ * three tickets taken before any wait still took three times as long. `issues/system/0211`. It
+ * matters here because the three answers a case compares — GNU's, one host's, the other's — are
+ * independent runs over three separate trees, so they are three-way concurrent for free.
+ */
+export Pending<Exec> submit(Cli cli, i32 seconds, string cwd, string home, string prog,
+                            string[] args, u8[] stdin) {
   string line = "cd " + quoted(cwd) + " && exec timeout " + itoa(seconds) + " " +
                 envLine(cli, home) + " " + quoted(prog);
   for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
-  Exec r = cli.exec("/bin/sh", string[]("-c", line), stdin).wait();
+  return cli.exec("/bin/sh", string[]("-c", line), stdin);
+}
+
+export Ran collect(Pending<Exec> p) {
+  Exec r = p.wait();
   if (!r.ran()) { return Ran(-1, "", "the shell did not run — " + r.error, false); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status == 124);
+}
+
+Ran once(Core core, Cli cli, i32 seconds, string cwd, string home, string prog, string[] args,
+         u8[] stdin) {
+  return collect(submit(cli, seconds, cwd, home, prog, args, stdin));
 }
 
 /**

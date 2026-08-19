@@ -31,8 +31,9 @@
 // the file runs three cases at once, deliberately, and `Cli.exec` blocked at the call on both Rust
 // hosts, so the concurrency below could not be written until that was fixed. It is written the same
 // way here — submit, then collect — because that is what a ticket is for.
-// test-lane: heavy — 11s cold and 37 MB of built artifacts: fourteen examples built and run on two
-// hosts, three at a time. Serially it is 20s, measured — which is what the concurrency buys and
+// **Not heavy**, for the reason `native_hostfs_test.wac` gives: a two-host comparison that is not in
+// the gate is not doing its job. **5s warm** (8s cold, 9.9 MB): fourteen examples built and run on
+// two hosts, three at a time. Serially it is 20s, measured — which is what the concurrency buys and
 // what `issues/system/0211` had to be fixed for.
 
 import { T } from "../../../wactest/src/assert.wac";

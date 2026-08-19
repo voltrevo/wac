@@ -29,16 +29,20 @@
 //
 // Host-side until 2026-08-19, `issues/system/0161`. The three-way comparison is unchanged; what moved
 // is the process-spawning around it, which was never the interesting part.
-// test-lane: heavy — 28s cold and 41 MB of built artifacts, seven cases each driving the native
-// host over a real tree. It was 85s and 1145 MB host-side, and the difference is that the six
-// builds are made once behind an mtime check rather than once per test.
+// **Not heavy, and that is deliberate.** It declared `test-lane: heavy` when it arrived in wac,
+// which means it does not run on a push — so the two-host comparison, the thing this file exists
+// for, would not have been in the gate. agent-c had just taken the TypeScript version *out* of the
+// heavy lane for exactly that reason and it would have gone straight back in. It is **17s warm**
+// (26s cold, 6.6 MB): the six builds are made once behind an mtime check rather than once per test,
+// and the three answers a case compares run concurrently over three trees rather than in turn.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult, Pending } from "../../../platform/src/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { Ran, boundedAgain, hangReport, stale } from "./hostfs.wac";
+import { Ran, boundedAgain, hangReport, stale, submit, collect, DEFAULT_SECONDS }
+  from "./hostfs.wac";
 
 const string ENTRY = "packages/box/src/bin/sh.wac";
 /** Where the built shells live, so seven cases do not build six artifacts each. */
@@ -144,15 +148,31 @@ Shells shells(Cli cli) {
  */
 string tmpFor(Cli cli, string name) { return root(cli) + "/.cache/hostfs-" + name; }
 
-void fixture(Cli cli, string tmp) {
-  cli.remove(tmp + "/tree", true).wait();
-  cli.mkdir(tmp + "/tree/sub", true).wait();
-  cli.writeFile(tmp + "/tree/f", ("a\nb\nc\n").toBytes()).wait();
-  cli.writeFile(tmp + "/tree/n", ("3\n1\n2\n").toBytes()).wait();
-  cli.writeFile(tmp + "/tree/sub/deep", ("x\n").toBytes()).wait();
+void fixtureAt(Cli cli, string tree) {
+  cli.remove(tree, true).wait();
+  cli.mkdir(tree + "/sub", true).wait();
+  cli.writeFile(tree + "/f", ("a\nb\nc\n").toBytes()).wait();
+  cli.writeFile(tree + "/n", ("3\n1\n2\n").toBytes()).wait();
+  cli.writeFile(tree + "/sub/deep", ("x\n").toBytes()).wait();
   cli.exec("/bin/sh", string[]("-c",
-    "cd " + quoted(tmp + "/tree") + " && ln -s f link && ln -s nosuch dangling && ln -s loop loop"),
+    "cd " + quoted(tree) + " && ln -s f link && ln -s nosuch dangling && ln -s loop loop"),
     u8[0]()).wait();
+}
+
+void fixture(Cli cli, string tmp) { fixtureAt(cli, tmp + "/tree"); }
+
+/**
+ * One tree per answer, so the three runs of a case can be in flight together.
+ *
+ * The TypeScript rebuilt *the* tree before each of the three, which made them serial by construction:
+ * a script that writes — `echo new > made; cat made; rm made; ls` — would otherwise see the previous
+ * run's leftovers. Three trees is the same isolation and does not order them, which halves the wall
+ * clock now that `exec` returns a ticket rather than an answer (`issues/system/0211`).
+ */
+string treeFor(Cli cli, string tmp, string which) {
+  string tree = tmp + "/tree-" + which;
+  fixtureAt(cli, tree);
+  return tree;
 }
 
 /** The real tools, through bash, in the same directory the shells are told to change to. */
@@ -294,11 +314,28 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
   string[] scripts = agreed();
   for (i32 i = 0; i < scripts.len(); i++) {
     string script = scripts[i];
-    fixture(cli, tmp);
-    Ran want = gnu(core, cli, tmp, script);
-    fixture(cli, tmp);
-    Ran js = shell(core, cli, tmp, s.deno, string[0](fill: ""), script);
-    // A bound that fired is not an answer — see `hostfs.wac` and issue 0128.
+    // One tree each and all three submitted before any is collected: the three answers are
+    // independent runs and there is no reason to take them in turn. `issues/system/0211`.
+    string bashTree = treeFor(cli, tmp, "bash");
+    string denoTree = treeFor(cli, tmp, "deno");
+    string nativeTree = native == "" ? "" : treeFor(cli, tmp, "native");
+
+    Pending<Exec> pw = submit(cli, DEFAULT_SECONDS, bashTree, tmp, "bash",
+                               string[]("-c", script), u8[0]());
+    Pending<Exec> pj = submit(cli, DEFAULT_SECONDS, denoTree, tmp, s.deno,
+                               string[]("-c", script), u8[0]());
+    bool haveNative = native != "";
+    Pending<Exec> pr = haveNative
+      ? submit(cli, DEFAULT_SECONDS, nativeTree, tmp, native, string[](s.manifest, "-c", script),
+               u8[0]())
+      : pj;
+
+    Ran want = collect(pw);
+    Ran js = collect(pj);
+    // A bound that fired is not an answer — see `hostfs.wac` and issue 0128. A retry is serial and
+    // rare, so it goes through `boundedAgain`'s path rather than complicating the batch above.
+    if (want.hung) { want = gnu(core, cli, tmp, script); }
+    if (js.hung) { js = shell(core, cli, tmp, s.deno, string[0](fill: ""), script); }
     string stuck = hangReport(script, string[]("bash", "deno"), Ran[](want, js));
     if (stuck != "") { t.fail(stuck); continue; }
 
@@ -308,9 +345,9 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
     // nosuch` sat in this list with the half that matters unchecked, and two hosts agreeing on a
     // sentence GNU does not use would have passed.
     t.eqStr(strip(js.err), strip(want.err), "deno stderr: " + script);
-    if (native == "") { continue; }
-    fixture(cli, tmp);
-    Ran rs = shell(core, cli, tmp, native, string[](s.manifest), script);
+    if (!haveNative) { continue; }
+    Ran rs = collect(pr);
+    if (rs.hung) { rs = shell(core, cli, tmp, native, string[](s.manifest), script); }
     string stuckNative = hangReport(script, string[]("native"), Ran[](rs));
     if (stuckNative != "") { t.fail(stuckNative); continue; }
     t.eqStr(rs.out, want.out, "native: " + script);
