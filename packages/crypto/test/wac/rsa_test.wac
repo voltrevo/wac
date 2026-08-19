@@ -13,7 +13,18 @@
 //
 // `test/oracle.mjs` answers with a fresh key on request and then signs with it. It is **stateful on
 // purpose**: `rsakeygen` selects the key every later line in the same batch uses, exactly as the
-// callback it replaces did, and generating a 3072-bit key is a second so each size is made once.
+// callback it replaces did, so each size is made once per batch.
+//
+// **Where this file's ~5s goes, measured 2026-08-19, because the sentence here used to guess.** It
+// said generating a 3072-bit key was a second; five runs of node's keygen are 158-249ms, and a 2048
+// one is 86ms. The oracle is not the cost. **We are**: one 2048-bit `rsaSignPkcs1` is **117ms** in
+// wac against 0.6ms in OpenSSL, and verification with e=65537 is under a millisecond — the private
+// exponent is 2048 bits of modular exponentiation and the public one is seventeen. Six signatures
+// across two key sizes is most of the file.
+//
+// So this is the same family as `issues/system/0209`: the asymmetric primitives here are two to
+// three orders of magnitude off an optimised implementation, and every test that signs pays it. The
+// number moves when that does, not when this file is rearranged.
 // Host-side until 2026-08-17, `issues/system/0161`.
 //
 // Two rounds per test, and the split is always the same: everything the host must *produce* goes in

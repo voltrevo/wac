@@ -16,6 +16,8 @@ Twenty operations each, inside wasm under the `wac` binary, on this machine:
 | `ed25519Verify` | **61ms** |
 | `p256Sign` | 12ms |
 | `p256Verify` | 13ms |
+| `rsaSignPkcs1`, 2048-bit | 117ms |
+| `rsaVerifyPkcs1`, 2048-bit, e=65537 | <1ms |
 
 **Most of the ordering has an answer, and it is `issues/system/0210`.** P-256's `jacMul` adds only
 when the scalar bit is set; ed25519's `ptMul` always adds and selects. So P-256 is doing about half
@@ -64,6 +66,10 @@ operations are counted:
   introduction point, and the outer signature.
 - `packages/tls/test/wac/certtamper_test.wac` — 5.5s for 456 chain verifications, at P-256 speed. Had
   the fixtures been ed25519 it would have been 28s.
+- `packages/crypto/test/wac/rsa_test.wac` — ~5s, of which the node oracle is a few hundred
+  milliseconds: a 2048-bit private-key operation is 117ms here against about 0.6ms in OpenSSL, and
+  the file signs six times. RSA is a different implementation from the two curves and lands in the
+  same place, which is what makes this a package-wide property rather than one routine's problem.
 
 A relay validating a consensus, or a client checking a descriptor it just fetched, pays this per
 signature and not per test.
