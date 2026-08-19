@@ -86,14 +86,14 @@ void release(Cli cli, Bench b) {
 /**
  * The first hello, once the server's port is bound.
  *
- * **Readiness must not speak DTLS**, and the real exchange must not retry. `openssl s_server`
- * serves one peer, so a probe that sends its own ClientHello wins the server and this socket is
- * ignored — and a retry loop on `b.sock` would hit `issues/system/0207`, where giving up on a
- * `receiveFrom` leaves a reader that takes the next datagram and discards it. A DTLS flight has to
- * keep one source port, so `b.sock` cannot be replaced per attempt the way `stun_test.wac`'s can.
+ * **Readiness must not speak DTLS.** `openssl s_server` serves one peer, so a probe that sends its
+ * own ClientHello wins the server and this socket is then ignored — the probe passes and the test it
+ * was protecting fails. So readiness is settled out of band, against the kernel, and the exchange
+ * happens once with a deadline generous enough that a timeout means failure.
  *
- * Both constraints point the same way: settle readiness out of band, then exchange once with a
- * deadline generous enough that a timeout means failure.
+ * This file is also what found `issues/system/0207`, now fixed: a DTLS flight keeps one source port,
+ * so `b.sock` cannot be replaced per attempt the way `stun_test.wac`'s can, and a retry loop on it
+ * lost the answer to a reader abandoned by the previous deadline.
  */
 u8[] firstVerify(T t, Core core, Cli cli, Bench b, u8[] first) {
   if (!waitForBind(cli, b.server, 200)) {
