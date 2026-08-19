@@ -162,6 +162,28 @@ string openIssue(Cli cli, string n) {
   return hits.len() == 1 ? hits[0] : "";
 }
 
+/**
+ * An open issue number that only one tree uses, or "" if every open number is in both.
+ *
+ * The canary needs a number `openIssue` can actually answer, and the two trees number from 1
+ * independently — so "a number that is open" and "a number that resolves" are different claims,
+ * and only the second one tests the resolver. Read out of the directories rather than written
+ * down, because whichever number is written down is one somebody may file against tomorrow.
+ */
+string unambiguousOpenNumber(Cli cli) {
+  for (i32 i = 0; i < OPEN_DIRS().len(); i++) {
+    string[]? names = cli.readDir(OPEN_DIRS()[i]).wait();
+    if (names is null) { continue; }
+    string[] here = names!;
+    for (i32 k = 0; k < here.len(); k++) {
+      if (here[k].len() < 5) { continue; }
+      string n = here[k].slice(0, 4);
+      if (issuesNamed(cli, OPEN_DIRS(), n).len() == 1) { return n; }
+    }
+  }
+  return "";
+}
+
 /** Tracked source that could carry a tag, minus this file. */
 Tag[] taggedFiles(Core core, Cli cli) {
   string[] paths = tracked(core, cli);
@@ -193,7 +215,16 @@ export string test_the_lookup_can_find_an_open_issue(Core core, Cli cli) {
   // every assertion below runs zero times and reports success. That is indistinguishable from a
   // resolver that cannot resolve anything — which is exactly what this was for however long
   // `issues/open/` had not existed. So: one number that is open right now, resolved.
-  string one = "0161";
+  //
+  // **Found rather than written down.** This was the literal `"0161"`, and it broke the day
+  // somebody filed a `lang` issue on a number `system` already had open — a collision the rest of
+  // this test not only tolerates but *checks for*, two assertions below. The number was fine when
+  // it was chosen and stopped being fine for a reason having nothing to do with what it guards,
+  // which is the failure mode of every hard-coded fixture drawn from a shared, growing directory.
+  // So it now looks for an open number that only one tree has. That there is one is itself worth
+  // asserting: if every open number were ambiguous the canary would be vacuous again, and silently.
+  string one = unambiguousOpenNumber(cli);
+  t.isTrue(one != "", "some open issue has a number the other tree does not also have");
   string path = openIssue(cli, one);
   t.isTrue(path != "", "issue " + one + " resolves as open — got \"" + path + "\"");
   t.isTrue(contains(path, "/open/"), "and the path is in an open directory");

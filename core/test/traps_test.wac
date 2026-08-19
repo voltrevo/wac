@@ -15,8 +15,8 @@
 // One trap per test, necessarily: the first ends the call, so two in a function would only ever
 // check the first. That is why these are thirteen functions rather than one with thirteen lines.
 
-import { T } from "../../../wactest/src/assert.wac";
-import { Vec } from "../../src/vec.wac";
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Vec } from "core/vec.wac";
 import { Option } from "core/option.wac";
 import { Result } from "core/result.wac";
 

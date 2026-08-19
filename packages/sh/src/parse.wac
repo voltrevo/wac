@@ -18,7 +18,7 @@
 // and `echo hi > out` are the same command. Treating them as a trailing clause parses the common
 // case and quietly drops the other.
 
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Kind, Part, PartKind, Token, tokenize } from "./lex.wac";
 
 export struct Word {

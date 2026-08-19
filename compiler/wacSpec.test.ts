@@ -2513,9 +2513,29 @@ Deno.test("[§wac-core-one-type-8fjm2wq] a hand-written copy of Read is still a 
   eq(msg, "type mismatch: expected Read, got Copy", "copy vs core");
 });
 
-Deno.test("[§wac-core-unquoted-3nqk7vd] `core` quoted is an error, and so is any other bare word", () => {
-  eq(errMulti(new Map([["main.wac", `import { Read } from "core";  export i32 run() { return 0; }`]])),
-    "`core` is not a file — import it unquoted, as `from core`", "quoted core");
+Deno.test("[§wac-core-unquoted-3nqk7vd] the root takes either spelling; any other bare word does not", async () => {
+  // Quoted `"core"` was an error until D5, and the case is kept rather than deleted because what it
+  // has to show is now the opposite. **Both spellings reach one module**, which is more than "both
+  // compile": a change that gave the quoted form a key of its own would declare `Read` twice and
+  // still pass a test that only asked for the absence of a diagnostic. So one file produces a value
+  // through the bare spelling and the other consumes it through the quoted one. wac has nominal
+  // types, so two keys is a type mismatch here rather than a subtle difference later.
+  //
+  // Two files rather than two imports in one, which was the first shape and is a worse test: it
+  // needed `import { Read as R2 }` beside `import { Read }` to have two names to compare, and wacc
+  // makes an aliased import of an already-imported type a *distinct* type — for any file, not only
+  // this one, and the reference does not (`issues/lang/0161`). That would have made this clause's
+  // case fail for a reason that has nothing to do with the clause. Across two files is also the
+  // shape the repository will actually be in while the sweep is half-done.
+  const inst = await runMulti(new Map([
+    ["helper.wac", `import { Read } from core;\nexport Read end() { return Read.End; }`],
+    ["main.wac", `
+      import { Read } from "core";
+      import { end } from "./helper.wac";
+      export i32 run() { Read r = end(); return match (r) { case End: 1, else: 0 }; }
+    `],
+  ]));
+  eq(inst.call("run", []), 1, "both spellings, one type");
   eq(err(`import { Read } from cor;  export i32 run() { return 0; }`),
     "unknown module 'cor' — an unquoted import reads only from `core`", "bare word");
 });

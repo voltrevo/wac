@@ -1342,9 +1342,15 @@ export function makeParser(tokens: Token[], file: string) {
     // `expect` matches a token by text as well as by kind, so this still reads the
     // `from` even though it lexes as an ordinary identifier now.
     expect("}"); expect("from");
-    // A quoted specifier means *a file lives at this path*. `core` is not a file — it ships inside
-    // the compiler and cannot be pointed anywhere else — so it is spelled without quotes, which
-    // makes the difference visible instead of something a reader has to know.
+    // The bare `core`, which is the older spelling of `"core"` and still accepted — D5 made the
+    // quoted form work and did not remove this one, because 65 files use it. It is recorded as a
+    // *prefix* rather than a path, which is what the two spellings differ by from here on: the
+    // resolvers join them back to one key, and `spec/spec/imports.md` says to write the quoted one.
+    //
+    // The argument for the bare form was that a quoted specifier means *a file lives at this path*
+    // and `core` was not a file. It is a source tree now — `core/option.wac` is a file, inside the
+    // compiler — so what is left is which spelling its root takes, and one bare word in a language
+    // where everything else is quoted is a thing to remember rather than a distinction to see.
     if (!at("string")) {
       const name = at("ident") ? advance().text : (err("expected a quoted file path, or `core`"), "?");
       if (name !== "?" && name !== CORE.key) {

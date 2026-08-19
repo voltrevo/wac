@@ -14,7 +14,7 @@
 // buys. A client ships with hardcoded authority fingerprints and fallback mirrors, fetches
 // from one directly, and refuses anything a majority did not sign.
 
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { parseInt } from "./directory.wac";
 import { publishPath } from "./hsdir.wac";
 import { parseUtc, findFrom } from "./consensus.wac";

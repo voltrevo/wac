@@ -142,7 +142,7 @@ test green.
 **This section used to say it was impossible**, and said so for long enough that
 72 host-side files were written around it — the claim was that a trap "aborts
 the module", when it unwinds *that* module and nothing else, leaving the tests
-after it to run normally. `packages/std/test/wac/traps_test.wac` is the file that
+after it to run normally. `core/test/traps_test.wac` is the file that
 settles it: making `Vec.get` bound by `data.len()` instead of `n` fails exactly
 the case its old fixture said no wac test could tell apart. `issues/system/0161`.
 

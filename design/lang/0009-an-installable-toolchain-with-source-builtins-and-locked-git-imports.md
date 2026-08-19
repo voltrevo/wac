@@ -170,7 +170,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
 | 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `deno task gen:core` writes `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
 | 3. `core` and `std` as embedded trees (D3, D4) | **`core` is a tree; `std` is untouched** (2026-08-18). `core/` holds `read` and `jsx` as the root and `option`, `result`, `hash`, `map` as siblings, each its own module reached as `"core/option.wac"`, with its own tests under `core/test/` and `deno task coverage:core`. `packages/std/src` is down to `vec.wac`, whose 64 importers are the last move — and the one that retires that package. The seam is in three resolvers and both compilers; see below. `std` as the *capability* tree (D4's half: `Core`, `Cli`, filesystem, network) has not been started |
-| 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
+| 4. quoted specifiers (D5) | **the compilers accept them** (2026-08-19). `"core"` and `"core/option.wac"` resolve to the modules the compiler carries, in both, and `§wac-core-unquoted-3nqk7vd` now says the root takes either spelling. The bare form still compiles: 65 files use it and the sweep is its own commit, so that nothing has to land atomically across two compilers and 65 files at once. Removing it is what is left, and the sweep has one cost worth knowing before starting it: three of the files are in `packages/platform/src`, which is in the seed's own graph, so every agent who pulls it needs `deno task seed:bootstrap` rather than `deno task seed` — their existing seed refuses the new spelling. Cheapest once everybody's seed already accepts quoted specifiers, which is what this commit gives them. |
 | 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | not started — see below |
 | 7. Git mappings and `wac.lock` (D9, D10, D11) | **the pure half is done.** `packages/wacpkg` enforces D9's non-overlap, reads and canonicalises `wac.lock`, and `plan` decides USE/CREATE/REFRESH per mapping — including the rule that a moved branch is not a reason to re-resolve. `refToCommit` resolves a ref to a commit, measured against real `git` — an object name, an exact advertised name, then `refs/heads/` or `refs/tags/`, with an ambiguous name refused rather than ranked, and an annotated tag's peel preferred because the two advertised lines name different objects. The cache **layout** is settled too — `cachePath` is `$WAC_HOME/cache/git/<escaped repository>/<commit>`, a function of those two and nothing else, with the repository name escaped reversibly rather than hashed or slugified. Settled before anything fetches on purpose: a cache key lives in people's home directories and cannot be changed later without a migration. **Fetching works**: `packages/wacpkg/example/fetch.wac` resolves, fetches over `packages/git`+`packages/tls`, verifies the commit is in the pack by content address, writes it to the cache and updates the lock — 7.6 MB and 2618 objects from `github.com/voltrevo/wac`, and a second run fetches nothing, which is D11's sentence demonstrated. What is left is reading a `subdir` out of a cached commit and handing those files to the compiler, which is step 5's blocked half |
@@ -326,6 +326,40 @@ is.
 Worth writing down because the facade reading is the intuitive one, and taking it would have made
 step 3 block on `issues/lang/0073` for no gain.
 
+### `std`'s half of step 3 costs about 384 KB of seed, and that wants deciding first
+
+`core` is done and cost what it was measured to cost. `std` — D4's capability half — is a different
+size of thing, counted 2026-08-18 with `core` already moved:
+
+| file | bytes | importers |
+|---|---:|---:|
+| `packages/platform/src/platform.wac` | 105,318 | **437** |
+| `packages/platform/src/frame.wac` | 17,206 | 10 |
+| `packages/platform/src/stream.wac` | 14,748 | 28 |
+
+At the **2.8x** the collections measured, 137 KB of source is about **384 KB of seed** — a compiler
+that is 847 KB today would be roughly **1.23 MB**, and the sweep is 437 files rather than 68.
+
+Three things to weigh, and none of them is obvious:
+
+- **The argument for embedding `core` does not transfer unchanged.** `core` is embedded because
+  nominal types must be one thing everywhere and a funcref cannot adapt between two declarations of
+  `Read` — plus the playground has no filesystem. The first half applies to `Core` and `Cli` exactly
+  as it does to `Read`. The second half applies to any embedded tree. So the case is real; it is the
+  *price* that is new, because `platform.wac` is twenty-seven times `option.wac`.
+- **It is mostly one file.** 105 KB of the 137 KB, and 437 of the 475 import edges, are
+  `platform.wac`. Whatever is decided can be decided about that file alone; `frame` and `stream` are
+  38 importers between them and could stay packages without weakening anything D4 says.
+- **2.8x is a measurement of the current representation**, and the one-literal experiment showed the
+  generated shape is not the driver — it is what a wasm module costs to carry a string. If 384 KB is
+  judged too much, that is the thing to attack, and it has not been attacked yet: nothing has tried
+  storing the tree as a single data section read at parse time rather than as per-file literals.
+
+Recommendation: **do not move `platform.wac` on the strength of D4 alone.** Reserve `std/` and the
+specifier, move `frame` and `stream` if they are wanted, and treat the big file as its own decision
+with the 384 KB in front of whoever takes it. Doubling the compiler is not a thing to discover after
+the sweep.
+
 ### The move list, counted
 
 `packages/std` is five files, and they are not equal work — importers, counted 2026-08-18:
@@ -339,7 +373,7 @@ step 3 block on `issues/lang/0073` for no gain.
 | `vec.wac` | 64 | the one that makes this a sweep |
 
 So `option` + `result` are the pair to move first — eight files touched including the four
-`packages/std/test/wac/*_test.wac` that name them, `compiler/wapyPrint.ts` and `packages/std/cov.ts`
+`packages/std/test/wac/*_test.wac` that name them, `compiler/wapyPrint.ts` and that package's `cov.ts`
 — and they exercise the interesting case on the way: `result.wac` imports `./option.wac`, so a
 sibling resolving a sibling inside the tree is proved by the first move rather than the last.
 

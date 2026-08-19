@@ -42,7 +42,7 @@
 
 import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { boxApplet } from "../src/shrun.wac";
 import { UNKNOWN } from "../src/box.wac";
 import { Session } from "../src/lib/session.wac";

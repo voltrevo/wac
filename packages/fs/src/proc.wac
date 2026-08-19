@@ -54,7 +54,7 @@
 //   - **The stopping signals** — `STOP`, `TSTP`, `TTIN`, `TTOU` — are refused by name rather than
 //     treated as termination, because there is no job control here to resume from.
 
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /** Running: started, and no status yet. */
 export i32 PROC_RUN() { return 0; }

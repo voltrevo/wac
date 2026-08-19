@@ -20,7 +20,7 @@
 import { Cli, Core } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { encode } from "../../codec/src/hex.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Ad, AdRef, Advertised, Reply, findPack, offers, parseAdvertisement,
          wantRequest } from "../src/fetch.wac";
 import { Got, Indexed, Pack, indexPack, openIndexed, objectNamed } from "../src/pack.wac";

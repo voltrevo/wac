@@ -39,7 +39,7 @@ import { GitIndex, IndexEntry, Staged, parseIndex, writeIndex } from "./index.wa
 import { Rule, ignored, parseIgnore } from "./ignore.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /** An open repository. */
 export struct Repo {

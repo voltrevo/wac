@@ -1,0 +1,145 @@
+// The built-in tree is reachable without a filesystem, by every spelling that names it.
+//
+// **This is the property the tree exists for.** `design/lang/0009` D3/D4 put `core` inside the
+// compiler so that the CLI has no path to read it from and the playground, which has no filesystem
+// at all, can still compile a program that uses `Option`. A spelling that only works because the
+// repository happens to have a `core/` directory under the current working directory has none of
+// that: it works here and fails everywhere else, and nothing in the suite would say so, because the
+// suite runs from the repository root.
+//
+// So the shape of every case below is the same: a file map that contains **only the entry**. If a
+// spelling needs `core/option.wac` to be on disk, `blockedFiles` says the file was not supplied, and
+// that is the failure this test is for.
+//
+// D5 is why the quoted spellings are here rather than only the bare one. It makes every specifier
+// quoted — `from "core"` rather than `from core` — and a migration to a spelling the compiler
+// cannot resolve is a migration that breaks 65 files at once.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { joined, contains } from "../../../wactest/src/strings.wac";
+import { Change, Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { emitFiles, blockedFiles } from "../../src/api.wac";
+
+/** Only the entry. Whatever the tree contributes has to come from inside the compiler. */
+string[] paths() { return string[]("main.wac"); }
+
+/** A program that uses the root of the tree — `Read` is what bare `core` gets. */
+string[] rootUsing(string importLine) {
+  return string[](importLine + "\nexport i32 main() { Read r = Read.End; " +
+                  "return match (r) { case End: 0, else: 1 }; }\n");
+}
+
+/** A program that uses a sibling: its own module, reached by its own specifier. */
+string[] siblingUsing(string importLine) {
+  return string[](importLine + "\nexport i32 main() { Option<i32> o = Option.Some(7); " +
+                  "return o.orElse(0); }\n");
+}
+
+/** Blocked-or-emitted-nothing, as one sentence, so a case can report either. */
+string refusal(string[] sources) {
+  string why = blockedFiles(paths(), sources, "main.wac");
+  if (why != "") { return why; }
+  if (emitFiles(paths(), sources, "main.wac").len() == 0) { return "emitted nothing"; }
+  return "";
+}
+
+export string test_the_root_is_reachable_by_every_spelling() {
+  // The bare form is the one in use today, and it is here as the canary: if it fails, the file map
+  // or the program is wrong and the quoted cases below say nothing.
+  T t = T.create();
+  string[] lines = string[]("import { Read } from core;", "import { Read } from \"core\";");
+  string[] wrong = string[lines.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    string why = refusal(rootUsing(lines[i]));
+    if (why != "") { wrong[n] = lines[i] + " -> " + why; n = n + 1; }
+  }
+  string[] said = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { said[i] = wrong[i]; }
+  t.eqI32(n, 0, "spelling(s) of the root did not resolve: " + joined(said, "; "));
+  return t.report();
+}
+
+export string test_a_sibling_is_reachable_without_being_supplied() {
+  // `core/option.wac` is a module inside the compiler exactly as the root is. Nothing here supplies
+  // it, and from any directory but this repository's own root there would be nothing to supply.
+  T t = T.create();
+  string why = refusal(siblingUsing("import { Option } from \"core/option.wac\";"));
+  t.isTrue(why == "", "core/option.wac was not served from inside the compiler: " + why);
+  return t.report();
+}
+
+export string test_a_name_the_tree_does_not_have_is_still_refused() {
+  // The canary for both: a change that served *any* `core/...` specifier out of the tree would pass
+  // every case above while accepting names that do not exist. This one has to stay refused, and for
+  // the reason that it was not supplied rather than by emitting an empty module.
+  T t = T.create();
+  string why = blockedFiles(paths(), siblingUsing("import { Option } from \"core/nope.wac\";"),
+                            "main.wac");
+  t.isTrue(why != "", "an absent member of the tree was accepted");
+  t.isTrue(contains(why, "not supplied"), "refused for the wrong reason: " + why);
+  return t.report();
+}
+
+/** `wac check <entry>` run with the working directory somewhere the repository is not. */
+Exec checkFrom(Cli cli, string dir, string entry) {
+  return cli.exec("/bin/sh",
+                  string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " check " + entry),
+                  u8[0]()).wait();
+}
+
+export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli) {
+  // **The three cases above go through the compiler, which does no I/O; this one goes through the
+  // command, which is all of it.** The distinction is the whole point of the test: the file-reading
+  // walk in `example/wacc.wac` used to hand a built-in specifier to `readFile` like any other, and
+  // a relative read resolves against the working directory — so `core/option.wac` was found, in
+  // this repository, because this repository has that file at that path. Every test in the suite
+  // runs from the root and every one of them agreed. From anywhere else the command answered
+  // *`wacc: cannot read core/option.wac`*, which is the opposite of what an embedded tree is for.
+  T t = T.create();
+  string dir = scratch(cli, "builtinspec");
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  // One file per spelling, so a failure names which one rather than "the directory".
+  string[] names = string[]("root_bare.wac", "root_quoted.wac", "sibling.wac");
+  string[] progs = string[](
+    "import { Read } from core;\n" +
+    "export i32 main() { Read r = Read.End; return match (r) { case End: 0, else: 1 }; }\n",
+    "import { Read } from \"core\";\n" +
+    "export i32 main() { Read r = Read.End; return match (r) { case End: 0, else: 1 }; }\n",
+    "import { Option } from \"core/option.wac\";\n" +
+    "export i32 main() { Option<i32> o = Option.Some(7); return o.orElse(0); }\n");
+  for (i32 i = 0; i < names.len(); i++) {
+    Change w = cli.writeFile(dir + "/" + names[i], progs[i].toBytes()).wait();
+    t.isTrue(w.ok(), "could not write " + names[i] + " — " + w.message);
+    if (!w.ok()) { return t.report(); }
+  }
+
+  for (i32 i = 0; i < names.len(); i++) {
+    Exec r = checkFrom(cli, dir, names[i]);
+    t.isTrue(r.ran(), names[i] + ": the command did not run — " + r.error);
+    if (!r.ran()) { continue; }
+    t.eqI32(r.status, 0,
+            names[i] + " did not check from " + dir + ": " + string.fromBytes(r.stderr) +
+            string.fromBytes(r.stdout));
+  }
+
+  // The canary, and it is the one that matters here: a walk that answered *every* unreadable path
+  // out of the tree would pass all three cases above and accept a specifier naming nothing. This
+  // one has to still fail, from the same directory, by the same command.
+  Change w = cli.writeFile(dir + "/absent.wac",
+                           ("import { Nope } from \"core/nope.wac\";\n" +
+                            "export i32 main() { return 0; }\n").toBytes()).wait();
+  t.isTrue(w.ok(), "could not write absent.wac — " + w.message);
+  if (w.ok()) {
+    Exec r = checkFrom(cli, dir, "absent.wac");
+    t.isTrue(r.ran() && r.status != 0, "a specifier the tree does not have was accepted");
+  }
+
+  cli.remove(dir, true).wait();
+  core.log("    checked three spellings from " + dir);
+  return t.report();
+}

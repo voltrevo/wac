@@ -28,7 +28,7 @@
 // [0065](../../../issues/system/closed/0065-a-spawned-programs-arguments-are-not-byte-exact.md).
 
 import { Map } from "core/map.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { hashString, stringEq } from "core/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,

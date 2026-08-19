@@ -2306,14 +2306,16 @@ export function wacResolve(
     for (const item of prog.items) {
       if (item.tag !== "import") continue;
       const importedPath = importKey(filePath, item);
-      // A quoted `"core"` joins to the same key core is filed under, and would otherwise reach the
-      // embedded module through something that looks like — and reads as — a path. There is one
-      // spelling, and it is the unquoted one.
-      if (importedPath === CORE.key && item.prefix === undefined) {
-        err(`\`${CORE.key}\` is not a file — import it unquoted, as \`from ${CORE.key}\``,
-          filePath, item.line, item.col);
-        continue;
-      }
+      // A quoted `"core"` joins to the same key core is filed under, which used to be the reason to
+      // refuse it: the argument was that a quoted specifier says *a file lives at this path* and
+      // there was no path here to be right or wrong about. `design/lang/0009` D4 removed the
+      // premise. `core` is a source tree now — `core/option.wac` does name a file inside the
+      // compiler, and is imported quoted like any other — so the root being the one member of that
+      // tree written without quotes is the odd spelling rather than the principled one.
+      //
+      // Both spellings resolve here, and to the same key, which is the point: `Read` reached two
+      // ways has to be one type. The unquoted form is not deprecated by this commit — 65 files use
+      // it and they are swept separately — but `spec/spec/imports.md` now says which one to write.
       visitFile(importedPath); // recursive DFS
 
       const importedScope = fileScopes.get(importedPath);

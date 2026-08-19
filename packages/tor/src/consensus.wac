@@ -202,7 +202,7 @@ export bool verifyKeyCertification(u8[] cert, u8[] identityKeyDer, u8[] signatur
 // Step 5 is not an afterthought. A correctly signed consensus from last year is still a lie
 // about who the relays are, and replaying one costs an attacker nothing.
 
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { daysFromCivil } from "../../datetime/src/civil.wac";
 import { decode } from "../../codec/src/base64.wac";
 import { parseInt } from "./directory.wac";

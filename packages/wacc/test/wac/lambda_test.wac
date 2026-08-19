@@ -513,10 +513,20 @@ export string test_a_lambda_in_a_module_that_also_imports_a_real_package(Core co
 
   // `Vec` brings strings and a good deal else with it; the point is a module large enough to have
   // the string builtins in it, not this particular import.
+  //
+  // **`itoa` is here for the closure, not for the program.** `Vec` moved into the built-in tree
+  // (`design/lang/0009` D4), and a built-in is not a file the corpus holds — the compiler injects
+  // it. So `closureOf`, which is a text scan over supplied keys, cannot resolve `"core/vec.wac"`
+  // against anything and answers *one file*, and the guard below fires. It was right to fire: what
+  // it protects is that this test compiles a program with a real package around it rather than a
+  // lambda on its own, and after the move `Vec` alone no longer demonstrates that. `itoa` is an
+  // ordinary file in `packages/`, so it resolves, and it is called so that nothing drops it.
   string entry = ".cache/_lambda0138.wac";
-  string src = "import { Vec } from \"../packages/std/src/vec.wac\";\n" +
+  string src = "import { Vec } from \"core/vec.wac\";\n" +
+               "import { itoa } from \"../packages/fmt/src/itoa.wac\";\n" +
                "export i32 f() {\n  Vec<i32> v = Vec.create();\n  v.push(20);\n  i32 n = 1;\n" +
-               "  fn[i32()] g = () => n + 21;\n  n = n + 0;\n  return v.get(0) + g();\n}\n" +
+               "  fn[i32()] g = () => n + 21;\n  n = n + 0;\n" +
+               "  return v.get(0) + g() + itoa(n).len() - 1;\n}\n" +
                "export i32 main() { return f(); }\n";
   string[] all = string[c.paths.len() + 1](fill: "");
   string[] allSrc = string[c.paths.len() + 1](fill: "");
@@ -536,8 +546,8 @@ export string test_a_lambda_in_a_module_that_also_imports_a_real_package(Core co
   for (i32 i = 0; i < all.len(); i++) { keys[i] = "/" + all[i]; }
   i32[] near = closureOf(keys, allSrc, all.len() - 1);
   t.isTrue(near.len() >= 2,
-           "the closure is " + itoa(near.len()) + " file(s) — the import did not resolve, so this " +
-           "would be testing a lambda with no package around it");
+           "the closure is " + itoa(near.len()) + " file(s) — the `fmt` import did not resolve, so " +
+           "this would be testing a lambda with no package around it");
   if (near.len() < 2) { return t.report(); }
   string[] paths = string[near.len()](fill: "");
   string[] sources = string[near.len()](fill: "");

@@ -28,7 +28,7 @@ import { boxNames, boxRun } from "../../src/shrun.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../../fs/src/image.wac";
-import { Vec } from "../../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Fixture } from "./cases.wac";
 
 /** What one shell said. */

@@ -13,7 +13,7 @@
 // that a file written elsewhere round-trips, and the group id is **not** used for anything: there is no
 // group table, so `packages/fs` compares owner-or-other and says so.
 
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /** One line of the table. */
 export struct User {

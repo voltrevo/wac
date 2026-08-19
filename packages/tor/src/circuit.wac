@@ -35,7 +35,7 @@
 // received the cells knows that value. It is captured when the deliver window reaches a
 // multiple of the increment, which is one cell *before* the SENDME goes out.
 
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { HOP_KEY_MATERIAL, NTOR_KEY_MATERIAL,
   Hop, encryptRelay, decryptRelay, relayRecognized, relayCommand, relayStreamId,
   relayPayload, relayLengthValid, beginBody, extend2Body, extended2Reply, sendmeBodyV1,

@@ -20,7 +20,7 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Fs } from "../../../fs/src/fs.wac";
-import { Vec } from "../../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { boxNames } from "../../src/shrun.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";

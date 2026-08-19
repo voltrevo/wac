@@ -21,7 +21,7 @@ import { Who } from "../src/commit.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { commitTree, headRef, openRepo, writeWorkTree } from "../src/repo.wac";
 import { IndexEntry } from "../src/index.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 export i32 main(Core core, Cli cli) {
   i32 n = cli.argCount().wait();

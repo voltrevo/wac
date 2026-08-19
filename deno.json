@@ -43,7 +43,6 @@
     "coverage:server": "deno run -A packages/server/cov.ts",
     "coverage:stream": "deno run -A packages/stream/cov.ts",
     "coverage:zstd": "deno run -A packages/zstd/cov.ts",
-    "coverage:std": "deno run -A packages/std/cov.ts",
     "coverage:ssh": "deno run -A packages/ssh/cov.ts",
     "coverage:sh": "deno run -A packages/sh/cov.ts",
     "coverage:unicode": "deno run -A packages/unicode/cov.ts",

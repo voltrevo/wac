@@ -51,7 +51,7 @@ const WACC_ROOT = [READ, JSX];
  * Both compilers get all of these — the omission the two lists above express is about the root, not
  * about the tree. A sibling costs nothing until something imports it, because each is its own module.
  */
-const SIBLINGS = ["core/option.wac", "core/result.wac", "core/hash.wac", "core/map.wac"];
+const SIBLINGS = ["core/option.wac", "core/result.wac", "core/hash.wac", "core/map.wac", "core/vec.wac"];
 
 const REF_OUT = "compiler/wacCore.ts";
 const WACC_OUT = "packages/wacc/src/coretext.wac";

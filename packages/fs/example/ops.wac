@@ -14,7 +14,7 @@
 import { Cli, Core, FAULT_NONE } from "../../platform/src/platform.wac";
 import { Fs } from "../src/fs.wac";
 import { Sink } from "../../platform/src/stream.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 export i32 main(Core core, Cli cli) {
   i32 n = cli.argCount().wait();

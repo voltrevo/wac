@@ -42,7 +42,7 @@ import { Inflation, inflate, inflateAt } from "../../gzip/src/inflate.wac";
 import { crc32 } from "../../gzip/src/crc32.wac";
 import { zlibCompress } from "./zlib.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /** A pack and its index, ready to be read from. */
 export struct Pack {

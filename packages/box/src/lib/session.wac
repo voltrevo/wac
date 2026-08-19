@@ -19,7 +19,7 @@
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Shell, runScript } from "../../../sh/src/exec.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Vec } from "../../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { boxNames, boxRun } from "../shrun.wac";
 

@@ -27,7 +27,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult, Pending } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Vec } from "../../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Proc, Procs } from "../../src/proc.wac";
 import { Fs } from "../../src/fs.wac";
 

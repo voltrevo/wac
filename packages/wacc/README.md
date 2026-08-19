@@ -2538,11 +2538,17 @@ directions: a new miss breaks it, and fixing one breaks it too.
 
 Three rules, each read off the clause that governs it rather than off the reference's message:
 
-**`core` is the one specifier that is not a file.** `imports.md` says a quoted `"core"` is an error —
-a quoted specifier claims a path, and there is no path here to be right about — and *"so is any other
-bare word, which reports `unknown module 'x'`"*. The parser already recorded the word without
-checking it, and said so in a comment whose reason was that matching the reference would mean a new
-error code. The spec asks for the check on its own terms.
+**`core` is the one bare word an import may name.** Any other reports `unknown module 'x'`. The
+parser already recorded the word without checking it, and said so in a comment whose reason was that
+matching the reference would mean a new error code. The spec asks for the check on its own terms.
+
+> This rule had a second half until `design/lang/0009` D5: a quoted `"core"` was *also* an error,
+> because a quoted specifier claims a path and there was no path here to be right about. D4 made
+> `core` a source tree, so `core/option.wac` is a path and is right, and both spellings of the root
+> now resolve to one module. The half that survives is the one above. Worth keeping the story,
+> because the two compilers disagreed while it stood — wacc answered `unknown module` where the
+> reference answered `` `core` is not a file `` — and the corpus differential could not see it: it
+> asks whether each side complains, not what it says.
 
 **A generic that instantiates itself with a *larger* argument never terminates.**
 `struct Rec<T> { Rec<Box<T>>? next; }` needs `Rec<Box<T>>` needs `Rec<Box<Box<T>>>`. The test is
@@ -2852,6 +2858,11 @@ the reason no adapter could join them across a repository boundary; closures lan
 do not change it, because the obstacle is that the two types are distinct rather than that nothing
 could be written between them. It is embedded rather than fetched for the same reason: a version
 diamond in it would be unresolvable rather than awkward.
+
+> **Dated: this describes `core` as it stood then.** `design/lang/0009` D3/D4 made it a *tree* —
+> `Option`, `Result`, `Vec`, `Map` and hashing are files in it, imported as `"core/option.wac"` — and
+> D5 made the root take either spelling. What the section below explains still holds and is still
+> where to read how the mechanism works; the count of what is in there is the part that has moved.
 
 So the feature is: know that text. The linker carries it under a path no source can spell, `" core"`,
 and from there it is a file like any other — the enum machinery, the variant tables and the arms all

@@ -11,7 +11,7 @@
 
 import { NTOR_KEY_MATERIAL, relayDataLen } from "./relay.wac";
 import { Core, Cli, Socket, Pending } from "../../platform/src/platform.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Relay } from "./directory.wac";
 import { Circuit, Received, gotData, gotEnd, gotConnected, gotExtended, gotBroken,
          gotDestroyed, extendedReply } from "./circuit.wac";
