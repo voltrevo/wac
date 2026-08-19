@@ -44,6 +44,7 @@ export i32 perrFieldName()   { return 25; }
 export i32 perrMethodName()  { return 26; }
 export i32 perrCtorBrace()   { return 27; }
 export i32 perrFnArray()     { return 28; }
+export i32 perrBareSpec()    { return 29; }
 
 export struct P {
   u8[] src;
@@ -1995,16 +1996,31 @@ Decl parseImport(P p) {
   // one: only an import clause can put a word in this position, so the reference's message is the
   // one that names it, and this parser has no error code for "the wrong contextual keyword".
   if (p.at1(kIdent())) { p.advance(); } else { p.fail(perrExpected()); }
-  // A quoted specifier is a path. A bare word is `core`, the module the compiler ships — it is not
-  // a file, so it is not quoted, and there is nothing here to resolve it against.
+  // **Every specifier is a quoted path** — `design/lang/0009` D5. A bare word after `from` is an
+  // error, and it is reported *here* rather than in the checker, for one reason: this is the only
+  // place that still has the word. By the time `check.wac` sees the import it has a token index and
+  // a generic `unknown module`, which is true and useless — it names what the compiler failed to do
+  // instead of what the author should write.
   //
-  // The word is recorded rather than checked, the same way `from` above is recorded rather than
-  // checked. The reference rejects anything but `core`; matching that means a new error code, and
-  // this parser does not yet distinguish the contextual keywords it already accepts loosely.
+  // `core` gets its own sentence because it is the one word anybody will have typed out of habit:
+  // it was the single unquoted specifier in the language until D5, so every wac program written
+  // before this spells it that way.
+  //
+  // The word was recorded and not checked until 2026-08-19, which left wacc saying `unknown module`
+  // where the reference said the sentence naming the fix — for the same program, with nothing
+  // comparing them, because the corpus differential only asks *whether* each side complains.
+  // `builtinspec_test.wac` compares the text now.
   i32 pathTok = -1;
   i32 prefixTok = -1;
   if (p.at1(kString())) { pathTok = p.advance(); }
-  else if (p.at1(kIdent())) { prefixTok = p.advance(); }
+  else if (p.at1(kIdent())) {
+    string word = p.textAt(0);
+    p.failWith(perrBareSpec(),
+               word == "core"
+                 ? "`core` is imported like any other module — write `from \"core\"`"
+                 : "unknown module `" + word + "`");
+    prefixTok = p.advance();
+  }
   else { p.fail(perrExpected()); }
   p.expect(kSemi());
   return Decl(DeclKind.Import(pathTok, prefixTok, items.take()), line, col);

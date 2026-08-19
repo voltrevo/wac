@@ -9600,7 +9600,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // is only linked in when something names it. Saying which import is missing beats declining
       // an expression the reader can see is well formed.
       if (jsxElementVariant(env) < 0) {
-        return "a JSX element without `import { Attr, Node } from core;`";
+        return "a JSX element without `import { Attr, Node } from \"core\";`";
       }
       for (i32 i = 0; i < attrs.len(); i++) {
         string why = unsupportedExpr(src, lexed, env, attrs[i].value);
