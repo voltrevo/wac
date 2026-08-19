@@ -106,7 +106,7 @@ Both wac-side callers are converted, and no `pushChild`/`popChild` call remains 
 
 **The oracle is a differential against the host frame.** `example/insideValue.wac` is
 `example/inside.wac` with the world as a value — the child function copied across unchanged, because
-a child that had to be adapted would prove nothing — and `test/frame.test.ts` requires the two
+a child that had to be adapted would prove nothing — and `test/wac/frame_test.wac` requires the two
 programs' output to be identical byte for byte. Canaried: making `childCore.log` write through
 instead of capturing fails it, with the child's line appearing on the parent's stdout, which is
 exactly the mistake the host frame's own comments say its first version made.

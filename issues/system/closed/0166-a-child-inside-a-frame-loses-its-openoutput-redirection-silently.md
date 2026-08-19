@@ -97,7 +97,7 @@ It also has to be decided once for both host implementations and for
 `packages/platform/src/frame.wac`, whose substitute capabilities reproduce today's behaviour
 deliberately — `childCli` passes `openOutput` to the parent and keeps capturing, so the two agree.
 Changing one and not the other would make them disagree about something neither documents, and the
-differential in `packages/platform/test/frame.test.ts` would then be enforcing the bug.
+differential in `packages/platform/test/wac/frame_test.wac` would then be enforcing the bug.
 
 Found while building the substitute capabilities for `issues/lang/0137`, by reading `WRITE_STDOUT`
 to decide what the substitute should do about a sink it cannot see.
@@ -128,7 +128,7 @@ redirecting a *child*. Both are satisfied by one rule:
 Which makes the capture empty in the reproduction above, and leaves 0070 as it is.
 
 I am not treating that as decided — it is still a decision about a silent-data-loss boundary, and it has
-to land in both hosts and in `packages/platform/src/frame.wac` together, with `frame.test.ts`'s
+to land in both hosts and in `packages/platform/src/frame.wac` together, with `frame_test.wac`'s
 differential updated in the same commit or it will enforce the old behaviour. But the 50/50 framing in the
 section above was mine and it was wrong: one of the two answers prints file contents to a terminal.
 

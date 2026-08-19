@@ -43,7 +43,7 @@ share a cause once someone looks; they are not the same report.
 
 ## How it was found, which is the part worth keeping
 
-Converting `packages/platform/test/frame.test.ts` for `issues/system/0161`. That test is a
+Converting the TypeScript `frame.test.ts` for `issues/system/0161`. That test is a
 **differential**: `example/inside.wac` uses the host frame and `example/insideValue.wac` uses a
 substitute built from lambdas, the child function is copied between them unchanged, and their output
 must be identical. Under `deno test` it passes and has for as long as it has existed. Ported to run
@@ -54,10 +54,18 @@ So the divergence was invisible while both sides were run by the same host, and 
 differential is for. It also means the property that test asserts — *a child cannot tell which of the
 two frames ran it* — **is false on the binary**, which is now the host most things use.
 
-## What this blocks
+## What this blocks — narrowed 2026-08-19
 
-`packages/platform/test/frame.test.ts` stays TypeScript until it is fixed. Porting it today would
-mean either pinning the broken behaviour or shipping a red test, and the conversion is not worth
-either. The wac version is a straight translation of its two cases — run both examples, compare the
-two streams and the status — and is a few minutes' work on the day this closes; it was written to
-find this and then not committed, because a red test in the tree is worse than a note in an issue.
+**Not the conversion.** `test/frame.test.ts` moved to `test/wac/frame_test.wac` on 2026-08-19 and is
+green: it builds both examples through `packages/platform/build.ts` and runs them on the Deno host,
+which is exactly what the TypeScript did. Driving that from wac rather than from `deno test` changes
+who runs the test, not who runs the programs.
+
+What is blocked is the **stronger** test, which nobody had written: the same differential with both
+halves run by the binary. That is the one that goes red, and it is the one worth having — the
+property is *a child cannot tell which of the two frames ran it*, and on the host most things now use
+it can. Adding a second pair of runs to `frame_test.wac` is a few minutes on the day this closes.
+
+The original note said the conversion stayed TypeScript until this was fixed. That conflated the two:
+it was written while the wac version was being run under `wac run`, and the conclusion "porting it
+would mean shipping a red test" was true of that version and not of the port.

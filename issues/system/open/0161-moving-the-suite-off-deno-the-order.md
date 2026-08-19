@@ -1258,31 +1258,37 @@ them, not about what it measured.
 
 ### Two build features the CLI does not have, and one host divergence — 2026-08-18
 
-Three `packages/platform` files that look convertible are not, and the reasons are worth recording
-because each looks like a missing test rather than a missing feature.
+**All three of these were wrong, and wrong in the same way — corrected 2026-08-19.** What follows is
+what was written, then what happened when each was tried.
 
 **`test/optimize.test.ts` needs `--optimize`, which only `buildApp` has.** `wac build` answers
-`unknown flag '--optimize' — --allow-read, --allow-write, --allow-net, --allow-env, --allow-run`. The
-flag is a TypeScript build option, so the test cannot ask the binary for the thing it measures.
+`unknown flag '--optimize'`. **True, and not the blocker.** A wac test does not have to ask the
+binary: `cli.exec("deno", ...)` runs `packages/platform/build.ts`, which has the flag, and is the
+same command the TypeScript called through. Moved, all three cases, including the refusal — coverage
+is not a flag either but it is `(opts.coverage ?? profiling())`, so `WAC_PROFILE=1` in front of the
+command asks for the combination that must be refused.
 
-**`test/producer.test.ts` needs to choose the compiler, which the binary cannot.** Its property is
-*both markers, and different*: a module built by wacc says `processed-by: wacc` and one built by the
-reference says `wac-reference`, and a marker on one compiler only would make absence ambiguous.
-`WAC_APP_FROM=reference wac build` produces a module stamped `wacc` — measured, not assumed: the
-variable is read by `native.ts`, and the binary embeds wacc. Porting half of it would delete the
-comparison that is the whole test, so it stays whole.
+**`test/producer.test.ts` needs to choose the compiler, which the binary cannot.**
+`WAC_APP_FROM=reference wac build` produces a module stamped `wacc` — measured, and still true.
+**Also not the blocker**, for the same reason: the variable is read by `native.ts`, and a wac test
+can run `native.ts`. Moved whole, and it is self-canarying — the two builds must produce *different*
+strings, so a reader that answered nothing, or an environment variable that did not take, fails.
 
-**`test/frame.test.ts` found a real bug instead**, filed as `issues/system/0199`. It is a
-differential between the host frame and a substitute built from lambdas, and it passes under
-`deno test`. Run the same two programs with `wac run` and they disagree: the native host does not
-apply a pushed child's `cwd`, so the child is told `note.txt: No such file or directory` in the
-directory that has it. Both spellings of the directory fail, so it is not `issues/system/0194`. The
-divergence was invisible while one host ran both halves — which is what a differential is for, and it
-means the property that test asserts is false on the binary.
+**`test/frame.test.ts` found a real bug instead**, filed as `issues/system/0199`, and that part
+stands: run the two programs with `wac run` and they disagree, because the native host does not apply
+a pushed child's `cwd`. **But that is a stronger test than the one being converted.** The TypeScript
+ran both halves on the Deno host; so does the wac port, and it passes for the same reason. What 0199
+blocks is the two-host version, which nobody had written — the conversion was never what was blocked.
 
-The general shape: a conversion is blocked either by something the CLI cannot express, or by
-something that turns out not to work on the host the CLI uses. The second kind is worth more than the
-conversion.
+**The premise all three shared: that a wac test drives the binary.** It does not have to. `Cli.exec`
+reaches `deno`, and `build.ts` and `native.ts` are ordinary programs. Every "the CLI cannot express
+this" in the table above was really "the binary cannot", and the binary was never the only host
+available. That is worth more than the three conversions: it is the question to ask of anything else
+recorded here as blocked on a missing flag.
+
+What survives is the second kind of blocker — something that turns out not to work on a host — and
+0199 is the example. It is worth more than the conversion, which is why it was found while looking
+for one.
 
 ### `packages/wacc`'s tests convert better than anything else — 2026-08-18
 
