@@ -22,122 +22,12 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
-import { jsonFile, strOf, arrayOf, boolOf } from "../../../wactest/src/jsonfile.wac";
-import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { jsonFile, strOf } from "../../../wactest/src/jsonfile.wac";
+import { Case, CORPUS, load, multiFile, listed, assertKeysExist }
+  from "./speccases.wac";
 import { sha256 } from "../../../crypto/src/sha256.wac";
 import { encode } from "../../../codec/src/hex.wac";
 import { dumpErrors, dumpTypeErrorsFiles } from "../../src/api.wac";
-
-const string CORPUS = "packages/wacc/test/specCases.json";
-
-/** One recorded program: its files, which one is the entry, and whether the spec calls it legal. */
-struct Case {
-  string key;
-  string entry;
-  string[] paths;
-  string[] sources;
-  bool ok;
-  string message;
-}
-
-string stringIn(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { return ""; }
-  match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { return ""; }
-  }
-}
-
-bool boolIn(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { return false; }
-  match (v!) {
-    case Bool(value): { return value; }
-    else: { return false; }
-  }
-}
-
-JsonArray arrayIn(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { return JsonArray.create(); }
-  match (v!) {
-    case Array(items): { return items; }
-    else: { return JsonArray.create(); }
-  }
-}
-
-string itemString(JsonValue v) {
-  match (v) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { return ""; }
-  }
-}
-
-/**
- * Every recorded case, keyed the way the ledgers below name them.
- *
- * The key is `<test name>#<nth>`, because one spec clause can state several programs and a bare name
- * would not say which. `keyed()` in `specCases.ts` builds the same thing for the same reason.
- */
-Case[] load(Cli cli) {
-  JsonObject top = jsonFile(cli, CORPUS);
-  JsonArray cases = arrayIn(top, "cases");
-  Case[] out = Case[cases.len()](fill: Case("", "", string[0](fill: ""), string[0](fill: ""),
-                                            false, ""));
-  // How many times each test name has been seen, so the nth can be numbered.
-  string[] names = string[cases.len()](fill: "");
-  i32[] counts = i32[cases.len()](fill: 0);
-  i32 nNames = 0;
-
-  for (i32 i = 0; i < cases.len(); i++) {
-    JsonObject c = JsonObject.create();
-    match (cases.get(i)) {
-      case Object(members): { c = members; }
-      else: { continue; }
-    }
-    string test = stringIn(c, "test");
-    i32 nth = 0;
-    bool found = false;
-    for (i32 k = 0; k < nNames; k++) {
-      if (names[k] == test) { nth = counts[k]; counts[k] = counts[k] + 1; found = true; }
-    }
-    if (!found) { names[nNames] = test; counts[nNames] = 1; nNames = nNames + 1; }
-
-    JsonArray files = arrayIn(c, "files");
-    string[] paths = string[files.len()](fill: "");
-    string[] sources = string[files.len()](fill: "");
-    for (i32 k = 0; k < files.len(); k++) {
-      match (files.get(k)) {
-        case Array(pair): {
-          if (pair.len() >= 2) {
-            paths[k] = itemString(pair.get(0));
-            sources[k] = itemString(pair.get(1));
-          }
-        }
-        else: { }
-      }
-    }
-    out[i] = Case(test + "#" + itoa(nth), stringIn(c, "entry"), paths, sources,
-                  boolIn(c, "ok"), stringIn(c, "message"));
-  }
-  return out;
-}
-
-/** The cases that take more than one file to state. */
-Case[] multiFile(Case[] all, bool wantOk) {
-  i32 n = 0;
-  for (i32 i = 0; i < all.len(); i++) {
-    if (all[i].paths.len() > 1 && all[i].ok == wantOk) { n = n + 1; }
-  }
-  Case[] out = Case[n](fill: all.len() > 0 ? all[0] : Case("", "", string[0](fill: ""),
-                                                           string[0](fill: ""), false, ""));
-  i32 at = 0;
-  for (i32 i = 0; i < all.len(); i++) {
-    if (all[i].paths.len() > 1 && all[i].ok == wantOk) { out[at] = all[i]; at = at + 1; }
-  }
-  return out;
-}
 
 /** A program is refused when any phase says no; which phase is not the language's business. */
 bool refuses(Case c) {
@@ -163,23 +53,6 @@ string[] knownMisses() { return string[0](fill: ""); }
  * second module's fields were looked up on the first module's struct.
  */
 string[] knownFalseAlarms() { return string[0](fill: ""); }
-
-bool listed(string[] ledger, string key) {
-  for (i32 i = 0; i < ledger.len(); i++) { if (ledger[i] == key) { return true; } }
-  return false;
-}
-
-/**
- * A ledger that names a case the corpus no longer contains is worse than an unnamed one: it reads as
- * coverage and asserts nothing.
- */
-void assertKeysExist(T t, string[] ledger, Case[] all, string what) {
-  for (i32 i = 0; i < ledger.len(); i++) {
-    bool live = false;
-    for (i32 k = 0; k < all.len(); k++) { if (all[k].key == ledger[i]) { live = true; } }
-    t.isTrue(live, what + " names a case the corpus does not contain: " + ledger[i]);
-  }
-}
 
 export string test_the_recorded_corpus_is_the_one_the_spec_suite_currently_states(
     Core core, Cli cli) {

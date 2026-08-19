@@ -557,7 +557,7 @@ enum a variant belongs to — the comment saying so is still in the history — 
 true the day imported names started entering under the importer's own name for them.
 
 One illegal program is still accepted and no legal one is refused; the one left is named in
-`specSingle.test.ts`, and it is a multi-file case the recorder kept one file of.
+`specsingle_test.wac`, and it is a multi-file case the recorder kept one file of.
 
 That is a change of aim, not of method. A disagreement with the reference is now a question —
 *which of us is right?* — rather than a defect report against this checker, and a program wacc
@@ -568,7 +568,7 @@ they find real rules cheaply. What they no longer are is a definition of correct
 
 | oracle | input | what it asserts |
 |---|---|---|
-| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 303 of 304 illegal refused, 367 of 367 legal silent, the one left named |
+| `test/wac/specsingle_test.wac` | the 671 one-file programs the suite **runs** | **the contract** — 303 of 304 illegal refused, 367 of 367 legal silent, the one left named |
 | `test/wac/specmulti_test.wac` | the spec's programs that take more than one file | **the contract** — all 15 illegal refused, all 42 legal silent |
 | `specCheck.test.ts` | the **100** illegal programs read out of the text | 100 of 100 refused, no exceptions at all |
 | `specAccept.test.ts` | the **263** legal programs read out of the text | 263 of 263 silent, from the accepting side |
