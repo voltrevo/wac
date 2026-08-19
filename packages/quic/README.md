@@ -56,7 +56,7 @@ endpoint that advertised `grease_quic_bit` may be sent a zero there. A real Deno
 **about two replies in three** — measured, 13 of 20 — so refusing a cleared bit outright drops most
 of what a server sends. Whether a zero is acceptable is connection state, not a property of the
 packet, so the caller answers. This file said the opposite until 2026-08-13, in a comment claiming no
-version-1 peer sends a zero; `test/greased.test.ts` is that comment being wrong.
+version-1 peer sends a zero; `test/wac/greased_test.wac` is that comment being wrong.
 
 **`src/initial.wac`** — the keys that protect an Initial, and opening one. RFC 9001 §5.2's
 derivation, header protection, and AES-128-GCM.

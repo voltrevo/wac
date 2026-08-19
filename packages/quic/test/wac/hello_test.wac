@@ -1,0 +1,93 @@
+// A first flight where every byte is ours, answered by an implementation we did not write.
+//
+// `design/system/0007` step 4. `seal_test.wac` built the *packet* and borrowed quinn's ClientHello,
+// which was the right way round — it isolated the packet layer — but left the handshake unowned: the
+// TLS message a server has to agree with was somebody else's. This writes that too, so a reply means
+// quinn read a ClientHello this repository composed and was willing to continue.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { flight, flightMismatched, helloOnly, publicKey } from "./hello_probe.wac";
+import { closeCodeIn, closeReasonIn, handshakeTypeIn, kindsIn, streamLen } from "./frame_probe.wac";
+import { openServer } from "./initial_probe.wac";
+import { ask } from "./peer.wac";
+
+const i32 HAS_ACK = 4;
+const i32 HAS_CRYPTO = 8;
+const i32 HAS_CLOSE = 16;
+
+u8[] dcid() { return decoded("8394c8f03e515708"); }
+u8[] scid() { return decoded("11223344"); }
+
+export string test_the_clienthello_we_write_is_one_we_can_read() {
+  // The cheap check, and it is cheap for the reason `seal_test.wac` sets out: both halves are ours,
+  // so agreeing proves they agree. It is here to make the network test attributable — a malformed
+  // hello and an unacceptable one both look like a server that did not answer.
+  T t = T.create();
+  u8[] hello = helloOnly(scid(), "localhost");
+  t.eqI32(hello[0], 1, "handshake type 1 is client_hello");
+  t.isTrue(hello.len() > 150, "and it is a real message: " + itoa(hello.len()) + " bytes");
+
+  // A key share whose private half we hold. x25519 public keys are 32 bytes, and a wrong length here
+  // is the difference between a share a server can use and one it reports as a decode error.
+  t.eqI32(publicKey().len(), 32, "an x25519 public key is 32 bytes");
+  return t.report();
+}
+
+export string test_a_real_quic_server_accepts_a_first_flight_we_authored(Core core, Cli cli) {
+  T t = T.create();
+  u8[] first = flight(dcid(), scid(), "localhost");
+  t.eqI32(first.len(), 1200, "padded to the anti-amplification minimum");
+
+  u8[] reply = ask(t, core, cli, "hello-accept", first, 5000);
+  t.isTrue(reply.len() > 0,
+           "the server did not answer our first flight. Silence is what it gives an unopenable " +
+           "packet *and* what it gives one it will not talk to, so this is either the packet layer " +
+           "— which seal_test.wac covers — or the hello: the version, the group, the suite, the " +
+           "ALPN, or the transport parameters.");
+  if (reply.len() == 0) { return t.report(); }
+
+  u8[] payload = openServer(reply, dcid(), true);
+  t.isTrue(payload.len() > 0, "the server's Initial opens under the id we invented");
+  if (payload.len() == 0) { return t.report(); }
+
+  i32 kinds = kindsIn(payload);
+  t.eqI32(kinds & HAS_CLOSE, 0,
+          "not a refusal — code " + itoa(closeCodeIn(payload)) + " " + closeReasonIn(payload));
+  t.neI32(kinds & HAS_ACK, 0, "it acknowledges the packet we sent");
+  t.neI32(kinds & HAS_CRYPTO, 0, "and carries handshake bytes");
+
+  // 2 is `server_hello`. Reaching it means quinn parsed a ClientHello we wrote, agreed to TLS 1.3,
+  // x25519 and AES-128-GCM, accepted `h3`, and validated transport parameters we encoded.
+  t.eqI32(handshakeTypeIn(payload), 2, "the handshake message is a ServerHello");
+  t.isTrue(streamLen(payload) > 30,
+           "a ServerHello is tens of bytes: " + itoa(streamLen(payload)));
+  return t.report();
+}
+
+export string test_initial_source_connection_id_is_checked(Core core, Cli cli) {
+  // Identical to the flight above except that the parameter names an id the header does not — so a
+  // server that carried the transport parameters without reading them would answer exactly as it
+  // does above, and this is what says it read them.
+  T t = T.create();
+  u8[] other = decoded("99887766");
+  u8[] bad = flightMismatched(dcid(), scid(), other, "localhost");
+
+  u8[] reply = ask(t, core, cli, "hello-mismatch", bad, 5000);
+  t.isTrue(reply.len() > 0, "the server did not answer, so nothing was validated");
+  if (reply.len() == 0) { return t.report(); }
+
+  u8[] payload = openServer(reply, dcid(), true);
+  t.neI32(kindsIn(payload) & HAS_CLOSE, 0,
+          "a mismatch is refused, and the refusal is itself a protected Initial we can open");
+
+  // 0x08 is TRANSPORT_PARAMETER_ERROR. The reason quinn writes is `CID authentication failure`,
+  // which is not asserted: prose a peer may reword, where the code is the protocol's own word.
+  t.eqI32(closeCodeIn(payload), 0x08,
+          "TRANSPORT_PARAMETER_ERROR, reason " + closeReasonIn(payload));
+  return t.report();
+}

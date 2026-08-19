@@ -26,11 +26,9 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, FileResult, Pending, Socket }
-  from "../../../platform/src/platform.wac";
-import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
-import { quoted } from "../../../wactest/src/childenv.wac";
-import { contains } from "../../../wactest/src/strings.wac";
+import { Core, Cli, Socket } from "../../../platform/src/platform.wac";
+import { Server, ask, firstHeard, handshake, heardCount, receiveWithin, startServer,
+         stopServer } from "./peer.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
@@ -46,88 +44,6 @@ u8[] scid() { return decoded("11223344"); }
 
 string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
 
-// ── The server, and talking to it ─────────────────────────────────────────────
-
-/** A running `quicserver.ts`, or `ok` false with the reason. */
-struct Server {
-  bool ok;
-  string error;
-  string dir;
-  i32 port;
-  Daemon daemon;
-
-  string file(const this, Cli cli, string name) { return readIfPresent(cli, this.dir + "/" + name); }
-}
-
-string readIfPresent(Cli cli, string path) {
-  FileResult f = cli.readFile(path).wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
-}
-
-void pause(Cli cli) { cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait(); }
-
-Server startServer(Cli cli, string name, bool upper) {
-  string dir = cli.cwd().wait() + "/.cache/quic/" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
-  string line = "deno run -A --unstable-net " + quoted(SERVER) + " " + quoted(dir) +
-                (upper ? " --upper" : "");
-  Daemon d = start(cli, line, dir + "/server.log");
-  if (!d.ok()) { return Server(false, "the QUIC server did not start — " + d.error, dir, -1, d); }
-
-  // Deno takes a moment to boot; the port appears when it is listening.
-  for (i32 i = 0; i < 400; i++) {
-    string ready = readIfPresent(cli, dir + "/ready.json");
-    if (ready != "") {
-      i32 port = numberIn(ready, "port");
-      if (port > 0) { return Server(true, "", dir, port, d); }
-    }
-    pause(cli);
-  }
-  return Server(false, "the QUIC server never published a port — " +
-                       readIfPresent(cli, dir + "/server.log"), dir, -1, d);
-}
-
-void stopServer(Cli cli, Server s) {
-  stop(cli, s.daemon);
-  cli.remove(s.dir, true).wait();
-}
-
-/** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
-u8[] receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
-  Pending<Datagram> p = cli.receiveFrom(sock.handle);
-  if (core.waitAny(i32[](p.id), ms) < 0) {
-    p.drop(p.id);
-    return u8[0]();
-  }
-  Datagram d = p.wait();
-  return d.error == "" ? d.bytes : u8[0]();
-}
-
-/**
- * The handshake, up to the point where the client may send application data.
- *
- * Empty when the server never answered — every caller checks, because everything after this reads
- * keys derived from the reply.
- */
-u8[] handshake(Core core, Cli cli, Socket sock, Server s) {
-  cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid(), scid(), NAME)).wait();
-  u8[] reply = receiveWithin(core, cli, sock, 5000);
-  if (reply.len() == 0) { return u8[0](); }
-  cli.sendTo(sock.handle, "127.0.0.1", s.port,
-             clientFinishedPacket(reply, dcid(), scid(), NAME)).wait();
-  return reply;
-}
-
-/** Wait for the server's application to have heard `n` streams. */
-bool heardCount(Cli cli, Server s, i32 n, i32 tries) {
-  for (i32 i = 0; i < tries; i++) {
-    if (countIn(s.file(cli, "streams.json")) >= n) { return true; }
-    pause(cli);
-  }
-  return false;
-}
-
 // ── The tests ─────────────────────────────────────────────────────────────────
 
 export string test_a_real_quic_server_reads_a_stream_this_client_opened(Core core, Cli cli) {
@@ -138,7 +54,7 @@ export string test_a_real_quic_server_reads_a_stream_this_client_opened(Core cor
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s);
+  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
   if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
 
@@ -177,7 +93,7 @@ export string test_and_answers_on_it_which_this_client_reads_back(Core core, Cli
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s);
+  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
   if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
 
@@ -222,7 +138,7 @@ export string test_an_acknowledgement_the_server_accepts(Core core, Cli cli) {
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s);
+  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
   if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
 
@@ -308,7 +224,7 @@ export string test_a_dropped_datagram_is_survived(Core core, Cli cli) {
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s);
+  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
   if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
 
@@ -367,7 +283,7 @@ export string test_an_ack_past_what_the_server_sent_is_refused(Core core, Cli cl
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
 
-  u8[] reply = handshake(core, cli, sock, s);
+  u8[] reply = handshake(core, cli, sock, s, dcid(), scid(), NAME);
   t.isTrue(reply.len() > 0, "the server did not answer our first flight");
   if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
 
@@ -407,48 +323,4 @@ i64 closeSeen(Core core, Cli cli, Socket sock, u8[] reply, i32 tries) {
 void done(Cli cli, Socket sock, Server s) {
   if (sock.handle >= 0) { cli.closeSocket(sock.handle); }
   stopServer(cli, s);
-}
-
-// ── Reading the server's little JSON files ────────────────────────────────────
-
-/** `"key": 123` out of a flat object. -1 when absent. */
-i32 numberIn(string json, string key) {
-  i32 at = json.indexOf("\"" + key + "\"");
-  if (at < 0) { return -1; }
-  string rest = json.slice(at + key.len() + 2, json.len());
-  i32 v = -1;
-  for (i32 i = 0; i < rest.len(); i++) {
-    i32 b = rest.toBytes()[i];
-    if (b >= '0' && b <= '9') { v = (v < 0 ? 0 : v) * 10 + (b - '0'); continue; }
-    if (v >= 0) { break; }
-  }
-  return v;
-}
-
-/** How many strings `{"heard": ["…", "…"]}` holds. */
-i32 countIn(string json) {
-  i32 at = json.indexOf("[");
-  if (at < 0) { return 0; }
-  i32 count = 0;
-  bool open = false;
-  for (i32 i = at; i < json.len(); i++) {
-    string c = json.slice(i, i + 1);
-    if (c == "]") { break; }
-    if (c != "\"") { continue; }
-    open = !open;
-    if (!open) { count = count + 1; }
-  }
-  return count;
-}
-
-/** The first string in that array. */
-string firstHeard(string json) {
-  i32 at = json.indexOf("[");
-  if (at < 0) { return ""; }
-  string rest = json.slice(at, json.len());
-  i32 open = rest.indexOf("\"");
-  if (open < 0) { return ""; }
-  string body = rest.slice(open + 1, rest.len());
-  i32 close = body.indexOf("\"");
-  return close < 0 ? "" : body.slice(0, close);
 }

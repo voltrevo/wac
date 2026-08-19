@@ -2,7 +2,7 @@
 //
 // **The logic moved and this did not change what it answers.** Every export below is the same function
 // it was, with the same signature, delegating to a `Client` built from the two constants at the top —
-// which is what makes `hello.test.ts`, `handshake.test.ts` and `complete.test.ts` an argument that the
+// which is what makes `hello_test.wac`, `handshake.test.ts` and `complete.test.ts` an argument that the
 // extraction preserved behaviour rather than a fresh set of expectations agreeing with fresh code.
 //
 // The private scalar and the client random are constants. A real client must use fresh random ones —

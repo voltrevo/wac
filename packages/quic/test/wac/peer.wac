@@ -1,0 +1,181 @@
+// A real QUIC peer to talk to: Deno's, which is quinn.
+//
+// `../quicserver.ts` is the server and says why it is a subprocess — the short version is that
+// `Deno.QuicEndpoint` is a JavaScript API, the point is a peer we did not write, and neither
+// `Cli.exec` nor `Cli.spawn` can hold one open from wac. It signals through a directory, and this is
+// the side that starts it and reads what it says.
+//
+// `./minted.wac` is the other half: Deno's QUIC *client*, for the tests that read a first flight
+// rather than answer one.
+//
+// Extracted when the second caller arrived. `stream_test.wac` had all of this inline and was the
+// only file that needed it; six more do.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, FileResult, Pending, Socket }
+  from "../../../platform/src/platform.wac";
+import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { clientFinishedPacket, flight } from "./hello_probe.wac";
+
+const string SERVER = "packages/quic/test/quicserver.ts";
+
+/** A running `quicserver.ts`, or `ok` false with the reason. */
+export struct Server {
+  bool ok;
+  string error;
+  string dir;
+  i32 port;
+  Daemon daemon;
+
+  /** One of the files it publishes, or empty when it has not written that one yet. */
+  string file(const this, Cli cli, string name) { return readIfPresent(cli, this.dir + "/" + name); }
+}
+
+export string readIfPresent(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+/** A short sleep. Polling for a file is a `stat`, so the loops around here sleep rather than spin. */
+export void pause(Cli cli) { cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait(); }
+
+/**
+ * Start one and wait for it to publish its port.
+ *
+ * `upper` makes it an echo that upper-cases what it reads, which is how the other-direction test
+ * tells the server's answer from its own request coming back off a buffer.
+ */
+export Server startServer(Cli cli, string name, bool upper) {
+  string dir = cli.cwd().wait() + "/.cache/quic/" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string line = "deno run -A --unstable-net " + quoted(SERVER) + " " + quoted(dir) +
+                (upper ? " --upper" : "");
+  Daemon d = start(cli, line, dir + "/server.log");
+  if (!d.ok()) { return Server(false, "the QUIC server did not start — " + d.error, dir, -1, d); }
+
+  // Deno takes a moment to boot; the port appears when it is listening.
+  for (i32 i = 0; i < 400; i++) {
+    string ready = readIfPresent(cli, dir + "/ready.json");
+    if (ready != "") {
+      i32 port = numberIn(ready, "port");
+      if (port > 0) { return Server(true, "", dir, port, d); }
+    }
+    pause(cli);
+  }
+  return Server(false, "the QUIC server never published a port — " +
+                       readIfPresent(cli, dir + "/server.log"), dir, -1, d);
+}
+
+export void stopServer(Cli cli, Server s) {
+  stop(cli, s.daemon);
+  cli.remove(s.dir, true).wait();
+}
+
+/** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
+export u8[] receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
+  Pending<Datagram> p = cli.receiveFrom(sock.handle);
+  if (core.waitAny(i32[](p.id), ms) < 0) {
+    p.drop(p.id);
+    return u8[0]();
+  }
+  Datagram d = p.wait();
+  return d.error == "" ? d.bytes : u8[0]();
+}
+
+/**
+ * Send one datagram at a fresh server and wait for anything back.
+ *
+ * The shape most of these tests want: a peer that exists only for one exchange. Empty when nothing
+ * came, and every caller says what silence would mean for *its* case — a server gives the same
+ * silence to a packet it cannot open and to one it will not talk to.
+ */
+export u8[] ask(T t, Core core, Cli cli, string name, u8[] datagram, i32 ms) {
+  Server s = startServer(cli, name, false);
+  if (!s.ok) {
+    t.fail(s.error);
+    stopServer(cli, s);
+    return u8[0]();
+  }
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) {
+    t.fail("our socket did not bind — " + sock.error);
+    stopServer(cli, s);
+    return u8[0]();
+  }
+  cli.sendTo(sock.handle, "127.0.0.1", s.port, datagram).wait();
+  u8[] got = receiveWithin(core, cli, sock, ms);
+  cli.closeSocket(sock.handle);
+  stopServer(cli, s);
+  return got;
+}
+
+/**
+ * The handshake, up to the point where the client may send application data.
+ *
+ * Answers the server's reply datagram, which is what every later packet's keys come off — so empty
+ * means the caller must stop rather than carry on with keys derived from nothing.
+ */
+export u8[] handshake(Core core, Cli cli, Socket sock, Server s, u8[] dcid, u8[] scid,
+                      string name) {
+  cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid, scid, name)).wait();
+  u8[] reply = receiveWithin(core, cli, sock, 5000);
+  if (reply.len() == 0) { return u8[0](); }
+  cli.sendTo(sock.handle, "127.0.0.1", s.port, clientFinishedPacket(reply, dcid, scid, name)).wait();
+  return reply;
+}
+
+// ── Reading the server's little JSON files ────────────────────────────────────
+
+/** `"key": 123` out of a flat object. -1 when absent. */
+export i32 numberIn(string json, string key) {
+  i32 at = json.indexOf("\"" + key + "\"");
+  if (at < 0) { return -1; }
+  string rest = json.slice(at + key.len() + 2, json.len());
+  i32 v = -1;
+  for (i32 i = 0; i < rest.len(); i++) {
+    i32 b = rest.toBytes()[i];
+    if (b >= '0' && b <= '9') { v = (v < 0 ? 0 : v) * 10 + (b - '0'); continue; }
+    if (v >= 0) { break; }
+  }
+  return v;
+}
+
+/** How many strings `{"heard": ["…", "…"]}` holds. */
+export i32 countIn(string json) {
+  i32 at = json.indexOf("[");
+  if (at < 0) { return 0; }
+  i32 count = 0;
+  bool open = false;
+  for (i32 i = at; i < json.len(); i++) {
+    string c = json.slice(i, i + 1);
+    if (c == "]") { break; }
+    if (c != "\"") { continue; }
+    open = !open;
+    if (!open) { count = count + 1; }
+  }
+  return count;
+}
+
+/** The first string in that array. */
+export string firstHeard(string json) {
+  i32 at = json.indexOf("[");
+  if (at < 0) { return ""; }
+  string rest = json.slice(at, json.len());
+  i32 open = rest.indexOf("\"");
+  if (open < 0) { return ""; }
+  string body = rest.slice(open + 1, rest.len());
+  i32 close = body.indexOf("\"");
+  return close < 0 ? "" : body.slice(0, close);
+}
+
+/** Wait for the server's application to have heard `n` streams. */
+export bool heardCount(Cli cli, Server s, i32 n, i32 tries) {
+  for (i32 i = 0; i < tries; i++) {
+    if (countIn(s.file(cli, "streams.json")) >= n) { return true; }
+    pause(cli);
+  }
+  return false;
+}

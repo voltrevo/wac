@@ -1,0 +1,89 @@
+// A real server's reply, which has the "fixed" bit set to zero.
+//
+// RFC 9000 §17.2 calls bit 0x40 the *fixed bit* and says a packet is not a valid version-1 packet
+// without it. RFC 9287 then says: an endpoint may advertise the `grease_quic_bit` transport
+// parameter, and its peer may then send zero there. quinn advertises it and does grease, so a parser
+// that treats the bit as fixed refuses about two replies in three from a real server.
+//
+// `packet_test.wac` and `initial_test.wac` read a packet quinn *sent to nobody* — Deno's client
+// aimed at a dead socket, which needs no server and no certificate. This one needs an answer, so it
+// stands up a real Deno QUIC server and replays a genuine Initial at it over plain UDP.
+//
+// Replaying somebody else's first flight is enough to make a server answer: the Initial keys come
+// from the connection id in the header, which the sender chooses, and the ClientHello inside is a
+// well-formed TLS message whoever produced it. The handshake cannot be *completed* this way — we do
+// not have the client's private key — and it does not need to be. The reply is the whole point.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { dcidLen, packetType, parseOk, version } from "./packet_probe.wac";
+import { anInitial } from "./minted.wac";
+import { ask } from "./peer.wac";
+
+/**
+ * Replies until one has the fixed bit cleared.
+ *
+ * Fifteen attempts against a measured rate near two in three leaves a chance of missing below one in
+ * a hundred thousand, and a run that somehow saw fifteen ungreased replies says so rather than
+ * passing quietly — "we did not observe it" and "it does not happen" are different answers and only
+ * one of them is a reason to skip an assertion.
+ *
+ * Empty when the server never answered at all, which is a different failure and one `t` is told
+ * about by `ask`.
+ */
+u8[] aGreasedReply(T t, Core core, Cli cli, string name, u8[] initial) {
+  u8[] last = u8[0]();
+  for (i32 i = 0; i < 15; i++) {
+    u8[] reply = ask(t, core, cli, name + "-" + itoa(i), initial, 5000);
+    if (reply.len() == 0) { return u8[0](); }
+    last = reply;
+    if ((reply[0] & 0x40) == 0) { return reply; }
+  }
+  t.fail("fifteen replies in a row had the fixed bit set; greasing may have been turned off");
+  return last;
+}
+
+export string test_a_real_servers_reply_has_the_fixed_bit_greased_to_zero(Core core, Cli cli) {
+  T t = T.create();
+  u8[] initial = anInitial(t, core, cli, "greased-mint");
+  if (initial.len() == 0) { return t.report(); }
+  u8[] reply = aGreasedReply(t, core, cli, "greased-reply", initial);
+  if (reply.len() == 0) { return t.report(); }
+
+  // The bit RFC 9000 calls fixed, in a packet from a real implementation.
+  t.neI32(reply[0] & 0x80, 0, "a long header");
+  t.eqI32(reply[0] & 0x40, 0, "the server greased the fixed bit");
+  t.eqI32((reply[0] >> 4) & 3, 0, "and it is an Initial");
+
+  // **The bit is the only thing wrong with it.** Everything else is an ordinary version-1 Initial,
+  // which is what makes refusing it a defect rather than caution: the version says 1, the ids are
+  // within their bounds, and the packet is the anti-amplification 1200 bytes.
+  t.eqI32(reply.len(), 1200, "padded to the anti-amplification minimum");
+  t.isTrue(parseOk(reply, true), "with greasing allowed, it parses");
+  t.eqI32(version(reply, true), 1, "version 1");
+  t.isTrue(dcidLen(reply, true) <= 20, "and the connection id is within bounds");
+  return t.report();
+}
+
+export string test_greasing_is_something_the_caller_allows(Core core, Cli cli) {
+  T t = T.create();
+  u8[] initial = anInitial(t, core, cli, "greased-mint2");
+  if (initial.len() == 0) { return t.report(); }
+  u8[] reply = aGreasedReply(t, core, cli, "greased-reply2", initial);
+  if (reply.len() == 0) { return t.report(); }
+
+  // A parser cannot decide this alone. RFC 9287 permits a zero **only** when `grease_quic_bit` was
+  // negotiated, which is connection state — so whether to accept one is the caller's answer, in the
+  // same way `parseShortDcid` takes a connection id length it cannot know. Told no, this is refused.
+  t.isFalse(parseOk(reply, false),
+            "without the transport parameter, a cleared fixed bit is not a version-1 packet");
+
+  // And a client's own Initial has the bit set, so allowing greasing never has to mean ignoring it.
+  t.neI32(initial[0] & 0x40, 0, "quinn sets the bit on the packet it sends first");
+  t.isTrue(parseOk(initial, false), "which parses either way");
+  t.isTrue(parseOk(initial, true), "…either way");
+  return t.report();
+}
