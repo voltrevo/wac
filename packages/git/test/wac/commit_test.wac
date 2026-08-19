@@ -139,7 +139,8 @@ struct Repo {
     return withEnv(this.cli, string[]("GIT_AUTHOR_DATE"), string[](DATE), wac,
                    string[](builtProgram(this.cli, "packages/git/example/gitci.wac", "gitci",
                                          string[]("--allow-read", "--allow-write", "--allow-env",
-                                                  "--quiet")),
+                                                  "--quiet"),
+                                         string[]("packages/git/src", "packages/git/example")),
                             this.dir, message));
   }
 
