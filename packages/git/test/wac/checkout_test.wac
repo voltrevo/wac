@@ -16,6 +16,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, Stat, FileResult } from "../../../platform/src/platform.wac";
+import { builtProgram } from "./built.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -115,8 +116,9 @@ struct Ran {
 Ran gitco(T t, Cli cli, string dir) {
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
   Exec r = cli.exec(wac,
-                    string[]("run", "--allow-read", "--allow-write",
-                             "packages/git/example/gitco.wac", "--", dir),
+                    string[](builtProgram(cli, "packages/git/example/gitco.wac", "gitco",
+                                           string[]("--allow-read", "--allow-write", "--quiet")),
+                             dir),
                     u8[0]()).wait();
   t.eqStr(r.error, "", "the wac binary could be started");
   return Ran(r.status, trimmed(string.fromBytes(r.stdout)), trimmed(string.fromBytes(r.stderr)));

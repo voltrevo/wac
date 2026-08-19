@@ -30,6 +30,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { builtProgram } from "./built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 
@@ -113,8 +114,10 @@ export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for
   // Read for the trust store, net for the socket, env for the proxy. No write.
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
   Exec r = withEnv(cli, names, values, wac,
-                   string[]("run", "--allow-net", "--allow-env", "--allow-read",
-                            "packages/git/example/gitfetch.wac", "--", REMOTE, "1"));
+                   string[](builtProgram(cli, "packages/git/example/gitfetch.wac", "gitfetch",
+                                         string[]("--allow-net", "--allow-env", "--allow-read",
+                                                  "--quiet")),
+                            REMOTE, "1"));
   string err = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 0, "gitfetch failed: " + err);
   t.eqStr(err, "", "gitfetch warned");

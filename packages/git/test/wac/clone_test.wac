@@ -26,6 +26,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { builtProgram } from "./built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { slice } from "../../../bytes/src/slice.wac";
@@ -128,8 +129,10 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
 
   string wac = cwd + "/native/v8/target/release/wac";
   Exec r = withEnv(cli, names, values, wac,
-                   string[]("run", "--allow-net", "--allow-env", "--allow-read", "--allow-write",
-                            "packages/git/example/gitclone.wac", "--", REMOTE, dir, "1"));
+                   string[](builtProgram(cli, "packages/git/example/gitclone.wac", "gitclone",
+                                         string[]("--allow-net", "--allow-env", "--allow-read",
+                                                  "--allow-write", "--quiet")),
+                            REMOTE, dir, "1"));
   string warned = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 0, "gitclone failed: " + warned);
   if (r.status != 0) { return t.report(); }
