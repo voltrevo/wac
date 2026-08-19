@@ -24,11 +24,11 @@ import { ROOT } from "./programs.ts";
 
 Deno.test("the registered name is the label and the test name without its prefix", () => {
   const cases: [string, string | undefined, string, string][] = [
-    ["packages/std/test/wac/map_test.wac", "map", "test_basics", "map: basics"],
+    ["core/test/map_test.wac", "map", "test_basics", "map: basics"],
     // `test` with no underscore is the other spelling the stripper accepts.
-    ["packages/std/test/wac/map_test.wac", "map", "testBasics", "map: Basics"],
+    ["core/test/map_test.wac", "map", "testBasics", "map: Basics"],
     // No label: the wac file's stem, extension removed, directories dropped.
-    ["packages/std/test/wac/map_test.wac", undefined, "test_basics", "map_test: basics"],
+    ["core/test/map_test.wac", undefined, "test_basics", "map_test: basics"],
     ["a/b/c/option_test.wac", "opt", "test_a_long_name", "opt: a_long_name"],
   ];
   for (const [entry, prefix, native, want] of cases) {
@@ -41,7 +41,7 @@ Deno.test("the registered name is the label and the test name without its prefix
 
 Deno.test("a call written with a variable is counted, not dropped", () => {
   const src = [
-    'await wacTestRun("packages/std/test/wac/map_test.wac", "map");',
+    'await wacTestRun("core/test/map_test.wac", "map");',
     'await wacTestRun("core/test/option_test.wac");',
     'await wacTestRun("packages/crypto/test/wac/aes_test.wac", "aes", [ref]);',
     "await wacTestRun(path);",
