@@ -21,6 +21,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { builtProgram } from "./built.wac";
 import { Vec } from "core/vec.wac";
 import { Report, RefReport, readReport, noRefsIn, oldFor } from "../../src/receive.wac";
 import { Ad, parseAdvertisement } from "../../src/fetch.wac";
@@ -121,8 +122,8 @@ struct Pushed {
 Pushed pushWith(T t, Cli cli, string src, string target, string advFile, i32 advLen) {
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
   Exec made = cli.exec(wac,
-                       string[]("run", "--allow-read", "--allow-write",
-                                "packages/git/example/gitpush.wac", "--",
+                       string[](builtProgram(cli, "packages/git/example/gitpush.wac", "gitpush",
+                                              string[]("--allow-read", "--allow-write", "--quiet")),
                                 src, advFile, "refs/heads/main"),
                        u8[0]()).wait();
   string note = trimmed(string.fromBytes(made.stderr));

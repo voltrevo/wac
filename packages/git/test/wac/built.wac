@@ -1,0 +1,80 @@
+// One built program per entry, shared by the tests in this package.
+//
+// **Six files here ran `wac run <example>.wac` per operation, which compiles the git package from
+// source before it runs.** `commit_test.wac` did it seven times and cost 10.2s; built once it is
+// 0.5s. That is not a property of `commit_test` — it is what every one of these files was doing, so
+// the build lives here rather than in six copies of the same fifteen lines.
+//
+// It is also closer to what a person does. `wac run` is the shape for a one-off; a test that runs the
+// same program seven times is the case `wac build` exists for, and the grants end up in the module's
+// manifest rather than on each command line.
+//
+// ## Freshness
+//
+// mtimes, the rule `tools/seedFresh.test.ts` uses for the seed: the built module is rebuilt when
+// anything under the source trees it is made from — or the binary that builds it — is newer. Coarser
+// than an import walk on purpose, because the failure mode that matters is "somebody edited
+// `packages/git/src` and the test kept using yesterday's build", and a directory mtime scan catches
+// that for the price of a few dozen stats.
+//
+// The cache is `.cache/`, which is per workspace and therefore per agent. Nothing here writes to
+// `/tmp`, where three agents would share a name.
+
+import { Cli, Exec, Stat } from "../../../platform/src/platform.wac";
+
+/** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
+export i64 newestUnder(Cli cli, string dir) {
+  i64 newest = 0 as i64;
+  string[]? names = cli.readDir(dir).wait();
+  if (names is null) { return 0 as i64; }
+  string[] here = names!;
+  for (i32 i = 0; i < here.len(); i++) {
+    string path = dir + "/" + here[i];
+    Stat s = cli.stat(path).wait();
+    if (!s.exists) { continue; }
+    if (s.isDir) {
+      i64 deep = newestUnder(cli, path);
+      if (deep > newest) { newest = deep; }
+      continue;
+    }
+    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+  }
+  return newest;
+}
+
+/** The path of the `wac` binary these tests build and run with. */
+export string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/**
+ * `entry` built into `.cache/built-<name>/<name>.wasm` with `grants`, or the one already there.
+ *
+ * `name` is what the module is called on disk; two entries must not share one. `grants` are the
+ * `--allow-…` flags the program needs, which go into its manifest at build time — a built module is
+ * run as `wac <module.wasm> <args…>` with no flags at all.
+ *
+ * Answers the path either way. A build that fails leaves no module, and the caller's first run says
+ * so: `wac` reports the missing file and the test's own assertion on the exit status carries it.
+ */
+export string builtProgram(Cli cli, string entry, string name, string[] grants) {
+  string wac = wacBinary(cli);
+  string dir = cli.cwd().wait() + "/.cache/built-" + name;
+  cli.mkdir(dir, true).wait();
+  string stem = dir + "/" + name;
+  Stat have = cli.stat(stem + ".wasm").wait();
+
+  i64 newest = newestUnder(cli, "packages/git/src");
+  i64 example = newestUnder(cli, "packages/git/example");
+  if (example > newest) { newest = example; }
+  Stat bin = cli.stat(wac).wait();
+  if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
+  if (have.exists && have.modifiedMillis > newest) { return stem + ".wasm"; }
+
+  string[] args = string[4 + grants.len()](fill: "");
+  args[0] = "build";
+  args[1] = entry;
+  args[2] = "-o";
+  args[3] = stem;
+  for (i32 i = 0; i < grants.len(); i++) { args[4 + i] = grants[i]; }
+  cli.exec(wac, args, u8[0]()).wait();
+  return stem + ".wasm";
+}

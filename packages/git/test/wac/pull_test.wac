@@ -18,6 +18,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { builtProgram, wacBinary } from "./built.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -103,14 +104,11 @@ struct Ran {
 }
 
 Ran gitpull(Cli cli, string[] args) {
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
-  string[] full = string[args.len() + 5](fill: "");
-  full[0] = "run";
-  full[1] = "--allow-read";
-  full[2] = "--allow-write";
-  full[3] = "packages/git/example/gitpull.wac";
-  full[4] = "--";
-  for (i32 i = 0; i < args.len(); i++) { full[5 + i] = args[i]; }
+  string wac = wacBinary(cli);
+  string[] full = string[args.len() + 1](fill: "");
+  full[0] = builtProgram(cli, "packages/git/example/gitpull.wac", "gitpull",
+                         string[]("--allow-read", "--allow-write", "--quiet"));
+  for (i32 i = 0; i < args.len(); i++) { full[1 + i] = args[i]; }
   Exec r = cli.exec(wac, full, u8[0]()).wait();
   return Ran(r.status, r.stdout, trimmed(string.fromBytes(r.stderr)));
 }
