@@ -1,0 +1,67 @@
+// Composing children: standard input through two of them and out again.
+//
+// `spawn_test.wac` covers one child in isolation. What this covers is the claim that handles
+// compose — that standard input, a socket and a child are interchangeable to `recv`, `send` and
+// `waitAny`, so plumbing them together needs no new capability. The example was written against the
+// existing world without touching it, which is the evidence.
+//
+// The children are platform's own `wc.wac` rather than `box`, so platform's tests do not depend on a
+// package that depends on platform.
+//
+// ## The socket half of this file is still in TypeScript, and not because it is a harness
+//
+// `pipeline.test.ts` keeps its second test — `inetd` accepting a connection and handing it to a `wc`
+// child. That one needs the *client* to say it is done speaking and then read the reply, and a wac
+// program cannot: `closeSocket` ends the socket in both directions, so the answer can never come
+// back, and `wc` writes nothing before EOF. `issues/system/0215` is the missing half-close;
+// `Deno.Conn.closeWrite` is standing in for a capability rather than being the subject.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { trimmed } from "../../../wactest/src/strings.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/pipeline-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+export string test_stdin_through_two_children_and_out_again(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "pipe");
+  string pipe = dir + "/pipe";
+  // A worker rather than an executable: `pipe.wac` spawns this path, and what `spawnSelf` and
+  // `spawn` take is the worker module. The suffix is what the builder keys the bundle form off.
+  string child = dir + "/wc.worker.js";
+
+  Exec bp = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/pipe.wac",
+             "--allow-read", "-o", pipe), u8[0]()).wait();
+  t.isTrue(bp.ran() && bp.status == 0, "pipe.wac built — " + string.fromBytes(bp.stderr));
+  Exec bc = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/wc.wac",
+             "--worker", "-o", child), u8[0]()).wait();
+  t.isTrue(bc.ran() && bc.status == 0, "wc.wac built as a worker — " + string.fromBytes(bc.stderr));
+  if (!bp.ran() || bp.status != 0 || !bc.ran() || bc.status != 0) {
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+
+  // Empty args: `wc` with no arguments reads standard input, which is the point here.
+  Exec r = cli.exec(pipe, string[](child, "", ""), "one two three\n".toBytes()).wait();
+  t.isTrue(r.ran(), "the pipeline ran");
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
+
+  // `wc` of "one two three\n" is "1 3 14"; `wc` of that is "1 3 7". The second number proves the
+  // bytes went *through* the first child rather than around it.
+  t.eqStr(trimmed(string.fromBytes(r.stdout)), "1 3 7",
+          "stderr was: " + string.fromBytes(r.stderr));
+  cli.remove(dir, true).wait();
+  return t.report();
+}

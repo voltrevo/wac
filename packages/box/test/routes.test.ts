@@ -17,7 +17,7 @@
 // **A bounded slice, and the bound is stated.** Each case costs two subprocesses; `deno task
 // corpus:routes` is the whole 821 and takes minutes.
 
-import { buildApp } from "../../platform/build.ts";
+import { type AppRunner, appRunner, runBounded } from "../../../harness/appRun.ts";
 import { type Bounded, boundedAgainAsync, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 import { CORPUS } from "../../sh/test/corpus.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
@@ -44,16 +44,28 @@ globalThis.addEventListener("unload", () => {
   }
 });
 
-const called = `${tmp}/boxsh`;
-const spawned = `${tmp}/wacsh`;
-await buildApp("packages/box/example/boxsh.wac", called, { read: true, write: true, env: true });
-await buildApp("packages/box/src/bin/sh.wac", spawned, { read: true, write: true, env: true });
+/**
+ * **Both routes in workers, not processes.** `appRunner` is the launcher half of the same built
+ * program — same capability implementations, same grants — and the process boundary is not what this
+ * file is about: the subject is which route the shell takes *inside* itself, `pushChild`/`popChild`
+ * against `spawn`, and both of those happen within one instance either way. Eighty process starts at
+ * about 110ms each was most of the seven seconds this test cost; a worker run is about a
+ * millisecond. `packages/box/test/box.test.ts` made the same move for the same reason.
+ *
+ * The bound comes with it, through `runBounded`: a worker run has no timeout of its own, and a bound
+ * that fired is a report rather than an answer (issue 0128). It does not retry where
+ * `boundedAgainAsync` did — a retry existed because forty scripts' worth of subprocesses starved each
+ * other, which is the load this removes.
+ */
+const calledRun = await appRunner("packages/box/example/boxsh.wac", { read: true, write: true, env: true });
+const spawnedRun = await appRunner("packages/box/src/bin/sh.wac", { read: true, write: true, env: true });
 
-async function run(cmd: string, script: string, cwd: string): Promise<Bounded> {
-  return await boundedAgainAsync(DEFAULT_SECONDS, cmd, ["-c", script], {
+async function run(which: AppRunner, script: string, cwd: string): Promise<Bounded> {
+  const r = await runBounded(which, ["-c", script], {
     cwd,
     env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: cwd },
-  });
+  }, DEFAULT_SECONDS, JSON.stringify(script));
+  return { code: r.code, out: r.out, err: r.err, hung: false, seconds: DEFAULT_SECONDS };
 }
 
 /** One script's two answers, each in a directory of its own so neither sees the other's files. */
@@ -64,8 +76,8 @@ async function both(script: string, n: number): Promise<{ called: Bounded; spawn
   // The two routes at once: separate directories, separate processes, and the whole claim of this file
   // is that neither can tell. A script that could tell would be a finding rather than a flake.
   const [answerCalled, answerSpawned] = await Promise.all([
-    run(called, script, a),
-    run(spawned, script, b),
+    run(calledRun, script, a),
+    run(spawnedRun, script, b),
   ]);
   await Deno.remove(a, { recursive: true });
   await Deno.remove(b, { recursive: true });
@@ -73,14 +85,17 @@ async function both(script: string, n: number): Promise<{ called: Bounded; spawn
 }
 
 /**
- * How many scripts are in flight, each of which is two processes.
+ * How many scripts are in flight, each of which is two **worker runs**.
  *
- * Two, so four subprocesses — the share of a five-core box this file can take while three other Deno
- * workers run beside it. Forty scripts serially, two spawns each, was ten seconds and the slowest
- * single test in the suite after `native_examples`; it is about three now.
+ * It said "two processes" until 2026-08-19, and that was the whole cost: forty scripts serially at two
+ * spawns each was ten seconds, and running two at a time — four subprocesses, the share of a five-core
+ * box this file could take beside three other Deno workers — brought it to about three. Both routes are
+ * `appRunner` now, so a run is about a millisecond and this number no longer decides anything: two is
+ * kept because there is no reason to change it, not because four subprocesses is the limit.
  *
- * The bound retries once (`boundedAgainAsync`), which is the part that keeps a starved run from
- * reading as a hang now that this file makes its own load — issue 0128.
+ * The retry went with the processes. `boundedAgainAsync` asked again because forty scripts' worth of
+ * subprocesses starved each other, and a starved run reads as a hang (issue 0128) — there is no such
+ * load now, and `runBounded` reports a bound that fires rather than retrying it.
  */
 const AT_ONCE = 2;
 

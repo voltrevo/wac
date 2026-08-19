@@ -123,3 +123,35 @@ About 30 CPU-seconds a run of recompiling code that did not change — 8s of wal
 enough that the reason to do it is the hand-run case rather than the suite: `wac test` on one
 directory pays its whole compile before running anything, which is 2.25s of a 24s wacc chunk and 378ms
 of a 653ms json one, and that is the loop somebody sits in while fixing a test.
+
+## Built, 2026-08-19 — and the saving is smaller than the compile share suggests
+
+`native/v8/src/main.rs` now keys the built aggregate on the aggregate's own text, the content of every
+`.wac` it reaches, the grants, `--coverage`, the binary's version and the embedded seed's bytes; hits
+come from one shared directory, swept to the newest sixty.
+
+Measured per directory, three runs each on a box three agents share:
+
+| directory | no cache | cached |
+| --- | ---: | ---: |
+| `packages/json/test/wac` | 2 570 / 2 059 / 1 756ms | 1 906 / 1 027 / 1 370ms |
+| `packages/url/test/wac` | ~1 850ms | ~1 570ms |
+
+So **0.3-0.7s a chunk**, which over fifty-one chunks is 15-35s of the lane's work — a few seconds of
+wall at four workers, and most of the benefit is an agent re-running one directory while iterating.
+
+**The compile share overstated it, and that is worth recording.** Timing `wac build` on a kept
+aggregate said 674ms of an 887ms run for `packages/url`; the cache saves about 280ms there. Two
+reasons: `wac build` writes artefacts to disk that the in-process path does not, and the 887ms run had
+no `--allow-run`, so its oracle-driven tests failed early and the denominator was too small. A share
+measured with a *different command* than the one being sped up is a different measurement.
+
+Two bugs on the way in, both of the shape this repository keeps producing:
+
+- the key hashed the aggregate's *path*, which carries the pid, so every run wrote a new entry and hit
+  nothing. It looked like "faster, and three new entries a run" — a hit count would have said it at
+  once.
+- a hit skipped `build_module`, which is where V8 is started, so the first cached run panicked with
+  `Invalid global state`. It presented as a 4ms directory with no failures, which is exactly what a
+  run that never happened looks like from outside.
+

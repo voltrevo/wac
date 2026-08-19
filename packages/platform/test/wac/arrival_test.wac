@@ -37,6 +37,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
+import { builtByDeno, builtProgram, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ran, boundedAgain, hangReport } from "./hostfs.wac";
@@ -96,12 +97,46 @@ struct World {
   string manifest;
 }
 
+/**
+ * A directory of its own per test, with the two builds **shared** rather than remade.
+ *
+ * The directory has to be per test: each writes an image into it and a leftover from the case before
+ * would be read as this one's. The two *programs* do not — they are the same entry with the same
+ * grants every time, and building them here meant six builds for three tests, at a `deno run` and a
+ * `wac build` apiece. `wactest/src/built.wac` keeps one of each and this copies them in; the copy
+ * restores the executable bit, because the Deno half is run as a program.
+ */
 World world(Cli cli, string name) {
   string dir = root(cli) + "/.cache/arrival-" + name;
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
-  string why = buildOne(cli, false, dir + "/imaged-deno") + buildOne(cli, true, dir + "/imaged");
-  return World(why == "", why, dir, dir + "/imaged-deno", dir + "/imaged.json");
+  string[] grants = string[]("--allow-read", "--allow-write");
+  string[] trees = string[]("packages/platform/src", "packages/box/src", "packages/fs/src");
+
+  string madeDeno = builtByDeno(cli, ENTRY, "arrival-imaged", grants, "deno", false, trees);
+  string madeNative = builtProgram(cli, ENTRY, "arrival-imaged-native",
+                                   string[]("--allow-read", "--allow-write", "--quiet"), trees);
+  if (madeDeno == "") { return World(false, "imaged did not build for deno", dir, "", ""); }
+
+  string deno = dir + "/imaged-deno";
+  if (!copyBuilt(cli, madeDeno, deno, true)) {
+    return World(false, "the deno build did not copy into " + dir, dir, "", "");
+  }
+  // The native half is a module plus a manifest, and **the manifest names the module by the name it was
+  // built under** — so the copy keeps that name rather than renaming to `imaged`. Renaming it was the
+  // first attempt and every case failed with `arrival-imaged-native.wasm: No such file or directory`,
+  // which is the manifest asking for the file it was told about.
+  string base = madeNative;
+  i32 slash = -1;
+  for (i32 i = 0; i < base.len(); i++) { if (base.slice(i, i + 1) == "/") { slash = i; } }
+  if (slash >= 0) { base = base.slice(slash + 1, base.len()); }
+  string stem = base.slice(0, base.len() - 5);
+  string jsonFrom = madeNative.slice(0, madeNative.len() - 5) + ".json";
+  if (!copyBuilt(cli, madeNative, dir + "/" + base, false) ||
+      !copyBuilt(cli, jsonFrom, dir + "/" + stem + ".json", false)) {
+    return World(false, "the native build did not copy into " + dir, dir, "", "");
+  }
+  return World(true, "", dir, deno, dir + "/" + stem + ".json");
 }
 
 /** One session over `image`, from the world's directory, bounded and asked twice if it wedges. */

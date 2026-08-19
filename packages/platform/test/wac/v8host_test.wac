@@ -29,6 +29,11 @@
 // **loudly**, and the Deno half still runs and still asserts — a skip must not be mistaken for a
 // pass, which is how a differential test comes to compare nothing.
 //
+// **3s warm, 21s cold.** The six built programs are shared across the three cases behind an mtime
+// check rather than rebuilt into a directory each case had just wiped — `issues/system/0213` is the
+// measurement of what these files cost in the lane, and this is the half of it that is builds
+// rather than process starts.
+//
 // Host-side until 2026-08-19, `issues/system/0161`. One thing is different rather than translated:
 // this runs *under* the host it is testing, since `wac test` is `native/v8`. That is not circular —
 // what is compared is a separate process running a separate program — but it does mean the V8 half
@@ -37,6 +42,11 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
+import { stale } from "./hostfs.wac";
+
+const string BOXSH = "packages/box/example/boxsh.wac";
+const string SPAWNSH = "packages/box/src/bin/sh.wac";
+const string IMAGED = "packages/box/src/bin/imaged.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
@@ -136,6 +146,50 @@ string scratch(Cli cli, string name) {
   return dir;
 }
 
+/**
+ * The six built programs, made once behind an mtime check and shared by all three cases.
+ *
+ * Each case used to build its own two into a directory it had just wiped, so a run paid for six
+ * builds of `box`'s shells whatever had changed. `issues/system/0213` measures what these files cost
+ * in the lane; this is the half of it that is not process starts. The rule is `stale`'s — mtimes, the
+ * same one `harness/nativeHost.ts` uses for the crate — and the artefacts are identical whichever
+ * case writes them, which is what makes sharing safe.
+ */
+struct Programs {
+  bool ok;
+  string error;
+  string boxshDeno;
+  string boxshStem;
+  string spawnshDeno;
+  string spawnshStem;
+  string imagedDeno;
+  string imagedStem;
+}
+
+Programs programs(Cli cli) {
+  string dir = root(cli) + "/.cache/v8host";
+  cli.mkdir(dir, true).wait();
+  Programs p = Programs(true, "",
+                        dir + "/boxsh-deno", dir + "/boxsh",
+                        dir + "/spawnsh-deno", dir + "/spawnsh",
+                        dir + "/imaged-deno", dir + "/imaged");
+  string[] rw = string[]("--allow-read", "--allow-write");
+  string[] rwen = string[]("--allow-read", "--allow-write", "--allow-env", "--allow-net");
+  string why = "";
+  if (stale(cli, p.boxshDeno)) { why = why + buildOne(cli, false, BOXSH, p.boxshDeno, rw); }
+  if (stale(cli, p.boxshStem + ".wasm")) { why = why + buildOne(cli, true, BOXSH, p.boxshStem, rw); }
+  if (stale(cli, p.spawnshDeno)) { why = why + buildOne(cli, false, SPAWNSH, p.spawnshDeno, rw); }
+  if (stale(cli, p.spawnshStem + ".wasm")) {
+    why = why + buildOne(cli, true, SPAWNSH, p.spawnshStem, rw);
+  }
+  if (stale(cli, p.imagedDeno)) { why = why + buildOne(cli, false, IMAGED, p.imagedDeno, rwen); }
+  if (stale(cli, p.imagedStem + ".wasm")) {
+    why = why + buildOne(cli, true, IMAGED, p.imagedStem, rwen);
+  }
+  if (why != "") { p.ok = false; p.error = why; }
+  return p;
+}
+
 /** The lines of `text` with leading and trailing blank lines dropped. */
 string[] trimmedLines(string text) {
   i32 from = 0;
@@ -172,21 +226,18 @@ string firstWord(string line) {
 export string test_boxs_shell_answers_the_same_on_deno_and_on_the_rust_host_on_v8(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "boxsh");
-  const string ENTRY = "packages/box/example/boxsh.wac";
+  Programs p = programs(cli);
+  t.eqStr(p.error, "", "the programs built");
+  if (!p.ok) { return t.report(); }
 
   // The Deno half, which runs whether or not cargo is here.
-  string denoBin = dir + "/bsh-deno";
-  string why = buildOne(cli, false, ENTRY, denoBin, string[]("--allow-read", "--allow-write"));
-  t.eqStr(why, "", "the Deno half built");
-  if (why != "") { return t.report(); }
-  Ran onDeno = run(cli, denoBin, string[0](fill: ""), SCRIPT);
+  Ran onDeno = run(cli, p.boxshDeno, string[0](fill: ""), SCRIPT);
 
   // **Asserted, not merely captured.** If the two hosts were compared and nothing else, a shell that
   // printed nothing on both would pass.
   string[] lines = trimmedLines(onDeno.out);
   t.eqI32(lines.len(), 6, "expected six answers, got: " + onDeno.out + onDeno.err);
-  if (lines.len() != 6) { cli.remove(dir, true).wait(); return t.report(); }
+  if (lines.len() != 6) { return t.report(); }
   t.eqStr(lines[0], "2", "the pipeline's count");
   t.eqStr(lines[1], "42", "the arithmetic");
   t.eqI32(firstWord(lines[2]).len(), 64, "a sha256 is 64 hex digits: " + lines[2]);
@@ -194,31 +245,22 @@ export string test_boxs_shell_answers_the_same_on_deno_and_on_the_rust_host_on_v
   t.eqStr(lines[5], "done", "and the shell got to the end");
 
   string v8 = v8Host(core, cli);
-  if (v8 == "") { cli.remove(dir, true).wait(); return t.report(); }
-  string stem = dir + "/bsh";
-  why = buildOne(cli, true, ENTRY, stem, string[]("--allow-read", "--allow-write"));
-  t.eqStr(why, "", "the V8 half built");
-  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
-  Ran onV8 = run(cli, v8, string[](stem), SCRIPT);
+  if (v8 == "") { return t.report(); }
+  Ran onV8 = run(cli, v8, string[](p.boxshStem), SCRIPT);
 
   t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
   t.eqStr(onV8.err, onDeno.err, "the two hosts disagree about what the shell warned");
   t.eqI32(onV8.code, onDeno.code, "the two hosts disagree about the exit code");
-  cli.remove(dir, true).wait();
   return t.report();
 }
 
 export string test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_host(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "spawnsh");
-  const string ENTRY = "packages/box/src/bin/sh.wac";
-
-  string denoBin = dir + "/spawnsh-deno";
-  string why = buildOne(cli, false, ENTRY, denoBin, string[]("--allow-read", "--allow-write"));
-  t.eqStr(why, "", "the Deno half built");
-  if (why != "") { return t.report(); }
-  Ran onDeno = run(cli, denoBin, string[0](fill: ""), SPAWNING_SCRIPT);
+  Programs p = programs(cli);
+  t.eqStr(p.error, "", "the programs built");
+  if (!p.ok) { return t.report(); }
+  Ran onDeno = run(cli, p.spawnshDeno, string[0](fill: ""), SPAWNING_SCRIPT);
 
   // **Asserted before it is compared.** Two hosts that both print nothing agree perfectly, and that is
   // exactly the state this test exists to catch: before 0148 was fixed the V8 host printed *nothing at
@@ -228,16 +270,11 @@ export string test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_h
                "the Deno half: " + onDeno.err);
 
   string v8 = v8Host(core, cli);
-  if (v8 == "") { cli.remove(dir, true).wait(); return t.report(); }
-  string stem = dir + "/spawnsh";
-  why = buildOne(cli, true, ENTRY, stem, string[]("--allow-read", "--allow-write"));
-  t.eqStr(why, "", "the V8 half built");
-  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
-  Ran onV8 = run(cli, v8, string[](stem), SPAWNING_SCRIPT);
+  if (v8 == "") { return t.report(); }
+  Ran onV8 = run(cli, v8, string[](p.spawnshStem), SPAWNING_SCRIPT);
 
   t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
   t.eqI32(onV8.code, onDeno.code, "the two hosts disagree about the exit code");
-  cli.remove(dir, true).wait();
   return t.report();
 }
 
@@ -260,12 +297,12 @@ export string test_an_image_survives_a_process_and_is_readable_by_a_spawned_chil
   string dir = scratch(cli, "imaged");
   const string ENTRY = "packages/box/src/bin/imaged.wac";
   const string READ = "cat /data/n | sort -nr | head -1\n";
-  string[] grants = string[]("--allow-read", "--allow-write", "--allow-env", "--allow-net");
-
-  string denoBin = dir + "/imaged-deno";
-  string why = buildOne(cli, false, ENTRY, denoBin, grants);
-  t.eqStr(why, "", "the Deno half built");
-  if (why != "") { return t.report(); }
+  // The images stay in a per-case directory — they are what this writes — while the programs come
+  // from the shared cache, because they are not.
+  Programs p = programs(cli);
+  t.eqStr(p.error, "", "the programs built");
+  if (!p.ok) { return t.report(); }
+  string denoBin = p.imagedDeno;
   string denoImg = dir + "/deno.wacimg";
   run(cli, denoBin, string[](denoImg), "mkdir /data; seq 1 5 > /data/n\n");
   Ran onDeno = run(cli, denoBin, string[](denoImg), READ);
@@ -275,10 +312,7 @@ export string test_an_image_survives_a_process_and_is_readable_by_a_spawned_chil
 
   string v8 = v8Host(core, cli);
   if (v8 == "") { cli.remove(dir, true).wait(); return t.report(); }
-  string stem = dir + "/imaged";
-  why = buildOne(cli, true, ENTRY, stem, grants);
-  t.eqStr(why, "", "the V8 half built");
-  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
+  string stem = p.imagedStem;
   string v8Img = dir + "/v8.wacimg";
   run(cli, v8, string[](stem, v8Img), "mkdir /data; seq 1 5 > /data/n\n");
   Ran onV8 = run(cli, v8, string[](stem, v8Img), READ);

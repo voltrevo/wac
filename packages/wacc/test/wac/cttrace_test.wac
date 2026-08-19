@@ -1,0 +1,357 @@
+// Trace instrumentation: an ordered journal of branches *and array indices*.
+//
+// Coverage answers "was this reached". This answers "in what order, and with which index", which is
+// the question a constant-time check asks — and the second half is the reason the mode exists. A
+// secret-dependent branch is the leak everyone looks for; a secret-dependent *index* has no branch
+// at all, and `SBOX[key]` touches a cache line chosen by the key, which is how AES keys have been
+// recovered from cache timing since 2005. A tool that counts branches calls it perfectly uniform.
+//
+// `harness/ctTrace.ts` is the consumer and `packages/crypto/test/constanttime.test.ts` the real use,
+// including the assertion that AES leaks at five named lines. This file holds the compiler's half:
+// that the journal records what it claims to, in the order it happened. `issues/lang/0105`.
+//
+// ## Host-side until 2026-08-19, `issues/system/0161`
+//
+// **No new command was needed, which was not obvious.** Nothing in wac can call `__cov_get` — the
+// instrumentation injects it, so no source names it — and `test/wac/coverage_test.wac` had to have
+// `wac covdump` written for exactly that. But a traced module reuses those three exports and only
+// changes what the array *means*: slot 0 is how many entries are live, then `(site, value)` pairs,
+// and the last slot is how many events happened whether or not there was room. `covdump` prints the
+// array in index order, so it already prints the journal; what is here is the reader for it.
+//
+// The other difference from the TypeScript is that a run is a **module** rather than a call. The
+// TypeScript instantiated once and called `f(1)` and `f(2)`; `covdump` runs `main` and nothing else,
+// so each argument is its own module differing only in the constant `main` passes. That is the shape
+// `coverage_test.wac` already uses, and it costs a compile per run rather than a call.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa, atoi } from "../../../fmt/src/itoa.wac";
+import { splitLines, trimmed, joined, contains } from "../../../wactest/src/strings.wac";
+import { emitFilesTraced, emitFilesTracedSlots, traceTableFiles } from "../../src/api.wac";
+
+const string ENTRY = "/t/m.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/** One recorded point: what it is and where. */
+struct Point {
+  i32 line;
+  i32 col;
+  string kind;
+}
+
+/** A run's journal, and what the array said about itself. */
+struct Journal {
+  i32[] sites;
+  i32[] values;
+  /** How many slots the caller asked for. */
+  i32 capacity;
+  /** How many events happened, whether or not there was room to record them. */
+  i32 wanted;
+  bool ok;
+  string error;
+}
+
+/** The tab-separated fields of one line. */
+string[] fields(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\t") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  string cur = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\t") { out[at] = cur; at = at + 1; cur = ""; }
+    else { cur = cur + s.slice(i, i + 1); }
+  }
+  out[at] = cur;
+  return out;
+}
+
+/** `traceTableFiles`' rows: index, line, col, kind, file. */
+Point[] pointsOf(string src) {
+  string[] rows = splitLines(traceTableFiles(string[](ENTRY), string[](src), ENTRY));
+  i32 n = 0;
+  for (i32 i = 0; i < rows.len(); i++) { if (rows[i].len() > 0) { n = n + 1; } }
+  Point[] out = Point[n](fill: Point(0, 0, ""));
+  i32 at = 0;
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (rows[i].len() == 0) { continue; }
+    string[] f = fields(rows[i]);
+    // index, line, col, kind, file — the index is the row's position, asserted rather than read.
+    out[at] = Point(f.len() > 1 ? atoi(f[1]) : 0,
+                    f.len() > 2 ? atoi(f[2]) : 0,
+                    f.len() > 3 ? f[3] : "");
+    at = at + 1;
+  }
+  return out;
+}
+
+/**
+ * Compile with trace instrumentation, run `main`, and read the journal back.
+ *
+ * `slots` of 0 means the compiler's own size.
+ */
+Journal traced(Cli cli, string name, string src, i32 slots) {
+  string dir = root(cli) + "/.cache/cttrace";
+  cli.mkdir(dir, true).wait();
+  string path = dir + "/" + name + ".wasm";
+  u8[] wasm = slots == 0
+    ? emitFilesTraced(string[](ENTRY), string[](src), ENTRY)
+    : emitFilesTracedSlots(string[](ENTRY), string[](src), ENTRY, slots);
+  if (wasm.len() <= 8) {
+    return Journal(i32[0](), i32[0](), 0, 0, false, name + ": the emitter declined this program");
+  }
+  cli.writeFile(path, wasm).wait();
+
+  Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
+                    string[]("covdump", path), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    return Journal(i32[0](), i32[0](), 0, 0, false,
+                   name + ": covdump — " + r.error + string.fromBytes(r.stderr));
+  }
+
+  // `<index>\t<value>` per slot, then a line saying how many there were.
+  string[] rows = splitLines(string.fromBytes(r.stdout));
+  i32 n = 0;
+  for (i32 i = 0; i < rows.len(); i++) {
+    string[] f = fields(rows[i]);
+    if (f.len() == 2 && atoi(f[0]) == n) { n = n + 1; }
+  }
+  if (n < 2) {
+    return Journal(i32[0](), i32[0](), 0, 0, false,
+                   name + ": covdump printed " + itoa(n) + " slots: " + string.fromBytes(r.stdout));
+  }
+  i32[] raw = i32[n]();
+  i32 at = 0;
+  for (i32 i = 0; i < rows.len() && at < n; i++) {
+    string[] f = fields(rows[i]);
+    if (f.len() == 2 && atoi(f[0]) == at) { raw[at] = atoi(f[1]); at = at + 1; }
+  }
+
+  // Slot 0 is how many entries are live; the last is how many events happened.
+  i32 used = raw[0];
+  i32 events = used / 2;
+  i32[] sites = i32[events]();
+  i32[] values = i32[events]();
+  for (i32 k = 0; k < events; k++) {
+    sites[k] = raw[1 + 2 * k];
+    values[k] = raw[2 + 2 * k];
+  }
+  return Journal(sites, values, n, raw[n - 1], true, "");
+}
+
+/** Where two journals first differ, as `kind@line`, or the empty string when they are identical. */
+string divergence(Point[] points, Journal a, Journal b) {
+  i32 n = a.sites.len() > b.sites.len() ? a.sites.len() : b.sites.len();
+  for (i32 i = 0; i < n; i++) {
+    bool ax = i < a.sites.len();
+    bool bx = i < b.sites.len();
+    if (ax && bx && a.sites[i] == b.sites[i] && a.values[i] == b.values[i]) { continue; }
+    i32 site = ax ? a.sites[i] : b.sites[i];
+    if (site < 0 || site >= points.len()) { return "site " + itoa(site) + " is not in the table"; }
+    return points[site].kind + "@" + itoa(points[site].line);
+  }
+  return "";
+}
+
+/** Whether any point of this kind exists. */
+bool hasKind(Point[] points, string kind) {
+  for (i32 i = 0; i < points.len(); i++) { if (points[i].kind == kind) { return true; } }
+  return false;
+}
+
+/** The kinds a run recorded, in order. */
+string kindsOf(Point[] points, Journal j) {
+  string[] out = string[j.sites.len()](fill: "");
+  for (i32 i = 0; i < j.sites.len(); i++) {
+    i32 s = j.sites[i];
+    out[i] = (s >= 0 && s < points.len()) ? points[s].kind : "?";
+  }
+  return joined(out, ",");
+}
+
+/** The values a run recorded, in order. */
+string valuesOf(Journal j) {
+  string[] out = string[j.values.len()](fill: "");
+  for (i32 i = 0; i < j.values.len(); i++) { out[i] = itoa(j.values[i]); }
+  return joined(out, ",");
+}
+
+/** The values recorded at points of one kind, in order. */
+string valuesOfKind(Point[] points, Journal j, string kind) {
+  string[] out = string[j.values.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < j.values.len(); i++) {
+    i32 s = j.sites[i];
+    if (s >= 0 && s < points.len() && points[s].kind == kind) {
+      out[n] = itoa(j.values[i]);
+      n = n + 1;
+    }
+  }
+  string[] r = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { r[i] = out[i]; }
+  return joined(r, ",");
+}
+
+bool both(T t, string what, Journal a, Journal b) {
+  t.isTrue(a.ok, what + ": " + a.error);
+  t.isTrue(b.ok, what + ": " + b.error);
+  return a.ok && b.ok;
+}
+
+export string test_a_secret_dependent_index_diverges_and_there_is_no_branch_to_find(
+    Core core, Cli cli) {
+  // The shape of AES's S-box lookup, and the whole reason indices are recorded: `f` has exactly one
+  // branch point per run either way, so counting branches reports it as uniform.
+  T t = T.create();
+  const string BODY = "const u8[] SBOX = u8[](3, 1, 4, 1, 5, 9, 2, 6);\n" +
+    "export i32 f(i32 secret) {\n" +
+    "  i32 v = SBOX[secret & 7];\n" +
+    "  return v;\n" +
+    "}\n";
+  Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
+  t.isTrue(hasKind(points, "index"), "an index point exists");
+
+  Journal a = traced(cli, "index1", BODY + "export i32 main() { return f(1); }\n", 0);
+  Journal b = traced(cli, "index2", BODY + "export i32 main() { return f(2); }\n", 0);
+  if (both(t, "the S-box lookup", a, b)) {
+    t.eqI32(a.sites.len(), b.sites.len(), "same number of events — no branch differs");
+    t.eqStr(divergence(points, a, b), "index@3", "the index at line 3 is where they differ");
+  }
+  return t.report();
+}
+
+export string test_a_secret_dependent_branch_diverges_at_the_branch(Core core, Cli cli) {
+  T t = T.create();
+  const string BODY = "export i32 f(i32 secret) {\n" +
+    "  if (secret > 10) { return 1; }\n" +
+    "  return 0;\n" +
+    "}\n";
+  Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
+  Journal a = traced(cli, "branch1", BODY + "export i32 main() { return f(1); }\n", 0);
+  Journal b = traced(cli, "branch100", BODY + "export i32 main() { return f(100); }\n", 0);
+  // `else@2`, not `then@2`: the divergence is named for the point the *first* run stood at, and with
+  // `secret = 1` that run took the untaken side. Which of the two it names does not matter to a
+  // caller — `firstDivergence` reports the line — and pinning the real answer is worth more than
+  // pinning the one that was assumed.
+  if (both(t, "the branch", a, b)) {
+    t.eqStr(divergence(points, a, b), "else@2", "where the two journals part");
+  }
+  return t.report();
+}
+
+export string test_a_routine_that_does_not_look_at_its_secret_produces_one_journal(
+    Core core, Cli cli) {
+  // The canary for the two tests above: a comparison that *finds* a divergence everywhere is not a
+  // check, it is a broken clock, and both of the leaks here are one line away from this program.
+  T t = T.create();
+  const string BODY = "export i32 f(i32 secret) {\n" +
+    "  i32 acc = 0;\n" +
+    "  for (i32 i = 0; i < 8; i++) { acc = acc + (secret & 1); }\n" +
+    "  return acc;\n" +
+    "}\n";
+  Point[] points = pointsOf(BODY + "export i32 main() { return f(0); }\n");
+  Journal a = traced(cli, "clean0", BODY + "export i32 main() { return f(0); }\n", 0);
+  Journal b = traced(cli, "clean255", BODY + "export i32 main() { return f(255); }\n", 0);
+  if (both(t, "the clean routine", a, b)) {
+    t.isTrue(a.sites.len() > 0, "something was recorded");
+    t.eqStr(divergence(points, a, b), "", "identical journals");
+  }
+  return t.report();
+}
+
+export string test_the_right_hand_side_of_a_short_circuit_is_a_point(Core core, Cli cli) {
+  // It had none, so a secret deciding whether `b` runs at all was invisible — and a coverage report
+  // called `a && b` covered when only `a` had ever been true. The reference records it as `and-rhs`;
+  // this is the same point under the same name.
+  T t = T.create();
+  const string BODY = "i32 side(i32 v) { return v; }\n" +
+    "export i32 f(i32 secret) {\n" +
+    "  bool ok = secret > 4 && side(secret) > 0;\n" +
+    "  return ok ? 1 : 0;\n" +
+    "}\n";
+  Point[] points = pointsOf(BODY + "export i32 main() { return f(1); }\n");
+  t.isTrue(hasKind(points, "and-rhs"), "an and-rhs point exists");
+
+  Journal a = traced(cli, "short1", BODY + "export i32 main() { return f(1); }\n", 0);
+  Journal b = traced(cli, "short9", BODY + "export i32 main() { return f(9); }\n", 0);
+  if (both(t, "the short circuit", a, b)) {
+    // **The claim, asserted directly**: with `secret = 1` the left operand is false and the right
+    // never runs; with `secret = 9` it does. Before this point existed the two runs recorded the same
+    // events and the check said the secret had not been observed.
+    string ka = kindsOf(points, a);
+    string kb = kindsOf(points, b);
+    t.isTrue(!contains(ka, "and-rhs"), "the short circuit skipped it: " + ka);
+    t.isTrue(contains(kb, "and-rhs"), "and running it is recorded: " + kb);
+
+    // Where the two *first* differ is a weaker claim than the one above and moves with the point set:
+    // once ternary sides became points (`issues/lang/0112`) the first differing index landed on the
+    // skipping run's `ternary-else` rather than on the other's `and-rhs`. Both are the same
+    // divergence.
+    t.eqStr(divergence(points, a, b), "ternary-else@4", "where the two journals part");
+  }
+  return t.report();
+}
+
+export string test_the_journal_is_a_journal_order_is_what_it_records(Core core, Cli cli) {
+  // Two runs that touch the same indices in a different *order* have identical counts, and coverage
+  // cannot tell them apart. This is what a trace is for.
+  T t = T.create();
+  const string BODY = "const u8[] TBL = u8[](0, 1, 2, 3);\n" +
+    "export i32 f(i32 secret) {\n" +
+    "  i32 a = TBL[secret & 1];\n" +
+    "  i32 b = TBL[(secret + 1) & 1];\n" +
+    "  return a + b;\n" +
+    "}\n";
+  Point[] points = pointsOf(BODY + "export i32 main() { return f(0); }\n");
+  Journal a = traced(cli, "order0", BODY + "export i32 main() { return f(0); }\n", 0);
+  Journal b = traced(cli, "order1", BODY + "export i32 main() { return f(1); }\n", 0);
+  if (both(t, "the ordering", a, b)) {
+    // **The whole sequence, so the wrapper is stated rather than filtered.** Two entries because
+    // there are two functions — `main` is one, and the TypeScript that called `f` directly saw only
+    // `f`'s. Then the two lookups. The claim is about the lookups, so they are also compared alone:
+    // `0 then 1` against `1 then 0` is the same two indices in the other order, which is exactly what
+    // a counter cannot see.
+    t.eqStr(kindsOf(points, a), "entry,entry,index,index", "what the first run recorded");
+    t.eqStr(kindsOf(points, b), "entry,entry,index,index", "what the second run recorded");
+    t.eqStr(valuesOfKind(points, a, "index"), "0,1", "0 then 1");
+    t.eqStr(valuesOfKind(points, b, "index"), "1,0", "1 then 0 — the same two, swapped");
+    t.isTrue(divergence(points, a, b) != "", "and the journals differ");
+  }
+  return t.report();
+}
+
+export string test_a_journal_too_small_says_how_large_it_needed_to_be(Core core, Cli cli) {
+  // `issues/lang/0059`: the buffer was a fixed 2^22 events, so a routine that produces more could not
+  // be checked for secret dependence *at all* — and the routines that overflow are the ones selected
+  // for being expensive on purpose. A KDF's cost is the function rather than a parameter of it.
+  //
+  // Two halves. The caller can size the journal, and a run that overflows says what it needed rather
+  // than leaving the caller to double and try again.
+  T t = T.create();
+  const string SRC = "export i32 f(i32 n) {\n" +
+    "  i32 acc = 0;\n" +
+    "  for (i32 i = 0; i < n; i++) { acc = acc + i; }\n" +
+    "  return acc;\n" +
+    "}\n" +
+    "export i32 main() { return f(40); }\n";
+
+  // Eight slots is one event's worth of room and little more, so 40 iterations overflow it many
+  // times over.
+  Journal tiny = traced(cli, "tiny", SRC, 8);
+  Journal roomy = traced(cli, "roomy", SRC, 4096);
+  if (both(t, "the sized journal", tiny, roomy)) {
+    t.eqI32(tiny.capacity, 8, "the size is the caller's");
+    t.isTrue(tiny.sites.len() < tiny.wanted, "fewer recorded (" + itoa(tiny.sites.len()) +
+             ") than happened (" + itoa(tiny.wanted) + ")");
+    t.isTrue(tiny.wanted > 40, "one point per iteration at least, got " + itoa(tiny.wanted));
+
+    // The same program with room: nothing is lost, and the count agrees with what was recorded.
+    t.eqI32(roomy.sites.len(), roomy.wanted, "every event recorded is every event that happened");
+    // And the number the small run reported is the number the large one produced — which is what
+    // makes it a size to use rather than a lower bound to double.
+    t.eqI32(tiny.wanted, roomy.wanted, "the overflowing run counted the same events");
+  }
+  return t.report();
+}

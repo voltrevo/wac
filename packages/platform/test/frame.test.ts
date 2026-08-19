@@ -66,7 +66,7 @@ Deno.test("a substitute capability answers exactly as the host frame does", asyn
 });
 
 Deno.test("a substitute capability does not let the child reach the real standard input", async () => {
-  // The same property `inside.test.ts` pins for the host frame, and the one a shell depends on: a
+  // The same property `test/wac/inside_test.wac` pins for the host frame, and the one a shell depends on: a
   // filter running in process must not swallow the terminal. Here it is `Frame.take` answering from
   // its own bytes rather than the host being asked at all.
   const value = await run("packages/platform/example/insideValue.wac", "THE PARENT'S OWN INPUT\n");

@@ -62,3 +62,28 @@ Two things to keep while doing it:
 
 Left for whoever is next in those files — they were written in the last few hours and are being
 iterated on, and this is a change to the shape of their sweeps rather than a fix to a defect.
+
+## Adopted in two of the three, 2026-08-19
+
+`native_hostfs_test.wac` (~17s → 10.2s) and `native_shell_test.wac` (9.3-17.3s → 4.9s warm) now send
+their Deno halves through `denoBatch` in `packages/platform/test/wac/hostfs.wac`. `v8host_test.wac`
+runs its program once per test, so a batch buys nothing there; its three `build.ts` calls would be
+served by `wactest/src/built.wac`'s `builtByDeno`, which is a smaller and separate win.
+
+The stdin case in `native_hostfs_test.wac` deliberately keeps its processes, and the file now says why:
+a batched run is fed by pushing onto the child's parent-fed queue — the queue that shadowed fd 0 in the
+fault that test exists to catch — so batching it would compare a queue-fed JavaScript host against an
+fd-fed native one.
+
+## The same shape in a third file, for whoever owns it
+
+`packages/wacc/test/wac/bindgenwac_test.wac`, added 2026-08-19, is **13.1s standalone**: six
+`deno run packages/wacc/test/bindgenOracle.ts` calls — three programs by two languages — at about 1.4s
+each, one of them generating glue for `packages/wacc/src/api.wac`, half a megabyte of module.
+
+Those answers are a pure function of the entry's sources and of `compiler/`, which is the case
+`wactest/src/oracle.wac`'s `askCached` exists for: `typecheck_test.wac` went 8.6s to 3.2s that way.
+Adopting it here means giving `askOracle` the `Lines`/`DONE` protocol `askCached` speaks, or a
+one-shot variant of it. Left alone because the file is minutes old and being iterated on; the
+measurement is here so nobody has to take it again.
+

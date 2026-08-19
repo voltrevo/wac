@@ -267,7 +267,7 @@ export string bindgenFiles(u8[] wasm, string[] paths, string[] sources, string e
  * where two files declare one name and the declaring file is not known — is the case this exists for:
  * it took `core` gaining an enum with a payload and `packages/tor` already having a `Node` for
  * anything to have two, and `@` is not a TypeScript identifier, so glue that carried it unsanitised
- * would not parse. `packages/wacc/test/bindgenWac.test.ts` hands both generators the same keyed wire
+ * would not parse. `packages/wacc/test/wac/bindgenwac_test.wac` hands both generators the same keyed wire
  * and compares the text, which is the only way that property is checked for either of them.
  *
  * `sigs` is `exportSigsFiles`'s format and `wire` is `bindTypesFiles`'s.

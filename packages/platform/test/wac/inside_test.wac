@@ -1,0 +1,93 @@
+// `pushChild` and `popChild`: a program running inside another one.
+//
+// Driven through `example/inside.wac`, which is the smallest thing that uses all of it — its own
+// argv, its own standard input, its own working directory, and both output streams kept rather
+// than written. The assertions are on what the *parent* printed, because the point of the
+// capability is that the child printed nothing anybody else can see.
+//
+// `native_examples_test.wac` runs this same example, and runs it on both hosts — but what it checks
+// is that the two hosts *agree*, which two hosts that had both lost the child's standard error would
+// also do. What is here is the content: the exact transcript, and the parent's own streams staying
+// empty.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string INSIDE = "packages/platform/example/inside.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/** A directory of this test's own, under `.cache` so no walker over the repository sees it appear. */
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/inside-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+/** Build `inside.wac` for the Deno world, which is what `deno task app` does and what ships. */
+bool build(T t, Cli cli, string out) {
+  Exec r = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/build.ts", INSIDE,
+             "--allow-read", "--allow-write", "-o", out), u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           "inside.wac built — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+  return r.ran() && r.status == 0;
+}
+
+export string test_a_childs_output_comes_back_to_its_caller_and_goes_nowhere_else(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "quiet");
+  string app = dir + "/inside";
+  if (!build(t, cli, app)) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec r = cli.exec(app, string[](dir), u8[0]()).wait();
+  t.isTrue(r.ran(), "the built program ran");
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  string out = string.fromBytes(r.stdout);
+  t.eqI32(r.status, 0, string.fromBytes(r.stderr));
+
+  // Everything the child wrote, in the order it wrote it: `write` of its uppercased input, `write`
+  // of the file it opened, then a `core.log` — because `log` is standard output too, and a capture
+  // that took only `write` would lose the thirty `box` applets that report that way.
+  //
+  // `whole yes` is the third thing a frame answers: whether `out` is all of it. A child that filled
+  // the capture buffer stops *cleanly* and its short output looks complete, so the caller is the
+  // only one that can know — see `Captured.truncated`. This one writes fourteen bytes.
+  const string WANT = "status 0\n" +
+    "out   FROM STDIN\\nFROM THE FILE\\nread 14 bytes\\n\n" +
+    "err   shout: nothing wrong, just talking\\n\n" +
+    "whole yes\n";
+  t.eqStr(out, WANT, "the parent's transcript of its child");
+
+  // And the child's own streams reached neither of the parent's. This is the parent's standard
+  // error, which stayed empty while the child was complaining into its buffer.
+  t.eqStr(string.fromBytes(r.stderr), "", "the parent's standard error");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_child_reads_what_it_was_fed_not_the_terminals_standard_input(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "stdin");
+  string app = dir + "/inside";
+  if (!build(t, cli, app)) { cli.remove(dir, true).wait(); return t.report(); }
+
+  // Something on the real standard input that the child must *not* see. Without the check in
+  // `READ_CHUNK` a filter running inside a shell would swallow the terminal.
+  Exec r = cli.exec(app, string[](dir), "THE PARENT'S OWN INPUT\n".toBytes()).wait();
+  t.isTrue(r.ran(), "the built program ran");
+  if (!r.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+  string out = string.fromBytes(r.stdout);
+
+  t.isTrue(contains(out, "FROM STDIN"), "the child read its own feed: " + out);
+  t.isTrue(!contains(out, "PARENT"), "the child read the parent's standard input: " + out);
+  cli.remove(dir, true).wait();
+  return t.report();
+}

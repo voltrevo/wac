@@ -1,12 +1,23 @@
-// Composing children: a pipeline, and a child serving a socket.
+// A child serving a socket it cannot see.
 //
-// `spawn.test.ts` covers one child in isolation. What these two cover is the claim that
-// handles compose — that standard input, a socket and a child are interchangeable to `recv`,
-// `send` and `waitAny`, so plumbing them together needs no new capability. Both examples were
-// written against the existing world without touching it, which is the evidence.
+// `spawn.test.ts` covers one child in isolation. What this covers is the claim that handles
+// compose — that standard input, a socket and a child are interchangeable to `recv`, `send` and
+// `waitAny`, so plumbing them together needs no new capability. The example was written against
+// the existing world without touching it, which is the evidence.
 //
-// The children are platform's own `wc.wac` rather than `box`, so platform's tests do not
-// depend on a package that depends on platform.
+// The child is platform's own `wc.wac` rather than `box`, so platform's tests do not depend on
+// a package that depends on platform.
+//
+// ## Why this one is still here — 2026-08-19
+//
+// The pipeline half moved to `test/wac/pipeline_test.wac`, which builds both programs, feeds the
+// parent and reads what came out. This half did not, and not for want of a harness: the client
+// has to say *it is done speaking* and then read the reply. A wac program has no call for that —
+// `closeSocket` ends the socket both ways, so the answer can never arrive, and `wc` writes nothing
+// before EOF. `issues/system/0215` is the missing half-close.
+//
+// So `Deno.Conn.closeWrite` below is standing in for a capability rather than being the subject,
+// and this file goes to zero the day that capability exists. `issues/system/0161`.
 
 import { buildApp } from "../build.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
@@ -25,40 +36,6 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const dec = new TextDecoder();
-
-Deno.test("stdin -> child -> child -> stdout, with three handles live at once", async () => {
-  const pipe = await Deno.makeTempFile({ prefix: "wac-pipe-" });
-  const child = await Deno.makeTempFile({ prefix: "wac-wc-", suffix: ".worker.js" });
-  try {
-    await buildApp("packages/platform/example/pipe.wac", pipe, { read: true });
-    await buildApp("packages/platform/example/wc.wac", child, {}, "deno", true);
-
-    const p = new Deno.Command(pipe, {
-      // Empty args: `wc` with no arguments reads standard input, which is the point here.
-      args: [child, "", ""],
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
-
-    const w = p.stdin.getWriter();
-    await w.write(new TextEncoder().encode("one two three\n"));
-    await w.close();
-
-    // Both streams drained before `status`, or a full pipe buffer deadlocks the test rather
-    // than failing it. That has cost this suite three hangs.
-    const [out, err, st] = await Promise.all([p.stdout, p.stderr, p.status].map((x) =>
-      x instanceof Promise ? x : new Response(x).arrayBuffer()
-    ) as [Promise<ArrayBuffer>, Promise<ArrayBuffer>, Promise<Deno.CommandStatus>]);
-
-    assertEquals(st.code, 0, dec.decode(err));
-    // `wc` of "one two three\n" is "1 3 14"; `wc` of that is "1 3 7". The second number
-    // proves the bytes went *through* the first child rather than around it.
-    assertEquals(dec.decode(out).trim(), "1 3 7", dec.decode(out));
-  } finally {
-    for (const f of [pipe, child]) await Deno.remove(f);
-  }
-});
 
 Deno.test("a child serves a socket it cannot see", async () => {
   const inetd = await Deno.makeTempFile({ prefix: "wac-inetd-" });

@@ -30,7 +30,7 @@ that asks the checker is told the program is fine.
 
 ## What this corrects
 
-`packages/wacc/test/specSingle.test.ts`'s single `KNOWN_MISSES` entry says of this case:
+`packages/wacc/test/wac/specsingle_test.wac`'s single `KNOWN_MISSES` entry says of this case:
 
 > A single-file runner has no `b.wac`, so it cannot refuse it … The miss is the runner's scope rather
 > than the checker's, which is why it is known rather than fixed.
@@ -78,5 +78,5 @@ saying which name was not found.
 
 ## What closes when it lands
 
-`specSingle.test.ts`'s `KNOWN_MISSES` goes empty — 304 of 304 illegal programs refused — and
+`specsingle_test.wac`'s `KNOWN_MISSES` goes empty — 304 of 304 illegal programs refused — and
 `packages/wacc/README.md`'s type-check row stops carrying an exception.

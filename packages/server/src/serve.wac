@@ -7,7 +7,7 @@
 //
 // That boundary is the reason this is testable at all. A server written as a callback soup can
 // only be tested by running it; this can be tested by calling it, and *is* — the same bytes go
-// through `test/serve.test.ts` without a socket in sight, and then through real clients to check
+// through `test/wac/serve_test.wac` without a socket in sight, and then through real clients to check
 // that the answer survives contact with curl and fetch.
 //
 // `consumed` is what makes keep-alive and pipelining work, and it comes straight from the parser.

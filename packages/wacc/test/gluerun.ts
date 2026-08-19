@@ -2,7 +2,7 @@
 // Run generated glue and check it answers — the half of `bindgen` a reader cannot check.
 //
 // **Not an oracle.** It compares nothing against a second implementation; it is a JavaScript *host*,
-// which is what generated JavaScript glue needs in order to be more than text. `test/bindgenWac.test.ts`
+// which is what generated JavaScript glue needs in order to be more than text. `test/wac/bindgenwac_test.wac`
 // holds the two generators to the same bytes; this asks whether those bytes work, and a generator that
 // dropped a cast it needed would still look like JavaScript to any amount of reading.
 //

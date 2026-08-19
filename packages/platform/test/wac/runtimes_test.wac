@@ -1,0 +1,271 @@
+// One application, two JavaScript runtimes, and the artefact each build produces.
+//
+// The bridge, the opcodes and the capability structs are shared between the Deno and Node hosts;
+// only a dozen closures and the thread API differ. These are what check that claim rather than
+// asserting it — the same program built twice and made to tell the same story.
+//
+// **The transcript is checked as well as the agreement.** Two hosts that had both lost a capability
+// would agree perfectly, so each comparison is followed by a line the program is known to print.
+// That is not a formality: the `stat` case below passed for a while while checking the *write*
+// denial and claiming to check the stat.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+//
+// Two things go through `/bin/sh` rather than `Cli.exec` directly, and both are gaps rather than
+// style: `exec` passes no working directory, and `Stat` carries no mode — so `cd` and `test -x` are
+// spelled by the shell. Neither is worth a capability on this evidence alone; both are noted where
+// they are used.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string WC = "packages/platform/example/wc.wac";
+const string ROUNDTRIP = "packages/platform/example/roundtrip.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/runtimes-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+string[] none() { return string[0](fill: ""); }
+
+/**
+ * Build one example, for a named target.
+ *
+ * `coverage: false` is the shape `platform.test.ts` asked for through the API and there is no flag
+ * for it, so the shebang assertion below is made only when nothing has asked for an instrumented
+ * build — an instrumented one carries a scoped `--allow-write` for its coverage dump. wac-mono 0024.
+ */
+bool build(T t, Cli cli, string entry, string out, string target, string[] grants) {
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry, "--target", target);
+  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
+  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
+  args[head.len() + grants.len()] = "-o";
+  args[head.len() + grants.len() + 1] = out;
+  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           entry + " built for " + target + " — " +
+           string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+  return r.ran() && r.status == 0;
+}
+
+/** The first line of a built program, which is its shebang. */
+string shebang(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) { return "<unreadable: " + f.error + ">"; }
+  string[] ls = splitLines(string.fromBytes(f.bytes));
+  return ls.len() > 0 ? ls[0] : "<empty>";
+}
+
+/** Whether an instrumented build was asked for, which changes the grants baked into the shebang. */
+bool profiling(Cli cli) {
+  u8[]? v = cli.env("WAC_PROFILE").wait();
+  return (v is not null) && string.fromBytes(v!).len() > 0;
+}
+
+export string test_an_application_builds_to_one_executable_file_and_runs_repeatedly(
+    Core core, Cli cli) {
+  // Built once, run several times on purpose. The first version of this worked one run in three: the
+  // launcher's `postMessage` reached the worker while the generated module was suspended at its
+  // top-level `await WebAssembly.instantiate`, and was dropped. A single run would have called that
+  // a pass.
+  T t = T.create();
+  string dir = scratch(cli, "exe");
+  string app = dir + "/wc";
+  if (!build(t, cli, WC, app, "deno", string[]("--allow-read"))) {
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+
+  // `Stat` says `isFile` and a size and nothing about the mode, so the execute bit is asked of the
+  // shell. It is the property that matters: a built program is run, not interpreted by a launcher.
+  Exec x = cli.exec("/bin/sh", string[]("-c", "test -x '" + app + "'"), u8[0]()).wait();
+  t.isTrue(x.ran() && x.status == 0, "the built file is executable");
+
+  if (!profiling(cli)) {
+    t.eqStr(shebang(cli, app),
+            "#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read",
+            "the shebang states the grants, and the cache flag which is not one");
+  }
+
+  for (i32 i = 0; i < 3; i++) {
+    // No permission flags and no separator: a built program takes the arguments a program takes.
+    // What it may *do* was decided at build.
+    Exec r = cli.exec(app, string[](WC), u8[0]()).wait();
+    t.isTrue(r.ran(), "run " + itoa(i) + " started — " + r.error);
+    if (!r.ran()) { continue; }
+    t.eqI32(r.status, 0, "run " + itoa(i) + ": " + string.fromBytes(r.stderr));
+    string out = trimmed(string.fromBytes(r.stdout));
+    t.isTrue(out.len() >= WC.len() && out.slice(out.len() - WC.len(), out.len()) == WC,
+             "run " + itoa(i) + " counted the file: " + out);
+  }
+
+  // The same application built without the grant: the capability is simply absent, and nothing the
+  // caller passes can put it back.
+  string bare = dir + "/wc-bare";
+  if (build(t, cli, WC, bare, "deno", none())) {
+    Exec denied = cli.exec(bare, string[](WC), u8[0]()).wait();
+    t.isTrue(denied.ran(), "the ungranted build ran — " + denied.error);
+    if (denied.ran()) {
+      t.eqI32(denied.status, 1, "no filesystem, and the application says so");
+      t.isTrue(contains(string.fromBytes(denied.stderr), "not granted"),
+               string.fromBytes(denied.stderr));
+    }
+    // The shebang is exactly the grants, so a program granted nothing asks for nothing. That is only
+    // possible because the worker comes from a blob URL: spawning the file itself needs
+    // --allow-read, which used to sit in every shebang and read as a filesystem grant to anyone
+    // auditing it.
+    if (!profiling(cli)) {
+      t.eqStr(shebang(cli, bare),
+              "#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache",
+              "no capabilities, no permissions");
+    }
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_same_application_builds_for_node_and_agrees_with_the_deno_build(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "node");
+  string denoOut = dir + "/wc-deno";
+  string nodeOut = dir + "/wc-node";
+  bool okD = build(t, cli, WC, denoOut, "deno", string[]("--allow-read"));
+  bool okN = build(t, cli, WC, nodeOut, "node", string[]("--allow-read"));
+  if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
+
+  t.eqStr(shebang(cli, nodeOut), "#!/usr/bin/env node",
+          "Node has no permission system, so its shebang states nothing");
+
+  Exec d = cli.exec(denoOut, string[](WC), u8[0]()).wait();
+  Exec n = cli.exec("node", string[](nodeOut, WC), u8[0]()).wait();
+  t.isTrue(d.ran() && d.status == 0, "the Deno build ran — " + string.fromBytes(d.stderr));
+  t.isTrue(n.ran() && n.status == 0, "the Node build ran — " + string.fromBytes(n.stderr));
+  if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string dOut = trimmed(string.fromBytes(d.stdout));
+  t.eqStr(trimmed(string.fromBytes(n.stdout)), dOut,
+          "byte for byte, the same answer from both runtimes");
+  // And it is an answer rather than two empty strings agreeing.
+  t.isTrue(contains(dOut, WC), "neither runtime counted anything: " + dOut);
+
+  // And the capability boundary holds on Node, where it is the *only* boundary — there is no
+  // process-level permission behind it.
+  string bare = dir + "/wc-node-bare";
+  if (build(t, cli, WC, bare, "node", none())) {
+    Exec denied = cli.exec("node", string[](bare, WC), u8[0]()).wait();
+    t.isTrue(denied.ran(), "the ungranted Node build ran — " + denied.error);
+    if (denied.ran()) {
+      t.eqI32(denied.status, 1, string.fromBytes(denied.stderr));
+      t.isTrue(contains(string.fromBytes(denied.stderr), "not granted"),
+               string.fromBytes(denied.stderr));
+    }
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * Run a built program in a directory of its own.
+ *
+ * `Cli.exec` passes no working directory, so `cd` is the shell's. A directory each matters here:
+ * `readDir(".")` prints how many entries it saw, so a shared one would make the two transcripts
+ * differ for a reason that has nothing to do with the hosts.
+ */
+Exec inDir(Cli cli, string dir, string command) {
+  return cli.exec("/bin/sh", string[]("-c", "cd '" + dir + "' && " + command), u8[0]()).wait();
+}
+
+export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_reading_a_file(
+    Core core, Cli cli) {
+  // The comparison above uses `wc`, which reads one file and prints three numbers — so `stat`,
+  // `readDir`, `writeFile`, `rename` and `remove` had **no Node coverage at all**, on a host whose
+  // handlers are separate code from Deno's. `stat`'s reply grew a fault byte (wac-mono 0065) and
+  // nothing would have noticed if only two of the three hosts had been told.
+  //
+  // `roundtrip` is the example that exercises all of them and prints what each answered, which makes
+  // it an oracle for itself: the two runtimes have to produce the same transcript.
+  T t = T.create();
+  string dir = scratch(cli, "fs");
+  string denoOut = dir + "/rt-deno";
+  string nodeOut = dir + "/rt-node";
+  bool okD = build(t, cli, ROUNDTRIP, denoOut, "deno", string[]("--allow-read", "--allow-write"));
+  bool okN = build(t, cli, ROUNDTRIP, nodeOut, "node", string[]("--allow-read", "--allow-write"));
+  if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string denoDir = dir + "/d";
+  string nodeDir = dir + "/n";
+  cli.mkdir(denoDir, true).wait();
+  cli.mkdir(nodeDir, true).wait();
+
+  Exec d = inDir(cli, denoDir, "'" + denoOut + "' hello");
+  Exec n = inDir(cli, nodeDir, "node '" + nodeOut + "' hello");
+  t.isTrue(d.ran() && d.status == 0, "the Deno build ran — " + string.fromBytes(d.stderr));
+  t.isTrue(n.ran() && n.status == 0, "the Node build ran — " + string.fromBytes(n.stderr));
+  if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string dOut = string.fromBytes(d.stdout);
+  t.eqStr(string.fromBytes(n.stdout), dOut,
+          "the two runtimes told different stories about the same operations");
+
+  // And the transcript is the one the program describes, rather than an empty run that agrees
+  // vacuously — the failure this comparison could most easily hide.
+  string[] want = string[]("wrote roundtrip.txt", "stat: exists=yes isFile=yes size=5",
+                           "read: hello", "same bytes back", "rename:", "removed,");
+  for (i32 i = 0; i < want.len(); i++) {
+    t.isTrue(contains(dOut, want[i]), "missing \"" + want[i] + "\" in:\n" + dOut);
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_take(
+    Core core, Cli cli) {
+  // The other half of the fault field: a world with no read capability answers `FAULT_NOT_GRANTED`,
+  // not "does not exist" and not "permission denied". Both hosts have to say it, and this is a case
+  // where being wrong is invisible — an ungranted program that claims a file is absent looks exactly
+  // like one whose file is absent, and one that claims permission was denied sends a reader to check
+  // a mode.
+  //
+  // **Write but not read**, which is a strange grant to hold and the only one that reaches the line
+  // this test is about. With nothing granted the program dies at its first `writeFile` and never
+  // stats at all — which is how the first version of this test passed while checking the *write*
+  // denial and claiming to check the stat.
+  T t = T.create();
+  string dir = scratch(cli, "statdenied");
+  string denoOut = dir + "/rtd-deno";
+  string nodeOut = dir + "/rtd-node";
+  bool okD = build(t, cli, ROUNDTRIP, denoOut, "deno", string[]("--allow-write"));
+  bool okN = build(t, cli, ROUNDTRIP, nodeOut, "node", string[]("--allow-write"));
+  if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string work = dir + "/w";
+  cli.mkdir(work, true).wait();
+  Exec d = inDir(cli, work, "'" + denoOut + "' hello");
+  Exec n = inDir(cli, work, "node '" + nodeOut + "' hello");
+  t.isTrue(d.ran() && n.ran(), "both builds ran — " + d.error + n.error);
+  if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string dOut = string.fromBytes(d.stdout);
+  t.eqStr(string.fromBytes(n.stdout), dOut, "Deno and Node told different stories");
+  t.eqI32(n.status, d.status, "exit " + itoa(d.status) + " against " + itoa(n.status));
+  t.isTrue(contains(dOut, "stat: cannot tell — Not granted to this application"),
+           "the ungranted stat was not reported as ungranted:\n" + dOut + string.fromBytes(d.stderr));
+  // And not with an empty reason, which is what this printed while the category had no phrase:
+  // `Stat` carries no host message to fall back to, so "no words for this category" meant no words
+  // at all.
+  t.isTrue(!contains(dOut, "stat: cannot tell — \n"), "an empty reason:\n" + dOut);
+  // It got that far, which is what makes the line above a statement about `stat` rather than about
+  // whichever capability happened to fail first.
+  t.isTrue(contains(dOut, "wrote roundtrip.txt"), dOut);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
