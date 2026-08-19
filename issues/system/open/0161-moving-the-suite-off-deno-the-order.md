@@ -1494,6 +1494,26 @@ The table it regenerates is strictly better than the one it replaces:
 What is left in `packages/crypto` is three oracles — `mlkem_oracle.ts`, `rsaOracle.ts`,
 `bench/hash.ts` — and `cov.ts`, which is a coverage driver rather than a test.
 
+### The next frontier is `cov.ts`, and it is 20 files — 2026-08-19
+
+Twenty packages have one, 6,660 lines between them, each wired to a `deno task coverage:<pkg>`. That
+is a subsystem rather than a conversion, and it is **not** superseded by `wac test --coverage`, which
+was the obvious hope. Measured on `packages/codec`, they answer different questions:
+
+    deno run -A packages/codec/cov.ts     4 branch points never executed:
+                                            packages/codec/src/base32.wac:44:3  else
+                                            packages/codec/src/hex.wac:73:13    entry
+                                            ...
+    wac test --coverage packages/codec/   27 / 30    packages/codec/src/hex.wac
+                                          79 / 84    packages/codec/src/base32.wac
+
+`--coverage` counts per file; `cov.ts` **names the points nothing reached**, which is the output
+somebody acts on. So converting these needs the naming first — `covTableFiles` already keys a position
+per counter and `wac covdump` already prints the counts, so the pieces exist and nothing joins them.
+That is one command, roughly the shape `ctcompare` turned out to be, and then twenty small ports.
+
+Not started here: it is a distinct project and it is not a test.
+
 Filed on the way: `issues/lang/0162`. `ct.wac` declared a `struct Stat` for `tracestat`'s three
 numbers, and a program that declares a struct `platform.wac` also declares compiles cleanly and will
 not start — the linker qualifies the platform one, `Cli.stat`'s funcref signature carries the
