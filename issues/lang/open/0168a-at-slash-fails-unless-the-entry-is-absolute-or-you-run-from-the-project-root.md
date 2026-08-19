@@ -56,6 +56,45 @@ From `proj/` the relative spelling happens to work because `.` *is* the project 
 nothing caught it: every test in the suite runs from a directory where the walk lands on the answer
 in one step.
 
+## The rule, stated from the behaviour
+
+Every case below was run. The fixture is `proj/` with `wac.json5` and `lib.wac` at its root,
+`src/main.wac` importing `@/lib.wac`, `src/util/deep.wac` importing the same, and a nested project
+`sub/` with its own manifest and `inner.wac` importing `@/lib2.wac`.
+
+| cwd | entry | result |
+|---|---|---|
+| `proj/` | `src/main.wac` | 9 |
+| `proj/` | `./src/main.wac` | 9 |
+| `proj/` | `<abs>/src/main.wac` | 9 |
+| `proj/src/` | `main.wac` | **fails** |
+| `proj/src/` | `./main.wac` | **fails** |
+| `proj/src/` | `<abs>/src/main.wac` | 9 |
+| `proj/src/util/` | `../main.wac` | **fails** |
+| `proj/src/util/` | `<abs>/src/main.wac` | 9 |
+| `m/` (above the project) | `proj/src/main.wac` | 9 |
+| `proj/` | `src/util/deep.wac` | 9 |
+| `proj/src/` | `util/deep.wac` | **fails** |
+| `proj/src/util/` | `deep.wac` | **fails** |
+| `proj/` | `sub/inner.wac` | 4 |
+| `proj/sub/` | `inner.wac` | **4** — works, because the manifest is in the cwd |
+| `m/` | `proj/sub/inner.wac` | 4 |
+
+**The rule the table describes.** The directories searched are the file's own directory *as spelled*,
+climbing to the boundary — and for a relative entry the boundary is the working directory. So `@/`
+resolves exactly when a manifest sits somewhere in the path you typed, or in the directory you are
+standing in. `proj/sub/inner.wac` from `proj/sub/` works for that reason and not by luck.
+
+**It never picks the wrong project, only no project.** Every directory in the chain is a genuine
+ancestor of the file, because the chain is built from the file's path under the cwd. So the failure
+is always "not found" and never a silent resolution against someone else's manifest — which is worth
+knowing, because it means no program compiles against the wrong `@/` today.
+
+Adding a manifest to `proj/src/` makes the failing case pass and changes what `@/lib.wac` means —
+`src/lib.wac`, answering 77, rather than `proj/lib.wac` answering 9. That is D7 working correctly:
+the nearest manifest at or above the importing file wins. It is included because it shows the search
+itself is sound; what is missing is only the ability to climb past where you happen to be standing.
+
 ## Why it matters
 
 It is the first thing an outside user does. `cd src && wac run main.wac` is an ordinary way to run a
