@@ -9,6 +9,13 @@
 // each variant, decrypted it, and found exactly the introduction points it was built with. What is
 // here is the part tor cannot see from outside — that the two lengths move independently, that the
 // name follows the period, and that bad inputs are refused rather than built around.
+//
+// **Why it costs what it costs: ten descriptor builds, and a build is about ten ed25519 operations.**
+// The identity certificate, a certificate pair per introduction point, the outer signature. Measured
+// 2026-08-19, inside wasm: `ed25519Sign` 63ms and `ed25519Verify` 61ms, against `p256Sign` 12ms and
+// `p256Verify` 13ms — which is the wrong way round for those two curves and is `issues/system/0209`,
+// with `0210` for the part of the difference that is P-256 not being constant-time. Nothing in this
+// file is doing more work than it needs to; the number moves when that does.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
