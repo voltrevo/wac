@@ -16,12 +16,18 @@ is older than its sources, and `CLAUDE.md` tells you to run the task after touch
 | who | what it does |
 |---|---|
 | `packages/raster/test/wac/hosts_test.wac` | `cd native && cargo build --release --quiet` |
-| `packages/platform/test/native_hostfs.test.ts` | its own `Deno.Command("cargo", …)` |
-| `packages/platform/test/native_shell.test.ts` | another — its lane note says *"and it builds the Rust host"* |
+| `packages/platform/test/wac/native_hostfs_test.wac` | its own `cd native && cargo build`, plus a `find -newer` freshness check |
+| `packages/platform/test/wac/native_shell_test.wac` | another — its lane note says *"and it builds the Rust host"* |
 | `tools/corpusHosts.ts` | another |
 | `tools/runCli.test.ts` | probes `cargo --version` instead |
 
 Nine files run `target/release/wacland`; the other four assume it is there.
+
+**Moving two of them to wac on 2026-08-19 did not reduce the count and was not meant to.** They
+were `Deno.Command("cargo", …)` and are now `cli.exec("/bin/sh", …)` around the same command, with
+the memoisation that `harness/nativeHost.ts` gave them replaced by a per-file `find -newer` — so
+the duplication this issue is about now spans two languages, which makes it slightly worse rather
+than better. The fix below is unchanged by that; it is one more reason to want it.
 
 ## Two costs, one measured and one not
 

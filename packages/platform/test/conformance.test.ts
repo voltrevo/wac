@@ -4,7 +4,7 @@
 // is the first large subsystem here with nothing independent to check it against, in a repo whose
 // rigour is mostly differential." Since then a good deal *has* been checked — the arrival test moves an
 // image between the two hosts, `native_hostfs.test.ts` compares twelve filesystem operations and every
-// grant refusal, `native_shell.test.ts` runs a slice of the shell corpus on both — but that coverage
+// grant refusal, `native_shell_test.wac` runs a slice of the shell corpus on both — but that coverage
 // grew a file at a time, and **nothing knew what it added up to.**
 //
 // This is the ledger. For every opcode on the two-host surface it names where the comparison lives, or
