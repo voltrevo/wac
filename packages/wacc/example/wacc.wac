@@ -33,7 +33,7 @@ import { withManifestSection } from "../src/manifest.wac";
 import { renderDiagnostics } from "../src/render.wac";
 import { importSpecs, normalisePath, resolveFrom, resolveFromIn } from "../src/files.wac";
 import { Res } from "../src/path.wac";
-import { coreFile, coreSource, isBuiltinSpec } from "../src/coretext.wac";
+import { coreFile, coreSource, isBuiltinSpec, stdFile } from "../src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 import { Manifest, Match, Located, readManifest, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
@@ -307,6 +307,13 @@ Sources gather(Fs fs, Cli cli, string entry) {
     // the tree was moved inside the compiler to have (`design/lang/0009` D3/D4), so it is worth
     // saying plainly: the CLI has no path to read these from, and the playground has no filesystem.
     string builtin = path == "core" ? coreSource() : coreFile(path);
+    // **And `std`, which is the same tree and was not on this line.** It was added to `emit.wac`'s
+    // `sourceOf` when D4 landed and not to this walk, so `std/platform.wac` fell through to
+    // `readFile` and resolved off the repository's own `std/` directory — the *identical* fault the
+    // paragraph above records for `core/option.wac`, repeated within a day, in the function whose
+    // comment describes it. Every test still passed, because they all run with the repository root
+    // as the working directory. From anywhere else: `wacc: cannot read std/platform.wac`.
+    if (builtin == "") { builtin = stdFile(path); }
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {
       FileResult r = fs.readFile(path);
