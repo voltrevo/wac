@@ -159,3 +159,79 @@ export string test_a_project_specifier_with_no_manifest_is_refused(Core core, Cl
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
+  // **D8's half that exists today.** `design/lang/0009` D8: identity is canonical *after* resolution,
+  // so a file reached by `./point.wac` and by `@/src/point.wac` is one module — and in wac that is
+  // load-bearing rather than tidy, because types are nominal. Two keys would be two `Point`s, and
+  // passing one where the other is wanted is what the note calls "a seam whose error message names
+  // the same type twice".
+  //
+  // **What this catches, and on which side, because they differ.** With the resolver perturbed so
+  // the two spellings key differently, wacc's `check` stays clean and the *engine* rejects the
+  // emitted module — so on wacc this case fails, loudly and in the wrong place. The reference reads
+  // the file twice and answers 7 regardless, so on that side this can only catch resolution losing
+  // the file, not resolution duplicating it. That asymmetry is `issues/lang/0163`, and it is why the
+  // assertion below is per-compiler rather than "the two agree".
+  //
+  // The mapping halves of D8's differential — the same file through a whole-repository mapping and
+  // through a `subdir` one, and two mappings at different commits asserted to be *two* modules —
+  // belong here too, and cannot be written until D9-D11 exist.
+  T t = T.create();
+  string dir = scratch(cli, "atspec-one-module");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "the manifest");
+  t.isTrue(put(cli, dir + "/src/point.wac",
+               "export struct Point {\n  i32 x;\n  i32 y;\n" +
+               "  Point create(i32 x, i32 y) { return Point(x, y); }\n" +
+               "  i32 sum(const this) { return this.x + this.y; }\n}\n"), "point");
+  // One importer spells it relatively, the other through the project root.
+  t.isTrue(put(cli, dir + "/src/a.wac",
+               "import { Point } from \"./point.wac\";\n" +
+               "export Point make() { return Point.create(3, 4); }\n"), "a");
+  t.isTrue(put(cli, dir + "/src/b.wac",
+               "import { Point } from \"@/src/point.wac\";\n" +
+               "export i32 take(Point p) { return p.sum(); }\n"), "b");
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { make } from \"./a.wac\";\n" +
+               "import { take } from \"./b.wac\";\n" +
+               "export i32 main() { return take(make()); }\n"), "main");
+
+  Exec r = reference(cli, "referenceRun", string[](dir + "/src/main.wac", "main"));
+  t.isTrue(r.ran(), "the reference did not run — " + r.error);
+  if (r.ran()) {
+    t.eqI32(r.status, 0, "the reference did not compile it: " + string.fromBytes(r.stderr));
+    t.isTrue(contains(string.fromBytes(r.stdout), "7"),
+             "the reference answered " + string.fromBytes(r.stdout) + ", want 7");
+  }
+
+  // wacc is the side that can actually fail here: a `Point` from two modules does not type-check
+  // against itself, and when it slips past the checker the engine refuses the module.
+  Exec w = wacc(cli, "run", string[](dir + "/src/main.wac"));
+  t.isTrue(w.ran(), "wac did not run — " + w.error);
+  if (w.ran()) {
+    t.eqI32(w.status, 7,
+            "wacc answered " + itoa(w.status) + ", want 7 — a `Point` reached two ways is one type: " +
+            string.fromBytes(w.stderr));
+  }
+
+  // **And again with a relative entry, from inside the project, because the two are not the same
+  // test.** The call above passes an absolute path, so the project root is absolute and a
+  // perturbation that only fails to collapse a leading `./` produces the *same* key either way —
+  // invisible. I canaried this case with exactly that perturbation, watched it pass, and had a
+  // vacuous test until I asked why. A relative entry makes the root `.`, where that class of
+  // mistake does change the key. Between them the case sees both.
+  Exec rel = cli.exec("/bin/sh",
+                      string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " run src/main.wac"),
+                      u8[0]()).wait();
+  t.isTrue(rel.ran(), "wac did not run from inside the project — " + rel.error);
+  if (rel.ran()) {
+    t.eqI32(rel.status, 7,
+            "wacc answered " + itoa(rel.status) + " for a relative entry, want 7: " +
+            string.fromBytes(rel.stderr));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
