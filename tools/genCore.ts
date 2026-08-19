@@ -115,7 +115,29 @@ function asWac(text: string): string {
   const quoted = lines.map((l) =>
     `"${l.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}\\n"`
   );
-  return quoted.map((q, i) => (i === 0 ? `  return ${q}` : `         + ${q}`)).join("\n") + ";";
+  // **In chunks, because one expression this wide overflows the compiler's stack.** `std/platform.wac`
+  // is 1,939 lines, and as a single `+` chain that is a right-nested expression 1,939 operands deep;
+  // every recursive walk over it — parse, check, emit — recurses once per operand. It compiled, but
+  // with no headroom: adding one import edge to a file that already reached this module was enough
+  // to tip it into `Maximum call stack size exceeded`, from a trap that named neither the file nor
+  // the import. `issues/lang/0165a`.
+  //
+  // 64 is well under where trouble starts and still only ~30 statements for the largest file.
+  //
+  // **Not free, and not identical output**: the seed went 963,369 to 963,562 bytes, because
+  // `s = s + …` really is different code from one chain, and the concatenation is now incremental
+  // rather than one expression. 193 bytes to remove a stack overflow that struck from three files
+  // away is a trade worth stating rather than glossing.
+  const CHUNK = 64;
+  if (quoted.length === 0) return `  return "";`;
+  const out: string[] = [];
+  for (let i = 0; i < quoted.length; i += CHUNK) {
+    const part = quoted.slice(i, i + CHUNK);
+    const head = i === 0 ? "  string s = " : "  s = s + ";
+    out.push(part.map((q, k) => (k === 0 ? head + q : " ".repeat(head.length) + "+ " + q)).join("\n") + ";");
+  }
+  out.push("  return s;");
+  return out.join("\n");
 }
 
 const BANNER = (from: string[]) =>

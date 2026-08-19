@@ -1,7 +1,7 @@
 # 0165a — importing a name straight from `coretext.wac` overflows wacc's stack, re-exporting it does not
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — the generated embedding is emitted in chunks, so the expression is no longer 1,939 deep
+- **Fixed in:** the commit this line arrived in
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -72,3 +72,27 @@ than one expression, and seeing whether the failing spelling then compiles.
 **Related but not the same:** `issues/lang/0147` (closed) is about a `trap` message being dropped.
 Here the message came through — `Maximum call stack size exceeded` is V8's, and it is the only useful
 thing in the output.
+
+## Fixed
+
+The guess in *Where to start* was right, and the experiment it suggested is the fix. `asWac` in
+`tools/genCore.ts` emitted the whole file as one `+` chain — for `std/platform.wac` a right-nested
+expression **1,939 operands deep** — and every recursive walk over it recurses once per operand. It
+compiled, with no headroom: one more import edge to a module already in the graph was enough.
+
+It is emitted in 64-line chunks now (`string s = …; s = s + …; return s;`), about 30 statements for
+the largest file. With the fix in place the reproduction compiles: `graph.wac` importing
+`isBuiltinSpec` straight from `coretext.wac` gives `2 passed, 0 failed` where it used to trap.
+
+**Not free.** The seed went 963,369 to 963,562 bytes, because `s = s + …` is different code from one
+chain and the concatenation is incremental rather than a single expression. 193 bytes against a stack
+overflow that struck from three files away, with a message naming neither the file nor the import.
+
+`files.wac` keeps its `isBuiltinSpec` re-export. It was written as a workaround and stays on its
+merits — a caller walking imports off the disk should ask the resolver-facing module rather than
+reach into a generated one.
+
+**What this does not do is remove the depth as a hazard**, only this instance of it. Any generated or
+hand-written expression of a few thousand operands will do the same, and the failure will again be a
+stack overflow with a wasm offset. A compiler-side depth limit that names the file and the construct
+would turn it into a diagnostic; nothing here does that.
