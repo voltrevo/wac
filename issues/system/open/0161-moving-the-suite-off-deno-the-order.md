@@ -1503,12 +1503,18 @@ not mine:
 `*_model`, `queue_conformance`, `bytequeue`, `reqbuf`, `ring`, `driver`, `describe`, `schedule`,
 `grants`, `wasmChild`, `subprocess_profile`, and the four bridge tests left in `platform.test.ts`.
 
-**Read only at the header, so not a determination**: `sinks` (140), `keydown` (137), `pointer` (125),
-`unnameable` (104). Each *looks* like host TypeScript — a `void`-versus-`Promise<void>` hazard, a
-browser event translation, `ev.offsetX`, Deno's lossy `readDir` — and looking is what got the
-`bindgen` row above wrong. `unnameable` is the one most likely to have a portable half: the claim that
-a program is told `FAULT_NOT_REPRESENTABLE` rather than "no such file" is about what reaches the
-program. Whoever takes these should open them.
+**Opened rather than guessed** — `sinks` (140), `keydown` (137), `pointer` (125), `unnameable` (104).
+All four stay, and one guess was wrong, which is why they were opened. `sinks` drives `denoWorld`,
+`browserWorld` and `nodeWorld` through `hostCall`; `keydown` and `pointer` call `terminalBytes` and
+`pageDom` out of `host/entryBrowser.ts`; `unnameable` calls `faultOfPath`, `pathFailure`, `phraseOf`
+and `statFault` out of `host/faults.ts` in **every one of its five tests**.
+
+`unnameable` was the one written up here as most likely to have a portable half — the claim that a
+program is told `FAULT_NOT_REPRESENTABLE` rather than "no such file" *is* about what reaches a
+program, and this file does not test it. It tests the classifier that decides it. The portable test
+does not exist; if someone wants it, it is a new test rather than a conversion.
+
+**So `packages/platform` is swept: nothing convertible is left in it.**
 
 **The lesson this block repeats:** three of these six carry their own verdict in their own header,
 written by whoever last thought about them. Reading the header first would have saved opening four
