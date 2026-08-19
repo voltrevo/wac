@@ -18,7 +18,7 @@
 // the program it is about is unreadable in a failure.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, Answers, ask, hex } from "../../../wactest/src/oracle.wac";
+import { Lines, Answers, ask, askCached, hex } from "../../../wactest/src/oracle.wac";
 import { Cli, Stat, FileResult, Change } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
@@ -116,94 +116,6 @@ export Ref referenceTolerant(T t, Cli cli, string[] sources) {
   return refAsk(t, cli, sources, false);
 }
 
-/** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
-i64 newestUnder(Cli cli, string dir) {
-  i64 newest = 0 as i64;
-  string[]? names = cli.readDir(dir).wait();
-  if (names is null) { return 0 as i64; }
-  string[] here = names!;
-  for (i32 i = 0; i < here.len(); i++) {
-    string path = dir + "/" + here[i];
-    Stat st = cli.stat(path).wait();
-    if (!st.exists) { continue; }
-    if (st.isDir) {
-      i64 deep = newestUnder(cli, path);
-      if (deep > newest) { newest = deep; }
-      continue;
-    }
-    if (st.modifiedMillis > newest) { newest = st.modifiedMillis; }
-  }
-  return newest;
-}
-
-/** A checksum of everything asked, so a different question is a different key. */
-i32 sumOf(string[] parts) {
-  i32 h = 7;
-  for (i32 i = 0; i < parts.len(); i++) {
-    u8[] b = parts[i].toBytes();
-    for (i32 k = 0; k < b.len(); k++) { h = (h * 31 + b[k]) & 2147483647; }
-    h = (h * 31 + 255) & 2147483647;
-  }
-  return h;
-}
-
-/**
- * The reference's answers, from `.cache` when the question and the reference are both unchanged.
- *
- * **`typecheck_test.wac` asks 48 times, one `deno run` per ask**, and each one is the same question
- * about the same fixtures as the run before. The answers are a pure function of the sources and of
- * `compiler/` — a *second implementation* this repository does not otherwise touch — so they are
- * cached on a checksum of the lines and the newest mtime under `compiler/` and `harness/`.
- *
- * **Only the reference side.** Our own checker runs on every pass whatever the cache holds; a
- * differential with one remembered side is still a differential, and one with two is nothing. Cold —
- * a fixture changed, or `compiler/` did — it costs exactly what it always did, which is the run where
- * this has something new to say.
- */
-string cachedAnswers(Cli cli, string key) {
-  FileResult f = cli.readFile(".cache/rung3/" + key + ".txt").wait();
-  return f.ok ? string.fromBytes(f.bytes) : "";
-}
-
-/** The lines of a cached answer file, without the empty tail a trailing newline leaves. */
-string[] nonEmptyLines(string body) {
-  string[] all = splitLines(body);
-  i32 n = 0;
-  for (i32 i = 0; i < all.len(); i++) { if (all[i] != "") { n = n + 1; } }
-  string[] out = string[n](fill: "");
-  i32 at = 0;
-  for (i32 i = 0; i < all.len(); i++) {
-    if (all[i] == "") { continue; }
-    out[at] = all[i];
-    at = at + 1;
-  }
-  return out;
-}
-
-/**
- * Write this answer, and drop every answer from an older reference.
- *
- * A key ends with the reference's stamp, so one `compiler/` edit makes a whole new generation — 55
- * files here, a few megabytes — and nothing else would ever remove the old one. Sweeping on write
- * keeps the directory at one generation, which is the only one that can be read again.
- */
-void writeAnswers(Cli cli, string key, string[] lines, string stamp) {
-  cli.mkdir(".cache/rung3", true).wait();
-  string body = "";
-  for (i32 i = 0; i < lines.len(); i++) { body = body + lines[i] + "\n"; }
-  cli.writeFile(".cache/rung3/" + key + ".txt", body.toBytes()).wait();
-
-  string[]? names = cli.readDir(".cache/rung3").wait();
-  if (names is null) { return; }
-  string[] here = names!;
-  string keep = "-" + stamp + ".txt";
-  for (i32 i = 0; i < here.len(); i++) {
-    if (here[i].len() < keep.len()) { continue; }
-    if (here[i].slice(here[i].len() - keep.len(), here[i].len()) == keep) { continue; }
-    cli.remove(".cache/rung3/" + here[i], false).wait();
-  }
-}
-
 Ref refAsk(T t, Cli cli, string[] sources, bool strict) {
   Lines lines = Lines.create();
   string[] asked = string[sources.len()](fill: "");
@@ -211,16 +123,12 @@ Ref refAsk(T t, Cli cli, string[] sources, bool strict) {
     asked[i] = "checkpos " + hex(sources[i].toBytes());
     lines.add(asked[i]);
   }
-  i64 reference = newestUnder(cli, "compiler");
-  i64 harness = newestUnder(cli, "harness");
-  if (harness > reference) { reference = harness; }
-  string stamp = itoa((reference / (1000 as i64)) as! i32);
-  string key = itoa(sumOf(asked)) + "-" + itoa(sources.len()) + "-" + stamp;
-  string held = cachedAnswers(cli, key);
-  Answers a = held == "" ? ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
-                               "the reference type checker")
-                         : Answers(true, nonEmptyLines(held));
-  if (held == "" && a.ok) { writeAnswers(cli, key, a.lines, stamp); }
+  // **Cached on the questions and on the reference's own sources.** This is asked 48 times in a run
+  // of `typecheck_test.wac` — once per `referenceFor`, `decidedByReference` and `caughtAndQuiet` —
+  // and every one is the same question about the same fixtures as the run before. 8.6s to 3.2s.
+  // Our checker still runs on every pass; what is remembered is the other implementation's answer.
+  Answers a = askCached(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                        "the reference type checker", "rung3", string[]("compiler", "harness"));
   string[] at = string[sources.len()](fill: "");
   string[] said = string[sources.len()](fill: "");
   bool[] bad = bool[sources.len()]();
