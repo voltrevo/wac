@@ -4,7 +4,7 @@
 // code nothing exercises by accident, and "it traps, obviously" is a claim rather than a check —
 // deleting one leaves every other test in this package passing. `issues/lang/0112`.
 //
-// This file is a coverage unit as well as a test, which `packages/std/cov.ts` is the other half of:
+// This file is a coverage unit as well as a test, which `core/cov.ts` is the other half of:
 // the counter for the branch is incremented *before* the trap fires, so instrumenting it is what
 // makes a guard a measured decision rather than an unaccounted one.
 //

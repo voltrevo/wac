@@ -38,7 +38,7 @@
 // `example/gitst.wac` does that, and `test/wac/status_test.wac` fails if the order is reversed.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /** One line of a `.gitignore`, parsed. */
 export struct Rule {

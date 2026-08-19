@@ -26,7 +26,7 @@
 // So an isolation key comes from the caller. This guarantees two different keys never share
 // and does not invent one.
 
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /** tor's MaxCircuitDirtiness. A bound on correlation, not a timeout. */
 export i64 maxDirtinessMs() { return 600000; }

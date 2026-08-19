@@ -29,7 +29,7 @@
 
 import { Core, Cli } from "../../../platform/src/platform.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
-import { Vec } from "../../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";
 import { boxApplet, boxNames, boxRun } from "../shrun.wac";

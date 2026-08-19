@@ -339,7 +339,7 @@ step 3 block on `issues/lang/0073` for no gain.
 | `vec.wac` | 64 | the one that makes this a sweep |
 
 So `option` + `result` are the pair to move first — eight files touched including the four
-`packages/std/test/wac/*_test.wac` that name them, `compiler/wapyPrint.ts` and `packages/std/cov.ts`
+`packages/std/test/wac/*_test.wac` that name them, `compiler/wapyPrint.ts` and that package's `cov.ts`
 — and they exercise the interesting case on the way: `result.wac` imports `./option.wac`, so a
 sibling resolving a sibling inside the tree is proved by the first move rather than the last.
 

@@ -12,7 +12,7 @@
 // the deletion cannot reach it.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Sink } from "../../platform/src/stream.wac";
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
 import { digitValue } from "../../codec/src/hex.wac";

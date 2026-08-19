@@ -23,7 +23,7 @@
 // side.
 
 import { Cli, Core } from "../../platform/src/platform.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Shell } from "./exec.wac";
 import { shellMain } from "./entry.wac";
 import { Fs } from "../../fs/src/fs.wac";

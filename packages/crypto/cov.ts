@@ -890,7 +890,7 @@ const ctTests = await instrument("packages/crypto/test/wac/ct_test.wac");
   runTestExports(ctTests, "ct_test.wac");
 }
 
-// **The guards that trap, as a unit of their own** — `packages/std/cov.ts`'s shape. A trap aborts the
+// **The guards that trap, as a unit of their own** — `core/cov.ts`'s shape. A trap aborts the
 // module, so each of these is one call and the instance is finished afterwards; what makes it worth
 // instrumenting is that the branch's counter is incremented *before* the trap fires, so the guard
 // becomes a measured decision instead of a line nobody can account for. `test/wac/traps_test.wac`

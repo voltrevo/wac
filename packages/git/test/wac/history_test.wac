@@ -23,7 +23,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
-import { Vec } from "../../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { RefValue, PackedRef, parseRef, parsePackedRefs, packedTarget } from "../../src/refs.wac";
 import { Commit, Parsed, Who, parseCommit } from "../../src/commit.wac";
 import { Object, readLoose } from "../../src/object.wac";

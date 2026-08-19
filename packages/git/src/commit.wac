@@ -25,7 +25,7 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { decode, encode } from "../../codec/src/hex.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { itoa64 } from "../../fmt/src/itoa.wac";
 
 /** Who did something, and when. */

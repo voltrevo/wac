@@ -54,7 +54,7 @@ import { serveOn } from "../../../fs/src/serve.wac";
 import { argvOf } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { FileResult, readReason } from "../../../platform/src/platform.wac";
-import { Vec } from "../../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";

@@ -514,7 +514,7 @@ export string test_a_lambda_in_a_module_that_also_imports_a_real_package(Core co
   // `Vec` brings strings and a good deal else with it; the point is a module large enough to have
   // the string builtins in it, not this particular import.
   string entry = ".cache/_lambda0138.wac";
-  string src = "import { Vec } from \"../packages/std/src/vec.wac\";\n" +
+  string src = "import { Vec } from \"core/vec.wac\";\n" +
                "export i32 f() {\n  Vec<i32> v = Vec.create();\n  v.push(20);\n  i32 n = 1;\n" +
                "  fn[i32()] g = () => n + 21;\n  n = n + 0;\n  return v.get(0) + g();\n}\n" +
                "export i32 main() { return f(); }\n";

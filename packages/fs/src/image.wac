@@ -56,7 +56,7 @@
 // checksum nobody compresses with is arguably not the gzip package.
 
 import { Map } from "core/map.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { hashString, stringEq } from "core/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { crc32 } from "../../gzip/src/crc32.wac";

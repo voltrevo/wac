@@ -49,7 +49,7 @@ import {
   relayIntroduce1,
 } from "./relay.wac";
 import { Relay } from "./directory.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { onionPubkey } from "./onionaddr.wac";
 import { blindedPublicKey, subcredential } from "./hsblind.wac";
 import {

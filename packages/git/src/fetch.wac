@@ -37,7 +37,7 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { Pkt, flushPkt, readPkt, writeText } from "./pktline.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { decode, encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 

@@ -19,11 +19,25 @@ import { instrument, report, runTestExports } from "../harness/wacCoverage.ts";
 const verbose = Deno.args.includes("--verbose");
 
 const runs = [];
-for (const entry of ["option", "hash", "map"]) {
+for (const entry of ["option", "hash", "map", "vec"]) {
   const run = await instrument(`core/test/${entry}_test.wac`);
   runTestExports(run, `core/test/${entry}_test.wac`);
   runs.push(run);
 }
+
+// **`traps_test.wac` is separate, because a `test_traps_*` export is *expected* to trap.** Its
+// failure is not a failure, so it cannot go through `runTestExports`, which reports one. This came
+// across with the collections when `packages/std` retired — and the same block in that package's
+// driver had once named a path that no longer existed, crashing the task with `NotFound` until
+// somebody looked. `issues/system/0161`.
+const traps = await instrument("core/test/traps_test.wac");
+for (const fn of Object.values(traps.mod)) {
+  if (typeof fn !== "function") continue;
+  try {
+    (fn as () => number)();
+  } catch { /* the trap is the point */ }
+}
+runs.push(traps);
 
 const { total, covered } = report(runs, "core/", { verbose });
 if (covered < total) Deno.exit(0); // reporting tool, not a gate

@@ -2463,7 +2463,7 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     if (starts.len() > sn) { starts[sn] = outLines + 1; }
     // **And what the file was called.** The line boundaries say which file a declaration came from
     // and nothing said what its name was, which is the whole of what a bind name for a
-    // monomorphisation needs: the reference spells `Vec<string>` from `packages/std/src/vec.wac` as
+    // monomorphisation needs: the reference spells `Vec<string>` from `core/vec.wac` as
     // `Vec__packages_std_src_vec$string`. `issues/lang/0089`.
     if (filePaths.len() > sn - 1) { filePaths[sn - 1] = path; }
     if (partCount < parts.len()) { parts[partCount] = body + "\n"; partCount = partCount + 1; }
@@ -11624,8 +11624,8 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
 /**
  * A declaring file's tag, the reference's way: the path without `.wac`, every other character `_`.
  *
- * `packages/std/src/vec.wac` is `packages_std_src_vec`, which is what makes
- * `Vec__packages_std_src_vec` the name a monomorphisation is spelled from. `issues/lang/0089`.
+ * `core/vec.wac` is `core_vec`, which is what makes `Vec__core_vec` the name a
+ * monomorphisation is spelled from. `issues/lang/0089`.
  */
 string fileTagOf(string path) {
   u8[] a = path.toBytes();
@@ -11664,8 +11664,8 @@ string pathOfKey(Env env, string key) {
 string bindTypeSpelling(Env env, string t, string templatePath) {
   // An array and a nullable are spelled by suffix, a funcref by its shape, and an instantiation by
   // its arguments after a `$` — `mangleType` in `compiler/wacResolve.ts`, which is what the generated
-  // glue is named from. `u8[]` is `u8_arr`, and `Vec<u8[]>` from `packages/std/src/vec.wac` is
-  // `Vec__packages_std_src_vec$u8_arr`.
+  // glue is named from. `u8[]` is `u8_arr`, and `Vec<u8[]>` from `core/vec.wac` is
+  // `Vec__core_vec$u8_arr`.
   if (isArrayType(t)) { return bindTypeSpelling(env, elemOf(t), "") + "_arr"; }
   u8[] a = t.toBytes();
   if (a.len() > 1 && a[a.len() - 1] == 63) {                  // a trailing `?`
