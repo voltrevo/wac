@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0162](open/0162-a-struct-named-like-one-in-platform-wac-makes-the-program-unrunnable.md) | a program declaring `struct Stat` — or `Change`, `Exec`, `Read`, any name `platform.wac` uses — compiles cleanly and will not start: the linker qualifies the platform one, `Cli.stat`'s funcref signature carries the qualified spelling, no dispatcher is emitted under it, and the host says "the manifest describes no Cli" when it describes one | bug | wrong answer |
 | [0161](open/0161-an-aliased-import-of-an-already-imported-type-is-a-different-type-in-wacc.md) | `import { E as E2 }` beside `import { E }` makes two nominal types out of one declaration, so passing one where the other is wanted is a mismatch — wacc only, the reference accepts it | bug | compile error |
 | [0160](open/0160-a-lambda-capturing-a-parameter-loses-it-to-a-top-level-function-of-the-same-name.md) | a lambda's captured parameter resolves to a same-named top-level function instead — so any file importing `platform.wac` and declaring `f` builds an invalid module | bug | invalid wasm |
 | [0159](open/0159-arithmetic-on-a-string-operand-silently-deletes-the-function.md) | `s[0] - '0'` is `string - string`; both compilers exit 0 and silently drop the enclosing function from the module and the manifest | diagnostic | invalid wasm |
@@ -34,7 +35,7 @@ has been fixed and why.
 
 ## Closed
 
-161 issues, 135 closed.
+162 issues, 135 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

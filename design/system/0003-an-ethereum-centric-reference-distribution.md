@@ -98,7 +98,7 @@ secret material, and `packages/crypto`'s own README says of everything shipped s
 code hard to write does not arise". An accounts service cannot have that scope decision.
 
 **This is a reason to sequence it last, not a reason it cannot be done.** The repo is better equipped
-than most: `harness/ctTrace.ts` compiles in the compiler's trace mode and compares the ordered sequence
+than most: `wac build --trace` instruments and `wac ctcompare` compares the ordered sequence
 of branches *and* array indices between runs differing only in the secret — the second half matters,
 because a secret-dependent index has no branch and a branch-counting tool calls it uniform. A failure is
 definite, at a named source line. `packages/bls`'s README already says where this work goes: "a different

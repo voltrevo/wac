@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-38 packages, 127,289 lines of wac, 2525 tests,
-78 command-line programs and 11 browser pages.
+38 packages, 127,999 lines of wac, 2523 tests,
+79 command-line programs and 11 browser pages.
 
 ## Packages
 
@@ -28,7 +28,7 @@ In dependency order: nothing here imports anything below it.
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point. | 1,321 | 58 | `bytes` `fmt` |
 | [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 6,153 | 220 | `bytes` `fmt` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 10 | `fmt` |
-| [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 5,957 | 283 | `bignum` `codec` `fmt` `platform` |
+| [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 6,315 | 283 | `bignum` `codec` `fmt` `platform` |
 | [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,283 | 42 | `bytes` `fmt` `gzip` `platform` |
 | [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,327 | 40 | `bytes` `codec` `fmt` `platform` |
 | [`raster`](packages/raster/) | A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell. | 1,071 | 27 | `fmt` `platform` `unicode` |
@@ -39,8 +39,8 @@ In dependency order: nothing here imports anything below it.
 | [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,507 | 32 | `bytes` `codec` `fmt` `fs` `platform` |
 | [`ssz`](packages/ssz/) | SSZ is how Ethereum's consensus layer lays out data. | 802 | 26 | `bytes` `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,203 | 185 | `bytes` `codec` `crypto` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 31,068 | 247 | `bytes` `codec` `crypto` `fmt` `fs` `platform` |
-| [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 1,322 | 28 | `bytes` `crypto` `fmt` `json` `platform` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 31,118 | 245 | `bytes` `codec` `crypto` `fmt` `fs` `platform` |
+| [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 1,624 | 28 | `bytes` `crypto` `fmt` `json` `platform` |
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,456 | 138 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `raster` `regex` `server` `sh` `tls` `unicode` `url` `zstd` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 389 | 24 | `bytes` `crypto` `mpt` |
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,764 | 61 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `tls` |
@@ -92,6 +92,7 @@ reach — see `packages/platform/README.md`.
 | `packages/platform/example/whichever.wac` | Wait on two sockets and report whichever speaks first. |
 | `packages/platform/example/writeread.wac` | Can a socket be written to while a read on it is still outstanding? |
 | `packages/crypto/tools/capture-hkdfcap.wac` | HKDF at its 255-block cap, answered by WebCrypto. |
+| `packages/crypto/tools/ct.wac` | Regenerate the side-channel table in README.md. |
 | `packages/fs/example/ops.wac` | The same filesystem operations against memory or against the host, so the two can be compared. |
 | `packages/fs/example/saveimage.wac` | Save a filesystem that is partly the host's, and say what could not be saved. |
 | `packages/http/example/tunnel.wac` | `tunnel <host> <port>` — open a `CONNECT` tunnel through the proxy in `$HTTP_PROXY` and say so. |

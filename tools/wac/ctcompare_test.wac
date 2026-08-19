@@ -4,7 +4,7 @@
 // index, in the order they happened. Two runs that differ only in a secret must produce the same
 // journal, and where they do not is where the secret was observed. That is the question
 // `packages/crypto`'s constant-time tests ask, and until these two commands existed it could only be
-// asked from JavaScript — `harness/ctTrace.ts` instantiated the module and walked the journal in
+// asked from JavaScript — a TypeScript harness instantiated the module and walked the journal in
 // process.
 //
 // **The comparison is the command, and that is the whole design.** `covdump` can already print a
@@ -150,6 +150,20 @@ export string test_a_secret_dependent_index_is_found_where_no_branch_differs_6kn
   return t.report();
 }
 
+/** The `n`th whitespace-separated word of a line. */
+string word(string line, i32 n) {
+  i32 at = 0;
+  string cur = "";
+  for (i32 i = 0; i <= line.len(); i++) {
+    string c = i < line.len() ? line.slice(i, i + 1) : " ";
+    if (c == " " || c == "\n" || c == "\t") {
+      if (cur.len() > 0) { if (at == n) { return cur; } at = at + 1; }
+      cur = "";
+    } else { cur = cur + c; }
+  }
+  return "";
+}
+
 /** Digits to an integer; -1 when it is not one. */
 i32 atoiOf(string s) {
   u8[] b = s.toBytes();
@@ -230,6 +244,63 @@ export string test_a_module_with_no_journal_is_an_error_not_an_empty_comparison_
   }
 
   Exec usage = cli.exec(binaryPath(cli), string[]("ctcompare"), u8[0]()).wait();
+  t.isTrue(usage.ran() && usage.status == 2, "no arguments is a usage error");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_tracestat_reports_what_a_run_wanted_so_the_next_one_can_fit_6knq4wp(
+    Core core, Cli cli) {
+  // **The overflow has to be reported as a number, not as a flag.** A journal that filled up is the
+  // normal case for anything expensive, and "it did not fit" leaves a caller doubling and retrying;
+  // `wanted` says exactly how large the next attempt has to be. `--trace-slots` is the other half.
+  T t = T.create();
+  string dir = scratch(cli, "ctcompare-slots");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  // 40 iterations is more than eight slots can hold and far less than the default.
+  const string SRC = "export i32 main() {\n" +
+    "  i32 acc = 0;\n" +
+    "  for (i32 i = 0; i < 40; i++) { acc = acc + i; }\n" +
+    "  return acc;\n" +
+    "}\n";
+  string entry = dir + "/p.wac";
+  cli.writeFile(entry, SRC.toBytes()).wait();
+
+  Exec small = cli.exec(binaryPath(cli),
+    string[]("build", entry, "--trace", "--trace-slots", "8", "-o", dir + "/small", "--quiet"),
+    u8[0]()).wait();
+  t.isTrue(small.ran() && small.status == 0,
+           "the small build — " + string.fromBytes(small.stderr));
+  if (!small.ran() || small.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec r = cli.exec(binaryPath(cli), string[]("tracestat", dir + "/small.wasm"), u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0, "tracestat ran — " + string.fromBytes(r.stderr));
+  if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+  string said = trimmed(string.fromBytes(r.stdout));
+  i32 events = atoiOf(word(said, 1));
+  i32 wanted = atoiOf(word(said, 3));
+  i32 slots = atoiOf(word(said, 5));
+  t.eqI32(slots, 8, "the size is the caller's: " + said);
+  t.isTrue(wanted > events, "it should have overflowed: " + said);
+  t.isTrue(wanted > 40, "one point per iteration at least: " + said);
+
+  // Sized from what the first run reported, the second fits — and `events` and `wanted` agree, which
+  // is the whole claim.
+  Exec big = cli.exec(binaryPath(cli),
+    string[]("build", entry, "--trace", "--trace-slots", itoa(2 * wanted + 8),
+             "-o", dir + "/big", "--quiet"), u8[0]()).wait();
+  t.isTrue(big.ran() && big.status == 0, "the resized build — " + string.fromBytes(big.stderr));
+  if (big.ran() && big.status == 0) {
+    Exec r2 = cli.exec(binaryPath(cli), string[]("tracestat", dir + "/big.wasm"), u8[0]()).wait();
+    string said2 = trimmed(string.fromBytes(r2.stdout));
+    t.eqI32(atoiOf(word(said2, 1)), atoiOf(word(said2, 3)),
+            "the resized journal did not fit what the first run asked for: " + said2);
+    t.eqI32(atoiOf(word(said2, 3)), wanted, "the two runs counted different events: " + said2);
+  }
+
+  Exec usage = cli.exec(binaryPath(cli), string[]("tracestat"), u8[0]()).wait();
   t.isTrue(usage.ran() && usage.status == 2, "no arguments is a usage error");
   cli.remove(dir, true).wait();
   return t.report();

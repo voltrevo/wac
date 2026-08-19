@@ -1697,6 +1697,9 @@ fn main() {
     if SEED.is_some() && stem == "ctcompare" {
         std::process::exit(ctcompare_command(&args[2..]));
     }
+    if SEED.is_some() && stem == "tracestat" {
+        std::process::exit(tracestat_command(&args[2..]));
+    }
     if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
         start_v8();
         std::process::exit(run_seed(&args[1..]));
@@ -1925,6 +1928,37 @@ fn covdump_command(rest: &[String]) -> i32 {
         println!("{i}\t{n}");
     }
     println!("{} counter(s)", counters.len());
+    0
+}
+
+/// `wac tracestat <module.wasm>` — one traced run's size, without shipping the journal out.
+///
+/// `events` is what was recorded, `wanted` is what happened whether or not there was room, and `slots`
+/// is the room there was. They differ exactly when the journal overflowed, and `wanted` is the number
+/// to pass to `--trace-slots` to make the next run fit — which is the whole reason it is reported
+/// rather than left for a caller to double and try again.
+fn tracestat_command(rest: &[String]) -> i32 {
+    let Some(path) = rest.first() else {
+        eprintln!("usage: wac tracestat <module.wasm>");
+        return 2;
+    };
+    let counters = match counters_of(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("wac: {e}");
+            return 1;
+        }
+    };
+    if counters.len() < 2 {
+        eprintln!("wac: a journal is at least two slots; got {}", counters.len());
+        return 1;
+    }
+    println!(
+        "events {} wanted {} slots {}",
+        counters[0].max(0) / 2,
+        counters[counters.len() - 1],
+        counters.len()
+    );
     0
 }
 

@@ -1,0 +1,357 @@
+// Regenerate the side-channel table in README.md.
+//
+//   wac run packages/crypto/tools/ct.wac --allow-read --allow-write --allow-run
+//
+// Every routine is run with several structured secrets and the same public input, and the ordered
+// trace of branches and memory indices is compared. The table this prints is what belongs in the
+// README — published figures that cannot be regenerated go stale silently, which is what
+// `issues/system/0007` is about, and this file exists so that does not happen to these ones.
+//
+// `test/wac/constanttime_test.wac` asserts the *conclusions* — what is uniform, and where the known
+// leaks are. This prints the numbers behind them.
+//
+// ## Ported from `ct.ts`, 2026-08-19 — `issues/system/0161`
+//
+// The TypeScript instantiated each module and walked its journal in process, through
+// a TypeScript harness. Three commands do that now — `wac build --trace`, `wac tracestat` and
+// `wac ctcompare --all` — so the walk happens where the modules are and the numbers come back as
+// text. That matters here more than in the test: `bcryptPbkdf` is 8.2 million events, and shipping
+// the journal out to be walked would be a hundred megabytes to fill in one row.
+//
+// **A routine too expensive for the default journal is recompiled to fit.** It used to be reported as
+// *not measured*: the buffer was 2^22 events, fixed in the compiler, and a KDF is designed to cost
+// more than that with no parameter that brings it under. The journal is sized by the caller now, and
+// a run counts the events it had no room for — so the first attempt says exactly how large the second
+// has to be, rather than leaving this to double and try again. `issues/lang/0059`.
+//
+// **The drivers of one comparison differ only in their data.** `main`'s own points are in the journal,
+// so a pair written with different shapes parts at event 1, which is the driver and not the routine.
+// Every driver here comes from one template with one array literal substituted.
+
+import { Core, Cli, Exec, Change, FileResult } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+const string CACHE = ".cache/ct-table";
+
+/** One row of the table: what to run, and with which secrets. */
+struct Case {
+  /** What the row is called, which is the exported routine. */
+  string name;
+  /** The file it comes from, relative to the repository root. */
+  string src;
+  /** The call, with `$KEY` where the secret's literal goes. */
+  string call;
+  /** How many bytes the secret is. */
+  i32 keyLen;
+  /** Which structured secrets, by index into `keyOf`. */
+  i32[] keys;
+}
+
+/**
+ * Structured secrets, not random ones: a leak shows at the extremes first.
+ *
+ * Four of them — all zero, all 0xFF, a stride, and one bit set — and at 32 bytes it is the 16-byte
+ * key written twice, which is what `ct.ts`'s `KEYS32` was.
+ */
+i32[] keyOf(i32 which, i32 len) {
+  i32[] out = i32[len]();
+  for (i32 i = 0; i < len; i++) {
+    i32 j = i % 16;
+    if (which == 0) { out[i] = 0; }
+    else if (which == 1) { out[i] = 255; }
+    else if (which == 2) { out[i] = (j * 37) & 255; }
+    else { out[i] = j == 0 ? 128 : 0; }
+  }
+  return out;
+}
+
+string literal(i32[] v) {
+  string out = "u8[](";
+  for (i32 i = 0; i < v.len(); i++) { out = out + (i > 0 ? ", " : "") + itoa(v[i]); }
+  return out + ")";
+}
+
+/** `0, 1, 2, …` — the public input, which is not a secret. */
+string block16() { i32[] b = i32[16](); for (i32 i = 0; i < 16; i++) { b[i] = i; } return literal(b); }
+
+i32[] all4() { return i32[](0, 1, 2, 3); }
+
+Case[] cases() {
+  return Case[](
+    Case("sha256", "packages/crypto/src/sha256.wac", "sha256($KEY)", 16, all4()),
+    Case("chachaBlock", "packages/crypto/src/chacha20.wac",
+         "chachaBlock($KEY, 1, u8[12](fill: 1))", 32, all4()),
+    Case("poly1305", "packages/crypto/src/poly1305.wac",
+         "poly1305($KEY, " + block16() + ")", 32, all4()),
+    // Two scalars only: 1.8M events per run, and the point is made without four of them.
+    Case("x25519Base", "packages/crypto/src/x25519.wac", "x25519Base($KEY)", 32, i32[](0, 1)),
+    Case("ghash", "packages/crypto/src/ghash.wac", "ghash($KEY, " + block16() + ")", 16, all4()),
+    Case("aesExpandKey", "packages/crypto/src/aes.wac", "aesExpandKey($KEY)", 16, all4()),
+    Case("aesEncrypt", "packages/crypto/src/aes.wac",
+         "aesEncrypt($KEY, " + block16() + ")", 16, all4()),
+    // **`p256PublicKey` was a row the tool could not produce**, and the README carried it as
+    // `~2,000,000` with a tilde — a hand-written figure in a generated table, which is the exact
+    // failure this file exists to prevent. Not the all-zero key: `curvePublicKey` traps on a scalar of
+    // zero or one past the group order, so the secrets have to be valid keys as well as different.
+    Case("p256PublicKey", "packages/crypto/src/p256.wac", "p256PublicKey($KEY)", 32, i32[](2, 3)),
+    // One round and two passwords: a single bcrypt hash is already 129 key expansions, so the event
+    // count dwarfs everything above and a third password would say nothing more.
+    //
+    // Included even though the answer is known in advance — bcrypt indexes its S-boxes with state
+    // derived from the password, by design — because "we did not measure it" and "it is fine" look
+    // identical in a table that omits the row.
+    Case("bcryptPbkdf", "packages/crypto/src/bcryptpbkdf.wac",
+         "bcryptPbkdf($KEY, " + block16() + ", 32, 1)", 16, i32[](0, 1)));
+}
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/**
+ * The `n`th whitespace-separated word of a line.
+ *
+ * **A newline is whitespace**, and splitting on spaces alone left the last field carrying one — so
+ * `numberOf` saw a non-digit and answered -1, every routine looked like it had overflowed, and the
+ * table printed `>-1`. The guard that refused to report a number it could not trust is what made that
+ * visible rather than plausible.
+ */
+string word(string line, i32 n) {
+  i32 at = 0;
+  string cur = "";
+  for (i32 i = 0; i <= line.len(); i++) {
+    string c = i < line.len() ? line.slice(i, i + 1) : " ";
+    if (c == " " || c == "\n" || c == "\t" || c == "\r") {
+      if (cur.len() > 0) { if (at == n) { return cur; } at = at + 1; }
+      cur = "";
+    } else { cur = cur + c; }
+  }
+  return "";
+}
+
+i32 numberOf(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return -1; }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < 48 || b[i] > 57) { return -1; }
+    v = v * 10 + (b[i] - 48);
+  }
+  return v;
+}
+
+bool startsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(0, p.len()) == p;
+}
+
+string[] linesOf(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  string cur = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\n") { out[at] = cur; at = at + 1; cur = ""; }
+    else { cur = cur + s.slice(i, i + 1); }
+  }
+  out[at] = cur;
+  return out;
+}
+
+/** `1,542` — the table's own spelling of a count. */
+string grouped(i32 n) {
+  string d = itoa(n);
+  string out = "";
+  for (i32 i = 0; i < d.len(); i++) {
+    if (i > 0 && (d.len() - i) % 3 == 0) { out = out + ","; }
+    out = out + d.slice(i, i + 1);
+  }
+  return out;
+}
+
+/** Build one traced driver at a given journal size; the stem, or "" when it did not build. */
+string build(Core core, Cli cli, Case c, i32 which, i32 slots, string tag) {
+  string dir = cli.cwd().wait() + "/" + CACHE;
+  string program = "import { " + c.name + " } from \"../../" + c.src + "\";\n" +
+                   "export i32 main() {\n" +
+                   "  return " + replaceKey(c.call, literal(keyOf(which, c.keyLen))) + ".len();\n" +
+                   "}\n";
+  string entry = dir + "/" + tag + ".wac";
+  Change wrote = cli.writeFile(entry, program.toBytes()).wait();
+  if (!wrote.ok()) { core.warn("ct: cannot write " + entry + " — " + wrote.message); return ""; }
+
+  string[] argv = slots > 0
+    ? string[]("build", entry, "--trace", "--trace-slots", itoa(slots), "-o", dir + "/" + tag,
+               "--quiet")
+    : string[]("build", entry, "--trace", "-o", dir + "/" + tag, "--quiet");
+  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("ct: " + c.name + " did not build — " + r.error + string.fromBytes(r.stderr));
+    return "";
+  }
+  return dir + "/" + tag;
+}
+
+string replaceKey(string call, string lit) {
+  for (i32 i = 0; i + 4 <= call.len(); i++) {
+    if (call.slice(i, i + 4) == "$KEY") {
+      return call.slice(0, i) + lit + call.slice(i + 4, call.len());
+    }
+  }
+  return call;
+}
+
+/** `events`, `wanted` and `slots` for one built module. */
+struct TraceStat { i32 events; i32 wanted; i32 slots; bool ok; }
+
+TraceStat statOf(Core core, Cli cli, string stem) {
+  Exec r = cli.exec(binary(cli), string[]("tracestat", stem + ".wasm"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("ct: tracestat — " + r.error + string.fromBytes(r.stderr));
+    return TraceStat(0, 0, 0, false);
+  }
+  string line = string.fromBytes(r.stdout);
+  return TraceStat(numberOf(word(line, 1)), numberOf(word(line, 3)), numberOf(word(line, 5)), true);
+}
+
+/** `kind` and `file:line` for a site, out of the table beside the module. */
+struct Site { string kind; string at; bool ok; }
+
+Site siteOf(Cli cli, string stem, i32 site) {
+  FileResult f = cli.readFile(stem + ".trace").wait();
+  if (!f.ok) { return Site("", "", false); }
+  string[] rows = linesOf(string.fromBytes(f.bytes));
+  string want = itoa(site) + "\t";
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (!startsWith(rows[i], want)) { continue; }
+    string[] parts = string[5](fill: "");
+    i32 n = 0;
+    string cur = "";
+    for (i32 k = 0; k <= rows[i].len(); k++) {
+      string c = k < rows[i].len() ? rows[i].slice(k, k + 1) : "\t";
+      if (c == "\t") { if (n < 5) { parts[n] = cur; n = n + 1; } cur = ""; }
+      else { cur = cur + c; }
+    }
+    if (n < 5) { return Site("", "", false); }
+    // The table prints a leak's home without its directory, as the README does.
+    string file = parts[4];
+    const string PREFIX = "packages/crypto/src/";
+    i32 cut = -1;
+    for (i32 k = 0; k + PREFIX.len() <= file.len() && cut < 0; k++) {
+      if (file.slice(k, k + PREFIX.len()) == PREFIX) { cut = k + PREFIX.len(); }
+    }
+    if (cut >= 0) { file = file.slice(cut, file.len()); }
+    return Site(parts[3], file + ":" + parts[1], true);
+  }
+  return Site("", "", false);
+}
+
+bool listed(string[] all, i32 n, string want) {
+  for (i32 i = 0; i < n; i++) { if (all[i] == want) { return true; } }
+  return false;
+}
+
+export i32 main(Core core, Cli cli) {
+  string dir = cli.cwd().wait() + "/" + CACHE;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  core.log("| routine | events per run | result |");
+  core.log("|---|---:|---|");
+
+  Case[] all = cases();
+  for (i32 ci = 0; ci < all.len(); ci++) {
+    Case c = all[ci];
+    string base = build(core, cli, c, c.keys[0], 0, "base");
+    if (base == "") { return 1; }
+    TraceStat s = statOf(core, cli, base);
+    if (!s.ok) { return 1; }
+    // An empty journal is not a clean routine, it is a call that never happened.
+    if (s.events == 0) {
+      core.warn("ct: " + c.name + ": no events — did the call happen?");
+      return 1;
+    }
+
+    // Overflowed: the run says what it wanted, so the second attempt is sized rather than doubled.
+    i32 slots = 0;
+    if (s.wanted * 2 > s.slots) {
+      slots = 2 * s.wanted + 8;
+      core.warn("  " + c.name + ": " + grouped(s.wanted) + " events — retracing with " +
+                grouped(slots) + " slots");
+      base = build(core, cli, c, c.keys[0], slots, "base");
+      if (base == "") { return 1; }
+      s = statOf(core, cli, base);
+      if (!s.ok) { return 1; }
+    }
+    if (s.wanted * 2 > s.slots) {
+      core.log("| `" + c.name + "` | >" + grouped(s.slots) +
+               " | **not measured** — the journal could not be made large enough |");
+      continue;
+    }
+
+    string[] sites = string[64](fill: "");
+    string[] kinds = string[64](fill: "");
+    i32 nSites = 0;
+    bool stopped = false;
+    string splitAt = "";
+    for (i32 k = 1; k < c.keys.len(); k++) {
+      string other = build(core, cli, c, c.keys[k], slots, "other");
+      if (other == "") { return 1; }
+      Exec r = cli.exec(binary(cli),
+                        string[]("ctcompare", "--all", base + ".wasm", other + ".wasm"),
+                        u8[0]()).wait();
+      if (!r.ran() || r.status != 0) {
+        core.warn("ct: ctcompare — " + r.error + string.fromBytes(r.stderr));
+        return 1;
+      }
+      string[] rows = linesOf(string.fromBytes(r.stdout));
+      for (i32 i = 0; i < rows.len(); i++) {
+        if (startsWith(rows[i], "split ")) {
+          stopped = true;
+          // **Named, but as what it is.** A split is where *this* run happened to be when the two
+          // stopped agreeing; the other was somewhere else, and the point itself need not depend on
+          // the secret — `ghash.wac`'s is an index with a literal 0. The README carried
+          // `weierstrass.wac:120` by hand for as long as the p256 row existed, which is the evidence
+          // that a reader wants it; the wording is what keeps it honest.
+          if (splitAt == "") {
+            // `split <event> <siteA> <siteB>` — the site is the third field, not the second.
+            Site sp = siteOf(cli, base, numberOf(word(rows[i], 2)));
+            if (sp.ok) { splitAt = sp.at; }
+          }
+          continue;
+        }
+        if (!startsWith(rows[i], "site ")) { continue; }
+        Site st = siteOf(cli, base, numberOf(word(rows[i], 2)));
+        if (!st.ok) { continue; }
+        if (!listed(sites, nSites, st.at) && nSites < 64) {
+          sites[nSites] = st.at;
+          kinds[nSites] = st.kind;
+          nSites = nSites + 1;
+        }
+      }
+    }
+
+    string n = grouped(s.events);
+    if (nSites == 0 && !stopped) {
+      core.log("| `" + c.name + "` | " + n + " | uniform |");
+      continue;
+    }
+    // Two different claims: an index leak is located exactly, a path split only says where one run
+    // stood when they stopped agreeing.
+    string idx = "";
+    i32 nIdx = 0;
+    for (i32 i = 0; i < nSites; i++) {
+      if (kinds[i] != "index") { continue; }
+      idx = idx + (nIdx > 0 ? ", " : "") + "`" + sites[i] + "`";
+      nIdx = nIdx + 1;
+    }
+    string parts = "";
+    if (nIdx > 0) { parts = "secret-dependent index at " + idx; }
+    if (stopped) {
+      parts = parts + (parts.len() > 0 ? "; " : "") + "control flow diverges" +
+              (splitAt == "" ? "" : " where one run stood at `" + splitAt + "`") +
+              "; not examined past that";
+    }
+    core.log("| `" + c.name + "` | " + n + " | **leaks** — " + parts + " |");
+  }
+  cli.remove(dir, true).wait();
+  return 0;
+}

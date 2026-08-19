@@ -12,7 +12,7 @@
 // ## Host-side until 2026-08-19, `issues/system/0161`
 //
 // `0161` had this file down as **the one shape a wac program cannot express at all**, because
-// `harness/ctTrace.ts` instantiates a module and walks its journal in process. The premise was about
+// the harness that instantiated a module and walked its journal in process. The premise was about
 // the language and not the toolchain: `wac build --trace` and `wac ctcompare` are two commands now,
 // and the comparison happens where the modules are. `p256PublicKey` produces about three million
 // events, so shipping both journals out as text to be compared here would be tens of megabytes for

@@ -22,7 +22,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 | first argument | what happens |
 |---|---|
 | `prog.wasm`, or a stem with `prog.json` beside it | run that program: the module carries its own manifest, or the pair does |
-| `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare` | this host's own commands — compiling, running, the shell, and the three that ask about a built module |
+| `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` |
 
 A name ending in `.wasm` is a bundle *claim* whether or not the file exists, and is reported as a file
@@ -41,6 +41,7 @@ wac sh      [-c script]              # the shell, sealed unless granted
 wac validate mod.wasm […]            # whether the engine accepts each module, without running it
 wac covdump mod.wasm                 # run `main` under the counters and print each one
 wac ctcompare [--all] a.wasm b.wasm  # two traced runs, and where their journals differ
+wac tracestat mod.wasm               # one traced run's size, and what it wanted
 ```
 
 `validate` answers the one question `WebAssembly.validate` answers on a JavaScript host and nothing in
@@ -226,6 +227,13 @@ did not check the number would be told every routine it asked about is constant-
 journals kept is real — the events are aligned up to there, and what was dropped cannot un-differ
 them — so an overflowing run is still measurable, which matters because the routines that overflow are
 the expensive ones. What truncation invalidates is `same`.
+
+**`tracestat <module.wasm>`** is the same facility asking about one run rather than two. It prints
+`events <n> wanted <w> slots <c>`: what was recorded, what happened whether or not there was room, and
+the room there was. They differ exactly when the journal overflowed, and `w` is the number to pass to
+`--trace-slots` to make the next run fit — reported rather than left for a caller to double and try
+again, because the routines that overflow are the ones designed to be expensive and one bcrypt hash is
+8.2 million events.
 
 The site indices are the ones `stem.trace` is keyed by: `<index>\t<line>\t<col>\t<kind>\t<file>`,
 the same shape `--coverage` writes to `stem.cov`. `--coverage` and `--trace` cannot be asked for

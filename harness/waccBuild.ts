@@ -36,7 +36,7 @@ type WaccApi = {
   ) => { wasm: Uint8Array; described: string };
   describeSeparator: () => string;
   covTableFiles: (paths: string[], sources: string[], entry: string) => string;
-  /** Trace instrumentation — an ordered journal of branches *and array indices*. `harness/ctTrace.ts`. */
+  /** Trace instrumentation — an ordered journal of branches *and array indices*. `wac ctcompare`. */
   emitFilesTraced: (paths: string[], sources: string[], entry: string) => Uint8Array;
   traceTableFiles: (paths: string[], sources: string[], entry: string) => string;
   /** The same with the journal sized by the caller — `issues/lang/0059`. */

@@ -26,7 +26,7 @@ import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFiles, bindgenDeclinedFiles, bindgenWire, blockedFiles, buildFiles, covTableFiles,
          describeSeparator, diagnoseGraph, exportSigsFiles,
          wireHasErrors,
-         emitFilesCovered, emitFilesTraced, traceTableFiles,
+         emitFilesCovered, emitFilesTraced, emitFilesTracedSlots, traceTableFiles,
          manifestWire } from "../src/api.wac";
 import { Built } from "../src/emit.wac";
 import { withManifestSection } from "../src/manifest.wac";
@@ -144,7 +144,7 @@ string[] exactly(string[] xs, i32 n) {
  */
 string usage() {
   return "usage: wac check|compile|bindgen <entry.wac> [out]   # --js for bindgen's glue\n"
-       + "       wac build <entry.wac> -o <stem> [--coverage|--trace] [--quiet]\n"
+       + "       wac build <entry.wac> -o <stem> [--coverage|--trace [--trace-slots n]] [--quiet]\n"
        + "                [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]";
 }
 
@@ -166,7 +166,7 @@ string[] positionals(Cli cli, i32 argc) {
   i32 i = 1;
   while (i < argc) {
     string a = string.fromBytes(cli.arg(i).wait());
-    if (a == "-o") { i = i + 2; continue; }
+    if (a == "-o" || a == "--trace-slots") { i = i + 2; continue; }
     if (a.len() > 0 && a.slice(0, 1) == "-") { i = i + 1; continue; }
     out[n] = a;
     n = n + 1;
@@ -217,11 +217,35 @@ string unknownFlag(Cli cli, i32 argc) {
     if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
     if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
         && a != "--allow-run" && a != "--quiet" && a != "--js" && a != "--coverage"
-        && a != "--trace") {
+        && a != "--trace" && a != "--trace-slots") {
       return a;
     }
   }
   return "";
+}
+
+/**
+ * The number after `--trace-slots`, or 0 for the compiler's own size.
+ *
+ * **A journal a caller can size is why this exists.** The default is 2^22 events, and a routine that
+ * produces more cannot be checked for secret dependence at all — the routines that overflow being
+ * exactly the ones designed to be expensive. A KDF's cost is the function rather than a parameter of
+ * it: one bcrypt hash is 8.2 million events. `wac tracestat` reports what a run *wanted*, so the
+ * second attempt is sized rather than doubled. `issues/lang/0059`.
+ */
+i32 traceSlots(Cli cli, i32 argc) {
+  for (i32 i = 1; i + 1 < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) != "--trace-slots") { continue; }
+    u8[] d = string.fromBytes(cli.arg(i + 1).wait()).toBytes();
+    if (d.len() == 0) { return 0; }
+    i32 v = 0;
+    for (i32 k = 0; k < d.len(); k++) {
+      if (d[k] < 48 || d[k] > 57) { return 0; }
+      v = v * 10 + (d[k] - 48);
+    }
+    return v;
+  }
+  return 0;
 }
 
 /** The value after `-o`, or "". */
@@ -373,7 +397,10 @@ export i32 main(Core core, Cli cli) {
   u8[] wasm = u8[0]();
   if (covered || traced) {
     blocked = blockedFiles(paths, texts, entry);
-    wasm = covered ? emitFilesCovered(paths, texts, entry) : emitFilesTraced(paths, texts, entry);
+    i32 slots = traceSlots(cli, argc);
+    wasm = covered ? emitFilesCovered(paths, texts, entry)
+                   : (slots > 0 ? emitFilesTracedSlots(paths, texts, entry, slots)
+                                : emitFilesTraced(paths, texts, entry));
     sigs = exportSigsFiles(paths, texts, entry);
     types = bindTypesFiles(paths, texts, entry);
   } else {

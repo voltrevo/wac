@@ -1472,20 +1472,34 @@ ladder at `weierstrass.wac:120`; x25519 uniform over 1.6 million events. Two thi
     pair written with different shapes parts at event 1 — the driver rather than the routine. That
     cost a measurement before it was noticed.
 
-`harness/ctTrace.ts` stays, and not for the test: `packages/crypto/ct.ts` regenerates the README's
-side-channel table from it. That is 109 lines of tool plus 313 of harness, and it is *not* a test
-conversion — but it is the last thing holding either file, so here is what it would take, measured
-rather than guessed:
+**`packages/crypto` has no TypeScript left but its oracles — 2026-08-19.** `ct.ts` and
+`harness/ctTrace.ts` are gone, 422 lines, replaced by `packages/crypto/tools/ct.wac`. The two things
+that entry said it would take were built: `--trace-slots N` on `wac build`, and `wac tracestat`, which
+prints `events <n> wanted <w> slots <c>` so an overflowing run says exactly how large the next one has
+to be rather than leaving a caller to double and retry. One bcrypt hash is 8.2 million events against
+a default of 4.2 million slots, so this is the ordinary case for a KDF and not an edge.
 
-  - **`--trace-slots N` on `wac build`.** The table has a `bcryptPbkdf` row, and a single bcrypt hash
-    is 129 key expansions — far past the default journal. `ct.ts` handles that by reading the
-    overflowing run's own event count and recompiling to fit, which is what `emitFilesTracedSlots`
-    exists for and what the CLI has no flag for. Without it the row goes back to reading *not
-    measured*, and "we did not measure it" and "it is fine" look identical in a table that omits a row.
-  - **An event count for a single run.** `ctcompare` reports one on `same <n>` and the table wants it
-    on every row, including the leaking ones. A `--count` mode, or the number on `differs` too.
+The table it regenerates is strictly better than the one it replaces:
 
-Neither is hard and neither is a test. Whoever wants `crypto` to have no TypeScript at all — it has no
+  - **`p256PublicKey` was a row the old tool could not produce.** The README carried `~2,000,000` and
+    `weierstrass.wac:120` by hand — a hand-written figure and a hand-written line in a table whose
+    whole purpose is that published figures can be regenerated. Both are measured now: 3,065,278.
+  - **A path split names where one run stood.** The old tool reported "control flow diverges" and
+    nothing else, which is why the p256 line was hand-written in the first place. The wording carries
+    the caveat that made it worth omitting — `ghash.wac:36` is where *one* run was when the two
+    stopped agreeing, and need not itself be the point that reads the secret.
+  - **Every count is one higher, uniformly**, because a run is a program whose `main` calls the
+    routine and `main`'s entry is an event. Stated in the README rather than subtracted.
+
+What is left in `packages/crypto` is three oracles — `mlkem_oracle.ts`, `rsaOracle.ts`,
+`bench/hash.ts` — and `cov.ts`, which is a coverage driver rather than a test.
+
+Filed on the way: `issues/lang/0162`. `ct.wac` declared a `struct Stat` for `tracestat`'s three
+numbers, and a program that declares a struct `platform.wac` also declares compiles cleanly and will
+not start — the linker qualifies the platform one, `Cli.stat`'s funcref signature carries the
+qualified spelling, no dispatcher is emitted under it, and the host says "the manifest describes no
+Cli" while describing one. That cost about twenty minutes, and the property is already asserted by
+`packages/platform/test/wac/native_manifest_test.wac` — which has no case with a colliding name.
 `.test.ts` as of 2026-08-19 — takes these two.
 
 **`tor/ctor_live.test.ts` is not blocked, it is unverifiable here**: there is no C tor on this machine,
