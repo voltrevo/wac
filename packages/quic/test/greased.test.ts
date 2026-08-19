@@ -16,7 +16,7 @@
 //
 // ## The oracle, and why it is different from the other two
 //
-// `packet.test.ts` and `initial.test.ts` read a packet quinn *sent to nobody* — Deno's client aimed
+// `test/wac/packet_test.wac` and `test/wac/initial_test.wac` read a packet quinn *sent to nobody* — Deno's client aimed
 // at a dead socket, which needs no server and no certificate. This one needs an answer, so it stands
 // up a real Deno QUIC server and replays a genuine Initial at it over plain UDP.
 //

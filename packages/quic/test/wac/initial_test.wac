@@ -1,0 +1,61 @@
+// The Initial keys, judged by whether quinn's own first flight decrypts.
+//
+// `design/system/0007` step 3, and the first step where being wrong is invisible without an oracle:
+// a key that is wrong in one bit produces bytes exactly as random-looking as a right one. There is
+// nothing to inspect and nothing to reason about — either the peer's packet opens or it does not.
+//
+// **What one passing assertion establishes.** RFC 9001's initial salt, transcribed from memory; the
+// four HKDF labels; the sample offset for header protection; the nonce construction; and that the
+// AAD is the *unmasked* header. Every one of those is load-bearing, so the ClientHello coming out
+// the other end is the whole chain at once. That is the argument for testing this against a peer
+// rather than against a fixture of our own making — and `./minted.wac` is what keeps the peer real.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
+import { firstCryptoHandshakeType, hp, iv, key, open, secret } from "./initial_probe.wac";
+import { anInitial } from "./minted.wac";
+
+export string test_quinns_initial_decrypts_to_a_crypto_frame_carrying_a_clienthello(
+    Core core, Cli cli) {
+  T t = T.create();
+  u8[] packet = anInitial(t, core, cli, "initial-open");
+  if (packet.len() == 0) { return t.report(); }
+
+  u8[] plain = open(packet, false);
+  // An empty answer is every failure at once — bad salt, bad label, wrong sample offset, masked AAD.
+  // There is no diagnosis to print here, which is exactly why the assertion is worth having.
+  t.isTrue(plain.len() > 0,
+           "the packet did not open: the derivation is wrong somewhere and only the peer can say so");
+  if (plain.len() == 0) { return t.report(); }
+
+  // RFC 9000 §19: frame type 0x06 is CRYPTO, and inside it an offset, a length, then the TLS
+  // handshake — handshake type 1 being ClientHello.
+  //
+  // Read with the package's **own varint decoder**, through the probe. The first version of this
+  // assumed the offset and length were a byte each and read the type one byte early: quinn's
+  // ClientHello is 280 bytes, so its length is `41 18`, the two-byte form. Guessing a varint's width
+  // is the exact mistake `src/varint.wac` exists to prevent, and a test does not get an exemption.
+  t.eqI32(firstCryptoHandshakeType(plain), 0x01, "the first CRYPTO frame should carry a ClientHello");
+  return t.report();
+}
+
+export string test_the_keys_are_the_right_shapes_and_the_two_directions_differ() {
+  T t = T.create();
+  u8[] dcid = decoded("8394c8f03e515708");
+
+  t.eqI32(key(dcid).len(), 16, "AES-128-GCM key");
+  t.eqI32(iv(dcid).len(), 12, "a GCM nonce base");
+  t.eqI32(hp(dcid).len(), 16, "the header-protection key");
+
+  // Client and server derive from the same connection id and must not land on the same secret — the
+  // labels are the only thing separating them, and swapping them is a silent disaster.
+  string client = string.fromBytes(hexEncode(secret(dcid, false)));
+  string server = string.fromBytes(hexEncode(secret(dcid, true)));
+  t.neI32(client == server ? 1 : 0, 1, "client and server initial secrets must differ");
+  t.eqI32(secret(dcid, false).len(), 32, "a SHA-256 secret");
+  return t.report();
+}
