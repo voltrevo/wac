@@ -24,9 +24,12 @@
 // that directory exists (the launcher resolves bundle names from its own `cwd`) and pays for it in
 // file copies rather than process starts.
 //
-// Of the 12s that remain, **8s is the two cases that are supposed to reach their timeout** — the node
-// that never announces itself and the wait for something never said, at `timeout 4000` each. Those
-// are the tests, not overhead: the rest of the file is thirteen launcher runs and their children.
+// Of what remains, **half is the two cases that are supposed to reach their timeout** — the node that
+// never announces itself and the wait for something never said. Those are the tests rather than
+// overhead, but the bound is a number somebody chose, so it is now chosen from a measurement: 2000ms
+// against 200-470ms for a node that does announce, which took the file from 12.0s to 7.8s. The
+// reasoning is at the first of the two cases; the rest of the file is thirteen launcher runs and
+// their children.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Stat, FileResult } from "../../../platform/src/platform.wac";
@@ -222,9 +225,17 @@ export string test_a_node_that_never_announces_itself_fails_the_run(Core core, C
   Fixture f = fixture(t, cli, "ghost");
   if (!f.ok) { t.fail(f.error); return t.report(); }
   // `alpha` will print "waiter: running" and never this. The timeout is seconds rather than the
-  // two-minute default because this case is *expected* to reach it.
+  // two-minute default because this case is *expected* to reach it — so the bound is this test's
+  // whole cost, paid on every run, and it is set from a measurement rather than by feel.
+  //
+  // **Two seconds, against 200-470ms for a node that does announce.** Measured 2026-08-19 on this
+  // machine with three agents on it and a load average near ten: the cheapest case in this file is
+  // 513ms end to end, one that brings a network up and runs work across it is 708ms, and one that
+  // waits for a later state is 972ms. What has to fit inside the bound is `alpha` starting and
+  // printing its marker, because the assertion below is that a node which *is* up is not reported
+  // down. Four seconds was eight to twenty times that; two is four to ten, under load.
   describe(cli, f, "net.txt", string[](
-    "timeout 4000",
+    "timeout 2000",
     "node alpha | waiter: running    | waiter.worker.js",
     "node ghost | never printed this | waiter.worker.js",
     "run  count |                    | wc.worker.js counted.txt"));
@@ -398,7 +409,7 @@ export string test_a_wait_for_something_a_node_never_says_fails(Core core, Cli c
   Fixture f = fixture(t, cli, "waitnever");
   if (!f.ok) { t.fail(f.error); return t.report(); }
   describe(cli, f, "net.txt", string[](
-    "timeout 4000",
+    "timeout 2000",
     "node alpha | waiter: running | waiter.worker.js",
     "wait alpha | never says this |",
     "run  count |                 | wc.worker.js counted.txt"));
