@@ -62,7 +62,7 @@ Deno.test("[§wac-cli-nocaps-5hq2xn9] wac run: a main that takes no capabilities
 // `main` params now.
 //
 // `buildNative` is what builds `wacland`, and it needs cargo. If cargo is absent this asserts nothing
-// and says so — the pattern `packages/platform/test/native.test.ts` sets out: "silent skipping is how a
+// and says so — the pattern `packages/platform/test/wac/native_test.wac` sets out: "silent skipping is how a
 // differential test comes to compare nothing".
 Deno.test("[§wac-cli-nocaps-5hq2xn9] wacland: a main that takes no capabilities runs there too", async () => {
   const cargo = await new Deno.Command("cargo", { args: ["--version"], stdout: "null", stderr: "null" })

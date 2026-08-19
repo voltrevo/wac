@@ -159,6 +159,6 @@ inside `packages/platform` for an hour, which is how long it took the suite to p
 567 MB `target/` is walked by every test that walks that package, and *changes while the build runs*.
 `target/` is gitignored: all of it is reproducible from `Cargo.toml` and `Cargo.lock`.
 
-`packages/platform/test/native.test.ts` runs `example/wacland.wac` on this host and on Deno and compares
+`packages/platform/test/wac/native_test.wac` runs `example/wacland.wac` on this host and on Deno and compares
 them. It builds through cargo and **skips loudly** when cargo is absent, with the Deno half still
 asserting — a silent skip is how a differential test comes to compare nothing.
