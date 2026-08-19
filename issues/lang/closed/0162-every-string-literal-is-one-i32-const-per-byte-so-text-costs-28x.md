@@ -1,7 +1,9 @@
 # 0162 — every string literal is one `i32.const` per byte, so text costs 2.8× in the module
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-a
+- **Closed:** 2026-08-19
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
 - **Kind:** performance
@@ -71,3 +73,25 @@ rather than a patch.
 A cheaper partial: the two-byte LEB is only needed because the value is signed. Nothing else here
 would change if the loop emitted the byte through a form with no sign bit to worry about — but wasm
 has no unsigned `i32.const`, so that is not available, and the honest fix is the data segment.
+
+## Fixed — 2026-08-19
+
+A string literal is three instructions now: the offset, the length, and `array.new_data` over one
+passive segment that accumulates as literals are met, so a literal's offset is the blob's length at
+the moment it is emitted. **The compiler went 851,775 to 795,535 bytes** — 56 KB, 6.6% — and is still
+a fixed point.
+
+Two cases the tests found, and both are worth knowing:
+
+- **A constant expression cannot name a data segment.** The data count section sits between element
+  and code, so a global's initialiser is validated before any segment index exists:
+  `const string G = "global";` was rejected. A literal in that position keeps `array.new_fixed` and
+  its old cost. Module-level string constants are few and the section ordering is not negotiable.
+- **Gating the section on `data.len > 0` is the same question as "was it used" only until a literal
+  is empty.** `string s = "";` appends nothing and still emits `array.new_data` over segment 0, so
+  the code referred to a segment that was never written. The blob's length is what the *offsets*
+  are; whether a segment exists is what the *code* needs. Tracked separately now.
+
+All three engines accept it: V8 through the `wac` binary, wasmtime through `wacland` running
+`packages/sh` — which is nothing but strings — and Chromium through the browser test. That was the
+risk that made this a report rather than a patch when filed, and it is discharged.
