@@ -100,6 +100,49 @@ itself is sound; what is missing is only the ability to climb past where you hap
 It is the first thing an outside user does. `cd src && wac run main.wac` is an ordinary way to run a
 program, and the error names the manifest they are looking straight at.
 
+## What the behaviour should be
+
+`spec/spec/imports.md` `§wac-import-project-4hq7mnv` already says it, and says it in the words this
+violates:
+
+> `@/` is the root of the **project containing the importing file** — the nearest directory at or
+> above it holding a `wac.json5`. **Not the directory the compiler was started in**, and not the
+> entry's project.
+
+So:
+
+1. Resolve the **importing file** to an absolute path, then search upward from its own directory.
+2. Stop at the provider boundary. D7 lists four — the embedded package root, the Git checkout root,
+   the mapped `subdir`, and the local-filesystem boundary. **The working directory is not one of
+   them.**
+3. The nearest `wac.json5` at or above the file wins.
+4. No manifest inside the boundary is a compile error naming the specifier — never a fallback.
+
+The property that makes this checkable, and the one to write the test against: **where you were
+standing and how you spelled the entry cannot change what a program means.** Every row of the table
+above should give the same answer as the absolute spelling of the same file — 9 for `src/main.wac`
+and `src/util/deep.wac`, 4 for `sub/inner.wac` — and today six of them do not.
+
+## Both compilers have it, so the differential cannot see it
+
+`@/` is one rule implemented twice, and `projectspec_test.wac` exists to compare them. It cannot
+catch this: the reference fails the same way, in nearly the same words.
+
+    $ cd proj/src && deno run -A harness/referenceRun.ts main.wac main
+    error: `@/lib.wac` needs a project: no `wac.json5` above main.wac
+
+Two implementations cannot see a mistake they share. Whatever is done here has to be done to both,
+and the case that guards it has to assert an *answer* rather than agreement — the two agreeing is
+exactly the state we are in.
+
+## One thing the fix has to decide
+
+With the boundary at the filesystem root, a stray `wac.json5` anywhere above a file — in `$HOME`, in
+`/tmp`, in a directory somebody made years ago — becomes that file's project root. D7 says the
+local-filesystem boundary and that is the reading, but it is worth taking deliberately rather than
+inheriting: it is the failure mode where a program compiles, silently, against a `@/` nobody meant.
+The alternatives are a checkout root or an explicit stop, and neither is written down anywhere yet.
+
 ## The decision, which is why this is filed rather than fixed
 
 The obvious fix — resolve the entry to an absolute path before searching — changes what the found
