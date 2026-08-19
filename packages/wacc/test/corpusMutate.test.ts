@@ -173,59 +173,92 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
   }
 
   /**
-   * **The reference's half, cached — it was 12.6s of this test's 13.0s.**
+   * **The reference's half, cached per mutant — it was 12.6s of this test's 13.0s.**
    *
-   * Measured 2026-08-19: the reference compiling 341 mutants is 12 639ms and our checker judging them
-   * is 776ms. The mutants are deterministic — mutation `i % 26` applied to corpus file `i` — so the
-   * reference's answers are a pure function of the corpus, the mutations and `compiler/`. That makes
-   * them cacheable on exactly those things.
+   * Measured 2026-08-19: the reference compiling the mutants is 12.6s of a 13.0s run and our checker
+   * judging them 776ms — 451 of them now, where that measurement said 341, because the corpus has grown.
+   * The mutants are deterministic — mutation `i % 26` applied to corpus file `i` — so a mutant's answer
+   * is a pure function of *its own* sources and `compiler/`.
+   *
+   * **One file per mutant, keyed on its own closure.** The first version of this cached all 341 answers
+   * in one entry keyed on the whole corpus, which meant an edit to any of its 900-odd files recomputed
+   * every answer: 16.1s on the gate that pulled somebody's change, 2.4s otherwise, and the gate pulls.
+   * Keyed per mutant, an edit invalidates the mutants that actually read the edited file.
+   *
+   * The name is stable and the key lives *inside* the file rather than in its name, because
+   * `buildCache.ts` prunes a cache directory to 120 entries — 341 content-keyed names would evict each
+   * other and never hit. A file whose key does not match is recomputed and rewritten, which is the same
+   * invalidation with none of the churn.
+   *
+   * Measured, all four directions: **4.0s warm**, 17.4s when `compiler/` changes and every answer is
+   * recomputed, **6.8s after a real edit** to `packages/codec/src/hex.wac` — the mutants that read it —
+   * and 4.0s when only an mtime moved, since the key is content. The one-deep file means reverting an
+   * edit recomputes rather than finding the older answer, which is a trade for keeping 451 files instead
+   * of an unbounded pile.
    *
    * **Ours is not cached and must not be**: it runs on every mutant on every pass. A differential with
    * one remembered side is still a differential; one with two is nothing. And the sweep's own floor is
    * the canary — an empty or wrong set of answers leaves `broken` at zero, which throws "no mutant was
    * measurable" rather than passing quietly.
    */
+  const MUTANT_CACHE = ".cache/corpus-mutant";
+
   async function referenceAnswers(): Promise<RefAnswer[]> {
     const compiler = await compilerKeyParts();
-    const compute = (): RefAnswer[] =>
-      mutants.map(({ name, mutated }) => {
-        try {
-          const r = wacCompile(closureOf(`/${name}`).set(`/${name}`, mutated), `/${name}`);
-          if (r.ok) return { kind: "ok" };
-          const d = r.diagnostics;
-          return {
-            kind: "diags",
-            phases: d.map((x) => x.phase),
-            message: d[0].message,
-            line: d[0].line,
-            col: d[0].col,
-            count: d.length,
-          };
-        } catch {
-          return { kind: "threw" };
-        }
-      });
+    const answerOf = (name: string, mutated: string): RefAnswer => {
+      try {
+        const r = wacCompile(closureOf(`/${name}`).set(`/${name}`, mutated), `/${name}`);
+        if (r.ok) return { kind: "ok" };
+        const d = r.diagnostics;
+        return {
+          kind: "diags",
+          phases: d.map((x) => x.phase),
+          message: d[0].message,
+          line: d[0].line,
+          col: d[0].col,
+          count: d.length,
+        };
+      } catch {
+        return { kind: "threw" };
+      }
+    };
     // No compiler identity means no key that could be trusted, so the answers are computed. The
     // alternative — keying on the sources alone — would serve a stale reference's opinion after a
     // change to `compiler/`, which is the one thing this test is comparing against.
-    if (compiler === null) return compute();
-    const key = await contentKey([
-      "corpus-mutants 1",
-      ...compiler,
-      ...entries.flatMap(([name, src]) => [name, src]),
-      ...mutants.flatMap((m) => [m.name, m.mutated]),
-    ]);
-    const path = await cached("corpus-mutants", key, ".json", async (at) => {
-      await Deno.writeTextFile(at, JSON.stringify(compute()));
-    });
-    return JSON.parse(await Deno.readTextFile(path)) as RefAnswer[];
+    if (compiler === null) return mutants.map((m) => answerOf(m.name, m.mutated));
+
+    await Deno.mkdir(MUTANT_CACHE, { recursive: true }).catch(() => {});
+    const out: RefAnswer[] = [];
+    for (const { name, mutated } of mutants) {
+      const scope = closureOf(`/${name}`).set(`/${name}`, mutated);
+      const key = await contentKey([
+        "corpus-mutant 1",
+        ...compiler,
+        ...[...scope].flatMap(([at, src]) => [at, src]),
+      ]);
+      const at = `${MUTANT_CACHE}/${name.replaceAll("/", "_")}.json`;
+      let answer: RefAnswer | null = null;
+      try {
+        const held = JSON.parse(await Deno.readTextFile(at)) as { key: string; answer: RefAnswer };
+        if (held.key === key) answer = held.answer;
+      } catch {
+        // Not there, or not readable as ours: recompute.
+      }
+      if (answer === null) {
+        answer = answerOf(name, mutated);
+        await Deno.writeTextFile(at, JSON.stringify({ key, answer })).catch(() => {});
+      }
+      out.push(answer);
+    }
+    return out;
   }
 
   const answers = await referenceAnswers();
+  // Kept, though the per-mutant cache can no longer produce a short list: this is one answer per
+  // mutant by construction now, and the check costs nothing to leave standing for whatever comes next.
   if (answers.length !== mutants.length) {
     throw new Error(
-      `the reference answered ${answers.length} of ${mutants.length} mutants — a cache entry from a ` +
-        `different corpus would look like this, so nothing below was judged`,
+      `the reference answered ${answers.length} of ${mutants.length} mutants, so nothing below was judged`,
     );
   }
 
