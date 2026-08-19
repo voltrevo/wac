@@ -99,7 +99,7 @@ Two things the platform change does contribute:
 
 - **`CALL_SLOTS` is now exported from `packages/platform/src/platform.wac`**, so a program can derive its
   limits instead of transcribing the number — `socks.wac` does that as of the same commit
-  (`MAX_CLIENTS = CALL_SLOTS / 4`), and `packages/platform/test/slots.test.ts` fails if the wac constant
+  (`MAX_CLIENTS = CALL_SLOTS / 4`), and `packages/platform/test/wac/slots_test.wac` fails if the wac constant
   and `layout.ts` ever disagree. Whatever budget this issue settles on can be written against that
   constant rather than against a comment.
 - **Exceeding the ring is no longer always silent.** If every slot holds an *answer* nobody collected,

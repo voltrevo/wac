@@ -570,8 +570,6 @@ they find real rules cheaply. What they no longer are is a definition of correct
 |---|---|---|
 | `test/wac/specsingle_test.wac` | the 671 one-file programs the suite **runs** | **the contract** — 303 of 304 illegal refused, 367 of 367 legal silent, the one left named |
 | `test/wac/specmulti_test.wac` | the spec's programs that take more than one file | **the contract** — all 15 illegal refused, all 42 legal silent |
-| `specCheck.test.ts` | the **100** illegal programs read out of the text | 100 of 100 refused, no exceptions at all |
-| `specAccept.test.ts` | the **263** legal programs read out of the text | 263 of 263 silent, from the accepting side |
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; **100%** recall (9,120 of 9,127), held by a 97% floor |
 | `checkSweep.test.ts` | the emitter's **4,148** valid programs of 4,501 | no false alarm, and guarded against an empty run and a narrowed corpus |
 | `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; **99%** recall (989 of 993), held by a 92% floor |
@@ -2531,8 +2529,8 @@ consecutive runs. Keyed per case, the answer is stable.
 | still allowed | `from cor` (module identity), a generic struct that instantiates itself for ever, an enum method named after a variant |
 | the reference-shaped oracles | unchanged — 0 false alarms, 95% and 99% recall |
 
-The three that remain are named per case in `specCheck.test.ts`, and the list fails in both
-directions: a new miss breaks it, and fixing one breaks it too.
+The three that remain are named per case in `test/wac/specsingle_test.wac`, and the list fails in
+both directions: a new miss breaks it, and fixing one breaks it too.
 
 ### 101 of 101 — the contract is met
 

@@ -6,7 +6,7 @@
 // at all, and `SBOX[key]` touches a cache line chosen by the key, which is how AES keys have been
 // recovered from cache timing since 2005. A tool that counts branches calls it perfectly uniform.
 //
-// `harness/ctTrace.ts` is the consumer and `packages/crypto/test/constanttime.test.ts` the real use,
+// `packages/crypto/test/wac/constanttime_test.wac` is the real use,
 // including the assertion that AES leaks at five named lines. This file holds the compiler's half:
 // that the journal records what it claims to, in the order it happened. `issues/lang/0105`.
 //

@@ -40,7 +40,7 @@ private keys through `p256PublicKey`:
 
 The verdict does not depend on the truncation: the traces part at the first differing bit.
 
-`packages/crypto/test/constanttime.test.ts` now records it in the same shape as the `ghash` and `aes`
+`packages/crypto/test/wac/constanttime_test.wac` now records it in the same shape as the `ghash` and `aes`
 leaks — asserted *as* a leak, so a fix fails the test and forces the README's table to change with it.
 
 ## Who reaches it
@@ -59,7 +59,7 @@ In this repository that is `packages/tls`'s certificate chains and `packages/ssh
 
 The side-channel table in `packages/crypto/README.md` had **no asymmetric row at all**. It listed
 sha256, chachaBlock, poly1305, x25519Base, ghash, aes and bcryptPbkdf; the absence of P-256 read as
-"not applicable" rather than "never measured". `test/constanttime.test.ts` matched the table, so
+"not applicable" rather than "never measured". `test/wac/constanttime_test.wac` matched the table, so
 nothing was checking it and nothing said so.
 
 Found from the other end: `issues/system/0209` asked why `ed25519Sign` is 63ms where `p256Sign` is

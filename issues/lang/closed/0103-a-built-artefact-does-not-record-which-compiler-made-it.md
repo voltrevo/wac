@@ -14,7 +14,7 @@ Both compilers now write the standard `producers` custom section — `processed-
 `processed-by wac-reference` — so a module says which one made it, and `wasm-objdump` reads it
 without being taught anything. **Both, and different**, which is the property that matters: a marker
 on one compiler only would make absence mean "the other one", when absence also means "built before
-this landed". `packages/platform/test/producer.test.ts` builds the same program under both settings
+this landed". `packages/platform/test/wac/producer_test.wac` builds the same program under both settings
 of `WAC_APP_FROM` and reads the marker back.
 
 The third spelling noted below (`WAC_APP_FROM` beside `WAC_WASM_FROM` and `WAC_BIND_FROM`) is still

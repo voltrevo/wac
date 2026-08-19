@@ -53,7 +53,7 @@ missing a function the host asks for by name.
 **Both bundlers are done, 2026-08-12.** `build.ts` compiles applications with wacc by default
 (`issues/lang/0106`), and `native.ts` now builds its manifest from `bindTypesFiles`,
 `exportSigsFiles` and the module's own export list. The wasmtime host's 16 tests pass against
-wacc-built artifacts, and `packages/platform/test/native_manifest.test.ts` holds the property the
+wacc-built artifacts, and `packages/platform/test/wac/native_manifest_test.wac` holds the property the
 host actually depends on: every funcref field names a signature the manifest has a dispatcher for.
 
 One thing that mapping had to solve. The emitter collapses `Pending<u8[]?>` into `Pending<u8[]>` —

@@ -285,7 +285,7 @@ export string covTableFiles(string[] paths, string[] sources, string entry) {
 }
 
 /**
- * The same module instrumented for a *trace* rather than for coverage — `harness/ctTrace.ts`.
+ * The same module instrumented for a *trace* rather than for coverage — `wac ctcompare` reads one.
  *
  * Read through the same three accessors, because a consumer written against one compiler should
  * work against the other: `__cov_init()` clears the journal, `__cov_len()` is its capacity, and

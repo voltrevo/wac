@@ -22,7 +22,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 | first argument | what happens |
 |---|---|
 | `prog.wasm`, or a stem with `prog.json` beside it | run that program: the module carries its own manifest, or the pair does |
-| `run`, `test`, `sh`, `validate`, `covdump` | this host's own commands — compiling, running, the shell, and the two that ask about a built module |
+| `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` |
 
 A name ending in `.wasm` is a bundle *claim* whether or not the file exists, and is reported as a file
@@ -33,12 +33,15 @@ command 'prog.wasm'*, which is a message about the wrong thing.
 wac check   main.wac                 # diagnostics, and nothing written
 wac compile main.wac [out.wasm]      # a module
 wac build   main.wac -o stem         # a module carrying a manifest, and stem.json beside it
+wac build   main.wac --trace -o stem # ...instrumented for a trace, and stem.trace beside it
 wac bindgen main.wac [--js]          # the glue a host calls it through
 wac run     main.wac [args…]         # compile into a temporary file and run it
 wac test    [path…] [--ignore p,…]   # every `test*` export under each path
 wac sh      [-c script]              # the shell, sealed unless granted
 wac validate mod.wasm […]            # whether the engine accepts each module, without running it
 wac covdump mod.wasm                 # run `main` under the counters and print each one
+wac ctcompare [--all] a.wasm b.wasm  # two traced runs, and where their journals differ
+wac tracestat mod.wasm               # one traced run's size, and what it wanted
 ```
 
 `validate` answers the one question `WebAssembly.validate` answers on a JavaScript host and nothing in
@@ -197,3 +200,41 @@ is silence — the summary names the files and says which.
 declared, none granted, and `wac run` runs it. This is the language's central claim, so the tools have
 to be able to express its smallest case — all three hosts read `main`'s parameter list rather than
 building a world and hoping the program wants it.
+
+`[§wac-cli-ctcompare-6knq4wp]` **`ctcompare` answers with the comparison, not with the two journals.**
+A module built `--trace` records an ordered journal of `(site, value)` — every branch taken and every
+array index — and a real one is large: `p256PublicKey` produces about three million events. Printing
+both through `covdump` is tens of megabytes of text for a caller to parse twice to learn one number,
+so the comparison happens where the modules are and one line comes back:
+
+| line | meaning |
+|---|---|
+| `same <n>` | the two journals are identical, over `n` events |
+| `differs <i> <sa> <va> <sb> <vb>` | at event `i`, where each side stood; `-1 -1` means that run had ended |
+| `truncated <a> <b>` | **nothing diverged, and a journal was too small to be sure** — each side's event count |
+
+`--all` replaces the first line with one per divergent site — `site <i> <site> <va> <vb>`, once per
+site — and stops at `split <i> <sa> <sb>`, where the two runs are at *different* points rather than at
+one point with different values. Past a split the journals are not aligned and every later difference
+is an artefact of the misalignment. It prints `same <n>` when nothing diverged, because no output at
+all is also what a command that never ran produces.
+
+**`same` carries the event count**, because agreement over nothing is not agreement: a mistyped
+export name calls nothing and records nothing, and two empty journals match perfectly. A caller that
+did not check the number would be told every routine it asked about is constant-time.
+
+**Truncation is checked after the walk, not before it.** A difference found inside the prefix both
+journals kept is real — the events are aligned up to there, and what was dropped cannot un-differ
+them — so an overflowing run is still measurable, which matters because the routines that overflow are
+the expensive ones. What truncation invalidates is `same`.
+
+**`tracestat <module.wasm>`** is the same facility asking about one run rather than two. It prints
+`events <n> wanted <w> slots <c>`: what was recorded, what happened whether or not there was room, and
+the room there was. They differ exactly when the journal overflowed, and `w` is the number to pass to
+`--trace-slots` to make the next run fit — reported rather than left for a caller to double and try
+again, because the routines that overflow are the ones designed to be expensive and one bcrypt hash is
+8.2 million events.
+
+The site indices are the ones `stem.trace` is keyed by: `<index>\t<line>\t<col>\t<kind>\t<file>`,
+the same shape `--coverage` writes to `stem.cov`. `--coverage` and `--trace` cannot be asked for
+together; they are one counter array meaning two things.

@@ -1303,7 +1303,7 @@ export const i32 GRANT_ENV = 8;
  *
  * Stated here rather than transcribed into each program, because it has already changed twice (four,
  * sixteen, 128) and every copy of the old number becomes a limit nobody can explain.
- * `test/slots.test.ts` fails if this and `host/layout.ts` disagree.
+ * `test/wac/slots_test.wac` fails if this and `host/layout.ts` disagree.
  */
 export const i32 CALL_SLOTS = 128;
 

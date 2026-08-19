@@ -1,0 +1,121 @@
+// A built artefact says which compiler made it.
+//
+// Two compilers build this repository — `WAC_APP_FROM` picks one — and their output differs by about
+// a fifth in size (`issues/lang/0107`). Until then nothing in either artefact recorded which one ran,
+// so "what built this page" was answered by whatever the environment happened to be when somebody
+// typed the command, and a page built before the default flipped was indistinguishable from one built
+// after. `issues/lang/0103`, criterion 2.
+//
+// The marker is the standard `producers` custom section rather than anything invented here, so
+// `wasm-objdump` and every other tool that already reads it does.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The section reader is here rather than borrowed
+// from `packages/wacc/test/wac/wasm_probe.wac`: a test in one package reaching into another package's
+// test helpers is a dependency the packages themselves do not have, and this is thirty lines.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/** LEB128 unsigned, advancing `pos[0]`. */
+i32 leb(u8[] b, i32[] pos) {
+  i32 r = 0;
+  i32 shift = 0;
+  i32 x = 0x80;
+  while ((x & 0x80) != 0 && pos[0] < b.len()) {
+    x = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    r = r | ((x & 0x7F) << shift);
+    shift = shift + 7;
+  }
+  return r;
+}
+
+/** A length-prefixed name, advancing `pos[0]`. */
+string name(u8[] b, i32[] pos) {
+  i32 n = leb(b, pos);
+  if (n < 0 || pos[0] + n > b.len()) { return ""; }
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[pos[0] + i]; }
+  pos[0] = pos[0] + n;
+  return string.fromBytes(out);
+}
+
+/**
+ * Every `processed-by` value in a module's `producers` section, in order.
+ *
+ * Section id 0 is a custom section and there may be several, so each one's own name is read before
+ * anything else is believed about its body.
+ */
+string[] producedBy(u8[] b) {
+  string[] out = string[8](fill: "");
+  i32 found = 0;
+  i32[] pos = i32[1]();
+  pos[0] = 8;
+  while (pos[0] + 1 < b.len()) {
+    i32 id = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 size = leb(b, pos);
+    i32 end = pos[0] + size;
+    if (id == 0 && name(b, pos) == "producers") {
+      i32 fields = leb(b, pos);
+      for (i32 f = 0; f < fields && pos[0] < end; f++) {
+        string field = name(b, pos);
+        i32 values = leb(b, pos);
+        for (i32 v = 0; v < values && pos[0] < end; v++) {
+          string value = name(b, pos);
+          name(b, pos);                 // the version, which neither compiler has a number for yet
+          if (field == "processed-by" && found < 8) { out[found] = value; found = found + 1; }
+        }
+      }
+    }
+    pos[0] = end;
+  }
+  string[] r = string[found](fill: "");
+  for (i32 i = 0; i < found; i++) { r[i] = out[i]; }
+  return r;
+}
+
+/** Build a program with `WAC_APP_FROM` set as given, and read the marker back. */
+string builtBy(T t, Cli cli, string label, string from) {
+  string dir = root(cli) + "/.cache/producer-" + label;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  // **A program with no imports**, written here rather than an example from the tree.
+  //
+  // The subject is the *marker* — which compiler stamped the module — so the program only has to
+  // build under both. `hello.wac` cannot: it takes a `Core`, and `packages/platform` is wacc-only now
+  // that `Pending.then` is a lambda, which the reference compiler does not have. Using it here would
+  // make this test fail for a reason that has nothing to do with what it checks.
+  cli.writeFile(dir + "/stamp.wac", "export i32 main() { return 0; }\n".toBytes()).wait();
+
+  // `unset` rather than leaving it alone, so the default case is the default rather than whatever
+  // this run inherited.
+  string env = from.len() == 0 ? "unset WAC_APP_FROM;" : "WAC_APP_FROM='" + from + "'";
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c", env + " exec deno run -A packages/platform/native.ts '" + dir +
+             "/stamp.wac' -o '" + dir + "/hello'"), u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           label + ": the build — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+  if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return "<did not build>"; }
+
+  FileResult f = cli.readFile(dir + "/hello.wasm").wait();
+  t.isTrue(f.ok, label + ": the module is there — " + f.error);
+  string answer = f.ok ? joined(producedBy(f.bytes), ",") : "<no module>";
+  cli.remove(dir, true).wait();
+  return answer;
+}
+
+export string test_a_built_module_names_the_compiler_that_made_it_and_the_two_names_differ(
+    Core core, Cli cli) {
+  // **Both, and different** — which is the property. A marker on one compiler only would make
+  // absence mean "the other one", and absence also means "built before this landed".
+  T t = T.create();
+  t.eqStr(builtBy(t, cli, "default", ""), "wacc", "the default is wacc");
+  t.eqStr(builtBy(t, cli, "reference", "reference"), "wac-reference", "and the escape hatch says so");
+  return t.report();
+}

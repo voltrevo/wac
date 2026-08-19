@@ -1,7 +1,11 @@
 // **The contract, for the programs a single file states — all 671 of them.**
 //
-// This replaces what `specCheck.test.ts` and `specAccept.test.ts` measured by reading
-// `wacSpec.test.ts` as text. That extractor finds 101 illegal programs; the suite *executes* 304. The
+// This replaced what `specCheck.test.ts` and `specAccept.test.ts` measured by reading
+// `wacSpec.test.ts` as text, and those two were deleted on 2026-08-19 once the replacement was
+// checked rather than assumed: every one of the 109 tags their extractor finds is in this corpus, and
+// every one of the 266 acceptance tags too — measured, both counts zero-missing — while the corpus
+// carries 525 cases and `specmulti_test.wac` fails when its recorded hash of `wacSpec.test.ts` goes
+// stale. A wider corpus that could rot would not have been a replacement. That extractor finds 101 illegal programs; the suite *executes* 304. The
 // gap is the ceiling of reading a file whose test data is wac source inside template literals — a
 // regular expression finds the calls written in the shape it knows, and the spec does not confine
 // itself to one shape. Recording what the compiler was handed finds all of them, and keeps finding

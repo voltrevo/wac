@@ -1522,7 +1522,7 @@ export struct Env {
    *
    * The second is what the mode is for: a secret-dependent branch is a leak that branch coverage
    * sees, and a secret-dependent *index* — `SBOX[key]` — has no branch at all and is how AES keys
-   * have been recovered from cache timing since 2005. `harness/ctTrace.ts` compares two runs.
+   * have been recovered from cache timing since 2005. `wac ctcompare` compares two runs.
    */
   bool trace;
 
@@ -2638,7 +2638,7 @@ export u8[] emitLinkedCovered(string[] paths, string[] sources, string entry) {
  *
  * Coverage answers "was this reached"; this answers "in what order, and with what index" — which is
  * the question a constant-time check asks, because a secret-dependent index has no branch at all.
- * `harness/ctTrace.ts` runs a function twice with one public input and two secrets and compares.
+ * `packages/crypto/tools/ct.wac` runs a routine with one public input and several secrets and compares.
  */
 export u8[] emitLinkedTraced(string[] paths, string[] sources, string entry) {
   return emitLinkedTracedSlots(paths, sources, entry, 0);
