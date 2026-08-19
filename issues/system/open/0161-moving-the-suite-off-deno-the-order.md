@@ -1473,8 +1473,20 @@ ladder at `weierstrass.wac:120`; x25519 uniform over 1.6 million events. Two thi
     cost a measurement before it was noticed.
 
 `harness/ctTrace.ts` stays, and not for the test: `packages/crypto/ct.ts` regenerates the README's
-side-channel table from it. That tool could be a wac program over `ctcompare --all` now, which is
-worth doing and is not a test conversion.
+side-channel table from it. That is 109 lines of tool plus 313 of harness, and it is *not* a test
+conversion — but it is the last thing holding either file, so here is what it would take, measured
+rather than guessed:
+
+  - **`--trace-slots N` on `wac build`.** The table has a `bcryptPbkdf` row, and a single bcrypt hash
+    is 129 key expansions — far past the default journal. `ct.ts` handles that by reading the
+    overflowing run's own event count and recompiling to fit, which is what `emitFilesTracedSlots`
+    exists for and what the CLI has no flag for. Without it the row goes back to reading *not
+    measured*, and "we did not measure it" and "it is fine" look identical in a table that omits a row.
+  - **An event count for a single run.** `ctcompare` reports one on `same <n>` and the table wants it
+    on every row, including the leaking ones. A `--count` mode, or the number on `differs` too.
+
+Neither is hard and neither is a test. Whoever wants `crypto` to have no TypeScript at all — it has no
+`.test.ts` as of 2026-08-19 — takes these two.
 
 **`tor/ctor_live.test.ts` is not blocked, it is unverifiable here**: there is no C tor on this machine,
 so a port could only be shown to take its skip path. Worth doing by someone who can run it, and not
