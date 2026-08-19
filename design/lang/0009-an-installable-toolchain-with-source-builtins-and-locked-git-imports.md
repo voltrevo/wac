@@ -26,7 +26,7 @@ binary. `wac uninstall [--keep-cache]` removes the binary, the cache, the profil
 metadata, and never a manifest, a lockfile, a source file or a build product.
 
 `app:wacbin` becomes `app:native-binary`, which is what it always was: the generic builder, not the
-dedicated one. *(2026-08-18: done — the task, `packages/platform/nativeBinary.ts`'s usage line,
+dedicated one. *(2026-08-18: done — the task, the native-binary tool's usage line,
 `native/v8/README.md` and the test that names it. Closed issues keep the old spelling, because they
 record what somebody typed on a day.)*
 

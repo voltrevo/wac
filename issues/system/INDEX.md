@@ -6,6 +6,7 @@ record of what has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0215](open/0215-a-socket-can-only-be-closed-outright-so-a-wac-client-cannot-say-it-is-done-speaking.md) | a wac program can `closeSocket` but cannot half-close, so a client that must signal EOF and then read the reply has no call for it; `closeFeed` is the same thing for a child's stdin and its doc comment makes the argument, with the same `wc` example | missing feature | not implemented |
+| [0216](open/0216-the-supported-build-produces-a-wac-with-no-shell.md) | `deno task seed` and `wac:install` both leave `sh.wasm` out of the seed, so `wac sh` answers `unknown command` on a binary built the supported way, while `spec/cli/wac.md` lists it unconditionally | bug | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
 | [0213a](open/0213a-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
 | [0212](open/0212-the-mutation-recall-floor-is-decided-by-filenames-not-by-the-checker.md) | rung 3 pairs each corpus file with `MUTATIONS[i % 7]` over an alphabetical list, so adding one file re-pairs every later one — two gate runs failed under the 97% floor for that reason | bug | wrong answer |
@@ -68,7 +69,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-222 issues, 166 closed.
+223 issues, 166 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
