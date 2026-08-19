@@ -2,7 +2,7 @@
 import "../../../harness/spawnRetry.ts";
 // **A wac program completes a QUIC handshake with a real server.**
 //
-// `complete.test.ts` already completes this handshake, and this is not a duplicate of it. There the
+// `test/wac/complete_test.wac` already completes this handshake, and this is not a duplicate of it. There the
 // socket is TypeScript's: the wac side answers "what bytes do I send" and the test puts them on the
 // wire, keeps the server's reply, and hands it back. That is the right way to check a packet layer and
 // it leaves one question unasked — whether the thing is a program.

@@ -9,7 +9,7 @@
 //   deno task app:build packages/quic/example/handshake.wac --allow-net -o handshake.js
 //   deno run -A --unstable-net handshake.js 127.0.0.1 4433 localhost
 //
-// **Everything here already worked, and none of it had ever run in one process.** `complete.test.ts`
+// **Everything here already worked, and none of it had ever run in one process.** `test/wac/complete_test.wac`
 // completes this same handshake with quinn, but the socket is TypeScript's: the wac side answers
 // "what bytes do I send" and a test puts them on the wire. That is the right way to *check* a packet
 // layer and it leaves one question unasked, which is whether the thing is a program.

@@ -1,6 +1,6 @@
 // **The application epoch: quinn's own 1-RTT packet, opened here.**
 //
-// `complete.test.ts` ends where the handshake does. It sees the server's next packet and asserts one
+// `test/wac/complete_test.wac` ends where the handshake does. It sees the server's next packet and asserts one
 // thing about it — that the top bit is clear, so it is a short header — and says in its own comment
 // that nothing in this package can read one. This is that packet, read.
 //
