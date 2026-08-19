@@ -1479,6 +1479,37 @@ Two things came out of it that were not the port:
     here — it is a rewrite of working code rather than a port of a test — but the sentence is the
     kind of comment that reads as a constraint and is a date.
 
+### `packages/platform`, swept — 2026-08-19
+
+Every file in `packages/platform/test` has now been looked at. The count went 4,799 → about 1,900 of
+convertible-looking lines, and what is left divides into three, which is the useful part:
+
+**Moved today**: `inside`, `pipeline` (one of two), `platform.test.ts` (thirteen of seventeen, into
+`world_test.wac`, `runtimes_test.wac` and `chunking_test.wac`), `frame`, `optimize`, `producer`,
+`app`, `native_manifest`, `slots`.
+
+**Stays, and the file says why in its own header** — these were opened and the argument is theirs,
+not mine:
+
+| file | the argument, theirs |
+|---|---|
+| `aliasing` (161) | the obvious port was tried and **passed with the bug reinstated**; nothing about running a wac program makes two reads pending at once |
+| `listen` (167) | drives the handler table because the address crossing is what is checked; "a wac client would prove the same thing twice" |
+| `datagram` (138) | `test/wac/echod_test.wac` is already its program-side half, and says so; this one is the host handlers |
+| `trapMessage` (72) | three of four moved in August; the one left is the JavaScript glue route |
+| `spawn` (115) | seven moved; the three left hand `spawnChild` a `WorkerLike` this file makes up |
+
+**Stays because the subject is TypeScript** — `marshal`, `browser`, `browser_live`, `fuzz`, the four
+`*_model`, `queue_conformance`, `bytequeue`, `reqbuf`, `ring`, `driver`, `describe`, `schedule`,
+`grants`, `wasmChild`, `subprocess_profile`, and the four bridge tests left in `platform.test.ts`.
+
+**Read only at the header, so not a determination**: `sinks` (140), `keydown` (137), `pointer` (125),
+`unnameable` (104). Each *looks* like host TypeScript — a `void`-versus-`Promise<void>` hazard, a
+browser event translation, `ev.offsetX`, Deno's lossy `readDir` — and looking is what got the
+`bindgen` row above wrong. `unnameable` is the one most likely to have a portable half: the claim that
+a program is told `FAULT_NOT_REPRESENTABLE` rather than "no such file" is about what reaches the
+program. Whoever takes these should open them.
+
 **The lesson this block repeats:** three of these six carry their own verdict in their own header,
 written by whoever last thought about them. Reading the header first would have saved opening four
 files — and `aliasing`'s says not just *that* it stays but that the obvious port was tried and
