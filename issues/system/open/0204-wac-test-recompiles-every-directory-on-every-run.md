@@ -195,3 +195,32 @@ at full compile cost, so nothing stale is served; and `KEEP_MODULES` went from 6
 ninety-odd test files now key into a directory sized for fifty-one chunks and sixty entries evicted the
 thing about to be asked for. Sixty entries measured 30 MB, so two hundred is about 100 MB.
 
+## `wac build` is deliberately *not* cached — 2026-08-19
+
+The obvious next step is the same trick for `wac build`, and it is the wrong one. `entries_test.wac` is
+7.4s of thirteen `wac build` processes with a 0.0s floor, `deno task seed` is `wac build` twice, and
+agents build programs by hand all day, so the prize looks large.
+
+**It would hollow out the tests that prove determinism.** `test/wac/selfhost_test.wac` builds the
+compiler *twice* and requires the two artefacts to be byte-identical; `fixpointemit_test.wac` does the
+same for one source file. A content-keyed build cache answers the second build from disk, so the
+comparison becomes "these bytes equal themselves" — a test that cannot fail, still passing, with nobody
+told. `tools/seed.sh` iterates builds to a fixed point for the same reason and would be reduced to the
+same tautology. That is the exact shape of `when a change's failure mode is a better number`: the suite
+would go green and faster.
+
+Two lesser reasons, recorded so the whole case is here rather than the headline:
+
+- it needs a second implementation of the build command line. The seed parses `build`'s flags
+  (`--allow-*`, `--coverage`, `--trace`, `--trace-slots n`, `--quiet`, `-o`), and the host would have to
+  parse enough of them to key on — a copy that drifts, and the failure mode of a *mis-keyed* build cache
+  is a stale artefact rather than an error.
+- `--coverage` and `--trace` write a table beside the module, so a hit would produce a module without
+  its table.
+
+What *is* safe is what the tests already do: `packages/wactest/src/built.wac` keeps a built program in
+`.cache/built-<name>` and rebuilds it when anything under its trees or the binary is newer. That is a
+cache with a named owner, per test, which a determinism test simply does not use — the choice is at the
+call site rather than under everybody. `arrival_users_test.wac` went 15s to 2.5s that way on the same
+day this was written.
+

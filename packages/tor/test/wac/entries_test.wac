@@ -91,9 +91,15 @@ export string test_every_entry_file_compiles(Core core, Cli cli) {
   // Four rather than thirteen, and the bound is about memory rather than cores: each of these is a
   // compiler holding a whole program's graph, and three agents share this machine. **Measured, as the
   // peak resident set of every `wac` process while this ran: 447 MB one at a time, 833 MB at four.**
-  // Thirteen at once would be some way past two gigabytes, which is the whole suite's peak today.
-  // Four buys most of the wall clock there is to buy — 9.5s to 3.5s — and the rest of it would cost
-  // memory the machine is already short of.
+  // Thirteen at once would be some way past two gigabytes, on a machine with 11 GB and about 6 free.
+  // Four buys most of the wall clock there is to buy and the rest would cost memory the machine is
+  // already short of.
+  //
+  // **7.4s at width four, re-measured 2026-08-19** — it was 3.5s when this was written, against 9.5s
+  // serial. Nothing here changed: the entries grew, and `packages/platform` becoming an embedded `std`
+  // tree put more of the world into every one of them. The floor is 0.0s now, since a lone test file's
+  // module is cached (`issues/system/0204`), so all of this is the thirteen compiles. Caching *those*
+  // is not available and the issue says why: it would make the determinism tests vacuous.
   //
   // **Each one writes its own output.** A shared `-o` would have thirteen compilers writing one path
   // at once, and the failure would be a corrupt artefact rather than a race anything reports.
