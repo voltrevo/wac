@@ -472,7 +472,27 @@ the emitter's linker does" and did not — `from.slice(0, from.lastIndexOf("/"))
 
 **The measurement, both times:** over every real import specifier in the repository the copies
 agree — 2915 pairs for the two wac ones, 2955 for the four TypeScript ones, zero disagreements
-either time. Over hand-written edge cases, 8 of 24 and 9 of 16. One of those crosses the oracle relationship and is worth naming for whoever consolidates: for `/a/c.wac` importing `../../d.wac`, wacc answers `/../d.wac` and `compiler/wacResolve.ts` answers `d.wac`, because its `..` can pop the root marker. POSIX says `/..` is `/`, so the answer is arguably `/d.wac` and **both** are wrong — which makes it a decision rather than a fix, and an unreachable one until an absolute entry path climbs above its root. That is the shape of this whole
+either time.
+
+> **Asked a third time on 2026-08-19, and the answer had changed, because the set had.** Two of the
+> four TypeScript copies were gone by then — the reference CLI's with the CLI, and
+> `packages/wacc/test/corpus.ts`'s, which became the harness's — so the figures above and the
+> "8 of 24, 9 of 16" below are about a population that no longer exists. Between the two that were
+> left: **4232 of 4232 real specifiers agree, and 26 of 27 hand-written spellings.** The one
+> disagreement was `..` climbing above an absolute root, where `compiler/wacResolve.ts` dropped the
+> leading slash and returned a *relative* key — which a relative import can also produce, so two
+> specifiers named one module. That is D8's failure at the smallest possible scale, and it
+> compiled: an entry keyed `/home/wac/main.wac` importing four levels up was handed a file keyed
+> `../lib.wac`. Fixed there rather than worked around, and with the answers then identical the
+> harness's body became a call into the compiler's and `site/src/editor/file-store.ts`'s copy — the
+> one this section counts and nothing ever called — was deleted.
+>
+> So the consolidation this section asks for is **done for the resolution rule**, and the count is
+> two: one per language, which is the floor. What it does *not* cover is the part that has not been
+> written — a manifest lookup and a provider table still have to land in both, and the argument
+> below is about those. The useful thing the exercise proved is that the section was right for a
+> reason it did not state: the copies did not agree, and no test noticed, for as long as nobody
+> asked. Over hand-written edge cases, 8 of 24 and 9 of 16. One of those crosses the oracle relationship and is worth naming for whoever consolidates: for `/a/c.wac` importing `../../d.wac`, wacc answers `/../d.wac` and `compiler/wacResolve.ts` answers `d.wac`, because its `..` can pop the root marker. POSIX says `/..` is `/`, so the answer is arguably `/d.wac` and **both** are wrong — which makes it a decision rather than a fix, and an unreachable one until an absolute entry path climbs above its root. That is the shape of this whole
 problem: they agree on everything anybody writes today, and the moment the rule grows a
 manifest lookup they will not, and no existing test will notice. The original wording of this paragraph follows, because the shape it describes
 is unchanged even though one copy is: Beyond

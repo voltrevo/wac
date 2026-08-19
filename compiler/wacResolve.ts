@@ -189,16 +189,38 @@ export function resolvePath(baseFile: string, rel: string): string {
   return joinPath(dir, rel);
 }
 
+/**
+ * `dir/rel` with `.` and `..` collapsed — the spelling every key in a program map is in.
+ *
+ * **An absolute path keeps its leading slash**, and that is about identity rather than tidiness.
+ * The root used to be carried as an empty first element and `..` popped whatever was on top, so a
+ * `..` with nothing left to climb removed the root itself: `/abs/a.wac` importing `"../../b.wac"`
+ * came back as `b.wac`, and `/home/wac/main.wac` importing four levels up came back as
+ * `../lib.wac`. Both are *relative* keys, and a relative key is one an ordinary relative import can
+ * also produce — so two different specifiers named one module, which is the failure
+ * `design/lang/0001` spends its longest paragraph on and `0009` D8 exists to prevent. It compiled:
+ * the entry climbed above the filesystem root and was handed a file keyed `../lib.wac`.
+ *
+ * Absolute bases are not hypothetical here. The playground keys everything under `/home/wac/`
+ * (`site/src/editor/file-store.ts`), and this file's own tests use `/main.wac`.
+ *
+ * `packages/wacc/src/path.wac` and `harness/wacFiles.ts` were already right, each by remembering
+ * absoluteness separately from the parts — which is what this does now.
+ * `packages/wacc/test/wac/files_test.wac` asserts `/abs/a.wac` + `../../b.wac` is `/../b.wac` and
+ * says it holds "in both walks"; it does, and now it holds in this one too. POSIX would answer `/`,
+ * and none of these is a filesystem: what they compute is an identity for a path, so two identities
+ * agreeing matters more than either matching `realpath`.
+ */
 function joinPath(dir: string, rel: string): string {
-  const parts = (dir + "/" + rel).split("/");
+  const joined = `${dir}/${rel}`;
+  const absolute = joined.startsWith("/");
   const out: string[] = [];
-  for (const p of parts) {
-    if (p === "" && out.length > 0) continue;
-    if (p === ".") continue;
-    if (p === "..") { if (out.length > 0 && out[out.length - 1] !== "..") { out.pop(); } else { out.push(".."); } }
+  for (const p of joined.split("/")) {
+    if (p === "" || p === ".") continue;
+    if (p === ".." && out.length > 0 && out[out.length - 1] !== "..") out.pop();
     else out.push(p);
   }
-  return out.join("/");
+  return (absolute ? "/" : "") + out.join("/");
 }
 
 /** Extract the file stem (filename without path or extension). */

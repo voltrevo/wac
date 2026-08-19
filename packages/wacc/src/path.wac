@@ -14,6 +14,14 @@
 // `site/src/editor/file-store.ts`. This removes the one that was reachably wrong; the rest are
 // 0150's remaining work, and `design/lang/0009` is why it matters — a manifest lookup, a provider
 // table and a mapping table are not two lines, and seven copies of *those* will not agree.
+//
+// **Two, as of 2026-08-19: this one and `compiler/wacResolve.ts`.** The reference CLI's went with
+// the CLI, `corpus.ts`'s became the harness's, the harness's became a call into the compiler's, and
+// `site/src/editor/file-store.ts`'s was deleted — it was exported and nothing called it, because the
+// editor hands `wacCompile` the whole file map and lets the compiler resolve. Two is the floor:
+// there are two languages. Consolidating found the last disagreement between them rather than
+// merely tidying, so it is worth naming — `..` above an absolute root, where the compiler's answer
+// dropped the leading slash and produced a relative key, which is D8's failure in miniature.
 
 /**
  * `spec` resolved against the directory `fromPath` sits in, with `.` and `..` collapsed.

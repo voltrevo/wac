@@ -13,6 +13,7 @@ import { isBuiltinSpecifier } from "wac/wacCore.ts";
 // mistake impossible instead of merely unlikely.
 
 import { wacLex } from "wac/wacLex.ts";
+import { resolvePath } from "wac/wacResolve.ts";
 
 /** Resolve `spec` relative to the directory of `fromPath`. */
 /**
@@ -28,19 +29,18 @@ export function resolveFrom(fromPath: string, spec: string): string {
   // A built-in is already the key it is looked up by. Joining it to the importing file's directory
   // would make `core/option.wac` into packages/json/src/core/option.wac — a path, and a missing one.
   if (isBuiltinSpecifier(spec)) return spec;
-  const dir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : ".";
-  const joined = `${dir}/${spec}`;
-  // Collapse `a/./b` and `a/b/../c` so the same file is never keyed two ways.
-  // An absolute path keeps its leading slash — normalising it away silently turns
-  // it into a relative path and the read fails somewhere far from the cause.
-  const absolute = joined.startsWith("/");
-  const parts: string[] = [];
-  for (const part of joined.split("/")) {
-    if (part === "." || part === "") continue;
-    if (part === ".." && parts.length > 0 && parts[parts.length - 1] !== "..") parts.pop();
-    else parts.push(part);
-  }
-  return (absolute ? "/" : "") + parts.join("/");
+  // **The compiler's own, rather than a copy that matches it.** This had its own body until
+  // 2026-08-19, and the two agreed: over the 4232 real import specifiers in the repository, and over
+  // 27 hand-written spellings, one case apart — a `..` climbing above an absolute root, where the
+  // compiler's dropped the leading slash and produced a *relative* key. That is the shape
+  // `design/lang/0009` D8 is about, so it was fixed there rather than tolerated here, and once the
+  // two answers were identical keeping two bodies bought nothing. What it cost was the possibility
+  // of a program the harness gathers under one key and the compiler files under another.
+  //
+  // The direction is forced: the compiler must not import the harness. `design/lang/0009` asks for
+  // this consolidation *before* the manifest lookups land, on the grounds that two lines agreeing is
+  // not evidence that a provider table and a mapping table will.
+  return resolvePath(fromPath, spec);
 }
 
 /**
