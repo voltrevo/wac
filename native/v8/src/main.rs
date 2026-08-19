@@ -830,6 +830,31 @@ fn test_module_key(entry: &str, sources: &[(String, Vec<u8>)], flags: &[String],
     h
 }
 
+/// This process's CPU time so far, self plus every child it has waited for, in milliseconds.
+///
+/// **Wall time ranks by whoever else was running.** `wac test` reports what each file cost so that "no
+/// slow tests" has a ranking, and the suite runs four of these at once on a machine three agents share
+/// — so the wall time of a process-heavy file is two to eight times its work, unevenly, and the
+/// ranking it produces is a ranking of contention. Measured 2026-08-19: the suite's own per-file
+/// numbers summed to **456s against a 219s wall**, and `native_hostfs_test.wac` was reported at 60.2s
+/// where a directory pass puts its run at 7.7s. Two days of "why is this test slow" went to the top of
+/// that list.
+///
+/// CPU time does not move when a neighbour runs. `cutime`/`cstime` cover children this process has
+/// reaped, which is every `Cli.exec` — they wait — so a test that spends its time in `ssh` or `deno` is
+/// still counted. Read from `/proc/self/stat` rather than through a crate: fields 14-17, after the
+/// comm field, which can itself contain spaces and is therefore skipped by its closing parenthesis.
+fn cpu_millis() -> u128 {
+    let Ok(text) = std::fs::read_to_string("/proc/self/stat") else { return 0 };
+    let Some(after) = text.rsplit_once(')') else { return 0 };
+    let fields: Vec<&str> = after.1.split_whitespace().collect();
+    // `after.1` starts at field 3 (state), so utime is index 11 through cstime at 14.
+    let ticks: u64 = (11..=14).filter_map(|i| fields.get(i)?.parse::<u64>().ok()).sum();
+    // `sysconf(_SC_CLK_TCK)` is 100 on every Linux this runs on, and getting it right matters less
+    // than being consistent: the number is only ever compared with another from the same machine.
+    (ticks as u128) * 10
+}
+
 /// How many built modules the shared directory keeps.
 ///
 /// Sixty was chosen when only directory aggregates landed here — about fifty-one chunks in a suite
@@ -1306,10 +1331,15 @@ fn test_command(rest: &[String]) -> i32 {
     // before this loop, so these are run times with no compile in them — which is the number to act
     // on: a file that is slow because the directory's graph is large is not the file's fault, and a
     // file that is slow because it emits a thousand modules is.
-    let mut cost: Vec<(String, u128)> = Vec::new();
+    //
+    // **Ranked by CPU rather than by wall**, for the reason `cpu_millis` carries: four of these run at
+    // once and the wall time of a process-heavy file is mostly its neighbours. Both are printed, since
+    // wall is what a person waited and CPU is what the file is answerable for.
+    let mut cost: Vec<(String, u128, u128)> = Vec::new();
     for (i, f) in files.iter().enumerate() {
         println!("── {f}");
         let began = std::time::Instant::now();
+        let cpu_began = cpu_millis();
         let code = match &built[group_of[i]] {
             Some(((bytes, text, manifest, _), carried)) if carried.contains(&i) => run_as_with(
                 manifest,
@@ -1332,7 +1362,7 @@ fn test_command(rest: &[String]) -> i32 {
                 build_and_call(&args, Entry::Tests)
             }
         };
-        cost.push((f.clone(), began.elapsed().as_millis()));
+        cost.push((f.clone(), began.elapsed().as_millis(), cpu_millis().saturating_sub(cpu_began)));
         match code {
             0 => ok += 1,
             3 => {
@@ -1399,17 +1429,21 @@ fn test_command(rest: &[String]) -> i32 {
     // is a question about individual files. One second is the floor because below it a ranking is
     // noise, and the count under the floor is stated so this cannot read as "everything else is fast"
     // when it means "nothing else reached the floor".
-    let mut slow: Vec<&(String, u128)> = cost.iter().filter(|(_, ms)| *ms >= 1000).collect();
+    let mut slow: Vec<&(String, u128, u128)> = cost.iter().filter(|(_, _, cpu)| *cpu >= 1000).collect();
     if files.len() > 1 && !slow.is_empty() {
-        slow.sort_by(|a, b| b.1.cmp(&a.1));
+        slow.sort_by(|a, b| b.2.cmp(&a.2));
         let under = cost.len() - slow.len();
         println!();
         println!(
-            "   {} file(s) took a second or more to run — the other {under} did not:",
+            "   {} file(s) cost a second or more of CPU to run — the other {under} did not:",
             slow.len()
         );
-        for (f, ms) in slow.iter().take(6) {
-            println!("     {:>6}  {f}", format!("{:.1}s", *ms as f64 / 1000.0));
+        for (f, ms, cpu) in slow.iter().take(6) {
+            println!(
+                "     {:>6} cpu {:>6} wall  {f}",
+                format!("{:.1}s", *cpu as f64 / 1000.0),
+                format!("{:.1}s", *ms as f64 / 1000.0)
+            );
         }
         if slow.len() > 6 {
             println!("     ... and {} more above the floor", slow.len() - 6);
