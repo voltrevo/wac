@@ -13,7 +13,7 @@
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Cli } from "../../../platform/src/platform.wac";
-import { arrayOf, boolOf, jsonFile, numOf, objectOf, strOf } from "./jsonfile.wac";
+import { arrayOf, boolOf, jsonFile, numOf, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
 
 /**
  * The publish verdicts, the generated descriptor, and the controls — built here rather than handed in.

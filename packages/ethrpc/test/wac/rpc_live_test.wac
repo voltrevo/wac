@@ -6,7 +6,7 @@
 // node on the other end decides what comes back.
 //
 // It is skipped when anvil is absent, and **says so with the path it looked in** — a skip that prints
-// nothing reads as coverage, which is the failure `packages/tls/test/openssl35.ts` was written to
+// nothing reads as coverage, which is the failure `packages/tls/test/wac/openssl.wac` was written to
 // stop.
 //
 // ## Host-side until 2026-08-18, `issues/system/0161`

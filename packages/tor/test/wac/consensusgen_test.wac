@@ -14,7 +14,7 @@ import { AuthorityKeys } from "../../src/authcert.wac";
 import { ConsensusInfo, ConsensusVoter, consensusDocument } from "../../src/consensusgen.wac";
 import { RelayOpinion, signedLength, voteSignatureDigest } from "../../src/vote.wac";
 import { decode as b64decode } from "../../../codec/src/base64.wac";
-import { jsonFile, strOf, numOf, num64Of } from "./jsonfile.wac";
+import { jsonFile, strOf, numOf, num64Of } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
