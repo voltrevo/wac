@@ -1,7 +1,7 @@
 // Where OpenSSL 3.5 is, for the tests that need ML-KEM.
 //
 // Ubuntu 24.04 ships 3.0.13, which predates X25519MLKEM768 entirely, so the two interop tests that pin the
-// hybrid group — `client.test.ts` and `handshake_interop.test.ts` — need a newer build. `tools/openssl35.sh`
+// hybrid group — `handshake_interop.test.ts` — need a newer build. `tools/openssl35.sh`
 // makes one.
 //
 // **One copy of the lookup.** Both files had their own ten lines of it, with the same hardcoded `/tmp`
