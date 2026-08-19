@@ -46,7 +46,7 @@ import { Core, Cli, Exec, FileResult, Pending } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { Ran, boundedAgain, denoBatch, hangReport, stale, submit, collect, DEFAULT_SECONDS }
+import { Ran, boundedAgain, denoBatch, hangReport, stale, newestFor, submit, collect, DEFAULT_SECONDS }
   from "./hostfs.wac";
 
 const string ENTRY = "packages/box/src/bin/sh.wac";
@@ -133,12 +133,14 @@ Shells shells(Cli cli) {
   string[] none = string[0](fill: "");
 
   string why = "";
-  if (stale(cli, s.deno)) { why = why + buildOne(cli, false, s.deno, rw); }
-  if (stale(cli, s.manifest)) { why = why + buildOne(cli, true, dir + "/wacsh", rw); }
-  if (stale(cli, s.wonlyDeno)) { why = why + buildOne(cli, false, s.wonlyDeno, w); }
-  if (stale(cli, s.wonly)) { why = why + buildOne(cli, true, dir + "/wonly", w); }
-  if (stale(cli, s.nograntDeno)) { why = why + buildOne(cli, false, s.nograntDeno, none); }
-  if (stale(cli, s.nogrant)) { why = why + buildOne(cli, true, dir + "/nogrant", none); }
+  // One walk of `sh.wac`'s 190-file closure, not six.
+  i64 newest = newestFor(cli, ENTRY);
+  if (stale(cli, s.deno, newest)) { why = why + buildOne(cli, false, s.deno, rw); }
+  if (stale(cli, s.manifest, newest)) { why = why + buildOne(cli, true, dir + "/wacsh", rw); }
+  if (stale(cli, s.wonlyDeno, newest)) { why = why + buildOne(cli, false, s.wonlyDeno, w); }
+  if (stale(cli, s.wonly, newest)) { why = why + buildOne(cli, true, dir + "/wonly", w); }
+  if (stale(cli, s.nograntDeno, newest)) { why = why + buildOne(cli, false, s.nograntDeno, none); }
+  if (stale(cli, s.nogrant, newest)) { why = why + buildOne(cli, true, dir + "/nogrant", none); }
   if (why != "") { s.ok = false; s.error = why; }
   return s;
 }
@@ -683,7 +685,27 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
   // batched Deno half would exercise the queue and never the process's own input, and the comparison
   // would be a queue-fed JavaScript host against an fd-fed native one. The bug this test exists to
   // catch lives exactly in that difference. Ten cases at one process each is what checking real
-  // standard input costs.
+  // standard input costs — but not one *after another*: measured 2026-08-19, interleaved and warm,
+  // this test is **2.3–2.6s serial against 1.6–1.9s** with the twenty runs started together, over a
+  // 0.7s floor for `wac test` compiling the file and running nothing.
+  //
+  // Worth recording what that floor exposed, since this test used to be described as the file's
+  // expense: it is not. **Re-measured 2026-08-19 in CPU rather than wall**, which is the only ranking
+  // that survives four workers on a shared box, with the floor now 0.1s because a lone test file's
+  // module is cached (`issues/system/0204`):
+  //
+  //     4.0s  the real filesystem sweep, three implementations over many cases
+  //     2.7s  this one — ten cases, twenty processes, 1.0s of wall because they start together
+  //     1.7s  every capability refused the same way on both hosts
+  //     1.1s  where the real tool prints more than this system has
+  //     1.0s  kill %1
+  //     0.6s  the four grants are independent
+  //     0.4s  why a file is not a program
+  //
+  // **11.5s of CPU for about a hundred runs of three implementations, and that is what this file is.**
+  // The wall clock it reports in a suite pass has been as high as 58s, all of it either its shells
+  // being rebuilt — `issues/system/0217`, now only when something they are made of changes — or the
+  // neighbours it shares four workers with.
   T t = T.create();
   string native = nativeBinary(cli);
   if (native == "") {
@@ -724,12 +746,34 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
   inputs[8] = ("one\ntwo\nthree\n").toBytes();
   inputs[9] = ("c\na\nb\n").toBytes();
 
-  for (i32 i = 0; i < scripts.len() && i < inputs.len(); i++) {
+  // **One process each, all started together.** Keeping a process per case is the point above; running
+  // them one after another is not. Twenty runs of a shell reading its input are independent — nothing
+  // here writes to the tree — so they are submitted and then collected, and the cost is the slowest
+  // rather than the sum. `denoBatch` is still the thing that must not be used: it would feed the child
+  // through the parent-fed queue that shadowed fd 0, which is the whole subject.
+  i32 n = scripts.len() < inputs.len() ? scripts.len() : inputs.len();
+  Pending<Exec>[] pjs = Pending<Exec>[n]();
+  Pending<Exec>[] prs = Pending<Exec>[n]();
+  for (i32 i = 0; i < n; i++) {
+    pjs[i] = submit(cli, DEFAULT_SECONDS, tmp, tmp, s.deno, string[]("-c", scripts[i]), inputs[i]);
+    prs[i] = submit(cli, DEFAULT_SECONDS, tmp, tmp, native, string[](s.manifest, "-c", scripts[i]),
+                    inputs[i]);
+  }
+  for (i32 i = 0; i < n; i++) {
     string label = "`" + scripts[i] + "` (" + itoa(inputs[i].len()) + " bytes in)";
-    Ran js = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", scripts[i]), inputs[i],
-                          () => { });
-    Ran rs = boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", scripts[i]),
-                          inputs[i], () => { });
+    Ran js = collect(pjs[i]);
+    Ran rs = collect(prs[i]);
+    // **A run that hit its bound is asked again alone**, which is what `boundedAgain` is for and why
+    // the batch does not replace it: twenty concurrent processes on a shared machine can make a slow
+    // run look like a wedged one, and the retry is where that is told apart — a case that hangs with
+    // nothing else competing is a hang. Same shape as the batch above, at line 356.
+    if (js.hung) {
+      js = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", scripts[i]), inputs[i], () => { });
+    }
+    if (rs.hung) {
+      rs = boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", scripts[i]),
+                        inputs[i], () => { });
+    }
     t.eqStr(rs.out, js.out, label + ": the hosts read different input");
     t.eqStr(rs.err, js.err, label + ": stderr");
     t.eqI32(rs.code, js.code, label + ": status");

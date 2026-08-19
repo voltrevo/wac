@@ -42,21 +42,6 @@ function strip(v: unknown): unknown {
   return v;
 }
 
-/**
- * Whether this compiler can read the file at all.
- *
- * **Asked rather than declared.** Files using syntax `packages/wacc` has and this one does not — a
- * lambda, most often — used to say so with a `// only: wacc` marker, and this counted them and
- * required each to genuinely fail. That marker is gone: it made the reference a second implementation
- * of the language and so a constraint on it, when its only job is bootstrapping. Trying to parse
- * answers the same question without asking every file in the repository to declare itself.
- *
- * The count is still kept and still guarded below, because a corpus this compiler has silently
- * stopped parsing is a green test that compared nothing.
- */
-function cannotRead(src: string, path: string): boolean {
-  return wacParse(wacLex(src).tokens, path).errors.length > 0;
-}
 
 function ast(src: string, path: string) {
   const p = wacParse(wacLex(src).tokens, path);
@@ -68,7 +53,27 @@ function ast(src: string, path: string) {
 
 /** The whole trip, returning a diff-friendly description of the first difference. */
 export function roundTrip(src: string, path: string): { ok: true } | { ok: false; why: string } {
-  const before = ast(src, path);
+  return roundTripFrom(ast(src, path), src, path);
+}
+
+/**
+ * The same, for a caller that has already parsed the file — which the corpus sweep has.
+ *
+ * **It parsed every file twice.** `cannotRead` lexes and parses to decide whether a file is worth
+ * round-tripping at all, and `roundTrip` then called `ast`, which lexes and parses it again. Measured
+ * over the 282 files under `packages/*​/src` on 2026-08-19: 505ms for the first parse and 564ms for the
+ * second, in a sweep that costs about seven seconds.
+ *
+ * The rest of that seven seconds is the round trip doing its job, and worth writing down so nobody
+ * looks for a trick that is not there: **printing wapy is 2372ms and parsing it back 3265ms**, against
+ * 266ms to strip both trees and compare them as JSON and 21ms to read the files. It is two front ends
+ * over the whole of `packages`, which is the property being tested.
+ */
+function roundTripFrom(
+  before: unknown,
+  src: string,
+  path: string,
+): { ok: true } | { ok: false; why: string } {
   const wapy = wapyOf(src, path).text;
   // wapy is parsed straight into the AST — there is no intermediate wac text, and no line map,
   // because the tokens carry the positions they were written at.
@@ -349,11 +354,18 @@ Deno.test("round trip: every package", async () => {
     // A file this compiler cannot parse has nothing to round-trip. Counted rather than skipped in
     // silence — the number going up is the shared subset shrinking, which is worth seeing, and the
     // guard below fails if it ever becomes all of them.
-    if (cannotRead(src, f)) {
+    //
+    // **Parsed once.** This asked a `cannotRead` helper and then let `roundTrip` parse the same file
+    // again. Trying to parse is also how a file that only `wacc` can read is recognised: there was a
+    // `// only: wacc` marker once, and it made the reference a second implementation of the language
+    // rather than a bootstrap. The count is guarded below, because a corpus this compiler has silently
+    // stopped parsing is a green test that compared nothing.
+    const parsed = wacParse(wacLex(src).tokens, f);
+    if (parsed.errors.length) {
       marked++;
       continue;
     }
-    const r = roundTrip(src, f);
+    const r = roundTripFrom(strip(parsed.program), src, f);
     if (!r.ok) bad.push(`${f}\n${r.why.split("\n").slice(0, 4).join("\n")}`);
   }
   // A corpus this compiler can read none of is a green test that compared nothing — the same failure

@@ -45,8 +45,7 @@ string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release
 
 /** `example/handshake.wac`, built once with the grant it needs. */
 string handshakeModule(Cli cli) {
-  return builtProgram(cli, ENTRY, "quic-handshake", string[]("--allow-net", "--quiet"),
-                      string[]("packages/quic/src", "packages/quic/example"));
+  return builtProgram(cli, ENTRY, "quic-handshake", string[]("--allow-net", "--quiet"));
 }
 
 /** What the program and the server each said. */

@@ -55,12 +55,25 @@ const startedAll = performance.now();
  * package it skipped regresses. Both passed when this was found, which is the only reason it cost
  * nothing. Deriving it means adding a task is the whole of adding it to the sweep.
  */
-const PACKAGES = Object.keys(
-  (JSON.parse(Deno.readTextFileSync("deno.json")) as { tasks: Record<string, string> }).tasks,
-)
+const TASKS = (JSON.parse(Deno.readTextFileSync("deno.json")) as { tasks: Record<string, string> })
+  .tasks;
+const PACKAGES = Object.keys(TASKS)
   .filter((t) => t.startsWith("coverage:") && t !== "coverage:all")
   .map((t) => t.slice("coverage:".length))
   .sort();
+
+/**
+ * Where a package's driver actually is, read out of the *command* rather than assumed.
+ *
+ * `packages/<pkg>/cov.ts` is wrong for `core`, whose tree is at the repository root — and the version
+ * of this that assumed it reported `core` as having no driver at all while `core/cov.ts` sat there.
+ * The same assumption would be wrong for the next tree that moves. The command names its own file, so
+ * that is what is read: `deno run -A core/cov.ts` and
+ * `… covreport.wac -- packages/codec/test/cov_exercise.wac …` both give it up to a regex.
+ */
+const driverOf = (pkg: string): string | null =>
+  (TASKS[`coverage:${pkg}`] ?? "").match(/\S+\.(?:ts|wac)(?=\s|$)/g)
+    ?.find((f) => !f.endsWith("covreport.wac")) ?? null;
 
 type Result = { pkg: string; code: number; ms: number; output: string };
 
@@ -119,7 +132,20 @@ const elapsed = (performance.now() - startedAll) / 1000;
  * the summary from claiming it either way.
  */
 const kinds = await Promise.all(results.map(async (r) => {
-  const src = await Deno.readTextFile(`packages/${r.pkg}/cov.ts`).catch(() => "");
+  // **Either driver, and "neither" is its own answer.** A package's driver is `cov.ts` until it moves
+  // to `test/cov_exercise.wac` (`issues/system/0161`), and reading only the first meant a converted
+  // package fell through `.catch(() => "")` into "reports" — which happens to be right for one with no
+  // failure path and would be a silent wrong answer for one that has it. A task with no driver at all
+  // is a task pointing at nothing, so it says so rather than being counted as harmless.
+  const path = driverOf(r.pkg);
+  const src = path === null ? null : await Deno.readTextFile(path).catch(() => null);
+  // A task whose command names no driver, or names one that is not there, is a task pointing at
+  // nothing — said out loud rather than counted among the harmless ones.
+  if (src === null || path === null) return "no driver";
+  // A wac driver is exercises and nothing else, so it is always "reports": a coverage *floor* has no
+  // wac spelling yet, and inferring one from a `return 1;` in unrelated code would be a classification
+  // pretending to be a measurement.
+  if (path.endsWith(".wac")) return "reports";
   if (!/Deno\.exit\(1\)/.test(src)) return "reports";
   // The two shapes differ in what they hold you to. One fails when a point nothing reaches has no
   // entry — a coverage floor. The others fail only when an entry they already carry has drifted onto
@@ -132,7 +158,7 @@ console.log(
   `\n${results.length - failed.length}/${results.length} ran in ${elapsed.toFixed(0)}s ` +
     `(${total.toFixed(0)}s of work at ${WORKERS} workers) — ${count("floor")} hold a coverage floor, ` +
     `${count("entries")} only check their own exemptions have not drifted, ${count("reports")} report ` +
-    `and cannot fail`,
+    `and cannot fail` + (count("no driver") > 0 ? `, ${count("no driver")} have no driver at all` : ""),
 );
 
 for (const r of failed) {

@@ -42,7 +42,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
-import { stale } from "./hostfs.wac";
+import { stale, newestFor } from "./hostfs.wac";
 
 const string BOXSH = "packages/box/example/boxsh.wac";
 const string SPAWNSH = "packages/box/src/bin/sh.wac";
@@ -176,14 +176,17 @@ Programs programs(Cli cli) {
   string[] rw = string[]("--allow-read", "--allow-write");
   string[] rwen = string[]("--allow-read", "--allow-write", "--allow-env", "--allow-net");
   string why = "";
-  if (stale(cli, p.boxshDeno)) { why = why + buildOne(cli, false, BOXSH, p.boxshDeno, rw); }
-  if (stale(cli, p.boxshStem + ".wasm")) { why = why + buildOne(cli, true, BOXSH, p.boxshStem, rw); }
-  if (stale(cli, p.spawnshDeno)) { why = why + buildOne(cli, false, SPAWNSH, p.spawnshDeno, rw); }
-  if (stale(cli, p.spawnshStem + ".wasm")) {
+  i64 boxshNewest = newestFor(cli, BOXSH);
+  i64 spawnshNewest = newestFor(cli, SPAWNSH);
+  i64 imagedNewest = newestFor(cli, IMAGED);
+  if (stale(cli, p.boxshDeno, boxshNewest)) { why = why + buildOne(cli, false, BOXSH, p.boxshDeno, rw); }
+  if (stale(cli, p.boxshStem + ".wasm", boxshNewest)) { why = why + buildOne(cli, true, BOXSH, p.boxshStem, rw); }
+  if (stale(cli, p.spawnshDeno, spawnshNewest)) { why = why + buildOne(cli, false, SPAWNSH, p.spawnshDeno, rw); }
+  if (stale(cli, p.spawnshStem + ".wasm", spawnshNewest)) {
     why = why + buildOne(cli, true, SPAWNSH, p.spawnshStem, rw);
   }
-  if (stale(cli, p.imagedDeno)) { why = why + buildOne(cli, false, IMAGED, p.imagedDeno, rwen); }
-  if (stale(cli, p.imagedStem + ".wasm")) {
+  if (stale(cli, p.imagedDeno, imagedNewest)) { why = why + buildOne(cli, false, IMAGED, p.imagedDeno, rwen); }
+  if (stale(cli, p.imagedStem + ".wasm", imagedNewest)) {
     why = why + buildOne(cli, true, IMAGED, p.imagedStem, rwen);
   }
   if (why != "") { p.ok = false; p.error = why; }

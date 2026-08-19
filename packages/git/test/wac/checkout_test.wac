@@ -117,8 +117,7 @@ Ran gitco(T t, Cli cli, string dir) {
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
   Exec r = cli.exec(wac,
                     string[](builtProgram(cli, "packages/git/example/gitco.wac", "gitco",
-                                           string[]("--allow-read", "--allow-write", "--quiet"),
-                              string[]("packages/git/src", "packages/git/example")),
+                                           string[]("--allow-read", "--allow-write", "--quiet")),
                              dir),
                     u8[0]()).wait();
   t.eqStr(r.error, "", "the wac binary could be started");

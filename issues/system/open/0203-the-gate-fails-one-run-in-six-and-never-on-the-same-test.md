@@ -110,3 +110,33 @@ Which sharpens decision 3 above. A retry-and-report would have turned both of th
 disbelieve. It would not have hidden anything: neither failure is reproducible on its own, and a count
 of retries over a week is the measurement this issue keeps asking for.
 
+## A third kind, and this one is not a peer — 2026-08-19
+
+`test/wac/selfhost_test.wac` failed a gate with
+
+```
+and does it again: got "wac build exited 1: wac: packages/wacc/example/wacc.wac trapped
+```
+
+which is the compiler **trapping while compiling itself**, in the second of the two builds that test
+compares. That is not the population above: there is no peer, no port and no timeout in it.
+
+What is known, measured straight afterwards on the same tree:
+
+- four runs of the file alone: **green, 5.9–7.3s each**.
+- two `wac build` of `wacc.wac` started together, three times: **both succeeded every time**, peak
+  resident 396–436 MB each, with 5.6 GB available. So it is not the concurrency that test uses, and it
+  is not memory being tight in isolation.
+- the gate it failed in was a four-worker suite with another agent's suite beside it.
+
+So it behaves like the others — load, not input — while looking nothing like them, and a guest *trap*
+rather than an OOM or a timeout is a specific enough symptom to be worth catching next time: it means
+the compiler reached a `trap` in its own code, which the emitter does when a table it sized turns out
+too small (`ranOut`). If that is what it is, the input that overflows would be the same every run and
+this would not be load-dependent — which is the part that does not fit, and the reason it is recorded
+here rather than diagnosed.
+
+**What would settle it** is the stderr of the failing build, which the assertion above truncates: it
+carries the trap's own message when the guest wrote one. Worth widening that message before the next
+occurrence.
+

@@ -130,8 +130,7 @@ string gitst(T t, Cli cli, string dir) {
   Exec r = cli.exec(wac,
                     string[](builtProgram(cli, "packages/git/example/gitst.wac", "gitst",
                                           string[]("--allow-read", "--allow-write", "--allow-env",
-                                                   "--quiet"),
-                              string[]("packages/git/src", "packages/git/example")),
+                                                   "--quiet")),
                              dir),
                     u8[0]()).wait();
   t.eqStr(r.error, "", "the wac binary could be started");
@@ -371,8 +370,7 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
   Exec ours = withHome(cli, home, wac,
                        string[](builtProgram(cli, "packages/git/example/gitst.wac", "gitst",
                                              string[]("--allow-read", "--allow-write", "--allow-env",
-                                                      "--quiet"),
-                              string[]("packages/git/src", "packages/git/example")),
+                                                      "--quiet")),
                                 d));
   t.eqStr(ours.error, "", "the wac binary could be started");
   t.eqI32(ours.status, 0, "gitst exited zero: " + string.fromBytes(ours.stderr));

@@ -1,0 +1,107 @@
+// Branch coverage for codec: the exercises, and nothing else.
+//
+//   deno task coverage:codec
+//   deno task coverage:codec --verbose
+//
+// The same exercises the tests run: the RFC vectors' shapes, a round trip at every length up to 300 —
+// which is what reaches each short-group case — and the strictness inputs, which are the only things
+// that reach the rejection paths at all.
+//
+// The bytes are filler rather than the published vectors, because which branch runs depends on the
+// *shapes* — lengths, padding, alphabet — and not on the values. That keeps this short without letting
+// it drift into measuring a workload the tests never run, which would report on this file rather than
+// on what is actually checked.
+//
+// The reverse direction is the one that needs care: every input below has a matching test. When a
+// branch here has no assertion behind it, the honest fix is a test, not another call in this file —
+// reaching a guard proves only that it was reached.
+//
+// ## What this file is, after 2026-08-19 — `issues/system/0161`
+//
+// It was the package's `cov.ts`, which was these exercises plus a copy of the reporting.
+// `tools/wac/covreport.wac` is the reporting now, shared, so what is left here is the part that is
+// actually about codec. It is a program rather than a caller: `covreport` builds *this* with
+// `--coverage` and runs its `main`, so the exercises are inside the instrumented module.
+//
+// **It lives under `test/` on purpose.** `covreport` skips any file with `/test/` in its path, which
+// is the rule `harness/wacCoverage.ts` had and the reason `test/probe.wac` was never counted — so a
+// driver's own branches cannot appear in codec's number.
+
+import { hexEnc, hexEncUpper, hexDec, hexAccepts, b64Enc, b64Dec, b64Accepts,
+         b32Enc, b32Dec, b32Accepts } from "./probe.wac";
+
+/** The rejection inputs for base64: everything well-formed decoding refuses. */
+string[] b64Bad() {
+  return string[](
+    "A", "AAAAA", "A===", "AB=A", "=", "AB=", "ABCDE=", "A@AA", "AA A", "QR==", "Zm9vYmF=",
+    "", "AA", "QQ", "Zm9v", "Zm9vYg", "Zm9vYmE", "====", "=A", "AAAA=", "AA@", "A@A", "@AA");
+}
+
+/** The same for base32, both alphabets. */
+string[] b32Bad() {
+  return string[](
+    "A", "AAA", "AAAAAA", "AAAAAAAAA", "A=======", "AAA=====", "", "AA", "AAAA", "AAAAA",
+    "AAAAAAA", "AAAAAAAA", "MY======", "MY=====", "MY=======", "MZXW6===", "MZXW6==",
+    "MZ======", "M2======", "8=======", "@@@@@@@@", "=======",
+    // Lowercase, which decoders must accept.
+    "my======", "mzxw6yTBOI======", "cpnmuoj1", "cpnmuoj1e8======");
+}
+
+string[] hexBad() {
+  return string[]("0", "abc", "0g", "0 0", "0x00", "", "00", "ff", "FF", "aA",
+                  "0123456789abcdefABCDEF");
+}
+
+export i32 main() {
+  // xorshift32, and `u32` is what makes the right shift logical — the same generator the TypeScript
+  // used, so the same lengths meet the same bytes.
+  u32 x = 0x77aa11bb;
+  i32 seen = 0;
+
+  // Every length up to 300, which walks all four short-group shapes repeatedly.
+  for (i32 len = 0; len <= 300; len++) {
+    u8[] data = u8[len]();
+    for (i32 i = 0; i < len; i++) {
+      x = x ^ (x << 13);
+      x = x ^ (x >> 17);
+      x = x ^ (x << 5);
+      data[i] = (x & 255) as~ i32;
+    }
+    bool[] bools = bool[](true, false);
+    for (i32 p = 0; p < 2; p++) {
+      bool pad = bools[p];
+      seen = seen + hexDec(hexEnc(data)).len();
+      seen = seen + hexDec(hexEncUpper(data)).len();
+      for (i32 u = 0; u < 2; u++) { seen = seen + b64Dec(b64Enc(data, bools[u], pad)).len(); }
+      for (i32 h = 0; h < 2; h++) {
+        seen = seen + b32Dec(b32Enc(data, bools[h], pad), bools[h]).len();
+      }
+    }
+  }
+
+  // The rejection paths, which nothing well-formed reaches.
+  string[] bad64 = b64Bad();
+  for (i32 i = 0; i < bad64.len(); i++) {
+    u8[] t = bad64[i].toBytes();
+    if (b64Accepts(t)) { seen = seen + 1; }
+    seen = seen + b64Dec(t).len();
+  }
+
+  string[] bad32 = b32Bad();
+  bool[] hexAlpha = bool[](true, false);
+  for (i32 i = 0; i < bad32.len(); i++) {
+    u8[] t = bad32[i].toBytes();
+    for (i32 h = 0; h < 2; h++) {
+      if (b32Accepts(t, hexAlpha[h])) { seen = seen + 1; }
+      seen = seen + b32Dec(t, hexAlpha[h]).len();
+    }
+  }
+
+  string[] badHex = hexBad();
+  for (i32 i = 0; i < badHex.len(); i++) {
+    u8[] t = badHex[i].toBytes();
+    if (hexAccepts(t)) { seen = seen + 1; }
+    seen = seen + hexDec(t).len();
+  }
+  return seen;
+}

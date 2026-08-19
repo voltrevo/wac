@@ -18,6 +18,7 @@
 
 import { Core, Cli, Exec, Stat, Pending } from "std/platform.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
+import { newestInClosure } from "../../../wactest/src/built.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
@@ -105,20 +106,40 @@ export string hangReport(string what, string[] names, Ran[] runs) {
 }
 
 /**
- * Whether `artifact` is older than any wac source, and so has to be built again.
+ * Whether `artifact` is older than any file `entry` is made of, and so has to be built again.
  *
  * The rule `harness/nativeHost.ts` uses for the crate and `tools/seedFresh.test.ts` uses for the
- * seed: mtimes, not content. One `find` rather than a walk in here, because `find -newer … -quit`
- * stops at the first answer and the question is only ever yes or no.
+ * seed: mtimes, not content.
+ *
+ * **It used to ask about the whole tree** — `find packages core spec -name '*.wac' -newer …` — and that
+ * was measured on 2026-08-19: touching `packages/tor/src/relay.wac`, which none of these shells
+ * imports, took `v8host_test.wac` from 1.5s to **38.9s** because all six of its artefacts were rebuilt.
+ * The gate pulls before it runs, so the three files that call this were the top three of every gate log
+ * that day at 42–58s each, and they are not slow tests. `issues/system/0217`.
+ *
+ * `newest` is what `newestFor` answers: the newest mtime among an entry and the files it imports,
+ * derived by scanning rather than named by a caller, and taken once per program by the caller. `packages/box/src/bin/sh.wac` reaches 190
+ * of the tree's 902 `.wac` files, so four edits in five no longer touch these.
+ *
+ * What this still does not ask about is the **binary**: an artefact built by an older `wac` is not
+ * rebuilt when the host is. That was true of the `find` too, so it is left as it was rather than
+ * changed in passing — `wactest/src/built.wac` does check it, and the difference is worth knowing.
  */
-export bool stale(Cli cli, string artifact) {
+export bool stale(Cli cli, string artifact, i64 newest) {
   Stat s = cli.stat(artifact).wait();
   if (!s.isFile) { return true; }
-  Exec r = cli.exec("/bin/sh",
-    string[]("-c", "find packages core spec -name '*.wac' -newer " + quoted(artifact) +
-                   " -print -quit 2>/dev/null"), u8[0]()).wait();
-  return !r.ran() || r.stdout.len() > 0;
+  return newest > s.modifiedMillis;
 }
+
+/**
+ * `newestInClosure`, and **once per entry rather than once per artefact.**
+ *
+ * The first version of this took the entry and walked it inside `stale`, which read 190 files six times
+ * over for `native_hostfs_test.wac`'s six shells — 9.4s of self CPU in the gate that landed it, where
+ * that file had been spending 0.3s. The walk is per *program*, so the callers below take it once and
+ * hand the answer to each check.
+ */
+export i64 newestFor(Cli cli, string entry) { return newestInClosure(cli, entry); }
 
 /**
  * Every script through the **Deno host in one process**, rather than one process each.
