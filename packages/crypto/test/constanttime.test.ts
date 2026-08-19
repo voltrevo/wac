@@ -83,6 +83,45 @@ Deno.test({ ...ct, name: "ghash branches on the bits of H (known leak)", fn: asy
   if (d.kind === "index") throw new Error(`expected a branch leak, got an index one at ${d.file}:${d.line}`);
 } });
 
+Deno.test({ ...ct, name: "the Weierstrass ladder branches on the scalar (known leak)", fn: async () => {
+  // **The first asymmetric routine measured here, and it leaks.** `jacMul` in
+  // `weierstrass.wac` is double-and-add with the add taken only when the bit is set:
+  //
+  //     for (i32 i = 0; i < bits; i++) {
+  //       acc = jacDouble(c, acc);
+  //       i32 bit = (scalar[i / 8] >> (7 - (i % 8))) & 1;
+  //       if (bit == 1) { acc = jacAdd(c, acc, p); }     // ← weierstrass.wac:120
+  //     }
+  //
+  // The scalar is the private key in `curvePublicKey` and `curveEcdh`, and the *nonce* in
+  // ECDSA signing, where a partial leak is key recovery rather than key disclosure. Every
+  // caller of P-256 and P-384 in this repository goes through it, which is `packages/tls`'s
+  // certificate chains and `packages/ssh`'s host keys.
+  //
+  // It is also why `p256Sign` is 12ms and `ed25519Sign` is 63ms: ed25519's `ptMul` always
+  // adds and selects, and this does not. `issues/system/0210` is the fix and `0209` is the
+  // speed comparison that led here.
+  //
+  // `firstDivergence` rather than `allDivergentSites`: a run is about two million events —
+  // one of the two overflows the journal, which does not affect the verdict because the
+  // traces part at the first differing bit — and enumerating every site over that many is
+  // the slow part, where finding the first is 200ms.
+  const m = await ctModule("packages/crypto/src/p256.wac");
+  // Not `KEYS32[0]`, which is all zeros: `curvePublicKey` traps on a scalar of zero or one
+  // past the group order, so the secrets here have to be valid keys as well as different.
+  const base = traceOf(m, () => m.exports.p256PublicKey(bytes(m, KEYS32[2])));
+  const other = traceOf(m, () => m.exports.p256PublicKey(bytes(m, KEYS32[3])));
+  const d = firstDivergence(m, base, other);
+  if (!d) throw new Error("the ladder no longer leaks — update the README and delete this test");
+  if (d.kind === "index") throw new Error(`expected a branch leak, got an index one at ${d.file}:${d.line}`);
+  // The expected place, in one constant used by both the check and the message — a message
+  // that spells the number a second time can say "expected 120, got 120" when it is wrong.
+  const want = "packages/crypto/src/weierstrass.wac", wantLine = 120;
+  if (d.file !== want || d.line !== wantLine) {
+    throw new Error(`the README says ${want}:${wantLine} leaks; the trace says ${d.file}:${d.line}`);
+  }
+} });
+
 Deno.test({ ...ct, name: "aes indexes its S-box with key-dependent values (known leak)", fn: async () => {
   const m = await ctModule("packages/crypto/src/aes.wac");
   const base = traceOf(m, () => m.exports.aesEncrypt(bytes(m, KEYS16[0]), bytes(m, BLOCK)));

@@ -17,6 +17,12 @@ Twenty operations each, inside wasm under the `wac` binary, on this machine:
 | `p256Sign` | 12ms |
 | `p256Verify` | 13ms |
 
+**Most of the ordering has an answer, and it is `issues/system/0210`.** P-256's `jacMul` adds only
+when the scalar bit is set; ed25519's `ptMul` always adds and selects. So P-256 is doing about half
+the point additions — and leaking the scalar through control flow, which is why 0210 is a bug rather
+than a note. Fixing that will move P-256 toward ed25519's number rather than the other way round, and
+what is left below is what remains after that is accounted for.
+
 **The ordering is the finding.** Every other implementation has ed25519 several times *faster* than
 P-256 — a prime-order twisted Edwards curve with complete addition formulas against a short Weierstrass
 curve needing a modular inversion — and here it is five times slower. That is not a property of the
