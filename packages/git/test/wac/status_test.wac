@@ -29,6 +29,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { builtProgram, wacBinary } from "./built.wac";
 import { withHome } from "../../../wactest/src/childenv.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
@@ -125,10 +126,12 @@ bool anyEndsWith(string[] all, string suffix) {
 
 /** `gitst <dir>`, run through the compiler rather than a built executable. */
 string gitst(T t, Cli cli, string dir) {
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = wacBinary(cli);
   Exec r = cli.exec(wac,
-                    string[]("run", "--allow-read", "--allow-write", "--allow-env",
-                             "packages/git/example/gitst.wac", "--", dir),
+                    string[](builtProgram(cli, "packages/git/example/gitst.wac", "gitst",
+                                          string[]("--allow-read", "--allow-write", "--allow-env",
+                                                   "--quiet")),
+                             dir),
                     u8[0]()).wait();
   t.eqStr(r.error, "", "the wac binary could be started");
   t.eqI32(r.status, 0, "gitst exited zero: " + string.fromBytes(r.stderr));
@@ -363,10 +366,12 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
   t.isTrue(verdicts.indexOf(".gitignore:1:kept.txt") >= 0,
            ".gitignore did not decide kept.txt: " + verdicts);
 
-  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string wac = wacBinary(cli);
   Exec ours = withHome(cli, home, wac,
-                       string[]("run", "--allow-read", "--allow-write", "--allow-env",
-                                "packages/git/example/gitst.wac", "--", d));
+                       string[](builtProgram(cli, "packages/git/example/gitst.wac", "gitst",
+                                             string[]("--allow-read", "--allow-write", "--allow-env",
+                                                      "--quiet")),
+                                d));
   t.eqStr(ours.error, "", "the wac binary could be started");
   t.eqI32(ours.status, 0, "gitst exited zero: " + string.fromBytes(ours.stderr));
   t.eqStr(withoutTrailingNewline(string.fromBytes(ours.stdout)), theirsText,
