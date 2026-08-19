@@ -46,7 +46,7 @@ import { Core, Cli, Exec, FileResult, Pending } from "../../../platform/src/plat
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
-import { Ran, boundedAgain, hangReport, stale, submit, collect, DEFAULT_SECONDS }
+import { Ran, boundedAgain, denoBatch, hangReport, stale, submit, collect, DEFAULT_SECONDS }
   from "./hostfs.wac";
 
 const string ENTRY = "packages/box/src/bin/sh.wac";
@@ -317,30 +317,51 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
   cli.mkdir(tmp, true).wait();
 
   string[] scripts = agreed();
+
+  // **The Deno half of every script, in one process.** It was one process each — 133ms of Deno
+  // starting against 17ms for the native host and 2ms for bash — and fifty of those was most of this
+  // test. `harness/appRunMany.ts` is the same program through the same `appRunner` the TypeScript
+  // version used, behind one `exec`; `issues/system/0213` has the numbers and why a wac test could not
+  // have it until it existed. A tree per script is made up front, exactly as before, so the runs are
+  // as isolated as they were when they were separate processes.
+  string[] denoTrees = string[scripts.len()](fill: "");
+  string[][] denoArgv = string[][scripts.len()](fill: string[0](fill: ""));
+  u8[][] denoIn = u8[][scripts.len()](fill: u8[0]());
+  for (i32 i = 0; i < scripts.len(); i++) {
+    denoTrees[i] = treeFor(cli, tmp, "deno-" + itoa(i));
+    denoArgv[i] = string[]("-c", scripts[i]);
+  }
+  Ran[] jsAll = denoBatch(cli, DEFAULT_SECONDS * 2, ENTRY,
+                          string[]("--allow-read", "--allow-write", "--allow-env"), tmp,
+                          denoTrees, denoArgv, denoIn);
+
   for (i32 i = 0; i < scripts.len(); i++) {
     string script = scripts[i];
-    // One tree each and all three submitted before any is collected: the three answers are
-    // independent runs and there is no reason to take them in turn. `issues/system/0211`.
+    // One tree each and both submitted before either is collected: the answers are independent runs
+    // and there is no reason to take them in turn. `issues/system/0211`.
     string bashTree = treeFor(cli, tmp, "bash");
-    string denoTree = treeFor(cli, tmp, "deno");
     string nativeTree = native == "" ? "" : treeFor(cli, tmp, "native");
 
     Pending<Exec> pw = submit(cli, DEFAULT_SECONDS, bashTree, tmp, "bash",
-                               string[]("-c", script), u8[0]());
-    Pending<Exec> pj = submit(cli, DEFAULT_SECONDS, denoTree, tmp, s.deno,
                                string[]("-c", script), u8[0]());
     bool haveNative = native != "";
     Pending<Exec> pr = haveNative
       ? submit(cli, DEFAULT_SECONDS, nativeTree, tmp, native, string[](s.manifest, "-c", script),
                u8[0]())
-      : pj;
+      : pw;
 
     Ran want = collect(pw);
-    Ran js = collect(pj);
+    Ran js = jsAll[i];
     // A bound that fired is not an answer — see `hostfs.wac` and issue 0128. A retry is serial and
     // rare, so it goes through `boundedAgain`'s path rather than complicating the batch above.
     if (want.hung) { want = gnu(core, cli, tmp, script); }
-    if (js.hung) { js = shell(core, cli, tmp, s.deno, string[0](fill: ""), script); }
+    // A batch that did not answer marks every case hung, so this is the same retry it always was:
+    // one process, its own tree, and the answer that decides the comparison.
+    if (js.hung) {
+      fixtureAt(cli, denoTrees[i]);
+      js = collect(submit(cli, DEFAULT_SECONDS * 3, denoTrees[i], tmp, s.deno,
+                          string[]("-c", script), u8[0]()));
+    }
     string stuck = hangReport(script, string[]("bash", "deno"), Ran[](want, js));
     if (stuck != "") { t.fail(stuck); continue; }
 
@@ -520,6 +541,19 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
     "touch t",            // writeFile
     "cp f copy");         // read and write in one command
 
+  // The Deno half of all twelve in one process, as the sweep above does — same program, same
+  // (absent) grants, same fixture per script. A tree apiece so the runs stay as independent as they
+  // were when each was its own process.
+  string[] nograntTrees = string[scripts.len()](fill: "");
+  string[][] nograntArgv = string[][scripts.len()](fill: string[0](fill: ""));
+  u8[][] nograntIn = u8[][scripts.len()](fill: u8[0]());
+  for (i32 i = 0; i < scripts.len(); i++) {
+    nograntTrees[i] = treeFor(cli, tmp, "nogrant-" + itoa(i));
+    nograntArgv[i] = string[]("-c", scripts[i] + "; echo status=$?");
+  }
+  Ran[] jsAll = denoBatch(cli, DEFAULT_SECONDS * 2, ENTRY, string[0](fill: ""), tmp,
+                          nograntTrees, nograntArgv, nograntIn);
+
   for (i32 i = 0; i < scripts.len(); i++) {
     string script = scripts[i];
     // **Started *in* the fixture rather than `cd`-ing into it**, and that is not tidiness. With
@@ -533,10 +567,13 @@ export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_o
     Ran rs = boundedAgain(core, cli, where, tmp, native,
                           string[](s.nogrant, "-c", script + "; echo status=$?"), u8[0](),
                           () => { fixture(cli, tmp); });
-    fixture(cli, tmp);
-    Ran js = boundedAgain(core, cli, where, tmp, s.nograntDeno,
-                          string[]("-c", script + "; echo status=$?"), u8[0](),
-                          () => { fixture(cli, tmp); });
+    Ran js = jsAll[i];
+    if (js.hung) {
+      fixture(cli, tmp);
+      js = boundedAgain(core, cli, where, tmp, s.nograntDeno,
+                        string[]("-c", script + "; echo status=$?"), u8[0](),
+                        () => { fixture(cli, tmp); });
+    }
 
     // It did not happen. `status=0` would mean the operation went through; the file contents are
     // checked separately because a read that succeeded prints rather than failing.
@@ -640,6 +677,13 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
   // The cause was a queue shadowing the real thing: a child spawned with `inheritInput` has its
   // parent-fed queue finished at once, and `readChunk` read *that*, saw empty, and answered end of
   // input before reaching the process's own stdin.
+  //
+  // **So this one keeps its processes, and `denoBatch` must not be used here.** The batch feeds a run
+  // by pushing onto the child's parent-fed queue — the very queue that shadowed fd 0 above — so a
+  // batched Deno half would exercise the queue and never the process's own input, and the comparison
+  // would be a queue-fed JavaScript host against an fd-fed native one. The bug this test exists to
+  // catch lives exactly in that difference. Ten cases at one process each is what checking real
+  // standard input costs.
   T t = T.create();
   string native = nativeBinary(cli);
   if (native == "") {
