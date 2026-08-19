@@ -196,6 +196,62 @@ export Answers askCached(T t, Cli cli, string program, string[] args, Lines line
   return a;
 }
 
+/**
+ * A **one-shot** oracle's standard output, cached — the argv shape rather than the batch one.
+ *
+ * `askCached` above is for an oracle that takes a batch on standard input and answers a line each.
+ * Some are not built that way: `packages/wacc/test/bindgenOracle.ts` takes an entry and a language on
+ * its command line and writes one answer, and `bindgenwac_test.wac` calls it six times — three
+ * programs by two languages, at about 1.4s each, one of them generating the glue for
+ * `packages/wacc/src/api.wac`. That is 11s of a 13s file, and every answer is the same as the run
+ * before unless the program or the reference moved.
+ *
+ * **`inputs` is what the caller knows and the argv does not.** The oracle reads files from disk, so
+ * the key cannot be the arguments alone — it has to carry the *content* those arguments point at. A
+ * caller that already holds the sources (this one holds the whole import graph) passes them; one that
+ * does not should name the trees they live in instead, which is what `trees` is for.
+ *
+ * Answers `""` for a run that failed, exactly as an uncached call does, and does not cache that: a
+ * failure is a fact about this run rather than about the question.
+ */
+export string askArgvCached(T t, Cli cli, string program, string[] args, string what, string name,
+                            string[] trees, string[] inputs) {
+  i64 newest = 0 as i64;
+  for (i32 i = 0; i < trees.len(); i++) {
+    i64 deep = newestUnder(cli, trees[i]);
+    if (deep > newest) { newest = deep; }
+  }
+  string stamp = itoa((newest / (1000 as i64)) as! i32);
+  string[] parts = string[args.len() + inputs.len()](fill: "");
+  for (i32 i = 0; i < args.len(); i++) { parts[i] = args[i]; }
+  for (i32 i = 0; i < inputs.len(); i++) { parts[args.len() + i] = inputs[i]; }
+  string key = name + "-" + itoa(sumOfStrings(parts)) + "-" + itoa(parts.len()) + "-" + stamp;
+  string path = ".cache/oracle/" + key + ".out";
+
+  FileResult held = cli.readFile(path).wait();
+  if (held.ok) { return string.fromBytes(held.bytes); }
+
+  Exec r = cli.exec(program, args, u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0, what + ": the oracle ran — " + string.fromBytes(r.stderr));
+  if (!r.ran() || r.status != 0) { return ""; }
+  string answer = string.fromBytes(r.stdout);
+  cli.mkdir(".cache/oracle", true).wait();
+  cli.writeFile(path, answer.toBytes()).wait();
+  sweepOlder(cli, ".cache/oracle", name + "-", "-" + stamp + ".out");
+  return answer;
+}
+
+/** A checksum over several strings, with a separator no argument can contain. */
+i32 sumOfStrings(string[] parts) {
+  i32 h = 7;
+  for (i32 i = 0; i < parts.len(); i++) {
+    u8[] b = parts[i].toBytes();
+    for (i32 k = 0; k < b.len(); k++) { h = (h * 31 + b[k]) & 2147483647; }
+    h = (h * 31 + 255) & 2147483647;
+  }
+  return h;
+}
+
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
 i64 newestUnder(Cli cli, string dir) {
   i64 newest = 0 as i64;
