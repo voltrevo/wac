@@ -3,7 +3,7 @@
 // `design/0001`'s state-of-play table is the page anyone reads to find out where WacLand is, and it is
 // the page nobody's test was reading. Four separate sentences said **sixty applets** where there were
 // 63, step 1 said **57 scripts on both backings** where 817 run on three, step 2a said the network was
-// what remained while `arrival_users.test.ts` was serving ssh from the second host, and step 7 said in
+// what remained while `arrival_users_test.wac` was serving ssh from the second host, and step 7 said in
 // its first sentence that `init` was done and in its last that `init` was what was left.
 //
 // None of that was carelessness. A count is written once by someone who has just counted, and then the

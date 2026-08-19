@@ -3,7 +3,7 @@
 //   deno task corpus:hosts [--from N] [--count N]
 //
 // design/0001's arrival test asks for the same system in two substantially different hosts. The gate
-// runs a bounded slice of this in `packages/platform/test/native_shell.test.ts`, because every case
+// runs a bounded slice of this in `packages/platform/test/wac/native_shell_test.wac`, because every case
 // costs two subprocesses and the corpus is 800-odd; this is the whole sweep, run by hand.
 //
 // It builds both artifacts from `packages/box/src/bin/sealedsh.wac` — a session whose filesystem is in

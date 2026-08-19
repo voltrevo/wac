@@ -108,7 +108,7 @@ complete" and "the connection ended" are the same statement.
 
 ## The 2×2
 
-`test/interop.test.ts` runs two clients against two servers:
+`test/wac/interop_test.wac` runs two clients against two servers:
 
 | | wac server | Node server |
 |---|---|---|

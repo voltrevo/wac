@@ -1,0 +1,249 @@
+// **The arrival test's last two words: users and system services.**
+//
+// design/0001 asks for "the same users, files, installed programs, shell behaviour and system
+// services" in two substantially different hosts. `arrival.test.ts` covers files, programs and shell
+// behaviour by moving an image between them. This is the other half, and it needs a *service*: the
+// users only exist once something logs in as them.
+//
+// So: `packages/ssh`'s `sshd` built twice. The **JavaScript host** writes the world — `/etc/passwd`,
+// two homes, two `authorized_keys`, two private files with owners and modes. The **host with no
+// JavaScript in it** then serves that same image, and a real OpenSSH client logs in as each user.
+//
+// design/0001 step 4's own criterion is "two keys land in two homes and neither can read the other's
+// private file". That criterion is met here **across hosts**: the world was written by one and is
+// enforced by the other, out of the image, with nothing about the machine underneath consulted.
+//
+// ## What makes this evidence rather than a demonstration
+//
+// The client is `ssh(1)` — a program neither host wrote, which will not connect at all unless the key
+// exchange, the ciphers and the authentication are right. And the permission denial comes from
+// `packages/fs` reading a `mode` and an `owner` **stored in the image**, not from the operating
+// system: the whole image is one file owned by whoever ran the process, so the host could not enforce
+// it even if it wanted to.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. `keygen` and `restrict` come from
+// `packages/wactest/src/keys.wac`, where they moved when this file wanted them — a second copy of
+// "make an ed25519 key and chmod it 600" is how two of them come to disagree about the mode, and
+// `ssh(1)` refuses over that with a message about permissions rather than about the key.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { Daemon, Held, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
+import { keygen, restrict, publicLine } from "../../../wactest/src/keys.wac";
+
+const string ENTRY = "packages/ssh/src/sshd.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/** Whether this machine has the tools: without `ssh` and `ssh-keygen` there is no client. */
+bool haveSsh(Cli cli) {
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c", "command -v ssh >/dev/null && command -v ssh-keygen >/dev/null"),
+    u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+/** The native host binary — `wacland`, built when its sources are newer than it. */
+string nativeBinary(Core core, Cli cli) {
+  string path = root(cli) + "/native/target/release/wacland";
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c",
+      "if [ -x '" + path + "' ] && " +
+      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer '" + path +
+      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
+      "cd native && cargo build --release --quiet"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0 || !cli.stat(path).wait().isFile) {
+    core.warn("arrival_users: SKIPPING the native half — cargo did not build `native`");
+    return "";
+  }
+  return path;
+}
+
+string buildOne(Cli cli, bool native, string out) {
+  string[] grants = string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env");
+  if (native) {
+    string[] args = string[4 + grants.len()](fill: "");
+    args[0] = "build";
+    args[1] = ENTRY;
+    for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
+    args[2 + grants.len()] = "-o";
+    args[3 + grants.len()] = out;
+    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
+    if (!r.ran() || r.status != 0) {
+      return "wac build sshd: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    }
+    return "";
+  }
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", ENTRY);
+  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
+  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
+  args[head.len() + grants.len()] = "-o";
+  args[head.len() + grants.len() + 1] = out;
+  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return "build.ts sshd: " + string.fromBytes(r.stderr); }
+  return "";
+}
+
+struct Said {
+  i32 code;
+  string out;
+  string err;
+}
+
+Said ssh(Cli cli, string tmp, i32 port, string key, string user, string script) {
+  Exec r = cli.exec("ssh", string[](
+    "-p", itoa(port),
+    "-i", tmp + "/" + key,
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "LogLevel=ERROR",
+    "-o", "ConnectTimeout=10",
+    user + "@127.0.0.1",
+    script), u8[0]()).wait();
+  if (!r.ran()) { return Said(-1, "", "ssh did not run — " + r.error); }
+  return Said(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
+}
+
+/** A running sshd, or why there is not one. */
+struct Server {
+  Daemon d;
+  i32 port;
+  string error;
+}
+
+/**
+ * Start `sshd` over `image` and wait until it says which port it took.
+ *
+ * The startup line is the only thing that says binding finished — racing it is how a test like this
+ * becomes flaky rather than failing. The port is held until the statement before the spawn and the
+ * race is retried, and only that: `Held` shrinks the window rather than closing it, because a server
+ * takes its port on the command line and something has to know the number before the process exists.
+ */
+Server serve(Core core, Cli cli, string tmp, string cmd, string[] pre, string image, string log) {
+  for (i32 attempt = 1; attempt <= 3; attempt++) {
+    Held held = Held.take(cli);
+    if (held.port < 0) { return Server(Daemon(-1, "", log), -1, "no free port could be bound"); }
+    i32 port = held.port;
+
+    string line = quoted(cmd);
+    for (i32 i = 0; i < pre.len(); i++) { line = line + " " + quoted(pre[i]); }
+    line = line + " -p " + itoa(port) +
+           " -h " + quoted(tmp + "/hostkey") +
+           " -a " + quoted(tmp + "/authorized_keys") +
+           " -i " + quoted(image);
+
+    held.release(cli);
+    Daemon d = start(cli, line, log + "." + itoa(attempt));
+    if (!d.ok()) { return Server(d, -1, "the shell did not start sshd — " + d.error); }
+    if (waitForLogWithin(core, cli, d, "listening on port " + itoa(port), 20000)) {
+      return Server(d, port, "");
+    }
+    stop(cli, d);
+    if (attempt == 3) {
+      return Server(d, -1,
+        "the server never said it was listening on " + itoa(port) + ", three times: " + logOf(cli, d));
+    }
+  }
+  return Server(Daemon(-1, "", log), -1, "unreachable");
+}
+
+
+export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_image(
+    Core core, Cli cli) {
+  T t = T.create();
+  if (!haveSsh(cli)) {
+    core.warn("arrival_users: skipped — no ssh or ssh-keygen on this machine, so there is no client");
+    return t.report();
+  }
+  string tmp = root(cli) + "/.cache/arrival-users";
+  cli.remove(tmp, true).wait();
+  cli.mkdir(tmp, true).wait();
+
+  string denoBin = tmp + "/sshd-deno";
+  string why = buildOne(cli, false, denoBin);
+  t.eqStr(why, "", "the Deno sshd built");
+  if (why != "") { return t.report(); }
+
+  string[] keys = string[]("hostkey", "admin", "ada", "grace");
+  for (i32 i = 0; i < keys.len(); i++) {
+    if (!keygen(t, cli, tmp + "/" + keys[i])) { return t.report(); }
+    restrict(cli, tmp + "/" + keys[i]);
+  }
+  cli.writeFile(tmp + "/authorized_keys", (publicLine(cli, tmp + "/admin.pub") + "\n").toBytes()).wait();
+  string image = tmp + "/system.wacimg";
+
+  // ── The JavaScript host writes the world ────────────────────────────────
+  Server first = serve(core, cli, tmp, denoBin, string[0](fill: ""), image, tmp + "/deno.log");
+  t.eqStr(first.error, "", "the Deno sshd is up");
+  if (first.port <= 0) { return t.report(); }
+
+  string build =
+    "mkdir /etc; " +
+    "printf 'ada:x:1000:1000::/home/ada:/bin/sh\\ngrace:x:1001:1001::/home/grace:/bin/sh\\n' " +
+      "> /etc/passwd; " +
+    "mkdir /home; mkdir /home/ada; mkdir /home/ada/.ssh; " +
+      "mkdir /home/grace; mkdir /home/grace/.ssh; " +
+    "printf '%s\\n' '" + publicLine(cli, tmp + "/ada.pub") + "' > /home/ada/.ssh/authorized_keys; " +
+    "printf '%s\\n' '" + publicLine(cli, tmp + "/grace.pub") + "' > /home/grace/.ssh/authorized_keys; " +
+    "echo the difference engine > /home/ada/secret; " +
+    "echo the first compiler > /home/grace/secret; " +
+    "chmod 600 /home/ada/secret; chown ada /home/ada/secret; " +
+    "chmod 600 /home/grace/secret; chown grace /home/grace/secret; " +
+    "chown ada /home/ada; chown grace /home/grace";
+  Said made = ssh(cli, tmp, first.port, "admin", "root", build);
+  t.eqI32(made.code, 0, "building the world: " + made.err);
+  // **No second connection.** This used to need one: the image was written after the connection was
+  // over, so killing the server as soon as `ssh` returned could beat the save and the next host booted
+  // an empty world (0108). A session writes before it tells the client the command finished now, so
+  // the assertion can be made where it means more — on the file itself, once the server that wrote it
+  // is gone.
+  stop(cli, first.d);
+
+  // The image on disk carries the table, checked with nothing running: an image that never got the
+  // users and a second host that cannot read them are different failures, and this rules out the first
+  // before the second host is asked anything.
+  FileResult onDisk = cli.readFile(image).wait();
+  t.isTrue(onDisk.ok && contains(string.fromBytes(onDisk.bytes), "ada:x:1000"),
+           "the stopped server left an image with no users");
+  if (!onDisk.ok) { return t.report(); }
+
+  string native = nativeBinary(core, cli);
+  if (native == "") { cli.remove(tmp, true).wait(); return t.report(); }
+  why = buildOne(cli, true, tmp + "/sshd");
+  t.eqStr(why, "", "the native sshd built");
+  if (why != "") { cli.remove(tmp, true).wait(); return t.report(); }
+
+  // ── …and the host with no JavaScript in it serves the same file ─────────
+  Server second = serve(core, cli, tmp, native, string[](tmp + "/sshd.json"), image,
+                        tmp + "/native.log");
+  t.eqStr(second.error, "", "the native sshd is up");
+  if (second.port <= 0) { cli.remove(tmp, true).wait(); return t.report(); }
+
+  // Each key lands in its own home, with its own name, without the server being told either.
+  Said ada = ssh(cli, tmp, second.port, "ada", "ada", "pwd; echo $USER");
+  t.eqStr(ada.out, "/home/ada\nada\n", ada.out + " / " + ada.err);
+  // Grace logs in *after* ada, so this also says the server reads policy as the system rather than as
+  // whoever it served last.
+  Said grace = ssh(cli, tmp, second.port, "grace", "grace", "pwd; echo $USER");
+  t.eqStr(grace.out, "/home/grace\ngrace\n", grace.out + " / " + grace.err);
+
+  // Each reads their own.
+  Said own = ssh(cli, tmp, second.port, "ada", "ada", "cat /home/ada/secret");
+  t.eqStr(own.out, "the difference engine\n", own.err);
+
+  // And neither reads the other's — design/0001 step 4's criterion, on a host that did not write the
+  // image. The mode and the owner are **in the image**: the whole thing is one file owned by whoever
+  // ran the process, so the operating system could not enforce this even if it tried.
+  Said theirs = ssh(cli, tmp, second.port, "ada", "ada", "cat /home/grace/secret; echo status=$?");
+  t.isTrue(contains(theirs.out, "status=1"), theirs.out + " / " + theirs.err);
+  t.isFalse(contains(theirs.out, "the first compiler"), "ada read grace's secret");
+  t.isTrue(contains(theirs.err, "Permission denied"), theirs.err);
+
+  stop(cli, second.d);
+  cli.remove(tmp, true).wait();
+  return t.report();
+}

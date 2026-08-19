@@ -1,4 +1,3 @@
-// only: wacc
 //
 // This file is built out of lambdas, and the reference compiler does not have them — it is
 // `packages/wacc` that grew `design/lang/0002`. The marker is not a skip: the corpus tests that

@@ -295,7 +295,7 @@ export i32 kJsxText() { return 84; }
 
 // `=>`, the lambda arrow — wac's own as well, and after `kJsxText` for the reason above: the
 // reference has no token for it, so putting it anywhere below 84 would shift a kind the differential
-// in `lex_test.wac` reads straight out of `wacLex.ts`. `design/lang/0002` tier two.
+// used to be read straight out of `wacLex.ts` by a differential that is gone. `design/lang/0002` tier two.
 /** `=>` */
 export i32 kFatArrow() { return 85; }
 

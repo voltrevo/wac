@@ -1,6 +1,5 @@
 // expect: answers f = 42
 // why: a parameter is captured like any other local, and shared rather than copied
-// only: wacc
 // from: design/lang/0002 tier two
 //
 // A captured local becomes a cell where it is declared. A parameter has none — it arrives already in

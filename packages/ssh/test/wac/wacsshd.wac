@@ -38,7 +38,8 @@ import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wa
 import { onlyEnv, onlyEnvLine, quoted } from "../../../wactest/src/childenv.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { atoi, itoa } from "../../../fmt/src/itoa.wac";
-import { copyPreserving, keygen, restrict, scratch } from "./fixture.wac";
+import { scratch } from "./fixture.wac";
+import { copyPreserving, keygen, restrict } from "../../../wactest/src/keys.wac";
 
 /** Our server, running, with a host key and one authorized client key. */
 export struct Wacsshd {

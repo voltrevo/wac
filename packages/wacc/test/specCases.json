@@ -1,6 +1,6 @@
 {
   "source": "compiler/wacSpec.test.ts",
-  "sha256": "2b3fe8a37a5f4e9d39351fcbc982ec1b1f0366632c75050fcb72977d0da8c01b",
+  "sha256": "fcd25af60c992c47448caf92132c7c9ea888ca1cd75c0e2e9753e99e911c9a1c",
   "cases": [
     {
       "test": "[§wac-int32-dfkqg8u] int32() returns 42",

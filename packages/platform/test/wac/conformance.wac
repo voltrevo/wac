@@ -1,0 +1,204 @@
+// Scanning source files for the names they declare, for `conformance_test.wac`.
+//
+// Hand-written rather than a regex, and that is the point rather than a limitation: every one of
+// these is asserted to have found *enough*, because an extraction that quietly matched nothing makes
+// the loop it feeds vacuous — which is how a ledger comes to certify a surface it never read. The
+// TypeScript this replaces learned that twice, once in each direction: a bracket class that stopped
+// at the `]` of `u8[]` reported 20 `Cli` fields where there are 31, and a `SCREAMING_SNAKE` to
+// `camelCase` conversion that is right 36 times out of 38 reported two capabilities as missing from a
+// runtime that plainly has them.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { Cli, FileResult } from "../../../platform/src/platform.wac";
+
+export string sourceOf(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) { trap; }
+  return string.fromBytes(f.bytes);
+}
+
+/** Every line of `text`, without its terminator. */
+export string[] linesOf(string text) {
+  i32 count = 1;
+  u8[] b = text.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { count = count + 1; } }
+  string[] out = string[count](fill: "");
+  i32 n = 0;
+  i32 at = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '\n') {
+      out[n] = text.slice(at, i);
+      n = n + 1;
+      at = i + 1;
+    }
+  }
+  out[n] = text.slice(at, text.len());
+  return out;
+}
+
+bool isUpper(i32 c) { return c >= 'A' && c <= 'Z'; }
+bool isDigit(i32 c) { return c >= '0' && c <= '9'; }
+bool isWordByte(i32 c) {
+  return isUpper(c) || isDigit(c) || (c >= 'a' && c <= 'z') || c == '_';
+}
+
+/** Trim the given array to its first `n` entries. */
+string[] firstOf(string[] all, i32 n) {
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = all[i]; }
+  return out;
+}
+
+/**
+ * The opcode names in `host/ops.ts` — the JavaScript side's numbering.
+ *
+ * Two spaces, a `SCREAMING_SNAKE` name, a colon, a number and a comma: the shape of one entry in the
+ * object literal, and nothing else in that file has it.
+ */
+export string[] opcodes(Cli cli) {
+  string[] lines = linesOf(sourceOf(cli, "packages/platform/host/ops.ts"));
+  string[] found = string[lines.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    string line = lines[i];
+    u8[] b = line.toBytes();
+    if (b.len() < 5 || b[0] != ' ' || b[1] != ' ' || !isUpper(b[2])) { continue; }
+    i32 at = 2;
+    while (at < b.len() && (isUpper(b[at]) || isDigit(b[at]) || b[at] == '_')) { at = at + 1; }
+    if (at >= b.len() || b[at] != ':') { continue; }
+    i32 name = at;
+    at = at + 1;
+    if (at >= b.len() || b[at] != ' ') { continue; }
+    at = at + 1;
+    i32 digits = 0;
+    while (at < b.len() && isDigit(b[at])) { at = at + 1; digits = digits + 1; }
+    if (digits == 0 || at >= b.len() || b[at] != ',' || at + 1 != b.len()) { continue; }
+    found[n] = line.slice(2, name);
+    n = n + 1;
+  }
+  return firstOf(found, n);
+}
+
+/**
+ * The capability names the wasmtime host wires an arm for.
+ *
+ * `("Core", "name") => Cap::` in `native/src/main.rs`. An opcode with no entry here is page-only.
+ */
+export string[] nativeCapabilities(Cli cli) {
+  string src = sourceOf(cli, "native/src/main.rs");
+  u8[] b = src.toBytes();
+  string[] found = string[512](fill: "");
+  i32 n = 0;
+  string[] structs = string[]("(\"Core\", \"", "(\"Cli\", \"", "(\"Page\", \"");
+  for (i32 s = 0; s < structs.len(); s++) {
+    i32 at = 0;
+    while (at < src.len()) {
+      i32 hit = src.slice(at, src.len()).indexOf(structs[s]);
+      if (hit < 0) { break; }
+      i32 start = at + hit + structs[s].len();
+      i32 end = start;
+      while (end < b.len() && isWordByte(b[end])) { end = end + 1; }
+      // `") => Cap::` is what makes it a capability arm rather than any other pair of strings.
+      if (end < b.len() && src.slice(end, end + 11) == "\") => Cap::" && n < found.len()) {
+        found[n] = src.slice(start, end);
+        n = n + 1;
+      }
+      at = start;
+    }
+  }
+  return firstOf(found, n);
+}
+
+/**
+ * The capability *fields* `platform.wac` declares for one struct.
+ *
+ * `opcodes` reads the JavaScript side's numbering; this reads the language's own declaration, which is
+ * what a wac program can actually ask for. The two are different questions and only this one can
+ * answer "is there a capability the wasm host has never heard of" — an opcode nobody assigned a number
+ * to would be missing from `ops.ts` *and* from `main.rs`, and would look consistent.
+ *
+ * **The scan to the closing bracket is greedy on purpose.** A signature contains array types —
+ * `fn[Pending<bool>(string, i32, i32, u8[])] drawPixels;` — so stopping at the first `]` drops the
+ * field silently. Written that way first, the TypeScript reported 20 `Cli` fields where there are 31.
+ */
+export string[] declaredFields(Cli cli, string name) {
+  string src = sourceOf(cli, "packages/platform/src/platform.wac");
+  i32 from = src.indexOf("export struct " + name + " {");
+  if (from < 0) { trap; }
+  i32 to = src.slice(from, src.len()).indexOf("\n}");
+  if (to < 0) { trap; }
+  string[] lines = linesOf(src.slice(from, from + to));
+  string[] found = string[lines.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    string line = lines[i];
+    u8[] b = line.toBytes();
+    i32 at = 0;
+    while (at < b.len() && (b[at] == ' ' || b[at] == '\t')) { at = at + 1; }
+    if (at + 3 >= b.len() || line.slice(at, at + 3) != "fn[") { continue; }
+    // The *last* `]` on the line, so `u8[]` inside the signature does not end it early.
+    i32 close = -1;
+    for (i32 k = b.len() - 1; k > at; k--) { if (b[k] == ']') { close = k; break; } }
+    if (close < 0) { continue; }
+    i32 s = close + 1;
+    while (s < b.len() && (b[s] == ' ' || b[s] == '\t')) { s = s + 1; }
+    i32 e = s;
+    while (e < b.len() && isWordByte(b[e])) { e = e + 1; }
+    if (e == s || e >= b.len() || b[e] != ';' || e + 1 != b.len()) { continue; }
+    found[n] = line.slice(s, e);
+    n = n + 1;
+  }
+  return firstOf(found, n);
+}
+
+/** `SCREAMING_SNAKE` as `camelCase`. */
+export string camel(string op) {
+  // The two whose wac-side name is not the camelCase of the opcode, and both are the standard
+  // streams. Listed rather than guessed: the opcode is named for the stream it writes and the
+  // capability for what a caller does, and a mapping that is right 36 times out of 38 gets believed.
+  if (op == "WRITE_STDOUT") { return "write"; }
+  if (op == "WRITE_STDERR") { return "writeErr"; }
+  string out = "";
+  bool upNext = false;
+  u8[] b = op.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '_') { upNext = true; continue; }
+    if (upNext) {
+      out = out + op.slice(i, i + 1);
+      upNext = false;
+    } else if (isUpper(b[i])) {
+      // Lowercase, by arithmetic: the byte is known to be A–Z here.
+      u8[] one = u8[1](fill: 0);
+      one[0] = b[i] + 32;
+      out = out + string.fromBytes(one);
+    } else {
+      out = out + op.slice(i, i + 1);
+    }
+  }
+  return out;
+}
+
+export bool has(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
+  return false;
+}
+
+/** Ascending, so a pinned set can be written down once and stay written. */
+export string[] sorted(string[] all) {
+  string[] out = string[all.len()](fill: "");
+  for (i32 i = 0; i < all.len(); i++) { out[i] = all[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string v = out[i];
+    i32 k = i - 1;
+    while (k >= 0 && out[k] > v) { out[k + 1] = out[k]; k = k - 1; }
+    out[k + 1] = v;
+  }
+  return out;
+}
+
+export string joined(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = out + (i == 0 ? "" : sep) + all[i]; }
+  return out;
+}

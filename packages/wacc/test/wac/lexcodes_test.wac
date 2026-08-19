@@ -1,0 +1,78 @@
+// The lexer's error-code table, checked against `lex.wac` itself.
+//
+// **What is left of rung 1 after 2026-08-19.** This file used to sit beside a differential that
+// lexed and parsed every `.wac` file in the repository with both wacc and the reference and required
+// them to agree. That is gone, and the reason is worth keeping: **the reference's only job is
+// bootstrapping.** Holding it up as a second implementation of the language made it a constraint on
+// the language — wac has lambdas and the reference does not, so every ordinary file that used one
+// had to carry a `// only: wacc` marker to say it was allowed to differ. The markers are gone with
+// the test.
+//
+// This check survives because it never used the reference as an oracle for the *language*. The table
+// is hand-written — the reference has no error kinds to derive from, it interpolates English at each
+// site — so what is asked here is that the table and `packages/wacc/src/lex.wac` agree with each
+// other: no code twice, and every code the source can emit is in it. The `deno` call fetches the
+// table, which is data, not a second opinion.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined, splitLines, startsWith, trimmed, has } from "../../../wactest/src/strings.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Lines, Answers, ask, word } from "../../../wactest/src/oracle.wac";
+
+const string ORACLE = "packages/wacc/test/reference.ts";
+
+export string test_lex_errors_the_code_table_itself_is_sound(Core core, Cli cli) {
+  // Without this, a code added to `lex.wac` would be compared against nothing.
+  T t = T.create();
+  Lines lines = Lines.create();
+  lines.add("lexcodes");
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines, "the table");
+  if (!a.ok || a.lines.len() != 1) { return t.report(); }
+  t.isFalse(startsWith(a.lines[0], "lexcodes BAD"), a.lines[0]);
+  if (startsWith(a.lines[0], "lexcodes BAD")) { return t.report(); }
+
+  string[] declared = string[64](fill: "");
+  i32 nDeclared = 0;
+  while (word(a.lines[0], nDeclared + 1) != "" && nDeclared < declared.len()) {
+    declared[nDeclared] = word(a.lines[0], nDeclared + 1);
+    nDeclared = nDeclared + 1;
+  }
+
+  FileResult f = cli.readFile("packages/wacc/src/lex.wac").wait();
+  t.isTrue(f.ok, "lex.wac is readable — " + f.error);
+  if (!f.ok) { return t.report(); }
+
+  // `err[A-Z]` rather than any `err…`: the latter also matches `errorStride()`, which is a layout
+  // constant and not a code, and the count check duly reported eight where the table has seven.
+  string[] lines2 = splitLines(string.fromBytes(f.bytes));
+  i32 inSource = 0;
+  string[] missing = string[16](fill: "");
+  i32 nMissing = 0;
+  for (i32 i = 0; i < lines2.len(); i++) {
+    string l = trimmed(lines2[i]);
+    if (!startsWith(l, "export i32 err")) { continue; }
+    i32 c = l.toBytes()[14];
+    if (c < 'A' || c > 'Z') { continue; }
+    i32 ret = l.indexOf("return ");
+    if (ret < 0) { continue; }
+    string rest = l.slice(ret + 7, l.len());
+    i32 semi = rest.indexOf(";");
+    if (semi < 0) { continue; }
+    string code = trimmed(rest.slice(0, semi));
+    inSource = inSource + 1;
+    string[] have = string[nDeclared](fill: "");
+    for (i32 k = 0; k < nDeclared; k++) { have[k] = declared[k]; }
+    if (!has(have, code) && nMissing < missing.len()) {
+      missing[nMissing] = code + " is in lex.wac and not in the table, so nothing compares it";
+      nMissing = nMissing + 1;
+    }
+  }
+
+  string[] said = string[nMissing](fill: "");
+  for (i32 i = 0; i < nMissing; i++) { said[i] = missing[i]; }
+  t.eqI32(nMissing, 0, joined(said, "; "));
+  t.eqI32(inSource, nDeclared,
+          itoa(inSource) + " codes in lex.wac, " + itoa(nDeclared) + " in the table");
+  return t.report();
+}

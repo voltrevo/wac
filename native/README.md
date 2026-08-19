@@ -118,7 +118,7 @@ which is not a refusal but the honest answer to "what does this world's environm
 **The arrival test passes.** `packages/platform/test/arrival.test.ts`: an image written by the Deno
 host is the same system here and back again, and a session that changes nothing writes a byte-identical
 image on either host, with 65 applets run over it in between. The shell's corpus is a separate
-claim and a separate test: `native_shell.test.ts` runs the first 25 scripts through both hosts on
+claim and a separate test: `native_shell_test.wac` runs the first 25 scripts through both hosts on
 every suite run and says so in the file, and `deno task corpus:hosts` sweeps the whole corpus by
 hand — whose size is stated in [`packages/sh`'s README](../packages/sh/README.md#the-oracle-is-bash)
 and, deliberately, nowhere else. That took the filesystem —
@@ -159,6 +159,6 @@ inside `packages/platform` for an hour, which is how long it took the suite to p
 567 MB `target/` is walked by every test that walks that package, and *changes while the build runs*.
 `target/` is gitignored: all of it is reproducible from `Cargo.toml` and `Cargo.lock`.
 
-`packages/platform/test/native.test.ts` runs `example/wacland.wac` on this host and on Deno and compares
+`packages/platform/test/wac/native_test.wac` runs `example/wacland.wac` on this host and on Deno and compares
 them. It builds through cargo and **skips loudly** when cargo is absent, with the Deno half still
 asserting — a silent skip is how a differential test comes to compare nothing.

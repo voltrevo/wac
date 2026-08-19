@@ -452,7 +452,7 @@ so each row says which: *pinned* means pure functions checked against C tor's ow
 | 2 — onion service client | **live.** `src/hsconnect.wac` fetches a page from a real onion service over our own circuits |
 | 3 — the relay | **live, end to end.** A C tor bootstraps from our authority, builds a three-hop circuit through our relays, and **a stream carries bytes**: `stream 5129 open to 192.168.80.2:8087`, 5004 bytes byte-identical to the file served. Link handshake, CREATE2, EXTEND2, BEGIN, CONNECTED, END and DATA **towards the client** all have live witnesses, up to 8 MB with a slow reader. DATA the other way works too, past the 500-cell window, since `relayd` returns SENDMEs (1 MB measured). A connection multiplexes several circuits |
 | 4 — the directory authority | **live, both flavours.** Descriptor, key certificate, vote and consensus all accepted by C tor's parsers; the vote's signature verified inside the parse, and the ns **and** microdesc consensuses verified by `networkstatus_check_consensus_signature` — `This microdesc one has 1 (wacauth)`. Microdescriptors are generated, served at `/tor/micro/d/`, fetched by a C tor and accepted; it reaches `Bootstrapped 100% (done)` with `UseMicrodescriptors` at its default |
-| 5 — the launcher | **done, and the suite stands the network up.** `src/network.wac` brings a network up from a description, waits for each node's own ready line, runs work across it and tears it down. `test/network_tor.test.ts` does exactly that on every run of the suite: three relays, an authority, a service, a client, thirteen seconds. The port collision that used to make this impossible is gone — relays take `-p 0` and announce what they were given, so nothing in a description is agreed in advance and two agents' suites do not collide. One limit remains and is structural: it cannot start a C tor, because `spawn` takes a worker bundle by design |
+| 5 — the launcher | **done, and the suite stands the network up.** `src/network.wac` brings a network up from a description, waits for each node's own ready line, runs work across it and tears it down. `test/wac/network_tor_test.wac` does exactly that on every run of the suite: three relays, an authority, a service, a client, thirteen seconds. The port collision that used to make this impossible is gone — relays take `-p 0` and announce what they were given, so nothing in a description is agreed in advance and two agents' suites do not collide. One limit remains and is structural: it cannot start a C tor, because `spawn` takes a worker bundle by design |
 | 6 — the onion service host | **done, against its own condition.** A C tor client fetched a page from a service we host: `curl --socks5-hostname` → `hello from behind an onion`. The introduction point and rendezvous point relay roles went live in the same run — `packages/tor/INTEROP.md` |
 | 7 — the interop matrix | **written**, `packages/tor/INTEROP.md`: each component in both directions, with *pinned*, *live* and *ours only* kept apart. Its first act was to catch step 6 above being marked done against the wrong condition |
 | — X.509 generation | **pinned.** `packages/tls/src/derwrite.wac` and `src/x509gen.wac`, verified by OpenSSL |
@@ -931,7 +931,7 @@ interop matrix stays a shell script. That one is still true.
 The second was that **the suite did not stand up a Tor network with it** — the ports a relay listens
 on are baked into its signed descriptor, so two agents running the suite at once would collide on
 5555. That is no longer true and stopped being a property of Tor the moment anyone looked at it: a
-relay takes `-p 0`, is given a port by the operating system, and announces it. `test/network_tor.test.ts`
+relay takes `-p 0`, is given a port by the operating system, and announces it. `test/wac/network_tor_test.wac`
 now stands the whole network up on every run. `test/network.test.ts` still tests the launcher against
 `packages/platform/example/waiter.wac`, which remains the right subject for *that* file — it knows
 about processes and ready markers, not about Tor, and it should fail when the launcher is wrong rather
@@ -2121,7 +2121,7 @@ the fix was upstream of everything anyone was looking at.
 
 *"`deno task test` stands up a Tor network with no C in it, publishes an onion service on it, fetches
 a page from that service through a three-hop circuit, and tears it down."* On 2026-08-07, in
-`packages/tor/test/network_tor.test.ts`, in thirteen seconds:
+`packages/tor/test/wac/network_tor_test.wac`, in thirteen seconds:
 
     gendesc: wrote a 2472-byte consensus and a 2485-byte microdesc one
     3 responsible directories
@@ -2162,7 +2162,7 @@ express that at any granularity. The second does not follow from it, and nobody 
 
 A C tor never needed to live inside the capability world. It needs to be **a peer on a socket**. The
 suite is TypeScript, `tools/runTests.ts` already gives every test subprocess `--allow-run` and
-`--allow-net`, and `network_tor.test.ts` was already shelling out — to run the launcher. So
+`--allow-net`, and `network_tor_test.wac` was already shelling out — to run the launcher. So
 `test/ctor_live.test.ts` starts a real tor beside the wac network and requires it to bootstrap through
 it. No platform change was needed. What needs one is `network.wac` *owning* a C tor, which is a much
 weaker claim than the one being made.
@@ -2344,7 +2344,7 @@ flavours carry `s Exit Fast Guard HSDir Running Stable V2Dir Valid`, so that is 
 taught: `Log info` rather than `Log notice` in the torrc, and then the question is narrow — does tor
 compute the same responsible HSDirs we uploaded to, does it fetch a descriptor, and does it decrypt
 one. At `notice` the log says nothing about any of that, which is why this attempt ran out of room.
-Our own client fetches from this same service in `network_tor.test.ts`, so the descriptor is
+Our own client fetches from this same service in `network_tor_test.wac`, so the descriptor is
 retrievable and decryptable by *something* that computes the ring the way we do.
 
 **A latent bug fell out of the attempt and is fixed.** `startTor` stood up its own network, which was

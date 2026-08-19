@@ -1,6 +1,5 @@
 // expect: answers f = 5
 // why: a bound reference over a struct holding a Cell is a closure with reference semantics, written by hand
-// only: wacc
 // from: design/lang/0002 tier two — the lowering, compiled before the syntax was designed
 //
 // Capture is by reference and primitives are included (decided 2026-08-16), so a captured `i32`

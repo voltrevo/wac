@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0212](open/0212-the-mutation-recall-floor-is-decided-by-filenames-not-by-the-checker.md) | rung 3 pairs each corpus file with `MUTATIONS[i % 7]` over an alphabetical list, so adding one file re-pairs every later one — two gate runs failed under the 97% floor for that reason | bug | wrong answer |
 | [0210](open/0210-the-weierstrass-ladder-branches-on-the-secret-scalar.md) | `jacMul` adds only when the scalar bit is set, so P-256 and P-384 leak the private key — and the ECDSA *nonce* — through control flow; measured with `ctTrace`, one divergent site at `weierstrass.wac:120`, and the README's side-channel table had no asymmetric row at all | bug | no error |
 | [0209](open/0209-ed25519-is-five-times-slower-than-p-256-which-is-the-wrong-way-round.md) | `ed25519Sign` is 63ms and `p256Sign` is 12ms — five times slower on the curve that should be faster, so it is this code rather than the mathematics; `ptDouble` is `ptAdd(p, p)` and there is no precomputed base table | performance | no error |
 | [0208](open/0208-nothing-owns-the-wasmtime-hosts-build-so-five-callers-do-it-themselves.md) | nothing owns the wasmtime host's build, so five callers each do it themselves | missing feature | not implemented |
@@ -64,11 +65,10 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-217 issues, 165 closed.
+218 issues, 165 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
 thirteen numbers used twice and five issues written in a third header format — neither of
 which anything would have noticed, because the rows above happened to be right.
 
-214 issues, 164 closed.

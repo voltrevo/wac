@@ -95,7 +95,7 @@ Per host, since a capability is only as portable as its worst host:
 
 **There are two native hosts and they are not interchangeable**, which this table said wrongly until
 2026-08-12: it listed `native/v8` alone and the order of work below said "the three hosts". The one
-that matters for the invariant is `native/` — `conformance.test.ts`'s check that "every capability
+that matters for the invariant is `native/` — `conformance_test.wac`'s check that "every capability
 the language declares, the host with no JavaScript supplies" reads `native/src/main.rs`, so
 implementing V8's arms does not satisfy it. `native/v8` is where the direction is going
 (design/lang 0003 makes V8 the primary platform) and `native/` is what the suite checks today. A

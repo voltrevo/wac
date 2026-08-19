@@ -1,6 +1,5 @@
 // expect: answers f = 42
 // why: a captured name is written *through* — an element and a field — not just rebound
-// only: wacc
 // from: design/lang/0002 tier two — found building `packages/platform`'s substitute capabilities
 //
 // **Reading a captured name and writing through one are different paths in the emitter, and only the

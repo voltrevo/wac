@@ -24,7 +24,8 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains, trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Said, Wacsshd, buildServer, realSsh, startWacsshd, stopWacsshd } from "./wacsshd.wac";
-import { haveSshd, keygen, publicBlobText, restrict, scratch } from "./fixture.wac";
+import { haveSshd, scratch } from "./fixture.wac";
+import { keygen, publicBlobText, restrict } from "../../../wactest/src/keys.wac";
 
 Wacsshd imageServer(T t, Core core, Cli cli, string name, string image) {
   string binary = buildServer(t, cli, true);

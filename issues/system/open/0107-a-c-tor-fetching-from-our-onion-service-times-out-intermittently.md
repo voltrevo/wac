@@ -34,7 +34,7 @@ introduction point, and publishes to six directories — three HSDirs for each o
 then waits. tor reaches `Bootstrapped 100%`. The failure is entirely in the client's half: no
 rendezvous is ever joined.
 
-**Our own client does not show this.** `packages/tor/test/network_tor.test.ts` fetches from the same
+**Our own client does not show this.** `packages/tor/test/wac/network_tor_test.wac` fetches from the same
 service, over the same network, on every suite run and has never failed. So whatever this is lives in
 what C tor does differently from `hsconnect` — descriptor fetch from a different HSDir choice,
 INTRODUCE1 timing, or something in the rendezvous.
@@ -48,7 +48,7 @@ its own header and is a plausible interaction with a client that retries.
 ## Almost certainly the same thing as 0106
 
 [0106](0106-the-onion-service-test-goes-red-under-load-on-a-shared-machine.md) is agent-a's, filed the
-same day, for `network_tor.test.ts` going red intermittently with *"a relay went silent for 30000ms →
+same day, for `network_tor_test.wac` going red intermittently with *"a relay went silent for 30000ms →
 could not reach the introduction point"*. That is **our** client failing the same way this is C tor
 failing: an onion-service fetch that works alone and does not under load, with a timeout that cannot
 tell busy from wedged.

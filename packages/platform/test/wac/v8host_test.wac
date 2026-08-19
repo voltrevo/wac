@@ -1,0 +1,310 @@
+// Two hosts, one program, one answer — with the second host being `native/v8`.
+//
+// `native/v8` runs a wac program on V8 driven from Rust, with no JavaScript layer, and the only thing
+// that makes it trustworthy is that programs written for the JavaScript hosts behave the same on it.
+// Every capability it grew was checked that way by hand; this is that check, kept.
+//
+// **What is compared.** `packages/box/example/boxsh.wac` running a short script — the same shell the
+// website's transcript is checked against. It is the strongest single program available: a pipeline
+// exercises `pushChild`/`popChild` and the frame stack, `sha256sum` streams through
+// `openInput`/`readChunk`, `wc -l` on a file reads one, and arithmetic keeps a builtin in the mix.
+//
+// Two wrong answers found by exactly this comparison, both of which looked like right ones:
+// `sha256sum README.md` inside the shell printing the hash of the empty string, because the applet
+// read the frame's queue instead of the file it had opened; and a pipeline dying with
+// `grep: : No such file or directory`, because `openInput("")` means standard input and was taken as
+// a path.
+//
+// ## One difference this deliberately does not compare
+//
+// `sleep 0 &` — the *background* form — diverges: it says nothing here and `sh: sleep: No such file
+// or directory` on Deno. The cause is not `spawn`, which was the first guess and the wrong one — it
+// is that a background child's error stream is a queue its parent never drains, where the JavaScript
+// hosts relay it. The foreground form is what this test compares, because that is the one that
+// carries an exit code, and there the two hosts agree exactly — `sh: sleep: command not found`, 127.
+//
+// ## When cargo is not there
+//
+// The host is Rust and the rest of the repo is not. If cargo cannot build it the V8 half is skipped
+// **loudly**, and the Deno half still runs and still asserts — a skip must not be mistaken for a
+// pass, which is how a differential test comes to compare nothing.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. One thing is different rather than translated:
+// this runs *under* the host it is testing, since `wac test` is `native/v8`. That is not circular —
+// what is compared is a separate process running a separate program — but it does mean the V8 half
+// can no longer be skipped for want of cargo while the file still runs, so the skip path is now a
+// freshness check rather than a build.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/** A script that reaches four different capability families in five lines. */
+const string SCRIPT =
+  "seq 1 20 | grep 7 | wc -l\n" +
+  "echo $((6*7))\n" +
+  "sha256sum README.md\n" +
+  "wc -l MERGE.md\n" +
+  // A command that does not exist, which is where a host's `spawn` shows: both must report it the
+  // same way and set the same code. The *background* form is deliberately not here — see above.
+  "sleep 0\n" +
+  "echo code $?\n" +
+  "echo done\n";
+
+/**
+ * Commands that must each become a real child, so nothing here can be served by a builtin.
+ *
+ * `example/boxsh.wac` runs an applet **in-process** through `pushChild`. `src/bin/sh.wac` runs it as a
+ * real child through `spawnSelf` — a separate instance with its own grants. They are the same commands
+ * over two entirely different host paths, and the first script only ever exercises the first.
+ *
+ * That gap hid `issues/system/0148` for two days. The spawning path was broken twice over on this
+ * host: argv was read with the `string[]` accessors when `spawn` passes `u8[][]`, so children were
+ * started with **no arguments** and a shell asked for nothing exits silently; and `PARENT_FS`, a
+ * channel number wac reserves as 1, was the first handle this host's socket allocator handed out.
+ * Neither could fail the comparison above, because `pushChild` reaches neither.
+ */
+const string SPAWNING_SCRIPT =
+  // An applet on its own: the smallest thing that re-enters `main` as a multi-call entry.
+  "seq 1 3\n" +
+  // A pipeline, so more than one child exists at once and the parent reads both.
+  "seq 1 5 | sort -nr | head -1\n" +
+  // An applet that takes an argument, because argv arriving *empty* was the first fault: a child
+  // given no arguments runs the shell, prints nothing and exits 0, which reads as success.
+  "echo spawned ok\n" +
+  "echo done\n";
+
+/** The V8 host binary, or "" with the reason said out loud. */
+string v8Host(Core core, Cli cli) {
+  string path = root(cli) + "/native/v8/target/release/wac";
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c",
+      "if [ -x '" + path + "' ] && " +
+      "[ -z \"$(find native/v8 -name '*.rs' -o -name Cargo.toml -newer '" + path +
+      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
+      "cd native/v8 && cargo build --release --quiet"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0 || !cli.stat(path).wait().isFile) {
+    core.warn("SKIPPING the V8 half: cargo did not build native/v8. " +
+              "The Deno half still runs. See native/v8/README.md.");
+    return "";
+  }
+  return path;
+}
+
+struct Ran {
+  i32 code;
+  string out;
+  string err;
+}
+
+Ran run(Cli cli, string bin, string[] args, string stdin) {
+  Exec r = cli.exec(bin, args, stdin.toBytes()).wait();
+  if (!r.ran()) { return Ran(-1, "", "did not run — " + r.error); }
+  return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
+}
+
+string buildOne(Cli cli, bool native, string entry, string out, string[] grants) {
+  if (native) {
+    string[] args = string[4 + grants.len()](fill: "");
+    args[0] = "build";
+    args[1] = entry;
+    for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
+    args[2 + grants.len()] = "-o";
+    args[3 + grants.len()] = out;
+    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
+    if (!r.ran() || r.status != 0) {
+      return "wac build " + entry + ": " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    }
+    return "";
+  }
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
+  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
+  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
+  args[head.len() + grants.len()] = "-o";
+  args[head.len() + grants.len() + 1] = out;
+  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return "build.ts " + entry + ": " + string.fromBytes(r.stderr); }
+  return "";
+}
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/v8host-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+/** The lines of `text` with leading and trailing blank lines dropped. */
+string[] trimmedLines(string text) {
+  i32 from = 0;
+  i32 to = text.len();
+  while (from < to && (text.slice(from, from + 1) == "\n" || text.slice(from, from + 1) == " ")) {
+    from = from + 1;
+  }
+  while (to > from && (text.slice(to - 1, to) == "\n" || text.slice(to - 1, to) == " ")) {
+    to = to - 1;
+  }
+  string body = text.slice(from, to);
+  if (body == "") { return string[0](fill: ""); }
+  i32 count = 1;
+  u8[] b = body.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { count = count + 1; } }
+  string[] out = string[count](fill: "");
+  i32 n = 0;
+  i32 at = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '\n') { out[n] = body.slice(at, i); n = n + 1; at = i + 1; }
+  }
+  out[n] = body.slice(at, body.len());
+  return out;
+}
+
+/** The first whitespace-delimited word. */
+string firstWord(string line) {
+  u8[] b = line.toBytes();
+  i32 i = 0;
+  while (i < b.len() && b[i] != ' ' && b[i] != '\t') { i = i + 1; }
+  return line.slice(0, i);
+}
+
+export string test_boxs_shell_answers_the_same_on_deno_and_on_the_rust_host_on_v8(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "boxsh");
+  const string ENTRY = "packages/box/example/boxsh.wac";
+
+  // The Deno half, which runs whether or not cargo is here.
+  string denoBin = dir + "/bsh-deno";
+  string why = buildOne(cli, false, ENTRY, denoBin, string[]("--allow-read", "--allow-write"));
+  t.eqStr(why, "", "the Deno half built");
+  if (why != "") { return t.report(); }
+  Ran onDeno = run(cli, denoBin, string[0](fill: ""), SCRIPT);
+
+  // **Asserted, not merely captured.** If the two hosts were compared and nothing else, a shell that
+  // printed nothing on both would pass.
+  string[] lines = trimmedLines(onDeno.out);
+  t.eqI32(lines.len(), 6, "expected six answers, got: " + onDeno.out + onDeno.err);
+  if (lines.len() != 6) { cli.remove(dir, true).wait(); return t.report(); }
+  t.eqStr(lines[0], "2", "the pipeline's count");
+  t.eqStr(lines[1], "42", "the arithmetic");
+  t.eqI32(firstWord(lines[2]).len(), 64, "a sha256 is 64 hex digits: " + lines[2]);
+  t.eqStr(lines[4], "code 127", "an unfound command is 127");
+  t.eqStr(lines[5], "done", "and the shell got to the end");
+
+  string v8 = v8Host(core, cli);
+  if (v8 == "") { cli.remove(dir, true).wait(); return t.report(); }
+  string stem = dir + "/bsh";
+  why = buildOne(cli, true, ENTRY, stem, string[]("--allow-read", "--allow-write"));
+  t.eqStr(why, "", "the V8 half built");
+  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
+  Ran onV8 = run(cli, v8, string[](stem), SCRIPT);
+
+  t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
+  t.eqStr(onV8.err, onDeno.err, "the two hosts disagree about what the shell warned");
+  t.eqI32(onV8.code, onDeno.code, "the two hosts disagree about the exit code");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_host(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "spawnsh");
+  const string ENTRY = "packages/box/src/bin/sh.wac";
+
+  string denoBin = dir + "/spawnsh-deno";
+  string why = buildOne(cli, false, ENTRY, denoBin, string[]("--allow-read", "--allow-write"));
+  t.eqStr(why, "", "the Deno half built");
+  if (why != "") { return t.report(); }
+  Ran onDeno = run(cli, denoBin, string[0](fill: ""), SPAWNING_SCRIPT);
+
+  // **Asserted before it is compared.** Two hosts that both print nothing agree perfectly, and that is
+  // exactly the state this test exists to catch: before 0148 was fixed the V8 host printed *nothing at
+  // all* for every line of this script.
+  t.eqStrArray(trimmedLines(onDeno.out),
+               string[]("1", "2", "3", "5", "spawned ok", "done"),
+               "the Deno half: " + onDeno.err);
+
+  string v8 = v8Host(core, cli);
+  if (v8 == "") { cli.remove(dir, true).wait(); return t.report(); }
+  string stem = dir + "/spawnsh";
+  why = buildOne(cli, true, ENTRY, stem, string[]("--allow-read", "--allow-write"));
+  t.eqStr(why, "", "the V8 half built");
+  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
+  Ran onV8 = run(cli, v8, string[](stem), SPAWNING_SCRIPT);
+
+  t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
+  t.eqI32(onV8.code, onDeno.code, "the two hosts disagree about the exit code");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * The image story, which is the one thing a spawned child cannot do without its parent.
+ *
+ * `imaged` holds a filesystem *in wac memory* and writes it to one file. A spawned applet is a
+ * separate instance with separate memory, so the only route from `cat` to that image is the channel
+ * its parent serves — `spawn`'s `serveFs`, `Child.fsHandle`, and `PARENT_FS` at the child's end.
+ * `issues/system/0157`: this host read the first five arguments of `spawn` and dropped that one, so
+ * writing into an image worked and reading it back through a child did not. Silently: the child got
+ * the *machine's* filesystem instead, and the grant check then refused the path.
+ *
+ * Two processes on purpose. One writes and exits; the next reads what the first left, so what is
+ * being compared is an image on disk rather than anything held in memory.
+ */
+export string test_an_image_survives_a_process_and_is_readable_by_a_spawned_child(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "imaged");
+  const string ENTRY = "packages/box/src/bin/imaged.wac";
+  const string READ = "cat /data/n | sort -nr | head -1\n";
+  string[] grants = string[]("--allow-read", "--allow-write", "--allow-env", "--allow-net");
+
+  string denoBin = dir + "/imaged-deno";
+  string why = buildOne(cli, false, ENTRY, denoBin, grants);
+  t.eqStr(why, "", "the Deno half built");
+  if (why != "") { return t.report(); }
+  string denoImg = dir + "/deno.wacimg";
+  run(cli, denoBin, string[](denoImg), "mkdir /data; seq 1 5 > /data/n\n");
+  Ran onDeno = run(cli, denoBin, string[](denoImg), READ);
+
+  // Asserted before it is compared: two hosts that both fail to read the file agree perfectly.
+  t.eqStr(trimmed(onDeno.out), "5", "the Deno half did not read the image back: " + onDeno.err);
+
+  string v8 = v8Host(core, cli);
+  if (v8 == "") { cli.remove(dir, true).wait(); return t.report(); }
+  string stem = dir + "/imaged";
+  why = buildOne(cli, true, ENTRY, stem, grants);
+  t.eqStr(why, "", "the V8 half built");
+  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
+  string v8Img = dir + "/v8.wacimg";
+  run(cli, v8, string[](stem, v8Img), "mkdir /data; seq 1 5 > /data/n\n");
+  Ran onV8 = run(cli, v8, string[](stem, v8Img), READ);
+
+  t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the image held");
+
+  // **Then swap them**, which is the property `design/system/0001` actually claims: a session's
+  // filesystem is a file, and it *moves between hosts*. Each host reads the image the other wrote,
+  // which is a far stronger check than comparing the two files — and the only one available, because
+  // an image is not byte-reproducible: two runs of the *same* host differ in ten bytes, three pairs of
+  // timestamps and a trailer, so byte equality would fail for a reason that has nothing to do with
+  // hosts.
+  t.eqStr(trimmed(run(cli, v8, string[](stem, denoImg), READ).out), "5",
+          "the V8 host could not read an image Deno wrote");
+  t.eqStr(trimmed(run(cli, denoBin, string[](v8Img), READ).out), "5",
+          "Deno could not read an image the V8 host wrote");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\n" || c == "\t" || c == "\r"; }

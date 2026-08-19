@@ -1,7 +1,6 @@
 // The differential corpus every rung is compared over.
 //
-// One definition, because it was written out identically in lex_test.wac and
-// parse_test.wac and rungs 3, 4 and 5 each want the same thing. Sorted, so a failure
+// One definition, because rungs 3, 4 and 5 each want the same thing. Sorted, so a failure
 // list reads the same way twice and a diff between two runs means something.
 //
 // Note what this does *not* do: it does not compile or type-check anything. A corpus
@@ -170,21 +169,3 @@ export function importClosure(
   return { paths: seen, sources: seen.map((p) => sources[paths.indexOf(p)]) };
 }
 
-/**
- * Whether a file declares itself **wacc-only** — using syntax the reference does not have.
- *
- * The same marker `spec/cases` uses, and for the same reason: `// only: wacc` in the first few lines.
- * A differential that compares the two compilers over the whole repository cannot compare such a
- * file, because the reference cannot read it.
- *
- * **Skipping is not enough on its own.** A test that quietly passes over a file is a test that has
- * stopped covering it, and a marker nobody checks is a marker that outlives its reason. So the two
- * differentials that honour this also assert the reference *refuses* the file — see
- * `issues/lang/0140`. A marked file the reference accepts is a stale marker and should fail.
- */
-export function isWaccOnly(source: string): boolean {
-  for (const line of source.split("\n", 12)) {
-    if (/^\s*\/\/\s*only:\s*wacc\s*$/.test(line)) return true;
-  }
-  return false;
-}

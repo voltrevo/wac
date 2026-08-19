@@ -1,6 +1,5 @@
 // expect: answers f = 42
 // why: a lambda reads the locals around it, carried in the environment half of its pair
-// only: wacc
 // from: design/lang/0002 tier two
 //
 // The capture record is built where the lambda is written — there the names are ordinary locals —
