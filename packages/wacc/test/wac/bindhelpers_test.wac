@@ -1,0 +1,140 @@
+// The `$bind$` helpers, as the module actually carries them.
+//
+// A host reaching a wac program does not call its exports directly — it calls generated glue, and
+// the glue calls helpers the emitter writes for it: constructors for each array element type, an
+// accessor triple, a getter and a setter per struct field, a tag reader and a payload getter per
+// enum case. The glue passes a fixed number of arguments to each. If the emitter writes a helper
+// with a different arity, or under a different name, the module and its glue disagree and the
+// engine refuses the instantiation with a message about a type mismatch — one that names an index
+// rather than the helper.
+//
+// **The names and arities are read out of the emitted bytes**, not out of the compiler's account of
+// what it emitted. `namesFiles` answers from the *link*, which is the pass that produced them, so a
+// helper the emitter dropped can still be named there. `wasm_probe.wac` does the walk; three
+// sections say an arity between them and none says it alone.
+//
+// **`arities` is asserted to have found something.** An empty map agrees with every `!has` and
+// disagrees with no arity, so a walker that fell off the first section would report every helper
+// present and correct.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { Arities, exportArities, arityOf, allExportNames } from "./wasm_probe.wac";
+import { emitFiles } from "../../src/api.wac";
+
+Arities arities(T t, string what, string src) {
+  u8[] b = emitFiles(string[]("a.wac"), string[](src), "a.wac");
+  Arities a = exportArities(b);
+  t.isTrue(a.ok, what + ": reading the module — " + a.error);
+  t.isTrue(a.names.len() > 0, what + ": no function export carried a type — nothing was asserted");
+  return a;
+}
+
+/** `name` is exported and takes `want` arguments. */
+void takes(T t, Arities a, string name, i32 want) {
+  i32 got = arityOf(a, name);
+  t.eqI32(got, want, got < 0 ? name + " is missing"
+                             : name + " takes " + itoa(got) + " args, glue passes " + itoa(want));
+}
+
+export string test_the_array_constructors_have_the_arity_the_glue_calls_them_with(
+    Core core, Cli cli) {
+  T t = T.create();
+  Arities a = arities(t, "array helpers",
+    "export i32 rows(u8[][] g) { return g.len(); }\n" +
+    "export i32 parts(string[] ps) { return ps.len(); }\n" +
+    "export i32 sum(i32[] xs) { return xs.len(); }\n");
+
+  // A `string` element is non-null on the compiler's side, so the host says what to fill with, and an
+  // empty one needs its own helper because there is no element to fill it from.
+  takes(t, a, "$bind$arr_string_new", 2);
+  t.isTrue(arityOf(a, "$bind$arr_string_new0") >= 0, "$bind$arr_string_new0 is missing");
+
+  // An array element and a numeric one are both defaultable, so both take the count alone.
+  takes(t, a, "$bind$arr_u8Arr_new", 1);
+  t.eqI32(arityOf(a, "$bind$arr_u8Arr_new0"), -1,
+          "$bind$arr_u8Arr_new0 exists and nothing calls it");
+  takes(t, a, "$bind$arr_i32_new", 1);
+
+  // The accessors, whose shape is the same whatever the element is.
+  string[] sfx = string[]("string", "u8Arr", "i32");
+  for (i32 i = 0; i < sfx.len(); i++) {
+    takes(t, a, "$bind$arr_" + sfx[i] + "_get", 2);
+    takes(t, a, "$bind$arr_" + sfx[i] + "_set", 3);
+    takes(t, a, "$bind$arr_" + sfx[i] + "_len", 1);
+  }
+  return t.report();
+}
+
+export string test_an_instances_methods_carry_the_compilers_mangled_name(Core core, Cli cli) {
+  // A monomorphisation is named from *canonical* names — the template qualified by its declaring
+  // file, then each argument mangled — because that is what the bindgen generates its glue against.
+  // `packages/box` and `packages/fs` stopped at `$bind$sm_Vec__packages_std_src_vec$string_create`
+  // for want of exactly this. `issues/lang/0089`.
+  T t = T.create();
+  u8[] b = emitFiles(
+    string[]("packages/std/src/vec.wac", "packages/std/src/main.wac"),
+    string[](
+      "export struct Vec<T> { T[] items; i32 n;\n" +
+      "  Vec<T> create() { return Vec<T>(T[0](), 0); }\n" +
+      "  i32 len(const this) { return this.n; }\n}\n",
+      "import { Vec } from \"./vec.wac\";\n" +
+      "export i32 f() { Vec<string> a = Vec.create(); Vec<u8[]> b = Vec.create(); " +
+      "return a.len() + b.len(); }\n"),
+    "packages/std/src/main.wac");
+  string[] names = allExportNames(b);
+  t.isTrue(names.len() > 0, "the module exports nothing — nothing was asserted");
+
+  string[] want = string[](
+    "$bind$sm_Vec__packages_std_src_vec$string_create",
+    "$bind$m_Vec__packages_std_src_vec$string_len",
+    // An array argument is `_arr` rather than `[]`, which is `mangleType`'s spelling and not ours.
+    "$bind$sm_Vec__packages_std_src_vec$u8_arr_create",
+    "$bind$m_Vec__packages_std_src_vec$u8_arr_len");
+
+  string[] missing = string[want.len()](fill: "");
+  i32 nMissing = 0;
+  for (i32 i = 0; i < want.len(); i++) {
+    bool found = false;
+    for (i32 k = 0; k < names.len(); k++) { if (names[k] == want[i]) { found = true; } }
+    if (!found) { missing[nMissing] = want[i]; nMissing = nMissing + 1; }
+  }
+  string[] first = string[nMissing](fill: "");
+  for (i32 i = 0; i < nMissing; i++) { first[i] = missing[i]; }
+  t.eqI32(nMissing, 0, "missing: " + joined(first, ", "));
+  return t.report();
+}
+
+export string test_a_string_an_enum_and_a_method_reach_the_host_under_the_names_bindgen_uses(
+    Core core, Cli cli) {
+  T t = T.create();
+  Arities a = arities(t, "the boundary helpers",
+    "enum Shape { Circle(f64 r), Empty }\n" +
+    "struct Counter { i32 n; i32 get(const this) { return this.n; } " +
+    "Counter create(i32 v) { return Counter(v); } }\n" +
+    "export f64 radiusOf(Shape s) { return match (s) { case Circle(r): r, else: 0.0 }; }\n" +
+    "export i32 use(Counter c) { return c.get(); }\n" +
+    "export string echo(string s) { return s; }\n");
+
+  takes(t, a, "$bind$str_new", 1);
+  takes(t, a, "$bind$str_get", 2);
+  takes(t, a, "$bind$str_set", 3);
+  takes(t, a, "$bind$str_len", 1);
+  takes(t, a, "$bind$str_to_mem", 1);
+  takes(t, a, "$bind$str_from_mem", 1);
+  takes(t, a, "$bind$e_Shape_tag", 1);
+  takes(t, a, "$bind$e_Shape_Circle_new", 1);
+  takes(t, a, "$bind$e_Shape_Circle_get_r", 1);
+  takes(t, a, "$bind$e_Shape_Empty_new", 0);
+  takes(t, a, "$bind$m_Counter_get", 1);
+  takes(t, a, "$bind$sm_Counter_create", 1);
+  takes(t, a, "$bind$s_Counter_new", 1);
+  takes(t, a, "$bind$s_Counter_get_n", 1);
+  takes(t, a, "$bind$s_Counter_set_n", 2);
+  takes(t, a, "$bind$mem_ensure", 1);
+  return t.report();
+}

@@ -1406,15 +1406,16 @@ The other eight that do *not* use the reference, and what each is actually waiti
 
 | file | what it needs |
 | --- | --- |
-| `bindHelpers` (178) | a wasm section walker in wac — LEB128, type/function/export sections. `emit.wac` has a writer, not a reader, so this is a second parser rather than a reuse. Portable, not blocked. |
-| `bindgen` (392) | the same oracle shape `bindgenwac_test.wac` now has. Portable, not blocked. |
+| `bindHelpers` (178) | **done.** The walker was already there: `test/wac/wasm_probe.wac` had the LEB reader and the section loop for four other tests, and what was missing was the type section — so this grew `exportArities` beside them rather than a second parser. It reports `ok: false` with the tag it did not know rather than guessing, which the canary check needed: skipping the rec-group byte turns every arity into `-1`, and a walker that guessed would have reported the wrong helper. |
+| `bindgen` (392) | **stays.** I wrote "portable, not blocked" here without opening it, which is the third time in one day I have classified a file by its imports instead of its assertions. Its cases are JavaScript expressions against the *generated API* — `p.y = 10` writing through a reference, `c.Circle_r` being a getter rather than a method, a wrapper handed straight back into the module and returning as another wrapper. Moving them would put the JavaScript in a script and leave wac comparing printed strings, which deletes the claim. Same category as `jsxBoundary`. |
 | `ctTrace` (195) | *reads* as portable; its subject is `harness/ctTrace.ts`'s trace mode, so check what it measures before believing that. |
 | `specCheck` (68), `specAccept` (66) | `specCorpus.ts`, the text extractor. A second reader of one corpus is the trap named above — and `specCases.json` already records what these read, so the honest move may be to delete them rather than port them. |
 | `jsBindgen` (113), `jsxBoundary` (97) | JavaScript is half the differential. Stay. |
 | `nativeBinary` (510) | see above. |
 
 So the count blocked on the reference decision is nine, and the count that is simply unstarted work is
-three or four.
+**one** — `bindHelpers`. Every other line of this table was checked by opening the file, after the
+`bindgen` row above was written from its import list and turned out to be wrong.
 
 **The nine that do use the reference as an oracle.** On 2026-08-19 the operator deleted the whole-repository lex and
 parse differentials and every `// only: wacc` marker, on the grounds that **the reference's only job

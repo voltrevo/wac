@@ -15,6 +15,7 @@
 // getting this wrong sent one investigation to `hexOf` for a fault in `openRepo` (`issues/lang/0097`).
 
 import { slice } from "../../../bytes/src/slice.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** Every exported function of a module: `names[i]` is at `indices[i]`. */
 export struct Exports {
@@ -248,4 +249,132 @@ export bool namesIndex(Names ns, i32 n) {
     if (ns.indices[i] == n) { return true; }
   }
   return false;
+}
+
+/**
+ * Every exported function's **parameter count**: `params[i]` is the arity of `names[i]`.
+ *
+ * Three sections say it between them and none says it alone — the export section maps a name to a
+ * function index, the function section maps that to a type index, and the type section holds the
+ * parameter count. `ok` is false with a reason in `error` when a type tag turns up that this does
+ * not know, which is the failure that matters: a silent guess would make every arity after it wrong
+ * and the test would report the wrong helper.
+ *
+ * wacc writes one rec group, which is the only wrinkle in walking the type section.
+ */
+export struct Arities {
+  string[] names;
+  i32[] params;
+  bool ok;
+  string error;
+}
+
+/** A value type is one byte unless it is a reference, which carries a signed heap type. */
+void skipValType(u8[] b, i32[] pos) {
+  i32 t = b[pos[0]];
+  pos[0] = pos[0] + 1;
+  if (t == 0x63 || t == 0x64) {
+    while (pos[0] < b.len() && (b[pos[0]] & 0x80) != 0) { pos[0] = pos[0] + 1; }
+    pos[0] = pos[0] + 1;
+  }
+}
+
+/** Where a section's body starts, or -1. The last one of an id wins, as it does for `exportedFunctions`. */
+i32 sectionAt(u8[] b, i32 want) {
+  i32[] pos = i32[1]();
+  pos[0] = 8;
+  i32 at = -1;
+  while (pos[0] < b.len()) {
+    i32 id = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 size = leb(b, pos);
+    if (id == want) { at = pos[0]; }
+    pos[0] = pos[0] + size;
+  }
+  return at;
+}
+
+export Arities exportArities(u8[] b) {
+  if (b.len() <= 8) {
+    return Arities(string[0](fill: ""), i32[0](), false, "the emitter declined this program");
+  }
+  i32 typesAt = sectionAt(b, 1);
+  i32 funcsAt = sectionAt(b, 3);
+  if (typesAt < 0 || funcsAt < 0) {
+    return Arities(string[0](fill: ""), i32[0](), false, "no type or function section");
+  }
+
+  // Type index to parameter count, -1 for a type that is not a function.
+  i32[] pos = i32[1]();
+  pos[0] = typesAt;
+  leb(b, pos);                       // one rec group
+  pos[0] = pos[0] + 1;               // 0x4E, the group itself
+  i32 typeCount = leb(b, pos);
+  i32[] params = i32[typeCount]();
+  for (i32 i = 0; i < typeCount; i++) {
+    i32 tag = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    if (tag == 0x5E) {                                  // array
+      skipValType(b, pos);
+      pos[0] = pos[0] + 1;                              // mutability
+      params[i] = -1;
+    } else if (tag == 0x50) {                           // sub, then a struct
+      i32 sup = leb(b, pos);
+      for (i32 k = 0; k < sup; k++) { leb(b, pos); }
+      pos[0] = pos[0] + 1;
+      i32 fc = leb(b, pos);
+      for (i32 f = 0; f < fc; f++) { skipValType(b, pos); pos[0] = pos[0] + 1; }
+      params[i] = -1;
+    } else if (tag == 0x5F) {                           // a plain struct
+      // A `fn[...]` value is a `{funcref, env}` pair — `design/lang/0002` — and the pairs share the
+      // type section's range, so a struct appears where this used to see only functions and arrays.
+      i32 fc = leb(b, pos);
+      for (i32 f = 0; f < fc; f++) { skipValType(b, pos); pos[0] = pos[0] + 1; }
+      params[i] = -1;
+    } else if (tag == 0x60) {                           // func
+      i32 pc = leb(b, pos);
+      for (i32 k = 0; k < pc; k++) { skipValType(b, pos); }
+      i32 rc = leb(b, pos);
+      for (i32 k = 0; k < rc; k++) { skipValType(b, pos); }
+      params[i] = pc;
+    } else {
+      return Arities(string[0](fill: ""), i32[0](), false,
+                     "unknown type tag " + itoa(tag) + " at entry " + itoa(i));
+    }
+  }
+
+  pos[0] = funcsAt;
+  i32 funcCount = leb(b, pos);
+  i32[] funcTypes = i32[funcCount]();
+  for (i32 i = 0; i < funcCount; i++) { funcTypes[i] = leb(b, pos); }
+
+  // An index from the export section counts the imports first, so its position in the function
+  // section is only itself when nothing is imported. These programs import nothing; subtracting is
+  // what makes the reader right about one that does.
+  i32 imported = importedFunctions(b);
+  Exports ex = exportedFunctions(b);
+  string[] names = string[ex.names.len()](fill: "");
+  i32[] arity = i32[ex.names.len()]();
+  i32 n = 0;
+  for (i32 i = 0; i < ex.names.len(); i++) {
+    i32 own = ex.indices[i] - imported;
+    if (own < 0 || own >= funcCount) { continue; }
+    i32 ti = funcTypes[own];
+    if (ti < 0 || ti >= typeCount) { continue; }
+    names[n] = ex.names[i];
+    arity[n] = params[ti];
+    n = n + 1;
+  }
+  string[] outN = string[n](fill: "");
+  i32[] outA = i32[n]();
+  for (i32 i = 0; i < n; i++) { outN[i] = names[i]; outA[i] = arity[i]; }
+  return Arities(outN, outA, true, "");
+}
+
+/** The arity of one export, or -1 when the module has no such export. */
+export i32 arityOf(Arities a, string name) {
+  for (i32 i = 0; i < a.names.len(); i++) {
+    if (a.names[i] == name) { return a.params[i]; }
+  }
+  return -1;
 }
