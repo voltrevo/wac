@@ -21,7 +21,7 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
 import { coreSource } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
-import { importSpecs, resolveFromIn } from "./files.wac";
+import { importSpecs, resolveFrom, resolveFromIn } from "./files.wac";
 import { Res, resolveVia } from "./path.wac";
 import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
@@ -468,9 +468,14 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  *
  * Each file is checked *as an entry*, which is what makes this correct rather than approximate: a
  * file gets exactly the scope it would get if you named it on the command line, its own private
- * declarations included. The cost is a whole-graph parse per file — 0.9s for wacc's own 13, 9.9s for
- * box's 179 — which is why this is what `check` calls and `diagnoseFiles` is what a build calls. The
- * issue records the measurement and what it would take to make both affordable.
+ * declarations included. That is why this is what `check` calls and `diagnoseFiles` is what a build
+ * calls — the issue records what it would take to make both affordable.
+ *
+ * **What it costs, `tools/benchCompile.ts`, 2026-08-19:** 378ms for wacc's own 17 files and 672ms for
+ * box's 167, where box was 1347ms before the graph below was taken once instead of per file, and its
+ * peak was 114 MiB above the floor rather than 51. The two numbers this docstring used to carry —
+ * 0.9s and 9.9s — predate `issues/lang/0133` and were a good deal further out than they look, which
+ * is the usual fate of a figure in a comment nothing checks.
  */
 export string diagnoseGraph(string[] paths, string[] sources, string entry) {
   string out = "";
@@ -480,13 +485,20 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
   Lexed?[] lexes = Lexed?[paths.len() + 1]();
   Program?[] progs = Program?[paths.len() + 1]();
   i32[] counts = declCountsInto(paths, sources, lexes, progs);
+  // **The edges too, once.** Every closure below was computed from the *text*: a file's import list
+  // was re-extracted once per closure that reached it, and each spec resolved by a linear scan of
+  // every path. Over the repository's own 718 files — closures summing to 10,904 — that is around
+  // 11,000 import-list scans and tens of millions of string comparisons, to walk a graph with a few
+  // thousand edges in it. Taken once, a closure is an integer walk and the loop below does no string
+  // work at all.
+  Edges edges = edgesOf(paths, sources);
+  i32[] seen = i32[paths.len()]();
   for (i32 i = 0; i < paths.len(); i++) {
     // **Each file is checked against its own closure, not against the whole list.** Handing
     // `checkFilesWith` 179 files to check one that imports three is the whole of why the naive
     // loop costs `n ×` a full parse. Nothing is lost: a file cannot be affected by a file it does
     // not reach.
-    string[] seen = string[paths.len()](fill: "");
-    i32 n = closureOf(paths, sources, paths[i], seen);
+    i32 n = closureFrom(edges, i, seen);
     string[] subPaths = string[n](fill: "");
     string[] subSources = string[n](fill: "");
     // One longer than the closure: `checkFilesWith` keeps `core`'s count in the last slot.
@@ -494,15 +506,12 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
     Lexed?[] subLexes = Lexed?[n + 1]();
     Program?[] subProgs = Program?[n + 1]();
     for (i32 k = 0; k < n; k++) {
-      // One scan for both. `sourceAt` and `countAt` each walked every path looking for the same
-      // name, on the same line — the second was mine and it doubled a lookup that is already
-      // O(files) inside a loop over files.
-      i32 at = indexOfPath(paths, seen[k]);
-      subPaths[k] = seen[k];
-      subSources[k] = at >= 0 && at < sources.len() ? sources[at] : "";
-      subCounts[k] = at >= 0 && at < counts.len() ? counts[at] : 0;
-      subLexes[k] = at >= 0 && at < lexes.len() ? lexes[at] : null;
-      subProgs[k] = at >= 0 && at < progs.len() ? progs[at] : null;
+      i32 at = seen[k];
+      subPaths[k] = paths[at];
+      subSources[k] = at < sources.len() ? sources[at] : "";
+      subCounts[k] = at < counts.len() ? counts[at] : 0;
+      subLexes[k] = at < lexes.len() ? lexes[at] : null;
+      subProgs[k] = at < progs.len() ? progs[at] : null;
     }
     subCounts[n] = counts[paths.len()];
     subLexes[n] = lexes[paths.len()];
@@ -561,21 +570,86 @@ i32 indexOfPath(string[] paths, string path) {
   return -1;
 }
 
-/** What `path` was given as, or "". */
-string sourceAt(string[] paths, string[] sources, string path) {
-  for (i32 i = 0; i < paths.len(); i++) {
-    if (paths[i] == path) { return i < sources.len() ? sources[i] : ""; }
-  }
-  return "";
+/**
+ * A graph's import edges: the files `paths[i]` imports are `to[start[i] .. start[i + 1]]`.
+ *
+ * Compressed rather than an array of arrays, because the whole point is that a closure walk touches
+ * no strings — and one flat array with offsets is the shape a fixed-size language can build in two
+ * passes without a growable one.
+ */
+struct Edges {
+  /** One longer than `paths`: `start[i]` to `start[i + 1]` are file `i`'s edges. */
+  i32[] start;
+  i32[] to;
 }
 
 /**
- * The files `entry` reaches, itself first, into `seen` — and how many there are.
+ * Every file's imports, resolved to indices, in two passes over the sources.
+ *
+ * A spec that resolves to a path this graph does not contain is dropped, which is the rule the
+ * text-domain walk had: a missing file is the caller's to report, and `example/wacc.wac` does, by
+ * name, before anything here is asked.
+ */
+Edges edgesOf(string[] paths, string[] sources) {
+  i32 n = paths.len();
+  i32[] start = i32[n + 1]();
+  i32 total = 0;
+  for (i32 i = 0; i < n; i++) {
+    start[i] = total;
+    string src = i < sources.len() ? sources[i] : "";
+    string[] specs = importSpecs(src.toBytes());
+    for (i32 s = 0; s < specs.len(); s++) {
+      if (indexOfPath(paths, resolveFrom(paths[i], specs[s])) >= 0) { total = total + 1; }
+    }
+  }
+  start[n] = total;
+  i32[] to = i32[total]();
+  i32 at = 0;
+  for (i32 i = 0; i < n; i++) {
+    string src = i < sources.len() ? sources[i] : "";
+    string[] specs = importSpecs(src.toBytes());
+    for (i32 s = 0; s < specs.len(); s++) {
+      i32 t = indexOfPath(paths, resolveFrom(paths[i], specs[s]));
+      if (t >= 0) { to[at] = t; at = at + 1; }
+    }
+  }
+  return Edges(start, to);
+}
+
+/**
+ * The files index `i` reaches, itself first, into `seen` — and how many there are.
  *
  * `seen` is the caller's because an array is sized where it is made, and the caller already has the
- * only bound that matters: no closure is larger than the graph. A path this graph does not contain
- * is skipped rather than guessed at — a missing file is the caller's to report, and
- * `example/wacc.wac` does, by name, before anything here is asked.
+ * only bound that matters: no closure is larger than the graph. It is reused across a whole sweep,
+ * since each walk overwrites the prefix it returns.
+ */
+i32 closureFrom(Edges e, i32 i, i32[] seen) {
+  seen[0] = i;
+  i32 n = 1;
+  i32 at = 0;
+  while (at < n) {
+    i32 f = seen[at];
+    for (i32 k = e.start[f]; k < e.start[f + 1]; k++) {
+      i32 next = e.to[k];
+      bool have = false;
+      for (i32 j = 0; j < n; j++) { if (seen[j] == next) { have = true; } }
+      if (have || n >= seen.len()) { continue; }
+      seen[n] = next;
+      n = n + 1;
+    }
+    at = at + 1;
+  }
+  return n;
+}
+
+/**
+ * The same walk from a path rather than an index, resolving each specifier as it goes.
+ *
+ * **Both of these exist on purpose.** `closureFrom` above walks `Edges`, which is built once for a
+ * whole sweep, and is what a sweep over every file should use. This one resolves per step, which is
+ * what a caller with a `Res` needs: `edgesOf` resolves with plain `resolveFrom`, so a `@/` or a
+ * mapped specifier is not an edge there at all — `design/lang/0009` D7 and D9. A sweep over the
+ * repository's own files never meets one; a build of somebody's project does.
  */
 i32 closureOf(string[] paths, string[] sources, string entry, string[] seen) {
   return closureOfIn(paths, sources, Res.empty(), entry, seen);
@@ -589,14 +663,14 @@ i32 closureOfIn(string[] paths, string[] sources, Res res, string entry, string[
   i32 at = 0;
   while (at < n) {
     string path = seen[at];
-    string[] specs = importSpecs(sourceAt(paths, sources, path).toBytes());
+    string[] specs = importSpecs(sourceOf(paths, sources, path).toBytes());
     for (i32 s = 0; s < specs.len(); s++) {
       string next = resolveVia(res, paths, path, specs[s]);
       bool known = false;
       for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == next) { known = true; } }
       if (!known) { continue; }
       bool have = false;
-      for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }
+      for (i32 j = 0; j < n; j++) { if (seen[j] == next) { have = true; } }
       if (have || n >= seen.len()) { continue; }
       seen[n] = next;
       n = n + 1;
@@ -605,6 +679,7 @@ i32 closureOfIn(string[] paths, string[] sources, Res res, string entry, string[
   }
   return n;
 }
+
 
 /** The whole graph's diagnostics, laid out for a person. What `example/wacc.wac` prints. */
 export string diagnoseGraphRendered(string[] paths, string[] sources, string entry) {

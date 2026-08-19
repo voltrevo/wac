@@ -1,0 +1,133 @@
+// A name another file keeps to itself is not a name this one can be confused by.
+//
+// `spec/spec/imports.md` says it three times. Line 16: "Only `export`-marked functions and types can
+// be imported". `[§wac-imp-coexist-p8km2v6]`: "imported names don't collide with same names in other
+// (non-imported) files". `[§wac-samename-struct-4jhq7wn]`: two files may each declare a struct of one
+// name, "the identity of a definition is the file it was written in", and that "holds however the two
+// are reached, including when the importing file names only *one* of them and the other arrives
+// transitively — which is the case that matters in practice, because then neither file you are reading
+// mentions the other's type."
+//
+// `Env.keyAt` resolves a written name through its file's own declarations, then the import that names
+// it, then the files it imports, and finally — for a type that arrived transitively, so is in nobody's
+// import list — through every declaration in the link. **Neither of the last two steps asked whether
+// the file declaring a candidate had exported it**, and that is two defects rather than one:
+//
+//   - a file that imports a *function* from a neighbour inherited that neighbour's private types.
+//     `Held h = make()` then failed with *"an assignment between related reference types"* — the
+//     stranger's two-field `Held` against the one the entry actually meant. A wrong answer reported as
+//     a type error in a program whose types are right.
+//   - a private declaration anywhere in the link counted as a candidate, so a name that arrived
+//     transitively was called ambiguous and the whole module was refused: *"cannot emit … — the name
+//     Case, which more than one file declares"*.
+//
+// **The second is how the suite found it.** `packages/wacc/test/wac` builds its test files into one
+// module so they compile once rather than 54 times; `diagnosticgap_test.wac` and `bindgenwac_test.wac`
+// each keep a private `struct Case`, `ast.wac` and `speccases.wac` each export one, and the shared
+// build declined — so the directory fell back to building every file on its own. It builds with this
+// fix: `wac test packages/wacc/test/wac` printed *"the shared build … did not build, so its 54 files
+// are being built one at a time"* before and prints nothing now. `issues/lang/0154` is where that was
+// reported and left as a language question; for a *private* declaration the spec had already answered
+// it. Five other packages are one file away from the same fallback: `Repo` in `git`, `Conn` in `ssh`,
+// `Line` in `tty`, `Block` and `LitHeader` in `zstd`.
+//
+// **What the fallback cost, since the message says "slower": nothing measurable.** The same directory
+// is 731s declined and 740s built. So the aggregate is not what makes a directory run expensive — the
+// tests' own work is — and the fix is worth having for the two defects above rather than for a time
+// it does not save. A message that names a cost invites the reader to believe the cost is the point.
+//
+// **What is not pinned here, and why.** The counting in `keyAt` exists so that a genuinely ambiguous
+// name is a refusal rather than a guess, and a canary for that belongs beside these. Three shapes were
+// tried — two exported declarations reached transitively, the same with the entry importing both files,
+// and one exported against one private — and *none* of them is refused, before the fix or after, by
+// either `blockedFiles` or `emitDeclineFiles`. So the refusal is reachable from a configuration these
+// four files do not describe, and asserting it here would have pinned a contract nothing implements.
+// The trigger that is known to fire is the directory itself: `wac test packages/wacc/test/wac` declined
+// its shared build until this fix, and builds it now.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { blockedFiles, emitDeclineFiles, emitFilesSelfDescribing } from "../../src/api.wac";
+import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
+
+const string ENTRY = "/pn/main.wac";
+
+string[] pnPaths() {
+  return string[]("/pn/held.wac", "/pn/lib.wac", "/pn/stranger.wac", ENTRY);
+}
+
+/**
+ * Four files, and why it takes four.
+ *
+ * Three would not reach either defect: if the entry imported the struct's own file, the import list
+ * would name it and `keyAt` would answer from there. The name has to arrive **transitively** —
+ * `make()` returns a `Held` the entry never imported — so resolution falls through to the steps that
+ * used to look at declarations they had no business seeing.
+ *
+ * `stranger.wac` declares its own `Held` with a different shape: two fields, so a wrong resolution is
+ * a wrong *layout* rather than merely a wrong label. `strangerExported` and `entryImportsStranger` are
+ * the two axes that separate the three cases below.
+ */
+string[] pnSources(bool strangerExported, bool entryImportsStranger) {
+  return string[](
+    "export struct Held {\n  i32 n;\n}\n",
+
+    "import { Held } from \"./held.wac\";\n" +
+    "export Held make() { return Held(7); }\n",
+
+    (strangerExported ? "export " : "") + "struct Held {\n  i32 a;\n  i32 b;\n}\n" +
+    "export i32 strangerSum() { Held h = Held(1, 2); return h.a + h.b; }\n",
+
+    "import { make } from \"./lib.wac\";\n" +
+    (entryImportsStranger ? "import { strangerSum } from \"./stranger.wac\";\n" : "") +
+    "export i32 total() { Held h = make(); return h.n" +
+    (entryImportsStranger ? " + strangerSum()" : "") + "; }\n" +
+    "export i32 main() { return total() == " + (entryImportsStranger ? "10" : "7") +
+    " ? 7 : 0; }\n");
+}
+
+/** Build it, run it, and say whether the answer came back. */
+string pnBuildAndRun(T t, Cli cli, string what, bool strangerExported, bool entryImportsStranger) {
+  string[] p = pnPaths();
+  string[] s = pnSources(strangerExported, entryImportsStranger);
+  t.eqStr(blockedFiles(p, s, ENTRY), "", what + ": the link was declined");
+  // **And the emit path's own reason**, which is not the same question: `blockedFiles` walks the
+  // checker's `Env` and cannot see a decline raised while emitting, so an ambiguous name reaches it
+  // as nothing at all. A module that emitted no code otherwise reports success — `issues/lang/0155`.
+  t.eqStr(emitDeclineFiles(p, s, ENTRY), "", what + ": the emit declined");
+  u8[] wasm = emitFilesSelfDescribing(p, s, ENTRY, "privatename.wasm", 0);
+  Ran r = runModule(cli, wasm, scratchDir(cli), "privatename.wasm", string[0](fill: ""));
+  t.isTrue(r.ok, what + ": it built and ran — " + r.error);
+  if (!r.ok) { return ""; }
+  // The exit status carries the comparison the module made — an i32 answer does not fit in eight
+  // bits, `issues/system/0184`.
+  t.eqI32(r.status, 7, what + ": the wrong `Held` was resolved — stderr: " + r.stderr);
+  return r.stderr;
+}
+
+/**
+ * The link holds an unrelated file with a private struct of the same name.
+ *
+ * This is the aggregate's case exactly: nothing imports `stranger.wac`, it imports nothing, and its
+ * `Held` is its own. It is in the link only because the link is a directory of files.
+ */
+export string test_a_private_struct_in_an_unrelated_file_does_not_make_a_name_ambiguous(
+    Core core, Cli cli) {
+  T t = T.create();
+  pnBuildAndRun(t, cli, "unimported stranger", false, false);
+  return t.report();
+}
+
+/**
+ * The entry imports a *function* from the file with the private struct.
+ *
+ * Which is the ordinary way a program is written — you import `strangerSum` because you want it — and
+ * it used to be enough to make the entry's `Held` mean the stranger's. Both resolutions are checked
+ * here: 7 from the transitively-reached `Held` and 3 from the stranger's own.
+ */
+export string test_importing_a_function_does_not_import_that_files_private_types(
+    Core core, Cli cli) {
+  T t = T.create();
+  pnBuildAndRun(t, cli, "imported stranger", false, true);
+  return t.report();
+}

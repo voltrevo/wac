@@ -11,15 +11,30 @@
 // **Both sides see the imports.** They did not at first: this checker was given the one file with
 // nothing resolved, which is safe — seeing less can make it miss a diagnostic and cannot make it
 // invent one — and which capped recall on real code at 85%, because every diagnostic it missed was in
-// a file that imports something. It is given the file's import closure now.
+// a file that imports something. It is given the file's import closure now, and the control below is
+// how this test knows that: a call that resolved nothing would be silent and look like a clean sweep.
 //
-// **Why it costs six seconds, measured 2026-08-18.** Each file is checked *as an entry, with its import
-// closure in scope* — that is the whole of what makes this a per-file oracle rather than one
+// **Why it costs six seconds, measured 2026-08-19.** Each file is checked *as an entry, with its
+// import closure in scope* — that is the whole of what makes this a per-file oracle rather than one
 // whole-program check, and it is what took recall on real code from 85% to where it is. The closures
-// overlap heavily, so the same file is checked many times over: 367 source files whose closures sum to
-// **5,349 file-checks**, 14.6 apiece on average, and `packages/ssh/src/sshd.wac` alone pulls in 195.
-// At roughly 1.2ms a check that is about six seconds, and the only ways down are checking fewer files —
-// which is the corpus this test exists for — or an incremental checker, which wacc does not have.
+// overlap heavily, so the same file is checked many times over: **718 source files whose closures sum
+// to 10,904 file-checks**, 15 apiece on average, the deepest reaching 80.
+//
+// It said "the only ways down are checking fewer files or an incremental checker" and was wrong on
+// both counts, which is worth keeping because the shape of the mistake is general: **it priced the
+// work by what the checker does and not by what the driver asked for twice.** The count above doubled
+// in a day — the corpus is every `.wac` under `packages/*/{src,test/wac,bench}`, so every file ported
+// in `issues/system/0161` lands in it — and the same 16.4s bought:
+//
+//   - one call instead of 718. `diagnoseGraph` is this sweep, and takes the parse **once for the
+//     graph**: 719 parses rather than about 11,600. 16.4s → 14.3s, so parsing was never the cost.
+//   - the graph walked as integers. Each closure was computed from the *text*, re-extracting a file's
+//     import list once per closure that reached it and resolving each spec by a scan of all 718 paths.
+//     Taken once as edges, 14.3s → **6.0s** — the bookkeeping was larger than the checking.
+//
+// What is left is 10,904 type-checks at about half a millisecond, and *that* is the floor an
+// incremental checker would move. A greedy cover of the corpus by closures was measured too and is
+// not a way down: 389 entries and 8,128 file-checks, 75% of the work for a weaker claim.
 //
 // **Any report on a file in this corpus is a false alarm.** This corpus is the *emitter's*, so wacc
 // compiles all of it by construction; a type error on one of these files is wrong whatever the
@@ -41,10 +56,10 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { joined } from "../../../wactest/src/strings.wac";
+import { joined, splitLines } from "../../../wactest/src/strings.wac";
 import { closureOf } from "./source_probe.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
-import { dumpTypeErrors, dumpTypeErrorsFiles } from "../../src/api.wac";
+import { dumpTypeErrors, dumpTypeErrorsFiles, diagnoseGraph } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 
 /** Whether the reference compiles `path` cleanly — asked only about a file wacc reported on. */
@@ -65,6 +80,48 @@ bool referenceIsHappy(Core core, Cli cli, string path) {
   return r.status == 0;
 }
 
+/** The `path\tline\tcol\tphase\tmessage\t…\tseverity` rows of a wire, warnings dropped. */
+string[] errorRows(string wire) {
+  string[] lines = splitLines(wire);
+  string[] out = string[lines.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (lines[i].len() == 0) { continue; }
+    // Severity is the last field, as `wireHasErrors` reads it — a warning on the repository's own
+    // code is not what this test is about, and there are some.
+    if (lines[i].len() >= 8 && lines[i].slice(lines[i].len() - 8, lines[i].len()) == "\twarning") {
+      continue;
+    }
+    out[n] = lines[i];
+    n = n + 1;
+  }
+  string[] r = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { r[i] = out[i]; }
+  return r;
+}
+
+/** The first field of a row: which file the diagnostic is in. */
+string fileOf(string row) {
+  for (i32 i = 0; i < row.len(); i++) {
+    if (row.slice(i, i + 1) == "\t") { return row.slice(0, i); }
+  }
+  return row;
+}
+
+/**
+ * **The positive control, and why it rides inside the real call.**
+ *
+ * Two synthetic files are appended to the corpus: one that imports a *real* corpus file and calls it
+ * with the wrong argument type. That diagnostic exists only if the import was resolved and the
+ * imported signature reached the caller — which is the property the header's history is about, since
+ * a checker given one file with nothing resolved stays silent and looks exactly like a passing sweep.
+ *
+ * It used to be proxied by counting closure entries, which measured `source_probe`'s walker rather
+ * than the one doing the checking, and could not notice the sweep going blind. This is the same claim
+ * as an oracle: the run must report **exactly this file and nothing else**.
+ */
+const string CANARY = "/packages/fmt/src/zzz_corpuscheck_canary.wac";
+
 export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core core, Cli cli) {
   T t = T.create();
   Corpus c = loadCorpus(cli, "corpuscheck_test");
@@ -72,49 +129,48 @@ export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core c
   if (!c.ok) { return t.report(); }
   t.isTrue(c.paths.len() >= 300, "only " + itoa(c.paths.len()) + " corpus files");
 
-  // The canary: something this checker certainly reports, through the same call. Without it a sweep
-  // that reported nothing because it had gone blind would look exactly like a passing one.
+  // The canary for the *single-file* path, which the corpus sweep does not take: something this
+  // checker certainly reports, through a call that resolves nothing.
   t.isTrue(dumpTypeErrors("export i32 f() { return \"x\"; }".toBytes()).len() > 0,
            "the canary is still reported — this sweep can see");
 
-  // The `/`-prefixed keys the TypeScript used, so a relative import resolves against them.
-  string[] keys = string[c.paths.len()](fill: "");
-  for (i32 i = 0; i < c.paths.len(); i++) { keys[i] = "/" + c.paths[i]; }
+  // The `/`-prefixed keys the TypeScript used, so a relative import resolves against them, plus the
+  // control above.
+  i32 n = c.paths.len();
+  string[] keys = string[n + 1](fill: "");
+  string[] sources = string[n + 1](fill: "");
+  for (i32 i = 0; i < n; i++) { keys[i] = "/" + c.paths[i]; sources[i] = c.sources[i]; }
+  keys[n] = CANARY;
+  sources[n] = "import { itoa } from \"./itoa.wac\";\n" +
+               "export string wrong() { return itoa(\"not a number\"); }\n";
 
+  // **One call, and one parse per file.** The loop this replaces called `dumpTypeErrorsFiles` per
+  // file, and each of those calls lexed and parsed that file's whole import closure: 718 files whose
+  // closures sum to 10,904, so about 11,000 parses of 718 distinct files. `diagnoseGraph` is the same
+  // sweep — every file checked as an entry against its own closure, which is what makes this a
+  // per-file oracle — with the parse taken once for the graph and handed to each check.
+  // `issues/lang/0133` is that economy one level down, inside a single call.
+  string[] rows = errorRows(diagnoseGraph(keys, sources, keys[0]));
+
+  bool sawCanary = false;
   string[] reported = string[64](fill: "");
   i32 nReported = 0;
-  i32 totalClosure = 0;
-  i32 biggest = 0;
-  for (i32 f = 0; f < keys.len(); f++) {
-    i32[] clos = closureOf(keys, c.sources, f);
-    string[] cp = string[clos.len()](fill: "");
-    string[] cs = string[clos.len()](fill: "");
-    for (i32 i = 0; i < clos.len(); i++) { cp[i] = keys[clos[i]]; cs[i] = c.sources[clos[i]]; }
-
-    totalClosure = totalClosure + clos.len();
-    if (clos.len() > biggest) { biggest = clos.len(); }
-    i32[] out = dumpTypeErrorsFiles(cp, cs, keys[f]);
-    if (out.len() == 0) { continue; }
+  for (i32 i = 0; i < rows.len(); i++) {
+    string file = fileOf(rows[i]);
+    if (file == CANARY) { sawCanary = true; continue; }
     if (nReported >= reported.len()) { continue; }
 
-    // Only now is the reference worth a process: in the green case this line never runs.
-    string kind = referenceIsHappy(core, cli, c.paths[f])
-                    ? ""
-                    : "  [only wacc compiles this file]";
-    reported[nReported] = c.paths[f] + ":" + itoa(out[1]) + ":" + itoa(out[2]) +
-                          " code " + itoa(out[0]) + kind;
+    // Only now is the reference worth a process: in the green case this line never runs. The path
+    // it wants is the repository's, without the leading slash the keys carry.
+    string path = file.len() > 0 && file.slice(0, 1) == "/" ? file.slice(1, file.len()) : file;
+    string kind = referenceIsHappy(core, cli, path) ? "" : "  [only wacc compiles this file]";
+    reported[nReported] = rows[i] + kind;
     nReported = nReported + 1;
   }
 
-  // **The closures actually resolved.** This is the assertion the header's history demands: giving
-  // the checker one file with nothing resolved is *safe* — seeing less can make it miss a diagnostic
-  // and cannot make it invent one — so a `closureOf` that resolved nothing would leave this sweep
-  // green while capping its recall at 85%, which is the state it was already found in once. A
-  // collapsed closure is one entry per file and nothing more.
-  t.isTrue(totalClosure > keys.len() * 2,
-           itoa(totalClosure) + " closure entries over " + itoa(keys.len()) +
-           " files — imports are being resolved");
-  t.isTrue(biggest > 20, "and the deepest reaches " + itoa(biggest) + " files");
+  t.isTrue(sawCanary,
+           "the control was reported — a wrong argument type against an imported signature, so the "
+           + "closures resolved and this sweep can see across files");
 
   string[] named = string[nReported](fill: "");
   for (i32 i = 0; i < nReported; i++) { named[i] = reported[i]; }

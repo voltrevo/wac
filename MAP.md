@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-38 packages, 128,706 lines of wac, 2541 tests,
+38 packages, 128,805 lines of wac, 2543 tests,
 79 command-line programs and 11 browser pages.
 
 ## Packages
@@ -49,7 +49,7 @@ In dependency order: nothing here imports anything below it.
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,456 | 138 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `raster` `regex` `server` `sh` `tls` `unicode` `url` `zstd` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 762 | 6 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `rlp` |
 | [`ssh`](packages/ssh/) | An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them. | 4,132 | 58 | `box` `bytes` `codec` `crypto` `fmt` `fs` `sh` `tty` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 33,677 | 263 | `bytes` `codec` `crypto` `fmt` `fs` `wacpkg` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 33,776 | 265 | `bytes` `codec` `crypto` `fmt` `fs` `wacpkg` |
 | [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 1,687 | 44 | `bytes` `codec` `fmt` `git` `json` `tls` `wacc` |
 
 ## Programs
