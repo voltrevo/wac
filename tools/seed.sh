@@ -24,11 +24,19 @@
 # written to the same basename in different directories; comparing across different names always
 # fails and says nothing.
 #
-# **The Deno path and the binary path are different pipelines.** `packages/platform/native.ts` and
-# `wac build` do not emit byte-identical artefacts from identical sources — 18 bytes apart when I
-# measured it — so comparing one against the other measures the two toolchains rather than the
-# compiler's fixpoint. Both stages here come from the binary; `--bootstrap` only supplies the *first*
-# seed and is then out of the comparison.
+# **The Deno path and the binary path agree — re-measured 2026-08-19.** This said they did not: that
+# `packages/platform/native.ts` and `wac build` were "18 bytes apart when I measured it". They are
+# byte-identical now, on `example/wc.wac` (233,661 bytes) and on `example/wacc.wac` (960,311), for both
+# the module and the manifest beside it.
+#
+# The paragraph above is why the old number is not evidence of a pipeline difference: **the grants are
+# in the module too**, exactly as the name is. Building `wc.wac` with two grants and with four, one
+# compiler, gives files two bytes apart. So a comparison has to hold the name *and* the grants equal,
+# and the 18 was either that or a state since fixed — `test/wac/manifest_test.wac` exists because the
+# two derivations have drifted before, once over a trailing comma on the `net` line.
+#
+# Both stages here still come from the binary; `--bootstrap` only supplies the *first* seed and is then
+# out of the comparison. That is about the fixpoint, not about the other pipeline.
 #
 # ## Why the old seed is put back on a mismatch
 #

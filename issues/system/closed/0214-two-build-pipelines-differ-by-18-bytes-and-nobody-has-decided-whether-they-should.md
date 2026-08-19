@@ -1,11 +1,28 @@
 # 0214 — two build pipelines differ by 18 bytes, and nobody has decided whether they should
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-19
 - **Kind:** bug
 - **Symptom:** wrong answer
+
+## Closed — the difference does not reproduce, 2026-08-19
+
+`packages/platform/native.ts` and `wac build` emit **byte-identical** artefacts, module and manifest
+both, on `packages/platform/example/wc.wac` (233,661 bytes) and on `packages/wacc/example/wacc.wac`
+(960,311). So there is no decision to take: the question this issue existed to ask has no subject.
+
+**Why the old number was not a pipeline difference.** `tools/seed.sh` already recorded that the output
+*name* is embedded in the module, so a comparison across two names always fails. The grants are in
+there too, and that is what this measurement missed: building `wc.wac` with two grants and with four,
+through one compiler, gives files two bytes apart. Hold the name and the grants equal and the two
+pipelines agree. The 18 was that, or a drift since fixed — `test/wac/manifest_test.wac` exists because
+these two derivations have parted before, once over a trailing comma on the `net` line, and it is what
+keeps them together.
+
+The first version of my own check reproduced a "difference" of six bytes and I nearly reported it. It
+was two different `-o` stems.
 
 ## The test this was filed about is gone — 2026-08-19
 
