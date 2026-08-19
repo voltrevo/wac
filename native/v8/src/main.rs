@@ -830,8 +830,15 @@ fn test_module_key(entry: &str, sources: &[(String, Vec<u8>)], flags: &[String],
     h
 }
 
-/// How many built aggregates the shared directory keeps. A megabyte or two each.
-const KEEP_MODULES: usize = 60;
+/// How many built modules the shared directory keeps.
+///
+/// Sixty was chosen when only directory aggregates landed here — about fifty-one chunks in a suite
+/// pass. Single files now key into the same directory, and there are ninety-odd `*_test.wac` in the
+/// tree plus whatever `wac run` builds, so sixty evicted the thing about to be asked for. **Measured
+/// on 2026-08-19: sixty entries were 30 MB**, half a megabyte each, so two hundred is about 100 MB of
+/// a filesystem with seventeen free — and `issues/system/0136`, the day the disk filled, is the reason
+/// this is a number with a measurement beside it rather than "plenty".
+const KEEP_MODULES: usize = 200;
 
 /// A built aggregate from the cache, or `None`.
 ///
@@ -1557,6 +1564,35 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     // numbers and nothing else; a compiler saying which file it wrote would land in the middle of a
     // pipeline. `--quiet` silences the line it prints when it succeeds and nothing else: a program
     // that does not compile still says so, on stderr, where the shell running this expects it.
+    // **One file's module is cacheable too, and was not.** The directory path above caches its
+    // aggregate, and a group of one was sent down this path with the note that "a lone file has nothing
+    // to share a build with" — true about *sharing* and wrong about *keeping*. So `wac test <one file>`
+    // compiled its whole graph every run: measured 2026-08-19, three identical runs of
+    // `packages/wacc/test/wac/bindgenwac_test.wac --filter zzz` at **5.38s, 5.33s, 5.42s**, all of it
+    // the compile, because every test that imports `packages/wacc/src/api.wac` pulls the compiler in.
+    // A file that imports it floors at 5.4-5.9s and one that does not at 1.2s.
+    //
+    // That is the shape of an agent's inner loop — the house rule is to run the file you are working on
+    // rather than the suite — and of the suite's own run-alone lane, where every file is a group of one.
+    //
+    // The key is the same one the aggregate uses, plus the entry's *name*: `test_module_key` hashes the
+    // entry by content and not by name, because an aggregate's path carries a pid, and here the name is
+    // real and reaches the manifest. `--filter` is deliberately not in it — it selects exports of an
+    // already-built module — and `--coverage` is left out of the cache entirely rather than keyed,
+    // because that path writes a table beside the module and a hit would not.
+    let key = if coverage {
+        None
+    } else {
+        let mut key_flags = flags.clone();
+        key_flags.push(format!("entry={entry}"));
+        Some(test_module_key(
+            &entry,
+            &closure_of(std::path::Path::new(&entry)),
+            &key_flags,
+            false,
+        ))
+    };
+
     let mut build = vec![
         "build".to_string(),
         entry,
@@ -1570,11 +1606,18 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     build.extend(flags);
 
     start_v8();
-    let built = run_seed(&build);
+    let from_cache = key.and_then(cached_module);
+    let built = if from_cache.is_some() { 0 } else { run_seed(&build) };
     let code = if built != 0 {
         built
     } else {
-        match std::fs::read(dir.join("prog.wasm")) {
+        match from_cache.map(Ok).unwrap_or_else(|| {
+            let read = std::fs::read(dir.join("prog.wasm"));
+            if let (Some(k), Ok(bytes)) = (key, read.as_ref()) {
+                remember_module(k, bytes);
+            }
+            read
+        }) {
             Err(e) => {
                 eprintln!("wac: the build wrote nothing to run — {e}");
                 1

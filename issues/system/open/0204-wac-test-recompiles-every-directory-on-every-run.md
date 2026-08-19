@@ -155,3 +155,43 @@ Two bugs on the way in, both of the shape this repository keeps producing:
   `Invalid global state`. It presented as a 4ms directory with no failures, which is exactly what a
   run that never happened looks like from outside.
 
+## And the lone file, which was the bigger half — 2026-08-19
+
+The grouping sends a directory of one file down the per-file path with the note that "a lone file has
+nothing to share a build with". True about *sharing* and wrong about *keeping*: its module is as
+cacheable as an aggregate's, and it was recompiled on every run. Measured before the change, three
+identical runs of `wac test packages/wacc/test/wac/bindgenwac_test.wac --filter zzz` — a filter that
+matches nothing, so nothing but the compile happens — at **5.38s, 5.33s and 5.42s**.
+
+That cost falls on exactly the two things that ask for one file: an agent iterating (the house rule is
+to run the file you are working on, not the suite) and the suite's own run-alone lane, where every file
+is a group of one.
+
+**It is a floor set by what the file imports.** A test that imports `packages/wacc/src/api.wac` pulls
+in the whole compiler and floors at **5.4–5.9s**; one that does not floors at **1.2s**. Twenty-odd
+files import it.
+
+Warm figures after the change, same command twice:
+
+| file | cold | warm |
+| --- | ---: | ---: |
+| `privatename_test.wac` | 5.4s | **0.1s** |
+| `buildchecks_test.wac` | 1.2s | **0.0s** |
+| `bindgenwac_test.wac` | 15.4s | 10.0s |
+| `coverage_test.wac` | 15.8s | 9.7s |
+| `wac run packages/box/src/box.wac --help` | 10.4s | **0.0s** |
+
+The last two keep most of their time because it is work rather than compiling.
+
+`--coverage` is left out of the cache rather than keyed into it: that path writes a table beside the
+module and a hit would not. `--filter` is deliberately *not* in the key, since it selects exports of an
+already-built module — checked both ways, one test filtered in and a filter matching nothing. The
+entry's **name** is in the key, unlike the aggregate path, where the name carries a pid; here it is
+real and reaches the manifest. Grants are in the key, and the check that matters is that the same
+program with fewer grants rebuilds rather than reusing the granted manifest — it does, at full cost.
+
+Two canaries rather than a stopwatch: editing an assertion in a cached file gives `0 passed, 2 failed`
+at full compile cost, so nothing stale is served; and `KEEP_MODULES` went from 60 to 200, because
+ninety-odd test files now key into a directory sized for fifty-one chunks and sixty entries evicted the
+thing about to be asked for. Sixty entries measured 30 MB, so two hundred is about 100 MB.
+
