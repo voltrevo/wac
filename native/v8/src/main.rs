@@ -4904,7 +4904,7 @@ fn build_socket<'s>(
 
 /// `STDIN`, in `packages/platform/src/platform.wac`. A channel number, never a socket.
 ///
-/// **Declared but not read here, deliberately.** `packages/platform/test/handles.test.ts` reads this
+/// **Declared but not read here, deliberately.** `packages/platform/test/wac/handles_test.wac` reads this
 /// name out of every host's source and checks the five of them agree, so the declaration is the
 /// point; `#[allow(dead_code)]` says that rather than letting the constant be deleted as unused and
 /// the guard go quiet.
@@ -4933,7 +4933,7 @@ const PARENT_FS_HANDLE: i32 = 1;
 /// The first handle this host may hand out, which is past every reserved one.
 ///
 /// The same number as `FIRST_FREE_HANDLE` in `packages/platform/host/children.ts` and in
-/// `native/src/main.rs`, and named the same so `packages/platform/test/handles.test.ts` can hold all
+/// `native/src/main.rs`, and named the same so `packages/platform/test/wac/handles_test.wac` can hold all
 /// five hosts to it. **That test existed while this host was getting it wrong**: it was written when
 /// the wasmtime host allocated from 0 and handed a child the number that means standard input, and
 /// it reads the four files that declared these constants. This one declared none of them, so the
