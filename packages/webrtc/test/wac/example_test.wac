@@ -20,7 +20,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, Exec, FileResult, Pending, Socket }
-  from "../../../platform/src/platform.wac";
+  from "std/platform.wac";
 import { Lines, check } from "../../../wactest/src/oracle.wac";
 import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";

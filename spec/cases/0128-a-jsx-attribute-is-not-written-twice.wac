@@ -3,7 +3,7 @@
 // why: the tree cannot express precedence, so a repeated attribute is a mistake rather than a rule
 // from: design/lang/0004
 // spec:  §jsx-attribute-written-once
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 export i32 run() {
   Node n = <div class="a" class="b"/>;

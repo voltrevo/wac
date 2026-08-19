@@ -15,7 +15,7 @@
 import { Vec } from "core/vec.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { Change, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Pending, Stat }
-         from "../../../platform/src/platform.wac";
+         from "std/platform.wac";
 import { Fs, Mount, mountSystem } from "../../src/fs.wac";
 import { Loaded, Written, dump, read, write } from "../../src/image.wac";
 import { ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,

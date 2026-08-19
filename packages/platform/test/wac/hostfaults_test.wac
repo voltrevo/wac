@@ -20,7 +20,7 @@
 // `issues/system/0132` is the conformance tier this belongs in.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 const string V8_HOST = "native/v8/src/main.rs";

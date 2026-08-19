@@ -3,7 +3,7 @@
 // `crc32Start`/`Update`/`Finish` exist precisely so this need not hold the input, and
 // nothing used them until there was a chunked read to feed them with.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";

@@ -39,7 +39,7 @@
 // and that is operational information rather than a network error: the fix is a line in a file on the
 // host. A caller reporting "connection failed" sends somebody to look at the wrong thing.
 
-import { Cli, Socket } from "../../platform/src/platform.wac";
+import { Cli, Socket } from "std/platform.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 

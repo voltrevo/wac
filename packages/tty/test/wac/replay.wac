@@ -8,7 +8,7 @@
 // use: a frozen expectation cannot see `n_tty` change under it, and the answer to that is one live case
 // per mode rather than fifty-five of them.
 
-import { Cli, Core, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** One measurement: what came back when `input` was typed at a terminal in `mode`. */

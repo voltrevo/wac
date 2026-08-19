@@ -8,7 +8,7 @@
 // Ten cases stay live, at the bottom. A frozen expectation cannot notice the environment changing under
 // it, and the answer to that is a canary rather than 645 of them.
 
-import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Shell } from "../../src/exec.wac";
 import { shellMain } from "../../src/entry.wac";

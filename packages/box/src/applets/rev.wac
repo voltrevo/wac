@@ -5,7 +5,7 @@
 // walks the line with `unicode`'s decoder and moves whole scalars. Invalid bytes are moved
 // as single bytes, which is what `decode` reporting `size: 1` on a bad lead is for.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";

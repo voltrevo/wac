@@ -21,7 +21,7 @@
 // actually reads, which is a different question from what it was meant to read, and the difference is
 // what 0105 is about.
 
-import { Core } from "../../../platform/src/platform.wac";
+import { Core } from "std/platform.wac";
 import { needsValue } from "./operands.wac";
 import { Args } from "./args.wac";
 

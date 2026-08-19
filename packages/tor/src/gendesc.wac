@@ -14,7 +14,7 @@
 // takes a moment; that is the reason this is a tool and the keys are committed with the vector rather
 // than generated inside a test.
 
-import { Core, Cli, Change, FileResult } from "../../platform/src/platform.wac";
+import { Core, Cli, Change, FileResult } from "std/platform.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { encode as hexEncode, encodeUpper } from "../../codec/src/hex.wac";

@@ -18,7 +18,7 @@
 // `reachableExcluding` — the difference — and for a fast-forward onto a long history that is a few objects
 // rather than all of them.
 
-import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { decode } from "../../codec/src/hex.wac";

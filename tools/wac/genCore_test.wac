@@ -15,7 +15,7 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
-import { Core, Cli, Exec, FileResult } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 
 export string test_the_embeddings_are_in_step_with_the_core_tree(Core core, Cli cli) {
   T t = T.create();
@@ -37,8 +37,14 @@ export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) 
   // The canary for the test above: `--check` compares two files it generates from `core/`, and if
   // `core/` were empty it would compare two empty embeddings and agree. So the inputs are asserted
   // to exist and to hold the declarations they are the source of.
-  string[] files = string[]("core/read.wac", "core/jsx.wac", "core/README.md");
-  string[] holds = string[]("export enum Read", "export enum Node", "which file a");
+  // **`std/` is in this list for exactly the same reason.** It became the second embedded tree on
+  // 2026-08-19 (`design/lang/0009` D4) and it is generated into the same file, so `--check` above
+  // covers it — but this canary is what stops that check being vacuous, and a canary that names only
+  // one of the two trees goes quiet about the other on the day somebody empties it.
+  string[] files = string[]("core/read.wac", "core/jsx.wac", "core/README.md",
+                            "std/platform.wac", "std/README.md");
+  string[] holds = string[]("export enum Read", "export enum Node", "which file a",
+                            "export struct Cli", "A capability, or the type of one");
   for (i32 i = 0; i < files.len(); i++) {
     FileResult f = cli.readFile(files[i]).wait();
     t.isTrue(f.ok, files[i] + " is there");
@@ -57,6 +63,12 @@ export string test_the_tree_is_there_and_says_who_gets_what(Core core, Cli cli) 
     string text = string.fromBytes(ref.bytes);
     t.isTrue(contains(text, "export enum Read"), "and it carries Read");
     t.isFalse(contains(text, "export enum Node"), "and not Node — the reference has no JSX frontend");
+    // And the ninth omission, which is a whole tree rather than one declaration: the reference
+    // carries no `std` at all, because `platform.wac` uses lambdas and this frontend has none. It
+    // must still *know* the name, so that `std/platform.wac` is refused with the reason instead of
+    // reported as an unknown module.
+    t.isFalse(contains(text, "export struct Cli"), "and no std — the reference has no lambdas");
+    t.isTrue(contains(text, "STD_ABSENT"), "but it knows the name, so it can refuse it by name");
   }
   FileResult wacc = cli.readFile("packages/wacc/src/coretext.wac").wait();
   t.isTrue(wacc.ok, "wacc's embedding is there");

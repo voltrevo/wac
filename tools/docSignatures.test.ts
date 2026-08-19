@@ -173,6 +173,19 @@ async function declarations(): Promise<Decls> {
   for (const [key, src] of Object.entries(CORE.files)) {
     collect(wacParse(wacLex(src).tokens, key).program, out);
   }
+  // **And `std`, the same story a day later.** `platform.wac` moved out of `packages/platform/src`
+  // into the `std/` tree on 2026-08-19 (`design/lang/0009` D4), taking `Core`, `Cli`, `Page` and
+  // every capability method with it — 16 references in that package's own README read as *no
+  // declaration* the moment the walk above stopped finding the file, plus three more in `ssh`, `tty`
+  // and `wacc`. Read from disk rather than from an embedding, because the reference compiler does
+  // not carry this tree at all: its one file uses lambdas and this frontend has none
+  // (`compiler/README.md`, the ninth omission). A repo tool has a filesystem, so that costs nothing
+  // here — but it is the reason this loop cannot simply mirror the one above it.
+  for await (const e of Deno.readDir("std")) {
+    if (!e.isFile || !e.name.endsWith(".wac")) continue;
+    const path = `std/${e.name}`;
+    collect(wacParse(wacLex(await Deno.readTextFile(path)).tokens, path).program, out);
+  }
   return out;
 }
 
@@ -264,8 +277,8 @@ docTest("docs: a README's `name(…)` names something that exists", async () => 
  * other list of names a reader is entitled to treat as complete.
  */
 docTest("docs: platform's capability table lists every capability", async () => {
-  const src = await Deno.readTextFile("packages/platform/src/platform.wac");
-  const { program } = wacParse(wacLex(src).tokens, "packages/platform/src/platform.wac");
+  const src = await Deno.readTextFile("std/platform.wac");
+  const { program } = wacParse(wacLex(src).tokens, "std/platform.wac");
   const readme = await Deno.readTextFile("packages/platform/README.md");
   const table = /\| \| capability \| grant \|[\s\S]*?\n\n/.exec(readme);
   if (table === null) throw new Error("platform's README has no capability table — has it been renamed?");

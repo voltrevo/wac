@@ -232,7 +232,7 @@ export i32 pow(i32 base, i32 exp) {
 // site/tools/site.test.ts rather than being prose. Bare here rather than `"core"` because the
 // playground compiles this with whichever compiler the page loaded, and the deployed asset can be
 // older than this file; both spellings work in the current one.
-export const EX_CORE_MAIN = `import { Read } from core;
+export const EX_CORE_MAIN = `import { Read } from "core";
 import { describe } from "./report.wac";
 
 export string demo() {
@@ -241,7 +241,7 @@ export string demo() {
     + " | " + describe(Read.Failed("disk went away"));
 }`;
 
-export const EX_CORE_LIB = `import { Read } from core;
+export const EX_CORE_LIB = `import { Read } from "core";
 
 export string describe(Read r) {
   match (r) {

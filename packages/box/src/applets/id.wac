@@ -13,7 +13,7 @@
 // What is held: `uid`, `gid` and the user's name, from `/etc/passwd` (`packages/fs/src/passwd.wac`),
 // looked up by the identity `packages/fs` enforces with — the same source `whoami` answers from.
 
-import { Cli, Core, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { extraOperand } from "../lib/operands.wac";

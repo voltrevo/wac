@@ -42,7 +42,7 @@
 // that makes it usable by something other than itself; the two share `link.wac`.
 
 
-import { Core, Cli, FileResult } from "../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { Network, Session, bootstrap, buildCircuit } from "./bootstrap.wac";
 import { fetchOverCircuit, itoa } from "./link.wac";
 

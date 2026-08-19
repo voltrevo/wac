@@ -22,7 +22,7 @@
 // we shipped. `git verify-pack -v` on the same file, on your machine, prints the same object count
 // and the same names — which is a check anyone can run and nobody has to trust us for.
 
-import { Cli, Core, Event, Page, Pending, Picked } from "../../platform/src/platform.wac";
+import { Cli, Core, Event, Page, Pending, Picked } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { encode } from "../../codec/src/hex.wac";

@@ -20,7 +20,7 @@
 // cells at whatever rate the tab allows, in WebAssembly compiled from wac, and the millisecond
 // counter is not decoration.
 
-import { Cli, Core, Event, Page, Pending, Picked } from "../src/platform.wac";
+import { Cli, Core, Event, Page, Pending, Picked } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 const string SOURCE =

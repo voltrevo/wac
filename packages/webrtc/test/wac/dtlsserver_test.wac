@@ -19,7 +19,7 @@
 // also where the note about `-ign_eof` and the 55 seconds it used to cost lives.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Exec, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Core, Cli, Datagram, Exec, Pending, Socket } from "std/platform.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

@@ -15,7 +15,7 @@
 // with fewer vectors in it than it found — a half-recorded set is worse than none, since the test
 // would go on passing for the cases that survived.
 
-import { Core, Cli, Exec, Stat } from "../../platform/src/platform.wac";
+import { Core, Cli, Exec, Stat } from "std/platform.wac";
 import { x25519Base } from "../../crypto/src/x25519.wac";
 import { ntorClientRequest } from "../src/ntor.wac";
 import { itoa } from "../../fmt/src/itoa.wac";

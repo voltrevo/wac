@@ -55,7 +55,7 @@ Deno.test("a built app reports the message the program gave", async () => {
   try {
     await Deno.writeTextFile(
       `${dir}/p.wac`,
-      `import { Cli, Core } from "../../packages/platform/src/platform.wac";\n\n` +
+      `import { Cli, Core } from "std/platform.wac";\n\n` +
         `export i32 main(Core core, Cli cli) {\n` +
         `  core.log("about to fail");\n  trap "the ring is full";\n}\n`,
     );

@@ -25,7 +25,7 @@
 // between two runs makes a diff meaningless — and byte order is what every tool this is compared
 // against does with `LC_ALL=C`.
 
-import { Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { endsWith } from "../../../wactest/src/strings.wac";
 import { sortNames } from "../../../fs/src/fs.wac";

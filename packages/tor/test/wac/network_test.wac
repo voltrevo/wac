@@ -32,7 +32,7 @@
 // their children.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Stat, FileResult } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 

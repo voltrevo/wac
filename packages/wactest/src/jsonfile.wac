@@ -16,7 +16,7 @@
 
 import { parse } from "../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../json/src/value.wac";
-import { Cli, FileResult } from "../../platform/src/platform.wac";
+import { Cli, FileResult } from "std/platform.wac";
 
 /** The top-level object of a JSON file, read relative to the repository root. */
 export JsonObject jsonFile(Cli cli, string path) {

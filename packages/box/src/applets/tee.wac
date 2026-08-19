@@ -5,7 +5,7 @@
 // wants two at once and cannot express that. Streaming it would need either a second sink
 // or an append, and neither exists. `cp`, which has one destination, streams.
 
-import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Fs } from "../../../fs/src/fs.wac";

@@ -41,7 +41,7 @@
 //     it gives every program that watches handles — derive the limit from `CALL_SLOTS`, do not transcribe
 //     it, and count every outstanding call, not just the ones you think of as reads.
 
-import { Cli, Core, Pending, CALL_SLOTS } from "../src/platform.wac";
+import { Cli, Core, Pending, CALL_SLOTS } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();

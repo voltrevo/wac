@@ -1,6 +1,6 @@
 // Directories made. `-p` makes the parents too, and forgives one that already exists.
 
-import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { missingOperand } from "../lib/operands.wac";

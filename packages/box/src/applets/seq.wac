@@ -15,7 +15,7 @@
 // counted to nothing. `atoi` answering 0 for a word is the same shape as `head -n x` using the default —
 // a mistake in the command coming back as an answer.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { atoi, itoa } from "../../../fmt/src/itoa.wac";

@@ -28,7 +28,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 

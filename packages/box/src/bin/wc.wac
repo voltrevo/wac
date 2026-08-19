@@ -7,7 +7,7 @@
 // this is what it also bought: an entry point is four lines, and the thing it wraps did not
 // have to know it was ever part of a multicall binary.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { parseFrom } from "../lib/args.wac";
 import { wc } from "../applets/wc.wac";
 import { Fs } from "../../../fs/src/fs.wac";

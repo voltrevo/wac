@@ -4,7 +4,7 @@
 // and `find` use it internally and never show it. The mtime goes through `datetime`, the
 // same pairing `date` uses.
 
-import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Stat } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa64 } from "../../../fmt/src/itoa.wac";

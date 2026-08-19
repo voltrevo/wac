@@ -17,7 +17,7 @@
 // they are used.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 

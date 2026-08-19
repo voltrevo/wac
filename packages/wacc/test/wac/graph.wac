@@ -14,8 +14,8 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Cli, FileResult } from "../../../platform/src/platform.wac";
-import { importSpecs, resolveFrom } from "../../src/files.wac";
+import { Cli, FileResult } from "std/platform.wac";
+import { importSpecs, isBuiltinSpec, resolveFrom } from "../../src/files.wac";
 
 /** An entry and everything it reaches, in the order they were found. */
 export struct Graph {
@@ -37,6 +37,16 @@ export Graph graphOf(Cli cli, string entry) {
     sources[i] = string.fromBytes(f.bytes);
     string[] specs = importSpecs(f.bytes);
     for (i32 s = 0; s < specs.len(); s++) {
+      // **A built-in is not a file, so there is nothing here to read.** `core` and `std` are carried
+      // by the compiler; `resolveFrom` hands a built-in specifier back unchanged, and reading it
+      // gives *cannot read core* — a sentence about a file for something that was never one.
+      //
+      // This walk did not need the check until 2026-08-19. `importSpecs` drops a *bare* word, and
+      // `core` was the one specifier written bare, so the only built-in anybody imported never
+      // reached here. `design/lang/0009` D5 quoted it and D4 added `std`, and both arrive through
+      // the same field as an ordinary path — which is the point of quoting them, and is why the
+      // filter has to be about what the specifier *names* rather than about how it was written.
+      if (isBuiltinSpec(specs[s])) { continue; }
       string resolved = resolveFrom(paths[i], specs[s]);
       bool seen = false;
       for (i32 k = 0; k < n; k++) { if (paths[k] == resolved) { seen = true; } }

@@ -21,7 +21,7 @@ import {
 import { hsMac } from "../../src/hsntor.wac";
 import { aesCtr } from "../../../crypto/src/aesctr.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import {
   blindedKey, descriptor, identityKey, introAuthKey, introCount, introEncKey, introLinkSpecifiers,
   introOnionKey, layerCount, layerMacKey, layerPlaintextLength, layerPlaintextSha3, layerSalt,

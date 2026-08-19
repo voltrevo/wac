@@ -5,7 +5,7 @@ import {
   microdescriptor, microdescDigest, microdescDigests, microdescLine, splitMicrodescriptors,
 } from "../../src/microdesc.wac";
 import { b64Unpadded } from "../../src/routerdesc.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import {
   caseCount, descriptor, digest, digestBase64, expected, mutationCount, mutationDigestBase64,
   mutationName, policySummary,

@@ -11,7 +11,7 @@
 //
 // The program on the other side is `cat` because `cat` is the one that adds nothing of its own.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Line, Typed } from "../src/line.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 

@@ -3,7 +3,7 @@
 // Without this each applet hardcoded its behaviour — `head` always took ten lines and `wc`
 // could not do `-l`. One parser makes a dozen of them real rather than approximate.
 
-import { Cli } from "../../../platform/src/platform.wac";
+import { Cli } from "std/platform.wac";
 import { atoi } from "../../../fmt/src/itoa.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 

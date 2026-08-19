@@ -27,7 +27,7 @@ import { b64Unpadded, descriptorIdentity } from "../../src/routerdesc.wac";
 import { jsonFile, strOf, numOf, num64Of, arrayOf, objectOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
 const string ORACLE = "packages/tor/test/oracle.mjs";

@@ -1,6 +1,6 @@
 // Everything but the last path component.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { dirName } from "../lib/path.wac";

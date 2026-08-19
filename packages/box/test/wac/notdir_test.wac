@@ -28,7 +28,7 @@
 // The host-mount half is the one comparable with GNU, so that half compares against the capture; the
 // image half compares against the host-mount half, which is the only oracle it can have.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { notDirCases, notDirFixtures } from "./cases.wac";

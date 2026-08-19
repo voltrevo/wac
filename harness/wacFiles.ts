@@ -13,6 +13,7 @@ import { isBuiltinSpecifier } from "wac/wacCore.ts";
 // mistake impossible instead of merely unlikely.
 
 import { wacLex } from "wac/wacLex.ts";
+import { isProjectSpecifier, resolvePath, resolveSpecifier } from "wac/wacResolve.ts";
 
 /** Resolve `spec` relative to the directory of `fromPath`. */
 /**
@@ -28,19 +29,18 @@ export function resolveFrom(fromPath: string, spec: string): string {
   // A built-in is already the key it is looked up by. Joining it to the importing file's directory
   // would make `core/option.wac` into packages/json/src/core/option.wac — a path, and a missing one.
   if (isBuiltinSpecifier(spec)) return spec;
-  const dir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : ".";
-  const joined = `${dir}/${spec}`;
-  // Collapse `a/./b` and `a/b/../c` so the same file is never keyed two ways.
-  // An absolute path keeps its leading slash — normalising it away silently turns
-  // it into a relative path and the read fails somewhere far from the cause.
-  const absolute = joined.startsWith("/");
-  const parts: string[] = [];
-  for (const part of joined.split("/")) {
-    if (part === "." || part === "") continue;
-    if (part === ".." && parts.length > 0 && parts[parts.length - 1] !== "..") parts.pop();
-    else parts.push(part);
-  }
-  return (absolute ? "/" : "") + parts.join("/");
+  // **The compiler's own, rather than a copy that matches it.** This had its own body until
+  // 2026-08-19, and the two agreed: over the 4232 real import specifiers in the repository, and over
+  // 27 hand-written spellings, one case apart — a `..` climbing above an absolute root, where the
+  // compiler's dropped the leading slash and produced a *relative* key. That is the shape
+  // `design/lang/0009` D8 is about, so it was fixed there rather than tolerated here, and once the
+  // two answers were identical keeping two bodies bought nothing. What it cost was the possibility
+  // of a program the harness gathers under one key and the compiler files under another.
+  //
+  // The direction is forced: the compiler must not import the harness. `design/lang/0009` asks for
+  // this consolidation *before* the manifest lookups land, on the grounds that two lines agreeing is
+  // not evidence that a provider table and a mapping table will.
+  return resolvePath(fromPath, spec);
 }
 
 /**
@@ -117,7 +117,7 @@ export function wacFilesIn(all: Map<string, string>, entry: string): Map<string,
  * process invalidates it. That matters: `tools/testCli.test.ts` and friends write a `.wac` and build
  * it, and a memo that answered from before the write would hand the compiler yesterday's source.
  */
-type Walked = { files: Map<string, string>; stamps: Map<string, string>; readAt: number };
+type Walked = { files: Map<string, string>; roots: Map<string, string>; stamps: Map<string, string>; readAt: number };
 const walked = new Map<string, Walked>();
 
 async function stampOf(path: string): Promise<string> {
@@ -187,6 +187,71 @@ if (wantsStats()) {
   });
 }
 
+/**
+ * The project root `path` sits in — the nearest directory at or above it holding a `wac.json5` —
+ * or `undefined` when there is none. `design/lang/0009` D6 and D7.
+ *
+ * **This is the I/O half of `@/`, which is why it is here and not in the compiler.**
+ * `compiler/wacResolve.ts` does no reading by design — "a compiler that reads files is a compiler
+ * that cannot run in a browser" — and D7 defines `@/` by *searching upwards for the nearest
+ * manifest*. So the search lives with the walk that already opens files, and the answer is handed to
+ * `wacCompile` as `options.roots`.
+ *
+ * It finds a manifest and never reads one. That keeps `packages/json` and the manifest parser out of
+ * this path entirely: what a `wac.json5` *says* matters for mappings (D9-D11), and `@/` needs only
+ * that it is there.
+ *
+ * Memoised per directory, because a graph is wide and shallow — `packages/box` is 171 files across a
+ * handful of directories, so the uncached version would `stat` the same three parents 171 times.
+ */
+const rootCache = new Map<string, string | undefined>();
+
+async function projectRootOf(path: string): Promise<string | undefined> {
+  let dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".";
+  const asked: string[] = [];
+  for (;;) {
+    if (rootCache.has(dir)) {
+      const seen = rootCache.get(dir);
+      for (const d of asked) rootCache.set(d, seen);
+      return seen;
+    }
+    asked.push(dir);
+    let here = false;
+    try {
+      here = (await Deno.stat(`${dir}/wac.json5`)).isFile;
+    } catch { /* not there, keep climbing */ }
+    if (here) {
+      for (const d of asked) rootCache.set(d, dir);
+      return dir;
+    }
+    // `.` and `/` are fixed points of "the directory above", so they are where the climb stops.
+    const up = dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) || "/" : (dir === "." ? "" : ".");
+    if (up === "" || up === dir) {
+      for (const d of asked) rootCache.set(d, undefined);
+      return undefined;
+    }
+    dir = up;
+  }
+}
+
+/**
+ * The same walk, with the project root of each file that needed one — what a caller passes as
+ * `wacCompile`'s `options.roots`.
+ *
+ * **Only files that actually write `@/` get an entry, and that is not an optimisation.** The walk
+ * has to resolve a `@/` specifier to *follow* it, so the search happens there or the graph is short
+ * a file; and `resolveSpecifier` consults the map only for a `@/`, so a file without one has nothing
+ * to say. Searching for every file instead would `stat` its way up the tree once per file to answer
+ * a question nobody asks — `packages/box` is 171 files — and would let a manifest somewhere above
+ * the repository change what the repository's own imports mean.
+ */
+export async function wacFilesWithRoots(
+  entry: string,
+): Promise<{ files: Map<string, string>; roots: Map<string, string> }> {
+  const files = await wacFiles(entry);
+  return { files, roots: new Map(walked.get(entry)?.roots ?? []) };
+}
+
 export async function wacFiles(entry: string): Promise<Map<string, string>> {
   calls++;
   const began = performance.now();
@@ -196,6 +261,7 @@ export async function wacFiles(entry: string): Promise<Map<string, string>> {
   if (hit !== undefined && await stillTrue(hit.stamps, hit.readAt)) { hits++; return new Map(hit.files); }
 
   const files = new Map<string, string>();
+  const roots = new Map<string, string>();
   // **Taken before the first read, not after the last stat**, which is the difference between a rule
   // that holds and one that mostly holds. A write after this instant has an mtime of at least this
   // millisecond, so a recorded mtime strictly below it cannot belong to a write we missed. Stamping
@@ -218,16 +284,32 @@ export async function wacFiles(entry: string): Promise<Map<string, string>> {
     const next: string[] = [];
     for (let i = 0; i < fresh.length; i++) {
       files.set(fresh[i], texts[i]);
-      for (const spec of importPaths(texts[i])) next.push(resolveFrom(fresh[i], spec));
+      for (const spec of importPaths(texts[i])) {
+        // **A `@/` is resolved here or the graph is short a file.** The root is the project the
+        // *importing* file is in, so it is looked up per file — and only when one of its specifiers
+        // asks, which is what keeps a graph with no `@/` in it paying nothing for the feature.
+        // A specifier with no project resolves to "", which no file is keyed by, so the import goes
+        // unread and `wacResolve` reports it as D7's compile error rather than this walk throwing.
+        if (isProjectSpecifier(spec)) {
+          let root = roots.get(fresh[i]);
+          if (root === undefined) {
+            root = await projectRootOf(fresh[i]);
+            if (root !== undefined) roots.set(fresh[i], root);
+          }
+          next.push(resolveSpecifier(fresh[i], spec, root));
+          continue;
+        }
+        next.push(resolveFrom(fresh[i], spec));
+      }
     }
-    wave = next.filter((p) => !files.has(p));
+    wave = next.filter((p) => p !== "" && !files.has(p));
   }
 
   const stamps = new Map<string, string>();
   const paths = [...files.keys()];
   const now = await Promise.all(paths.map(stampOf));
   for (let i = 0; i < paths.length; i++) stamps.set(paths[i], now[i]);
-  walked.set(entry, { files, stamps, readAt });
+  walked.set(entry, { files, roots, stamps, readAt });
   readMs += performance.now() - began;
   return new Map(files);
 }

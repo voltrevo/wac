@@ -17,7 +17,7 @@
 // pixels, each an iteration loop, recomputed on every zoom, in compiled code on a worker while
 // the page stays responsive. A drawing API would have made this the slow way to do it.
 
-import { Cli, Core, Event, Page } from "../src/platform.wac";
+import { Cli, Core, Event, Page } from "std/platform.wac";
 
 const i32 W = 480;
 const i32 H = 300;

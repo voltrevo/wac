@@ -19,7 +19,7 @@
 // Note the indent: these vectors were written with `json.dump(indent=1)`, one space per level, where
 // the hs-ntor and relaycert ones use two. A capture tool reproduces the file it is the recipe for.
 
-import { Core, Cli, Exec, Change, Stat } from "../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, Stat } from "std/platform.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { sha3_256 } from "../../crypto/src/keccak.wac";
 import { itoa } from "../../fmt/src/itoa.wac";

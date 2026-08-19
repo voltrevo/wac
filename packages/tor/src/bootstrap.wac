@@ -5,7 +5,7 @@
 // is expensive and good for hours. `buildCircuit` picks a path from that consensus and builds
 // it, which a long-running program does again every time a circuit dies or gets old.
 
-import { Core, Cli } from "../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
 import {
   Relay, parseConsensus, attachMicrodescriptors, parseInt, unpaddedBase64,

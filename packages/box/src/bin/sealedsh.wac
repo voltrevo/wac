@@ -27,7 +27,7 @@
 // that wanted eight bytes. The bound is the applet's to declare and the file is the filesystem's to
 // know; `Fs.readSome` was already the route and nothing was passing the number down it.
 
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { Vec } from "core/vec.wac";
 import { Shell } from "../../../sh/src/exec.wac";

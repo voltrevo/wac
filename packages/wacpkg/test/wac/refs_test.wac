@@ -12,8 +12,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
-import { FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
+import { FileResult } from "std/platform.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

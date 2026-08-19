@@ -4,7 +4,7 @@
 // by name, and the output looks like base64 either way. `packages/codec` has had `decode` all along, so
 // the flag was one import from working (wac-mono 0105).
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Buf } from "../../../bytes/src/buf.wac";

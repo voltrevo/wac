@@ -17,7 +17,7 @@
 // honest about being one step short. Printed on every run, because a proof that is not anchored looks
 // exactly like one that is.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { proofOfSlots, Proof } from "../src/getproof.wac";
 import { recordOf, Record } from "../../ens/src/verified.wac";
 import { ownerSlot, resolverSlot } from "../../ens/src/registry.wac";

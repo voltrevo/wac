@@ -16,7 +16,7 @@
 // **A case nobody can read is worse than none**, which is `cases.ts`'s rule and this keeps it: a file
 // that cannot be parsed comes back with `error` set rather than as a case that trivially passes.
 
-import { Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, FileResult } from "std/platform.wac";
 
 /** What a case says must happen. `call` and `value` are empty where the kind does not use them. */
 export struct Expect {

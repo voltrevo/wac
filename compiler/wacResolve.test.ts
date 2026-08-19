@@ -2,7 +2,7 @@ import { wacLex } from "./wacLex.ts";
 import { wacParse, type Program } from "./wacParse.ts";
 import {
   wacResolve, type ResolveResult, type FuncEntry, type StructEntry,
-  funcReturnType, funcParams, isMethod, type ScopeEntry,
+  funcReturnType, funcParams, isMethod, resolvePath, type ScopeEntry,
 } from "./wacResolve.ts";
 
 /** The FuncEntry a scope name denotes, or a clear failure if it denotes something else. */
@@ -677,4 +677,36 @@ Deno.test("wacResolve: a non-exported enum's variants are not importable", () =>
   if (!r.errors.some(e => e.message.includes("not exported"))) {
     throw new Error(`expected a not-exported error, got: ${r.errors.map(e => e.message).join("; ")}`);
   }
+});
+
+Deno.test("wacResolve: a `..` past the root does not eat the root", () => {
+  // **The key is the module's identity, so a path that loses its leading slash becomes a different
+  // kind of path.** `joinPath` popped unconditionally, and for an absolute base the first part is the
+  // empty string standing for the root — so a `..` with nothing left to climb removed the root itself
+  // and handed back a *relative* key. `/home/wac/main.wac` importing `"../../../../lib.wac"` came
+  // back as `../lib.wac`, which is also what a genuinely relative import can produce: two different
+  // specifiers, one key, which is the failure `design/lang/0001` spends its longest paragraph on and
+  // `0009` D8 is about.
+  //
+  // The answers below are the ones `packages/wacc/src/path.wac` and `harness/wacFiles.ts` already
+  // give — `packages/wacc/test/wac/files_test.wac` asserts the second one and says it holds "in both
+  // walks", which was a claim about them and not about this file. POSIX would say `/`; none of these
+  // is a filesystem, and what they compute is an identity, so two identities agreeing matters more
+  // than either matching `realpath`.
+  const cases: Array<[string, string, string]> = [
+    ["/abs/a.wac", "../../b.wac", "/../b.wac"],
+    ["/a.wac", "../../c.wac", "/../../c.wac"],
+    ["/home/wac/main.wac", "../../../../lib.wac", "/../../lib.wac"],
+    // Absolute bases that do not climb out must be untouched by the fix.
+    ["/abs/dir/a.wac", "./b.wac", "/abs/dir/b.wac"],
+    ["/abs/dir/sub/a.wac", "../b.wac", "/abs/dir/b.wac"],
+    // And a relative base still produces a bare `..`, which is what makes the two kinds distinct.
+    ["a.wac", "../../d.wac", "../../d.wac"],
+  ];
+  const wrong: string[] = [];
+  for (const [base, rel, want] of cases) {
+    const got = resolvePath(base, rel);
+    if (got !== want) wrong.push(`${base} + ${rel} -> ${got}, want ${want}`);
+  }
+  if (wrong.length) throw new Error(wrong.join("\n  "));
 });

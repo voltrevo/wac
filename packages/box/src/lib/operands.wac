@@ -19,7 +19,7 @@
 // usage summary and exits **2** rather than 1. Deriving any of that from the majority would have been
 // wrong for half of them — the same lesson `cannotOpen` in `input.wac` records one file over.
 
-import { Core } from "../../../platform/src/platform.wac";
+import { Core } from "std/platform.wac";
 import { Args } from "./args.wac";
 
 /**

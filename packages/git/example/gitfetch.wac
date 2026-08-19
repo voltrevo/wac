@@ -17,7 +17,7 @@
 // The `shallow <sha>` line a deepened request comes back with is already handled: `findPack` treats it as
 // a negotiation line, alongside `NAK` and `ACK`.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { Vec } from "core/vec.wac";

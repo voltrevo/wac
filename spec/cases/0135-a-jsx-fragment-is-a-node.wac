@@ -3,7 +3,7 @@
 // why: a component returns one Node, so several siblings need a node that is not an element
 // from: design/lang/0006
 // spec:  §jsx-fragment-is-a-node
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 string render(Node n) {
   match (n) {

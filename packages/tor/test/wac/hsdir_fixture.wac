@@ -11,7 +11,7 @@
 
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Cli } from "../../../platform/src/platform.wac";
+import { Cli } from "std/platform.wac";
 import { arrayOf, boolOf, jsonFile, num64Of, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
 
 JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdir_vectors.json"); }

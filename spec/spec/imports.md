@@ -34,19 +34,22 @@ carries the text and serves it. A project cannot shadow these names with a `core
 own, which is the other half of the same property — a built-in that the filesystem could take over
 is not a built-in.
 
-The root is what `core` alone names, and its files are named the way any other file is. `[§wac-core-unquoted-3nqk7vd]`
-The root may be written either way — `from "core"` or `from core` — and both reach the same module,
-so `Read` obtained through one is the same type as `Read` obtained through the other. **Write the
-quoted form.** Every other member of the tree is quoted, and a root that is the one bare word in the
-language is a spelling to remember rather than a rule to know. Any bare word that is *not* `core`
-reports `unknown module 'x'`.
+The root is what `"core"` names, and its files are named the way any other file is.
+`[§wac-core-unquoted-3nqk7vd]` **Every specifier is a quoted path, `core` included.** A bare word
+after `from` is an error: `core` is told to write `from "core"`, and anything else reports
+`unknown module 'x'`.
 
-> The unquoted form was for a while the only accepted one, and the argument was that a quoted
-> specifier says *a file lives at this path* while there was no path here to be right or wrong
+`[§wac-core-one-key-5jm2qhx]` However a file in the tree is reached, it is one module — so `Read`
+obtained in one file is the same type as `Read` obtained in another. That is not a nicety: wac's
+types are nominal, so two modules would be two `Read`s and nothing could convert between them, which
+is the whole reason the tree is embedded rather than copied.
+
+> `core` was written *without* quotes for most of this language's life, and the argument was that a
+> quoted specifier says *a file lives at this path* while there was no path here to be right or wrong
 > about. [design/lang/0009](../../design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md)
-> D4 removed the premise rather than the argument: there are paths now, `core/option.wac` is one,
-> and it is right. D5 accepts both spellings so that the files already using the bare one keep
-> compiling while they are moved over.
+> D4 removed the premise rather than the argument: there are paths now, `core/option.wac` is one, and
+> it is right. D5 then accepted both spellings for exactly as long as it took to move the files using
+> the old one — 54 of them — and removed it.
 
 What belongs in the tree is decided per file. The **root** holds only types that have to cross a
 *repository* boundary through a funcref signature: wac has nominal types and no closures, so two
@@ -60,13 +63,13 @@ is a library and belongs in a package. See `design/0001`.
 
 ```wac
 // producer.wac
-import { Read } from core;
+import { Read } from "core";
 export Read three() { return Read.Data(u8[](7, 7, 7)); }
 ```
 
 ```wac
 // consumer.wac
-import { Read } from core;
+import { Read } from "core";
 export i32 total(fn[Read()] source) {
   match (source()) {
     case Data(bytes): return bytes.len();
@@ -100,6 +103,89 @@ export enum Read {
 `[§wac-core-read-6kv4pnx]` A `u8[]` cannot say why it stopped: empty means both "finished" and
 "failed", and callers that conflated the two produced truncated output that looked successful.
 `match` is exhaustive, so a caller that ignores `Failed` does not compile.
+
+
+### `std`
+
+```wac
+import { Cli, Core } from "std/platform.wac";
+```
+
+The other built-in tree, and the split is by capability: `core` is what needs nothing from the host,
+`std` is what is nothing but host — `Core`, `Cli`, the filesystem, the network, processes, the
+environment, the terminal, clocks, randomness, the page.
+
+`[§wac-std-reserved-5kt8nqw]` `std` and `std/` are reserved exactly as `core` is: a project's own
+`std/platform.wac` does not shadow the built-in, and a `std` specifier never appears in `wac.lock`.
+Its version is the toolchain's.
+
+`[§wac-std-no-root-2vp6xmk]` `std` has **no root module** — every name in it is reached by path.
+`import { Core } from "std";` is an error naming the file to write instead. `core` has a root because
+`Read` is in it; nothing wants to be in a `std` root, and an empty one would only be a second spelling
+for the same thing.
+
+`[§wac-std-imports-core-7hn3qrz]` A file in a built-in tree may import `core` and nothing else. Both
+compilers carry these trees as **text** — one bundles into a browser with no filesystem, the other
+keeps them inside a wasm module — so a relative path out of the tree has nothing to resolve against
+at the far end. This is why `frame.wac` and `stream.wac` are packages rather than `std` files: both
+import `Buf` from `packages/bytes`.
+
+> **`std` is not in every compiler, and that is the only built-in that is not.** `platform.wac` uses
+> lambdas, which the reference frontend does not have, so the reference carries none of this tree and
+> refuses the specifier *by name* with that reason. `compiler/README.md` records it as the ninth
+> omission. The practical edge of it: the playground compiles `core` and cannot compile a program
+> that uses a capability — which was already true, since a browser tab has no filesystem to grant.
+
+### `@/` — the project root
+
+```wac
+import { parse } from "@/src/parse.wac";
+```
+
+`[§wac-import-project-4hq7mnv]` `@/` is the root of the **project containing the importing file** —
+the nearest directory at or above it holding a `wac.json5`. Not the directory the compiler was
+started in, and not the entry's project: a program can span two projects, and a file that writes
+`@/` means its own.
+
+A `@/` in a file with no `wac.json5` above it is a **compile error**, naming the specifier. It is not
+a fallback to something relative: `@/src/parse.wac` joined to nothing would be `src/parse.wac`, a
+path that looks real and is relative to a directory nobody named, so the program would compile
+against the wrong file instead of being refused.
+
+A project using only relative imports needs no manifest. An empty `wac.json5` is a valid one — its
+presence is what `@/` asks about, and nothing reads its contents to answer.
+
+
+### A mapped specifier
+
+```json5
+// wac.json5
+{ imports: { "dep/": { git: "https://example.com/dep.git", ref: "main", subdir: "src" } } }
+```
+
+```wac
+import { two } from "dep/lib.wac";
+```
+
+`[§wac-import-mapped-6np2rkq]` A specifier that is neither relative, nor `@/`, nor a built-in may
+name a **mapping** declared in the project's `wac.json5`. The name is exact or a slash-terminated
+prefix; for a prefix the unmatched suffix is appended to the mapping's `subdir` and rejected if it
+climbs out. Mappings may not overlap, so at most one can match and there is no precedence rule to
+learn.
+
+Resolution reads the lockfile, never the network: `wac.lock` records the commit each mapping is
+pinned to, and the file is read from the checkout cache. **A missing lock entry, or a commit that is
+not in the cache, is a compile error naming `wac update`** — an ordinary command does not fetch, and
+does not advance a pin because a branch moved.
+
+Identity is the repository, the resolved commit and the repository-relative path — so two mappings
+naming one repository at one commit are one module, and two commits are two. That falls out of where
+the cache puts a checkout rather than being computed separately.
+
+> **The reference compiler does not resolve mappings** — `compiler/README.md` records it as a stated
+> omission. Reading a manifest, a lockfile and a cache is package policy, and that gets one
+> implementation; the reference exists to build the first `wacc.wasm` from a cold checkout, which has
+> no dependencies by construction.
 
 ### Import resolution
 

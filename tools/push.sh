@@ -237,8 +237,21 @@ for attempt in 1 2 3; do
         fi
         echo "   Re-run when the machine is quiet; see issues/system 0142 before believing anything below."
       fi
+      # **What a failure looks like has to include the `wac test` lane's words.** `FAILED` and
+      # `error:` are Deno's, and this pattern was written when Deno ran everything. `wac test` says
+      # `FAIL`, and its per-directory summary says `1 with failures` and `3 that did not run` — none
+      # of which match. So a run with real failing tests printed *nothing matched FAILED or error:,
+      # so no test reported anything — the run itself died … usually a worker killed for memory*, and
+      # the reader went to look at `free -m`. That happened three times in one morning before anybody
+      # read the log by hand; the tell was that two runs produced an identical count of summaries,
+      # which is not what a memory kill looks like.
+      #
+      # `cannot emit` and `did not build` are here for a failure with no failing test at all: a
+      # directory whose files collide on a name builds one at a time instead, every test passes, and
+      # the suite still exits non-zero. Without them the summary is empty and truthful and useless.
+      fails='FAILED|^FAIL |error:|wacc: cannot emit|did not build|with failures|did not run'
       echo "-- failures --"
-      if ! grep -qE 'FAILED|error:' "$log"; then
+      if ! grep -qE "$fails" "$log"; then
         # **A failure with no failures in it means the run died rather than reported.** This happened on
         # 2026-08-05: the suite type-checked all 140 files, printed its last `Check` line, and exited
         # non-zero in nine seconds with no diagnostic — fifteen minutes after a host reboot, with other
@@ -246,12 +259,12 @@ for attempt in 1 2 3; do
         # issue 0075 has already seen reported as though the test were wrong. The exit code above is what
         # tells them apart, and it was not printed at the time, so the only diagnosis available was a
         # guess. Somebody made a confident one and it was wrong.
-        echo "   Nothing in the log matched FAILED or error:, so no test reported anything — the run"
+        echo "   Nothing in the log looked like a failure, so no test reported anything — the run"
         echo "   itself died. Exit $status. 1 with no output is usually a worker killed for memory;"
         echo "   check /proc/loadavg and free -m, and try again on a quieter machine before believing"
         echo "   the change is at fault."
       fi
-      grep -E 'FAILED|error:' "$log" | head -20
+      grep -E "$fails" "$log" | head -20
       # Any test that outstayed Deno's warning threshold is worth naming even on a plain failure:
       # it is the likeliest cause of a slow run somebody is about to blame on their own change.
       slow=$(grep -oE "'[^']+' has been running for over[^)]*.\)" "$log" | sort -u | head -5)
@@ -335,20 +348,29 @@ for attempt in 1 2 3; do
   #
   # It was held out of here until every one passed, on the rule that a red check in the gate blocks
   # every other agent for something they did not do. All nineteen have passed since 2026-08-12.
-  # **Reported, not enforced, since 2026-08-12 21:55.** It blocked for ten hours and then stopped
-  # being fair: `packages/zstd` now uses `leadingZeros`, which `wacc` has and the reference compiler
-  # does not, so `coverage:zstd` cannot build while every test of it passes. That is nobody's fault
-  # who is pushing, and a check that blocks every agent for something they did not do is the exact
-  # line 0101 said not to cross — including when the person who crossed it is the one who put the
-  # check here. issues/lang 0111 is the gap; this goes back to blocking when it closes.
+  # **Reported, not enforced, from 2026-08-12 21:55 to 2026-08-19.** It blocked for ten hours and then
+  # stopped being fair: `packages/zstd` used `leadingZeros`, which `wacc` had and the reference
+  # compiler did not, so `coverage:zstd` could not build while every test of it passed. That is
+  # nobody's fault who is pushing, and a check that blocks every agent for something they did not do
+  # is the exact line 0101 said not to cross — including when the person who crossed it is the one
+  # who put the check here.
+  #
+  # **Blocking again since 2026-08-19**, which is what that paragraph promised: `issues/lang/0111` is
+  # the gap it named, and it closed on 2026-08-13 — the condition was met for six days and nothing
+  # acted on it, because "put it back when that closes" is a sentence in a shell script and no check
+  # reads it. There are now 21 packages rather than 19 and all 21 have been green on every gate run
+  # since. If this blocks you for something you did not do, the fair answer is the same as it was:
+  # say so here and turn it back into a report, rather than pushing past it silently.
   if ! deno task coverage:all; then
-    echo "== the coverage ratchets are red — pushing anyway, and this is not fine =="
+    echo "== the coverage ratchets are red — not pushing =="
     echo "   A package above is below its recorded coverage, or an exemption in its cov.ts no longer"
     echo "   matches the line it names, or it will not build. Run:"
     echo "       deno task coverage:<pkg> --verbose"
     echo "   A branch you cannot reach is not a failure — record it in that package's cov.ts with the"
     echo "   argument for why, which is what every entry there already carries."
-    echo "   Blocking is off while issues/lang 0111 is open; put it back when that closes."
+    echo "   If this is a gap you did not open and cannot close, `tools/push.sh` says how this check"
+    echo "   went from blocking to reporting once before, and on what argument."
+    exit 1
   fi
 
   # `$tested:master`, not `HEAD:master`: pushing the revision the suite ran against. If HEAD has

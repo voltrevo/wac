@@ -8,7 +8,7 @@
 // Also `stat` and `readDir`: given a directory it lists it, which is what turns a
 // file-shaped tool into one that can walk a tree.
 
-import { Cli, Core, FileResult, Stat } from "../src/platform.wac";
+import { Cli, Core, FileResult, Stat } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   u8[] data = u8[0]();

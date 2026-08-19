@@ -15,7 +15,7 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`. `issues/system/0161`.
 
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { gunzipBytes } from "../../src/inflate.wac";
 
 export i32 main(Core core, Cli cli) {

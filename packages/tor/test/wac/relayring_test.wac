@@ -16,7 +16,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { ringHasRoom, MAX_CONNS, MAX_CIRCS } from "../../src/relayd.wac";
-import { CALL_SLOTS } from "../../../platform/src/platform.wac";
+import { CALL_SLOTS } from "std/platform.wac";
 
 export string test_connections_alone_never_reach_the_ring() {
   // The reason a *circuit* is what gets refused. A relay at `MAX_CONNS` with no circuits on any of

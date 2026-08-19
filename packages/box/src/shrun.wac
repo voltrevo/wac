@@ -35,7 +35,7 @@
 // authority: an applet run here can open any file the shell could. A real boundary is `spawn`,
 // which `sh` tries first — see `trySpawn` — and which a browser cannot do yet.
 
-import { Captured, Cli, Core } from "../../platform/src/platform.wac";
+import { Captured, Cli, Core } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../../platform/src/frame.wac";
 import { Vec } from "core/vec.wac";
 import { Args, parseList } from "./lib/args.wac";

@@ -14,7 +14,7 @@
 // caller having moved. Not a test file and not discovered as one: `wac test` walks
 // `*_test.wac`. `issues/system/0161`.
 
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** What an external tool said: its bytes, or why it refused. */

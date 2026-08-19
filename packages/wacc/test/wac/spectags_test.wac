@@ -27,10 +27,11 @@
 // and both are still covered elsewhere, so it has not fired yet. It would have.
 //
 // Every directory here is flat, which is why there is no recursive walk: 21 files in `spec/spec`,
-// 206 cases, and the three test directories.
+// one in `spec/cli`, 206 cases, and the test directories — which is also why a subdirectory holding
+// coverage, like `tools/mutate`, has to be named rather than found.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** A growable list of strings, with membership — the `Set`/`Map` the host-side version used. */
@@ -116,6 +117,19 @@ void mentionedIn(u8[] b, Strs into) {
 }
 
 /** The names in `dir` ending in `suffix`, or an empty list if it cannot be listed. */
+/**
+ * The directories whose `.md` files state clauses.
+ *
+ * **`spec/cli` was not in this list, and had never been.** Both guards below read `spec/spec` and
+ * nothing else, so the twelve `§wac-cli-*` clauses — what `check`, `compile`, `run`, `test`, the
+ * grants, the exit statuses and `uninstall` promise — were stated in the spec and checked by
+ * nobody. Every one of them does have a test, which is the only reason widening this is free; four
+ * are held in `tools/*.test.ts`, which is why that directory joins the list of places a clause may
+ * be held from. A guard against a class of rot that reads one file of that class is a shape this
+ * repository keeps finding, and it surfaced here because adding a clause did not move the count.
+ */
+string[] SPEC_DIRS() { return string[]("spec/spec", "spec/cli"); }
+
 string[] filesIn(Cli cli, string dir, string suffix) {
   string[]? entries = cli.readDir(dir).wait();
   if (entries is null) { return string[0](fill: ""); }
@@ -169,11 +183,14 @@ export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(
 
   Strs claimed = Strs.create();
   Strs wheres = Strs.create();
-  string[] specFiles = filesIn(cli, "spec/spec", ".md");
-  for (i32 i = 0; i < specFiles.len(); i++) {
-    FileResult f = cli.readFile(specFiles[i]).wait();
-    if (!f.ok) { t.fail("cannot read " + specFiles[i] + " — " + f.error); continue; }
-    claimedIn(f.bytes, specFiles[i], claimed, wheres);
+  for (i32 sd = 0; sd < SPEC_DIRS().len(); sd++) {
+    string[] specFiles = filesIn(cli, SPEC_DIRS()[sd], ".md");
+    t.isTrue(specFiles.len() > 0, SPEC_DIRS()[sd] + " has no .md in it — the walk did not resolve");
+    for (i32 i = 0; i < specFiles.len(); i++) {
+      FileResult f = cli.readFile(specFiles[i]).wait();
+      if (!f.ok) { t.fail("cannot read " + specFiles[i] + " — " + f.error); continue; }
+      claimedIn(f.bytes, specFiles[i], claimed, wheres);
+    }
   }
   t.isTrue(claimed.len() >= 300,
            "only " + itoa(claimed.len()) + " clauses found — did the walk resolve? (cwd is the repo root)");
@@ -194,8 +211,12 @@ export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(
   t.isTrue(corpus.ok, "cannot read the recorded corpus — " + corpus.error);
   if (corpus.ok) { mentionedIn(corpus.bytes, ours); }
 
-  string[] dirs = string[]("packages/wacc/test", "packages/wacc/test/wac", "tools/wac");
-  string[] suffixes = string[](".test.ts", "_test.wac", "_test.wac");
+  // `tools` and `tools/mutate` are here because four of the CLI clauses are held there —
+  // `covdump`, `validate`, `nocaps` and `status` — and they are as much "outside the reference" as
+  // the rest. Flat walks, so a subdirectory holding coverage has to be named.
+  string[] dirs = string[]("packages/wacc/test", "packages/wacc/test/wac", "tools/wac",
+                           "tools", "tools/mutate");
+  string[] suffixes = string[](".test.ts", "_test.wac", "_test.wac", ".test.ts", ".test.ts");
   for (i32 d = 0; d < dirs.len(); d++) {
     string[] tests = filesIn(cli, dirs[d], suffixes[d]);
     i32 before = ours.len();
@@ -245,11 +266,14 @@ export string test_every_wacc_only_clause_in_spec_is_named_by_a_case_or_a_test(
   // What the spec claims.
   Strs claimed = Strs.create();
   Strs wheres = Strs.create();
-  string[] specFiles = filesIn(cli, "spec/spec", ".md");
-  for (i32 i = 0; i < specFiles.len(); i++) {
-    FileResult f = cli.readFile(specFiles[i]).wait();
-    if (!f.ok) { t.fail("cannot read " + specFiles[i] + " — " + f.error); continue; }
-    claimedIn(f.bytes, specFiles[i], claimed, wheres);
+  for (i32 sd = 0; sd < SPEC_DIRS().len(); sd++) {
+    string[] specFiles = filesIn(cli, SPEC_DIRS()[sd], ".md");
+    t.isTrue(specFiles.len() > 0, SPEC_DIRS()[sd] + " has no .md in it — the walk did not resolve");
+    for (i32 i = 0; i < specFiles.len(); i++) {
+      FileResult f = cli.readFile(specFiles[i]).wait();
+      if (!f.ok) { t.fail("cannot read " + specFiles[i] + " — " + f.error); continue; }
+      claimedIn(f.bytes, specFiles[i], claimed, wheres);
+    }
   }
 
   // The `§wac-*` ones are the reference's to answer for, and `compiler/wacSpec.test.ts` already
@@ -273,8 +297,10 @@ export string test_every_wacc_only_clause_in_spec_is_named_by_a_case_or_a_test(
     FileResult f = cli.readFile(cases[i]).wait();
     if (f.ok) { namedByCase(string.fromBytes(f.bytes), named); }
   }
-  string[] dirs = string[]("packages/wacc/test", "compiler", "packages/wacc/test/wac");
-  string[] suffixes = string[](".test.ts", ".test.ts", "_test.wac");
+  string[] dirs = string[]("packages/wacc/test", "compiler", "packages/wacc/test/wac",
+                           "tools", "tools/wac", "tools/mutate");
+  string[] suffixes = string[](".test.ts", ".test.ts", "_test.wac",
+                               ".test.ts", "_test.wac", ".test.ts");
   i32[] contributed = i32[dirs.len()]();
   for (i32 d = 0; d < dirs.len(); d++) {
     string[] tests = filesIn(cli, dirs[d], suffixes[d]);

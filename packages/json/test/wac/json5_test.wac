@@ -28,7 +28,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Answers, Lines, ask, hex } from "../../../wactest/src/oracle.wac";
 import { endsWith, joined } from "../../../wactest/src/strings.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { Canonical, canonicalize, canonicalizeJson5 } from "../../src/json.wac";

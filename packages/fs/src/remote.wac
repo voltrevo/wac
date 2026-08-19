@@ -46,9 +46,9 @@
 // every format this package writes.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Read } from core;
+import { Read } from "core";
 import { Change, Cli, FAULT_OTHER, FileResult, Pending, Stat }
-  from "../../platform/src/platform.wac";
+  from "std/platform.wac";
 import { Reader, putI64, putString } from "./wire.wac";
 
 // ── What a child can ask ──────────────────────────────────────────────────────

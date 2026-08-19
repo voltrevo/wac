@@ -4,7 +4,7 @@
 // and said nothing, `cut -f2-4` printed field 2, and `cut -f-3` was refused as though no list had been
 // given. `lib/ranges.wac` is the syntax; this is what the two flags do with it.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, flagValue, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";

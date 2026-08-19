@@ -9,7 +9,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import {
   Checked, MAX_DESCRIPTOR_LEN, MAX_LIFETIME_MINUTES, PUB_CERT_SIG, PUB_LIFETIME, PUB_NOT_V3,
   PUB_NO_BODY, PUB_NO_CERT, PUB_OK, PUB_SIGNATURE, PUB_TOO_LARGE, certExpiryHours,

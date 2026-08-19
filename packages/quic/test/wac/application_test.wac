@@ -25,7 +25,7 @@
 // second of wall clock and makes one failure attributable to one case.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Socket } from "../../../platform/src/platform.wac";
+import { Core, Cli, Socket } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { applicationKeyPhase, clientFinishedPacket, firstNewCidShape, flight, frameCountIn,

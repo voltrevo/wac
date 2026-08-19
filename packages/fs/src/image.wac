@@ -61,7 +61,7 @@ import { hashString, stringEq } from "core/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { crc32 } from "../../gzip/src/crc32.wac";
 import { Reader, putI64, putString } from "./wire.wac";
-import { Cli, Core, FAULT_NOT_FOUND, FileResult } from "../../platform/src/platform.wac";
+import { Cli, Core, FAULT_NOT_FOUND, FileResult } from "std/platform.wac";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { Backing, Fs, Inode, Mount, mountSystem, sortNames } from "./fs.wac";
 

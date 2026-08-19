@@ -25,7 +25,7 @@
 // `coverage_test.wac` already uses, and it costs a compile per run rather than a call.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { splitLines, trimmed, joined, contains } from "../../../wactest/src/strings.wac";
 import { emitFilesTraced, emitFilesTracedSlots, traceTableFiles } from "../../src/api.wac";

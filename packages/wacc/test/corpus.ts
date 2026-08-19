@@ -136,6 +136,12 @@ export async function loadCorpus(caller: string): Promise<Entry[]> {
  *
  * Measured before it was replaced: over all 2955 real import specifiers in the repository the four
  * TypeScript copies of this rule agree, and over sixteen hand-written cases nine of them disagree.
+ *
+ * **Re-measured 2026-08-19, when two of those four had gone** — the reference CLI's with the CLI,
+ * and this one, which is why the figure above is about a set that no longer exists. Between the two
+ * that were left: 4232 of 4232 real specifiers agree, and 26 of 27 hand-written spellings. The one
+ * was a `..` climbing above an absolute root, and it was the compiler that was wrong. There is now
+ * one TypeScript body — `compiler/wacResolve.ts` — and `harness/wacFiles.ts` calls it.
  */
 export const resolveImportPath = resolveFrom;
 

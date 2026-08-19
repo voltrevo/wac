@@ -1,10 +1,11 @@
-# 0162 — a struct named like one in `platform.wac` makes the program unrunnable, and the message names the wrong thing
+# 0162b — a struct named like one in `platform.wac` makes the program unrunnable, and the message names the wrong thing
 
 - **Status:** open
 - **Reported by:** agent-b
 - **Date:** 2026-08-19
 - **Kind:** bug
 - **Symptom:** wrong answer
+- **Note:** filed as `0162` and renumbered `0162b` on 2026-08-19 — `issues/lang/closed/0162` was taken by another agent the same morning, and the suffix is the convention for exactly that (`issues/system/0191`). Nothing but this file referenced the old number.
 
 ## Reproduction
 

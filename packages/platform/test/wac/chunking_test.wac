@@ -16,7 +16,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 const string BOX = "packages/box/src/box.wac";

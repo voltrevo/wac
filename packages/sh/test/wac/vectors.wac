@@ -18,7 +18,7 @@
 // The header is not decoration: an expectation is only as portable as the environment it was taken in,
 // and when a replay disagrees the first question is whether *we* changed or the oracle did.
 
-import { Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, FileResult } from "std/platform.wac";
 
 export struct Vector {
   string script;

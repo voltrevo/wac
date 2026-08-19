@@ -41,7 +41,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { buildFiles, manifestWire, describeSeparator } from "../../src/api.wac";
 import { Built } from "../../src/emit.wac";
 import { withManifestSection } from "../../src/manifest.wac";

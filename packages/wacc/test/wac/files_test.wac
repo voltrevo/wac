@@ -23,7 +23,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { importSpecs, resolveFrom } from "../../src/files.wac";
 
@@ -110,6 +110,14 @@ export string test_a_specifier_resolves_against_the_file_that_wrote_it() {
   // neither of these is a filesystem: what they compute is an identity for a path, and two identities
   // agreeing matters more than either matching `realpath`. Asserted as it is so that one of them
   // cannot quietly start "fixing" it.
+  //
+  // **The two are `packages/wacc/src/path.wac` and `harness/wacFiles.ts`, and there was a third.**
+  // `compiler/wacResolve.ts` — the one the compiler itself keys modules by — carried the root as an
+  // empty first part and let `..` pop it, so this exact case came back as `b.wac`: a *relative* key,
+  // and one an ordinary sibling import also produces. It compiled, which is the part that matters:
+  // a program could climb above the root and be handed a different file. Fixed on 2026-08-19, and
+  // the harness's body is now a call into the compiler's, so "both walks" is two implementations
+  // rather than three copies — one per language, which is as few as there can be.
   string[] want = string[](
     "packages/fs/src/fs.wac", "lib.wac", "d.wac", "/abs/dir/b.wac", "/../b.wac");
   t.eqI32(from.len(), want.len(), "a case per answer");

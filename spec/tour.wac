@@ -806,12 +806,16 @@ export i32 methodRefs() {
 //   brings its constructors, fields and methods with it.
 // - Paths are relative (`./`, `../`). Circular imports are fine: wac files hold
 //   only declarations, so there is no initialisation order to get wrong.
-// - One import is not a path:
+// - Two specifiers name modules the compiler ships rather than files on disk:
 //
-//       import { Read } from core;      // no quotes, no extension
+//       import { Read } from "core";              // no capability needed
+//       import { Cli, Core } from "std/platform.wac";   // the capability world
 //
-//   `core` is the module the compiler ships, so there is no file to point at —
-//   quoting it is an error rather than a synonym. It holds `Read` and nothing
+//   Quoted like everything else. `core` was written bare until `design/lang/0009`
+//   D5 — it was the one unquoted specifier in the language — and that spelling is
+//   now an error telling you to add the quotes. Nothing on disk answers for either
+//   name: `core` and `std` are reserved, so your own `core/` or `std/` directory
+//   cannot shadow them. `core` holds `Read` and nothing
 //   else, because a type belongs there only if it must have ONE identity across
 //   a repo boundary: no closures means two copies of an enum can never be
 //   converted into each other. Containers and sum types go in a package.

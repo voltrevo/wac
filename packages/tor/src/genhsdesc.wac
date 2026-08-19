@@ -19,7 +19,7 @@
 // against each other — the seam this project keeps being caught by — so they are joined here, and the
 // subcredential tor is handed is the derived one rather than a constant.
 
-import { Core, Cli, Change } from "../../platform/src/platform.wac";
+import { Core, Cli, Change } from "std/platform.wac";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { encode as hexEncode } from "../../codec/src/hex.wac";
 import {

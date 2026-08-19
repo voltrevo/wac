@@ -8,7 +8,7 @@
 // Two capabilities are used and the rest are not, deliberately: a program that called all of them
 // would be measuring its own calls rather than the surface it inherited.
 
-import { Cli, Core } from "../src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   i32 acc = 0;

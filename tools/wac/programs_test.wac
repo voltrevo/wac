@@ -10,7 +10,7 @@
 // sorting.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli } from "../../packages/platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { KIND_CLI, KIND_PAGE, Program, blurbOf, findPrograms } from "./programs.wac";
 

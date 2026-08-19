@@ -10,7 +10,7 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, FileResult } from "std/platform.wac";
 
 export string sourceOf(Cli cli, string path) {
   FileResult f = cli.readFile(path).wait();
@@ -123,7 +123,7 @@ export string[] nativeCapabilities(Cli cli) {
  * field silently. Written that way first, the TypeScript reported 20 `Cli` fields where there are 31.
  */
 export string[] declaredFields(Cli cli, string name) {
-  string src = sourceOf(cli, "packages/platform/src/platform.wac");
+  string src = sourceOf(cli, "std/platform.wac");
   i32 from = src.indexOf("export struct " + name + " {");
   if (from < 0) { trap; }
   i32 to = src.slice(from, src.len()).indexOf("\n}");

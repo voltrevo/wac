@@ -5,7 +5,7 @@
 // `gunzip` is: the host blocks in `readChunk`, the decoder keeps its ordinary loops, and neither the
 // compressed input nor the decoded output is held whole.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";

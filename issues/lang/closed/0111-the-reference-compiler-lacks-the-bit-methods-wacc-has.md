@@ -50,6 +50,12 @@ who crossed it is the one who put the check there.
 So the gate now **reports** the ratchets instead of enforcing them, with the reason and this number in
 the message. **Put it back to blocking when this closes**; the comment in `push.sh` says so too.
 
+> **Done 2026-08-19** — six days after this closed, and found by reading `tools/push.sh` rather than
+> by anything checking. That is the interesting part: two places said "put it back when 0111 closes",
+> the condition was met on 2026-08-13, and both sentences went on being true and unread. A closed
+> issue cannot chase its own follow-up, and neither can a shell comment. `coverage:all` was 21/21
+> green immediately before the change, and 21/21 on the gate run before that.
+
 ## What would fix it
 
 **Corrected within the hour of filing.** My first answer was "implement the five methods in the

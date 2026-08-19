@@ -18,7 +18,7 @@
 // Host-side until 2026-08-18, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Stat } from "std/platform.wac";
 import { Daemon, Held, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains, trimmed, splitLines } from "../../../wactest/src/strings.wac";

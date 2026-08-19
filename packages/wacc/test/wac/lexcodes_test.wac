@@ -17,7 +17,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, startsWith, trimmed, has } from "../../../wactest/src/strings.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { Lines, Answers, ask, word } from "../../../wactest/src/oracle.wac";
 
 const string ORACLE = "packages/wacc/test/reference.ts";

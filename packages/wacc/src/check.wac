@@ -8188,11 +8188,16 @@ export void checkModule(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Import(pathTok, prefixTok, items): {
-        // **`core` is the one bare word allowed**, and any other reports `unknown module` —
-        // `spec/spec/imports.md`. The parser records the word without checking it, and says so in a
-        // comment that gives the reason as "matching the reference means a new error code". The
-        // spec asks for the check on its own terms, so here it is.
-        if (prefixTok >= 0 && tokenText(c, prefixTok) != "core") {
+        // **There is no bare specifier any more** — `design/lang/0009` D5, completed 2026-08-19.
+        // `core` was the one word an import could name without quotes, on the argument that it was
+        // not a file; D4 made it a source tree whose other members are imported quoted, so the root
+        // being spelled differently was the odd thing rather than the principled one. Both spellings
+        // were accepted while the files using the old one were swept, and this is the removal.
+        //
+        // Every bare word is `unknown module` now, `core` included. The parser is where the better
+        // message lives — it can say *write `from "core"`* — and this is the rule stated on its own
+        // terms, which is what `spec/spec/imports.md` asks for.
+        if (prefixTok >= 0) {
           c.reportTok(errUnknownModule(), prefixTok, "");
         }
         // A quoted `"core"` was refused here until `design/lang/0009` D5, on the argument that a
@@ -8214,7 +8219,15 @@ export void checkModule(C c, Program prog) {
         // A name it does not export is `no such export`, the same complaint a `./file.wac` import
         // gets, and it is checkable here because `core` ships inside the compiler rather than
         // living on disk. `spec/cases/0087`.
-        if (prefixTok >= 0 && tokenText(c, prefixTok) == "core") {
+        // **Asked of the quoted spelling now**, which is the only one there is. This branch used to
+        // key on the bare prefix, and removing that form would have made it dead code that still
+        // read like a live check — the shape this repository keeps finding late. The specifier is
+        // compared without its quotes rather than against a spelling with escaped ones: an escaped
+        // quote inside a literal is something `wapy`'s rendering of this file cannot read back, and
+        // this source round-trips through it on every suite run.
+        string spec = pathTok < 0 ? "" : tokenText(c, pathTok);
+        string bare = spec.len() >= 2 ? spec.slice(1, spec.len() - 1) : "";
+        if (bare == "core") {
           for (i32 i = 0; i < items.len(); i++) {
             string named = tokenText(c, items[i].nameTok);
             if (named == "Read" || named == "Node" || named == "Attr") { continue; }

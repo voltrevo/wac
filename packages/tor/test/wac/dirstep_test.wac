@@ -19,7 +19,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { DirAction, dirStep, filed } from "../../src/dirstep.wac";
 import { DirDocuments } from "../../src/dirserve.wac";
 import { PUB_NOT_NEWER, PUB_OK, revisionOf } from "../../src/hsstore.wac";

@@ -1,4 +1,4 @@
 // expect: refused
 // why: an import names something the module has to have, and `core` has no `Buf`
-import { Buf } from core;
+import { Buf } from "core";
 export i32 run() { return 0; }

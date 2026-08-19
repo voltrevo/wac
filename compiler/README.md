@@ -33,7 +33,7 @@ sources may not use, however much wacc itself supports them.
 
 ## The shared subset, and the omissions
 
-There are **seven omissions**, and this table is where they are written down — a reader has to be
+There are **nine omissions**, and this table is where they are written down — a reader has to be
 able to tell "the reference disagrees" (a defect, still the fastest signal this project has) from
 "the reference does not have that" (deliberate).
 
@@ -52,6 +52,8 @@ second copy does.
 | JSX fragments | no | yes | `<>…</>` is `Node.Fragment(kids)`; `core`'s tree has the variant. `design/lang/0006`, `spec/cases/0135` |
 | an integer's five bit methods | no | yes | `x.leadingZeros()`, `.rotateLeft(n)` and three more — ten MVP opcodes with no other spelling. `issues/lang/0069`, `spec/cases/0139` |
 | an omitted nullable field | no | yes | `P { … }` may leave out a `T?` field, which is then null — the first divergence outside JSX. `design/lang/0007`, `spec/cases/0136` |
+| Git-mapped specifiers | no | yes | `import { x } from "dep/lib.wac"` where `dep/` is a mapping in `wac.json5`. Resolving one means reading a manifest, a lockfile and a checkout cache, and **D11 says package policy does not get a second implementation** — so this is an omission by that decision rather than by cost. The reference exists to build the first `wacc.wasm` from a cold checkout, and that compile has no dependencies by construction: the repository's own imports are relative or built-in. `design/lang/0009` D9-D11, `§wac-import-mapped-6np2rkq` |
+| the `std` tree | no | yes | `import { Cli, Core } from "std/platform.wac";` — the capability built-in, `design/lang/0009` D4. **Not carried at all here**, because its one file uses lambdas and this frontend has none: parsing it gives 19 errors, every one cascading from the single `(i32 id) => …` at line 286. The reference refuses it *by name* with that reason rather than reporting an unknown module, since the specifier is correct and the compiler is what is short. `core` is unaffected — it has no lambdas and both compilers carry it. |
 
 The rest of the language is shared, and the differential covers all of it.
 

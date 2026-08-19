@@ -23,7 +23,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 
 const string HOST = "packages/platform/example/inside.wac";

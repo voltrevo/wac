@@ -3,7 +3,7 @@
 // Streams, like `sha256sum`. With this there is nothing left in `box` that buffers for
 // want of an API; what still buffers does so because the job needs the whole input.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";

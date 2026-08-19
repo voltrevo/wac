@@ -11,7 +11,7 @@
 // It does not fetch. `design/lang/0009` D11 puts that on `packages/git`; this says what fetching
 // *would* do, which is the part a person wants before it happens and a CI mode wants instead of it.
 
-import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Manifest, Mapping, readManifest, M_OK, unsupportedTransport } from "../src/manifest.wac";
 import { Lock, Step, readLock, plan, orphansOf, USE, CREATE, REFRESH } from "../src/lock.wac";

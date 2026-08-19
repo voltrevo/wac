@@ -10,7 +10,7 @@
 //
 // Exit status follows the real one: 0 for the same, 1 for different, 2 for trouble.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, readInput } from "../lib/input.wac";

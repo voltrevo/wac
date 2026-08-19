@@ -29,7 +29,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, contains, startsWith } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { diagnoseGraph, lambdaReportFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { closureOf } from "./source_probe.wac";

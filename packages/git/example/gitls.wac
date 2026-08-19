@@ -6,7 +6,7 @@
 // The output format is `git ls-remote`'s — `<sha>\t<ref>` — which is not decoration. It makes the oracle a
 // diff rather than an interpretation, and `test/wac/lsremote_test.wac` diffs it against the real thing.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { Ad, AdRef, Advertised, parseAdvertisement } from "../src/fetch.wac";

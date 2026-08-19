@@ -28,7 +28,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";

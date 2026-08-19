@@ -7,7 +7,7 @@
 // answer 0 — which it may here too, and that is fine. What matters is that the answers are right
 // and that `isDone` is false for something genuinely still running.
 
-import { Cli, Core, FileResult, Pending } from "../../../packages/platform/src/platform.wac";
+import { Cli, Core, FileResult, Pending } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 2) {

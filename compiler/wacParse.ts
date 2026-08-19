@@ -1342,22 +1342,28 @@ export function makeParser(tokens: Token[], file: string) {
     // `expect` matches a token by text as well as by kind, so this still reads the
     // `from` even though it lexes as an ordinary identifier now.
     expect("}"); expect("from");
-    // The bare `core`, which is the older spelling of `"core"` and still accepted — D5 made the
-    // quoted form work and did not remove this one, because 65 files use it. It is recorded as a
-    // *prefix* rather than a path, which is what the two spellings differ by from here on: the
-    // resolvers join them back to one key, and `spec/spec/imports.md` says to write the quoted one.
+    // **Every specifier is quoted, including `core`** — `design/lang/0009` D5, completed 2026-08-19.
     //
-    // The argument for the bare form was that a quoted specifier means *a file lives at this path*
-    // and `core` was not a file. It is a source tree now — `core/option.wac` is a file, inside the
-    // compiler — so what is left is which spelling its root takes, and one bare word in a language
-    // where everything else is quoted is a thing to remember rather than a distinction to see.
+    // The bare form was the only accepted one for a long time, on the argument that a quoted
+    // specifier says *a file lives at this path* and `core` was not a file. D4 removed the premise:
+    // `core` is a source tree, `core/option.wac` is one of its files and is imported quoted, so what
+    // was left was a root spelled bare in a language where every other specifier is quoted. Both
+    // spellings were accepted for a while so that the files using the old one kept compiling; they
+    // were swept, and this is the removal.
+    //
+    // A bare word after `from` is now always an error, and `core` is named in the message because it
+    // is the one anybody will have typed out of habit.
     if (!at("string")) {
-      const name = at("ident") ? advance().text : (err("expected a quoted file path, or `core`"), "?");
-      if (name !== "?" && name !== CORE.key) {
-        err(`unknown module '${name}' — an unquoted import reads only from \`${CORE.key}\``);
+      const name = at("ident") ? advance().text : "?";
+      if (name === CORE.key) {
+        err(`\`${CORE.key}\` is imported like any other module — write \`from "${CORE.key}"\``);
+      } else if (name !== "?") {
+        err(`unknown module '${name}' — a specifier is a quoted path`);
+      } else {
+        err("expected a quoted file path");
       }
       expect(";");
-      return { tag: "import", path: "", prefix: CORE.key, items, ...p };
+      return { tag: "import", path: CORE.key, items, ...p };
     }
     const path = advance().text;
     expect(";");

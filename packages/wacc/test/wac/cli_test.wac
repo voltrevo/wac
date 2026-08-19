@@ -8,7 +8,7 @@
 // and each of those commands answering rather than being a word in a string. The behaviour behind them
 // — grants, trap messages — is in the files named after those subjects.
 
-import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";
 
 /** The binary running this test. */

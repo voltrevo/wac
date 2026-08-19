@@ -31,7 +31,7 @@
 // of wacc as string literals — so asking for four numbers used to mean compiling it four times. A
 // batch takes no arguments, since there is nowhere to put per-call ones.
 
-import { wacFiles } from "./wacFiles.ts";
+import { wacFilesWithRoots } from "./wacFiles.ts";
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacInstance, type WacArg, type WacVal } from "wac/wacInstance.ts";
 import { wacDiag } from "wac/wacDiag.ts";
@@ -59,13 +59,13 @@ if (names.length > 1 && rest.length > 0) {
   die(`referenceRun: ${names.length} exports asked for at once, so none of them may take arguments`);
 }
 
-const files = await wacFiles(entry).catch((e) =>
+const { files, roots } = await wacFilesWithRoots(entry).catch((e) =>
   die(`referenceRun: cannot read ${entry} or one of its imports — ${
     e instanceof Error ? e.message : String(e)
   }`)
 );
 
-const result = wacCompile(files, entry, {});
+const result = wacCompile(files, entry, { roots });
 if (!result.ok) {
   // Rendered rather than dumped: when this fails it is usually because the reference and wacc
   // disagree about the driver, and the caller's next move is to read the diagnostic.

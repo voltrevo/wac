@@ -20,7 +20,7 @@
 // this set" and one asking "is this non-empty" answer differently, and this one asks the first.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { withEnv, withoutEnv } from "../../../wactest/src/childenv.wac";
 
 const string ENTRY = "packages/http/example/tunnel.wac";

@@ -13,7 +13,7 @@ import {
   DirDocuments, dirRoute, hsPublishResponse, hsPublishVersion,
 } from "../../src/dirserve.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { JsonValue, JsonObject } from "../../../json/src/value.wac";
 import { boolOf, numOf, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
 import {

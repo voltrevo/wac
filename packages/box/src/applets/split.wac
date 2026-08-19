@@ -4,7 +4,7 @@
 // it and closes it; this switches the current output for each piece, which is the part of
 // `openOutput` nothing had exercised.
 
-import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "std/platform.wac";
 import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";

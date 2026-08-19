@@ -214,7 +214,7 @@ export i32 pow(i32 base, i32 exp) {
       // is why this runs in a browser tab at all. It exists so that two libraries in two different
       // repositories can name one `Read` — wac has no closures, so a copy in each could never be
       // converted into the other.
-      [p("core.wac")]: `import { Read } from core;
+      [p("core.wac")]: `import { Read } from "core";
 import { describe } from "./util/report.wac";
 
 // This file produces Reads; report.wac consumes them. Neither imports the other's
@@ -226,7 +226,7 @@ export string demo() {
     + " | " + describe(Read.Failed("disk went away"));
 }
 `,
-      [p("util/report.wac")]: `import { Read } from core;
+      [p("util/report.wac")]: `import { Read } from "core";
 
 // The reason Read exists rather than a bare u8[]: an empty array means both "finished"
 // and "failed". match is exhaustive, so this cannot forget the difference.

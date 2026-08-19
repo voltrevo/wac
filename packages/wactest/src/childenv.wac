@@ -21,7 +21,7 @@
 // last one matters directly — `core.excludesFile = ~/.gitignore_global` is a value git expands
 // itself, and a shell that got there first would be testing something else.
 
-import { Cli, Exec } from "../../platform/src/platform.wac";
+import { Cli, Exec } from "std/platform.wac";
 
 /**
  * One shell word.

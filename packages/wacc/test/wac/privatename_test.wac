@@ -46,7 +46,7 @@
 // its shared build until this fix, and builds it now.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { blockedFiles, emitDeclineFiles, emitFilesSelfDescribing } from "../../src/api.wac";
 import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
 

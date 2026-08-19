@@ -100,7 +100,7 @@ Deno.test("wac test: the summary says how many tests were skipped for a grant", 
   try {
     await Deno.writeTextFile(
       `${dir}/y_test.wac`,
-      'import { Cli, Core } from "../../packages/platform/src/platform.wac";\n' +
+      'import { Cli, Core } from "std/platform.wac";\n' +
         'export string test_needs_nothing() { return ""; }\n' +
         'export string test_wants_a_capability(Core core, Cli cli) { return ""; }\n',
     );

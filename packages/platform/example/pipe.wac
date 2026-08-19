@@ -24,9 +24,9 @@
 // on saying sixteen after the ring had 128. When the ring *did* have four, four of four is why a
 // third stage was not something this could grow.
 
-import { Child, Cli, Core, FileResult, GRANT_NONE, Pending } from "../src/platform.wac";
+import { Child, Cli, Core, FileResult, GRANT_NONE, Pending } from "std/platform.wac";
 import { argvOf } from "../src/stream.wac";
-import { Read } from core;
+import { Read } from "core";
 
 /** Standard input, in the same handle space as sockets and children. */
 const i32 STDIN = 0;

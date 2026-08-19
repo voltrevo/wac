@@ -10,7 +10,7 @@
 // side owns — there is no listener to speak QUIC back, and none is wanted.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Datagram, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Core, Cli, Datagram, Pending, Socket } from "std/platform.wac";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

@@ -3,7 +3,7 @@
 // A bad pattern is a *user* error and is reported as one — the only applet where the input
 // can be wrong in a way that is nobody's bug.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Feed, Line, Lines, Sink, nextLine } from "../../../platform/src/stream.wac";

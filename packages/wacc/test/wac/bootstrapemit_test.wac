@@ -46,7 +46,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { emitFilesSelfDescribing, blockedFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";

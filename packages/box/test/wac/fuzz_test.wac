@@ -20,7 +20,7 @@
 // byte array, so empty means end of input, and "open but silent" has no spelling. `fuzz.test.ts` spawns
 // for that one — `issues/system/0195`.
 
-import { Cli, Core, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Answer, Rand, askOurs, combined, fixtures, normalise, perSeed, script, seeds, show,

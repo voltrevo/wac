@@ -20,7 +20,7 @@
 import { T } from "../../src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../src/strings.wac";
-import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
 
 /** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }

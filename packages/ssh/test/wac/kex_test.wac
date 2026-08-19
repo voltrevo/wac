@@ -12,7 +12,7 @@
 // Host-side until 2026-08-18, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { deriveKey, ephemeralPublic, sharedSecret, verifyEd25519Host } from "../../src/kex.wac";
