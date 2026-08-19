@@ -6,6 +6,8 @@
 //     wacc bindgen main.wac [--js]   # main.gen.ts — the glue a host calls the module through
 //
 // `build` also takes `--coverage`: a counter per branch point, and `<stem>.cov` saying what each is.
+// `--trace` is the other instrumented build — an ordered journal rather than counts, with
+// `<stem>.trace` naming each site. `wac ctcompare` is what reads one.
 //                                    #    --quiet for the success line, --allow-* for the grants
 //
 // A TypeScript CLI (`waccx`) did the same job until it was retired, and this was never a port for
@@ -24,7 +26,8 @@ import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFiles, bindgenDeclinedFiles, bindgenWire, blockedFiles, buildFiles, covTableFiles,
          describeSeparator, diagnoseGraph, exportSigsFiles,
          wireHasErrors,
-         emitFilesCovered, manifestWire } from "../src/api.wac";
+         emitFilesCovered, emitFilesTraced, traceTableFiles,
+         manifestWire } from "../src/api.wac";
 import { Built } from "../src/emit.wac";
 import { withManifestSection } from "../src/manifest.wac";
 import { renderDiagnostics } from "../src/render.wac";
@@ -141,7 +144,7 @@ string[] exactly(string[] xs, i32 n) {
  */
 string usage() {
   return "usage: wac check|compile|bindgen <entry.wac> [out]   # --js for bindgen's glue\n"
-       + "       wac build <entry.wac> -o <stem> [--coverage] [--quiet]\n"
+       + "       wac build <entry.wac> -o <stem> [--coverage|--trace] [--quiet]\n"
        + "                [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]";
 }
 
@@ -213,7 +216,8 @@ string unknownFlag(Cli cli, i32 argc) {
     string a = string.fromBytes(cli.arg(i).wait());
     if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
     if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
-        && a != "--allow-run" && a != "--quiet" && a != "--js" && a != "--coverage") {
+        && a != "--allow-run" && a != "--quiet" && a != "--js" && a != "--coverage"
+        && a != "--trace") {
       return a;
     }
   }
@@ -354,13 +358,22 @@ export i32 main(Core core, Cli cli) {
   // path keeps the separate calls, because there is no folded form of it and a coverage build is
   // something a person waits for on purpose.
   bool covered = hasFlag(cli, argc, "--coverage");
+  // **`--trace` is the other instrumented build**, and it is the same three exports meaning something
+  // else: a journal of `(site, value)` in the order events happened rather than a count per point.
+  // `wac ctcompare` reads it. The two cannot be asked for together — they are one counter array, and a
+  // build that tried to be both would answer whichever question was asked last.
+  bool traced = hasFlag(cli, argc, "--trace");
+  if (covered && traced) {
+    core.warn("wacc: --coverage and --trace are one counter array; ask for one of them");
+    return 2;
+  }
   string blocked = "";
   string sigs = "";
   string types = "";
   u8[] wasm = u8[0]();
-  if (covered) {
+  if (covered || traced) {
     blocked = blockedFiles(paths, texts, entry);
-    wasm = emitFilesCovered(paths, texts, entry);
+    wasm = covered ? emitFilesCovered(paths, texts, entry) : emitFilesTraced(paths, texts, entry);
     sigs = exportSigsFiles(paths, texts, entry);
     types = bindTypesFiles(paths, texts, entry);
   } else {
@@ -458,6 +471,16 @@ export i32 main(Core core, Cli cli) {
       Change wroteCov = fs.writeFile(stem + ".cov", covTableFiles(paths, texts, entry).toBytes());
       if (!wroteCov.ok()) {
         core.warn("wacc: cannot write " + stem + ".cov — " + wroteCov.message);
+        return 1;
+      }
+    }
+    // The same table for a traced build, under its own suffix. Both or neither, for the reason above:
+    // a table without the module it describes names positions in a program that was not built.
+    if (traced) {
+      Change wroteTrace = fs.writeFile(stem + ".trace",
+                                       traceTableFiles(paths, texts, entry).toBytes());
+      if (!wroteTrace.ok()) {
+        core.warn("wacc: cannot write " + stem + ".trace — " + wroteTrace.message);
         return 1;
       }
     }
