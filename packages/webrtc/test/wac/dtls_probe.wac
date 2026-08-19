@@ -70,7 +70,7 @@ export i32 hClientHello() { return hsClientHello(); }
 export i32 hServerHello() { return hsServerHello(); }
 export i32 hVerifyRequest() { return hsHelloVerifyRequest(); }
 
-// ── The key exchange and the Finished, for `test/handshake.test.ts` ──────────────────────────────
+// ── The key exchange and the Finished, for `test/wac/handshake_test.wac` ──────────────────────────────
 
 import { curveSecp256r1, curveX25519, clientKeyExchange, serverCurve,
          serverPublic } from "../../src/dtls.wac";

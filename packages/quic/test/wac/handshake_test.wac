@@ -1,0 +1,280 @@
+// **Both sides agree on the Handshake secrets**, which is what `design/system/0007` step 4 asks for.
+//
+// The chain, all of it ours except the peer: we author a ClientHello with an x25519 share whose
+// private half we hold, seal it into an Initial, and send it. quinn answers with a datagram holding
+// an Initial and a Handshake coalesced, and every question below is asked of that one reply.
+//
+// The reply is fetched per test rather than once, which is what the host-side version did: a stale
+// datagram shared across cases would make a failure in one look like a failure in all of them, and
+// a fresh handshake is a second of wall clock.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { chainLength, chainVerdict, flight, handshakeAt, handshakeCrypto, handshakeMessageType,
+         handshakePayload, identityVerifies, identityVerifiesUsing, openedAgainst, serverAskedRetry,
+         serverCert, serverFinishedVerifies, serverFlightKinds, serverGroup, serverHelloMessage,
+         serverIsTls13, serverSig, shared } from "./hello_probe.wac";
+import { ask } from "./peer.wac";
+
+/** TLS handshake message types, as the bits `serverFlightKinds` sets. */
+const i32 ENCRYPTED_EXTENSIONS = 1 << 8;
+const i32 CERTIFICATE = 1 << 11;
+const i32 CERTIFICATE_VERIFY = 1 << 15;
+const i32 FINISHED = 1 << 20;
+
+u8[] dcid() { return decoded("8394c8f03e515708"); }
+u8[] scid() { return decoded("11223344"); }
+
+/** Our first flight to a real server, and the datagram it answers with. Empty on failure. */
+u8[] exchange(T t, Core core, Cli cli, string name) {
+  u8[] reply = ask(t, core, cli, name, flight(dcid(), scid(), "localhost"), 5000);
+  if (reply.len() == 0) { t.fail("the server did not answer our first flight"); }
+  return reply;
+}
+
+u8[] pem(Cli cli, string name) {
+  FileResult f = cli.readFile("packages/tls/test/data/" + name).wait();
+  return f.ok ? f.bytes : u8[0]();
+}
+
+/** Seconds, which is the unit `x509.wac` parses out of a certificate's validity. */
+i64 nowSeconds(Core core) { return core.nowMillis().wait() / 1000; }
+
+export string test_the_serverhello_answers_in_the_group_we_offered(Core core, Cli cli) {
+  T t = T.create();
+  u8[] datagram = exchange(t, core, cli, "hs-group");
+  if (datagram.len() == 0) { return t.report(); }
+
+  u8[] hello = serverHelloMessage(datagram, dcid());
+  t.isTrue(hello.len() > 40, "a ServerHello is tens of bytes: " + itoa(hello.len()));
+  if (hello.len() > 0) { t.eqI32(hello[0], 2, "handshake type 2 is server_hello"); }
+
+  t.isTrue(serverIsTls13(datagram, dcid()), "TLS 1.3, from supported_versions");
+  t.eqI32(serverGroup(datagram, dcid()), 0x001d, "x25519, the group we offered");
+
+  // A HelloRetryRequest is a ServerHello with a sentinel random, and its key_share names a *group*
+  // rather than a key. Reading one as an ordinary hello derives a shared secret from two bytes, so
+  // this is checked rather than assumed even though a server with one group to choose from will not
+  // send one.
+  t.isFalse(serverAskedRetry(datagram, dcid()), "and not a HelloRetryRequest");
+  t.eqI32(shared(datagram, dcid()).len(), 32, "x25519 against the server's share gives 32 bytes");
+  return t.report();
+}
+
+export string test_the_server_coalesced_a_handshake_packet_behind_its_initial(Core core, Cli cli) {
+  T t = T.create();
+  u8[] datagram = exchange(t, core, cli, "hs-coalesced");
+  if (datagram.len() == 0) { return t.report(); }
+
+  // RFC 9000 §12.2. A server's first flight is normally an Initial and a Handshake in one datagram,
+  // and finding the second needs the first's `length` — which is why a packet reader that stops at
+  // one packet per datagram never sees the handshake at all.
+  i32 at = handshakeAt(datagram);
+  t.isTrue(at > 0, "a second packet begins inside the datagram: " + itoa(at));
+  t.isTrue(at < datagram.len(), "and inside it, not past the end");
+  if (at > 0 && at < datagram.len()) {
+    t.neI32(datagram[at] & 0x80, 0, "the second packet is a long header");
+    t.eqI32((datagram[at] >> 4) & 3, 2, "and type 2 is Handshake");
+  }
+  return t.report();
+}
+
+export string test_the_handshake_packet_opens_under_keys_we_derived(Core core, Cli cli) {
+  T t = T.create();
+  u8[] datagram = exchange(t, core, cli, "hs-open");
+  if (datagram.len() == 0) { return t.report(); }
+
+  u8[] payload = handshakePayload(datagram, dcid(), scid(), "localhost");
+  t.isTrue(payload.len() > 0,
+           "the Handshake packet did not open. The keys depend on the shared secret and on the " +
+           "transcript over both handshake messages, so this is one of: x25519, the ServerHello " +
+           "parse, the transcript's contents, the `s hs traffic` label, or QUIC's three. All of " +
+           "them produce well-formed keys and none of them produce a readable packet.");
+  if (payload.len() == 0) { return t.report(); }
+  t.isTrue(payload.len() > 500, "and it is the whole flight: " + itoa(payload.len()) + " bytes");
+
+  // 8 is `encrypted_extensions`, which is what TLS 1.3 sends immediately after a ServerHello — so
+  // this is the right bytes rather than merely some bytes that authenticated.
+  t.eqI32(handshakeMessageType(datagram, dcid(), scid(), "localhost"), 8,
+          "and it begins with EncryptedExtensions");
+  return t.report();
+}
+
+export string test_the_servers_whole_flight_arrives_in_that_one_packet(Core core, Cli cli) {
+  T t = T.create();
+  u8[] datagram = exchange(t, core, cli, "hs-flight");
+  if (datagram.len() == 0) { return t.report(); }
+
+  // Four messages and 658 bytes, which fits inside the 1200 the server is allowed to send before it
+  // has validated our address. A larger certificate would not, and the flight would then span two
+  // datagrams — so this asserts what is true here rather than what is true in general.
+  i32 kinds = serverFlightKinds(datagram, dcid(), scid(), "localhost");
+  t.neI32(kinds & ENCRYPTED_EXTENSIONS, 0, "EncryptedExtensions");
+  t.neI32(kinds & CERTIFICATE, 0, "Certificate");
+  t.neI32(kinds & CERTIFICATE_VERIFY, 0, "CertificateVerify");
+  t.neI32(kinds & FINISHED, 0, "Finished");
+
+  i32 n = handshakeCrypto(datagram, dcid(), scid(), "localhost").len();
+  t.isTrue(n > 500, "a whole flight: " + itoa(n) + " bytes");
+  return t.report();
+}
+
+export string test_the_servers_finished_verifies(Core core, Cli cli) {
+  // **Stronger than the test above it.** Opening the packet says the keys match. A Finished is an
+  // HMAC over every handshake message so far, keyed by a secret only a peer that did the same
+  // Diffie-Hellman can compute — so this says the *transcripts* match: every message, in the same
+  // order, hashed over exactly the same bytes, with the boundary in the same place.
+  //
+  // The boundary is the part that is easy to get wrong by one. A Finished authenticates what came
+  // before it and cannot include itself, so the transcript runs from our ClientHello through the
+  // server's CertificateVerify and stops.
+  T t = T.create();
+  u8[] datagram = exchange(t, core, cli, "hs-finished");
+  if (datagram.len() == 0) { return t.report(); }
+  t.isTrue(serverFinishedVerifies(datagram, dcid(), scid(), "localhost"),
+           "the HMAC we compute over our transcript is the one the server sent");
+  return t.report();
+}
+
+export string test_the_servers_certificateverify_signs_this_handshake(Core core, Cli cli) {
+  // **The check that binds an identity to a connection.** `serverFinishedVerifies` proves the peer
+  // did the same Diffie-Hellman and saw the same transcript — which anybody in the middle also did,
+  // having done one exchange with each side. What they cannot do is sign that transcript with the
+  // private key of the certificate presented. Until this, our client completed a handshake with
+  // whoever answered.
+  T t = T.create();
+  u8[] reply = exchange(t, core, cli, "hs-identity");
+  if (reply.len() == 0) { return t.report(); }
+
+  u8[] der = serverCert(reply, dcid(), scid(), "localhost");
+  t.isTrue(der.len() > 0, "no certificate was found in the server's flight");
+  if (der.len() == 0) { return t.report(); }
+  // A DER SEQUENCE, which is the shape of every certificate and the cheapest evidence that what came
+  // out is a certificate rather than an offset into one.
+  t.eqI32(der[0], 0x30, "the leaf starts with a SEQUENCE");
+
+  t.isTrue(identityVerifies(reply, dcid(), scid(), "localhost"),
+           "quinn's CertificateVerify does not verify against the certificate it sent. The " +
+           "signature covers the transcript through the Certificate itself, so this is that " +
+           "boundary, the signature scheme, or the key the certificate carries.");
+  return t.report();
+}
+
+export string test_and_refuses_a_signature_that_is_not_over_this_handshake(Core core, Cli cli) {
+  // **The canary.** The test above is satisfied by a function whose body is `return true`, and so is
+  // every run against a server that behaves. What says the check is a check is that it can say no.
+  T t = T.create();
+  u8[] reply = exchange(t, core, cli, "hs-badsig");
+  if (reply.len() == 0) { return t.report(); }
+
+  u8[] sig = serverSig(reply, dcid(), scid(), "localhost");
+  t.isTrue(sig.len() > 0, "no CertificateVerify signature was found");
+  if (sig.len() == 0) { return t.report(); }
+
+  u8[] bit = u8[sig.len()]();
+  bit.copyFrom(sig, 0, 0, sig.len());
+  bit[bit.len() - 1] = bit[bit.len() - 1] ^ 1;
+  t.isFalse(identityVerifiesUsing(reply, dcid(), scid(), "localhost", bit),
+            "one bit of the signature changed and it still verified");
+
+  u8[] short = u8[sig.len() - 1]();
+  short.copyFrom(sig, 0, 0, sig.len() - 1);
+  t.isFalse(identityVerifiesUsing(reply, dcid(), scid(), "localhost", short),
+            "a truncated signature");
+  t.isFalse(identityVerifiesUsing(reply, dcid(), scid(), "localhost", u8[0]()),
+            "no signature at all — the case an attacker who simply omits the message would reach");
+  return t.report();
+}
+
+export string test_and_refuses_a_certificate_that_is_not_for_the_name_we_asked_for(Core core, Cli cli) {
+  // The other half of identity, and the half a signature cannot supply: quinn holds the key for the
+  // certificate it sent either way, so what changes here is only the name this client set out to
+  // reach. A peer with a valid certificate for somewhere else is exactly what this refuses.
+  T t = T.create();
+  u8[] reply = exchange(t, core, cli, "hs-name");
+  if (reply.len() == 0) { return t.report(); }
+  t.isFalse(identityVerifies(reply, dcid(), scid(), "example.com"),
+            "the same handshake, verified under a name the certificate does not carry");
+  // And the same run still verifies under the right one, so the refusal above is the name and not
+  // some other thing that went wrong on the way.
+  t.isTrue(identityVerifies(reply, dcid(), scid(), "localhost"), "and the right name still passes");
+  return t.report();
+}
+
+export string test_the_servers_chain_reaches_the_root_that_signed_it(Core core, Cli cli) {
+  // The last part of identity, and the one the signature cannot supply on its own: a signature
+  // proves the peer holds the key in the certificate and says nothing about who vouched for it. The
+  // server here is quinn holding `leaf.pem`, which `ca.pem` signed.
+  T t = T.create();
+  u8[] reply = exchange(t, core, cli, "hs-chain");
+  if (reply.len() == 0) { return t.report(); }
+  t.eqI32(chainLength(reply, dcid(), scid(), "localhost"), 1,
+          "quinn sent the leaf alone, so the path is one hop to a root");
+  t.eqI32(chainVerdict(reply, dcid(), scid(), "localhost", pem(cli, "ca.pem"), nowSeconds(core)), 0,
+          "verifyPath refused a chain its own root signed");
+  return t.report();
+}
+
+export string test_and_not_a_root_that_did_not_sign_it(Core core, Cli cli) {
+  // **The canary, and a real one rather than a mangled root.** `other_ca.pem` is a well-formed
+  // authority with a valid key; what it has not done is sign this leaf. A check that accepted it
+  // would accept any certificate anybody could get issued, which is the whole point of having a
+  // store at all.
+  T t = T.create();
+  u8[] reply = exchange(t, core, cli, "hs-badroot");
+  if (reply.len() == 0) { return t.report(); }
+
+  i32 other = chainVerdict(reply, dcid(), scid(), "localhost", pem(cli, "other_ca.pem"),
+                           nowSeconds(core));
+  t.neI32(other, 0, "a root that signed nothing here was accepted");
+  t.neI32(chainVerdict(reply, dcid(), scid(), "localhost", u8[0](), nowSeconds(core)), 0,
+          "an empty store was accepted");
+  // And the name is checked on this path too, not only on the signature path.
+  t.neI32(chainVerdict(reply, dcid(), scid(), "example.com", pem(cli, "ca.pem"), nowSeconds(core)), 0,
+          "a name the certificate does not carry was accepted");
+  return t.report();
+}
+
+export string test_and_reads_the_clock_it_was_given(Core core, Cli cli) {
+  // Proof that `now` reaches `verifyPath` at all. A verifier handed a time before the certificate
+  // existed must refuse it, and one that quietly used its own clock — or zero — would pass every
+  // assertion above without ever looking. `leaf.pem` begins in August 2026, so 2020 is before it.
+  T t = T.create();
+  u8[] reply = exchange(t, core, cli, "hs-clock");
+  if (reply.len() == 0) { return t.report(); }
+  t.eqI32(chainVerdict(reply, dcid(), scid(), "localhost", pem(cli, "ca.pem"), 1577836800), 1,
+          "a certificate not yet valid is verifyPath's code 1");
+  return t.report();
+}
+
+export string test_a_connection_exists_only_when_both_checks_passed(Core core, Cli cli) {
+  // `Connection.of` asks nothing, which is right for a test and wrong for a program: a handshake
+  // completes against whoever answers. `Connection.checked` is the constructor that cannot be used
+  // that way, and these are the three answers it has.
+  T t = T.create();
+  u8[] reply = exchange(t, core, cli, "hs-checked");
+  if (reply.len() == 0) { return t.report(); }
+
+  i32[] ok = openedAgainst(reply, dcid(), scid(), "localhost", pem(cli, "ca.pem"), nowSeconds(core));
+  t.eqI32(ok[0], 0, "the good case: verdict 0");
+  t.eqI32(ok[1], 1, "and a connection to hold");
+
+  i32[] wrongRoot = openedAgainst(reply, dcid(), scid(), "localhost", pem(cli, "other_ca.pem"),
+                                  nowSeconds(core));
+  t.eqI32(wrongRoot[1], 0, "no connection when the chain reaches no root");
+  t.isTrue(wrongRoot[0] > 0,
+           "and a verifyPath code saying so, not -1: " + itoa(wrongRoot[0]));
+
+  // The name fails the *signature* half — `serverIdentityVerifies` checks it — so this is -1 rather
+  // than a chain code. The two ranges are what let a caller tell the failures apart.
+  i32[] wrongName = openedAgainst(reply, dcid(), scid(), "example.com", pem(cli, "ca.pem"),
+                                  nowSeconds(core));
+  t.eqI32(wrongName[0], -1, "a certificate for another host: refused as an identity failure");
+  t.eqI32(wrongName[1], 0, "and no connection");
+  return t.report();
+}
