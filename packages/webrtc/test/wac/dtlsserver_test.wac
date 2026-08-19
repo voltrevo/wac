@@ -1,0 +1,403 @@
+// The DTLS **server** role: OpenSSL's client completes a handshake with us.
+//
+// `design/system/0008` step 3's other half. The client role landed first because it is what talks to
+// a server; this is what a browser needs, because an SDP answer may choose `passive` and because a
+// data channel opened *to* us needs us to hold the certificate.
+//
+// The oracle is `openssl s_client -dtls1_2`, which is the same implementation that adjudicated the
+// client role from the other side — so between the two files both directions of the same handshake
+// are checked against something that has never seen our code.
+//
+// ## What this exercises that the client test could not
+//
+// Signing. A client proves nothing about its own key in this handshake; a server signs the ephemeral
+// key with the certificate's, and that signature is what binds them. So this is the first test in
+// the repository where wac **produces** an ECDSA signature that something else verifies — the
+// decoder in `x509.wac` has existed for a long time and nothing had ever needed the encoder.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The client fixture is `./openssl.wac`, which is
+// also where the note about `-ign_eof` and the 55 seconds it used to cost lives.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, Exec, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { encode as hexEncode } from "../../../codec/src/hex.wac";
+import { blockFrom, ckePublic, certMessage, doneBody, ecdhParams, epochAt, finishedMessage,
+         fragInfoAt, handshakeKindAt, helloHasSuite, kindAt, masterFrom, openedAt, ourPublic,
+         preMaster, randomOfHello, reheaded, sealedRecord, serverHelloBody, signEcdsaDer, sizeAt,
+         skeBody, cookieOfHello, verifyRequestRecord } from "./dtls_probe.wac";
+import { Peer } from "../../src/peer.wac";
+import { newPeer, peerEstablished, peerFlightSize, peerReceive } from "./peer_probe.wac";
+import { SClient, saidUntil, startClient, stopClient } from "./openssl.wac";
+
+const i32 SUITE = 0xC02B;        // ECDHE-ECDSA-AES128-GCM-SHA256
+/** What `s_client` prints when the handshake completed — the marker each test reads until. */
+const string CIPHER_LINE = "Cipher is ECDHE-ECDSA-AES128-GCM-SHA256";
+const i32 X25519 = 0x001D;
+const i32 ECDSA_SHA256 = 0x0403;
+
+u8[] ramp(i32 n, i32 mul, i32 add) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
+  return out;
+}
+
+u8[] serverRandom() { return ramp(32, 5, 11); }
+u8[] serverScalar() { return ramp(32, 13, 2); }
+/** A fixed ECDSA nonce. Fine here and catastrophic in a program — see the note where it is used. */
+u8[] sigK() { return ramp(32, 17, 29); }
+u8[] cookie() {
+  u8[] c = u8[8]();
+  for (i32 i = 0; i < 8; i++) { c[i] = 9 - i; }
+  return c;
+}
+
+string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+u8[] cat(u8[][] parts) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < parts.len(); i++) { out.pushAll(parts[i]); }
+  return out.take();
+}
+
+u8[] slice(u8[] b, i32 at, i32 end) {
+  i32 from = at < 0 ? 0 : at;
+  i32 to = end > b.len() ? b.len() : end;
+  if (to < from) { to = from; }
+  u8[] out = u8[to - from]();
+  out.copyFrom(b, from, 0, to - from);
+  return out;
+}
+
+/** A plaintext record header around a fragment. */
+u8[] recordOf(i32 kind, i32 epoch, i64 seq, u8[] fragment) {
+  u8[] out = u8[13 + fragment.len()]();
+  out[0] = kind;
+  out[1] = 0xFE;
+  out[2] = 0xFD;
+  out[3] = (epoch >> 8) & 255;
+  out[4] = epoch & 255;
+  for (i32 i = 0; i < 6; i++) { out[5 + i] = ((seq >> ((5 - i) * 8)) & 255) as i32; }
+  out[11] = (fragment.len() >> 8) & 255;
+  out[12] = fragment.len() & 255;
+  out.copyFrom(fragment, 0, 13, fragment.len());
+  return out;
+}
+
+/** Our certificate's DER, and the private scalar that signs with it. */
+struct Identity {
+  bool ok;
+  string error;
+  u8[] der;
+  u8[] priv;
+}
+
+Identity identity(Cli cli) {
+  Exec der = cli.exec("openssl",
+                      string[]("x509", "-in", "packages/tls/test/data/ec_leaf.pem", "-outform",
+                               "der"), u8[0]()).wait();
+  if (!der.ran() || der.status != 0) {
+    return Identity(false, "openssl x509: " + string.fromBytes(der.stderr), u8[0](), u8[0]());
+  }
+  Exec key = cli.exec("openssl",
+                      string[]("pkey", "-in", "packages/tls/test/data/ec_leaf.key", "-text",
+                               "-noout"), u8[0]()).wait();
+  if (!key.ran() || key.status != 0) {
+    return Identity(false, "openssl pkey: " + string.fromBytes(key.stderr), u8[0](), u8[0]());
+  }
+  // The `priv:` block, which is the scalar as colon-separated hex over several lines.
+  string text = string.fromBytes(key.stdout);
+  i32 start = text.indexOf("priv:");
+  if (start < 0) { return Identity(false, "no priv: block in the key", u8[0](), u8[0]()); }
+  string rest = text.slice(start + 5, text.len());
+  i32 stop = rest.indexOf("pub:");
+  string block = stop < 0 ? rest : rest.slice(0, stop);
+
+  Buf priv = Buf.create();
+  i32 nibble = -1;
+  for (i32 i = 0; i < block.len(); i++) {
+    string c = block.slice(i, i + 1);
+    i32 v = hexValue(c);
+    if (v < 0) { nibble = -1; continue; }
+    if (nibble < 0) { nibble = v; continue; }
+    priv.push(nibble * 16 + v);
+    nibble = -1;
+  }
+  return Identity(true, "", der.stdout, priv.take());
+}
+
+i32 hexValue(string c) {
+  if (c >= "0" && c <= "9") { return c.toBytes()[0] - '0'; }
+  if (c >= "a" && c <= "f") { return c.toBytes()[0] - 'a' + 10; }
+  return -1;
+}
+
+/** A datagram and where it came from, or `ok` false when the deadline passed. */
+struct Got {
+  bool ok;
+  u8[] bytes;
+  string peer;
+  i32 port;
+}
+
+/** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
+Got receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
+  Pending<Datagram> p = cli.receiveFrom(sock.handle);
+  if (core.waitAny(i32[](p.id), ms) < 0) {
+    p.drop(p.id);
+    return Got(false, u8[0](), "", 0);
+  }
+  Datagram d = p.wait();
+  if (d.error != "") { return Got(false, u8[0](), "", 0); }
+  return Got(true, d.bytes, d.peer, d.port);
+}
+
+export string test_openssl_s_client_completes_a_handshake_with_our_server_role(Core core, Cli cli) {
+  T t = T.create();
+  Identity me = identity(cli);
+  t.isTrue(me.ok, "the certificate and key could not be read — " + me.error);
+  if (!me.ok) { return t.report(); }
+  t.eqI32(me.priv.len(), 32, "a P-256 private scalar is thirty-two bytes");
+
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
+  if (sock.handle < 0) { return t.report(); }
+  SClient client = startClient(cli, "serverrole", sock.port);
+  t.isTrue(client.ok, client.error);
+  if (!client.ok) { cli.closeSocket(sock.handle); return t.report(); }
+
+  // ── Their first hello, and our cookie ────────────────────────────────────────
+  Got first = receiveWithin(core, cli, sock, 8000);
+  t.isTrue(first.ok, "s_client sent no ClientHello — " + client.said(cli));
+  if (!first.ok) { finish(cli, sock, client); return t.report(); }
+  t.eqI32(handshakeKindAt(first.bytes, 0), 1, "a ClientHello");
+  u8[] firstBody = slice(first.bytes, 13 + 12, sizeAt(first.bytes, 0));
+  t.eqI32(cookieOfHello(firstBody).len(), 0,
+          "the first hello carries no cookie — that is the point of the exchange");
+  t.isTrue(helloHasSuite(firstBody, SUITE),
+           "and offers ECDHE-ECDSA-AES128-GCM-SHA256, which is what we can answer");
+
+  // Any stable value is a legal cookie. A real server derives it from the client's address so it
+  // holds no state; this is a test and holds the association in a local variable instead.
+  cli.sendTo(sock.handle, first.peer, first.port, verifyRequestRecord(cookie(), 0, 0)).wait();
+
+  // ── Their second hello: the transcript starts here ───────────────────────────
+  Got second = receiveWithin(core, cli, sock, 8000);
+  t.isTrue(second.ok, "s_client did not retry with the cookie — " + client.said(cli));
+  if (!second.ok) { finish(cli, sock, client); return t.report(); }
+  t.eqI32(handshakeKindAt(second.bytes, 0), 1, "a second ClientHello");
+  u8[] clientHelloMsg = slice(second.bytes, 13, sizeAt(second.bytes, 0));
+  u8[] helloBody = slice(second.bytes, 13 + 12, sizeAt(second.bytes, 0));
+  t.eqStr(hexOf(cookieOfHello(helloBody)), hexOf(cookie()), "which echoes the cookie we issued");
+  u8[] clientRandom = randomOfHello(helloBody);
+  t.eqI32(clientRandom.len(), 32, "and carries a thirty-two byte random");
+
+  // ── Our flight ──────────────────────────────────────────────────────────────
+  u8[] ourKey = ourPublic(X25519, serverScalar());
+  u8[] params = ecdhParams(X25519, ourKey);
+
+  // **The signature that binds the ephemeral key to the certificate.** Over client random, server
+  // random and the parameters — the same bytes the client test checks in the other direction.
+  //
+  // `sigK` is a fixed nonce, which is safe *here* because the key is a test fixture and the message
+  // differs every run. In a program a repeated ECDSA nonce with two different messages publishes the
+  // private key, which is why this is a constant in a test and must never become one anywhere else.
+  u8[] signed = cat(u8[][](clientRandom, serverRandom(), params));
+  u8[] signature = signEcdsaDer(me.priv, signed, sigK());
+  t.isTrue(signature.len() > 0, "the ECDSA nonce produced a usable signature");
+  if (signature.len() > 0) {
+    t.eqI32(signature[0], 0x30, "and it is DER: a SEQUENCE of two INTEGERs");
+  }
+
+  // **The server's `message_seq` is one counter across the whole handshake**, and the
+  // HelloVerifyRequest already spent 0. So the ServerHello is 1, not 0 — numbering it 0 makes the
+  // client read a retransmission of a message it has already had and answer `unexpected message`,
+  // which says nothing about sequence numbers.
+  u8[] shMsg = reheaded(2, 1, serverHelloBody(serverRandom(), SUITE));
+  u8[] certMsg = reheaded(11, 2, certMessage(me.der));
+  u8[] skeMsg = reheaded(12, 3, skeBody(params, ECDSA_SHA256, signature));
+  u8[] doneMsg = reheaded(14, 4, doneBody());
+
+  // Four records, sent separately rather than bundled: the Certificate alone is close to a
+  // datagram's worth and DTLS has no rule that a flight is one datagram.
+  //
+  // **And the record sequence is a second continuous counter**, which the HelloVerifyRequest also
+  // spent 0 of. Restarting it makes the ServerHello a replay of a record the peer has already seen,
+  // and DTLS's replay window drops it silently — the client then waits and reports `read timeout
+  // expired`, which points at the network rather than at the counter.
+  cli.sendTo(sock.handle, first.peer, first.port, recordOf(22, 0, 1, shMsg)).wait();
+  cli.sendTo(sock.handle, first.peer, first.port, recordOf(22, 0, 2, certMsg)).wait();
+  cli.sendTo(sock.handle, first.peer, first.port, recordOf(22, 0, 3, skeMsg)).wait();
+  cli.sendTo(sock.handle, first.peer, first.port, recordOf(22, 0, 4, doneMsg)).wait();
+
+  // ── Their ClientKeyExchange, ChangeCipherSpec and Finished ───────────────────
+  u8[] clientKey = u8[0]();
+  u8[] ckeMsg = u8[0]();
+  u8[] finishedData = u8[0]();
+  i32 finishedAt = -1;
+  bool sawCcs = false;
+  for (i32 round = 0; round < 6 && finishedAt < 0; round++) {
+    Got got = receiveWithin(core, cli, sock, 4000);
+    if (!got.ok) {
+      // **Ask the client why.** It writes its alerts and its reasons out, and a test that reported
+      // only "nothing arrived" would be the third time in this package a diagnostic said less than
+      // the tool it was wrapping.
+      t.fail("no flight from s_client after our ServerHelloDone (cke " +
+             (clientKey.len() > 0 ? "yes" : "no") + ", ccs " + (sawCcs ? "yes" : "no") +
+             "). It said:\n" + client.said(cli));
+      finish(cli, sock, client);
+      return t.report();
+    }
+    i32 at = 0;
+    for (i32 guard = 0; guard < 64; guard++) {
+      i32 size = sizeAt(got.bytes, at);
+      if (size < 0) { break; }
+      i32 kind = kindAt(got.bytes, at);
+      if (kind == 20) { sawCcs = true; }
+      if (kind == 22) {
+        // **Told apart by epoch, not by whether it parses.** An encrypted record is still bytes and
+        // `fragInfoAt` reads a plausible-looking handshake header out of ciphertext quite happily —
+        // so "it did not parse" is not the test. Epoch 1 is the first thing sent under the new keys,
+        // and that is what a Finished is.
+        if (epochAt(got.bytes, at) == 1) {
+          finishedData = got.bytes;
+          finishedAt = at;
+        } else if (fragInfoAt(got.bytes, at)[0] == 16) {
+          ckeMsg = slice(got.bytes, at + 13, at + size);
+          clientKey = ckePublic(slice(got.bytes, at + 13 + 12, at + size));
+        }
+      }
+      at = at + size;
+    }
+  }
+  t.isTrue(clientKey.len() > 0 && ckeMsg.len() > 0, "no ClientKeyExchange arrived");
+  t.isTrue(sawCcs, "and no ChangeCipherSpec");
+  if (clientKey.len() == 0 || finishedAt < 0) { finish(cli, sock, client); return t.report(); }
+  t.eqI32(clientKey.len(), 32, "an x25519 point");
+
+  // ── The keys, and their Finished ─────────────────────────────────────────────
+  u8[] pms = preMaster(X25519, serverScalar(), clientKey);
+  u8[] master = masterFrom(pms, clientRandom, serverRandom());
+  u8[] block = blockFrom(master, serverRandom(), clientRandom);
+  u8[] clientWriteKey = slice(block, 0, 16);
+  u8[] serverWriteKey = slice(block, 16, 32);
+  u8[] clientIv = slice(block, 32, 36);
+  u8[] serverIv = slice(block, 36, 40);
+
+  u8[] transcript = cat(u8[][](clientHelloMsg, shMsg, certMsg, skeMsg, doneMsg, ckeMsg));
+  u8[] theirFinished = openedAt(finishedData, finishedAt, clientWriteKey, clientIv);
+  t.isTrue(theirFinished.len() > 0,
+           "their Finished did not authenticate under the keys we derived — the master secret, the " +
+           "key block or the record protection");
+  if (theirFinished.len() == 0) { finish(cli, sock, client); return t.report(); }
+  t.eqI32(theirFinished[0], 20, "and it is a Finished message");
+
+  u8[] wantClient = finishedMessage(master, transcript, 0, true);
+  t.eqStr(hexOf(slice(theirFinished, 12, theirFinished.len())),
+          hexOf(slice(wantClient, 12, wantClient.len())),
+          "their verify_data is what our transcript computes — so both ends hashed the same handshake");
+
+  // ── Our ChangeCipherSpec and Finished ────────────────────────────────────────
+  u8[] ourFinished = finishedMessage(master, cat(u8[][](transcript, theirFinished)), 5, false);
+  u8[] one = u8[1]();
+  one[0] = 1;
+  cli.sendTo(sock.handle, first.peer, first.port, recordOf(20, 0, 5, one)).wait();
+  cli.sendTo(sock.handle, first.peer, first.port,
+             sealedRecord(serverWriteKey, serverIv, 1, 0, 22, ourFinished)).wait();
+
+  // ── And what s_client says about all that ────────────────────────────────────
+  string said = saidUntil(cli, client, CIPHER_LINE, 500);
+  t.isTrue(contains(said, CIPHER_LINE),
+           "s_client did not report a completed handshake. Its output:\n" + said);
+  t.isTrue(contains(said, "Verify return code: 0 (ok)") || contains(said, "verify error"),
+           "and it reached certificate verification, which means the handshake got that far");
+
+  finish(cli, sock, client);
+  return t.report();
+}
+
+export string test_and_a_lost_flight_is_resent(Core core, Cli cli) {
+  // **The first thing a real path does is lose a packet**, and on loopback nothing ever does — so
+  // the loss is made here: our whole first flight is built and thrown away. What must happen next is
+  // that the client's own retransmission timer fires, its ClientHello arrives again, and the stored
+  // flight goes out with *fresh record sequence numbers* and the *same* `message_seq`.
+  //
+  // Getting that backwards is the interesting failure: resending the stored **records** repeats a
+  // sequence number the peer has already seen, its replay window drops them, and the handshake
+  // stalls exactly as though the retransmission had been lost too.
+  T t = T.create();
+  Identity me = identity(cli);
+  t.isTrue(me.ok, "the certificate and key could not be read — " + me.error);
+  if (!me.ok) { return t.report(); }
+
+  Peer peer = newPeer(me.der, me.priv, sigK(), serverScalar(), serverRandom(), cookie());
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
+  if (sock.handle < 0) { return t.report(); }
+  SClient client = startClient(cli, "resend", sock.port);
+  t.isTrue(client.ok, client.error);
+  if (!client.ok) { cli.closeSocket(sock.handle); return t.report(); }
+
+  i32 dropped = 0;
+  string[] sequences = string[16](fill: "");
+  i32 seen = 0;
+  for (i32 round = 0; round < 24 && !peerEstablished(peer); round++) {
+    Got got = receiveWithin(core, cli, sock, 6000);
+    if (!got.ok) { break; }
+    u8[][] out = peerReceive(peer, got.bytes);
+    // **Drop the first flight and nothing else.** Five messages arrive together the first time —
+    // ServerHello, Certificate, ServerKeyExchange, CertificateRequest, ServerHelloDone — and the
+    // resend is what the test is about, so it must get through.
+    if (out.len() == 5) {
+      for (i32 i = 0; i < 5 && seen < 16; i++) {
+        sequences[seen] = hexOf(slice(out[i], 5, 11));
+        seen = seen + 1;
+      }
+      if (dropped == 0) {
+        dropped = out.len();
+        continue;
+      }
+    }
+    for (i32 i = 0; i < out.len(); i++) {
+      cli.sendTo(sock.handle, got.peer, got.port, out[i]).wait();
+    }
+  }
+
+  t.eqI32(dropped, 5, "a flight of five messages was built and thrown away");
+  t.eqI32(peerFlightSize(peer), 5, "and the peer kept it");
+  t.isTrue(peerEstablished(peer),
+           "the handshake did not recover from the dropped flight — the client retransmitted its " +
+           "ClientHello and either we did not resend, or we resent records the peer discarded as " +
+           "replays. It said:\n" + client.said(cli));
+
+  // **The evidence that it was a resend and not a rebuild.** Ten records went out for five messages,
+  // and no record sequence number appears twice.
+  t.eqI32(seen, 10, "expected two flights of five");
+  t.eqI32(distinct(sequences, seen), seen,
+          "a record sequence number was reused — a peer's replay window drops the repeat, which " +
+          "looks exactly like the retransmission being lost as well");
+
+  string said = saidUntil(cli, client, CIPHER_LINE, 500);
+  t.isTrue(contains(said, CIPHER_LINE),
+           "s_client did not report a completed handshake:\n" + said);
+
+  finish(cli, sock, client);
+  return t.report();
+}
+
+i32 distinct(string[] all, i32 n) {
+  i32 count = 0;
+  for (i32 i = 0; i < n; i++) {
+    bool earlier = false;
+    for (i32 k = 0; k < i; k++) { if (all[k] == all[i]) { earlier = true; } }
+    if (!earlier) { count = count + 1; }
+  }
+  return count;
+}
+
+void finish(Cli cli, Socket sock, SClient client) {
+  stopClient(cli, client);
+  if (sock.handle >= 0) { cli.closeSocket(sock.handle); }
+}

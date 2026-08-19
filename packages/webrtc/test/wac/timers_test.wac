@@ -6,7 +6,7 @@
 // test and a flaky one**, and every case below runs in microseconds because the clock is `1`, `2`,
 // `1000`.
 //
-// The tests in `dtlsserver.test.ts` and `browser.test.ts` prove that a *lost* thing is recovered, by
+// The tests in `dtlsserver_test.wac` and `browser.test.ts` prove that a *lost* thing is recovered, by
 // throwing it away and watching a real peer receive the retransmission. What they cannot show is
 // *when*: they rely on the peer's own timer firing. This shows the rule.
 //

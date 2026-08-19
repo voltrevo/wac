@@ -133,3 +133,63 @@ export bool waitForBind(Cli cli, Dtls s, i32 tries) {
 }
 
 export void stopServer(Cli cli, Dtls s) { stop(cli, s.daemon); }
+
+// ── The other direction: their client against our server role ─────────────────
+
+/** A running `openssl s_client`. Its output is the daemon's log. */
+export struct SClient {
+  bool ok;
+  string error;
+  Daemon daemon;
+
+  /** Everything it has said, stdout and stderr together. */
+  string said(const this, Cli cli) { return logOf(cli, this.daemon); }
+}
+
+/**
+ * Start one against `port` on loopback, with a test certificate.
+ *
+ * **`-ign_eof`, and it is what the host-side version paid for.** `s_client` exits when its standard
+ * input ends, so that version held a pipe open from Deno — and before that used
+ * `sh -c "sleep 30 | openssl s_client …"`, then read the client's output with `output()`, which
+ * reads to EOF. EOF was when the `sleep` ended. So a test that had finished its work in a second
+ * waited out the remaining twenty-nine, and two of them were 55s of the suite: the second- and
+ * third-largest tests in it. Nothing was slow; the test was waiting for a timer it had started
+ * itself.
+ *
+ * `-ign_eof` says the same thing to `openssl` directly, so stdin can be `/dev/null` and the daemon's
+ * pid is `openssl` rather than a wrapper that would leak it. `saidUntil` then ends on the marker
+ * rather than on a duration.
+ *
+ * Both streams go to the one log because `s_client` writes its alerts and its reasons to stderr, and
+ * a diagnostic without them is the failure mode this package has hit three times.
+ */
+export SClient startClient(Cli cli, string name, i32 port) {
+  string dir = cli.cwd().wait() + "/.cache/dtls";
+  cli.mkdir(dir, true).wait();
+  Daemon d = start(cli,
+    "openssl s_client -dtls1_2 -ign_eof -cert packages/tls/test/data/ec_leaf.pem" +
+    " -key packages/tls/test/data/ec_leaf.key -connect 127.0.0.1:" + itoa(port) + " < /dev/null",
+    dir + "/" + name + "-client-" + itoa(port) + ".log");
+  if (!d.ok()) { return SClient(false, "s_client did not start — " + d.error, d); }
+  return SClient(true, "", d);
+}
+
+/**
+ * Read until `marker` appears, or `tries` looks pass. Answers everything read either way.
+ *
+ * The deadline is the failure path, not the success path: a handshake that completes says so in a
+ * millisecond or two, and one that never completes is a test that fails on the transcript this
+ * returns. It is *not* a wait for the client to exit — with `-ign_eof` it will not.
+ */
+export string saidUntil(Cli cli, SClient c, string marker, i32 tries) {
+  string said = "";
+  for (i32 i = 0; i < tries; i++) {
+    said = c.said(cli);
+    if (said.indexOf(marker) >= 0) { return said; }
+    cli.exec("/bin/sh", string[]("-c", "sleep 0.02"), u8[0]()).wait();
+  }
+  return said;
+}
+
+export void stopClient(Cli cli, SClient c) { stop(cli, c.daemon); }
