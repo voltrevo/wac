@@ -153,6 +153,11 @@ export u8[] emitFilesCovered(string[] paths, string[] sources, string entry) {
   return emitLinkedCovered(paths, sources, entry);
 }
 
+/** `emitFilesCovered` with the project root each file sits in — `design/lang/0009` D7. */
+export u8[] emitFilesCoveredIn(string[] paths, string[] sources, string[] roots, string entry) {
+  return emitLinkedCovered(paths, sources, entry);
+}
+
 /**
  * The exported functions and their wac types: `name\tret\tparam,param` per line.
  *
@@ -160,12 +165,24 @@ export u8[] emitFilesCovered(string[] paths, string[] sources, string entry) {
  * compiler can answer. `packages/wacc/tools/waccBindgen.ts` turns it into TypeScript.
  */
 export string exportSigsFiles(string[] paths, string[] sources, string entry) {
-  return exportSigsLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return exportSigsLinked(paths, sources, roots, entry);
+}
+
+/** `exportSigsFiles` with the project root each file sits in — `design/lang/0009` D7. */
+export string exportSigsFilesIn(string[] paths, string[] sources, string[] roots, string entry) {
+    return exportSigsLinked(paths, sources, roots, entry);
 }
 
 /** The structs and enums a host can hold — see `bindTypesLinked` for the shape. */
 export string bindTypesFiles(string[] paths, string[] sources, string entry) {
-  return bindTypesLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return bindTypesLinked(paths, sources, roots, entry);
+}
+
+/** `bindTypesFiles` with the project root each file sits in — `design/lang/0009` D7. */
+export string bindTypesFilesIn(string[] paths, string[] sources, string[] roots, string entry) {
+    return bindTypesLinked(paths, sources, roots, entry);
 }
 
 /**
@@ -176,7 +193,8 @@ export string bindTypesFiles(string[] paths, string[] sources, string entry) {
  * parse, and the `settleEmittable` fixed point over every declaration. `issues/lang/0129`.
  */
 export string describeFiles(string[] paths, string[] sources, string entry) {
-  return describeLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return describeLinked(paths, sources, roots, entry);
 }
 
 /**
@@ -184,7 +202,13 @@ export string describeFiles(string[] paths, string[] sources, string entry) {
  * `issues/lang/0129`.
  */
 export Built buildFiles(string[] paths, string[] sources, string entry) {
-  return buildLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return buildLinked(paths, sources, roots, entry);
+}
+
+/** `buildFiles` with the project root each file sits in — `design/lang/0009` D7. */
+export Built buildFilesIn(string[] paths, string[] sources, string[] roots, string entry) {
+    return buildLinked(paths, sources, roots, entry);
 }
 
 /** The line `describeFiles` puts between its two halves. */
@@ -200,8 +224,9 @@ export string describeSeparator() { return describeSep(); }
  */
 export string manifestFiles(u8[] wasm, string[] paths, string[] sources, string entry,
                             string wasmName, i32 grants) {
-  return manifestOf(wasm, bindTypesLinked(paths, sources, entry),
-                    exportSigsLinked(paths, sources, entry), entry, wasmName, grants);
+  string[] roots = string[0](fill: "");
+  return manifestOf(wasm, bindTypesLinked(paths, sources, roots, entry),
+                    exportSigsLinked(paths, sources, roots, entry), entry, wasmName, grants);
 }
 
 /**
@@ -229,8 +254,9 @@ export string manifestWire(u8[] wasm, string wire, string sigs, string entry,
  * what makes a self-hosted build slower than the one it replaces.
  */
 export string bindgenFiles(u8[] wasm, string[] paths, string[] sources, string entry, string lang) {
-  return bindgenOf(wasm, exportSigsLinked(paths, sources, entry),
-                   bindTypesLinked(paths, sources, entry), lang, false);
+  string[] roots = string[0](fill: "");
+  return bindgenOf(wasm, exportSigsLinked(paths, sources, roots, entry),
+                   bindTypesLinked(paths, sources, roots, entry), lang, false);
 }
 
 /**
@@ -251,8 +277,15 @@ export string bindgenWire(u8[] wasm, string sigs, string wire, string lang) {
 
 /** What bindgen could not write glue for, one `name(params) -> ret` per line. */
 export string bindgenDeclinedFiles(string[] paths, string[] sources, string entry) {
-  return bindgenDeclined(exportSigsLinked(paths, sources, entry),
-                         bindTypesLinked(paths, sources, entry));
+  string[] roots = string[0](fill: "");
+  return bindgenDeclined(exportSigsLinked(paths, sources, roots, entry),
+                         bindTypesLinked(paths, sources, roots, entry));
+}
+
+/** `bindgenDeclinedFiles` with the project root each file sits in — `design/lang/0009` D7. */
+export string bindgenDeclinedFilesIn(string[] paths, string[] sources, string[] roots, string entry) {
+    return bindgenDeclined(exportSigsLinked(paths, sources, roots, entry),
+                         bindTypesLinked(paths, sources, roots, entry));
 }
 
 /**
@@ -267,7 +300,8 @@ export string bindgenDeclinedFiles(string[] paths, string[] sources, string entr
  */
 export u8[] emitFilesSelfDescribing(string[] paths, string[] sources, string entry,
                                     string wasmName, i32 grants) {
-  Built b = buildLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  Built b = buildLinked(paths, sources, roots, entry);
   string sep = describeSep();
   i32 first = b.described.indexOf(sep);
   // No separator is a description that did not parse — an empty wire and empty signatures, which
@@ -281,7 +315,13 @@ export u8[] emitFilesSelfDescribing(string[] paths, string[] sources, string ent
 
 /** What each counter is: `index\tline\tcol\tkind` per line, in counter order. */
 export string covTableFiles(string[] paths, string[] sources, string entry) {
-  return covTableLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return covTableLinked(paths, sources, roots, entry);
+}
+
+/** `covTableFiles` with the project root each file sits in — `design/lang/0009` D7. */
+export string covTableFilesIn(string[] paths, string[] sources, string[] roots, string entry) {
+    return covTableLinked(paths, sources, roots, entry);
 }
 
 /**
@@ -302,17 +342,25 @@ export u8[] emitFilesTraced(string[] paths, string[] sources, string entry) {
  * how large it needed to be — `__cov_get(__cov_len() - 1)`. `issues/lang/0059`.
  */
 export u8[] emitFilesTracedSlots(string[] paths, string[] sources, string entry, i32 slots) {
-  return emitLinkedTracedSlots(paths, sources, entry, slots);
+  string[] roots = string[0](fill: "");
+  return emitLinkedTracedSlots(paths, sources, roots, entry, slots);
 }
 
 /** What each *trace* point is, including the `index` ones a counter build does not have. */
 export string traceTableFiles(string[] paths, string[] sources, string entry) {
-  return traceTableLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return traceTableLinked(paths, sources, roots, entry);
 }
 
 /** Why a linked module was not emitted in full, or `""`. */
 export string blockedFiles(string[] paths, string[] sources, string entry) {
-  return blockedLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return blockedLinked(paths, sources, roots, entry);
+}
+
+/** `blockedFiles` with the project root each file sits in — `design/lang/0009` D7. */
+export string blockedFilesIn(string[] paths, string[] sources, string[] roots, string entry) {
+    return blockedLinked(paths, sources, roots, entry);
 }
 
 /**
@@ -327,7 +375,8 @@ export string blockedFiles(string[] paths, string[] sources, string entry) {
  * capabilities) got the useless sentence again. An instrument nothing can call is not an instrument.
  */
 export string emitDeclineFiles(string[] paths, string[] sources, string entry) {
-  return emitDeclineLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return emitDeclineLinked(paths, sources, roots, entry);
 }
 
 /**
@@ -338,12 +387,14 @@ export string emitDeclineFiles(string[] paths, string[] sources, string entry) {
  * `emit.wac`, so the first thing it would have explained had to be diagnosed without it twice.
  */
 export string lambdaReportFiles(string[] paths, string[] sources, string entry) {
-  return lambdaReportLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return lambdaReportLinked(paths, sources, roots, entry);
 }
 
 /** The emitted functions of a linked program, in order, so a wasm "function #N" has a name. */
 export string namesFiles(string[] paths, string[] sources, string entry) {
-  return namesLinked(paths, sources, entry);
+  string[] roots = string[0](fill: "");
+  return namesLinked(paths, sources, roots, entry);
 }
 
 /**
@@ -421,6 +472,47 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * issue records the measurement and what it would take to make both affordable.
  */
 export string diagnoseGraph(string[] paths, string[] sources, string entry) {
+  string out = "";
+  // **Counted once for the whole graph.** Every closure below overlaps almost every other, so
+  // letting each one size its own tables parsed a widely-imported file once per importer — 54% of
+  // what this call cost, measured. `issues/lang/0133`.
+  Lexed?[] lexes = Lexed?[paths.len() + 1]();
+  Program?[] progs = Program?[paths.len() + 1]();
+  i32[] counts = declCountsInto(paths, sources, lexes, progs);
+  for (i32 i = 0; i < paths.len(); i++) {
+    // **Each file is checked against its own closure, not against the whole list.** Handing
+    // `checkFilesWith` 179 files to check one that imports three is the whole of why the naive
+    // loop costs `n ×` a full parse. Nothing is lost: a file cannot be affected by a file it does
+    // not reach.
+    string[] seen = string[paths.len()](fill: "");
+    i32 n = closureOf(paths, sources, paths[i], seen);
+    string[] subPaths = string[n](fill: "");
+    string[] subSources = string[n](fill: "");
+    // One longer than the closure: `checkFilesWith` keeps `core`'s count in the last slot.
+    i32[] subCounts = i32[n + 1]();
+    Lexed?[] subLexes = Lexed?[n + 1]();
+    Program?[] subProgs = Program?[n + 1]();
+    for (i32 k = 0; k < n; k++) {
+      // One scan for both. `sourceAt` and `countAt` each walked every path looking for the same
+      // name, on the same line — the second was mine and it doubled a lookup that is already
+      // O(files) inside a loop over files.
+      i32 at = indexOfPath(paths, seen[k]);
+      subPaths[k] = seen[k];
+      subSources[k] = at >= 0 && at < sources.len() ? sources[at] : "";
+      subCounts[k] = at >= 0 && at < counts.len() ? counts[at] : 0;
+      subLexes[k] = at >= 0 && at < lexes.len() ? lexes[at] : null;
+      subProgs[k] = at >= 0 && at < progs.len() ? progs[at] : null;
+    }
+    subCounts[n] = counts[paths.len()];
+    subLexes[n] = lexes[paths.len()];
+    subProgs[n] = progs[paths.len()];
+    out = out + diagnoseFilesWith(subPaths, subSources, paths[i], subCounts, subLexes, subProgs);
+  }
+  return out;
+}
+
+/** `diagnoseGraph` with the project root each file sits in — `design/lang/0009` D7. */
+export string diagnoseGraphIn(string[] paths, string[] sources, string[] roots, string entry) {
   string out = "";
   // **Counted once for the whole graph.** Every closure below overlaps almost every other, so
   // letting each one size its own tables parsed a widely-imported file once per importer — 54% of

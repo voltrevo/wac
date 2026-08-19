@@ -101,6 +101,27 @@ export enum Read {
 "failed", and callers that conflated the two produced truncated output that looked successful.
 `match` is exhaustive, so a caller that ignores `Failed` does not compile.
 
+
+### `@/` — the project root
+
+```wac
+import { parse } from "@/src/parse.wac";
+```
+
+`[§wac-import-project-4hq7mnv]` `@/` is the root of the **project containing the importing file** —
+the nearest directory at or above it holding a `wac.json5`. Not the directory the compiler was
+started in, and not the entry's project: a program can span two projects, and a file that writes
+`@/` means its own.
+
+A `@/` in a file with no `wac.json5` above it is a **compile error**, naming the specifier. It is not
+a fallback to something relative: `@/src/parse.wac` joined to nothing would be `src/parse.wac`, a
+path that looks real and is relative to a directory nobody named, so the program would compile
+against the wrong file instead of being refused.
+
+A project using only relative imports needs no manifest. An empty `wac.json5` is a valid one — its
+presence is what `@/` asks about, and nothing reads its contents to answer.
+
+
 ### Import resolution
 
 The compiler resolves the import graph depth-first, visiting each file at most

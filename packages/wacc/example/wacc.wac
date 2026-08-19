@@ -21,15 +21,16 @@
 import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { bindTypesFiles, bindgenDeclinedFiles, bindgenWire, blockedFiles, buildFiles, covTableFiles,
-         describeSeparator, diagnoseGraph, exportSigsFiles,
+import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
+         covTableFilesIn, describeSeparator, diagnoseGraphIn, exportSigsFilesIn,
          wireHasErrors,
-         emitFilesCovered, manifestWire } from "../src/api.wac";
+         emitFilesCoveredIn, manifestWire } from "../src/api.wac";
 import { Built } from "../src/emit.wac";
 import { withManifestSection } from "../src/manifest.wac";
 import { renderDiagnostics } from "../src/render.wac";
-import { importSpecs, normalisePath, resolveFrom } from "../src/files.wac";
+import { importSpecs, normalisePath, resolveFrom, resolveFromIn } from "../src/files.wac";
 import { coreFile, coreSource } from "../src/coretext.wac";
+import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
@@ -71,8 +72,42 @@ Described describedParts(string described) {
 struct Sources {
   string[] paths;
   string[] texts;
+  /**
+   * The project each file sits in, parallel to `paths` and "" for most of them.
+   *
+   * Only a file that writes `@/` has a root worth finding, so this is empty for every program that
+   * uses none — the search costs nothing it is not asked for. `design/lang/0009` D7.
+   */
+  string[] roots;
   i32 n;
   string missing;      // the first path that could not be read, or ""
+}
+
+/** What `Sources.missing` says for a `@/` the importing file has no project for — D7. */
+string noProject(string spec, string from) {
+  return spec + " needs a project: no " + MANIFEST_NAME() + " above " + from;
+}
+
+/**
+ * The project `path` sits in — the nearest directory at or above it holding a `wac.json5` — or "".
+ *
+ * **The I/O half of `@/`, and the only place in this program that looks for a manifest.** D7 defines
+ * `@/` by searching upwards for the nearest one, and `packages/wacpkg/src/root.wac` says which
+ * directories that means; this asks the filesystem which of them has the file. It *stats* rather than
+ * reads: what a manifest says matters for mappings (D9-D11), and `@/` needs only that it is there,
+ * which is what keeps the JSON parser out of the compiler's graph.
+ *
+ * The boundary is the filesystem root for an absolute path and `.` for a relative one — the
+ * "local-filesystem boundary" of D7, which is the only provider there is until mappings land.
+ */
+string projectRootOf(Fs fs, string path) {
+  string boundary = path.len() > 0 && path.slice(0, 1) == "/" ? "/" : ".";
+  string[] dirs = candidateRoots(path, boundary);
+  for (i32 i = 0; i < dirs.len(); i++) {
+    string at = dirs[i] == "." ? MANIFEST_NAME() : dirs[i] + "/" + MANIFEST_NAME();
+    if (fs.stat(at).exists) { return dirs[i]; }
+  }
+  return "";
 }
 
 /**
@@ -85,6 +120,7 @@ struct Sources {
 Sources gather(Fs fs, string entry) {
   string[] paths = string[maxFiles()](fill: "");
   string[] texts = string[maxFiles()](fill: "");
+  string[] roots = string[maxFiles()](fill: "");
   i32 n = 0;
   // **The entry in the same spelling its imports will be in.** `resolveFrom` collapses `.` and
   // `..`; the entry went in as typed, so `./a/b.wac` keyed the map one way and resolved its own
@@ -105,13 +141,28 @@ Sources gather(Fs fs, string entry) {
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {
       FileResult r = fs.readFile(path);
-      if (!r.ok) { return Sources(paths, texts, n, path); }
+      if (!r.ok) { return Sources(paths, texts, roots, n, path); }
       bytes = r.bytes;
     }
     texts[at] = string.fromBytes(bytes);
     string[] specs = importSpecs(bytes);
     for (i32 i = 0; i < specs.len(); i++) {
-      string next = resolveFrom(path, specs[i]);
+      // **A `@/` is resolved here or the graph is short a file**, and the root is looked up only
+      // when one of this file's specifiers asks for it — so a program with no project reference
+      // never stats anything, and a manifest above the tree cannot change what its imports mean.
+      if (isProjectSpecifier(specs[i]) && roots[at] == "") {
+        roots[at] = projectRootOf(fs, path);
+      }
+      string next = resolveFromIn(path, specs[i], roots[at]);
+      // **A `@/` with no project stops the walk, and saying so is the whole point.** D7 makes it a
+      // compile error. Skipping the import instead is the outcome that looks like success: the
+      // program compiles with the import silently absent, which is how the first version of this
+      // answered *"1 file(s), no diagnostics"* for a program that imports a name it cannot reach.
+      // The other wrong answer is resolving it anyway — `@/src/a.wac` against nothing is
+      // `src/a.wac`, a real-looking path relative to a directory nobody named.
+      if (next == "") {
+        return Sources(paths, texts, roots, n, noProject(specs[i], path));
+      }
       bool seen = false;
       for (i32 k = 0; k < n; k++) { if (paths[k] == next) { seen = true; } }
       if (seen || n >= maxFiles()) { continue; }
@@ -120,7 +171,7 @@ Sources gather(Fs fs, string entry) {
     }
     at = at + 1;
   }
-  return Sources(paths, texts, n, "");
+  return Sources(paths, texts, roots, n, "");
 }
 
 /** The arrays the API wants: exactly `n` long, since it walks their whole length. */
@@ -302,11 +353,17 @@ export i32 main(Core core, Cli cli) {
 
   Sources src = gather(fs, entry);
   if (src.missing != "") {
-    core.warn("wacc: cannot read " + src.missing);
+    // The two things `missing` can be: a path that would not read, and a `@/` with no project to
+    // resolve against. The second already reads as a sentence, so it is printed as one rather than
+    // wrapped in "cannot read", which would be a message about the wrong thing.
+    core.warn(src.missing.indexOf("needs a project") >= 0
+              ? "wacc: " + src.missing
+              : "wacc: cannot read " + src.missing);
     return 1;
   }
   string[] paths = exactly(src.paths, src.n);
   string[] texts = exactly(src.texts, src.n);
+  string[] roots = exactly(src.roots, src.n);
 
   // Diagnostics first for either command: compiling a program the checker refuses would write a
   // module built from a tree nobody approved.
@@ -325,7 +382,7 @@ export i32 main(Core core, Cli cli) {
   // So the wire is taken once, rendered for the reader, and asked whether anything in it was an
   // error. One pass: rendering and deciding from the same string is what stops this being the second
   // whole-graph walk `issues/lang/0133` was about.
-  string wire = diagnoseGraph(paths, texts, entry);
+  string wire = diagnoseGraphIn(paths, texts, roots, entry);
   string diags = renderDiagnostics(wire, paths, texts);
   if (diags != "") { core.warn(diags); }
   if (wireHasErrors(wire)) { return 1; }
@@ -359,12 +416,12 @@ export i32 main(Core core, Cli cli) {
   string types = "";
   u8[] wasm = u8[0]();
   if (covered) {
-    blocked = blockedFiles(paths, texts, entry);
-    wasm = emitFilesCovered(paths, texts, entry);
-    sigs = exportSigsFiles(paths, texts, entry);
-    types = bindTypesFiles(paths, texts, entry);
+    blocked = blockedFilesIn(paths, texts, roots, entry);
+    wasm = emitFilesCoveredIn(paths, texts, roots, entry);
+    sigs = exportSigsFilesIn(paths, texts, roots, entry);
+    types = bindTypesFilesIn(paths, texts, roots, entry);
   } else {
-    Built built = buildFiles(paths, texts, entry);
+    Built built = buildFilesIn(paths, texts, roots, entry);
     Described parts = describedParts(built.described);
     blocked = parts.blocked;
     sigs = parts.sigs;
@@ -401,7 +458,7 @@ export i32 main(Core core, Cli cli) {
   // signature, and one handed glue missing a function finds out at the call site.
   if (cmd == "bindgen") {
     bool js = hasFlag(cli, argc, "--js");
-    string declined = bindgenDeclinedFiles(paths, texts, entry);
+    string declined = bindgenDeclinedFilesIn(paths, texts, roots, entry);
     if (declined != "") {
       core.warn("wacc bindgen: not bound yet — " + oneLine(declined));
     }
@@ -455,7 +512,7 @@ export i32 main(Core core, Cli cli) {
     // `index\tline\tcol\tkind\tfile` per counter, in counter order — what turns a count into a
     // position. Beside the module because whoever runs it is who needs it.
     if (covered) {
-      Change wroteCov = fs.writeFile(stem + ".cov", covTableFiles(paths, texts, entry).toBytes());
+      Change wroteCov = fs.writeFile(stem + ".cov", covTableFilesIn(paths, texts, roots, entry).toBytes());
       if (!wroteCov.ok()) {
         core.warn("wacc: cannot write " + stem + ".cov — " + wroteCov.message);
         return 1;

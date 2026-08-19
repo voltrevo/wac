@@ -1,12 +1,12 @@
 // `@/` is the root of the project containing the **importing file** — `design/lang/0009` D7.
 //
-// **The reference only, for now, and deliberately.** `@/` needs an upward search for `wac.json5`,
-// which is I/O, so it lives with the caller that already reads files — `harness/wacFiles.ts` — and is
-// handed to `wacCompile` as `options.roots`. wacc's own reader has no such search yet, so a program
-// using `@/` compiles under the harness and not under `wac build`. That is a divergence with a shelf
-// life rather than a design: nothing in this repository writes `@/`, no spec clause claims it, and
-// the wacc half is the next slice. Written now so the semantics are pinned before the second
-// implementation is built against them rather than after.
+// `[§wac-import-project-4hq7mnv]`
+//
+// **Both compilers, and each case asks both.** `@/` needs an upward search for `wac.json5`, which is
+// I/O, so it lives with whichever caller already reads files: `harness/wacFiles.ts` for the
+// reference, `gather` in `example/wacc.wac` for wacc. Two searches, one rule — which is exactly the
+// shape that drifts, so every fixture below is compiled by both and the answers are compared rather
+// than each being checked against what I expected.
 //
 // The cases are the three that can each be wrong in a way the others would not catch:
 //
@@ -19,7 +19,7 @@
 //      directory nobody named, so the program would compile against the wrong file.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { scratch } from "../../../wactest/src/host.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Change, Cli, Core, Exec } from "../../../platform/src/platform.wac";
@@ -29,6 +29,14 @@ Exec reference(Cli cli, string tool, string[] args) {
   string line = "cd " + cli.cwd().wait() + " && exec deno run -A harness/" + tool + ".ts";
   for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
   return cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+}
+
+/** `wac <cmd> <args…>` — the binary, which carries wacc. */
+Exec wacc(Cli cli, string cmd, string[] args) {
+  string[] all = string[args.len() + 1](fill: "");
+  all[0] = cmd;
+  for (i32 i = 0; i < args.len(); i++) { all[i + 1] = args[i]; }
+  return cli.exec(binaryPath(cli), all, u8[0]()).wait();
 }
 
 /** One file, with its directory made first. */
@@ -56,9 +64,15 @@ export string test_a_project_specifier_resolves_against_its_own_project(Core cor
   Exec r = reference(cli, "referenceRun", string[](dir + "/src/main.wac", "main"));
   t.isTrue(r.ran(), "the reference did not run — " + r.error);
   if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 0, "it did not compile: " + string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "the reference did not compile it: " + string.fromBytes(r.stderr));
   t.isTrue(contains(string.fromBytes(r.stdout), "42"),
-           "answered " + string.fromBytes(r.stdout) + ", want 42");
+           "the reference answered " + string.fromBytes(r.stdout) + ", want 42");
+
+  // wacc, over the same fixture. `wac run` makes `main`'s answer the exit status rather than
+  // printing it, so the two are compared through what each one's interface actually reports.
+  Exec w = wacc(cli, "run", string[](dir + "/src/main.wac"));
+  t.isTrue(w.ran(), "wac did not run — " + w.error);
+  if (w.ran()) { t.eqI32(w.status, 42, "wacc answered " + itoa(w.status) + ", want 42"); }
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -91,9 +105,18 @@ export string test_the_root_is_the_importing_files_project_not_the_entrys(Core c
   if (!r.ran()) { return t.report(); }
   t.eqI32(r.status, 0, "it did not compile: " + string.fromBytes(r.stderr));
   string said = string.fromBytes(r.stdout);
-  t.isTrue(contains(said, "7"), "answered " + said + ", want 7");
+  t.isTrue(contains(said, "7"), "the reference answered " + said + ", want 7");
   t.isFalse(contains(said, "1001"),
-            "answered 1001 — `@/` took the entry's project, so the decoy was imported");
+            "the reference answered 1001 — `@/` took the entry's project, so the decoy was imported");
+
+  Exec w = wacc(cli, "run", string[](dir + "/appA/src/main.wac"));
+  t.isTrue(w.ran(), "wac did not run — " + w.error);
+  if (w.ran()) {
+    t.eqI32(w.status, 7,
+            "wacc answered " + itoa(w.status) +
+            (w.status == 233 ? " — that is 1001 through an exit status, so it imported the decoy" : "") +
+            ", want 7");
+  }
   cli.remove(dir, true).wait();
   return t.report();
 }
@@ -115,10 +138,24 @@ export string test_a_project_specifier_with_no_manifest_is_refused(Core core, Cl
   Exec r = reference(cli, "referenceCheck", string[](dir + "/src/main.wac"));
   t.isTrue(r.ran(), "the reference did not run — " + r.error);
   if (!r.ran()) { return t.report(); }
-  t.eqI32(r.status, 1, "a `@/` with no project was accepted (exit " + itoa(r.status) + ")");
+  t.eqI32(r.status, 1,
+          "the reference accepted a `@/` with no project (exit " + itoa(r.status) + ")");
   string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
-  t.isTrue(contains(said, "needs a project"), "refused for the wrong reason: " + said);
-  t.isTrue(contains(said, "@/src/lib.wac"), "it did not name the specifier: " + said);
+  t.isTrue(contains(said, "needs a project"), "the reference refused for the wrong reason: " + said);
+  t.isTrue(contains(said, "@/src/lib.wac"), "the reference did not name the specifier: " + said);
+
+  // **wacc's first version of this answered "1 file(s), no diagnostics".** It skipped the import it
+  // could not resolve and compiled what was left, which is the failure that looks like success — so
+  // this asserts the refusal rather than merely that the two agree, which they did while both were
+  // wrong in different ways.
+  Exec w = wacc(cli, "check", string[](dir + "/src/main.wac"));
+  t.isTrue(w.ran(), "wac did not run — " + w.error);
+  if (w.ran()) {
+    string wsaid = string.fromBytes(w.stderr) + string.fromBytes(w.stdout);
+    t.isTrue(w.status != 0, "wacc accepted a `@/` with no project: " + wsaid);
+    t.isTrue(contains(wsaid, "needs a project"), "wacc refused for the wrong reason: " + wsaid);
+    t.isTrue(contains(wsaid, "@/src/lib.wac"), "wacc did not name the specifier: " + wsaid);
+  }
   cli.remove(dir, true).wait();
   return t.report();
 }
