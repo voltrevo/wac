@@ -61,7 +61,9 @@ Ruled out, in this order, because each was cheaper than the next:
 ## What changed
 
 `harness/bounded.ts`, and the four two-host differentials use it: `native_shell`, `native_hostfs`,
-`native_examples` and `arrival`. Two things:
+`native_examples` and `arrival`. (`native_hostfs` moved to wac on 2026-08-19 and now carries the
+same two rules in `packages/platform/test/wac/hostfs.wac`; the argument is unchanged, the code is a
+second copy in a second language.) Two things:
 
 1. **A bound that fired is reported as a bound.** `timeout` answers 124, which no program chose, so a
    run that never finished was printed as a host that disagreed — `native "" (124)` — and read as a

@@ -1,0 +1,99 @@
+// Running a program under a bound, in a directory, with an environment of exactly what is named.
+//
+// Three things the tests here need that `Cli.exec` does not have on its own, and all three are one
+// shell line because that is where they belong: `exec` takes a program and arguments, not a working
+// directory, and `issues/system/0199` is why a child's `cwd` is not an option either.
+//
+// **A bound that fired is not an answer.** `timeout` exits 124, which is a real status a program
+// could also return, so it is carried as its own field rather than compared as a number — a run that
+// hung and a run that answered 124 are different facts and only one of them is a failure of the thing
+// under test. `harness/bounded.ts` made the same argument for the same reason.
+//
+// **And it is asked again.** A machine three agents share loses a race it would win alone, so a first
+// bound that fires is retried at three times the length before anyone is told about a hang. That is
+// `issues/system/0128`: a fixed wall-clock bound cannot tell a slow start from a dead one, and the
+// cost of being wrong in the generous direction is seconds, once.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { Core, Cli, Exec, Stat } from "../../../platform/src/platform.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** How long a run gets before the bound is called a hang. Generous on purpose. */
+export const i32 DEFAULT_SECONDS = 60;
+
+/** What a bounded run answers: the program's own result, or the fact that it never gave one. */
+export struct Ran {
+  i32 code;
+  string out;
+  string err;
+  /** `timeout` fired: there is no answer here, and `code` is its 124 rather than the program's. */
+  bool hung;
+}
+
+/**
+ * The environment every case runs in, and nothing else.
+ *
+ * `env -i` rather than inheriting: `LC_ALL=C` is what makes GNU's messages comparable at all, and a
+ * `LANG` left over from the shell that started the suite would undo it. `PATH` and `HOME` are the two
+ * the real tools actually need.
+ */
+string envLine(Cli cli, string home) {
+  string path = "/usr/bin:/bin";
+  u8[]? p = cli.env("PATH").wait();
+  if (p is not null) { path = string.fromBytes(p!); }
+  return "env -i LC_ALL=C " + quoted("PATH=" + path) + " " + quoted("HOME=" + home);
+}
+
+Ran once(Core core, Cli cli, i32 seconds, string cwd, string home, string prog, string[] args,
+         u8[] stdin) {
+  string line = "cd " + quoted(cwd) + " && exec timeout " + itoa(seconds) + " " +
+                envLine(cli, home) + " " + quoted(prog);
+  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  Exec r = cli.exec("/bin/sh", string[]("-c", line), stdin).wait();
+  if (!r.ran()) { return Ran(-1, "", "the shell did not run — " + r.error, false); }
+  return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status == 124);
+}
+
+/**
+ * Run it, and ask again at three times the bound if the first attempt did not finish.
+ *
+ * `refresh` is called between the two attempts, because every case here works over a tree the first
+ * attempt may have written to — a retry against a directory the first run half-edited is not the same
+ * experiment.
+ */
+export Ran boundedAgain(Core core, Cli cli, string cwd, string home, string prog, string[] args,
+                        u8[] stdin, fn[void()] refresh) {
+  Ran first = once(core, cli, DEFAULT_SECONDS, cwd, home, prog, args, stdin);
+  if (!first.hung) { return first; }
+  refresh();
+  return once(core, cli, DEFAULT_SECONDS * 3, cwd, home, prog, args, stdin);
+}
+
+/** Whichever of these hung, named — or empty when none did. */
+export string hangReport(string what, string[] names, Ran[] runs) {
+  string stuck = "";
+  for (i32 i = 0; i < runs.len() && i < names.len(); i++) {
+    if (runs[i].hung) { stuck = stuck == "" ? names[i] : stuck + " and " + names[i]; }
+  }
+  if (stuck == "") { return ""; }
+  return stuck + " did not finish `" + what + "` within " + itoa(DEFAULT_SECONDS) +
+         "s, twice — there is no answer to compare, so nothing below was checked";
+}
+
+/**
+ * Whether `artifact` is older than any wac source, and so has to be built again.
+ *
+ * The rule `harness/nativeHost.ts` uses for the crate and `tools/seedFresh.test.ts` uses for the
+ * seed: mtimes, not content. One `find` rather than a walk in here, because `find -newer … -quit`
+ * stops at the first answer and the question is only ever yes or no.
+ */
+export bool stale(Cli cli, string artifact) {
+  Stat s = cli.stat(artifact).wait();
+  if (!s.isFile) { return true; }
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c", "find packages core spec -name '*.wac' -newer " + quoted(artifact) +
+                   " -print -quit 2>/dev/null"), u8[0]()).wait();
+  return !r.ran() || r.stdout.len() > 0;
+}

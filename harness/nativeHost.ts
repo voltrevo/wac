@@ -3,7 +3,7 @@
 //
 // **`cargo build --release --quiet` costs 2.6 seconds in `native/` even when there is nothing to do.**
 // Measured 2026-08-18, twice in a row on an up-to-date crate. Nine test files shelled out to it, several
-// of them once per *test* — `native_hostfs.test.ts` seven times, `native_shell.test.ts` and
+// of them once per *test* — `native_hostfs` seven times, `native_shell.test.ts` and
 // `arrival.test.ts` three each — so a suite run spent tens of seconds asking a question whose answer had
 // not changed. In `packages/platform/test/arrival.test.ts` it was 2.5s of every one of the three tests,
 // against 340ms for all ten of the sessions those tests exist to run.
