@@ -413,6 +413,17 @@ struct HostState {
     /// **The open sockets**, by the handle the guest holds. Behind a mutex because `accept` and
     /// `recv` run on worker threads and each needs the listener or stream it was given.
     sockets: Arc<std::sync::Mutex<HashMap<i32, Sock>>>,
+    /// **Datagrams that arrived with nobody left to take them**, by socket handle.
+    ///
+    /// A `receiveFrom` reader runs on a thread, so a caller that gives up — a `waitAny` deadline —
+    /// leaves it blocked in `recv_from`. It then takes the *next* datagram, which was nothing to do
+    /// with the abandoned call. Discarding it loses a packet the peer will not send again, which is
+    /// `issues/system/0207`; this is where it waits for the next reader instead. Cleared with the
+    /// socket, since a handle is reused.
+    datagrams: Arc<std::sync::Mutex<HashMap<i32, std::collections::VecDeque<Answer>>>>,
+    /// Which socket each outstanding `receiveFrom` ticket is reading, so a dropped one knows where
+    /// to put back an answer that arrived first.
+    receiving: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
     next_handle: i32,
     /// **This program's standard input**, once `openInput` has redirected it to a file. `None` means
     /// the process's own stdin, which is what a program that never redirects reads.
@@ -1937,6 +1948,8 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            datagrams: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            receiving: Arc::new(std::sync::Mutex::new(HashMap::new())),
             // Above `STDIN_HANDLE` and `PARENT_FS_HANDLE`: wac reserves those two numbers as
             // channels, and this counter used to collide with the second of them — 0148.
             next_handle: FIRST_FREE_HANDLE,
@@ -3125,7 +3138,7 @@ fn dispatch(
                     Ok(bytes) => Answer::File(true, bytes, String::new(), FAULT_NONE),
                     Err(e) => Answer::File(false, Vec::new(), message_of(&e), fault_of(&e)),
                 };
-                worker.complete(id, a);
+                let _ = worker.complete(id, a);
             });
             match ticket_pending(scope, "FileResult", id) {
                 Some(p) => rv.set(p),
@@ -3249,7 +3262,7 @@ fn dispatch(
                     Err(_) => {
                         out.finish();
                         err.finish();
-                        worker.complete(exit_id, Answer::I32(127));
+                        let _ = worker.complete(exit_id, Answer::I32(127));
                         return;
                     }
                 };
@@ -3261,7 +3274,7 @@ fn dispatch(
                 // waiting for the next request, and the child having exited is the only thing that
                 // says there will not be one. 0157.
                 if let Some(req) = fs_req.as_ref() { req.finish(); }
-                worker.complete(exit_id, Answer::I32(code));
+                let _ = worker.complete(exit_id, Answer::I32(code));
             });
             HOST.with(|h| {
                 if let Some(s) = h.borrow_mut().as_mut() {
@@ -3395,7 +3408,7 @@ fn dispatch(
                 out.finish();
                 err.finish();
                 if let Some(req) = fs_req.as_ref() { req.finish(); }   // see the arm above — 0157
-                worker.complete(exit_id, Answer::I32(code));
+                let _ = worker.complete(exit_id, Answer::I32(code));
             });
             HOST.with(|h| {
                 if let Some(s) = h.borrow_mut().as_mut() {
@@ -3462,7 +3475,7 @@ fn dispatch(
                         }
                         all.extend_from_slice(&chunk);
                     }
-                    worker.complete(id, Answer::Bytes(Some(all)));
+                    let _ = worker.complete(id, Answer::Bytes(Some(all)));
                 });
                 match ticket_pending(scope, "u8[]", id) {
                     Some(p) => rv.set(p),
@@ -3499,7 +3512,7 @@ fn dispatch(
                     Ok(_) => Answer::Bytes(Some(buf)),
                     Err(_) => Answer::Bytes(Some(Vec::new())),
                 };
-                worker.complete(id, a);
+                let _ = worker.complete(id, a);
             });
             match ticket_pending(scope, "u8[]", id) {
                 Some(p) => rv.set(p),
@@ -3593,22 +3606,78 @@ fn dispatch(
                     _ => None,
                 }
             });
-            // 65535 is the largest a UDP payload can be, so a buffer of it cannot truncate one.
-            // Truncation here would be silent and would look like a peer sending short datagrams.
-            let answer = match sock {
-                None => Answer::Datagram(Vec::new(), String::new(), 0, "not an open datagram socket".into()),
-                Some(sk) => {
-                    let mut buf = vec![0u8; 65535];
-                    match sk.recv_from(&mut buf) {
-                        Ok((n, from)) => {
-                            buf.truncate(n);
-                            Answer::Datagram(buf, from.ip().to_string(), from.port() as i32, String::new())
+            // A bad handle is known now and answers now — there is nothing to wait for.
+            let Some(sk) = sock else {
+                return match ticket_for(
+                    scope,
+                    "Datagram",
+                    Answer::Datagram(Vec::new(), String::new(), 0, "not an open datagram socket".into()),
+                ) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Datagram> for receiveFrom"),
+                };
+            };
+            // **On a thread, with a live ticket — like `recv`, and for a sharper reason.**
+            // `recv_from` used to run here, inline, and the ticket was built from the finished
+            // answer; so the caller blocked *before* it had an id, and `waitAny` could not bound it.
+            // `waitAny`'s own documentation promises the opposite — a deadline belongs to the wait
+            // rather than to each capability — and this was the one capability where that mattered
+            // most, because a stream read ends when the peer closes and a datagram read ends only
+            // when a datagram arrives, which may be never. The Deno host had it right all along
+            // (`submit(b, OP.RECEIVE_FROM, …)`), so a program correct under one host parked under
+            // the other with nothing said. `issues/system/0206`.
+            // **A datagram an abandoned reader took is here, and is answered now.** Otherwise the
+            // packet a previous timed-out call swallowed would be lost — `issues/system/0207`.
+            let queues = HOST.with(|h| h.borrow().as_ref().map(|st| st.datagrams.clone()));
+            let waiting = queues.as_ref().and_then(|q| {
+                let mut q = q.lock().unwrap();
+                q.get_mut(&handle).and_then(|d| d.pop_front())
+            });
+            if let Some(a) = waiting {
+                return match ticket_for(scope, "Datagram", a) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Datagram> for receiveFrom"),
+                };
+            }
+
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            let parked = queues.clone();
+            // Remembered so a *dropped* ticket knows which socket to put its answer back on: the
+            // read can finish between the caller's deadline and its `drop`.
+            if let Some(r) = HOST.with(|h| h.borrow().as_ref().map(|st| st.receiving.clone())) {
+                r.lock().unwrap().insert(id, handle);
+            }
+            let registry = HOST.with(|h| h.borrow().as_ref().map(|st| st.receiving.clone()));
+            std::thread::spawn(move || {
+                // 65535 is the largest a UDP payload can be, so a buffer of it cannot truncate one.
+                // Truncation here would be silent and would look like a peer sending short datagrams.
+                let mut buf = vec![0u8; 65535];
+                let a = match sk.recv_from(&mut buf) {
+                    Ok((n, from)) => {
+                        buf.truncate(n);
+                        Answer::Datagram(buf, from.ip().to_string(), from.port() as i32, String::new())
+                    }
+                    Err(e) => Answer::Datagram(Vec::new(), String::new(), 0, e.to_string()),
+                };
+                if let Some(unclaimed) = worker.complete(id, a) {
+                    // Nobody was waiting. A read error is nothing to keep — it describes a call that
+                    // no longer exists — but a datagram is a packet, and it waits for the next
+                    // reader on this socket.
+                    if let Answer::Datagram(ref bytes, _, _, ref err) = unclaimed {
+                        if err.is_empty() && !bytes.is_empty() {
+                            if let Some(q) = parked {
+                                q.lock().unwrap().entry(handle).or_default().push_back(unclaimed);
+                            }
                         }
-                        Err(e) => Answer::Datagram(Vec::new(), String::new(), 0, e.to_string()),
                     }
                 }
-            };
-            match ticket_for(scope, "Datagram", answer) {
+                if let Some(r) = registry {
+                    r.lock().unwrap().remove(&id);
+                }
+            });
+            match ticket_pending(scope, "Datagram", id) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<Datagram> for receiveFrom"),
             }
@@ -3724,7 +3793,7 @@ fn dispatch(
                     }
                     Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0),
                 };
-                worker.complete(id, a);
+                let _ = worker.complete(id, a);
             });
             match ticket_pending(scope, "Socket", id) {
                 Some(p) => rv.set(p),
@@ -3789,7 +3858,7 @@ fn dispatch(
                     } else {
                         Answer::Read(ReadAnswer::Data(bytes))
                     };
-                    worker.complete(id, a);
+                    let _ = worker.complete(id, a);
                 });
                 match ticket_pending(scope, "Read", id) {
                     Some(p) => rv.set(p),
@@ -3808,7 +3877,7 @@ fn dispatch(
                     Ok(n) => Answer::Read(ReadAnswer::Data(buf[..n].to_vec())),
                     Err(e) => Answer::Read(ReadAnswer::Failed(message_of(&e))),
                 };
-                worker.complete(id, a);
+                let _ = worker.complete(id, a);
             });
             match ticket_pending(scope, "Read", id) {
                 Some(p) => rv.set(p),
@@ -3851,6 +3920,10 @@ fn dispatch(
             HOST.with(|h| {
                 if let Some(st) = h.borrow().as_ref() {
                     st.sockets.lock().unwrap().remove(&handle);
+                    // **And anything parked for it.** A handle is reused, so a datagram left over
+                    // from a closed socket would be answered to whatever opens next —
+                    // `issues/system/0207` is about not losing packets, not about inventing them.
+                    st.datagrams.lock().unwrap().remove(&handle);
                 }
             });
             rv.set_undefined();
@@ -3885,7 +3958,7 @@ fn dispatch(
                     }
                     Err(_) => Answer::Names(None),
                 };
-                worker.complete(id, a);
+                let _ = worker.complete(id, a);
             });
             match ticket_pending(scope, "string[]", id) {
                 Some(p) => rv.set(p),
@@ -3905,7 +3978,7 @@ fn dispatch(
             // the ticket in the same breath, so a `Pending<Exec>` on this host was a promise of
             // something that had already happened — three concurrent `sleep 1` were 3013ms here
             // against 1009ms for the same program on the Deno host, which dispatches and returns at
-            // once. Issue 0206, held by `packages/platform/test/wac/exec_test.wac`. The lost overlap
+            // once. Issue 0208, held by `packages/platform/test/wac/exec_test.wac`. The lost overlap
             // was the smaller half: a ticket that exists only after the work is over cannot be
             // watched by `waitAny`, so a child that wedged had nothing bounding it.
             let path = read_string(scope, args.get(1));
@@ -4122,7 +4195,7 @@ fn dispatch(
                     } else {
                         Answer::Read(ReadAnswer::Data(bytes))
                     };
-                    worker.complete(id, a);
+                    let _ = worker.complete(id, a);
                 });
                 // `readChunk` is `fn[Read()]` — not a ticket — so this one blocks on the table
                 // rather than handing a `Pending` back.
@@ -4263,7 +4336,7 @@ fn dispatch(
             let worker = t.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(millis as u64));
-                worker.complete(id, Answer::I64(millis as i64));
+                let _ = worker.complete(id, Answer::I64(millis as i64));
             });
             match ticket_pending(scope, "i64", id) {
                 Some(p) => rv.set(p),
@@ -4429,7 +4502,25 @@ fn dispatch(
         Cap::Drop => {
             let id = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
             if let Some(t) = table() {
-                t.drop_ticket(id);
+                // **What the ticket already held goes back where it came from.** For most work
+                // discarding it is right; for a `receiveFrom` the answer *is* a datagram, read off
+                // the socket once. `issues/system/0207`.
+                if let Some(answer) = t.drop_ticket(id) {
+                    let socket = HOST.with(|h| {
+                        h.borrow().as_ref().and_then(|st| st.receiving.lock().unwrap().remove(&id))
+                    });
+                    if let (Some(handle), Answer::Datagram(ref bytes, _, _, ref err)) =
+                        (socket, &answer)
+                    {
+                        if err.is_empty() && !bytes.is_empty() {
+                            if let Some(q) = HOST.with(|h| {
+                                h.borrow().as_ref().map(|st| st.datagrams.clone())
+                            }) {
+                                q.lock().unwrap().entry(handle).or_default().push_back(answer);
+                            }
+                        }
+                    }
+                }
             }
             rv.set_undefined();
         }
@@ -4976,7 +5067,7 @@ fn slots_of(_m: &Manifest) -> HashMap<String, usize> {
 /// `Cap::Exec`.
 ///
 /// Lifted out so the ticket can be handed back before any of this happens; see the note there and
-/// issue 0206. Nothing in here touches the v8 heap, which is what makes it liftable at all.
+/// issue 0208. Nothing in here touches the v8 heap, which is what makes it liftable at all.
 fn run_host_program(path: String, argv: Vec<String>, stdin: Vec<u8>) -> Answer {
     let mut cmd = std::process::Command::new(&path);
     cmd.args(&argv)

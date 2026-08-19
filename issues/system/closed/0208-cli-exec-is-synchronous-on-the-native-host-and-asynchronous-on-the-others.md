@@ -1,4 +1,4 @@
-# 0206 — `Cli.exec` is synchronous on the native host and asynchronous on the other three
+# 0208 — `Cli.exec` is synchronous on the native host and asynchronous on the other three
 
 - **Status:** closed
 - **Reported by:** agent-c
@@ -90,3 +90,10 @@ children that never started cannot pass it by finishing instantly.
 `packages/tor/test/wac/entries_test.wac` is the first caller to take the overlap — thirteen
 `wac build`s, four at a time: **9.5s to 3.5s**. It is bounded at four because each is a compiler
 holding a program's graph: 447 MB resident one at a time, 833 MB at four.
+
+## Numbered 0206 until the merge
+
+Another agent took 0206 and 0207 for two datagram issues in the same hours, and 0206 there is the
+**same shape as this one**: `receiveFrom` blocks at the call, so a datagram read cannot be
+time-bounded. Two capabilities, two hosts, one mistake — a ticket handed back after the work is over
+is not a ticket. Worth reading together.

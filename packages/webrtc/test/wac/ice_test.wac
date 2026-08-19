@@ -1,0 +1,397 @@
+// ICE, with a real aioice agent on the other end of a UDP socket.
+//
+// `design/system/0008` step 2. The arithmetic below could be checked against the RFC's formulae by
+// hand, and two of these do exactly that — but the one that matters puts `aioice.Connection` on
+// loopback and lets it drive: it sends connectivity checks, we validate and answer them, and its
+// `connect()` either completes or does not. A peer that finishes ICE with us is the only evidence
+// that our checks and responses are *acceptable* rather than merely well-formed.
+//
+// What the peer is told, and what it must not be, is in `../ice_agent.py`. The short version: the
+// test plays the signalling channel and nothing else crosses, so a response aioice accepts is one it
+// validated with its own code against its own password.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The live test is the interesting part of the move. The host-side version held the agent's stdin
+// open and wrote to it after reading its first line; `Cli.spawn` takes a wac worker bundle, so wac
+// cannot do that to a Python program, and `Cli.exec` runs a child to completion. The signalling is
+// three JSON files instead, written atomically — see the agent.
+//
+// The answering loop is what needed `issues/system/0206` fixed first. It has to answer checks
+// *while* waiting for the agent to say it connected, and that is a bounded `receiveFrom` in a loop
+// that also looks for `result.json`. Until the native host handed back a live ticket there was no
+// way to do the first without giving up the second.
+//
+// `test/wac/ice_probe.wac` stays: `browser.test.ts`, `example_test.wac` and `session_test.wac`
+// all import it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, Exec, FileResult, Pending, Socket }
+  from "../../../platform/src/platform.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { contains, trimmed } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
+import { Consent } from "../../src/ice.wac";
+import { check as iceCheck, consentAnswered, consentDue, consentLive, consentSent,
+         hostPref, isNomination, lineFor, newConsent, pairPriorityOf, prflxPref, priorityOf,
+         rejected, relayPref, reportedAddress, srflxPref, success, tidOf }
+  from "./ice_probe.wac";
+
+const string ORACLE = "packages/webrtc/test/ice_oracle.py";
+const string AGENT = "packages/webrtc/test/ice_agent.py";
+
+string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+void ask(T t, Cli cli, Lines lines, string what) {
+  check(t, cli, "python3", string[](ORACLE), lines, what);
+}
+
+// ── The live one ──────────────────────────────────────────────────────────────
+
+export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/ice";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  // **Bound to every interface, and advertised on the one aioice actually gathered.** aioice gathers
+  // host candidates from the container's real interface — not loopback — and a datagram from there
+  // to a `127.0.0.1` candidate does not route. Advertising loopback made the agent send checks that
+  // never arrived and time out, which reads exactly like a protocol bug and is not one.
+  Socket sock = cli.bindDatagram("0.0.0.0", 0).wait();
+  t.isTrue(sock.handle >= 0, "our socket did not bind — " + sock.error);
+  if (sock.handle < 0) { return t.report(); }
+  i32 ourPort = sock.port;
+  string ourUfrag = "wacUF";
+  string ourPwd = "wac-password-0123456789";
+  i64 ourPriority = priorityOf(hostPref(), 65535, 1);
+
+  Daemon agent = start(cli, "python3 " + quoted(AGENT) + " " + quoted(dir), dir + "/agent.log");
+  t.isTrue(agent.ok(), "the aioice agent did not start — " + agent.error);
+  if (!agent.ok()) { return t.report(); }
+
+  // Gathering takes a moment; the file appears when it is done.
+  string theirs = awaitFile(cli, dir + "/theirs.json", 600);
+  if (theirs == "") {
+    t.fail("aioice never published its candidates. It said: " + logTail(cli, dir + "/agent.log"));
+    stop(cli, agent);
+    cli.closeSocket(sock.handle);
+    return t.report();
+  }
+  string theirUfrag = jsonString(theirs, "ufrag");
+  string firstCandidate = firstOfArray(theirs, "candidates");
+  t.isTrue(firstCandidate != "", "aioice gathered no candidates");
+  if (firstCandidate == "") {
+    stop(cli, agent);
+    cli.closeSocket(sock.handle);
+    return t.report();
+  }
+  // Their first candidate's host is the interface they will send from, so it is the one we must be
+  // reachable on. `foundation component transport priority host port typ kind`.
+  string ourHost = word(firstCandidate, 4);
+
+  string ourLine = lineFor("wac1", 1, "udp", ourPriority, ourHost, ourPort, "host");
+  cli.writeFile(dir + "/ours.json",
+                ("{\"ufrag\": \"" + ourUfrag + "\", \"pwd\": \"" + ourPwd +
+                 "\", \"candidates\": [\"" + ourLine + "\"]}").toBytes()).wait();
+
+  // **Answer every check, for as long as it keeps sending them.** Each is validated with our own
+  // rules — the username has to name us, and the integrity has to check under the password we
+  // published — and only then answered. The loop ends when the agent publishes its result, so a
+  // bounded receive is what lets it do both.
+  i32 checksSeen = 0;
+  i32 nominations = 0;
+  string result = "";
+  for (i32 i = 0; i < 1200 && result == ""; i++) {
+    Pending<Datagram> p = cli.receiveFrom(sock.handle);
+    if (core.waitAny(i32[](p.id), 50) < 0) {
+      p.drop(p.id);
+      result = readIfPresent(cli, dir + "/result.json");
+      continue;
+    }
+    Datagram d = p.wait();
+    if (d.error != "" || d.bytes.len() == 0) { continue; }
+    if (rejected(d.bytes, ourUfrag, theirUfrag, ourPwd.toBytes()) != 0) { continue; }
+    checksSeen = checksSeen + 1;
+    if (isNomination(d.bytes)) { nominations = nominations + 1; }
+    cli.sendTo(sock.handle, d.peer, d.port,
+               success(tidOf(d.bytes), ourPwd.toBytes(), 1, ipv4Of(d.peer), d.port)).wait();
+  }
+  if (result == "") { result = awaitFile(cli, dir + "/result.json", 200); }
+
+  t.isTrue(result != "",
+           "aioice never reported a result. It said: " + logTail(cli, dir + "/agent.log"));
+  t.isTrue(contains(result, "\"connected\": true"),
+           "aioice did not report a completed connection: " + result);
+  t.isFalse(contains(result, "\"selected\": null"), "and it selected no candidate pair");
+  // **The evidence, stated as counts.** A `connect()` that returned without ever sending us a check
+  // would mean it found some other path, and this is what says otherwise.
+  t.isTrue(checksSeen > 0, "aioice sent no checks we accepted");
+  t.isTrue(nominations > 0,
+           "and nominated no pair with USE-CANDIDATE, which is the controlling agent's last word");
+  core.log("    ice: " + itoa(checksSeen) + " checks answered, " + itoa(nominations) +
+           " of them nominations");
+
+  stop(cli, agent);
+  cli.closeSocket(sock.handle);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+// ── Bytes, judged by aioice's parser ──────────────────────────────────────────
+
+export string test_aioice_validates_a_check_we_build(Core core, Cli cli) {
+  // The other direction. aioice's `parse_message` takes an integrity key and raises when it
+  // disagrees, so this is its own validation applied to our bytes.
+  T t = T.create();
+  u8[] tid = decoded("1122334455667788990011aa");
+  i64 priority = priorityOf(prflxPref(), 65535, 1);
+  u8[] tiebreak = decoded("0102030405060708");
+  u8[] good = iceCheck(tid, "peerUF", "wacUF", ("peer-password-xyz").toBytes(), priority, true,
+                       tiebreak, true);
+  u8[] bad = iceCheck(tid, "peerUF", "wacUF", ("the-wrong-password").toBytes(), priority, true,
+                      tiebreak, true);
+
+  Lines lines = Lines.create();
+  // `72623859790382856` is 0x0102030405060708 as an unsigned 64-bit number, which is how aioice
+  // reports it. The peer's fragment comes first in the username: a check names the receiver.
+  lines.add("check " + hexOf(good) + " peer-password-xyz peerUF:wacUF " + itoa64(priority) +
+            " ICE-CONTROLLING 72623859790382856 yes");
+  lines.add("refused " + hexOf(bad) + " peer-password-xyz");
+  ask(t, cli, lines, "aioice validating our check");
+  return t.report();
+}
+
+export string test_aioice_accepts_a_consent_check_as_an_authenticated_binding_request(
+    Core core, Cli cli) {
+  // **The bytes, judged by somebody else's parser.** A consent check is an ordinary connectivity
+  // check sent again later, so what has to hold is that it still authenticates. The second line is
+  // the canary: without it the first would pass on a message with no integrity attribute at all.
+  T t = T.create();
+  u8[] tid = decoded("0102030405060708090a0b0c");
+  u8[] msg = iceCheck(tid, "THEIRUF", "OURUF", ("their-password").toBytes(),
+                      priorityOf(hostPref(), 65535, 1), false, decoded("0707070707070707"), false);
+  Lines lines = Lines.create();
+  lines.add("check " + hexOf(msg) + " their-password THEIRUF:OURUF 2130706431 ICE-CONTROLLED " +
+            "506381209866536711 no");
+  lines.add("refused " + hexOf(msg) + " not-their-password");
+  ask(t, cli, lines, "aioice and a consent check");
+  return t.report();
+}
+
+export string test_a_candidate_line_is_the_shape_aioice_parses(Core core, Cli cli) {
+  T t = T.create();
+  string line = lineFor("wac1", 1, "udp", priorityOf(hostPref(), 65535, 1), "127.0.0.1", 45678,
+                        "host");
+  t.eqStr(line, "wac1 1 udp 2130706431 127.0.0.1 45678 typ host", "the line we write");
+  Lines lines = Lines.create();
+  lines.add("candidate " + hexOf(line.toBytes()) +
+            " wac1 1 udp 2130706431 127.0.0.1 45678 host");
+  ask(t, cli, lines, "aioice reading our candidate");
+  return t.report();
+}
+
+// ── Rules with no oracle but the RFC ──────────────────────────────────────────
+
+export string test_a_check_for_somebody_else_is_told_apart_from_a_good_one() {
+  // The canary for `rejected`, and the reason it answers a code rather than a boolean: the caller
+  // does different things with these.
+  T t = T.create();
+  u8[] tid = decoded("aabbccddeeff001122334455");
+  u8[] pwd = ("our-password").toBytes();
+  u8[] good = iceCheck(tid, "wacUF", "peerUF", pwd, 100, false, decoded("0000000000000001"), false);
+  t.eqI32(rejected(good, "wacUF", "peerUF", pwd), 0, "a check addressed to us");
+  t.eqI32(rejected(good, "otherUF", "peerUF", pwd), 3,
+          "3: the username names a different agent — somebody else's session on a shared port");
+  t.eqI32(rejected(good, "wacUF", "peerUF", ("not-our-password").toBytes()), 5,
+          "5: the right username and a signature that does not check, which is worth counting");
+  t.eqI32(rejected(decoded("16fefd0000"), "wacUF", "peerUF", pwd), 1, "1: not STUN");
+  t.eqI32(rejected(success(tid, pwd, 1, decoded("7f000001"), 4444), "wacUF", "peerUF", pwd), 2,
+          "2: a response, not a check");
+  return t.report();
+}
+
+export string test_the_response_reports_the_peers_address_not_ours() {
+  // The mistake that verifies and teaches the peer nothing: putting our own address in the
+  // XOR-MAPPED-ADDRESS because it is the one to hand.
+  T t = T.create();
+  i32[] addr = reportedAddress(success(decoded("0f0e0d0c0b0a09080706050f"), ("pw").toBytes(), 1,
+                                       decoded("c0a80105"), 51234));
+  t.eqI32(addr[0], 1, "IPv4");
+  t.eqI32(addr[1], 51234, "the port the check came from");
+  t.eqStr(dotted(addr), "192.168.1.5", "and its address");
+  return t.report();
+}
+
+export string test_the_priority_formulae_against_rfc_8445s_own_arithmetic() {
+  // `2^24 * type + 2^8 * local + (256 - component)`. A host candidate with the highest local
+  // preference and component 1 is 2130706431, which is the number every ICE implementation prints
+  // and the one to check a formula against.
+  T t = T.create();
+  t.eqI64(priorityOf(hostPref(), 65535, 1), 2130706431, "the canonical host priority");
+  t.eqI64(priorityOf(srflxPref(), 65535, 1), 1694498815, "server reflexive");
+  t.eqI64(priorityOf(relayPref(), 65535, 1), 16777215, "relayed, the lowest");
+  t.eqI64(priorityOf(hostPref(), 65535, 2), 2130706430,
+          "component 2 is one less, which is what makes RTP outrank RTCP on the same address");
+
+  // `2^32 * min(G, D) + 2 * max(G, D) + (G > D)`, and the point of the last term is that it is the
+  // *only* thing distinguishing the two orderings — so a pair priority must not be symmetric.
+  i64 a = priorityOf(hostPref(), 65535, 1);
+  i64 b = priorityOf(srflxPref(), 65535, 1);
+  t.eqI64(pairPriorityOf(a, b), (b << 32) + 2 * a + 1, "controlling higher");
+  t.eqI64(pairPriorityOf(b, a), (b << 32) + 2 * a, "controlled higher");
+  t.eqI64(pairPriorityOf(a, b) - pairPriorityOf(b, a), 1,
+          "the two orderings differ by exactly the tiebreak bit, which is what the formula is for");
+  t.eqI64(pairPriorityOf(a, a), (a << 32) + 2 * a, "equal priorities: no tiebreak");
+  return t.report();
+}
+
+export string test_consent_has_to_be_renewed_and_one_lost_check_does_not_end_it() {
+  // **RFC 7675, and it exists for somebody else's benefit.** An address that was a peer's may have
+  // been reassigned; without consent checks we would keep sending to whoever holds it now, who never
+  // agreed to receive it. That is the difference between a data channel and an amplifier.
+  T t = T.create();
+  u8[] password = ("peer-password").toBytes();
+  Consent c = newConsent(5000, 30000, 0);
+  t.isFalse(consentDue(c, 0), "not the moment it is created");
+  t.isFalse(consentDue(c, 4999), "nor just before the interval");
+  t.isTrue(consentDue(c, 5000), "every five seconds, per §4.1");
+
+  u8[] tid = decoded("000102030405060708090a0b");
+  consentSent(c, tid, 5000);
+  t.isFalse(consentDue(c, 5001), "and not again until the interval is up");
+  t.isTrue(consentAnswered(c, success(tid, password, 1, decoded("7f000001"), 45678), password, 5100),
+           "answered in 100ms");
+  t.isTrue(consentLive(c, 5100), "so consent is live");
+
+  // **A check going unanswered is not the end of consent.** A single loss on a working path happens;
+  // tearing the connection down for it would make packet loss fatal. Only thirty seconds with no
+  // valid response at all expires it.
+  consentSent(c, decoded("0102030405060708090a0b0c"), 10000);
+  t.isTrue(consentLive(c, 20000), "ten seconds of silence is not enough");
+  t.isTrue(consentLive(c, 35099), "nor is just under thirty from the last answer");
+  t.isFalse(consentLive(c, 35100),
+            "thirty seconds after the last valid response, consent is gone and we must stop sending");
+  return t.report();
+}
+
+export string test_a_consent_response_only_counts_if_it_is_the_one_we_asked_for() {
+  T t = T.create();
+  u8[] password = ("peer-password").toBytes();
+  u8[] other = ("wrong-password").toBytes();
+  u8[] tid = decoded("000102030405060708090a0b");
+  u8[] addr = decoded("7f000001");
+
+  t.isFalse(consentAnswered(freshConsent(tid),
+                            success(decoded("ffffffffffffffffffffffff"), password, 1, addr, 45678),
+                            password, 1100),
+            "a response to a different transaction proves nothing about this path");
+  t.isFalse(consentAnswered(freshConsent(tid), success(tid, other, 1, addr, 45678), password, 1100),
+            "and one that does not authenticate is anybody's — which is the whole point of the " +
+            "check, since an off-path attacker can see the transaction id in the request");
+  t.isTrue(consentAnswered(freshConsent(tid), success(tid, password, 1, addr, 45678), password, 1100),
+           "the right transaction, with the right key");
+  return t.report();
+}
+
+Consent freshConsent(u8[] tid) {
+  Consent c = newConsent(5000, 30000, 0);
+  consentSent(c, tid, 1000);
+  return c;
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+/** Poll for a file, answering its contents or empty. Each look is a `stat`, so this sleeps. */
+string awaitFile(Cli cli, string path, i32 tries) {
+  for (i32 i = 0; i < tries; i++) {
+    string got = readIfPresent(cli, path);
+    if (got != "") { return got; }
+    cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait();
+  }
+  return "";
+}
+
+string readIfPresent(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+string logTail(Cli cli, string path) {
+  string said = trimmed(readIfPresent(cli, path));
+  if (said == "") { return "(nothing)"; }
+  return said.len() <= 700 ? said : "…" + said.slice(said.len() - 700, said.len());
+}
+
+/** `"key": "value"` out of a flat JSON object — enough for what the agent writes. */
+string jsonString(string json, string key) {
+  i32 at = json.indexOf("\"" + key + "\"");
+  if (at < 0) { return ""; }
+  string rest = json.slice(at + key.len() + 2, json.len());
+  i32 open = rest.indexOf("\"");
+  if (open < 0) { return ""; }
+  string tail = rest.slice(open + 1, rest.len());
+  i32 close = tail.indexOf("\"");
+  return close < 0 ? "" : tail.slice(0, close);
+}
+
+/** The first string of `"key": ["a", "b"]`. */
+string firstOfArray(string json, string key) {
+  i32 at = json.indexOf("\"" + key + "\"");
+  if (at < 0) { return ""; }
+  string rest = json.slice(at, json.len());
+  i32 bracket = rest.indexOf("[");
+  if (bracket < 0) { return ""; }
+  string tail = rest.slice(bracket, rest.len());
+  i32 open = tail.indexOf("\"");
+  if (open < 0) { return ""; }
+  string body = tail.slice(open + 1, tail.len());
+  i32 close = body.indexOf("\"");
+  return close < 0 ? "" : body.slice(0, close);
+}
+
+/** The `n`th space-separated word, counting from zero. */
+string word(string s, i32 n) {
+  i32 at = 0;
+  for (i32 seen = 0; seen < n; seen++) {
+    i32 sp = s.slice(at, s.len()).indexOf(" ");
+    if (sp < 0) { return ""; }
+    at = at + sp + 1;
+  }
+  string rest = s.slice(at, s.len());
+  i32 end = rest.indexOf(" ");
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
+/** `a.b.c.d` as four bytes. Empty when it is not one, which is how an IPv6 peer is skipped. */
+u8[] ipv4Of(string address) {
+  u8[] out = u8[4]();
+  i32 at = 0;
+  for (i32 i = 0; i < 4; i++) {
+    string rest = address.slice(at, address.len());
+    i32 dot = rest.indexOf(".");
+    string part = dot < 0 ? rest : rest.slice(0, dot);
+    if (part == "") { return u8[4](); }
+    i32 v = 0;
+    for (i32 k = 0; k < part.len(); k++) {
+      i32 b = part.toBytes()[k];
+      if (b < '0' || b > '9') { return u8[4](); }
+      v = v * 10 + (b - '0');
+    }
+    out[i] = v & 255;
+    if (dot < 0) { break; }
+    at = at + dot + 1;
+  }
+  return out;
+}
+
+/** `reportedAddress`'s tail as `a.b.c.d`. */
+string dotted(i32[] a) {
+  string out = "";
+  for (i32 i = 2; i < a.len(); i++) { out = out + (i == 2 ? "" : ".") + itoa(a[i]); }
+  return out;
+}

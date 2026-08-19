@@ -1,4 +1,4 @@
-// Host-facing entry point for the Initial keys, so `initial.test.ts` can hand it a packet quinn
+// The Initial keys, one question at a time, so `initial_test.wac` can hand it a packet quinn
 // actually sent. The fixture has to come from a process, which wac cannot reach.
 
 import { InitialKeys, initialKeys, initialSecret, openClientInitial, openServerInitial,
