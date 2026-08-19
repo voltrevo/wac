@@ -43,7 +43,7 @@ const SUBJECTS: [string, string][] = [
   // it produced a subject with no cases and an error that read as a broken profiler.
   ["packages/quic/test/wac/varint_test.wac", "quic"],
   ["packages/bytes/test/wac/buf_test.wac", "buf"],
-  ["packages/std/test/wac/map_test.wac", "map"],
+  ["core/test/map_test.wac", "map"],
 ];
 
 type Tests = Record<string, string[]>;
