@@ -1,0 +1,180 @@
+// Our TLS 1.3 server, on an ephemeral port, for the round trip.
+//
+// A separate program rather than a helper the test calls, because both ends have to be running at
+// once and a wac test is one thread: `accept` blocks until somebody dials, and the somebody is the
+// same test. The TypeScript this replaces got away with it by putting the server in a floating
+// promise — `serveOnce` returned a `done` nobody awaited until the request had gone out — which is a
+// concurrency the language deliberately does not have.
+//
+// So it is started by `daemon.start`, says its port on standard output, and serves connections until
+// it is killed. The socket and the randomness live here; what a record means and what to answer is
+// `src/server.wac`, which is a pure function from (state, bytes) to (state, bytes).
+//
+//   ./tlsserved                      an ephemeral port, printed
+//   ./tlsserved 8443                 a port of your choosing
+//   ./tlsserved 0 --body "hi\n"      a reply body of your choosing
+//   ./tlsserved 0 --rsa <dir>        an RSA identity from <dir>/cert.der, n.bin and d.bin
+//
+// Built by `client_test.wac`; kept beside it rather than in `src/` because the reply is a fixture's
+// reply — a fixed body the test matches on, not something a server should answer.
+
+import { Core, Cli, Socket } from "../../../platform/src/platform.wac";
+import { Read } from core;
+import { tlsServerInit, tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsServerClose,
+         tlsPhase, tlsRecordNeeded } from "../../src/server.wac";
+import { clientStep, ClientStep } from "../../src/client.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** What a test matches on, unless it names its own. Fixed, so an assertion can name the bytes. */
+const string DEFAULT_BODY = "hello from the wac server\n";
+
+string reply(string body) {
+  return "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n" +
+         "content-length: " + itoa(body.len()) + "\r\nconnection: close\r\n\r\n" + body;
+}
+
+/** Whole records only, the same discipline the client keeps, for the same reason. */
+i32 readyIn(u8[] buf) {
+  i32 consumed = 0;
+  while (buf.len() - consumed >= 5) {
+    u8[] rest = u8[buf.len() - consumed]();
+    for (i32 i = consumed; i < buf.len(); i++) { rest[i - consumed] = buf[i]; }
+    if (tlsRecordNeeded(rest) != 0) { break; }
+    consumed = consumed + 5 + ((buf[consumed + 3] << 8) | buf[consumed + 4]);
+  }
+  return consumed;
+}
+
+/**
+  * An identity: either an ed25519 seed, or the three RSA numbers.
+  *
+  * **RSA is not a variation on the same thing.** TLS 1.3 removed PKCS#1 v1.5 from signing, so an RSA
+  * certificate means `rsa_pss_rsae_sha256` in CertificateVerify and nothing else — a different signer
+  * over a different key, reached through a different entry point.
+  */
+struct Identity {
+  u8[] cert;
+  u8[] seed;      // ed25519, empty when this is RSA
+  u8[] n;
+  u8[] d;
+  bool rsa;
+}
+
+void serve(Core core, Cli cli, i32 handle, Identity id, string body) {
+  u8[] state = id.rsa
+    ? tlsServerInitRsa(id.cert, id.n, u8[](0x01, 0x00, 0x01), id.d,
+                       core.randomBytes(32).wait(), core.randomBytes(32).wait())
+    : tlsServerInit(id.cert, id.seed, core.randomBytes(32).wait(),
+                    core.randomBytes(32).wait());
+  Buf raw = Buf.create();
+  for (i32 guard = 0; guard < 100000; guard++) {
+    bool more = false;
+    match (cli.recv(handle).wait()) {
+      case Data(bytes): { raw.pushAll(bytes); more = true; }
+      case End: { }
+      case Failed(why): { core.warn("tlsserved: recv: " + why); }
+    }
+    if (!more) { break; }
+
+    i32 ready = readyIn(raw.bytes());
+    if (ready == 0) { continue; }
+    u8[] all = raw.bytes();
+    u8[] whole = u8[ready]();
+    for (i32 i = 0; i < ready; i++) { whole[i] = all[i]; }
+    raw.dropFront(ready);
+
+    ClientStep st = clientStep(tlsServerFeed(state, whole));
+    state = st.state;
+    if (st.toSend.len() > 0) { cli.send(handle, st.toSend).wait(); }
+    if (st.appData.len() > 0) {
+      // What the peer asked for, on the log, because one case checks that the request *arrived* —
+      // "the client got a reply" and "the server read the request" are different claims and a server
+      // answering a fixed page satisfies the first without the second.
+      core.log("tlsserved: received " + firstLine(string.fromBytes(st.appData)));
+      ClientStep out = clientStep(tlsServerSend(state, reply(body).toBytes()));
+      state = out.state;
+      cli.send(handle, out.toSend).wait();
+      // **close_notify, not a bare TCP close.** A TLS peer cannot tell an orderly shutdown from an
+      // attacker cutting the connection unless it sees one, so a client that cares reports a
+      // truncation instead of end of stream — and one case asserts exactly that difference.
+      ClientStep bye = clientStep(tlsServerClose(state));
+      state = bye.state;
+      if (bye.toSend.len() > 0) { cli.send(handle, bye.toSend).wait(); }
+      break;
+    }
+    // A handshake that failed says so in the phase, and there is nothing further to read.
+    if (tlsPhase(state) == 3) { break; }
+  }
+  cli.closeSocket(handle);
+}
+
+/** Up to the first CR or LF, so a log line stays one line. */
+string firstLine(string text) {
+  u8[] b = text.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '\r' || b[i] == '\n') { return text.slice(0, i); }
+  }
+  return text;
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 port = 0;
+  string body = DEFAULT_BODY;
+  string rsaDir = "";
+  i32 n = cli.argCount().wait();
+  for (i32 i = 1; i < n; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--body" && i + 1 < n) {
+      body = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+      continue;
+    }
+    if (a == "--rsa" && i + 1 < n) {
+      rsaDir = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+      continue;
+    }
+    u8[] b = a.toBytes();
+    port = 0;
+    for (i32 k = 0; k < b.len() && b[k] >= '0' && b[k] <= '9'; k++) {
+      port = port * 10 + (b[k] - '0');
+    }
+  }
+
+  Identity id = Identity(u8[0](), u8[0](), u8[0](), u8[0](), false);
+  if (rsaDir == "") {
+    id.cert = cli.readFile("packages/tls/test/data/server.der").wait().bytes;
+    id.seed = cli.readFile("packages/tls/test/data/server.seed").wait().bytes;
+    if (id.cert.len() == 0 || id.seed.len() == 0) {
+      core.warn("tlsserved: no certificate — run from the repository root");
+      return 1;
+    }
+  } else {
+    id.rsa = true;
+    id.cert = cli.readFile(rsaDir + "/cert.der").wait().bytes;
+    id.n = cli.readFile(rsaDir + "/n.bin").wait().bytes;
+    id.d = cli.readFile(rsaDir + "/d.bin").wait().bytes;
+    if (id.cert.len() == 0 || id.n.len() == 0 || id.d.len() == 0) {
+      core.warn("tlsserved: " + rsaDir + " does not hold cert.der, n.bin and d.bin");
+      return 1;
+    }
+  }
+
+  Socket listener = cli.listen("127.0.0.1", port).wait();
+  if (listener.handle < 0) {
+    core.warn("tlsserved: listen: " + listener.error);
+    return 1;
+  }
+  // The port goes to standard output because the caller asked for zero and cannot otherwise learn
+  // which one it got — the same reason `dird` prints its own.
+  core.log("tlsserved: listening on 127.0.0.1:" + itoa(listener.port));
+
+  for (i32 served = 0; served < 1000; served++) {
+    Socket conn = cli.accept(listener.handle).wait();
+    if (conn.handle < 0) { core.warn("tlsserved: accept: " + conn.error); break; }
+    serve(core, cli, conn.handle, id, body);
+  }
+  cli.closeSocket(listener.handle);
+  return 0;
+}

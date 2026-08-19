@@ -16,7 +16,7 @@ import {
   checkForPublication,
 } from "../../src/hsstore.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
-import { boolOf, numOf, objectOf, strOf } from "./jsonfile.wac";
+import { boolOf, numOf, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
 import {
   blindedKeyBytes, controlBytes, controlCount, controls, descriptorBytes, descriptorText,
   publishTop,

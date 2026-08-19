@@ -9,7 +9,7 @@
 #
 # **Build it into ~/tools, not /tmp.** `/tmp` does not survive a container restart, so a build that lands
 # there is gone the next time a test looks — which is how the two X25519MLKEM768 interop tests came to be
-# permanently skipped on this machine while reading as "2 ignored". `packages/tls/test/openssl35.ts` looks
+# permanently skipped on this machine while reading as "2 ignored". `packages/tls/test/wac/openssl.wac` looks
 # in `$OPENSSL35`, then `~/tools/ossl`, then `/tmp/ossl`, and says on stderr what is not being checked when
 # it finds none of them.
 #

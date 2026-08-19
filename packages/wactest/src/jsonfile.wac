@@ -1,10 +1,11 @@
-// Reading a captured vector out of a JSON file, which every fixture in this directory does.
+// Reading a captured vector out of a JSON file, which every fixture that has one does.
 //
-// The captures under `test/data/` are JSON written by the tools in `packages/tor/tools/`, and until
-// 2026-08-17 each of them was parsed by a TypeScript wrapper that handed the fields over an
-// `fn[u8[](i32, u8[], u8[])]` seam. Removing the seam left the same six accessors written out three
-// times, one per fixture, which is how two of them quietly stop agreeing about what a missing field
-// means. `issues/system/0161` step 4.
+// It began in `packages/tor/test/wac/`, over the JSON captures under `tor/test/data/` that the tools
+// in `packages/tor/tools/` write, and moved here when `packages/tls` wanted it too. The reason it is
+// one file is the same reason it is now one file for two packages: until 2026-08-17 each fixture was
+// parsed by a TypeScript wrapper that handed the fields over an `fn[u8[](i32, u8[], u8[])]` seam, and
+// removing the seam left the same six accessors written out three times, one per fixture — which is
+// how two of them quietly stop agreeing about what a missing field means. `issues/system/0161` step 4.
 //
 // Every accessor **traps** on a shape it did not expect rather than returning a default. A vector
 // that has been regenerated into a different shape is not a test failure to be interpreted, it is a
@@ -13,9 +14,9 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { parse } from "../../../json/src/json.wac";
-import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
-import { Cli, FileResult } from "../../../platform/src/platform.wac";
+import { parse } from "../../json/src/json.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../json/src/value.wac";
+import { Cli, FileResult } from "../../platform/src/platform.wac";
 
 /** The top-level object of a JSON file, read relative to the repository root. */
 export JsonObject jsonFile(Cli cli, string path) {

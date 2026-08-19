@@ -1,0 +1,110 @@
+// `openssl s_server` as a fixture, for the interop direction.
+//
+// The round trip against our own server would pass even if both halves misread the spec the same
+// way. OpenSSL cannot make that mistake with us, which is the entire reason this file exists and the
+// reason a slow, process-spawning fixture is worth it.
+//
+// **A bind race is retried, and only that.** The port is chosen by binding zero and closing, so
+// between the close and openssl's bind another agent's suite can take it — and then the readiness
+// probe connects to *that* stranger, `s_server` exits with the port in use, and the request is
+// refused. That failed a gate once as a bare `Connection refused (os error 111)`, which names neither
+// the port nor the reason. Retrying a bind failure is right; retrying anything else turns one clear
+// error into three slow ones.
+//
+// `Held` shrinks the window rather than closing it: the listener stays open until the statement
+// before the spawn. It cannot be closed entirely — `s_server` takes a port on its command line, so
+// something has to know the number before the process exists.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Daemon, Held, start, stop, logOf, waitForPortWithin } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** A running `s_server`, or why there is not one. */
+export struct Server {
+  Daemon d;
+  i32 port;
+  string error;
+
+  bool ok(const this) { return this.port > 0 && this.error == ""; }
+}
+
+/** Whether the process is still there — the one question a readiness probe cannot answer. */
+bool alive(Cli cli, i32 pid) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", "kill -0 " + itoa(pid) + " 2>/dev/null"),
+                    u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+/**
+ * Start `s_server` with the named key pair, serving `-www` over TLS 1.3.
+ *
+ * `binary` is `openssl` for the ordinary cases and the 3.5 path for the post-quantum one, so a caller
+ * that needs a newer OpenSSL names it rather than this file guessing.
+ */
+export Server startServer(Core core, Cli cli, string binary, string cert, string key,
+                          string[] extra, string logPath) {
+  for (i32 attempt = 1; attempt <= 3; attempt++) {
+    Held held = Held.take(cli);
+    if (held.port < 0) { return Server(Daemon(-1, "", logPath), -1, "no free port could be bound"); }
+    i32 port = held.port;
+
+    string line = quoted(binary) + " s_server -accept " + itoa(port) +
+                  " -cert " + quoted(cert) + " -key " + quoted(key) +
+                  " -tls1_3 -www -quiet";
+    for (i32 i = 0; i < extra.len(); i++) { line = line + " " + quoted(extra[i]); }
+
+    held.release(cli);
+    Daemon d = start(cli, line, logPath + "." + itoa(attempt));
+    if (!d.ok()) { return Server(d, -1, "the shell did not start openssl — " + d.error); }
+
+    if (waitForPortWithin(core, cli, "127.0.0.1", port, 20000) && alive(cli, d.pid)) {
+      return Server(d, port, "");
+    }
+    // Either nothing ever answered, or something did and it was not ours. Both are the same retry.
+    stop(cli, d);
+    if (attempt == 3) {
+      return Server(d, -1,
+        "openssl s_server never served on " + itoa(port) + ", three times — the port was taken " +
+        "between choosing it and binding it, or the fixture cannot start at all. Its output was: " +
+        logOf(cli, d));
+    }
+  }
+  return Server(Daemon(-1, "", logPath), -1, "unreachable");
+}
+
+export void stopServer(Cli cli, Server s) { stop(cli, s.d); }
+
+/** Whether a program is on the path at all, so a missing one is skipped rather than failed. */
+export bool have(Cli cli, string binary) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", "command -v " + quoted(binary) + " >/dev/null"),
+                    u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+/**
+ * Where OpenSSL 3.5 is, or "" when it is nowhere.
+ *
+ * Ubuntu 24.04 ships 3.0.13, which predates X25519MLKEM768 entirely, so the interop case that pins the
+ * hybrid group needs a newer build; `tools/openssl35.sh` makes one. Under `~/tools` rather than `/tmp`
+ * because **`/tmp` does not survive a container restart**, and a reference build that has to be redone
+ * every restart is one that is never there when a test looks.
+ */
+export string openssl35(Cli cli) {
+  string home = "/home/claude";
+  u8[]? h = cli.env("HOME").wait();
+  if (h is not null) { home = string.fromBytes(h!); }
+  string[] candidates = string[](
+    "",                                    // $OPENSSL35, filled in below
+    home + "/tools/ossl/openssl-openssl-3.5.7/apps/openssl",
+    "/tmp/ossl/openssl-openssl-3.5.7/apps/openssl");
+  u8[]? named = cli.env("OPENSSL35").wait();
+  if (named is not null) { candidates[0] = string.fromBytes(named!); }
+  for (i32 i = 0; i < candidates.len(); i++) {
+    if (candidates[i] == "") { continue; }
+    if (cli.stat(candidates[i]).wait().isFile) { return candidates[i]; }
+  }
+  return "";
+}

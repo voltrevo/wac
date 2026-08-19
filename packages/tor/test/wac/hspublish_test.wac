@@ -15,7 +15,7 @@ import {
 import { equal, slice } from "../../../bytes/src/slice.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
 import { JsonValue, JsonObject } from "../../../json/src/value.wac";
-import { boolOf, numOf, objectOf, strOf } from "./jsonfile.wac";
+import { boolOf, numOf, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
 import {
   blindedKeyBytes, controlCount, controls, descriptorBytes, descriptorText, generatedTop,
   publishTop, queryName,

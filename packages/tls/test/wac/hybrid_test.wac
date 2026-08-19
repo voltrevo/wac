@@ -5,7 +5,7 @@
 // outputs. Both sides reaching the same secret, each half moving only when its own input
 // moves, ML-KEM's share coming first — none of those is a value someone else has to tell
 // us. The one thing an outside implementation adds is interoperability, and that is
-// `client.test.ts` negotiating against OpenSSL 3.5, which stays where it is.
+// `client_test.wac` negotiating against OpenSSL 3.5, which stays where it is.
 //
 // Everything here was TypeScript this morning, reaching in through a probe. **The length refusals
 // joined it on 2026-08-17** — they had stayed behind on the grounds that a trap unwinds the module

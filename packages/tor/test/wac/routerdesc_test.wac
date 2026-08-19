@@ -56,7 +56,7 @@ import {
   RelayInfo, RelayKeys, routerDescriptor,
 } from "../../src/routerdesc.wac";
 import { ed25519Verify } from "../../../crypto/src/ed25519.wac";
-import { jsonFile, strOf, numOf, num64Of, arrayOf, objectOf } from "./jsonfile.wac";
+import { jsonFile, strOf, numOf, num64Of, arrayOf, objectOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";

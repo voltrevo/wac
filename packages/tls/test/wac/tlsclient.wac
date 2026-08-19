@@ -1,0 +1,182 @@
+// Driving `src/client.wac` over a real socket: the part `host/connect.ts` used to be.
+//
+// The socket and the randomness live here; everything else is `src/`. That sentence was true of the
+// TypeScript too — what changed is that the harness no longer needs a JavaScript host to say it.
+//
+// **Whole records only.** `tlsClientFeed` does no buffering, by design, so that one place decides
+// where a record ends; `recordsReady` is that place and this calls it. Feeding it whatever `recv`
+// happened to return works until a response arrives in more than one segment, which is how a reader
+// that mostly works fails on a fast connection rather than a slow one — `packages/tor/src/link.wac`
+// carries the same paragraph over the same call.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { Core, Cli, Socket, Pending } from "../../../platform/src/platform.wac";
+import { Read } from core;
+import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
+         tlsClientPhase, tlsClientFailure, clientStep, ClientStep } from "../../src/client.wac";
+import { recordsReady } from "../../src/record.wac";
+import { pemBundle, Store } from "../../src/roots.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+/** How long a handshake and one reply may take before the peer is called dead. */
+const i32 READ_TIMEOUT_MS = 20000;
+
+/** What a request came to. */
+export struct Reply {
+  /**
+   * The client's own failure code, and 0 when it completed. **Not a boolean**: which refusal happened
+   * is the whole content of half these tests — a client that rejects everything passes every
+   * "it refused" assertion, so the code is checked, not the fact.
+   */
+  i32 failure;
+  string response;
+  /** Why the fixture never got as far as a code, empty when it did. */
+  string error;
+}
+
+/** The trust store from a PEM file: whatever roots it holds, and nothing else trusted. */
+export Store rootsFrom(Cli cli, string pemPath) {
+  return pemBundle(cli.readFile(pemPath).wait().bytes);
+}
+
+/** No roots at all — for a caller checking the shape of the first flight rather than a peer. */
+export Store noRoots() { return Store(u8[0](), i32[0](), 0); }
+
+/**
+ * A P-256 private scalar: 32 random bytes, retried until they land in [1, n).
+ *
+ * Rejection sampling rather than reduction, because reducing a uniform 256-bit value mod n biases the
+ * low end. The rejection probability is about 2^-32, so this virtually never loops — the loop is here
+ * because "virtually never" is not "never" and a biased scalar is not a failure anything would report.
+ */
+export u8[] p256Scalar(Core core) {
+  const u8[] N = u8[](0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
+                      0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                      0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84,
+                      0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51);
+  for (i32 tries = 0; tries < 64; tries++) {
+    u8[] k = core.randomBytes(32).wait();
+    bool zero = true;
+    for (i32 i = 0; i < 32; i++) { if (k[i] != 0) { zero = false; } }
+    if (zero) { continue; }
+    // Below n, compared big-endian: the first differing byte decides.
+    for (i32 i = 0; i < 32; i++) {
+      if (k[i] < N[i]) { return k; }
+      if (k[i] > N[i]) { break; }
+    }
+  }
+  trap;
+}
+
+/** The ClientHello and the state that goes with it, without a socket anywhere near it. */
+export ClientStep firstFlight(Core core, Cli cli, string sni, Store roots, i64 now) {
+  return clientStep(tlsClientInit(sni.toBytes(), roots.der, roots.offsets,
+                                  core.randomBytes(32).wait(), p256Scalar(core),
+                                  core.randomBytes(64).wait(), core.randomBytes(32).wait(), now));
+}
+
+/** The same, from fixed bytes, for a caller that wants the flight to be the same every run. */
+export ClientStep fixedFirstFlight(string sni, Store roots, u8[] seed) {
+  return clientStep(tlsClientInit(sni.toBytes(), roots.der, roots.offsets, seed, seed,
+                                  u8[64](fill: 0), u8[32](fill: 0), 0 as i64));
+}
+
+/** One bounded read. Empty means end of stream, and `ok` says whether the wait itself held. */
+struct Chunk {
+  u8[] bytes;
+  bool ok;
+  string error;
+}
+
+Chunk readOnce(Core core, Cli cli, i32 handle, i32 millis) {
+  Pending<Read> read = cli.recv(handle);
+  if (core.waitAny(i32[](read.id), millis) < 0) {
+    // Cancelling stops us waiting and does not stop the host's read, and a cancelled ticket keeps its
+    // slot until the call underneath finishes. Closing the handle is what makes it finish.
+    read.cancel();
+    cli.closeSocket(handle);
+    return Chunk(u8[0](), false, "the peer said nothing for " + itoa(millis) + "ms");
+  }
+  match (read.wait()) {
+    case Data(bytes): { return Chunk(bytes, true, ""); }
+    case End: { return Chunk(u8[0](), true, ""); }
+    case Failed(why): { return Chunk(u8[0](), false, "recv: " + why); }
+  }
+}
+
+/**
+ * Dial, handshake, send `req`, read until the peer stops, and answer.
+ *
+ * `now` is passed in rather than read from the clock, which is what lets a caller ask the client to
+ * evaluate a handshake as though it were 1990 without any clock trickery.
+ */
+export Reply request(Core core, Cli cli, string host, i32 port, string sni, Store roots,
+                     string req, i64 now) {
+  Pending<Socket> dial = cli.connect(host, port);
+  if (core.waitAny(i32[](dial.id), READ_TIMEOUT_MS) < 0) {
+    dial.cancel();
+    return Reply(-1, "", host + ":" + itoa(port) + " did not answer the dial");
+  }
+  Socket s = dial.wait();
+  if (s.handle < 0) { return Reply(-1, "", "connect: " + s.error); }
+
+  ClientStep st = firstFlight(core, cli, sni, roots, now);
+  u8[] state = st.state;
+  if (!cli.send(s.handle, st.toSend).wait()) {
+    cli.closeSocket(s.handle);
+    return Reply(-1, "", "the ClientHello did not go out");
+  }
+
+  Buf raw = Buf.create();
+  Buf app = Buf.create();
+  bool sent = false;
+  string error = "";
+
+  // One loop for both halves. The handshake finishing is not the end of the conversation, and a loop
+  // that returned there and started a second one would have to hand over `raw` — the partial record
+  // that a server which pipelines its Finished and its first application record leaves behind.
+  for (i32 guard = 0; guard < 100000; guard++) {
+    if (tlsClientFailure(state) != 0) { break; }
+    if (tlsClientPhase(state) == 3 && !sent) {
+      ClientStep out = clientStep(tlsClientSend(state, req.toBytes()));
+      state = out.state;
+      if (!cli.send(s.handle, out.toSend).wait()) { error = "the request did not go out"; break; }
+      sent = true;
+    }
+    Chunk c = readOnce(core, cli, s.handle, READ_TIMEOUT_MS);
+    if (!c.ok) { error = c.error; break; }
+    if (c.bytes.len() == 0) { break; }          // the peer closed, which is how `-www` ends
+    raw.pushAll(c.bytes);
+
+    i32 ready = recordsReady(raw.bytes());
+    if (ready == 0) { continue; }
+    u8[] all = raw.bytes();
+    u8[] whole = u8[ready]();
+    for (i32 i = 0; i < ready; i++) { whole[i] = all[i]; }
+    raw.dropFront(ready);
+
+    ClientStep step = clientStep(tlsClientFeed(state, whole));
+    state = step.state;
+    if (step.toSend.len() > 0) {
+      if (!cli.send(s.handle, step.toSend).wait()) { error = "an answer did not go out"; break; }
+    }
+    if (step.appData.len() > 0) { app.pushAll(step.appData); }
+
+    // Stop once the reply's headers are complete, rather than on end of stream. `s_server -quiet`
+    // implies `-ign_eof`, so OpenSSL answers and then holds the connection open indefinitely — a loop
+    // that waited for the close would time out against every interop case while passing against our
+    // own server, which does close. That is a difference in the *fixture*, not in the client.
+    if (app.len > 0 && contains(app.toStr(), "\r\n\r\n")) { break; }
+  }
+
+  if (tlsClientFailure(state) == 0 && sent) {
+    // Best effort: the peer may already be gone, and a close_notify nobody reads is not a failure.
+    ClientStep bye = clientStep(tlsClientClose(state));
+    if (bye.toSend.len() > 0) { cli.send(s.handle, bye.toSend).wait(); }
+  }
+  cli.closeSocket(s.handle);
+  return Reply(tlsClientFailure(state), string.fromBytes(app.take()), error);
+}
