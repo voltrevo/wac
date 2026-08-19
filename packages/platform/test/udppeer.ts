@@ -59,8 +59,15 @@ for (;;) {
     await new Promise((r) => setTimeout(r, 20));
     continue;
   }
-  // `JSON.parse` answers `null` for the four bytes `null`, so this is a real case rather than a
-  // formality the type checker asked for: a truncated write that happens to parse is not a request.
+  // **The `catch` above `continue`s, so this is unreachable when the parse failed** — and the flow
+  // analysis does not model that, because the assignment sits inside the `try` and could have
+  // thrown partway. Narrowing it here is the price of catching the read and the parse together,
+  // which is deliberate: a half-written file fails the parse and wants the same retry as a missing
+  // one.
+  //
+  // It is not only a narrowing, which is why it waits rather than spinning: `JSON.parse` answers
+  // `null` for the four bytes `null`, so a file that parses to nothing would otherwise be a hot
+  // loop rather than a retry.
   if (request === null) {
     await new Promise((r) => setTimeout(r, 20));
     continue;

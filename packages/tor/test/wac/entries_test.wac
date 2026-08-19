@@ -86,7 +86,7 @@ export string test_every_entry_file_compiles(Core core, Cli cli) {
   // one after another were 9.5s and the second-largest test in the lane, with a machine that has
   // cores to spare doing one at a time. `cli.exec` hands back a `Pending<Exec>` and every host now
   // starts the child before returning it — that was not true of the two native hosts until issue
-  // 0208, which is what made this list serial however it was written.
+  // 0211, which is what made this list serial however it was written.
   //
   // Four rather than thirteen, and the bound is about memory rather than cores: each of these is a
   // compiler holding a whole program's graph, and three agents share this machine. **Measured, as the

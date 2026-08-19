@@ -16,8 +16,6 @@ const verbose = Deno.args.includes("--verbose");
 const runs = [];
 for (const entry of [
   "packages/std/test/wac/vec_test.wac",
-  "packages/std/test/wac/map_test.wac",
-  "packages/std/test/wac/option_test.wac",
 ]) {
   const run = await instrument(entry);
   runTestExports(run, entry);

@@ -14,7 +14,7 @@
 // fills with it. That is why there is no `reserve()` without an element and why
 // `withCapacity` asks for one.
 
-import { Option } from "./option.wac";
+import { Option } from "core/option.wac";
 
 export struct Vec<T> {
   T[] data;

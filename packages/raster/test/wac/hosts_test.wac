@@ -78,6 +78,17 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   string dir = cwd + "/.cache/raster-hosts";
   cli.mkdir(dir, true).wait();
   string stem = dir + "/deskshot";
+  // **The directory is not emptied, and that is worth four seconds.** `wacland` caches the compiled
+  // module beside the `.wasm` as `deskshot.cwasm-<key>`, keyed by content — 4.8 MB that cranelift
+  // takes about four seconds to produce and twenty milliseconds to reuse. Deleting the directory
+  // deleted that too, so every run of this test recompiled a module whose bytes had not changed:
+  // `wac build` is deterministic for a given output stem, so the key is the same one it was last
+  // time. Measured on this box: 4120 ms cold, 17 ms once the cache survives the rebuild.
+  //
+  // What the delete was actually protecting is the comparison — two hosts that both write nothing
+  // agree perfectly on last run's pixels — so the *images* still go, and only they.
+  cli.remove(dir + "/js.ppm", false).wait();
+  cli.remove(dir + "/native.ppm", false).wait();
 
   // One build, both hosts. `--allow-write` because the program writes the image it is asked for.
   Exec built = cli.exec(wac, string[]("build", ENTRY, "-o", stem, "--allow-write", "--quiet"),
@@ -163,41 +174,17 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
           "the two hosts disagree at byte " + itoa(first) + ": javascript " + itoa(a[first]) +
           ", native " + itoa(b[first]));
 
-  // The images go; the module, its manifest and the compiled artefact stay, because they are what
-  // makes the next run 20ms rather than three seconds. Artefacts older than this build are last
-  // run's, and a run that changed the program leaves one behind for every change if nobody sweeps.
+  // **The images go; the build stays.** Removing the directory used to take the compiled artefact
+  // with it — cranelift spends about three seconds producing one and twenty milliseconds reusing it —
+  // so this test recompiled a module whose bytes had not changed, every run. The artefact no longer
+  // lives here at all: `native/src/main.rs` keeps compiled modules in one shared directory keyed by
+  // the wasm's own bytes, and sweeps it, so what stays in `.cache` is the module and its manifest.
+  // The pixels are what must not survive a run, and they do not.
   cli.remove(jsOut, false).wait();
   cli.remove(nativeOut, false).wait();
-  pruneStale(cli, dir);
   return t.report();
 }
 
-/**
- * Every compiled artefact in `dir` but the newest, which is the one this run used.
- *
- * **Not "older than the module just built", which is what this said first and was wrong.** `wac build`
- * rewrites the `.wasm` every run so its mtime is always now, while a cache *hit* does not touch the
- * artefact at all — so that rule deleted the very file it was keeping, and the test alternated
- * between 0.7s and 3.7s. Newest-wins has no such hole: a run that changed the program writes a new
- * artefact and last run's goes, and a run that changed nothing keeps the one it just hit.
- */
-void pruneStale(Cli cli, string dir) {
-  string[]? names = cli.readDir(dir).wait();
-  if (names is null) { return; }
-  string[] here = names!;
-  i64 newest = 0 as i64;
-  for (i32 i = 0; i < here.len(); i++) {
-    if (here[i].indexOf(".cwasm-") < 0) { continue; }
-    Stat s = cli.stat(dir + "/" + here[i]).wait();
-    if (s.exists && s.modifiedMillis > newest) { newest = s.modifiedMillis; }
-  }
-  for (i32 i = 0; i < here.len(); i++) {
-    if (here[i].indexOf(".cwasm-") < 0) { continue; }
-    string path = dir + "/" + here[i];
-    Stat s = cli.stat(path).wait();
-    if (s.exists && s.modifiedMillis < newest) { cli.remove(path, false).wait(); }
-  }
-}
 
 /** `bytes/src/slice.wac`'s `slice`, kept local so this file imports one package fewer. */
 u8[] sliceOf(u8[] s, i32 from, i32 to) {

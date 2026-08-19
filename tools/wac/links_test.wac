@@ -51,7 +51,7 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "../../packages/platform/src/platform.wac";
-import { hashString } from "../../packages/std/src/hash.wac";
+import { hashString } from "core/hash.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 // ── the corpus ───────────────────────────────────────────────────────────────

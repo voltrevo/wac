@@ -3978,7 +3978,7 @@ fn dispatch(
             // the ticket in the same breath, so a `Pending<Exec>` on this host was a promise of
             // something that had already happened — three concurrent `sleep 1` were 3013ms here
             // against 1009ms for the same program on the Deno host, which dispatches and returns at
-            // once. Issue 0208, held by `packages/platform/test/wac/exec_test.wac`. The lost overlap
+            // once. Issue 0211, held by `packages/platform/test/wac/exec_test.wac`. The lost overlap
             // was the smaller half: a ticket that exists only after the work is over cannot be
             // watched by `waitAny`, so a child that wedged had nothing bounding it.
             let path = read_string(scope, args.get(1));
@@ -5067,7 +5067,7 @@ fn slots_of(_m: &Manifest) -> HashMap<String, usize> {
 /// `Cap::Exec`.
 ///
 /// Lifted out so the ticket can be handed back before any of this happens; see the note there and
-/// issue 0208. Nothing in here touches the v8 heap, which is what makes it liftable at all.
+/// issue 0211. Nothing in here touches the v8 heap, which is what makes it liftable at all.
 fn run_host_program(path: String, argv: Vec<String>, stdin: Vec<u8>) -> Answer {
     let mut cmd = std::process::Command::new(&path);
     cmd.args(&argv)

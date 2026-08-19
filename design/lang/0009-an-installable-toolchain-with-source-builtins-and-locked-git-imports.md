@@ -169,7 +169,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | --- | --- |
 | 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
 | 2. de-duplicate `core` (D3) | **done** (2026-08-18). `core/read.wac` and `core/jsx.wac` are the source; `deno task gen:core` writes `compiler/wacCore.ts` and `packages/wacc/src/coretext.wac`, and `--check` fails when either drifts. The omission is expressed by *which file a declaration is in*, so the reference gets `read.wac` alone — see below, and `core/README.md` |
-| 3. `core` and `std` as embedded trees (D3, D4) | not started — `packages/std` is `hash, map, option, result, vec` and moves whole |
+| 3. `core` and `std` as embedded trees (D3, D4) | **`core` is a tree; `std` is untouched** (2026-08-18). `core/` holds `read` and `jsx` as the root and `option`, `result`, `hash`, `map` as siblings, each its own module reached as `"core/option.wac"`, with its own tests under `core/test/` and `deno task coverage:core`. `packages/std/src` is down to `vec.wac`, whose 64 importers are the last move — and the one that retires that package. The seam is in three resolvers and both compilers; see below. `std` as the *capability* tree (D4's half: `Core`, `Cli`, filesystem, network) has not been started |
 | 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
 | 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | not started — see below |
@@ -204,11 +204,43 @@ That makes step 2 larger than it reads and couples it to how omissions are repre
 `compiler/README.md`'s table today. Worth settling that before writing the generator, because the
 generator is where the answer gets encoded.
 
+*(2026-08-18: **every addition to `SIBLINGS` needs `seed:bootstrap`, not `seed`.** The seed carries
+its own copy of the list, so a compiler that does not yet know `core/map.wac` is a built-in resolves
+it against the importing file's directory and reports `cannot read packages/fs/src/core/map.wac`. It
+cannot build its own successor. `seed:bootstrap` goes through the reference, which has the
+regenerated list, and then the normal path works again. Twice now, and it is a property of the
+design rather than a mistake — worth knowing before the third.)*
+
 *(2026-08-18: settled and built. **The file is the unit of omission** — `core/read.wac` goes to both
 compilers, `core/jsx.wac` to wacc alone, and `tools/genCore.ts` holds the two lists. The alternative
 was a marker inside one shared file, which is a third thing to invent, to parse and to keep true for
 a distinction a directory already draws; and D3 makes `core` a source tree regardless, so this is on
 that path rather than beside it.*
+
+*(2026-08-18, later: **the concatenation was not the cost, and this paragraph guessed wrong.**
+Measured by changing it — one string literal per file instead of one per line — regenerating and
+reseeding: the generated wac shrank 10,442 to 8,008 bytes and the seed moved 800,077 to 798,974.
+**1,103 bytes, 0.1%.** So the per-line form is reverted, because the reason it was chosen still
+holds — a one-line change to `core/` stays a one-line diff in a generated file that is checked in —
+and it costs almost nothing.*
+
+*(2026-08-18, third measurement, and it corrects the one below: **the text costs about 2.8x, not
+about 1x.** `hash` and `map` moved with the seam already paid, so their delta is purely text —
+11,033 bytes of source against **+31,096 bytes of seed**, 800,077 to 831,173. The paragraph below
+guessed linear from a delta that was mostly one-off machinery, which was the wrong inference from
+the right observation. `vec` at 5,934 bytes should therefore cost about 16 KB, and the whole of
+`packages/std` in `core` is roughly 9% on a seed that began this session at 777 KB.*
+
+*It is not the concatenation — that was measured and reverted at 0.1%. So it is what a wasm module
+costs to carry a string literal: the bytes, plus the code that materialises them. Worth knowing
+before `core` grows past collections, and worth measuring again rather than extrapolating, since
+this is the second extrapolation in this paragraph and the first was wrong.)*
+
+*Which relocates the question. The 5.9 KB step 2 added, and the 17 KB step 3's first move added, are
+mostly the **seam** — `coreFile`'s dispatch, `isBuiltinSpec`, `sourceOf` and `resolveFrom` — which is
+one-off and already paid. The text itself is close to linear. `vec`, `map` and `hash` are 16,967
+bytes between them and should cost about that, not a multiple of it. Worth re-measuring after the
+next move rather than trusting this sentence too.)*
 
 *Two things worth knowing before step 3 does the same for `std`. The reference's embedded text is
 **byte-identical** to what it replaced, which is the check worth having — the reference sees exactly

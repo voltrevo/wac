@@ -1977,7 +1977,7 @@ fn dispatch(
             // in the same breath, which made a `Pending<Exec>` on this host a promise of something
             // that had already happened — while the other three hosts dispatch and return at once
             // (`packages/platform/host/respond.ts`). Three concurrent `sleep 1` were three seconds
-            // here and one on Deno: issue 0208, and `packages/platform/test/wac/exec_test.wac` is
+            // here and one on Deno: issue 0211, and `packages/platform/test/wac/exec_test.wac` is
             // where it is held. The second half of what it cost is worse than the lost overlap: a
             // ticket that only exists after the work is over cannot be watched by `waitAny`, so a
             // wedged child had nothing bounding it.
@@ -2790,7 +2790,7 @@ fn write_raw(bytes: &[u8], to_stderr: bool) -> bool {
 /// thing would undo the distinction the capability list is built on.
 ///
 /// Lifted out of the capability call so the ticket can be handed back before any of this happens;
-/// see the note at `Cap::Exec` and issue 0208. Nothing in here reads wasm memory, which is what
+/// see the note at `Cap::Exec` and issue 0211. Nothing in here reads wasm memory, which is what
 /// makes it liftable at all.
 fn run_host_program(path: String, argv: Vec<String>, stdin: Vec<u8>) -> Outcome {
     // An argument *vector*, never a shell line: a value containing a space or a semicolon

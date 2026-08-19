@@ -1,4 +1,4 @@
-# 0208 — `Cli.exec` is synchronous on the native host and asynchronous on the other three
+# 0211 — `Cli.exec` is synchronous on the native host and asynchronous on the other three
 
 - **Status:** closed
 - **Reported by:** agent-c
@@ -91,9 +91,11 @@ children that never started cannot pass it by finishing instantly.
 `wac build`s, four at a time: **9.5s to 3.5s**. It is bounded at four because each is a compiler
 holding a program's graph: 447 MB resident one at a time, 833 MB at four.
 
-## Numbered 0206 until the merge
+## Numbered 0206, then 0208, until the merges
 
-Another agent took 0206 and 0207 for two datagram issues in the same hours, and 0206 there is the
+Twice: another agent took 0206 and 0207 for two datagram issues in the same hours, and by the time
+this was renumbered to 0208 they had pushed a 0208 of their own. The rule that settles it is which
+one reached the bare repo first, and both times that was theirs. 0206 there is the
 **same shape as this one**: `receiveFrom` blocks at the call, so a datagram read cannot be
 time-bounded. Two capabilities, two hosts, one mistake — a ticket handed back after the work is over
 is not a ticket. Worth reading together.

@@ -154,7 +154,7 @@ export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, C
  *
  * **It did not, on one host of four.** `native/src/main.rs` ran the child to completion inside the
  * capability call and handed back a ticket that was already settled — 3006ms here against 1009ms for
- * the same program on the Deno host, which is issue 0208 — and 0206, filed the same day by another
+ * the same program on the Deno host, which is issue 0211 — and 0206, filed the same day by another
  * agent, is `receiveFrom` with the same fault. Two things came with it: no test that
  * shells out could overlap its oracle, and a child that wedged had no ticket to bound, since
  * `waitAny` needs a ticket that exists while the work is still running.

@@ -15,7 +15,7 @@
 // and WasmGC arrays are the only allocation wac gives cheaply. Deletion is backward-shift,
 // not tombstones, so a table that is filled and emptied repeatedly does not degrade.
 
-import { Option } from "./option.wac";
+import { Option } from "core/option.wac";
 
 /**
  * One slot's contents.

@@ -21,9 +21,9 @@
 // Distinctness is counted with a `Map` built on an **identity** hash, deliberately: using `hashI32` to
 // check `hashI32` would be an oracle made of the thing under test, and a `Map` is correct under any hash.
 
-import { T } from "../../../wactest/src/assert.wac";
-import { Map } from "../../src/map.wac";
-import { hashI32, hashI64, hashBytes, hashString } from "../../src/hash.wac";
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Map } from "core/map.wac";
+import { hashI32, hashI64, hashBytes, hashString } from "core/hash.wac";
 
 /** The key itself, so the set used for counting cannot share a fault with what it is measuring. */
 i32 identity(i32 k) { return k; }

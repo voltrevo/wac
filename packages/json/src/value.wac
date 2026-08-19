@@ -24,9 +24,9 @@
 // allocating a `string` per token. The edge is where they become text —
 // `JsonMember.keyStr()`, `JsonObject.getStr()`.
 
-import { Map } from "../../std/src/map.wac";
-import { Option } from "../../std/src/option.wac";
-import { hashBytes, bytesEq } from "../../std/src/hash.wac";
+import { Map } from "core/map.wac";
+import { Option } from "core/option.wac";
+import { hashBytes, bytesEq } from "core/hash.wac";
 
 export enum JsonValue {
   Null,

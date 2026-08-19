@@ -13,7 +13,7 @@ import { classify, WAC_BIN, wacTestArgs } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";
 
 /** A file with several passing tests and no host oracle, so every code below is reachable. */
-const SUBJECT = "packages/std/test/wac/map_test.wac";
+const SUBJECT = "core/test/map_test.wac";
 /** A file whose tests all take an oracle the native host cannot supply. */
 const ORACLE_ONLY = "packages/tor/test/wac/votestatus_test.wac";
 

@@ -12,7 +12,7 @@ import {
   type MatchArm,
 } from "./wacParse.ts";
 import { wacIntLit } from "./wacIntLit.ts";
-import { CORE } from "./wacCore.ts";
+import { CORE, isBuiltinSpecifier } from "./wacCore.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -171,12 +171,17 @@ export type ResolveResult = {
  * relative to, and a source inside a provider cannot climb out of one it never entered.
  */
 function importKey(baseFile: string, imp: { path: string; prefix?: string }): string {
+  // **A built-in is its own key.** `core/option.wac` is a module inside the compiler, so joining it
+  // to the importing file's directory would look for packages/std/src/core/option.wac — and the
+  // failure surfaces as *'Option' is not generic*, because the declaration was never found and a
+  // stand-in was. Three resolvers have to agree about this; `isBuiltinSpecifier` is the one answer.
+  if (imp.prefix === undefined && isBuiltinSpecifier(imp.path)) return imp.path;
   if (imp.prefix === undefined) return resolvePath(baseFile, imp.path);
   return imp.path === "" ? imp.prefix : `${imp.prefix}.${imp.path}`;
 }
 
 /** Resolve a relative import path against an absolute base path. */
-function resolvePath(baseFile: string, rel: string): string {
+export function resolvePath(baseFile: string, rel: string): string {
   // baseFile is like "/dir/file.wac" or "dir/file.wac"
   const dir = baseFile.includes("/")
     ? baseFile.slice(0, baseFile.lastIndexOf("/"))

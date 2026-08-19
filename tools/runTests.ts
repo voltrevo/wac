@@ -82,7 +82,7 @@
 
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 import { killedLaneNote } from "./killedLane.ts";
-import { exclusiveTests, heavyTests, isWacTest, laneSplit, wacTestDirs, wacTestFiles }
+import { exclusiveTests, heavyTests, isWacTest, laneSplit, wacLaneDirs, wacTestDirs, wacTestFiles }
   from "../harness/testLane.ts";
 import { clearWarnings, warningsSoFar } from "./docCheck.ts";
 import { takeSuiteSlot } from "./suiteGate.ts";
@@ -665,7 +665,12 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   //
   // **Each block is printed whole when its directory finishes**, rather than inherited, because four
   // workers writing to one terminal interleave `── file` headers with the failures they belong to.
-  const all = await wacTestDirs("packages");
+  // **`core/` as well as `packages/`.** The built-in tree became a source tree with tests of its own
+  // in `design/lang/0009` step 3, and it is deliberately not under `packages/` — it ships inside the
+  // compiler. `tools/lane.test.ts` caught the omission the moment it existed: a wac test the Deno
+  // driver registers and this lane does not walk runs in neither lane, which is the one way the
+  // suite gets quietly smaller.
+  const all = await wacLaneDirs();
   // **A target narrows this lane too, and it did not before.** `deno task test packages/tty/` ran
   // every wac test in the repository — 266s of unrelated work behind a two-second target — because the
   // lane's path was the literal string `packages/`. A target that names no wac directory says so rather
