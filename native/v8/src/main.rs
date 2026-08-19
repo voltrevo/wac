@@ -844,15 +844,26 @@ fn test_module_key(entry: &str, sources: &[(String, Vec<u8>)], flags: &[String],
 /// reaped, which is every `Cli.exec` — they wait — so a test that spends its time in `ssh` or `deno` is
 /// still counted. Read from `/proc/self/stat` rather than through a crate: fields 14-17, after the
 /// comm field, which can itself contain spaces and is therefore skipped by its closing parenthesis.
-fn cpu_millis() -> u128 {
-    let Ok(text) = std::fs::read_to_string("/proc/self/stat") else { return 0 };
-    let Some(after) = text.rsplit_once(')') else { return 0 };
+///
+/// **A child's CPU is charged when it is *reaped*, not while it runs**, and that is why the two halves
+/// are reported apart. A test that leaves a daemon running — `echod_test.wac` starts Deno peers — hands
+/// its CPU to whichever file happens to reap it, and the suite duly charged 49.1s to
+/// `v8host_test.wac`, the last file of that chunk, which costs 1.6s when run on its own. Split, that
+/// reads as "0.4s here and 48.7s in children" and the reader can see it is not v8host's.
+///
+/// It is also worth knowing what this does *not* fix: it says nothing about **waiting**. Four copies of
+/// one chunk put `echod_test.wac` at 2.0-5.4s of CPU against 33.6-97.5s of wall, all of it blocked on a
+/// port — no swapping, ten major faults in the whole run. That is why wall is printed beside it rather
+/// than dropped.
+fn cpu_millis() -> (u128, u128) {
+    let Ok(text) = std::fs::read_to_string("/proc/self/stat") else { return (0, 0) };
+    let Some(after) = text.rsplit_once(')') else { return (0, 0) };
     let fields: Vec<&str> = after.1.split_whitespace().collect();
-    // `after.1` starts at field 3 (state), so utime is index 11 through cstime at 14.
-    let ticks: u64 = (11..=14).filter_map(|i| fields.get(i)?.parse::<u64>().ok()).sum();
+    // `after.1` starts at field 3 (state), so utime is index 11 and cstime index 14.
+    let at = |i: usize| fields.get(i).and_then(|f| f.parse::<u64>().ok()).unwrap_or(0);
     // `sysconf(_SC_CLK_TCK)` is 100 on every Linux this runs on, and getting it right matters less
     // than being consistent: the number is only ever compared with another from the same machine.
-    (ticks as u128) * 10
+    ((at(11) + at(12)) as u128 * 10, (at(13) + at(14)) as u128 * 10)
 }
 
 /// How many built modules the shared directory keeps.
@@ -1335,11 +1346,11 @@ fn test_command(rest: &[String]) -> i32 {
     // **Ranked by CPU rather than by wall**, for the reason `cpu_millis` carries: four of these run at
     // once and the wall time of a process-heavy file is mostly its neighbours. Both are printed, since
     // wall is what a person waited and CPU is what the file is answerable for.
-    let mut cost: Vec<(String, u128, u128)> = Vec::new();
+    let mut cost: Vec<(String, u128, u128, u128)> = Vec::new();
     for (i, f) in files.iter().enumerate() {
         println!("── {f}");
         let began = std::time::Instant::now();
-        let cpu_began = cpu_millis();
+        let (self_began, child_began) = cpu_millis();
         let code = match &built[group_of[i]] {
             Some(((bytes, text, manifest, _), carried)) if carried.contains(&i) => run_as_with(
                 manifest,
@@ -1362,7 +1373,13 @@ fn test_command(rest: &[String]) -> i32 {
                 build_and_call(&args, Entry::Tests)
             }
         };
-        cost.push((f.clone(), began.elapsed().as_millis(), cpu_millis().saturating_sub(cpu_began)));
+        let (self_now, child_now) = cpu_millis();
+        cost.push((
+            f.clone(),
+            began.elapsed().as_millis(),
+            self_now.saturating_sub(self_began),
+            child_now.saturating_sub(child_began),
+        ));
         match code {
             0 => ok += 1,
             3 => {
@@ -1429,19 +1446,22 @@ fn test_command(rest: &[String]) -> i32 {
     // is a question about individual files. One second is the floor because below it a ranking is
     // noise, and the count under the floor is stated so this cannot read as "everything else is fast"
     // when it means "nothing else reached the floor".
-    let mut slow: Vec<&(String, u128, u128)> = cost.iter().filter(|(_, _, cpu)| *cpu >= 1000).collect();
+    let mut slow: Vec<&(String, u128, u128, u128)> =
+        cost.iter().filter(|(_, _, mine, kids)| mine + kids >= 1000).collect();
     if files.len() > 1 && !slow.is_empty() {
-        slow.sort_by(|a, b| b.2.cmp(&a.2));
+        slow.sort_by(|a, b| (b.2 + b.3).cmp(&(a.2 + a.3)));
         let under = cost.len() - slow.len();
         println!();
         println!(
             "   {} file(s) cost a second or more of CPU to run — the other {under} did not:",
             slow.len()
         );
-        for (f, ms, cpu) in slow.iter().take(6) {
+        for (f, ms, mine, kids) in slow.iter().take(6) {
             println!(
-                "     {:>6} cpu {:>6} wall  {f}",
-                format!("{:.1}s", *cpu as f64 / 1000.0),
+                "     {:>6} cpu ({:>5} here, {:>5} in children) {:>6} wall  {f}",
+                format!("{:.1}s", (*mine + *kids) as f64 / 1000.0),
+                format!("{:.1}s", *mine as f64 / 1000.0),
+                format!("{:.1}s", *kids as f64 / 1000.0),
                 format!("{:.1}s", *ms as f64 / 1000.0)
             );
         }

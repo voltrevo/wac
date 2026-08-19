@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
 | [0215](open/0215-a-socket-can-only-be-closed-outright-so-a-wac-client-cannot-say-it-is-done-speaking.md) | a wac program can `closeSocket` but cannot half-close, so a client that must signal EOF and then read the reply has no call for it; `closeFeed` is the same thing for a child's stdin and its doc comment makes the argument, with the same `wc` example | missing feature | not implemented |
 | [0214](open/0214-an-opt-in-test-has-been-red-and-four-of-its-seven-cases-are-wrong.md) | `nativeBinary.test.ts` fails 3 of 7 — 4 once the first three are fixed — and nothing noticed — it is opt-in and nobody opts in; two are defects in the test, one is the 18-byte pipeline difference `seed.sh` already documents | bug | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
@@ -69,11 +70,9 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-222 issues, 165 closed.
+223 issues, 165 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
 thirteen numbers used twice and five issues written in a third header format — neither of
 which anything would have noticed, because the rows above happened to be right.
-
-220 issues, 165 closed.
