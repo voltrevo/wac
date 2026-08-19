@@ -470,7 +470,7 @@ file by file.
 **The two runners agree, file by file.** `packages/wacc/test/nativeBinary.test.ts` runs every one of
 those files both ways — `wac test` and the module's `test*` exports called directly under Deno —
 and compares the pass and fail counts: 354 tests across 53 files, no disagreement. That is the same
-check `v8host.test.ts` makes for programs, applied to tests, and it is what makes running them
+check `v8host_test.wac` makes for programs, applied to tests, and it is what makes running them
 natively worth anything.
 
 The rest divide into two honest nothings, and the message says which: a `*_probe.wac` is a driver for
