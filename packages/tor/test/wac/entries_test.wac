@@ -21,6 +21,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, Stat, Pending } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -47,6 +48,16 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
  * the whole suite's work done twice. The list is the cost of the narrower check, and
  * `tools/wac/programs.wac` is what would notice a `main` that is in neither.
  */
+/** `packages/tor/src/relayd.wac` → `relayd`, which names its build directory. */
+string stemOf(string path) {
+  i32 from = 0;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { from = i + 1; } }
+  string name = path.slice(from, path.len());
+  return name.len() > 4 && name.slice(name.len() - 4, name.len()) == ".wac"
+    ? name.slice(0, name.len() - 4)
+    : name;
+}
+
 string[] entries() {
   return string[](
     "packages/tor/src/app.wac",
@@ -82,43 +93,22 @@ export string test_every_entry_file_compiles(Core core, Cli cli) {
   // A floor, because a list that emptied would leave this reporting a clean sweep of nothing.
   t.isTrue(es.len() >= 10, "the entry list still has entries: " + itoa(es.len()));
 
-  // **Four at a time, because a ticket is a thing that has been asked for.** Thirteen full compiles
-  // one after another were 9.5s and the second-largest test in the lane, with a machine that has
-  // cores to spare doing one at a time. `cli.exec` hands back a `Pending<Exec>` and every host now
-  // starts the child before returning it — that was not true of the two native hosts until issue
-  // 0211, which is what made this list serial however it was written.
+  // **Built once and kept, which is what the question actually needs.** This asks whether every entry
+  // *compiles*, and an entry whose own files have not changed since the last successful compile still
+  // does — so `wactest/src/built.wac` keeps each one and rebuilds only what moved. The artefact on disk
+  // is the evidence; a missing one is a failure below.
   //
-  // Four rather than thirteen, and the bound is about memory rather than cores: each of these is a
-  // compiler holding a whole program's graph, and three agents share this machine. **Measured, as the
-  // peak resident set of every `wac` process while this ran: 447 MB one at a time, 833 MB at four.**
-  // Thirteen at once would be some way past two gigabytes, on a machine with 11 GB and about 6 free.
-  // Four buys most of the wall clock there is to buy and the rest would cost memory the machine is
-  // already short of.
-  //
-  // **7.4s at width four, re-measured 2026-08-19** — it was 3.5s when this was written, against 9.5s
-  // serial. Nothing here changed: the entries grew, and `packages/platform` becoming an embedded `std`
-  // tree put more of the world into every one of them. The floor is 0.0s now, since a lone test file's
-  // module is cached (`issues/system/0204`), so all of this is the thirteen compiles. Caching *those*
-  // is not available and the issue says why: it would make the determinism tests vacuous.
-  //
-  // **Each one writes its own output.** A shared `-o` would have thirteen compilers writing one path
-  // at once, and the failure would be a corrupt artefact rather than a race anything reports.
-  i32 WIDTH = 4;
-  for (i32 base = 0; base < es.len(); base = base + WIDTH) {
-    i32 n = es.len() - base < WIDTH ? es.len() - base : WIDTH;
-    Pending<Exec>[] ps = Pending<Exec>[n]();
-    for (i32 k = 0; k < n; k++) {
-      ps[k] = cli.exec(binary(cli),
-                       string[]("build", es[base + k], "-o", work + "/out" + itoa(k),
-                                "--allow-read", "--allow-write"),
-                       u8[0]());
-    }
-    for (i32 k = 0; k < n; k++) {
-      Exec r = ps[k].wait();
-      t.isTrue(r.ran(), es[base + k] + ": the compiler would not start — " + r.error);
-      if (!r.ran()) { continue; }
-      t.eqI32(r.status, 0, es[base + k] + " did not compile:\n" + string.fromBytes(r.stderr));
-    }
+  // It was thirteen full compiles every run, four at a time: **24.0s of CPU, the most expensive file in
+  // the lane**, for programs nobody had touched. Four rather than thirteen at once was a memory bound —
+  // each is a compiler holding a whole program's graph, measured at 447 MB one at a time and 833 MB at
+  // four, on a machine with 11.9 GB that three agents share — and that bound still applies to the cold
+  // case, which is now serial. A cold pass is slower than it was; every other pass is the price of
+  // asking, and `tor`'s sources change on the days somebody works in `tor`.
+  for (i32 i = 0; i < es.len(); i++) {
+    string mod = builtProgram(cli, es[i], "torentry-" + stemOf(es[i]),
+                              string[]("--allow-read", "--allow-write"));
+    t.isTrue(cli.stat(mod).wait().exists,
+             es[i] + " did not compile — see " + mod + " and the build's own message above");
   }
 
   Change gone = cli.remove(work, true).wait();
