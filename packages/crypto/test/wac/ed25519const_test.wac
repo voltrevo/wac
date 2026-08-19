@@ -16,7 +16,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { feEquals, feMul, feMulSmall, feOne, feSub } from "../../src/field25519.wac";
 import { curveD, curveD2, curveDDerived, curveD2Derived, ed25519PublicKey, ed25519Sign,
-         ed25519Verify } from "../../src/ed25519.wac";
+         ed25519Verify, ptBase, ptBaseDerived, sqrtM1Used, sqrtM1Derived, Point }
+  from "../../src/ed25519.wac";
 
 /** The literals, reached the only way a test can: through what uses them. */
 i64[] dFromTheCurve() {
@@ -64,6 +65,38 @@ export string test_every_limb_matches() {
     t.isTrue(used2[i] == d2[i],
              "2d limb " + itoa64(i as i64) + ": the constant is " + itoa64(used2[i]) +
              " and the definition gives " + itoa64(d2[i]));
+  }
+  return t.report();
+}
+
+/**
+ * The other two constants that stopped being derived per call: sqrt(-1) and the base point.
+ *
+ * `recoverX` reaches sqrt(-1) once per decoded point and `ptBase` was an inversion plus a `recoverX`
+ * per signature — both for values that never change. The derivations are still in the source and this
+ * is where they run: **the base point's recovery code is exercised here, on every test run**, which is
+ * the property its comment claims and the reason it was derived in the first place.
+ */
+export string test_sqrt_minus_one_and_the_base_point_match_their_derivations() {
+  T t = T.create();
+  i64[] used = sqrtM1Used();
+  i64[] derived = sqrtM1Derived();
+  t.eqI32(used.len(), 10, "sqrt(-1) has ten limbs");
+  for (i32 i = 0; i < 10; i++) {
+    t.isTrue(used[i] == derived[i],
+             "sqrt(-1) limb " + itoa64(i as i64) + ": the constant is " + itoa64(used[i]) +
+             " and the definition gives " + itoa64(derived[i]));
+  }
+
+  Point b = ptBase();
+  Point d = ptBaseDerived();
+  for (i32 i = 0; i < 10; i++) {
+    t.isTrue(b.x[i] == d.x[i],
+             "base x limb " + itoa64(i as i64) + ": " + itoa64(b.x[i]) + " against " + itoa64(d.x[i]));
+    t.isTrue(b.y[i] == d.y[i],
+             "base y limb " + itoa64(i as i64) + ": " + itoa64(b.y[i]) + " against " + itoa64(d.y[i]));
+    t.isTrue(b.t[i] == d.t[i],
+             "base t limb " + itoa64(i as i64) + ": " + itoa64(b.t[i]) + " against " + itoa64(d.t[i]));
   }
   return t.report();
 }

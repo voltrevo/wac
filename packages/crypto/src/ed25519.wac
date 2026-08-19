@@ -91,11 +91,26 @@ export i64[] curveD2Derived() { return feMulSmall(curveDDerived(), 2); }
  * for exactly those y whose candidate root needed correcting — about half of them. The
  * base point was not one of them, and neither was one of RFC 8032's three public keys,
  * so signing was perfect and verification failed two times in three.
+ *
+ * **Written out since 2026-08-19, for the reason `curveD` above gives**: `recoverX` calls this once
+ * per decoded point, and an exponentiation is about as expensive as an inversion — two of them in
+ * every verification, for a value that never changes. The paragraph above is why the derivation is
+ * still here and why the test compares against it rather than against a second copy of the limbs:
+ * the exponent is the part that can be quietly wrong, and it is checked, once.
  */
-i64[] sqrtM1() {
+const i64[] SQRT_M1_LIMBS = i64[](
+  -32595792, -7943725, 9377950, 3500415, 12389472, -272473, -25146209, -2005654, 326686, 11406482);
+
+i64[] sqrtM1() { return feCopy(SQRT_M1_LIMBS); }
+
+/** sqrt(-1) from its definition, for the test that holds the limbs above honest. */
+export i64[] sqrtM1Derived() {
   i64[] two = feMulSmall(feOne(), 2);
   return feMul(feSquare(fePow22523(two)), two);
 }
+
+/** The constant `recoverX` uses, for that same test. */
+export i64[] sqrtM1Used() { return sqrtM1(); }
 
 // ── Points ────────────────────────────────────────────────────────────────────
 
@@ -113,11 +128,29 @@ export Point ptIdentity() { return Point(feZero(), feOne(), feOne(), feZero()); 
 /**
  * The base point B, whose y-coordinate is 4/5 and whose x is the even root.
  *
- * RFC 8032 §5.1 gives it as a decimal pair; deriving it from y = 4/5 instead means the
- * recovery code is exercised on the one point everything else depends on, so a broken
- * `recoverX` fails immediately and loudly rather than only for received keys.
+ * RFC 8032 §5.1 gives it as a decimal pair; deriving it from y = 4/5 means the recovery code is
+ * exercised on the one point everything else depends on, so a broken `recoverX` fails immediately and
+ * loudly rather than only for received keys.
+ *
+ * **That derivation now runs in a test rather than in every signature.** It was an inversion plus a
+ * `recoverX` — two exponentiations — on a value that never changes, once per sign and twice per
+ * verify. `ptBaseDerived` below is the same expression, and
+ * `packages/crypto/test/wac/ed25519const_test.wac` requires this to equal it, so the recovery code is
+ * still exercised on this point on every test run; what is gone is paying for it per operation.
  */
+const i64[] BASE_X_LIMBS = i64[](
+  -14297830, -7645148, 16144683, -16471763, 27570974, -2696100, -26142465, 8378389, 20764389, 8758491);
+const i64[] BASE_Y_LIMBS = i64[](
+  -26843541, -6710886, 13421773, -13421773, 26843546, 6710886, -13421773, 13421773, -26843546, -6710886);
+
 export Point ptBase() {
+  i64[] x = feCopy(BASE_X_LIMBS);
+  i64[] y = feCopy(BASE_Y_LIMBS);
+  return Point(x, y, feOne(), feMul(x, y));
+}
+
+/** The base point from y = 4/5, which is what the limbs above are a transcription of. */
+export Point ptBaseDerived() {
   i64[] y = feMul(feMulSmall(feOne(), 4), feInvert(feMulSmall(feOne(), 5)));
   i64[] x = recoverX(y, 0);
   return Point(x, y, feOne(), feMul(x, y));
