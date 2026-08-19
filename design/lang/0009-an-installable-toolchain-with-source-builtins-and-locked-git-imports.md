@@ -326,6 +326,40 @@ is.
 Worth writing down because the facade reading is the intuitive one, and taking it would have made
 step 3 block on `issues/lang/0073` for no gain.
 
+### `std`'s half of step 3 costs about 384 KB of seed, and that wants deciding first
+
+`core` is done and cost what it was measured to cost. `std` — D4's capability half — is a different
+size of thing, counted 2026-08-18 with `core` already moved:
+
+| file | bytes | importers |
+|---|---:|---:|
+| `packages/platform/src/platform.wac` | 105,318 | **437** |
+| `packages/platform/src/frame.wac` | 17,206 | 10 |
+| `packages/platform/src/stream.wac` | 14,748 | 28 |
+
+At the **2.8x** the collections measured, 137 KB of source is about **384 KB of seed** — a compiler
+that is 847 KB today would be roughly **1.23 MB**, and the sweep is 437 files rather than 68.
+
+Three things to weigh, and none of them is obvious:
+
+- **The argument for embedding `core` does not transfer unchanged.** `core` is embedded because
+  nominal types must be one thing everywhere and a funcref cannot adapt between two declarations of
+  `Read` — plus the playground has no filesystem. The first half applies to `Core` and `Cli` exactly
+  as it does to `Read`. The second half applies to any embedded tree. So the case is real; it is the
+  *price* that is new, because `platform.wac` is twenty-seven times `option.wac`.
+- **It is mostly one file.** 105 KB of the 137 KB, and 437 of the 475 import edges, are
+  `platform.wac`. Whatever is decided can be decided about that file alone; `frame` and `stream` are
+  38 importers between them and could stay packages without weakening anything D4 says.
+- **2.8x is a measurement of the current representation**, and the one-literal experiment showed the
+  generated shape is not the driver — it is what a wasm module costs to carry a string. If 384 KB is
+  judged too much, that is the thing to attack, and it has not been attacked yet: nothing has tried
+  storing the tree as a single data section read at parse time rather than as per-file literals.
+
+Recommendation: **do not move `platform.wac` on the strength of D4 alone.** Reserve `std/` and the
+specifier, move `frame` and `stream` if they are wanted, and treat the big file as its own decision
+with the 384 KB in front of whoever takes it. Doubling the compiler is not a thing to discover after
+the sweep.
+
 ### The move list, counted
 
 `packages/std` is five files, and they are not equal work — importers, counted 2026-08-18:
