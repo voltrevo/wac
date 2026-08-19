@@ -104,11 +104,20 @@ import { twice } from "@/src/util/math.wac";
 That beats counting `../../..` and, unlike a relative path, it does not change when you move the
 file.
 
-> **A limitation you will hit in the first ten minutes** — `issues/lang/0168a`. `@/` only resolves
-> when you run from the project root, or when the entry is an absolute path. From inside `src/`,
-> `wac run main.wac` reports *no wac.json5 above main.wac* with the manifest one directory up. The
-> upward search walks the relative string and stops at `.`. Until it is fixed: run from the root, or
-> pass an absolute path.
+**Where you run from does not matter, and neither does how you spell the entry.** These are the same
+program and all answer the same thing:
+
+```sh
+$ wac run src/main.wac        # from the project root
+$ cd src && wac run main.wac
+$ cd src && wac run ./main.wac
+$ cd src/util && wac run ../main.wac
+$ cd src/util && wac run /abs/path/src/main.wac
+```
+
+That is `§wac-import-project-4hq7mnv` — `@/` is the project containing the *importing file*, "not the
+directory the compiler was started in". It was not true until `issues/lang/0168a`, where the upward
+search walked the path as typed and so could climb only as far as you had spelled it.
 
 ## Depending on someone else's code
 
@@ -160,14 +169,22 @@ silent download.
 'acme': { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: 'lib/acme' },
 ```
 
+You get that directory and only that directory: code inside it cannot import the rest of the
+repository, by any spelling. That is the point of naming a `subdir` rather than taking the whole
+thing, and it is checked rather than assumed — `issues/lang/0169a`.
+
 ### Names you cannot use
 
 `core`, `core/`, `std` and `std/` are reserved and never appear in a lockfile.
 
-> **Not enforced yet** — `issues/lang/0167a`. A manifest that maps `std/` is accepted, and the
-> mapping is consulted for every name the built-in tree does not already hold. Do not map these; the
-> failure when it is enforced, or when a file is later added to `std/`, is that your program silently
-> changes which code it compiles.
+The whole prefix, not just the names that happen to exist — `std/anything.wac` is refused too, and so
+are `core`, `std`, `core/` and `std/` themselves. `stdlib/`, `corelib/` and `mystd/` are ordinary
+names and stay yours.
+
+```
+$ wac update
+wacfetch: wac.json5 is not valid: code 11 (std/)
+```
 
 ## Building, running and testing
 
