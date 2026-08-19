@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0168a](open/0168a-at-slash-fails-unless-the-entry-is-absolute-or-you-run-from-the-project-root.md) | `cd src && wac run main.wac` reports *no wac.json5 above main.wac* with the manifest one directory up — the upward search walks a relative string and stops at `.` | bug | a compile error on a correct program |
 | [0165a](open/0165a-importing-a-name-from-the-generated-core-module-overflows-waccs-stack.md) | one import line decides whether wacc overflows its stack — same function, same 37-file graph, straight from `coretext.wac` rather than through a re-export | bug | the compiler traps |
 | [0164a](open/0164a-wacc-never-compares-array-types-so-any-array-satisfies-any-slot.md) | any array value satisfies any slot in wacc — argument, assignment, return or field, including a slot that is not an array — so the checker is silent and the engine rejects the module | bug | invalid wasm |
 | [0163](open/0163-one-file-under-two-keys-is-silent-in-the-reference-and-an-invalid-module-in-wacc.md) | one file reached under two keys: the reference reads it twice and runs, wacc's checker stays clean and the engine rejects the module — neither is what D8 says the failure looks like | bug | invalid wasm |
@@ -39,7 +38,7 @@ has been fixed and why.
 
 ## Closed
 
-169 issues, 138 closed.
+169 issues, 139 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

@@ -1,7 +1,7 @@
 # 0168a — `@/` fails unless the entry is absolute or you run from the project root
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — the search is absolute and the answer comes back into the graph's key space
+- **Fixed in:** the commit this line arrived in
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -172,3 +172,28 @@ today because the suite runs at a root.
 ## Workaround
 
 Run from the project root, or pass the entry as an absolute path.
+
+## Fixed, in both compilers
+
+**Option 3 as recommended, and then the part the options list had not seen.** The search now starts
+from an absolute path — `projectRootAbs` in `wacc.wac`, `Deno.cwd()` in `harness/wacFiles.ts` — so it
+climbs past where you were standing. Every row of the table now gives the answer the absolute
+spelling gives, including `../main.wac`, which the `..` guard used to refuse outright.
+
+**That alone gives one file two keys, and two existing cases caught it.** An absolute root makes the
+join absolute while the rest of a relatively-keyed graph is not, so `relativeTo` brings the result
+back — the *result*, not the root, which is the whole trick: it makes `@/src/util/math.wac` and
+`./util/math.wac` land on the same key from either direction.
+
+**And relativising unconditionally breaks two things**, which is the second half and was found the
+same way. A file reached through a mapping lives under its checkout, and a file whose entry was given
+absolutely is absolutely keyed; converting either gives it a second key, and for a mapped file it
+also walks the answer out of the subdirectory it is confined to. So the conversion applies only when
+the importing file is itself relatively keyed. `one_file_reached_two_ways_is_one_module` and the
+in-subdir half of `a_mapped_subdir_cannot_import_outside_itself` are what said so, both of which went
+red on the first attempt.
+
+The guard is `test_a_project_specifier_does_not_depend_on_the_working_directory`: one file, three
+directories, four spellings, **both compilers, asserting the answer 9 rather than agreement** —
+because agreement is what the old behaviour had. Canaried by putting both walks back to lexical: six
+assertions fail, three per compiler.

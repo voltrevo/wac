@@ -20,6 +20,7 @@ import { stringLiteralBytes } from "./emit.wac";
 // Re-exported so the four callers that import them from here keep working; the rule itself
 // lives in a module `emit.wac` can also import, which is `issues/lang/0150`.
 import { resolveFrom as pathResolveFrom, resolveFromIn as pathResolveIn,
+         resolveFromAt as pathResolveAt,
          normalisePath as pathNormalise } from "./path.wac";
 import { isBuiltinSpec as coreIsBuiltinSpec } from "./coretext.wac";
 
@@ -74,4 +75,9 @@ export string normalisePath(string path) { return pathNormalise(path); }
 /** `resolveFrom` for a file whose project root is `root` — `design/lang/0009` D7, see `path.wac`. */
 export string resolveFromIn(string fromPath, string spec, string root) {
   return pathResolveIn(fromPath, spec, root);
+}
+
+/** The same, with the directory relative keys are measured from — `path.wac`'s `relativeTo`. */
+export string resolveFromAt(string fromPath, string spec, string root, string base) {
+  return pathResolveAt(fromPath, spec, root, base);
 }

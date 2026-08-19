@@ -43,7 +43,7 @@ try {
   Deno.exit(2);
 }
 
-const result = wacCompile(files, entry, { roots });
+const result = wacCompile(files, entry, { roots, base: Deno.cwd() });
 if (!result.ok) {
   console.error(wacDiag(result.diagnostics, files));
   Deno.exit(1);

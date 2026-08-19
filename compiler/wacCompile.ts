@@ -37,6 +37,16 @@ export type WacCompileOptions = {
    * no project, which D7 makes a compile error at the import that wanted one.
    */
   roots?: ReadonlyMap<string, string>;
+
+  /**
+   * The directory relative keys are measured from — the working directory, when there is one.
+   *
+   * Only used to bring a `@/` whose root was found *above* that directory back into the graph's own
+   * key space; without it one file gets two keys. Absent for the playground, which has no working
+   * directory and no root above anything. `issues/lang/0168a`, and `relativeTo` in `wacResolve.ts`
+   * carries the argument.
+   */
+  base?: string;
   /**
    * Trap on integer overflow in user-written add, sub and mul. Off by default. Experimental —
    * see `WasmTypeCtx.checked` for what it costs and what depends on wrapping.
@@ -310,7 +320,7 @@ export function wacCompile(
         if (spec === undefined || (item as Import).prefix !== undefined) continue;
         const key = isBuiltinSpecifier(spec)
           ? spec
-          : resolveSpecifier(path, spec, options.roots?.get(path));
+          : resolveSpecifier(path, spec, options.roots?.get(path), options.base);
         // **A built-in this compiler does not carry, refused by name.** `std/platform.wac` is a
         // correct specifier that resolves to nothing here, because the reference frontend has no
         // lambdas and that file uses them — `tools/genCore.ts` holds the measurement. Saying so is
@@ -357,7 +367,7 @@ export function wacCompile(
   if (hasError()) return { ok: false, diagnostics };
 
   // Phase 3: resolve import graph and build flat symbol table
-  const resolveResult = wacResolve(entry, programs, options.roots);
+  const resolveResult = wacResolve(entry, programs, options.roots, options.base);
   for (const e of resolveResult.errors) {
     diagnostics.push({ span: 1, ...e, phase: "resolve", severity: "error" });
   }

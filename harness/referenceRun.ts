@@ -65,7 +65,7 @@ const { files, roots } = await wacFilesWithRoots(entry).catch((e) =>
   }`)
 );
 
-const result = wacCompile(files, entry, { roots });
+const result = wacCompile(files, entry, { roots, base: Deno.cwd() });
 if (!result.ok) {
   // Rendered rather than dumped: when this fails it is usually because the reference and wacc
   // disagree about the driver, and the caller's next move is to read the diagnostic.
