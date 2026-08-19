@@ -1,0 +1,454 @@
+// **A stream, opened by this client, read by a real QUIC server.**
+//
+// Everything before this reads what a server sent or answers a handshake. This is the first thing
+// the client *says* on its own account, and it is what a connection is for. `design/system/0007`
+// step 5.
+//
+// ## The oracle is quinn handing us the bytes back through its own API
+//
+// A `QuicConn`'s incoming-stream reader yields a stream when the peer opens one, and reading it
+// yields the bytes the peer sent. Neither happens unless the packet authenticated, the frame parsed,
+// the stream id was one a client is allowed to open, and flow control allowed the data. So "the
+// server's application code saw these bytes on stream 0" is a much stronger statement than anything
+// this package can check about its own output — and it is checked by an implementation nobody here
+// wrote. `../quicserver.ts` is that server and says why it is a subprocess.
+//
+// ## What is deliberately hardcoded, and why that is the honest shape today
+//
+// The packet number is passed in. There is no connection state in `Client` yet: no next-number
+// counter, no ACK tracking, no retransmission. That is the rest of step 5, and inventing a counter
+// here would be pretending the state exists. What this establishes is the *packet* — that a wac
+// program can put application data on the wire in a form quinn accepts.
+//
+// The client also never acknowledges anything unless a case is about acknowledging, so quinn will
+// retransmit and eventually give up. That is fine for one exchange.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, FileResult, Pending, Socket }
+  from "../../../platform/src/platform.wac";
+import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
+import { ackPacket, applicationPacketNumber, clientFinishedPacket, closeCodeIn, flight,
+         lostThenResent, openApplication, resendAfterAckIsEmpty, streamBytes, streamFinished,
+         streamPacket } from "./hello_probe.wac";
+
+const string SERVER = "packages/quic/test/quicserver.ts";
+const string NAME = "localhost";
+
+u8[] dcid() { return decoded("8394c8f03e515708"); }
+u8[] scid() { return decoded("11223344"); }
+
+string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+// ── The server, and talking to it ─────────────────────────────────────────────
+
+/** A running `quicserver.ts`, or `ok` false with the reason. */
+struct Server {
+  bool ok;
+  string error;
+  string dir;
+  i32 port;
+  Daemon daemon;
+
+  string file(const this, Cli cli, string name) { return readIfPresent(cli, this.dir + "/" + name); }
+}
+
+string readIfPresent(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+void pause(Cli cli) { cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait(); }
+
+Server startServer(Cli cli, string name, bool upper) {
+  string dir = cli.cwd().wait() + "/.cache/quic/" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string line = "deno run -A --unstable-net " + quoted(SERVER) + " " + quoted(dir) +
+                (upper ? " --upper" : "");
+  Daemon d = start(cli, line, dir + "/server.log");
+  if (!d.ok()) { return Server(false, "the QUIC server did not start — " + d.error, dir, -1, d); }
+
+  // Deno takes a moment to boot; the port appears when it is listening.
+  for (i32 i = 0; i < 400; i++) {
+    string ready = readIfPresent(cli, dir + "/ready.json");
+    if (ready != "") {
+      i32 port = numberIn(ready, "port");
+      if (port > 0) { return Server(true, "", dir, port, d); }
+    }
+    pause(cli);
+  }
+  return Server(false, "the QUIC server never published a port — " +
+                       readIfPresent(cli, dir + "/server.log"), dir, -1, d);
+}
+
+void stopServer(Cli cli, Server s) {
+  stop(cli, s.daemon);
+  cli.remove(s.dir, true).wait();
+}
+
+/** The next datagram, bounded. The deadline is on the wait — `issues/system/0206`. */
+u8[] receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
+  Pending<Datagram> p = cli.receiveFrom(sock.handle);
+  if (core.waitAny(i32[](p.id), ms) < 0) {
+    p.drop(p.id);
+    return u8[0]();
+  }
+  Datagram d = p.wait();
+  return d.error == "" ? d.bytes : u8[0]();
+}
+
+/**
+ * The handshake, up to the point where the client may send application data.
+ *
+ * Empty when the server never answered — every caller checks, because everything after this reads
+ * keys derived from the reply.
+ */
+u8[] handshake(Core core, Cli cli, Socket sock, Server s) {
+  cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid(), scid(), NAME)).wait();
+  u8[] reply = receiveWithin(core, cli, sock, 5000);
+  if (reply.len() == 0) { return u8[0](); }
+  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+             clientFinishedPacket(reply, dcid(), scid(), NAME)).wait();
+  return reply;
+}
+
+/** Wait for the server's application to have heard `n` streams. */
+bool heardCount(Cli cli, Server s, i32 n, i32 tries) {
+  for (i32 i = 0; i < tries; i++) {
+    if (countIn(s.file(cli, "streams.json")) >= n) { return true; }
+    pause(cli);
+  }
+  return false;
+}
+
+// ── The tests ─────────────────────────────────────────────────────────────────
+
+export string test_a_real_quic_server_reads_a_stream_this_client_opened(Core core, Cli cli) {
+  T t = T.create();
+  Server s = startServer(cli, "stream-read", false);
+  t.isTrue(s.ok, s.error);
+  if (!s.ok) { stopServer(cli, s); return t.report(); }
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+
+  u8[] reply = handshake(core, cli, sock, s);
+  t.isTrue(reply.len() > 0, "the server did not answer our first flight");
+  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+
+  // **Stream 0 with FIN.** RFC 9000 §2.1 numbers streams by their initiator and directionality in
+  // the low two bits: 0 is the first client-initiated bidirectional stream, which is the one a
+  // client opens first and the only id a server will accept from us here. Packet number 0, in the
+  // application number space, which starts again at zero.
+  u8[] body = ("hello from wac").toBytes();
+  u8[] packet = streamPacket(reply, dcid(), scid(), NAME, 0, body, true, 0);
+  t.isTrue(packet.len() > 0, "the client produced a packet at all");
+  if (packet.len() > 0) {
+    t.eqI32(packet[0] & 0x80, 0, "and it is a short header");
+  }
+  cli.sendTo(sock.handle, "127.0.0.1", s.port, packet).wait();
+
+  t.isTrue(heardCount(cli, s, 1, 200),
+           "the server never saw a stream. The packet authenticated or it did not: the 1-RTT keys " +
+           "come off the master secret at the transcript through the server's Finished, the id is " +
+           "the one the server chose, the packet number is its own space starting at zero, and the " +
+           "first byte's low five bits are header-protected. Any of those wrong is silence.");
+  t.eqStr(string.fromBytes(decoded(firstHeard(s.file(cli, "streams.json")))), "hello from wac",
+          "what the server's application read");
+
+  done(cli, sock, s);
+  return t.report();
+}
+
+export string test_and_answers_on_it_which_this_client_reads_back(Core core, Cli cli) {
+  // The other direction. The server is an echo written against Deno's own QUIC API, so the bytes
+  // coming back have been through quinn's stream machinery rather than being a datagram we
+  // recognise. That is what makes it an answer rather than a reflection of our own frame writer.
+  T t = T.create();
+  Server s = startServer(cli, "stream-echo", true);
+  t.isTrue(s.ok, s.error);
+  if (!s.ok) { stopServer(cli, s); return t.report(); }
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+
+  u8[] reply = handshake(core, cli, sock, s);
+  t.isTrue(reply.len() > 0, "the server did not answer our first flight");
+  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+
+  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+             streamPacket(reply, dcid(), scid(), NAME, 0, ("hello from wac").toBytes(), true, 0))
+     .wait();
+
+  // Read datagrams until one carries stream 0's data. The server also sends NEW_CONNECTION_ID,
+  // acknowledgements and its own HANDSHAKE_DONE, and nothing here tells us which datagram is which
+  // until it is opened — so the loop is the honest shape.
+  string answer = "";
+  bool fin = false;
+  for (i32 i = 0; i < 40 && answer == ""; i++) {
+    u8[] got = receiveWithin(core, cli, sock, 2000);
+    if (got.len() == 0) { continue; }
+    u8[] data = streamBytes(reply, got, dcid(), scid(), NAME, 0);
+    if (data.len() > 0) {
+      answer = string.fromBytes(data);
+      fin = streamFinished(reply, got, dcid(), scid(), NAME, 0);
+    }
+  }
+  t.eqStr(answer, "HELLO FROM WAC",
+          "no datagram carried stream 0's data. Either the server never answered — which would be " +
+          "the request not arriving, and the test above says it does — or the reply did not open, " +
+          "which is the server-direction 1-RTT keys rather than the client's");
+  t.isTrue(fin, "and the server said it was finished with the stream");
+
+  done(cli, sock, s);
+  return t.report();
+}
+
+export string test_an_acknowledgement_the_server_accepts(Core core, Cli cli) {
+  // **A malformed ACK is not ignored.** RFC 9000 §19.3 makes an ACK that acknowledges a packet
+  // number larger than any the peer has sent a `PROTOCOL_VIOLATION`, and a peer that receives one
+  // closes the connection. So "the connection still works afterwards" is a real assertion about the
+  // frame rather than a formality. The second stream is what says the connection is alive: sending
+  // the ACK and asserting nothing would pass with the ACK never having been read at all.
+  T t = T.create();
+  Server s = startServer(cli, "stream-ack", false);
+  t.isTrue(s.ok, s.error);
+  if (!s.ok) { stopServer(cli, s); return t.report(); }
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+
+  u8[] reply = handshake(core, cli, sock, s);
+  t.isTrue(reply.len() > 0, "the server did not answer our first flight");
+  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+
+  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+             streamPacket(reply, dcid(), scid(), NAME, 0, ("first").toBytes(), true, 0)).wait();
+
+  // The server's own 1-RTT packets, and the number of one we certainly saw.
+  //
+  // **Stop at the first one, and do not drain.** Two failures taught this loop its shape and they
+  // pull in opposite directions: breaking on the first read timeout fails when the machine is busy,
+  // and *not* breaking fails worse — an unacknowledged peer retransmits, so reads keep succeeding,
+  // the loop runs to its deadline, and by the time the acknowledgement goes out the connection it
+  // was about is already being torn down. Under-acknowledging is always safe and over-acknowledging
+  // is a PROTOCOL_VIOLATION, so one number we certainly saw is enough. `issues/system/0156`.
+  i32 largest = -1;
+  for (i32 i = 0; i < 40 && largest < 0; i++) {
+    u8[] got = receiveWithin(core, cli, sock, 500);
+    if (got.len() == 0) { continue; }
+    if ((got[0] & 0x80) != 0) { continue; }        // still a long header: handshake traffic
+    i32 n = applicationPacketNumber(reply, got, dcid(), scid(), NAME);
+    if (n > largest) { largest = n; }
+  }
+  t.isTrue(largest >= 0,
+           "the server sent no 1-RTT packet, so there was nothing to acknowledge");
+  if (largest < 0) { done(cli, sock, s); return t.report(); }
+
+  // **The range must actually reach the frame**, checked on packets that are never sent. The keys
+  // come from `reply`, so these two can be built for any `largest` regardless of what the server
+  // did — and at a `largest` above zero an implementation that ignored `firstRange` produces
+  // identical bytes for "this packet alone" and "everything from zero". Without this the fix for
+  // 0156 is untested: on a quiet machine the real `largest` is 0, where the two spellings genuinely
+  // are the same packet.
+  u8[] alone = ackPacket(reply, dcid(), scid(), NAME, 5, 0, 9);
+  u8[] fromZero = ackPacket(reply, dcid(), scid(), NAME, 5, 5, 9);
+  t.isTrue(alone.len() > 0, "the probe built no acknowledgement at all");
+  t.neI32(hexOf(alone) == hexOf(fromZero) ? 1 : 0, 1,
+          "acknowledging one packet and acknowledging everything below it produced the same bytes, " +
+          "so `firstRange` is being ignored — issues/system/0156");
+
+  // `firstRange` 0: **this packet and nothing below it.** The loop above stops at the first 1-RTT
+  // packet it sees, so that number is the only one we can honestly claim.
+  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+             ackPacket(reply, dcid(), scid(), NAME, largest, 0, 1)).wait();
+
+  // Stream 4 is the next client-initiated bidirectional one: the low two bits carry the initiator
+  // and the directionality, so client bidi streams are 0, 4, 8.
+  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+             streamPacket(reply, dcid(), scid(), NAME, 4, ("second").toBytes(), true, 2)).wait();
+
+  bool alive = heardCount(cli, s, 2, 200);
+  if (!alive) {
+    // **Why, not just that.** Nothing arriving is either a server that closed the connection or one
+    // that never got scheduled, and the second happens on a machine three agents share. They differ
+    // on the wire: a peer that closes sends a CONNECTION_CLOSE naming a code. Issue 0149.
+    i64 code = closeSeen(core, cli, sock, reply, 20);
+    t.fail("the connection did not outlive the acknowledgement: heard " +
+           s.file(cli, "streams.json") + ". " +
+           (code >= 0
+              ? "The server closed with transport error " + itoa64(code) + ". 0xa (10) is " +
+                "PROTOCOL_VIOLATION, which an over-generous or malformed ACK provokes — so this is " +
+                "the ACK rather than the streams, and the test above shows a stream arriving alone."
+              : "The server sent no CONNECTION_CLOSE, so it did not refuse anything — it never " +
+                "answered at all. That is a busy machine rather than a protocol failure (issue " +
+                "0149); re-run before reading it as one."));
+  }
+
+  done(cli, sock, s);
+  return t.report();
+}
+
+export string test_a_dropped_datagram_is_survived(Core core, Cli cli) {
+  // `design/system/0007` step 5's second done-when clause, and the one that needs a connection
+  // rather than a packet: resending means putting the same *frames* in a **new** packet with a new
+  // number, because a QUIC packet number is used once — the nonce comes from it, and reusing one
+  // under the same key is the failure that loses the key rather than the packet.
+  //
+  // The loss is real in the only sense a test can make it: the client produced two packets and this
+  // sends the second. Nothing on the wire distinguishes that from a path that dropped the first.
+  T t = T.create();
+  Server s = startServer(cli, "stream-drop", false);
+  t.isTrue(s.ok, s.error);
+  if (!s.ok) { stopServer(cli, s); return t.report(); }
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+
+  u8[] reply = handshake(core, cli, sock, s);
+  t.isTrue(reply.len() > 0, "the server did not answer our first flight");
+  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+
+  u8[][] pair = lostThenResent(reply, dcid(), scid(), NAME, 0, ("survived the drop").toBytes());
+  t.eqI32(pair.len(), 2, "the connection produced a packet and a retransmission of it");
+  if (pair.len() != 2) { done(cli, sock, s); return t.report(); }
+  t.isTrue(pair[0].len() > 0, "the connection produced a first packet");
+  t.isTrue(pair[1].len() > 0, "and a retransmission of it");
+  // **Different bytes, because a different number.** Sending the same packet twice would be reusing
+  // a nonce; this is the check that the retransmission is a new packet rather than a copy, and it is
+  // the difference the far end can never see.
+  t.neI32(hexOf(pair[0]) == hexOf(pair[1]) ? 1 : 0, 1,
+          "the retransmission is byte-identical to the packet it replaces, which means the packet " +
+          "number — and so the AEAD nonce — was reused");
+
+  // The first is thrown on the floor. Only the second goes out.
+  cli.sendTo(sock.handle, "127.0.0.1", s.port, pair[1]).wait();
+
+  t.isTrue(heardCount(cli, s, 1, 200),
+           "the retransmitted frames never reached the server's application. The frames are the " +
+           "same bytes the first packet carried, so this is the new packet: its number, its nonce, " +
+           "or its header protection.");
+  t.eqStr(string.fromBytes(decoded(firstHeard(s.file(cli, "streams.json")))), "survived the drop",
+          "what the server's application read");
+
+  done(cli, sock, s);
+  return t.report();
+}
+
+export string test_and_a_packet_that_was_acknowledged_is_not_resent() {
+  // The other half of surviving loss: resending what already arrived is how a client turns one lost
+  // datagram into a connection that never stops repeating itself. No network needed — the question
+  // is whether the record was retired, and `connection_test.wac` covers the counting around it.
+  T t = T.create();
+  t.eqI32(resendAfterAckIsEmpty(u8[0](), dcid(), scid(), NAME, ("acknowledged").toBytes()), 0,
+          "an acknowledged packet has nothing to resend");
+  return t.report();
+}
+
+export string test_an_ack_past_what_the_server_sent_is_refused(Core core, Cli cli) {
+  // **The canary for the diagnosis above.** That test distinguishes "the server closed" from "the
+  // server never answered" by looking for a CONNECTION_CLOSE — and a signal that has never been seen
+  // firing is a signal that might not fire at all. So this provokes one on purpose.
+  //
+  // RFC 9000 §19.3: acknowledging a packet number larger than any the peer has sent is a
+  // PROTOCOL_VIOLATION. The number here is 1000, which no handshake reaches, so the server has no
+  // choice about it — and the value is not the point, only that it is past what was sent.
+  //
+  // This also pins the premise the other test's *message* rests on. It claims an over-generous ACK
+  // ends the connection; nothing checked that, so if quinn had merely ignored one, the message would
+  // have been sending readers after a cause that was not there.
+  T t = T.create();
+  Server s = startServer(cli, "stream-badack", false);
+  t.isTrue(s.ok, s.error);
+  if (!s.ok) { stopServer(cli, s); return t.report(); }
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) { t.fail("our socket did not bind"); stopServer(cli, s); return t.report(); }
+
+  u8[] reply = handshake(core, cli, sock, s);
+  t.isTrue(reply.len() > 0, "the server did not answer our first flight");
+  if (reply.len() == 0) { done(cli, sock, s); return t.report(); }
+
+  // Everything from 0 through 1000, all of which is a lie: `firstRange` matches `largest` on
+  // purpose here, because claiming the whole range is what this case is provoking.
+  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+             ackPacket(reply, dcid(), scid(), NAME, 1000, 1000, 0)).wait();
+
+  i64 code = closeSeen(core, cli, sock, reply, 40);
+  t.isTrue(code >= 0,
+           "the server accepted an ACK for a packet it never sent, or closed without saying so — " +
+           "either way the CONNECTION_CLOSE the test above relies on did not arrive, and that test " +
+           "cannot tell a refusal from a silence any more");
+  if (code >= 0) {
+    t.eqStr(itoa64(code), "10",
+            "the close carried transport error " + itoa64(code) + " rather than PROTOCOL_VIOLATION");
+  }
+
+  done(cli, sock, s);
+  return t.report();
+}
+
+/** The transport error in the first CONNECTION_CLOSE to arrive, or -1. */
+i64 closeSeen(Core core, Cli cli, Socket sock, u8[] reply, i32 tries) {
+  for (i32 i = 0; i < tries; i++) {
+    u8[] got = receiveWithin(core, cli, sock, 500);
+    if (got.len() == 0) { continue; }
+    if ((got[0] & 0x80) != 0) { continue; }
+    u8[] payload = openApplication(reply, got, dcid(), scid(), NAME);
+    if (payload.len() == 0) { continue; }
+    i64 code = closeCodeIn(payload);
+    if (code >= 0) { return code; }
+  }
+  return -1;
+}
+
+void done(Cli cli, Socket sock, Server s) {
+  if (sock.handle >= 0) { cli.closeSocket(sock.handle); }
+  stopServer(cli, s);
+}
+
+// ── Reading the server's little JSON files ────────────────────────────────────
+
+/** `"key": 123` out of a flat object. -1 when absent. */
+i32 numberIn(string json, string key) {
+  i32 at = json.indexOf("\"" + key + "\"");
+  if (at < 0) { return -1; }
+  string rest = json.slice(at + key.len() + 2, json.len());
+  i32 v = -1;
+  for (i32 i = 0; i < rest.len(); i++) {
+    i32 b = rest.toBytes()[i];
+    if (b >= '0' && b <= '9') { v = (v < 0 ? 0 : v) * 10 + (b - '0'); continue; }
+    if (v >= 0) { break; }
+  }
+  return v;
+}
+
+/** How many strings `{"heard": ["…", "…"]}` holds. */
+i32 countIn(string json) {
+  i32 at = json.indexOf("[");
+  if (at < 0) { return 0; }
+  i32 count = 0;
+  bool open = false;
+  for (i32 i = at; i < json.len(); i++) {
+    string c = json.slice(i, i + 1);
+    if (c == "]") { break; }
+    if (c != "\"") { continue; }
+    open = !open;
+    if (!open) { count = count + 1; }
+  }
+  return count;
+}
+
+/** The first string in that array. */
+string firstHeard(string json) {
+  i32 at = json.indexOf("[");
+  if (at < 0) { return ""; }
+  string rest = json.slice(at, json.len());
+  i32 open = rest.indexOf("\"");
+  if (open < 0) { return ""; }
+  string body = rest.slice(open + 1, rest.len());
+  i32 close = body.indexOf("\"");
+  return close < 0 ? "" : body.slice(0, close);
+}

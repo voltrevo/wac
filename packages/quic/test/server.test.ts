@@ -133,7 +133,7 @@ Deno.test({
     const { certDer, caPem: ca, n, e, d } = await identity(dir);
 
     // Fixed randomness, so a failing run is the same failing run twice — `hello_probe.wac` makes the
-    // same argument about the client, and `stream.test.ts`'s freshness test is where the other
+    // same argument about the client, and `stream_test.wac`'s freshness test is where the other
     // property is checked.
     const scalar = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 11) & 255);
     const random = Uint8Array.from({ length: 32 }, (_, i) => (i * 5 + 23) & 255);
