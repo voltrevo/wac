@@ -5,9 +5,11 @@
 // Each phase runs in order; later phases are skipped on earlier errors.
 
 import { EXTENSIONS, FRONTENDS, frontendFor } from "./wacFrontend.ts";
-import { CORE, isBuiltinSpecifier } from "./wacCore.ts";
+import { CORE, isBuiltinSpecifier, STD_ABSENT } from "./wacCore.ts";
 import type { Import, Program } from "./wacParse.ts";
-import { wacResolve, resolvePath, funcParams, funcReturnType, type ResolveResult } from "./wacResolve.ts";
+import {
+  wacResolve, resolvePath, resolveSpecifier, funcParams, funcReturnType, type ResolveResult,
+} from "./wacResolve.ts";
 import { wacTypeCheck } from "./wacTypeCheck.ts";
 import { wasmBuildBin, wasmBindMeta } from "./wasmBuildBin.ts";
 import type { CoveragePoint } from "./wacEmitFunc.ts";
@@ -25,6 +27,16 @@ import type { WacType } from "./wacParse.ts";
  */
 export type WacCompileOptions = {
   coverage?: boolean;
+  /**
+   * The project root each file sits in, for `@/` — `design/lang/0009` D7.
+   *
+   * **Absent is an ordinary state rather than a caller's oversight.** Finding a root means searching
+   * upwards for a `wac.json5`, which is I/O, and this function does none: it is called from the
+   * playground with a synthetic file map and no filesystem at all. So the caller that already reads
+   * files supplies what it found — `harness/wacFiles.ts` — and a file with no entry here simply has
+   * no project, which D7 makes a compile error at the import that wanted one.
+   */
+  roots?: ReadonlyMap<string, string>;
   /**
    * Trap on integer overflow in user-written add, sub and mul. Off by default. Experimental —
    * see `WasmTypeCtx.checked` for what it costs and what depends on wrapping.
@@ -296,7 +308,28 @@ export function wacCompile(
         if (item.tag !== "import") continue;
         const spec = (item as Import).path;
         if (spec === undefined || (item as Import).prefix !== undefined) continue;
-        const key = isBuiltinSpecifier(spec) ? spec : resolvePath(path, spec);
+        const key = isBuiltinSpecifier(spec)
+          ? spec
+          : resolveSpecifier(path, spec, options.roots?.get(path));
+        // **A built-in this compiler does not carry, refused by name.** `std/platform.wac` is a
+        // correct specifier that resolves to nothing here, because the reference frontend has no
+        // lambdas and that file uses them — `tools/genCore.ts` holds the measurement. Saying so is
+        // the whole point of the list: without it the import is skipped, `Core` and `Cli` come back
+        // undeclared, and the reader is sent to look for a typo in a specifier that is right.
+        if (key in STD_ABSENT) {
+          diagnostics.push({
+            span: 1,
+            phase: "resolve",
+            message:
+              `\`${key}\` is a built-in this compiler does not carry: ${STD_ABSENT[key]}. ` +
+              `The wac compiler (\`packages/wacc\`) has it; \`compiler/README.md\` records the omission.`,
+            file: path,
+            line: item.line ?? 1,
+            col: item.col ?? 1,
+            severity: "error",
+          });
+          continue;
+        }
         if (!(key in CORE.files) || programs.has(key)) continue;
         const frontend = FRONTENDS.get(CORE.extension)!;
         const { program: builtin, errors } = frontend(CORE.files[key], key);
@@ -324,7 +357,7 @@ export function wacCompile(
   if (hasError()) return { ok: false, diagnostics };
 
   // Phase 3: resolve import graph and build flat symbol table
-  const resolveResult = wacResolve(entry, programs);
+  const resolveResult = wacResolve(entry, programs, options.roots);
   for (const e of resolveResult.errors) {
     diagnostics.push({ span: 1, ...e, phase: "resolve", severity: "error" });
   }

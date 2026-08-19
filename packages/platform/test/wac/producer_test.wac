@@ -14,7 +14,7 @@
 // test helpers is a dependency the packages themselves do not have, and this is thirty lines.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 

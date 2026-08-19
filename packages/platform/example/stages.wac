@@ -14,7 +14,7 @@
 // scheduler tick would let both lines arrive in the same read — which is the case that passes whether
 // the launcher waits or not.
 
-import { Cli, Core } from "../src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   core.log("stages: listening");

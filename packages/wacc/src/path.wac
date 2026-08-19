@@ -14,6 +14,14 @@
 // `site/src/editor/file-store.ts`. This removes the one that was reachably wrong; the rest are
 // 0150's remaining work, and `design/lang/0009` is why it matters — a manifest lookup, a provider
 // table and a mapping table are not two lines, and seven copies of *those* will not agree.
+//
+// **Two, as of 2026-08-19: this one and `compiler/wacResolve.ts`.** The reference CLI's went with
+// the CLI, `corpus.ts`'s became the harness's, the harness's became a call into the compiler's, and
+// `site/src/editor/file-store.ts`'s was deleted — it was exported and nothing called it, because the
+// editor hands `wacCompile` the whole file map and lets the compiler resolve. Two is the floor:
+// there are two languages. Consolidating found the last disagreement between them rather than
+// merely tidying, so it is worth naming — `..` above an absolute root, where the compiler's answer
+// dropped the leading slash and produced a relative key, which is D8's failure in miniature.
 
 /**
  * `spec` resolved against the directory `fromPath` sits in, with `.` and `..` collapsed.
@@ -26,6 +34,29 @@
 import { isBuiltinSpec } from "./coretext.wac";
 
 export string resolveFrom(string fromPath, string spec) {
+  return resolveFromIn(fromPath, spec, "");
+}
+
+/** Whether `spec` is a project reference — `design/lang/0009` D7. */
+export bool isProjectSpec(string spec) {
+  return spec.len() >= 2 && spec.slice(0, 2) == "@/";
+}
+
+/**
+ * `spec` resolved for a file whose project root is `root`.
+ *
+ * **The root is a parameter because it cannot be looked up from here.** D7 makes `@/` the root of
+ * the project containing the *importing file*, found by searching upwards for a `wac.json5` — which
+ * is I/O, and this module opens nothing. So the caller that already reads files finds it and passes
+ * it; a graph spanning two projects has two roots, which is why it is per file rather than per
+ * compilation.
+ *
+ * **`""` for a root means there is no project, and the answer is `""` rather than a guess.** D7 says
+ * that is a compile error, and the caller reports it. The alternative resolves and is worse:
+ * `@/src/a.wac` joined to nothing gives `src/a.wac`, a real-looking key relative to a directory
+ * nobody named, so a program would compile against the wrong file instead of being refused.
+ */
+export string resolveFromIn(string fromPath, string spec, string root) {
   // **A built-in is its own key, decided before any path arithmetic.** `core/option.wac` names a
   // module inside the compiler, so joining it to the importing file's directory looks for
   // packages/std/src/core/option.wac. Both callers get the reservation from here — `gather` in
@@ -33,6 +64,10 @@ export string resolveFrom(string fromPath, string spec) {
   // because putting it in one and not the other is a module the graph reads and the linker cannot
   // find. `design/lang/0009` D4.
   if (isBuiltinSpec(spec)) { return spec; }
+  if (isProjectSpec(spec)) {
+    if (root == "") { return ""; }
+    return normalisePath(root + "/" + spec.slice(2, spec.len()));
+  }
   i32 cut = -1;
   for (i32 i = 0; i < fromPath.len(); i++) {
     if (fromPath.slice(i, i + 1) == "/") { cut = i; }
@@ -77,4 +112,60 @@ export string normalisePath(string path) {
   string out = "";
   for (i32 i = 0; i < n; i++) { out = out + (i > 0 ? "/" : "") + parts[i]; }
   return absolute ? "/" + out : out;
+}
+
+/**
+ * What the reader worked out about a graph's specifiers, for the two places that resolve them again.
+ *
+ * **Because some specifiers cannot be resolved twice.** A relative path is arithmetic and anyone can
+ * redo it; `@/` needs the importing file's project, which is why `roots` is here; and a *mapping* —
+ * `design/lang/0009` D9 — needs a manifest, a lockfile and a cache, none of which the compiler may
+ * read. So for a mapped import the reader records the answer and the compiler is told, rather than
+ * being given the ingredients and a way to open files.
+ *
+ * `roots` is parallel to the graph's `paths`. The three `map*` arrays are one entry per mapped
+ * import: the file that wrote it, the specifier as written, and the key it resolved to. Empty for
+ * every program that uses no mappings, which is all of them until somebody writes a `wac.json5`.
+ */
+export struct Res {
+  string[] roots;
+  string[] mapFrom;
+  string[] mapSpec;
+  string[] mapTo;
+
+  /** Nothing known — what every caller without a filesystem passes. */
+  Res empty() { return Res(string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), string[0](fill: "")); }
+
+  /** Just the roots, for a caller that has those and no mappings. */
+  Res of(string[] roots) {
+    return Res(roots, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""));
+  }
+
+  /** The project `path` sits in, or "" — keyed by position against the graph's `paths`. */
+  string rootAt(const this, string[] paths, string path) {
+    for (i32 i = 0; i < paths.len() && i < this.roots.len(); i++) {
+      if (paths[i] == path) { return this.roots[i]; }
+    }
+    return "";
+  }
+
+  /** The key `from` importing `spec` resolved to, or "" when it was not a mapping. */
+  string mappedTo(const this, string from, string spec) {
+    for (i32 i = 0; i < this.mapFrom.len() && i < this.mapSpec.len() && i < this.mapTo.len(); i++) {
+      if (this.mapFrom[i] == from && this.mapSpec[i] == spec) { return this.mapTo[i]; }
+    }
+    return "";
+  }
+}
+
+/**
+ * `spec` as `from` means it, using what the reader worked out.
+ *
+ * A mapping first, because only the reader could have resolved one; then the ordinary rule with the
+ * importing file's project root.
+ */
+export string resolveVia(Res res, string[] paths, string from, string spec) {
+  string mapped = res.mappedTo(from, spec);
+  if (mapped != "") { return mapped; }
+  return resolveFromIn(from, spec, res.rootAt(paths, from));
 }

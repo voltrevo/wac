@@ -28,7 +28,7 @@ import {
   MILLER_RABIN_ROUNDS, PUBLIC_EXPONENT, small, suitablePrime,
 } from "../../src/rsagen.wac";
 import { equal } from "../../../bytes/src/slice.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { derInteger, derSequence, derConcat, derIntegerSmall } from "../../../tls/src/derwrite.wac";
 import { encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 

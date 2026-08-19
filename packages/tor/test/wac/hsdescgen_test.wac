@@ -66,7 +66,7 @@
 // Host-side until 2026-08-17, and the tables above were in the wrapper. `issues/system/0161` step 4.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import {
   DECOY_CLIENTS, authCert, blindExpanded, blindPublic, cert, decoyClient, descriptor, encCert,
   ephemeral, factor, identityPublic, identitySeed, inner, innerPlainLen, innerSalt, ipEnc, ipNtor,

@@ -15,7 +15,7 @@
 // a wac test is one thread and cannot both `accept` and dial.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";

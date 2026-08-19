@@ -25,7 +25,7 @@ import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
 import { contains, startsWith, trimmed, splitLines } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { Core, Cli, Exec, Change, FileResult } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 
 /**
  * A program whose secret decides an array index and nothing else.

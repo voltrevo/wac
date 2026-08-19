@@ -11,7 +11,7 @@
 // mismatch in whatever it was actually testing. That is the worst kind of red — a true failure
 // message about the wrong thing.
 
-import { Cli } from "../../platform/src/platform.wac";
+import { Cli } from "std/platform.wac";
 
 /** Where `deno task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
 export string binaryPath(Cli cli) {

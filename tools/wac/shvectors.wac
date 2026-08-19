@@ -14,7 +14,7 @@
 // the point — a refresh is a task somebody runs, and the git diff is the review. The replays keep ten
 // cases live as a canary, so a wholesale change of environment is still caught.
 
-import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wac";
+import { Change, Cli, Core, Exec } from "std/platform.wac";
 import { Buf } from "../../packages/bytes/src/buf.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { corpus, programs } from "../../packages/sh/test/wac/corpus.wac";

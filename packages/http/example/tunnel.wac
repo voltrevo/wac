@@ -8,7 +8,7 @@
 // It writes nothing and reads nothing: `--allow-net` and no other grant, so what it proves is about the
 // network and cannot be about anything else.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { ProxyAt, Tunnel, connectThrough, parseProxy } from "../src/proxy.wac";
 

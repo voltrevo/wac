@@ -24,7 +24,7 @@
 // subject, so `test/trapMessage.test.ts` keeps that case and says why.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** Write `program` to `.cache` and run it through `wac run`, both streams together. */

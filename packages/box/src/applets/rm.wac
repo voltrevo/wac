@@ -7,7 +7,7 @@
 // file was still there. `remove` answers a `Change` now: a fault category beside the message, so
 // `-f` ignores `absent()` and nothing else, in one call with nothing to race against.
 
-import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { missingOperand } from "../lib/operands.wac";

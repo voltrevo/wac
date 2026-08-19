@@ -12,7 +12,7 @@
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli } from "../../../platform/src/platform.wac";
+import { Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { jsonFile } from "../../../wactest/src/jsonfile.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";

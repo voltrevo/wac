@@ -1,7 +1,7 @@
 // Encoded, with a trailing newline. Two characters per byte and no alignment to keep, so
 // each chunk encodes on its own and the newline is the only thing left for the end.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Span, nextSpan } from "../lib/input.wac";

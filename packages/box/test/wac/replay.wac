@@ -20,7 +20,7 @@
 // The header is not decoration: an expectation is only as portable as the environment it was taken in,
 // and when a replay disagrees the first question is whether *we* changed or the tools did.
 
-import { Cli, Core, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Shell } from "../../../sh/src/exec.wac";
 import { shellMain } from "../../../sh/src/entry.wac";

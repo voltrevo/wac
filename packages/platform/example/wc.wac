@@ -7,7 +7,7 @@
 // this one is parked — and it can reach nothing it was not handed, so `main`'s two
 // parameters are the complete list of what it can do.
 
-import { Cli, Core, FileResult } from "../src/platform.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   // No argument means standard input, as `wc` has always meant it. That this works at all

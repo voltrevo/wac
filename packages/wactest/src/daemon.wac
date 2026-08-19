@@ -30,7 +30,7 @@
 // **A caller must check `waitForPort`'s answer.** A server that never came up leaves every later
 // assertion measuring a refused connection, which is a different failure wearing the same clothes.
 
-import { Cli, Core, Exec, Socket } from "../../platform/src/platform.wac";
+import { Cli, Core, Exec, Socket } from "std/platform.wac";
 import { quoted } from "./childenv.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 

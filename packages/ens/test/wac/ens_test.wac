@@ -12,7 +12,7 @@ import { keccak256 } from "../../../crypto/src/keccak.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 
 /**
  * The vendored corpus, read and parsed here rather than handed in.

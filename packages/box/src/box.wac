@@ -24,7 +24,7 @@
 // applet per file means each could also be built alone, with only what it needs — `bin/`
 // does exactly that for four of them, and measures what it saves.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, parseArgs } from "./lib/args.wac";
 
 import { base32 } from "./applets/base32.wac";

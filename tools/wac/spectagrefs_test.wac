@@ -25,7 +25,7 @@
 // and is skipped. That distinction is the whole reason this cannot be a plain grep in a shell script.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 const string DIR = "spec/spec";

@@ -2,7 +2,7 @@
 // an interruption partway can hurt. See `lib/safe.wac` for why the temporary name is
 // worth the extra step.
 
-import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";

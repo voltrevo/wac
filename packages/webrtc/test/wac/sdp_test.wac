@@ -14,7 +14,7 @@
 // `browser.test.ts` imports it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { Lines, Answers, ask, check, word } from "../../../wactest/src/oracle.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

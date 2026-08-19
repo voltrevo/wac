@@ -20,7 +20,7 @@
 //
 // A caller that treats 2 as 1 is back to the bug above, so the codes differ.
 
-import { wacFiles } from "./wacFiles.ts";
+import { wacFilesWithRoots } from "./wacFiles.ts";
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacDiag } from "wac/wacDiag.ts";
 
@@ -31,8 +31,9 @@ if (entry === undefined) {
 }
 
 let files: Map<string, string>;
+let roots: Map<string, string>;
 try {
-  files = await wacFiles(entry);
+  ({ files, roots } = await wacFilesWithRoots(entry));
 } catch (e) {
   console.error(
     `referenceCheck: cannot read ${entry} or one of its imports — ${
@@ -42,7 +43,7 @@ try {
   Deno.exit(2);
 }
 
-const result = wacCompile(files, entry, {});
+const result = wacCompile(files, entry, { roots });
 if (!result.ok) {
   console.error(wacDiag(result.diagnostics, files));
   Deno.exit(1);

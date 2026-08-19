@@ -3,7 +3,7 @@
 // `readFile` returns before the read has happened. Both are running while this program is
 // between the two lines, and `wait()` collects whichever it asks for.
 
-import { Cli, Core, FileResult, Pending } from "../src/platform.wac";
+import { Cli, Core, FileResult, Pending } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 2) {

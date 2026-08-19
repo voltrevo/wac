@@ -3,7 +3,7 @@
 // Adjacent is the whole point: one line of state is enough, so this streams even though
 // `sort -u`, which does the same job for non-adjacent lines, cannot.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";

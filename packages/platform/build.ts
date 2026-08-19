@@ -517,7 +517,17 @@ async function optimized(wasm: Uint8Array): Promise<Uint8Array> {
   const f = binaryen.Features;
   module.setFeatures(
     f.GC | f.ReferenceTypes | f.SignExt | f.MutableGlobals |
-      f.NontrappingFPToInt | f.Multivalue | f.ExtendedConst,
+      f.NontrappingFPToInt | f.Multivalue | f.ExtendedConst |
+      // **Bulk memory, because the emitter now uses it** — which is the one way this list is allowed
+      // to grow. `issues/lang/0162` made a string literal a data segment and an `array.new_data`
+      // instead of one `i32.const` per byte, and that brings a datacount section with it, which
+      // binaryen classifies as bulk memory. So a *plain* build has required it since that landed.
+      //
+      // This entry therefore does not raise the floor of an optimised build above a plain one, which
+      // is the property the narrow list exists to keep. It restores it: without the feature
+      // `wasm-opt` refused every module holding a string, with *Data segment operations require bulk
+      // memory* — the optimiser correctly saying the emitter had moved past what it was told.
+      f.BulkMemory,
   );
   if (!module.validate()) {
     module.dispose();

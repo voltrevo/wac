@@ -12,7 +12,7 @@
 // still what runs, because that is the property `cat` is for. GNU's bundles are `-A` = `-vET`,
 // `-e` = `-vE`, `-t` = `-vT`, and `-b` overrides `-n`.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, Span, nextSpan, openStream, operandCount } from "../lib/input.wac";

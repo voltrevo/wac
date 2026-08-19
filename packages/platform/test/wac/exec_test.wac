@@ -17,7 +17,7 @@
 // constantly. `error` is non-empty only for the second.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Pending } from "../../src/platform.wac";
+import { Core, Cli, Exec, Pending } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 string text(u8[] b) { return string.fromBytes(b); }

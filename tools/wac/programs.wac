@@ -14,7 +14,7 @@
 // made an eighth copy of the rule. Not a test file and not discovered as one: `wac test` walks
 // `*_test.wac`. `issues/system/0161`.
 
-import { Cli, FileResult, Stat } from "../../packages/platform/src/platform.wac";
+import { Cli, FileResult, Stat } from "std/platform.wac";
 
 /** A `main` — something with a command line. */
 export const i32 KIND_CLI = 0;

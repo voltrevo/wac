@@ -49,7 +49,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decodeRender } from "./probe.wac";
 import { unhex, T_UINT, T_BOOL, T_ADDRESS } from "./descriptor.wac";

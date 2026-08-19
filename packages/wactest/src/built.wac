@@ -21,7 +21,7 @@
 // The cache is `.cache/`, which is per workspace and therefore per agent. Nothing here writes to
 // `/tmp`, where three agents would share a name.
 
-import { Cli, Exec, Stat, FileResult } from "../../platform/src/platform.wac";
+import { Cli, Exec, Stat, FileResult } from "std/platform.wac";
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
 export i64 newestUnder(Cli cli, string dir) {

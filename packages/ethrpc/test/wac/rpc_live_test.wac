@@ -17,7 +17,7 @@
 // `anvil_probe.wac` is this package's use of it. `appRunner` is replaced by `wac run --allow-net`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Port, freePortOr, freePort } from "../../../wactest/src/daemon.wac";
 import { Node, anvil, anvilPath, haveAnvil, runExample, stopAnvil } from "./anvil_probe.wac";

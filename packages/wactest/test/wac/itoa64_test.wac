@@ -19,7 +19,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { itoa64 } from "../../src/itoa64.wac";
 import { utoa64 } from "../../src/utoa64.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

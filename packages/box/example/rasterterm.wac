@@ -16,7 +16,7 @@
 // has the first, the manager step 3 built has the second's hit-testing, and neither is wired here —
 // this is the smallest thing that answers "does the same shell come out the same way on pixels".
 
-import { Cli, Core, Event, Page, Pending } from "../../platform/src/platform.wac";
+import { Cli, Core, Event, Page, Pending } from "std/platform.wac";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Grid } from "../../raster/src/grid.wac";
 import { Surface, cellHeight, cellWidth } from "../../raster/src/surface.wac";

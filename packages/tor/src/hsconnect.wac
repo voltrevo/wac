@@ -32,7 +32,7 @@
 // **Any padding or timing defence.** The two circuits are built back to back on demand, which is a
 // recognisable shape.
 
-import { Core, Cli, FileResult } from "../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import {
   Awaited, Network, Session, awaitCommand, bootstrap, buildCircuit, buildCircuitTo, relayByEd25519,
 } from "./bootstrap.wac";

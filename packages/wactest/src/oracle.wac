@@ -18,7 +18,7 @@
 // Anything else is a harness problem and is reported as one.
 
 import { T } from "./assert.wac";
-import { Cli, Exec, Stat, FileResult } from "../../platform/src/platform.wac";
+import { Cli, Exec, Stat, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 

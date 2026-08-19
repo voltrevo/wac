@@ -20,7 +20,7 @@
 // dispatches. That is why `drain` is written by the program rather than happening to it, and why a
 // program blocked anywhere else stalls its continuations until it gets there.
 
-import { Cli, Core } from "../src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   string how = cli.argCount().wait() > 0 ? string.fromBytes(cli.arg(0).wait()) : "drain";

@@ -43,17 +43,23 @@ wapy from wac and the round-trip test runs in that direction.
 | `{ … }` as a statement | `scope:` |
 | an empty body | `pass` |
 | `import { a, b as c } from "./m.wac";` | `from "./m.wac" import a, b as c` |
-| `import { Read } from core;` | `from core import Read` |
+| `import { Read } from "core";` | `from core import Read` |
 | `// comment`, `/// doc` | `# comment`, `## doc` |
 
 `[§wac-wapy-import-8kd3mqp]` The import path keeps its extension, so
 `from "./m.wapy" import f` and `import { f } from "./m.wapy";` both name the
 same file from either surface.
 
-`[§wac-wapy-core-5wq8jhn]` `core` is unquoted on both surfaces, and means the same thing on both —
-it is one language written two ways, not two module systems. It reads as Python here by accident
-rather than by design; the reason it has no quotes is that it is not a path (see
-[imports.md](imports.md)).
+`[§wac-wapy-core-5wq8jhn]` `core` means the same thing on both surfaces — it is one language
+written two ways, not two module systems — and each spells it the way that surface spells every
+other specifier: `from "core"` in wac, `from core import` here.
+
+> That sentence used to read *"`core` is unquoted on both surfaces"*, and the reason given was that
+> it is not a path. It is one now — `core` is a source tree and `core/option.wac` is a file inside
+> the compiler — so wac quotes it like everything else
+> ([design/lang/0009](../../design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md)
+> D5). wapy is unchanged: a Python-shaped `from X import` names its module bare whatever X is, so the
+> two surfaces still agree about the module and differ only in the syntax each already had.
 
 ### What wapy does not have
 

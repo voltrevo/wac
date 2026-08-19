@@ -30,7 +30,7 @@
 // at one is that a second adds no *new* seam: the loop already multiplexes, and proving it does is
 // what matters before scaling the count.
 
-import { Core, Cli, FileResult } from "../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import {
   Awaited, Network, Session, awaitCommand, bootstrap, buildCircuit, buildCircuitTo, relayByEd25519,

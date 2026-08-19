@@ -3,7 +3,7 @@
 // why: text between tags is a child, and a line break between elements is layout
 // from: design/lang/0004
 // spec:  §jsx-text-is-a-child §jsx-whitespace-breaks-are-layout §jsx-empty-run-is-not-a-child
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 /** Every text node, in order — which is what says the runs were split where they should be. */
 string textOf(Node n) {

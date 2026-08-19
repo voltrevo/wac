@@ -34,7 +34,7 @@ import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
   FAULT_IS_DIR, FAULT_NOT_A_DIR, FAULT_OTHER, FAULT_READ_ONLY, FAULT_UNSUPPORTED, FileResult,
   PARENT_FS, Pending, Stat }
-  from "../../platform/src/platform.wac";
+  from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Chan, parentUser, remoteChmod, remoteChown, remoteSetExecutable, remoteCloseOut, remoteIsHostPath, remoteMkdir,
   remoteOpenOut, remoteReadDir, remoteReadFile, remoteReadSome, remoteRemove, remoteRename,

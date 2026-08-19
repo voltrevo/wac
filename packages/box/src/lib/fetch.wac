@@ -6,7 +6,7 @@
 // that ends well. What is left here is what was actually specific to these two applets: the header dump
 // and the exit code.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { get, Fetched } from "../../../http/src/client.wac";
 

@@ -21,7 +21,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { sha256 } from "../../src/sha256.wac";
 import { sha512, sha384 } from "../../src/sha512.wac";

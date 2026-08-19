@@ -13,7 +13,7 @@
 // — so a check placed there would be one nothing runs. `issues/system/0146` is what that cost.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Exec, Stat } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }

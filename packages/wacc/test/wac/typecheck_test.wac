@@ -27,7 +27,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask } from "../../../wactest/src/oracle.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ref, assertCaught, assertQuiet, assertSound, caughtAndQuiet, complaint, decidedByReference,
          assertComplete, referenceTolerant,

@@ -9,7 +9,7 @@ An element is an expression, and what it evaluates to is `Node` — the tree `co
 is a value: it can be returned, stored, passed to a function, and walked.
 
 ```wac
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 export Node greeting(string who) {
   return <p class="hello">hello {Node.Text(who)}</p>;
@@ -37,10 +37,10 @@ export enum Node {
 }
 ```
 
-A program that writes JSX must import both — `import { Attr, Node } from core;` — and the emitter
+A program that writes JSX must import both — `import { Attr, Node } from "core";` — and the emitter
 says so by name when it has not:
 
-    a JSX element without `import { Attr, Node } from core;`
+    a JSX element without `import { Attr, Node } from "core";`
 
 ### Attributes
 

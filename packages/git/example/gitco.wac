@@ -12,7 +12,7 @@
 // to rebuild it, and asks git whether the result is clean. That is a hard test to pass by accident: a
 // wrong mode, a wrong byte, a missing file or an index in the wrong order all show up by name.
 
-import { Cli, Core, FAULT_NONE } from "../../platform/src/platform.wac";
+import { Cli, Core, FAULT_NONE } from "std/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { RepoAt, Written, checkout, head, openRepo, treeOfCommit } from "../src/repo.wac";

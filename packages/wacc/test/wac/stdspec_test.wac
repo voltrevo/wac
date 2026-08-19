@@ -1,0 +1,160 @@
+// `std` — the capability half of the built-in trees, `design/lang/0009` D4.
+//
+// `[§wac-std-reserved-5kt8nqw]` `[§wac-std-no-root-2vp6xmk]` `[§wac-std-imports-core-7hn3qrz]`
+//
+// **These cases ask wacc only, and that is the finding rather than an omission.** The neighbouring
+// `projectspec_test.wac` compiles every fixture with both compilers and compares them, because `@/`
+// is one rule implemented twice and the two drift. `std` cannot be asked that way: the reference
+// carries none of this tree, since `std/platform.wac` uses lambdas and that frontend has none — 19
+// parse errors, every one cascading from the single `(i32 id) => …` at line 286. So the reference's
+// half of the differential is the *refusal*, and it is the last case here.
+//
+// The cases are the four that can each be wrong in a way the others would not catch:
+//
+//   1. the specifier resolves at all, out of the compiler rather than off the disk;
+//   2. **a real `std/platform.wac` on disk does not win** — which is the whole of the reservation,
+//      and the only case that separates "reserved" from "resolved like any other relative path";
+//   3. a bare `std` is refused by *naming the file to write*, not by `cannot read std` — the tree
+//      has no root module, so the specifier is neither a file nor a built-in and the reader would
+//      otherwise fall through to path arithmetic and report a sentence about a file;
+//   4. the reference refuses `std/platform.wac` **by name, with the reason**, rather than reporting
+//      an unknown module — the specifier is correct and the compiler is the thing that is short.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Change, Cli, Core, Exec } from "std/platform.wac";
+
+/** `wac <cmd> <args…>` — the binary, which carries wacc. */
+Exec wacc(Cli cli, string cmd, string[] args) {
+  string[] all = string[args.len() + 1](fill: "");
+  all[0] = cmd;
+  for (i32 i = 0; i < args.len(); i++) { all[i + 1] = args[i]; }
+  return cli.exec(binaryPath(cli), all, u8[0]()).wait();
+}
+
+/** `deno run -A harness/<tool>.ts <args…>`, from the repository root. */
+Exec reference(Cli cli, string tool, string[] args) {
+  string line = "cd " + cli.cwd().wait() + " && exec deno run -A harness/" + tool + ".ts";
+  for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
+  return cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+}
+
+/** One file, with its directory made first. */
+bool put(Cli cli, string path, string text) {
+  i32 cut = -1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
+  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
+  return cli.writeFile(path, text.toBytes()).wait().ok();
+}
+
+export string test_a_std_specifier_resolves_out_of_the_compiler(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "stdspec-one");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  // No manifest and no `std/` directory: nothing on disk answers for this specifier, which is the
+  // point — the text comes out of the compiler the way `core`'s does.
+  t.isTrue(put(cli, dir + "/main.wac",
+               "import { Cli, Core } from \"std/platform.wac\";\n" +
+               "export i32 main(Core core, Cli cli) { return 7; }\n"), "wrote main");
+
+  Exec w = wacc(cli, "run", string[](dir + "/main.wac"));
+  t.isTrue(w.ran(), "wac did not run — " + w.error);
+  if (w.ran()) {
+    t.eqI32(w.status, 7, "wacc answered " + itoa(w.status) + ", want 7 — " +
+                         string.fromBytes(w.stderr));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "stdspec-shadow");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  t.isTrue(put(cli, dir + "/main.wac",
+               "import { Cli, Core } from \"std/platform.wac\";\n" +
+               "export i32 main(Core core, Cli cli) { return 7; }\n"), "wrote main");
+  // **A decoy at exactly the specifier's path.** It declares neither `Cli` nor `Core`, so if the
+  // resolver preferred the file the program would not compile at all — which is what makes 7 an
+  // answer about *which* module was reached rather than about arithmetic that happened to agree.
+  t.isTrue(put(cli, dir + "/std/platform.wac",
+               "export i32 decoy() { return 999; }\n"), "wrote the decoy");
+
+  Exec w = wacc(cli, "run", string[](dir + "/main.wac"));
+  t.isTrue(w.ran(), "wac did not run — " + w.error);
+  if (w.ran()) {
+    t.eqI32(w.status, 7, "a std/ directory beside the entry won: wacc answered " + itoa(w.status) +
+                         " — " + string.fromBytes(w.stderr));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_bare_std_names_the_file_to_write_instead(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "stdspec-root");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  t.isTrue(put(cli, dir + "/main.wac",
+               "import { Core } from \"std\";\n" +
+               "export i32 main(Core core) { return 1; }\n"), "wrote main");
+
+  Exec w = wacc(cli, "run", string[](dir + "/main.wac"));
+  t.isTrue(w.ran(), "wac did not run — " + w.error);
+  if (w.ran()) {
+    string said = string.fromBytes(w.stderr);
+    t.isTrue(w.status != 1 || contains(said, "no root module"),
+             "a bare \"std\" did not say it has no root module — " + said);
+    // **The wrong answer this exists to keep out.** `cannot read std` is a sentence about a file,
+    // for a word that was never going to be one; a reader who gets it goes looking on disk.
+    t.isTrue(!contains(said, "cannot read std"),
+             "a bare \"std\" fell through to path arithmetic — " + said);
+    t.isTrue(contains(said, "std/platform.wac"),
+             "the refusal did not name a file that would work — " + said);
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_reference_refuses_std_by_name_with_the_reason(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "stdspec-reference");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  t.isTrue(put(cli, dir + "/main.wac",
+               "import { Cli, Core } from \"std/platform.wac\";\n" +
+               "export i32 main(Core core, Cli cli) { return 7; }\n"), "wrote main");
+
+  Exec r = reference(cli, "referenceRun", string[](dir + "/main.wac", "main"));
+  t.isTrue(r.ran(), "the reference did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+    t.isTrue(r.status != 0, "the reference compiled a program using a capability, which it cannot");
+    // The three things the message has to carry: that this is a built-in rather than a typo, why
+    // this compiler has not got it, and where it does exist.
+    t.isTrue(contains(said, "built-in this compiler does not carry"),
+             "the reference did not say it was a built-in — " + said);
+    t.isTrue(contains(said, "lambdas"),
+             "the reference did not give the reason — " + said);
+    t.isTrue(contains(said, "packages/wacc"),
+             "the reference did not say which compiler has it — " + said);
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

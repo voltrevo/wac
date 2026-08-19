@@ -10,7 +10,7 @@
 // overwrite. GNU's `whoami` reports the *effective user id*, which is the identity the kernel
 // enforces with; ours reports the identity `packages/fs` enforces with, and those are the same claim.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { extraOperand } from "../lib/operands.wac";

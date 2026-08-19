@@ -5,7 +5,7 @@
 // answered 1, 10, 11 — which is the right answer to a question nobody asked. Found by typing it
 // into the browser shell the day `box`'s applets became commands there.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, readAll } from "../lib/input.wac";

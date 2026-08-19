@@ -8,7 +8,7 @@
 // is 456 bytes. Nothing here traps, so unlike `packages/gzip`'s corruption sweep it is all in one
 // process — the cost is arithmetic rather than process starts.
 
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Store, pemBundle } from "../../src/roots.wac";

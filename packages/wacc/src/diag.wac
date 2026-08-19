@@ -43,6 +43,7 @@ export string parseMessage(i32 code) {
   if (code == 26) { return "expected a method name"; }
   if (code == 27) { return "expected a brace after the struct name"; }
   if (code == 28) { return "a function type cannot be used as an array element type"; }
+  if (code == 29) { return "a module specifier must be a quoted path"; }
   return "the parser refused this";
 }
 
@@ -165,6 +166,7 @@ export string hintFor(i32 code) {
   if (code == 30) { return "use `as!` — a cast down the hierarchy has to be checked"; }
   if (code == 33) { return "store the packed value in a wider type, or drop the `?`"; }
   if (code == 40) { return "unwrap it with `!`, or test it with `is null` first"; }
+  if (code == 29) { return "quote it — `core` included, since D5 removed the one bare spelling"; }
   if (code == 46) { return "the cast can be removed"; }
   if (code == 50) { return "use `f64` if the value does not fit an `f32`"; }
   if (code == 55) { return "rename one of them with `as`"; }

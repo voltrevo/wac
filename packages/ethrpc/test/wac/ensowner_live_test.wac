@@ -22,7 +22,7 @@
 // carried before it is used.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { freePort } from "../../../wactest/src/daemon.wac";
 import { Node, anvil, anvilPath, blockHash, castRpc, castRun, haveAnvil, runExample, stopAnvil }

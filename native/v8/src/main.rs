@@ -507,6 +507,15 @@ const SHELL: Option<&[u8]> = Some(include_bytes!(env!("WAC_SHELL_WASM")));
 #[cfg(not(wac_shell))]
 const SHELL: Option<&[u8]> = None;
 
+/// The fetcher, for `wac update`. `design/lang/0009` D10 makes it the *explicit* operation — the one
+/// thing allowed to resolve a ref and move a lock — so an ordinary `wac build` never reaches the
+/// network. It is embedded rather than built on demand for the same reason the compiler is: somebody
+/// who installed the command has a `$WAC_HOME` and no checkout to build a program from.
+#[cfg(wac_update)]
+const UPDATE: Option<&[u8]> = Some(include_bytes!(env!("WAC_UPDATE_WASM")));
+#[cfg(not(wac_update))]
+const UPDATE: Option<&[u8]> = None;
+
 /// Start V8, once. Both the seeded path and the handed-a-module path go through here.
 /// Start V8, once per process however many times this is called.
 ///
@@ -607,6 +616,45 @@ fn run_shell(rest: &[String]) -> i32 {
         env: asked.env && held.env,
         run: asked.run && held.run,
     });
+    run_as_with(&manifest, wasm, &text, as_child)
+}
+
+
+/// `wac update [project]` — resolve what the lock does not cover, fetch it, and write the lock.
+///
+/// **The one command that reaches the network, and that is the whole point of it being one.** D10:
+/// an ordinary command may create a missing lock entry and must never advance an existing one
+/// because a branch moved; `wac update` is where a ref is resolved and a pin moves. Keeping it a
+/// separate command is what lets `wac build` be offline by construction rather than by convention.
+///
+/// The grants are the payload's own rather than this command line's. Unlike `wac sh`, there is no
+/// narrowing to offer: a fetcher that may not read, write, reach the network or find `$WAC_HOME` is
+/// a fetcher that cannot do the one thing it is for, so the flags would be a choice between working
+/// and not.
+fn update_command(rest: &[String]) -> i32 {
+    let Some(wasm) = UPDATE else {
+        eprintln!("wac: this build carries no fetcher — build one into seed/update.wasm from");
+        eprintln!("     packages/wacpkg/example/fetch.wac, see native/v8/README.md");
+        return 1;
+    };
+    let Some(text) = manifest_in(wasm) else {
+        eprintln!("wac: the built-in fetcher carries no wac.manifest section");
+        return 1;
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wac: the built-in fetcher's manifest is not one — {e}");
+            return 1;
+        }
+    };
+    start_v8();
+    let argv: Vec<Vec<u8>> = if rest.is_empty() {
+        vec![b".".to_vec()]
+    } else {
+        rest.iter().map(|a| a.as_bytes().to_vec()).collect()
+    };
+    let as_child = AsChild { argv, ..Default::default() };
     run_as_with(&manifest, wasm, &text, as_child)
 }
 
@@ -850,7 +898,7 @@ fn write_aggregate(
 ) -> Option<(String, Vec<usize>)> {
     let up = "../".repeat(to.parent()?.components().count());
     let mut imports = vec![format!(
-        "import {{ Cli, Core }} from \"{up}packages/platform/src/platform.wac\";"
+        "import {{ Cli, Core }} from \"std/platform.wac\";"
     )];
     let mut wrappers = Vec::new();
     // Which files ended up in it, by index into `files`: one with no tests contributes nothing, and
@@ -1610,6 +1658,14 @@ fn main() {
             );
             eprintln!("                                      the shell, sealed unless granted");
         }
+        if UPDATE.is_some() {
+            eprintln!("       wac update [project]           resolve and fetch what wac.lock does not");
+            eprintln!("                                      cover, and write the lock — the only");
+            eprintln!("                                      command that reaches the network");
+        }
+        eprintln!("       wac uninstall [--keep-cache]");
+        eprintln!("                                      remove what `deno task wac:install` put under");
+        eprintln!("                                      $WAC_HOME, the profile line, and nothing else");
         std::process::exit(if asked { 0 } else { code });
     }
     // A build with a shell and no compiler still answers `help` — the seed's own usage is the part
@@ -1669,6 +1725,21 @@ fn main() {
     // message about the wrong half.
     if SHELL.is_some() && stem == "sh" {
         std::process::exit(run_shell(&args[2..]));
+    }
+    // `update` is the host's too, and needs no compiler: the fetcher is already a module. Placed
+    // beside `sh` for the same reason — a build carrying one payload and not another is a perfectly
+    // good command for what it does carry.
+    if UPDATE.is_some() && stem == "update" {
+        std::process::exit(update_command(&args[2..]));
+    }
+    // **The one command that needs no compiler at all**, and the only one whose reason for being
+    // here is what the person typing it does *not* have. `deno task wac:uninstall` does the same
+    // job, and it is a Deno program under `tools/` — so it needs this repository, and somebody who
+    // installed the command has a `$WAC_HOME` and no checkout. `design/lang/0009` D1.
+    //
+    // No `SEED.is_some()`: a build carrying only a shell can still take itself away.
+    if stem == "uninstall" {
+        std::process::exit(uninstall_command(&args[2..]));
     }
     // **The other thing a person does with a compiler.** 125 files here are wac tests — an export
     // named `test*` answering a `string`, empty for a pass — and every one of them needed a Deno to
@@ -1775,7 +1846,7 @@ struct AsChild {
     ///
     /// Two queues rather than one because it is a conversation: the child *asks* on `fs_req` and
     /// *reads answers* on `fs_rep`, and a single queue would let it read back its own request.
-    /// `packages/platform/src/platform.wac` describes the same pair from the wac side —
+    /// `std/platform.wac` describes the same pair from the wac side —
     /// `recv(fsHandle)` in the parent reads a request and `send(fsHandle, …)` answers it.
     ///
     /// `None` is a child that was spawned with `serveFs` false, and every program that was not
@@ -1838,6 +1909,110 @@ fn validate_command(paths: &[String]) -> i32 {
 /// and cannot say how often.
 ///
 /// The module is instantiated with no imports, which is what an instrumented single file needs.
+/// `$WAC_HOME`, or `$HOME/.wac`, with trailing slashes off. `None` when neither is set.
+///
+/// The same rule as `wacHome` in `tools/install.ts`, and it has to be: the two commands install and
+/// remove one tree, so a disagreement about where it is means one of them works on nothing.
+fn wac_home() -> Option<String> {
+    if let Ok(set) = std::env::var("WAC_HOME") {
+        if !set.is_empty() {
+            return Some(set.trim_end_matches('/').to_string());
+        }
+    }
+    let home = std::env::var("HOME").ok()?;
+    if home.is_empty() {
+        return None;
+    }
+    Some(format!("{home}/.wac"))
+}
+
+/// Drop every line carrying the marker from a profile. Returns how many went.
+fn remove_profile_line(profile: &str) -> usize {
+    let Ok(text) = std::fs::read_to_string(profile) else { return 0 };
+    let lines: Vec<&str> = text.split('\n').collect();
+    let kept: Vec<&str> = lines.iter().copied().filter(|l| !l.contains("# wac")).collect();
+    if kept.len() == lines.len() {
+        return 0;
+    }
+    if std::fs::write(profile, kept.join("\n")).is_err() {
+        return 0;
+    }
+    lines.len() - kept.len()
+}
+
+/// **`wac uninstall` — D1's other half, and the half `deno task wac:uninstall` cannot do.**
+///
+/// It removes what the installer wrote and **nothing else**: not a manifest, not a lockfile, not a
+/// source file, not a build product. Those live in projects rather than here, and a package manager
+/// that tidies your working directory is one nobody trusts twice. `$WAC_HOME` itself goes only if it
+/// is empty afterwards — somebody may keep their own things under it, and what is left is *named*
+/// rather than passed over, so "removed" and "found nothing" are never the same line.
+///
+/// The list is duplicated from `tools/install.ts` rather than shared, because there is nothing to
+/// share it through: one is Rust in the binary and the other is TypeScript that needs the checkout.
+/// `packages/wacc/test/wac/uninstall_test.wac` is what keeps them the same list — it builds one fake
+/// install per implementation and compares what survives, so a divergence is a failing test rather
+/// than a surprise in somebody's home directory years later.
+fn uninstall_command(args: &[String]) -> i32 {
+    let mut keep_cache = false;
+    for a in args {
+        match a.as_str() {
+            "--keep-cache" => keep_cache = true,
+            _ => {
+                eprintln!("usage: wac uninstall [--keep-cache]");
+                eprintln!("wac: unknown argument {a}");
+                return 2;
+            }
+        }
+    }
+    let Some(home) = wac_home() else {
+        eprintln!("wac: neither WAC_HOME nor HOME is set, so there is nowhere to uninstall from");
+        return 2;
+    };
+    let mut went: Vec<String> = Vec::new();
+
+    // **The profile line first.** Removing the files and leaving every profile sourcing an `env`
+    // that is gone prints an error on every login, from a command the person has just removed. The
+    // task learned that by being run rather than by being tested, so the order is deliberate here.
+    if let Ok(h) = std::env::var("HOME") {
+        if !h.is_empty() {
+            let mut lines = 0;
+            for p in [".bashrc", ".zshrc", ".profile"] {
+                lines += remove_profile_line(&format!("{h}/{p}"));
+            }
+            if lines > 0 {
+                went.push(format!("{lines} profile line(s)"));
+            }
+        }
+    }
+    for name in ["bin/wac", "env", "install.json5"] {
+        if std::fs::remove_file(format!("{home}/{name}")).is_ok() {
+            went.push(name.to_string());
+        }
+    }
+    let _ = std::fs::remove_dir(format!("{home}/bin")); // only when empty, which is what we want
+    if !keep_cache && std::fs::remove_dir_all(format!("{home}/cache")).is_ok() {
+        went.push("cache".to_string());
+    }
+    if let Ok(entries) = std::fs::read_dir(&home) {
+        let left = entries.count();
+        if left == 0 {
+            let _ = std::fs::remove_dir(&home);
+        } else {
+            went.push(format!(
+                "({left} other entr{} left in {home})",
+                if left == 1 { "y" } else { "ies" }
+            ));
+        }
+    }
+    if went.is_empty() {
+        println!("nothing to remove");
+    } else {
+        println!("{}", went.join(", "));
+    }
+    0
+}
+
 /// Instantiate an instrumented module, run `main`, and hand back the counter array.
 ///
 /// Extracted from `covdump_command` when `ctcompare` wanted the same six steps. The array means
@@ -5271,7 +5446,7 @@ fn build_socket<'s>(
     ctor.call(scope, exports.into(), &[h.into(), err, who, p.into()])
 }
 
-/// `STDIN`, in `packages/platform/src/platform.wac`. A channel number, never a socket.
+/// `STDIN`, in `std/platform.wac`. A channel number, never a socket.
 ///
 /// **Declared but not read here, deliberately.** `packages/platform/test/wac/handles_test.wac` reads this
 /// name out of every host's source and checks the five of them agree, so the declaration is the
@@ -5288,7 +5463,7 @@ fn build_socket<'s>(
 #[allow(dead_code)]
 const STDIN_HANDLE: i32 = 0;
 
-/// `PARENT_FS`, in `packages/platform/src/platform.wac` — the channel a spawned program asks its
+/// `PARENT_FS`, in `std/platform.wac` — the channel a spawned program asks its
 /// parent for a filesystem on. `packages/platform/host/children.ts` calls the same number `n_HANDLE`
 /// and checks for it *before* looking anything up in its socket table.
 ///

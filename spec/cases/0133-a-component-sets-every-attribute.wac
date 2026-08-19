@@ -3,7 +3,7 @@
 // why: a component is a named construction, which builds the whole struct or none of it
 // from: design/lang/0005
 // spec:  §jsx-component-sets-every-attribute
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 struct Card {
   string title;

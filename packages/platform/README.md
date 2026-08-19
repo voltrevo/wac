@@ -28,7 +28,7 @@ things. All commands run from the repo root.
 
 wac has no ambient access. There is no import a program can name, no global reaching
 outside, so an application can only touch what it is handed. The capability structs in
-`src/platform.wac` are therefore not a convention but a **complete statement of what a
+`std/platform.wac` are therefore not a convention but a **complete statement of what a
 program can do**:
 
 ```wac
@@ -997,7 +997,10 @@ thread keeps running.
 ## Layout
 
 ```
-src/platform.wac    the world: Core, Cli, FileResult
+std/platform.wac    the world: Core, Cli, FileResult — a built-in tree, not this
+                    package's source. `design/lang/0009` D4 moved it there on 2026-08-19
+                    so a program reaches it by specifier rather than by relative path;
+                    the host implementations below stayed here.
 host/layout.ts      the shared-memory layout, in one place
 host/call.ts        the worker side — hostCall, which blocks
 host/respond.ts     the main-thread side — serves calls without blocking

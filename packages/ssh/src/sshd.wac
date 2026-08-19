@@ -34,7 +34,7 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Cli, Core, FileResult, Socket } from "../../platform/src/platform.wac";
+import { Cli, Core, FileResult, Socket } from "std/platform.wac";
 import { Conn, msgNewKeys } from "./conn.wac";
 import { clientVersion, clientVersionLine, Found, scanVersion, speaksV2, Version } from "./version.wac";
 import { keyLength } from "./cipher.wac";

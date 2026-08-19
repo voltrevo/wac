@@ -19,7 +19,7 @@
 // worth making here: that a child cannot tell which of the two ran it. The child — `shout` below —
 // is copied from `inside.wac` unchanged, because a child that had to be adapted would prove nothing.
 
-import { Captured, Cli, Core, FileResult } from "../src/platform.wac";
+import { Captured, Cli, Core, FileResult } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../src/frame.wac";
 
 export i32 main(Core core, Cli cli) {

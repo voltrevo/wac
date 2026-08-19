@@ -18,7 +18,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { joined, contains } from "../../../wactest/src/strings.wac";
-import { Change, Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, Exec } from "std/platform.wac";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
 
 /** Only the entry. Whatever the tree contributes has to come from inside the compiler. */
@@ -104,10 +104,15 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   if (!made.ok()) { return t.report(); }
 
   // One file per spelling, so a failure names which one rather than "the directory".
-  string[] names = string[]("root_bare.wac", "root_quoted.wac", "sibling.wac");
+  //
+  // **`root_bare.wac` is gone from this list, and that is `design/lang/0009` D5.** It held
+  // `import { Read } from core;` and asserted it *checked clean*, which was true when the bare
+  // spelling was the only way to name the root. Step 4 removed it: every specifier is a quoted path
+  // now. The case did not disappear — it moved to `test_a_bare_specifier_is_refused_the_same_way_by
+  // _both_compilers` below, where it asserts the refusal instead. Deleting it here and not adding it
+  // there would have turned a rule into an untested one at the moment it started being enforced.
+  string[] names = string[]("root_quoted.wac", "sibling.wac");
   string[] progs = string[](
-    "import { Read } from core;\n" +
-    "export i32 main() { Read r = Read.End; return match (r) { case End: 0, else: 1 }; }\n",
     "import { Read } from \"core\";\n" +
     "export i32 main() { Read r = Read.End; return match (r) { case End: 0, else: 1 }; }\n",
     "import { Option } from \"core/option.wac\";\n" +
@@ -140,6 +145,70 @@ export string test_the_cli_serves_the_tree_from_any_directory(Core core, Cli cli
   }
 
   cli.remove(dir, true).wait();
-  core.log("    checked three spellings from " + dir);
+  core.log("    checked two spellings from " + dir);
+  return t.report();
+}
+
+/**
+ * A bare specifier is refused, and **both compilers say the same thing about it** — D5.
+ *
+ * The refusal itself is not the interesting half; `builtinspec` above already covers what a quoted
+ * specifier reaches. What this case is for is the *message*, and the reason is written into
+ * `packages/wacc/src/check.wac` beside the rule: the last time these two disagreed here, one said
+ * `unknown module` and the other said the sentence naming the fix, for the same program — and
+ * nothing noticed, because the corpus differential only asks *whether* each side complains.
+ *
+ * So this compares the text. A bare word is what somebody typed out of habit, so the message has to
+ * carry the fix rather than the category, and it has to carry it whichever compiler they ran.
+ */
+export string test_a_bare_specifier_is_refused_the_same_way_by_both_compilers(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "barespec");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  Change w = cli.writeFile(dir + "/root_bare.wac",
+                           ("import { Read } from core;\n" +
+                            "export i32 main() { Read r = Read.End; return 0; }\n").toBytes()).wait();
+  t.isTrue(w.ok(), "could not write root_bare.wac — " + w.message);
+  if (!w.ok()) { return t.report(); }
+
+  Exec waccSaid = checkFrom(cli, dir, "root_bare.wac");
+  t.isTrue(waccSaid.ran(), "wac did not run — " + waccSaid.error);
+  if (waccSaid.ran()) {
+    string said = string.fromBytes(waccSaid.stderr) + string.fromBytes(waccSaid.stdout);
+    t.isTrue(waccSaid.status != 0, "wacc accepted a bare specifier: " + said);
+    // The fix, not the category. `unknown module` is true and useless — it names what the compiler
+    // failed to do rather than what the author should write.
+    t.isTrue(contains(said, "from \"core\""),
+             "wacc did not name the spelling that works — " + said);
+  }
+
+  // **The other half of the clause, which is a different sentence.** `§wac-core-unquoted-3nqk7vd`
+  // says `core` is told to write `from "core"` *and anything else reports `unknown module 'x'`* —
+  // two wordings, because a bare `core` is a habit and a bare anything-else is a mistake. wacc used
+  // to answer this one with *that file does not export this name*, pointed at the imported name
+  // rather than the specifier, which sends a reader to check a spelling that was never wrong.
+  Change w2 = cli.writeFile(dir + "/other_bare.wac",
+                            ("import { X } from nope;\n" +
+                             "export i32 main() { return 0; }\n").toBytes()).wait();
+  t.isTrue(w2.ok(), "could not write other_bare.wac — " + w2.message);
+  if (w2.ok()) {
+    Exec r2 = checkFrom(cli, dir, "other_bare.wac");
+    t.isTrue(r2.ran(), "wac did not run — " + r2.error);
+    if (r2.ran()) {
+      string said2 = string.fromBytes(r2.stderr) + string.fromBytes(r2.stdout);
+      t.isTrue(r2.status != 0, "wacc accepted a bare specifier: " + said2);
+      t.isTrue(contains(said2, "unknown module"),
+               "wacc did not report an unknown module — " + said2);
+      t.isTrue(contains(said2, "nope"),
+               "wacc did not name the word it could not resolve — " + said2);
+      t.isFalse(contains(said2, "does not export"),
+                "wacc still blames the import list for a specifier problem — " + said2);
+    }
+  }
+  cli.remove(dir, true).wait();
   return t.report();
 }

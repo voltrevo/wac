@@ -21,7 +21,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import {
   BUILD_BAD_ENC_KEY, BUILD_BAD_IDENTITY, BUILD_BAD_INTRO, BUILD_BAD_SIGNING, BUILD_FAILED,
   BUILD_NO_INTROS, BUILD_OK, Built, IntroPoint, buildDescriptor,

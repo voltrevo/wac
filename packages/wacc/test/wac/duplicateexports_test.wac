@@ -27,7 +27,7 @@
 // it emitted, and a duplicate the emitter did not know it wrote would not be in it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles } from "../../src/api.wac";
 import { allExportNames } from "./wasm_probe.wac";

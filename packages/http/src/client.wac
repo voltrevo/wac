@@ -14,7 +14,7 @@
 // Keep-alive, chunked request bodies and pipelining are **not implemented**. A caller that needs them
 // wants a connection object with state, which is a different shape from this function.
 
-import { Cli, Socket } from "../../platform/src/platform.wac";
+import { Cli, Socket } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Incoming, ParsedResponse, parseResponse } from "./incoming.wac";
 import { Headers } from "./headers.wac";

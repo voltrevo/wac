@@ -30,7 +30,7 @@
 // conclusion for DEFLATE. Decoding alone is the useful half: it is what a large download needs.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Read } from core;
+import { Read } from "core";
 import { Xxh64, xxh64Low } from "./xxh64.wac";
 import { FrameHeader, Reader, readHeader, headerLength, magic, skippableBase, blockMaxSize }
   from "./frame.wac";

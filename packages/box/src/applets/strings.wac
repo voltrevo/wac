@@ -3,7 +3,7 @@
 // The run itself is the only thing held, and it carries across a chunk boundary: a string
 // split by a read is one string, not two short ones that both fall under the minimum.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Feed, Sink } from "../../../platform/src/stream.wac";

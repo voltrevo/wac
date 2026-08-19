@@ -40,7 +40,7 @@ import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { ntorClientRequest, ntorClientFinish, ntorServerRespond } from "../../src/ntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
-import { Core, Cli, Exec, Stat, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Stat, FileResult } from "std/platform.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { objectOf, strOf, numOf } from "../../../wactest/src/jsonfile.wac";

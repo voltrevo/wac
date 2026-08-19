@@ -4,7 +4,7 @@
 // `gzip` it has no streaming form, so this holds its input — the honest note being that
 // the limit is the package's, not the world's.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, readInput } from "../lib/input.wac";

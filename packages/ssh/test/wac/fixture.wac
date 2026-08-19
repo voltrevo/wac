@@ -27,7 +27,7 @@
 // already written down.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec, FileResult } from "std/platform.wac";
 import { Daemon, Held, start, stop, waitForPortWithin } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { copyPreserving, keygen, publicBlobText, restrict }

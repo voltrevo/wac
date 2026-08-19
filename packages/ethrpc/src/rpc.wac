@@ -17,7 +17,7 @@
 // consistent* — it can invent a whole state and be believed. That is stated here rather than glossed,
 // because a composition that looks verified and is not is worse than one that admits it.
 
-import { Cli } from "../../platform/src/platform.wac";
+import { Cli } from "std/platform.wac";
 import { post, Fetched } from "../../http/src/client.wac";
 import { parse } from "../../json/src/json.wac";
 import { JsonValue, JsonObject } from "../../json/src/value.wac";

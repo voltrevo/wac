@@ -11,7 +11,7 @@
 import { FAULT_NONE, FAULT_NOT_FOUND, FAULT_DENIED, FAULT_EXISTS, FAULT_NOT_EMPTY, FAULT_OTHER,
          FAULT_NOT_REPRESENTABLE, FAULT_NOT_GRANTED, FAULT_IS_DIR, FAULT_UNSUPPORTED,
          FAULT_NOT_A_DIR, FAULT_READ_ONLY, FAULT_NAME_TOO_LONG, FAULT_LOOP, FAULT_NO_SPACE,
-         faultWords } from "../../src/platform.wac";
+         faultWords } from "std/platform.wac";
 
 export i32[] codes() {
   i32[] out = i32[15]();

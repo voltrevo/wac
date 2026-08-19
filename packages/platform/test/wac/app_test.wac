@@ -15,7 +15,7 @@
 // about. A SIGKILL would pass this test by removing the launcher's chance to do the wrong thing.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Daemon, start, stop, logOf } from "../../../wactest/src/daemon.wac";

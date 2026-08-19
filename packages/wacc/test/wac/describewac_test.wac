@@ -22,7 +22,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { blockedFiles, exportSigsFiles, bindTypesFiles, describeFiles,
          describeSeparator } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";

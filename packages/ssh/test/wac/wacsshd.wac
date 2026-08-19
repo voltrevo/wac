@@ -33,7 +33,7 @@
 // timing is not.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Core, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec, FileResult, Stat } from "std/platform.wac";
 import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wac";
 import { onlyEnv, onlyEnvLine, quoted } from "../../../wactest/src/childenv.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";

@@ -39,7 +39,7 @@
 // reading it is what lets the skip above say *which* precondition was missing.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";

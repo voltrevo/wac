@@ -12,7 +12,7 @@
 // names longer than 100 bytes. Each of those is refused rather than truncated — a tar
 // that quietly writes half a path is worse than one that says it cannot.
 
-import { Cli, Core, FileResult, readReason, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, FileResult, readReason, Stat } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";

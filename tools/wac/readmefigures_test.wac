@@ -35,7 +35,7 @@
 // something and had not run. A wac test has no such mode.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";

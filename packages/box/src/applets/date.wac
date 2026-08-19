@@ -1,6 +1,6 @@
 // The current time, RFC 3339. The clock is a capability, so this is `Core` at work.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { format } from "../../../datetime/src/rfc3339.wac";

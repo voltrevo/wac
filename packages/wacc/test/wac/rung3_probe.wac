@@ -19,7 +19,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, askCached, hex } from "../../../wactest/src/oracle.wac";
-import { Cli, Stat, FileResult, Change } from "../../../platform/src/platform.wac";
+import { Cli, Stat, FileResult, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { splitLines } from "../../../wactest/src/strings.wac";

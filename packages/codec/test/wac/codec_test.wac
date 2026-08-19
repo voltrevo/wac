@@ -31,7 +31,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { encode as hexEncode, encodeUpper as hexEncodeUpper, decode as hexDecode }
   from "../../src/hex.wac";

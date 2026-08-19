@@ -12,7 +12,7 @@
 // fixtures, and `ensowner` only ever reads a storage slot. This walks the same account proof and reads the
 // *account* rather than what it points at.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { proofOf, Proof } from "../src/getproof.wac";
 import { accountAt, AccountProof } from "../../mpt/src/account.wac";
 import { encode as hexEncode } from "../../codec/src/hex.wac";

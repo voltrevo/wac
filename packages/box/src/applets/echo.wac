@@ -10,7 +10,7 @@
 // the applet's own arguments raw, rather than `a.flags`, which has already decided what an option is
 // and would have swallowed a `-n` from the middle.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { Fs } from "../../../fs/src/fs.wac";

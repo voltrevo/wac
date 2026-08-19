@@ -21,7 +21,7 @@
 // names the file and line, because a refusal that cannot be located is a riddle.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 export string test_a_program_the_checker_refuses_does_not_build(Core core, Cli cli) {

@@ -6,7 +6,7 @@
 //   probe                  ->  read=ok net=ok        (built with --allow-read --allow-net)
 //   runner probe.worker.js  ->  read=denied net=denied
 
-import { Cli, Core, FileResult, Socket } from "../src/platform.wac";
+import { Cli, Core, FileResult, Socket } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   // A file that certainly exists when run from the repository root. A denial and a missing

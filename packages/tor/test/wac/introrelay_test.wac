@@ -9,7 +9,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import {
   INTRO_ACK_BAD_FORMAT, INTRO_ACK_SUCCESS, INTRO_ACK_UNKNOWN_ID, IntroPoints, Introduced,
   establishIntro, forgetCircuit, forgetConnection, indexOfKey, introduce1, introduceAckBody,

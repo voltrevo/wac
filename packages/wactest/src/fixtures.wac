@@ -40,7 +40,7 @@
 // substituted file — because those do not survive any hash, and `packages/crypto/test` compares this
 // implementation against published vectors before anything here runs.
 
-import { Core, Cli, Change, FileResult, Exec } from "../../platform/src/platform.wac";
+import { Core, Cli, Change, FileResult, Exec } from "std/platform.wac";
 import { Parser, parseDocument } from "../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../json/src/value.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";

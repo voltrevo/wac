@@ -29,7 +29,7 @@
 // as far as talking to the server and came back with something too small to be a real pack.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";

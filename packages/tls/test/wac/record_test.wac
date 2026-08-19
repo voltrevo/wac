@@ -38,7 +38,7 @@ import {
 } from "../../src/record.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
 const string ORACLE = "packages/tls/test/oracle.mjs";

@@ -12,7 +12,7 @@
 // The starting and stopping is `packages/wactest/src/daemon.wac`, which exists because `Cli.exec` runs
 // a child to completion and a node has to outlive the call.
 
-import { Cli, Exec, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Exec, Stat } from "std/platform.wac";
 import { Daemon, Port, freePortOr, logOf, start, stop, waitForPort }
   from "../../../wactest/src/daemon.wac";
 // `quoted` is `childenv.wac`'s, not `daemon.wac`'s — importing it from the latter is a compile

@@ -20,7 +20,7 @@
 // would make this the slowest check in the tree for no gain.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult, Stat } from "../../packages/platform/src/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 const string SITE = "site/src/next/Home.tsx";

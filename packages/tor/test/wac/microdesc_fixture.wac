@@ -8,7 +8,7 @@
 
 import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decode as base64Decode } from "../../../codec/src/base64.wac";
-import { Cli } from "../../../platform/src/platform.wac";
+import { Cli } from "std/platform.wac";
 import { arrayOf, jsonFile, objectOf, strOf } from "../../../wactest/src/jsonfile.wac";
 
 JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/microdesc_vectors.json"); }

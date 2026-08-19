@@ -27,7 +27,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { Ran, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
 
 export string test_a_downcast_out_of_anyref_emits_a_cast_and_the_module_validates(

@@ -19,7 +19,7 @@
 // and reaching the page through the same capability boundary a terminal program reaches a file
 // through. There is no JavaScript here that anybody wrote.
 
-import { Cli, Core, Event, Page, Pending, Picked } from "../../platform/src/platform.wac";
+import { Cli, Core, Event, Page, Pending, Picked } from "std/platform.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { gzipBest } from "../../gzip/src/gzip.wac";
 // The shared ones, not a local copy of each: this file had its own `hex` and its own `itoa`, and the

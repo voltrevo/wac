@@ -8,7 +8,7 @@
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
 import { T } from "./assert.wac";
-import { Cli, Exec, FileResult } from "../../platform/src/platform.wac";
+import { Cli, Exec, FileResult } from "std/platform.wac";
 import { quoted } from "./childenv.wac";
 
 /** `chmod 600` — what `ssh` requires of a private key before it will use one. */

@@ -15,7 +15,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { Core, Cli, Exec, Change, Stat, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, Stat, FileResult } from "std/platform.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */

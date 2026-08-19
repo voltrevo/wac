@@ -8,7 +8,7 @@
 // reading what we wrote, `httpd`, `nc`, the grants a *built* applet asks for, and the memory a streaming
 // applet holds. `issues/system/0193` has the list and the reasons.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Fixture, appletCases, appletFixtures } from "./cases.wac";

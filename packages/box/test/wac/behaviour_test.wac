@@ -12,7 +12,7 @@
 // Ten cases stay live at the bottom. A frozen expectation cannot see coreutils move under it, and the
 // answer to that is a canary rather than 104 of them.
 
-import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { cases, fixtures } from "./cases.wac";

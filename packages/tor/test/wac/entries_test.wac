@@ -19,7 +19,7 @@
 // `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, Stat, Pending } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, Stat, Pending } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */

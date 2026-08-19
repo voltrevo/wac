@@ -25,7 +25,7 @@
 // `write` for standard output as bytes but only `warn`, which is line-oriented, for the error
 // channel — so byte-exact interleaving is not expressible. Filed as wac-mono 0014.
 
-import { Change, Cli, Core, FileResult, Socket } from "../../platform/src/platform.wac";
+import { Change, Cli, Core, FileResult, Socket } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Client } from "./client.wac";
 import { KeyError, PrivateKey, readEd25519 } from "./privatekey.wac";

@@ -20,10 +20,10 @@
 // "no such declaration" has to be a failure, not a zero.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
-const string WAC = "packages/platform/src/platform.wac";
+const string WAC = "std/platform.wac";
 const string LAYOUT = "packages/platform/host/layout.ts";
 
 string readOr(T t, Cli cli, string path) {

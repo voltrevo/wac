@@ -28,7 +28,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
 import { search, slotCount } from "../../src/regex.wac";

@@ -28,7 +28,7 @@
 // so a pair written with different shapes parts at event 1, which is the driver and not the routine.
 // Every driver here comes from one template with one array literal substituted.
 
-import { Core, Cli, Exec, Change, FileResult } from "../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 const string CACHE = ".cache/ct-table";

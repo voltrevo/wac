@@ -34,7 +34,7 @@
 // levellings are `tools/corpusBackings.ts`'s, which this file replaces in the gate; the third is counted
 // and reported rather than quietly applied.
 
-import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Stat } from "std/platform.wac";
 import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../../fs/src/image.wac";

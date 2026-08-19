@@ -9,7 +9,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import {
   INTRO2_BAD_RENDEZVOUS, INTRO2_COOKIE_SEEN, INTRO2_NO_KEYS, INTRO2_OK, INTRO2_REPLAYED,
   INTRO2_UNREADABLE, Introduction, handleIntroduce2,

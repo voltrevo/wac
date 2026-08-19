@@ -5,7 +5,7 @@
 // to move its mtime would be worse than not moving it, so an existing path is left
 // exactly alone and the applet says so here rather than pretending.
 
-import { Change, Cli, Core, reasonOf, Stat } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf, Stat } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { missingOperand } from "../lib/operands.wac";

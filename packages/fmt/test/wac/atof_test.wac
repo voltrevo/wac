@@ -18,7 +18,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { approxBits, atofSpan, scan } from "../../src/atof.wac";
 import { ftoaBytes } from "../../src/ftoa.wac";

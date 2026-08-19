@@ -2,7 +2,7 @@
 // default and what this got wrong until a file with a blank line in it was compared. The
 // counter does not advance on a blank line either; it is skipped, not numbered invisibly.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";

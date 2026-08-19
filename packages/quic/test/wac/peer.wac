@@ -13,7 +13,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, FileResult, Pending, Socket }
-  from "../../../platform/src/platform.wac";
+  from "std/platform.wac";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

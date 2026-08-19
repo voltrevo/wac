@@ -110,5 +110,6 @@ paragraph said "a page cannot spawn" until someone opened `host/browser.ts`.) A 
 grants its parent chose intersected with what the parent itself holds, so a program can hand out one
 capability and can never hand out one it lacks — `probe.wac` is how that is checked.
 
-See [`../README.md`](../README.md) for the capability world itself, and `../src/platform.wac` for
-the whole surface in one file.
+See [`../README.md`](../README.md) for the capability world itself, and `std/platform.wac` for
+the whole surface in one file — a built-in tree since `design/lang/0009` D4, so it is reached by
+that specifier rather than by a path out of this directory.

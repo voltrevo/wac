@@ -13,7 +13,7 @@
 // because `Stat` carries no mode and an executable cannot be told from a plain file
 // (issues/system/0132). Committing a tree that contained an executable therefore records a mode change.
 
-import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { Setting, configOf } from "../src/config.wac";
 import { configChain } from "../src/configfiles.wac";

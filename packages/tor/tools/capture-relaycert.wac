@@ -24,7 +24,7 @@
 // and both must reproduce the committed `test/data/relaycert_vectors.json`.
 // `packages/tor/test/wac/capturetools_test.wac` is the `cmp`.
 
-import { Core, Cli, FileResult, Stat } from "../../platform/src/platform.wac";
+import { Core, Cli, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { field, hex } from "./capturejson.wac";
 

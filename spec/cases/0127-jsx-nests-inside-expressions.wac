@@ -3,7 +3,7 @@
 // why: `>` inside an attribute is a comparison, and an element is an ordinary expression
 // from: design/lang/0004
 // spec:  §jsx-nests-in-expressions
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 i32 kidsOf(Node n) {
   match (n) {

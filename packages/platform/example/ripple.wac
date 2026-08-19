@@ -27,7 +27,7 @@
 // disagree; this is here to be played with. The millisecond counter is the only real claim, and it
 // is about how fast wac compiled to WebAssembly runs a stencil over 30,000 cells.
 
-import { Cli, Core, Event, Page, Pending } from "../src/platform.wac";
+import { Cli, Core, Event, Page, Pending } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 const string SOURCE =

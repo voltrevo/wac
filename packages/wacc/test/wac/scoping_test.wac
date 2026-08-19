@@ -29,7 +29,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { diagnoseFiles, emitFiles } from "../../src/api.wac";
 import { Ran, runEmitted, scratchDir } from "./artifacts_probe.wac";
 

@@ -22,7 +22,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { keccak256, sha3_256, sha3_512, shake128, shake256, keccakF, Sha3_256 } from "../../src/keccak.wac";
 import { equal } from "../../../bytes/src/slice.wac";

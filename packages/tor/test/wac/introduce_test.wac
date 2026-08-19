@@ -27,7 +27,7 @@ import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { equal } from "../../../bytes/src/slice.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
 import { Introduce2, parseIntroduce2, rendezvous1Cell } from "../../src/hsservice.wac";
 import { linkSpecifiersValid } from "../../src/hsintro.wac";
 import { hsMac, serviceIntroduceKeys } from "../../src/hsntor.wac";

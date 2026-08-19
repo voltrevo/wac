@@ -19,7 +19,7 @@
 // The `--allow-net` grant is the same one `connect` and `listen` need. The authority is "speak to
 // something that is not this process", and UDP does not make that a different question.
 
-import { Cli, Core, Datagram, Socket } from "../src/platform.wac";
+import { Cli, Core, Datagram, Socket } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   i32 port = 0;

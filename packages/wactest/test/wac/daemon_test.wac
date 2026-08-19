@@ -15,7 +15,7 @@ import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForPort,
          waitForPortWithin } from "../../src/daemon.wac";
 import { quoted } from "../../src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 
 export string test_a_started_server_answers_and_a_stopped_one_does_not(Core core, Cli cli) {
   T t = T.create();

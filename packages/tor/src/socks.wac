@@ -42,7 +42,7 @@
 // rather than at it, because exceeding the ring does not degrade — it deadlocks, with the held
 // slots unable to complete.
 
-import { Core, Cli, Socket, Pending, FileResult, CALL_SLOTS } from "../../platform/src/platform.wac";
+import { Core, Cli, Socket, Pending, FileResult, CALL_SLOTS } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
 import { Network, Guard, Building, bootstrap, connectGuard, startCircuit, advanceCircuit,
          circuitReady, circuitFailed } from "./bootstrap.wac";
@@ -52,7 +52,7 @@ import { cellCircId, encodeDestroy, destroyRequested, ID_WIDE} from "./cell.wac"
 import { Link, feedLink, takeCell, sendCells, sliceOf, concat, itoa } from "./link.wac";
 import { socksReply, replyForEndReason, endReasonName, targetOf, requestLength,
          repOk, repFailure, repNotAllowed, repBadCommand, repBadAddress } from "./socks5.wac";
-import { Read } from core;
+import { Read } from "core";
 
 /**
  * One `accept`, one relay `recv`, and one `recv` per client, kept well under `CALL_SLOTS`.

@@ -9,7 +9,7 @@
 // wac *can* carry context beside a funcref, as an unbound method reference. It is this
 // signature that has no room for it, not the language.
 
-import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";

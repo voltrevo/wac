@@ -23,7 +23,7 @@
 // is lost, and it says so.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 const string ENTRY = "packages/raster/example/deskshot.wac";

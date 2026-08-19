@@ -8,7 +8,7 @@
 // The one thing the capability world cannot do is wait on two sockets at once, which SSH does not
 // need for a single channel running one command. It would need it for port forwarding.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Conn, msgNewKeys } from "./conn.wac";
 import { Found, Version, clientVersion, clientVersionLine, scanVersion, speaksV2 } from "./version.wac";
 import { keyLength } from "./cipher.wac";

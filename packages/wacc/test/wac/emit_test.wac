@@ -26,7 +26,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { joined, splitLines, startsWith, contains, trimmed } from "../../../wactest/src/strings.wac";
-import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "std/platform.wac";
 import { Lines, Answers, ask, hex } from "../../../wactest/src/oracle.wac";
 import { Ran, runEmittedOne, scratchDir, Validated,
          validateAll } from "./artifacts_probe.wac";

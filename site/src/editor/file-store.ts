@@ -22,15 +22,15 @@ export function absPath(rel: string): string {
   return rel.startsWith("/") ? rel : HOME + "/" + rel;
 }
 
-/** Resolve a relative import path against a base file's absolute path. */
-export function resolveImport(base: string, rel: string): string {
-  const parts = base.slice(0, base.lastIndexOf("/") + 1).split("/").filter(Boolean);
-  for (const s of rel.split("/")) {
-    if (s === "..") parts.pop();
-    else if (s !== ".") parts.push(s);
-  }
-  return "/" + parts.join("/");
-}
+// **`resolveImport` was here and nothing called it.** Exported, and no importer of this module
+// asked for it — the editor never resolves a specifier itself, because `compile()` hands the whole
+// `FileMap` to `wacCompile` and the compiler does its own resolving. `design/lang/0009` counted it
+// as one of the copies of the resolution rule that "have to agree", which made it look like a
+// liability to be reconciled; it was a liability nothing could reach, and it did not agree — no
+// built-in handling at all, so `core` would have become `/home/wac/core`, and a `..` that popped
+// unconditionally, so a path could climb above the root and come back looking local. Deleted rather
+// than fixed: the way to have this rule here is to call the compiler's, the way the editor already
+// does by handing it the map.
 
 function migrate(files: FileMap): FileMap {
   const prefix = HOME + "/";

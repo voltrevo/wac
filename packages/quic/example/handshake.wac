@@ -27,7 +27,7 @@
 // acknowledgements and no loss detection, so a dropped datagram ends this program rather than being
 // retransmitted — steps 5 and 6 of the design note.
 
-import { Cli, Core, Datagram, Socket } from "../../platform/src/platform.wac";
+import { Cli, Core, Datagram, Socket } from "std/platform.wac";
 import { Client } from "../src/client.wac";
 
 export i32 main(Core core, Cli cli) {

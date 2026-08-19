@@ -16,7 +16,7 @@
 // which is the only way from out here to ask for the combination that must be refused.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Stat } from "std/platform.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 

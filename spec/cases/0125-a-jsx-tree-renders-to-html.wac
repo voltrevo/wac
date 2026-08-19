@@ -2,7 +2,7 @@
 // only:   wacc
 // why: the tree exists to be walked, and a renderer is the smallest thing that walks all of it
 // from: design/lang/0004
-import { Attr, Node } from core;
+import { Attr, Node } from "core";
 
 /** `<p class="a">hi<br/></p>` — every part of the tree reached exactly once. */
 string render(Node n) {

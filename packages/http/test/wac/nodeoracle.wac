@@ -27,7 +27,7 @@
 // — so `--nudge-ms=` was added beside `WAC_HTTP_ORACLE_NUDGE_MS`. `oracle_test.wac` is what needs it.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Cli, Exec } from "../../../platform/src/platform.wac";
+import { Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";

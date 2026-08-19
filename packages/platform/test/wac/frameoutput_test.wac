@@ -11,7 +11,7 @@
 //
 // This is the smallest case: a child that opens a file, writes, and closes the redirection.
 
-import { Cli, Core } from "../../src/platform.wac";
+import { Cli, Core } from "std/platform.wac";
 import { Frame, childCli } from "../../src/frame.wac";
 import { T } from "../../../wactest/src/assert.wac";
 
