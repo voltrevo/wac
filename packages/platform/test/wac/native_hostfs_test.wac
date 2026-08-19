@@ -589,7 +589,7 @@ export string test_the_four_grants_are_independent_write_without_read_on_both_ho
 
 export string test_a_program_reading_its_standard_input_answers_the_same_on_both_hosts(
     Core core, Cli cli) {
-  // **Nothing compared this, and it was broken.** `conformance.test.ts` named it: every two-host
+  // **Nothing compared this, and it was broken.** `conformance_test.wac` named it: every two-host
   // runner in this repository passes `stdin: "null"`, so the one thing none of them exercised was a
   // program reading its input. Under the native runtime every filter run by a shell that *spawns* —
   // `cat`, `wc`, `head`, `sort`, `grep` — produced nothing at all, while working in a sealed shell
