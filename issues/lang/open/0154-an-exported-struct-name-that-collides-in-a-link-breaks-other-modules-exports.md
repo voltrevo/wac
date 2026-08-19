@@ -42,6 +42,43 @@ third file reaches for the name — so none is a defect. But each becomes one th
 that directory declares the same name, and the directory is linked as a unit. Refusing is safe; refusing
 *this often* is an argument for qualifying.
 
+## The private half is fixed, and the spec had already answered it — 2026-08-19
+
+`spec/spec/imports.md` line 16 says "only `export`-marked functions and types can be imported", and
+`[§wac-imp-coexist-p8km2v6]` that "imported names don't collide with same names in other (non-imported)
+files". `Env.keyAt` counted candidates without asking, so **a declaration its own file kept private was a
+candidate for every other file**. That is two defects, and `packages/wacc/test/wac/privatename_test.wac`
+pins both:
+
+- a file that imports a *function* from a neighbour inherited that neighbour's private types. Four files,
+  where the entry imports `strangerSum` and writes a `Held` that arrived transitively: it resolved to the
+  stranger's private `Held` and failed with *"an assignment between related reference types"* — a wrong
+  answer reported as a type error in a program whose types are right. This is the worse of the two,
+  because nothing refuses and nothing names the file responsible.
+- a private declaration anywhere in the link counted toward ambiguity, which is what declined this
+  directory's shared build.
+
+`Env` now carries `declExported` beside `declNames`/`declFiles`/`declKeys`, and `keyAt`'s two candidate
+walks skip what a file did not export. The file's own declarations are unaffected: they are matched and
+returned before either walk. `wac test packages/wacc/test/wac` printed *"the shared build … did not
+build, so its 54 files are being built one at a time"* before and prints nothing after; all 54 files pass
+either way, and the seed is a fixed point.
+
+**Two corrections to what is written above.** The fallback's cost was assumed and is not there: the same
+directory is **731s declined against 740s built**, so the aggregate is not what makes a directory
+expensive — the tests' own work is. And the ambiguity refusal is less reachable than this issue implies:
+three synthetic shapes were tried — two exported declarations reached transitively, the same with the
+entry importing both files, and one exported against one private — and *none* is refused by either
+`blockedFiles` or `emitDeclineFiles`, before the fix or after. Whatever configuration reaches the
+counting, these four files do not describe it, so the canary that belongs beside those two tests could
+not be written. That is worth knowing before anyone relaxes the rule further on the strength of it.
+
+**What remains open is unchanged in substance:** two *exported* declarations of one name, reached by a
+file that names neither. `[§wac-samename-struct-4jhq7wn]` says that must work — "the identity of a
+definition is the file it was written in", "however the two are reached" — which points at resolving
+against the reaching file's own transitive closure rather than the whole link. The emitter has no
+reachability structure to do that with yet, and adding one is the work this issue is now for.
+
 ## Reproduction
 
 Seven lines, in `packages/wacc/test/wac/`:
