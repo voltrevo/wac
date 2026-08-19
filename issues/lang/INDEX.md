@@ -5,6 +5,8 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0160](open/0160-a-lambda-capturing-a-parameter-loses-it-to-a-top-level-function-of-the-same-name.md) | a lambda's captured parameter resolves to a same-named top-level function instead — so any file importing `platform.wac` and declaring `f` builds an invalid module | bug | invalid wasm |
+| [0159](open/0159-arithmetic-on-a-string-operand-silently-deletes-the-function.md) | `s[0] - '0'` is `string - string`; both compilers exit 0 and silently drop the enclosing function from the module and the manifest | diagnostic | invalid wasm |
 | [0158](open/0158-the-checker-is-superlinear-in-one-files-import-count.md) | one file importing 600 others type-checks in 19.7s where the emitter takes 86ms — the cost is import edges in a single file, not files (1200 files with 10 imports: 8ms) | performance | no error |
 | [0157](open/0157-an-import-of-a-file-nobody-supplied-is-caught-by-the-emitter-not-the-checker.md) | importing a file nobody supplied is refused by the emitter with no position and no name, and the checker — even given the whole file map — reports nothing | diagnostic | no error |
 | [0156](open/0156-the-specs-parse-messages-match-neither-compiler.md) | the spec quotes `expected ';'` as a parse message, wacc says `unexpected token` with it in the annotation, the reference says a third thing — and the differentials compare positions, not text | diagnostic | wrong answer |

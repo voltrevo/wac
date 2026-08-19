@@ -1,0 +1,246 @@
+// `dird` over a socket: publish a descriptor, then fetch it back.
+//
+// Everything about *deciding* — which descriptors are acceptable, what they are called, which targets
+// are a publish — is checked without a socket in `hsstore_wac.test.ts` and `hspublish_wac.test.ts`,
+// against verdicts C tor reached on the same bytes. What is left is the part only a connection can
+// show, and it is the part that has bitten this package before: a body that arrives in more than one
+// read. Issue 0089 was two weeks of a relay dropping data because a record was fed to a parser in
+// pieces, and a fourteen-kilobyte POST is the same shape.
+//
+// So the first case here is the **control**: a fetch before anything is published. Without it a 200
+// later proves only that the server answers, not that it stored anything — and a route that returned
+// the descriptor unconditionally would pass every other case in this file.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The one thing the move deleted rather than
+// translated is the continuous pipe drain: the TypeScript held `dird`'s stdout on a pipe, so a reader
+// that stopped after the port line would eventually block the process under test, and a whole
+// paragraph existed to explain the pump. `daemon.start` redirects to a file, so the log is a
+// `readFile` away and nothing can fill.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { jsonFile, strOf } from "./jsonfile.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+string DESCRIPTOR(Cli cli) {
+  return strOf(jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"), "descriptor");
+}
+
+/** The same service, one revision later — what a republishing service actually sends. */
+string NEWER(Cli cli) {
+  return strOf(jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"), "descriptorNext");
+}
+
+/** The name the certificate gave it: the blinded key, base64 without padding. */
+string QUERY(Cli cli) {
+  string hex = strOf(jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"), "blindPublic");
+  string b64 = string.fromBytes(encode(decoded(hex), ALPHABET_STANDARD(), false));
+  return b64;
+}
+
+struct Reply {
+  i32 status;   // -1 when there was no status line to read
+  string body;
+}
+
+/**
+ * Send raw request bytes, in `chunks` pieces, and read the whole reply.
+ *
+ * The reply ends on end-of-stream rather than on a length, which is what HTTP/1.0 with no keep-alive
+ * means and what `dird` does: it answers and closes. A read loop bounded by a byte count would have
+ * to trust the `Content-Length` the server under test wrote.
+ */
+Reply request(Core core, Cli cli, i32 port, u8[] bytes, i32 chunks) {
+  i32 handle = cli.connect("127.0.0.1", port).wait().handle;
+  if (handle < 0) { return Reply(-1, "could not connect to 127.0.0.1:" + itoa(port)); }
+
+  i32 size = (bytes.len() + chunks - 1) / chunks;
+  if (size < 1) { size = 1; }
+  for (i32 at = 0; at < bytes.len(); at = at + size) {
+    i32 end = at + size;
+    if (end > bytes.len()) { end = bytes.len(); }
+    u8[] piece = u8[end - at](fill: 0);
+    for (i32 i = at; i < end; i++) { piece[i - at] = bytes[i]; }
+    cli.send(handle, piece).wait();
+    // A pause between pieces, so the server genuinely sees more than one read rather than the kernel
+    // coalescing them into one. Without it "sent in four chunks" is a claim about this test.
+    if (chunks > 1) { core.sleepMillis(15).wait(); }
+  }
+
+  string all = "";
+  bool reading = true;
+  while (reading) {
+    match (cli.recv(handle).wait()) {
+      case Data(got): { all = all + string.fromBytes(got); }
+      case End: { reading = false; }
+      case Failed(why): { reading = false; }
+    }
+  }
+  cli.closeSocket(handle);
+
+  i32 at = all.indexOf("\r\n\r\n");
+  string head = at < 0 ? all : all.slice(0, at);
+  i32 sp = head.indexOf(" ");
+  return Reply(sp < 0 ? -1 : numberAt(head, sp + 1),
+               at < 0 ? "" : all.slice(at + 4, all.len()));
+}
+
+Reply get(Core core, Cli cli, i32 port, string target) {
+  return request(core, cli, port, ("GET " + target + " HTTP/1.0\r\n\r\n").toBytes(), 1);
+}
+
+Reply post(Core core, Cli cli, i32 port, string body, i32 chunks) {
+  u8[] encoded = body.toBytes();
+  string head = "POST /tor/hs/3/publish HTTP/1.0\r\nHost: 127.0.0.1\r\n" +
+                "Content-Length: " + itoa(encoded.len()) + "\r\n\r\n";
+  u8[] headBytes = head.toBytes();
+  u8[] all = u8[headBytes.len() + encoded.len()](fill: 0);
+  for (i32 i = 0; i < headBytes.len(); i++) { all[i] = headBytes[i]; }
+  for (i32 i = 0; i < encoded.len(); i++) { all[headBytes.len() + i] = encoded[i]; }
+  return request(core, cli, port, all, chunks);
+}
+
+/**
+ * The decimal number starting at byte `from`, or -1 when there is not one there.
+ *
+ * Over the bytes rather than over `s[i]`, which is a one-character *string* — `s[i] - '0'` is
+ * `string - string`, which no operator defines and which both compilers accept and then silently
+ * delete the enclosing function over. `issues/lang/0159`.
+ */
+i32 numberAt(string s, i32 from) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  i32 digits = 0;
+  for (i32 i = from; i < b.len() && b[i] >= '0' && b[i] <= '9'; i++) {
+    n = n * 10 + (b[i] - '0');
+    digits = digits + 1;
+  }
+  return digits == 0 ? -1 : n;
+}
+
+/** The port out of `serving the directory on 127.0.0.1:<n>`, or -1. */
+i32 portFrom(string log) {
+  const string MARK = "serving the directory on 127.0.0.1:";
+  i32 at = log.indexOf(MARK);
+  return at < 0 ? -1 : numberAt(log, at + MARK.len());
+}
+
+export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/dird";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string bin = dir + "/dird";
+
+  Exec built = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/build.ts", "packages/tor/src/dird.wac",
+             "--allow-read", "--allow-net", "-o", bin), u8[0]()).wait();
+  t.eqI32(built.status, 0, "dird built — " + string.fromBytes(built.stderr));
+  if (built.status != 0) { return t.report(); }
+
+  string consensus = strOf(jsonFile(cli, "packages/tor/test/data/consensus_generated.json"),
+                           "consensus");
+  string routerdesc = strOf(jsonFile(cli, "packages/tor/test/data/consensus_generated.json"),
+                            "descriptor");
+  string certificate = strOf(jsonFile(cli, "packages/tor/test/data/authcert_generated.json"),
+                             "certificate");
+  cli.writeFile(dir + "/consensus", consensus.toBytes()).wait();
+  cli.writeFile(dir + "/cert", certificate.toBytes()).wait();
+  cli.writeFile(dir + "/desc", routerdesc.toBytes()).wait();
+
+  // Port 0 asks the OS for a free one, which two agents running the suite at once cannot collide on.
+  Daemon d = start(cli,
+    quoted(bin) + " " + quoted(dir + "/consensus") + " " + quoted(dir + "/cert") + " " +
+      quoted(dir + "/desc") + " 0",
+    dir + "/log");
+  t.isTrue(d.ok(), "dird started — " + d.error);
+  if (!d.ok()) { return t.report(); }
+
+  if (!waitForLogWithin(core, cli, d, "serving the directory on 127.0.0.1:", 20000)) {
+    t.fail("dird never said it listened. Its output was: " + logOf(cli, d));
+    stop(cli, d);
+    return t.report();
+  }
+  i32 port = portFrom(logOf(cli, d));
+  t.isTrue(port > 0, "and named the port it got");
+  if (port <= 0) { stop(cli, d); return t.report(); }
+
+  string descriptor = DESCRIPTOR(cli);
+  string newer = NEWER(cli);
+  string query = QUERY(cli);
+
+  // ── The control: nothing has been published, so there is nothing to serve ──
+  Reply before = get(core, cli, port, "/tor/hs/3/" + query);
+  t.eqI32(before.status, 404, "a descriptor nobody uploaded is not served");
+
+  // ── Publish, in four pieces, because a real upload does not arrive in one read ──
+  Reply published = post(core, cli, port, descriptor, 4);
+  t.eqI32(published.status, 200, "a valid descriptor is accepted");
+  t.isTrue(contains(published.body, "stored successfully"),
+           "the reply says so — got " + published.body);
+
+  // ── And it comes back, byte for byte, under the name the certificate gave it ──
+  Reply after = get(core, cli, port, "/tor/hs/3/" + query);
+  t.eqI32(after.status, 200, "the descriptor is served after publication");
+  t.eqStr(after.body, descriptor, "and it is the bytes that were uploaded, unchanged");
+
+  // A client asks for one service, so another name must not reach this one.
+  string other = "";
+  for (i32 i = 0; i < 43; i++) { other = other + "A"; }
+  t.eqI32(get(core, cli, port, "/tor/hs/3/" + other).status, 404,
+          "another blinded key is not this descriptor");
+
+  // ── A descriptor tor refuses, refused — and it must not evict the good one ──
+  i32 at = descriptor.indexOf("superencrypted") + 60;
+  // `== "X"` and not `== 'X'`: `descriptor[at]` is a one-character *string*, and comparing it to a
+  // character literal type-checks, emits an `i32.const` where a string belongs, and produces a module
+  // the engine refuses — with no diagnostic from either compiler. `issues/lang/0159`.
+  string broken = descriptor.slice(0, at) +
+                  (descriptor.slice(at, at + 1) == "X" ? "Y" : "X") +
+                  descriptor.slice(at + 1, descriptor.len());
+  t.eqI32(post(core, cli, port, broken, 1).status, 400,
+          "a descriptor whose signature fails is refused");
+  t.eqStr(get(core, cli, port, "/tor/hs/3/" + query).body, descriptor,
+          "and a refused upload does not disturb what is held");
+
+  // ── Republishing: strictly newer, or refused ──
+  // tor's `cache_store_v3_as_dir` replaces only when the revision counter is greater, so an
+  // unchanged descriptor uploaded twice is a 400 rather than a no-op 200. This case asserted 200
+  // until the sequence was put to a real HSDir, which refused it.
+  t.eqI32(post(core, cli, port, descriptor, 1).status, 400,
+          "an unchanged descriptor is refused the second time, as tor refuses it");
+  t.eqStr(get(core, cli, port, "/tor/hs/3/" + query).body, descriptor,
+          "and what is held is untouched by the refusal");
+
+  t.eqI32(post(core, cli, port, newer, 1).status, 200, "a newer revision is accepted");
+  t.eqStr(get(core, cli, port, "/tor/hs/3/" + query).body, newer,
+          "and replaces what was held rather than joining it");
+
+  // An older descriptor arriving late must not undo the newest publication — the failure that makes
+  // a service unreachable while every log line says it published.
+  t.eqI32(post(core, cli, port, descriptor, 1).status, 400, "the older one is refused");
+  t.eqStr(get(core, cli, port, "/tor/hs/3/" + query).body, newer,
+          "and the newer descriptor still stands");
+
+  // Two accepted uploads, and the directory still holds one descriptor. A store that appended would
+  // serve whichever copy the search reached first, which over a service's lifetime is the stale one
+  // — and the count is the only signal that tells the two apart.
+  string log = logOf(cli, d);
+  const string HELD = "stored a descriptor, 1 held";
+  i32 first = log.indexOf(HELD);
+  i32 second = first < 0 ? -1 : log.slice(first + HELD.len(), log.len()).indexOf(HELD);
+  t.isTrue(second >= 0, "dird said it stored one descriptor twice. Its output was: " + log);
+
+  // The directory documents still work, so publication did not take the port over.
+  t.eqI32(get(core, cli, port, "/tor/status-vote/current/consensus").status, 200,
+          "the consensus is still served");
+
+  stop(cli, d);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
