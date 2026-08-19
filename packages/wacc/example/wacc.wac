@@ -35,7 +35,7 @@ import { importSpecs, normalisePath, resolveFrom, resolveFromIn } from "../src/f
 import { Res } from "../src/path.wac";
 import { coreFile, coreSource, isBuiltinSpec, stdFile } from "../src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
-import { Manifest, Match, Located, readManifest, matchSpecifier, locate,
+import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
 import { Lock, LockEntry, readLock } from "../../wacpkg/src/lock.wac";
 import { cachePath } from "../../wacpkg/src/cache.wac";
@@ -204,7 +204,8 @@ Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
   Manifest m = readManifest(mf.bytes);
   if (!m.ok) {
     return Mapped(true, false, "", "",
-                  root + "/" + MANIFEST_NAME() + " is not usable: " + m.detail);
+                  root + "/" + MANIFEST_NAME() + ": " + manifestWhy(m.code) +
+                  (m.detail == "" ? "" : " — " + m.detail));
   }
   Match hit = matchSpecifier(m, spec);
   if (!hit.found) { return Mapped(false, false, "", "", ""); }

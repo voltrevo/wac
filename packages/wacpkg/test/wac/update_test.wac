@@ -36,12 +36,12 @@ export string test_a_mapping_that_did_not_need_resolving_keeps_the_commit_it_had
   // `std/` is USE and `new` is CREATE. WRONG is offered for `std/` — a caller that resolved
   // everything because resolving is easier than deciding would pass exactly this.
   LockEntry[] out = updated(
-    "{ imports: { 'std/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }",
-    "{ imports: { 'std/': { git: 'g1', ref: 'main', commit: '" + OLD() + "' } } }",
+    "{ imports: { 'bits/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }",
+    "{ imports: { 'bits/': { git: 'g1', ref: 'main', commit: '" + OLD() + "' } } }",
     string[](WRONG(), FRESH()));
   t.eqI32(out.len(), 2, "both mappings are written");
   if (out.len() != 2) { return t.report(); }
-  i32 std = entryNamed(out, "std/");
+  i32 std = entryNamed(out, "bits/");
   i32 fresh = entryNamed(out, "new");
   t.isTrue(std >= 0 && fresh >= 0, "both are named");
   if (std < 0 || fresh < 0) { return t.report(); }

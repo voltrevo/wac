@@ -1,7 +1,7 @@
 # 0167a — a project can map `std/` and `core/`, which D4 reserves, and the mapping is used
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — `readManifest` refuses a reserved name with `M_RESERVED_NAME` (11)
+- **Fixed in:** the commit this line arrived in
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -81,3 +81,35 @@ with `core/` or `std/`.
 
 That was written before D4 reserved the name. It should be some other prefix, or the example teaches
 the thing this issue is about.
+
+## Fixed
+
+`readManifest` refuses the **prefix**, not the file: `core`, `std`, `core/`, `std/` and anything
+beneath them, exact and case-sensitive, so `stdlib/`, `corelib/`, `mystd/`, `a/core/` and `Core/`
+stay ordinary names. New code `M_RESERVED_NAME()` = 11.
+
+Refused at the manifest rather than at the import, so it is reported once at the line somebody wrote:
+
+    $ wac update
+    wacfetch: wac.json5 is not valid: code 11 (std/)
+
+    $ wac run src/n.wac
+    wacc: ./wac.json5: `core` and `std` are the toolchain's own and cannot be mapped — std/
+
+**Where it does not fire, which is worth stating.** The compiler reads the manifest *lazily* — only
+when a specifier could name a mapping — so a project whose imports are all built-in or relative never
+parses it and never hears about a reserved mapping. That is deliberate (a program with no project
+reference stats nothing), and the two commands that do parse it are the two that matter: `wac update`
+always, and any build with a mapping-shaped specifier in it, which includes the reproduction above.
+
+The compile-time message used to be *`wac.json5` is not usable: std/* — the mapping without the
+complaint. `manifestWhy` now turns a code into a sentence, beside the codes so every reader says the
+same thing, and all eleven have one.
+
+Canaried: with `isReservedName` forced to `false` and nothing else changed, the new case fails on all
+seven refusals.
+
+**Seven fixtures across `wacpkg` used `'std/'` as their example mapping name** — written before D4
+reserved it — and three test files went red on the fix, which is the tidiest possible confirmation
+that the check reaches what it should. They are `bits/` now, along with the doc comments in
+`manifest.wac` and `lock.wac` and the README example.

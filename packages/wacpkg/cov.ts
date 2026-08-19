@@ -22,7 +22,7 @@ const MANIFESTS = [
   "{ }",
   "// nothing\n{}",
   "{ name: 'x' }",
-  "{ imports: { 'std/': { git: 'g', ref: 'main' }, 'acme': { git: 'g', ref: 'v1', subdir: 'packages/acme' } } }",
+  "{ imports: { 'bits/': { git: 'g', ref: 'main' }, 'acme': { git: 'g', ref: 'v1', subdir: 'packages/acme' } } }",
   "{",
   "[]",
   "1",
@@ -64,9 +64,9 @@ for (const sub of ["", "a", "a/b", "packages/std", "..", "../x", "a/../..", "a/.
 
 /** Matching, including the two shapes that must *not* match. */
 const table = readManifest(
-  enc.encode("{ imports: { 'std/': { git: 'g', ref: 'r' }, 'acme': { git: 'g', ref: 'r' } } }"),
+  enc.encode("{ imports: { 'bits/': { git: 'g', ref: 'r' }, 'acme': { git: 'g', ref: 'r' } } }"),
 );
-for (const spec of ["std/vec.wac", "std/a/b.wac", "acme", "std", "std/", "acme/x", "other"]) {
+for (const spec of ["std/vec.wac", "std/a/b.wac", "acme", "std", "bits/", "acme/x", "other"]) {
   matchSpecifier(table, spec);
 }
 
@@ -122,15 +122,15 @@ for (const f of ["actionUse", "actionCreate", "actionRefresh"]) (pkg.mod[f] as (
 
 const A = "a".repeat(40), B = "b".repeat(40);
 const LOCK = `{ imports: {
-  'std/': { git: 'g1', ref: 'main', commit: '${A}' },
+  'bits/': { git: 'g1', ref: 'main', commit: '${A}' },
   'sub': { git: 'g2', ref: 'v1', subdir: 'old', commit: '${B}' },
 } }`;
 for (
   const manifest of [
-    `{ imports: { 'std/': { git: 'g1', ref: 'main' } } }`,
+    `{ imports: { 'bits/': { git: 'g1', ref: 'main' } } }`,
     `{ imports: { 'fresh': { git: 'g9', ref: 'main' } } }`,
-    `{ imports: { 'std/': { git: 'OTHER', ref: 'main' } } }`,
-    `{ imports: { 'std/': { git: 'g1', ref: 'v2' } } }`,
+    `{ imports: { 'bits/': { git: 'OTHER', ref: 'main' } } }`,
+    `{ imports: { 'bits/': { git: 'g1', ref: 'v2' } } }`,
     `{ imports: { 'sub': { git: 'g2', ref: 'v1', subdir: 'new' } } }`,
     `{ imports: { 'sub': { git: 'g2', ref: 'v1' } } }`,
     `{ imports: { 'kept': { git: 'g', ref: 'r' } } }`,
@@ -206,8 +206,8 @@ for (const s of [A, "0".repeat(40), "", "3f2a", A.toUpperCase(), "g".repeat(40),
 const updatedLock = pkg.mod.updatedLock as (m: Uint8Array, l: Uint8Array, r: string[]) => unknown;
 {
   const OLD = "a".repeat(40), FRESH = "c".repeat(40), WRONG = "d".repeat(40);
-  const two = enc.encode(`{ imports: { 'std/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }`);
-  updatedLock(two, enc.encode(`{ imports: { 'std/': { git: 'g1', ref: 'main', commit: '${OLD}' } } }`), [WRONG, FRESH]);
+  const two = enc.encode(`{ imports: { 'bits/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }`);
+  updatedLock(two, enc.encode(`{ imports: { 'bits/': { git: 'g1', ref: 'main', commit: '${OLD}' } } }`), [WRONG, FRESH]);
   updatedLock(
     enc.encode(`{ imports: { 'a': { git: 'g', ref: 'v2', subdir: 'lib' } } }`),
     enc.encode(`{ imports: { 'a': { git: 'g', ref: 'v1', commit: '${OLD}' } } }`),

@@ -32,13 +32,13 @@ string SHA() { return "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"; }
 
 string MANIFEST() {
   return "{ imports: {\n"
-       + "  'std/': { git: 'https://x.invalid/g1', ref: 'main' },\n"
+       + "  'bits/': { git: 'https://x.invalid/g1', ref: 'main' },\n"
        + "  'acme': { git: 'https://x.invalid/g2', ref: 'v1', subdir: 'packages/acme' },\n"
        + "} }";
 }
 string LOCK() {
   return "{ imports: {\n"
-       + "  'std/': { git: 'https://x.invalid/g1', ref: 'main', commit: '" + A() + "' },\n"
+       + "  'bits/': { git: 'https://x.invalid/g1', ref: 'main', commit: '" + A() + "' },\n"
        + "  'gone': { git: 'https://x.invalid/g3', ref: 'r', commit: '" + B() + "' },\n"
        + "} }";
 }
@@ -111,8 +111,8 @@ export string test_the_planning_entry_points_agree_with_lock_wac() {
   t.eqBool(planNeedsResolving(MANIFEST().toBytes(), LOCK().toBytes()), needsResolving(direct),
            "planNeedsResolving agrees");
   t.isTrue(planNeedsResolving(MANIFEST().toBytes(), LOCK().toBytes()), "and it is true here");
-  string settled = "{ imports: { 'std/': { git: 'https://x.invalid/g1', ref: 'main' } } }";
-  string settledLock = "{ imports: { 'std/': { git: 'https://x.invalid/g1', ref: 'main', commit: '"
+  string settled = "{ imports: { 'bits/': { git: 'https://x.invalid/g1', ref: 'main' } } }";
+  string settledLock = "{ imports: { 'bits/': { git: 'https://x.invalid/g1', ref: 'main', commit: '"
                      + A() + "' } } }";
   t.isFalse(planNeedsResolving(settled.toBytes(), settledLock.toBytes()),
             "and false when every step is USE");
