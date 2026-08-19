@@ -17,12 +17,20 @@
 // these hosts are compared on the cases somebody wrote for a *reason* — each one is a rule of bash's
 // that was got wrong once — rather than on scripts chosen to pass.
 //
-// **A bounded slice, and the bound is stated rather than silent.** Every case costs two subprocesses,
-// so the whole corpus is minutes; this takes the first `SAMPLE` and says so. The full sweep is a
-// `deno task`, not a gate.
-// test-lane: heavy — 989 MB and 66s, and it builds the Rust host: cargo, then a shell on both hosts
+// **A bounded slice, and the bound is stated rather than silent.** The whole corpus is minutes; this
+// takes the first `SAMPLE` and says so. The full sweep is a `deno task`, not a gate.
+//
+// The arithmetic changed and the slice did not. Every case used to cost two subprocesses, ~210ms; the
+// JavaScript half now runs in a worker — the launcher half of the same built program — so a case is
+// the native host's 74ms and about a millisecond. That is the 800-odd corpus in a minute rather than
+// three, which is still not a thing to put in front of every push.
+// **Heavy until 2026-08-19, and no longer.** It declared `test-lane: heavy — 989 MB and 66s`, so the
+// only test that runs the sealed system on a host with no JavaScript in it ran every few hours rather
+// than on every push. It is **794 MB and 4.7s** now: the JavaScript half of each comparison is a worker,
+// cargo is asked by `stat` rather than run, the native bind wire is cached across processes, and
+// wasmtime's compiled artefact survives the temporary directory it was written into. The
+// Rust host is still built when its sources have moved, which is the one cost that can still spike.
 
-import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
 import { CORPUS } from "../../sh/test/corpus.ts";
 import { type Bounded, boundedAgain, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
@@ -31,9 +39,9 @@ import "../../../harness/spawnRetry.ts";
 // Memoised, and answered by `stat` when the crate has not moved — a bare `cargo build` is 2.6s even
 // with nothing to do, and this file asks more than once.
 import { nativeBinary } from "../../../harness/nativeHost.ts";
+import { type AppRunner, appRunner, type RunResult, runBounded } from "../../../harness/appRun.ts";
 
 const ENTRY = "packages/box/src/bin/sealedsh.wac";
-const CRATE = "native";
 /** How many corpus scripts the gate runs. The rest is `deno task corpus:hosts`, which runs all 800-odd. */
 const SAMPLE = 25;
 
@@ -61,14 +69,26 @@ function shell(cmd: string, args: string[], script: string): Bounded {
   return boundedAgain(DEFAULT_SECONDS, cmd, [...args, "-c", script], { cwd: tmp });
 }
 
+/**
+ * The JavaScript host's half, in a worker rather than a process.
+ *
+ * The native half stays a process because it *is* the other host and the whole point of this file;
+ * the Deno half's process boundary is not under test here — `appRunner` runs the same built program,
+ * with the same grants, through the same capability implementations, and saves ~130ms per script. It
+ * carries its own bound because a worker run has none, and a bound that fired is a report rather than
+ * an answer (0128) — `runBounded` throws where `hangReport` would have collected.
+ */
+function denoShell(runner: AppRunner, script: string): Promise<RunResult> {
+  return runBounded(runner, ["-c", script], { cwd: tmp }, DEFAULT_SECONDS, JSON.stringify(script));
+}
+
 
 Deno.test("the same sealed system answers the same on a JavaScript host and one that is not", async () => {
-  const deno = `${tmp}/denosh`;
-  await buildApp(ENTRY, deno, {});
+  const deno = await appRunner(ENTRY, {});
 
   // The Deno half asserted on its own, so a skipped native half still tests something — and so that a
   // sealed session is known to be *doing* something rather than refusing everything.
-  const alive = shell(deno, [], "mkdir /x; echo deep > /x/f; cat /x/f; seq 1 3 | tac | head -2");
+  const alive = await denoShell(deno, "mkdir /x; echo deep > /x/f; cat /x/f; seq 1 3 | tac | head -2");
   assertEquals(alive.out, "deep\n3\n2\n", alive.err);
 
   const native = await nativeBinary();
@@ -83,12 +103,12 @@ Deno.test("the same sealed system answers the same on a JavaScript host and one 
 
   const differ: string[] = [];
   for (const script of CORPUS.slice(0, SAMPLE)) {
-    const a = shell(deno, [], script);
+    const a = await denoShell(deno, script);
     const b = shell(native, [manifest], script);
     // **A bound that fired is not an answer.** `timeout` reports 124, which no program chose, so a
     // run that never finished used to be printed as a host that disagreed — `native "" (124)` — and
     // read as a conformance failure. Issue 0128 is what that cost.
-    const hung = hangReport(JSON.stringify(script), [{ name: "deno", run: a }, { name: "native", run: b }]);
+    const hung = hangReport(JSON.stringify(script), [{ name: "native", run: b }]);
     if (hung !== null) { differ.push(hung); continue; }
     if (a.out !== b.out || a.err !== b.err || a.code !== b.code) {
       differ.push(
@@ -101,8 +121,7 @@ Deno.test("the same sealed system answers the same on a JavaScript host and one 
 });
 
 Deno.test("the applets answer the same on both hosts, including the ones with an oracle", async () => {
-  const deno = `${tmp}/denosh`;
-  await buildApp(ENTRY, deno, {});
+  const deno = await appRunner(ENTRY, {});
   const native = await nativeBinary();
   if (native === null) return;
   await buildNative(ENTRY, `${tmp}/sealedsh`, {});
@@ -122,9 +141,9 @@ Deno.test("the applets answer the same on both hosts, including the ones with an
     "for i in 1 2 3; do echo $i; done | tac",
   ];
   for (const script of scripts) {
-    const a = shell(deno, [], script);
+    const a = await denoShell(deno, script);
     const b = shell(native, [manifest], script);
-    const stuck = hangReport(script, [{ name: "deno", run: a }, { name: "native", run: b }]);
+    const stuck = hangReport(script, [{ name: "native", run: b }]);
     if (stuck !== null) throw new Error(stuck);
     assertEquals(b.out, a.out, `${script} — stdout`);
     assertEquals(b.err, a.err, `${script} — stderr`);
@@ -164,8 +183,7 @@ Deno.test("the applets answer the same on both hosts, including the ones with an
  * mistake `sealing.test.ts` records making once already.
  */
 Deno.test("the seal holds on both hosts, not just the one it was written on", async () => {
-  const denoSealed = `${tmp}/sealed-granted`;
-  await buildApp(ENTRY, denoSealed, { read: true, write: true, env: true });
+  const denoSealed = await appRunner(ENTRY, { read: true, write: true, env: true });
 
   const native = await nativeBinary();
   if (native === null) return;
@@ -180,18 +198,18 @@ Deno.test("the seal holds on both hosts, not just the one it was written on", as
   // anybody. `packages/box/src/bin/sh.wac` is the same binary shape with a shell whose world *is* the
   // host's, so it must print what the machine says — and it does on both, checked rather than
   // assumed, because `Cap::Env` in the native host is a separate implementation from Deno's.
-  const openDeno = `${tmp}/open-granted`;
-  await buildApp("packages/box/src/bin/sh.wac", openDeno, { read: true, write: true, env: true });
+  const openDeno = await appRunner("packages/box/src/bin/sh.wac", { read: true, write: true, env: true });
   await buildNative("packages/box/src/bin/sh.wac", `${tmp}/open-granted-native`, {
     read: true,
     write: true,
     env: true,
   });
-  for (const [name, cmd, args] of [
-    ["deno", openDeno, []],
-    ["native", native, [`${tmp}/open-granted-native.json`]],
+  for (const [name, ask] of [
+    ["deno", (script: string) => denoShell(openDeno, script)],
+    ["native", (script: string) =>
+      Promise.resolve(shell(native, [`${tmp}/open-granted-native.json`], script))],
   ] as const) {
-    const sees = shell(cmd, [...args], "echo HOME=[$HOME]");
+    const sees = await ask("echo HOME=[$HOME]");
     if (!sees.out.includes(Deno.env.get("HOME") ?? "\u0000")) {
       throw new Error(
         `the ${name} host does not read the environment at all, so the seal below proves nothing: ` +
@@ -232,9 +250,9 @@ Deno.test("the seal holds on both hosts, not just the one it was written on", as
 
   const differ: string[] = [];
   for (const { script, want } of asked) {
-    const a = shell(denoSealed, [], script);
+    const a = await denoShell(denoSealed, script);
     const b = shell(native, [nativeManifest], script);
-    const stuck = hangReport(JSON.stringify(script), [{ name: "deno", run: a }, { name: "native", run: b }]);
+    const stuck = hangReport(JSON.stringify(script), [{ name: "native", run: b }]);
     if (stuck !== null) { differ.push(stuck); continue; }
     // **Each host against the claim first, then against the other.** Two hosts that leaked the same
     // way would agree with each other and be wrong, which is the failure a pure comparison cannot
@@ -256,8 +274,11 @@ Deno.test("the seal holds on both hosts, not just the one it was written on", as
   if (hostFile !== null && hostFile !== undefined) {
     const first = Deno.readTextFileSync(hostFile).split("\n")[0];
     if (first.length > 0) {
-      for (const [name, cmd, args] of [["deno", denoSealed, []], ["native", native, [nativeManifest]]] as const) {
-        const seen = shell(cmd, [...args], `cat ${hostFile} | head -1`);
+      for (const [name, ask] of [
+        ["deno", (script: string) => denoShell(denoSealed, script)],
+        ["native", (script: string) => Promise.resolve(shell(native, [nativeManifest], script))],
+      ] as const) {
+        const seen = await ask(`cat ${hostFile} | head -1`);
         if (seen.out.includes(first)) {
           differ.push(`${name} read ${hostFile}: ${JSON.stringify(seen.out)}`);
         }

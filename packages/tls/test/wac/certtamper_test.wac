@@ -1,0 +1,54 @@
+// Every single-byte tampering of a real certificate, verified.
+//
+// test-lane: heavy — 5.5s, 456 chain verifications at a P-256 signature apiece
+//
+// `fuzz_test.wac` keeps a stride-7 sample of this in the regular lane, over the same sweep in
+// `certtamper.wac`, so this is a size rather than a second implementation. The split is what the
+// cost forces: one flipped byte is one chain verification, a verification is 12ms, and a certificate
+// is 456 bytes. Nothing here traps, so unlike `packages/gzip`'s corruption sweep it is all in one
+// process — the cost is arithmetic rather than process starts.
+
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Store, pemBundle } from "../../src/roots.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+import { Tampered, sweepTampering } from "./certtamper.wac";
+
+/** The same two fixtures `fuzz_test.wac` uses: a real leaf and its issuer. */
+Store fixtures(Core core, Cli cli) {
+  u8[] all = u8[0]();
+  string[] names = string[]("ec_leaf", "ec_ca");
+  for (i32 i = 0; i < names.len(); i++) {
+    string path = "packages/tls/test/data/" + names[i] + ".pem";
+    FileResult r = cli.readFile(path).wait();
+    if (!r.ok) {
+      core.warn("cert tamper: cannot read " + path + " — " + r.error);
+      trap;
+    }
+    u8[] joined = u8[all.len() + r.bytes.len()]();
+    joined.copyFrom(all, 0, 0, all.len());
+    joined.copyFrom(r.bytes, 0, all.len(), r.bytes.len());
+    all = joined;
+  }
+  Store store = pemBundle(all);
+  if (store.offsets.len() < 4) { trap; }
+  return store;
+}
+
+export string test_every_single_byte_tampering_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  Store certs = fixtures(core, cli);
+  u8[] leaf = slice(certs.der, certs.offsets[0], certs.offsets[1]);
+  u8[] ca = slice(certs.der, certs.offsets[2], certs.offsets[3]);
+
+  Tampered swept = sweepTampering(leaf, ca, "wac.test", 1785715200, 1, 0);
+  // A floor, because a sweep of nothing accepts nothing and would pass every assertion below.
+  t.isTrue(swept.tried >= 400, "every byte was tried: " + itoa64(swept.tried as i64));
+  t.eqI32(swept.accepted, 0, "no single-byte tampering is accepted");
+  t.eqI32(swept.wrongCode, 0, "an unparseable certificate is refused as unparseable");
+  t.isTrue(swept.unparseable > 0,
+           "and some mutations broke the encoding rather than the signature: " +
+           itoa64(swept.unparseable as i64) + " of " + itoa64(swept.tried as i64));
+  return t.report();
+}

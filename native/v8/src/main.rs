@@ -4087,6 +4087,16 @@ fn dispatch(
             // **`--allow-run` is its own grant**, not `write`'s and not `spawn`'s. A build that may
             // start a confined wasm module must be able to refuse a host binary without refusing
             // both, and in a browser the second is always refused.
+            //
+            // **On a thread, so the ticket is handed back while the child is still running.** The
+            // reads above touch the v8 heap and have to happen here; nothing in `run_host_program`
+            // does. This used to run the child to completion inside the capability call and settle
+            // the ticket in the same breath, so a `Pending<Exec>` on this host was a promise of
+            // something that had already happened — three concurrent `sleep 1` were 3013ms here
+            // against 1009ms for the same program on the Deno host, which dispatches and returns at
+            // once. Issue 0211, held by `packages/platform/test/wac/exec_test.wac`. The lost overlap
+            // was the smaller half: a ticket that exists only after the work is over cannot be
+            // watched by `waitAny`, so a child that wedged had nothing bounding it.
             let path = read_string(scope, args.get(1));
             let argv: Vec<String> = read_string_array_bytes(scope, args.get(2))
                 .into_iter()
@@ -4094,72 +4104,23 @@ fn dispatch(
                 .collect();
             let stdin = read_bytes(scope, args.get(3));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.run));
-            let answer = if !granted {
-                Answer::Exec(0, Vec::new(), Vec::new(), "Not granted to this application".into())
-            } else {
-                // `args` is an argument *vector*. Nothing here builds a shell line, so a value
-                // containing a space or a semicolon arrives whole and is never re-split — a caller
-                // who wants a shell asks for `/bin/sh -c` by name.
-                let mut cmd = std::process::Command::new(&path);
-                cmd.args(&argv)
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped());
-                match cmd.spawn() {
-                    Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
-                    Ok(mut child) => {
-                        // **Draining starts before the write, not after.** A child that answers
-                        // while it is still being fed — `cat`, `grep`, any filter — blocks on its
-                        // own output once the pipe buffer is full, and a host that writes the whole
-                        // of stdin first blocks on the write. Both waiting on the other.
-                        //
-                        // `wait_with_output` does read both pipes concurrently, which is what the
-                        // comment here used to say, and it is not enough: it does not start until
-                        // the write has finished. Two megabytes through `cat` hung every host.
-                        let (out_tx, out_rx) = std::sync::mpsc::channel();
-                        let (err_tx, err_rx) = std::sync::mpsc::channel();
-                        let mut out_pipe = child.stdout.take();
-                        let mut err_pipe = child.stderr.take();
-                        std::thread::spawn(move || {
-                            use std::io::Read;
-                            let mut v = Vec::new();
-                            if let Some(p) = out_pipe.as_mut() {
-                                let _ = p.read_to_end(&mut v);
-                            }
-                            let _ = out_tx.send(v);
-                        });
-                        std::thread::spawn(move || {
-                            use std::io::Read;
-                            let mut v = Vec::new();
-                            if let Some(p) = err_pipe.as_mut() {
-                                let _ = p.read_to_end(&mut v);
-                            }
-                            let _ = err_tx.send(v);
-                        });
-                        // Dropped at the end of the block, which is what closes the child's input:
-                        // a program that reads to the end needs the end to arrive.
-                        if let Some(mut w) = child.stdin.take() {
-                            use std::io::Write;
-                            let _ = w.write_all(&stdin);
-                        }
-                        let out = out_rx.recv().unwrap_or_default();
-                        let err = err_rx.recv().unwrap_or_default();
-                        match child.wait() {
-                            Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
-                            Ok(status) => Answer::Exec(
-                                // A signalled child has no code. -1 rather than 0, so it is never
-                                // mistaken for success by a caller reading only the status.
-                                status.code().unwrap_or(-1),
-                                out,
-                                err,
-                                String::new(),
-                            ),
-                        }
-                    }
+            if !granted {
+                let refused =
+                    Answer::Exec(0, Vec::new(), Vec::new(), "Not granted to this application".into());
+                match ticket_for(scope, "Exec", refused) {
+                    Some(v) => rv.set(v),
+                    None => throw(scope, "this program has no Pending<Exec> to answer exec with"),
                 }
-            };
-            match ticket_for(scope, "Exec", answer) {
-                Some(v) => rv.set(v),
+                return;
+            }
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            std::thread::spawn(move || {
+                worker.complete(id, run_host_program(path, argv, stdin));
+            });
+            match ticket_pending(scope, "Exec", id) {
+                Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<Exec> to answer exec with"),
             }
         }
@@ -5216,4 +5177,69 @@ fn read_string(scope: &mut v8::PinScope, s: v8::Local<v8::Value>) -> String {
 #[allow(dead_code)]
 fn slots_of(_m: &Manifest) -> HashMap<String, usize> {
     HashMap::new()
+}
+
+/// A host program, run to completion, off the thread that answers capabilities — the body of
+/// `Cap::Exec`.
+///
+/// Lifted out so the ticket can be handed back before any of this happens; see the note there and
+/// issue 0211. Nothing in here touches the v8 heap, which is what makes it liftable at all.
+fn run_host_program(path: String, argv: Vec<String>, stdin: Vec<u8>) -> Answer {
+    let mut cmd = std::process::Command::new(&path);
+    cmd.args(&argv)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    match cmd.spawn() {
+        Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+        Ok(mut child) => {
+            // **Draining starts before the write, not after.** A child that answers
+            // while it is still being fed — `cat`, `grep`, any filter — blocks on its
+            // own output once the pipe buffer is full, and a host that writes the whole
+            // of stdin first blocks on the write. Both waiting on the other.
+            //
+            // `wait_with_output` does read both pipes concurrently, which is what the
+            // comment here used to say, and it is not enough: it does not start until
+            // the write has finished. Two megabytes through `cat` hung every host.
+            let (out_tx, out_rx) = std::sync::mpsc::channel();
+            let (err_tx, err_rx) = std::sync::mpsc::channel();
+            let mut out_pipe = child.stdout.take();
+            let mut err_pipe = child.stderr.take();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut v = Vec::new();
+                if let Some(p) = out_pipe.as_mut() {
+                    let _ = p.read_to_end(&mut v);
+                }
+                let _ = out_tx.send(v);
+            });
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut v = Vec::new();
+                if let Some(p) = err_pipe.as_mut() {
+                    let _ = p.read_to_end(&mut v);
+                }
+                let _ = err_tx.send(v);
+            });
+            // Dropped at the end of the block, which is what closes the child's input:
+            // a program that reads to the end needs the end to arrive.
+            if let Some(mut w) = child.stdin.take() {
+                use std::io::Write;
+                let _ = w.write_all(&stdin);
+            }
+            let out = out_rx.recv().unwrap_or_default();
+            let err = err_rx.recv().unwrap_or_default();
+            match child.wait() {
+                Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+                Ok(status) => Answer::Exec(
+                    // A signalled child has no code. -1 rather than 0, so it is never
+                    // mistaken for success by a caller reading only the status.
+                    status.code().unwrap_or(-1),
+                    out,
+                    err,
+                    String::new(),
+                ),
+            }
+        }
+    }
 }

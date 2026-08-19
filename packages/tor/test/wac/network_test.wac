@@ -16,9 +16,20 @@
 // That is a stated limitation, not an oversight.
 //
 // Host-side until 2026-08-19, `issues/system/0161`.
+//
+// **23s to 12s, and what is left is two deliberate waits.** Each case needs a launcher and three
+// child bundles, and building them per case was **52 `deno run build.ts` subprocesses** — the largest
+// single item in the `wac test` lane. They are the same four artefacts every time, so they are built
+// once into `.cache/network/_built` and copied into each case's directory, which keeps the reason
+// that directory exists (the launcher resolves bundle names from its own `cwd`) and pays for it in
+// file copies rather than process starts.
+//
+// Of the 12s that remain, **8s is the two cases that are supposed to reach their timeout** — the node
+// that never announces itself and the wait for something never said, at `timeout 4000` each. Those
+// are the tests, not overhead: the rest of the file is thirteen launcher runs and their children.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Stat, FileResult } from "../../../platform/src/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -46,37 +57,104 @@ bool build(T t, Cli cli, string entry, string out, string[] grants, bool worker)
   return r.ran() && r.status == 0;
 }
 
+/** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
+i64 newestUnder(Cli cli, string dir) {
+  i64 newest = 0 as i64;
+  string[]? names = cli.readDir(dir).wait();
+  if (names is null) { return 0 as i64; }
+  string[] here = names!;
+  for (i32 i = 0; i < here.len(); i++) {
+    string path = dir + "/" + here[i];
+    Stat s = cli.stat(path).wait();
+    if (!s.exists) { continue; }
+    if (s.isDir) {
+      i64 deep = newestUnder(cli, path);
+      if (deep > newest) { newest = deep; }
+      continue;
+    }
+    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+  }
+  return newest;
+}
+
+/** `from` to `to`, since `Cli` has no copy — these are build outputs of a few hundred kilobytes. */
+bool copyOver(Cli cli, string from, string to) {
+  FileResult r = cli.readFile(from).wait();
+  if (!r.ok) { return false; }
+  return cli.writeFile(to, r.bytes).wait().ok();
+}
+
+/**
+ * The four artefacts every case needs, built **once** and kept.
+ *
+ * They are the same four bytes for every case in this file, and building them per case was 52 `deno
+ * run build.ts` subprocesses: **22.9s, the largest single item in the `wac test` lane.** They are
+ * built into a directory of their own and copied into each case's, which keeps the property the
+ * per-case directory exists for — the launcher resolves bundle names from its own `cwd`, so two
+ * cases writing `net.txt` in one place would race — and pays for it in file copies rather than
+ * process starts.
+ *
+ * Freshness is mtimes, the rule `tools/seedFresh.test.ts` uses for the seed: anything newer than the
+ * built launcher under the sources these are made from, or under the builder itself, and all four are
+ * built again. It is coarser than an import walk on purpose — after any edit in those trees the first
+ * case rebuilds and the other twelve reuse, which is the shape that matters here.
+ */
+bool built(T t, Cli cli, string shared) {
+  cli.mkdir(shared, true).wait();
+  Stat have = cli.stat(shared + "/network").wait();
+  i64 newest = newestUnder(cli, "packages/tor/src");
+  i64 platform = newestUnder(cli, "packages/platform/src");
+  if (platform > newest) { newest = platform; }
+  i64 examples = newestUnder(cli, "packages/platform/example");
+  if (examples > newest) { newest = examples; }
+  Stat builder = cli.stat("packages/platform/build.ts").wait();
+  if (builder.exists && builder.modifiedMillis > newest) { newest = builder.modifiedMillis; }
+  if (have.exists && have.modifiedMillis > newest) { return true; }
+
+  if (!build(t, cli, "packages/tor/src/network.wac", shared + "/network",
+             string[]("--allow-read", "--allow-write", "--allow-net"), false)) {
+    return false;
+  }
+  if (!build(t, cli, "packages/platform/example/waiter.wac", shared + "/waiter.worker.js",
+             string[0](fill: ""), true)) {
+    return false;
+  }
+  if (!build(t, cli, "packages/platform/example/wc.wac", shared + "/wc.worker.js",
+             string[0](fill: ""), true)) {
+    return false;
+  }
+  // Two-stage: prints `stages: listening`, waits, then `stages: serving`. The second line cannot
+  // already have arrived when the ready marker resolves, which is what makes the `wait` cases below
+  // test the waiting rather than the luck.
+  return build(t, cli, "packages/platform/example/stages.wac", shared + "/stages.worker.js",
+               string[0](fill: ""), true);
+}
+
 /**
  * The launcher, three child bundles and the two files the work counts.
  *
- * Built into one directory per case, because the launcher's `cwd` is where it resolves a
- * description's bundle names from, and two cases writing `net.txt` into the same place would race.
+ * One directory per case, because the launcher's `cwd` is where it resolves a description's bundle
+ * names from, and two cases writing `net.txt` into the same place would race. The four artefacts are
+ * built once by `built` above and copied in.
  */
 Fixture fixture(T t, Cli cli, string name) {
+  string shared = scratch(cli) + "/_built";
+  if (!built(t, cli, shared)) {
+    return Fixture(false, "the shared build failed", scratch(cli) + "/" + name, "");
+  }
   string dir = scratch(cli) + "/" + name;
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   string launcher = dir + "/network";
 
-  if (!build(t, cli, "packages/tor/src/network.wac", launcher,
-             string[]("--allow-read", "--allow-write", "--allow-net"), false)) {
-    return Fixture(false, "the launcher did not build", dir, "");
+  string[] parts = string[]("network", "waiter.worker.js", "wc.worker.js", "stages.worker.js");
+  for (i32 i = 0; i < parts.len(); i++) {
+    if (!copyOver(cli, shared + "/" + parts[i], dir + "/" + parts[i])) {
+      return Fixture(false, "could not copy " + parts[i] + " into the case's directory", dir, "");
+    }
   }
-  if (!build(t, cli, "packages/platform/example/waiter.wac", dir + "/waiter.worker.js",
-             string[0](fill: ""), true)) {
-    return Fixture(false, "waiter did not build", dir, "");
-  }
-  if (!build(t, cli, "packages/platform/example/wc.wac", dir + "/wc.worker.js",
-             string[0](fill: ""), true)) {
-    return Fixture(false, "wc did not build", dir, "");
-  }
-  // Two-stage: prints `stages: listening`, waits, then `stages: serving`. The second line cannot
-  // already have arrived when the ready marker resolves, which is what makes the `wait` cases below
-  // test the waiting rather than the luck.
-  if (!build(t, cli, "packages/platform/example/stages.wac", dir + "/stages.worker.js",
-             string[0](fill: ""), true)) {
-    return Fixture(false, "stages did not build", dir, "");
-  }
+  // The launcher is run as `./network`, so it has to be executable — a copy is not.
+  cli.setExecutable(launcher, true).wait();
 
   cli.writeFile(dir + "/counted.txt", ("one two three\n").toBytes()).wait();
   // Named for what `waiter: running` leaves after the marker `waiter: runn`, which is how the

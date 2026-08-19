@@ -26,7 +26,13 @@
 // wasm above the boundary is identical. Cases where the real tool is not comparable (its `stat` prints
 // a page of inode detail; its `du` counts blocks) are compared between the two hosts only, and said
 // to be, rather than dropped.
-// test-lane: heavy — 1145 MB and 85s across seven cases, each driving the native host
+// **Heavy until 2026-08-19, and no longer.** It declared `test-lane: heavy — 1145 MB and 85s`, which
+// meant it ran every few hours rather than on every push — so the two-host comparison, the thing this
+// file exists for, was not part of the gate. It is **477 MB and 9.4s** now, measured the same way: the
+// Deno half of every script runs in a worker rather than a process, the native bind wire is cached
+// across processes, and wasmtime's compiled artefact is no longer thrown away with the temporary
+// directory it was written into. That is within what the regular lane already carries, so the declaration is gone
+// and this runs with everything else.
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
@@ -36,9 +42,9 @@ import "../../../harness/spawnRetry.ts";
 // Memoised, and answered by `stat` when the crate has not moved — a bare `cargo build` is 2.6s even
 // with nothing to do, and this file asks more than once.
 import { nativeBinary } from "../../../harness/nativeHost.ts";
+import { appRunner, runBounded } from "../../../harness/appRun.ts";
 
 const ENTRY = "packages/box/src/bin/sh.wac";
-const CRATE = "native";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   const a = JSON.stringify(got), b = JSON.stringify(want);
@@ -81,6 +87,9 @@ function fixture(): void {
 /** A name longer than any filesystem here will take — `ENAMETOOLONG`, at 300 bytes. */
 const TOO_LONG = "n".repeat(300);
 
+/** The world every run below is given, whether it is a process or a worker. */
+const HOST_ENV = { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: tmp };
+
 function runIt(cmd: string, args: string[], cwd: string = tmp): Bounded {
   // Asks again at three times the bound if the first attempt does not finish — see 0128.
   return boundedAgain(DEFAULT_SECONDS, cmd, args, {
@@ -97,6 +106,31 @@ function gnu(script: string): Bounded {
 
 const deno = `${tmp}/wacsh-deno`;
 await buildApp(ENTRY, deno, { read: true, write: true, env: true });
+
+/**
+ * The Deno host's half, in a worker rather than a process.
+ *
+ * **Measured over the fifty scripts below: 6722ms as processes, 134ms apiece.** The native half is
+ * 3706ms and bash is 91ms, so two thirds of this test was Deno starting up. `appRunner` is the launcher
+ * half of the same built program — same capability implementations, same grants, same `deno.ts` world —
+ * and the process boundary is not what this file is about: the subject is the *native* host's filesystem
+ * capabilities, judged against GNU and against this host's answers.
+ *
+ * **The bound comes with it.** `runIt` uses `boundedAgain` because a wedged run has to be reported
+ * rather than waited on (issue 0128), and a worker run has no timeout of its own — so it is raced
+ * against one here, and a run that outlasts the bound throws naming the script instead of hanging the
+ * suite. The native half keeps `boundedAgain` unchanged.
+ */
+const denoWorker = await appRunner(ENTRY, { read: true, write: true, env: true });
+async function runDeno(script: string): Promise<{ out: string; err: string; code: number }> {
+  return await runBounded(
+    denoWorker,
+    ["-c", `cd tree; ${script}`],
+    { cwd: tmp, env: HOST_ENV },
+    DEFAULT_SECONDS,
+    JSON.stringify(script),
+  );
+}
 await buildNative(ENTRY, `${tmp}/wacsh`, { read: true, write: true, env: true });
 const manifest = `${tmp}/wacsh.json`;
 
@@ -186,9 +220,10 @@ Deno.test("wacsh over the real filesystem agrees with GNU on both hosts", async 
     fixture();
     const want = gnu(script);
     fixture();
-    const js = runIt(deno, ["-c", `cd tree; ${script}`]);
-    // A bound that fired is not an answer — see `harness/bounded.ts` and issue 0128.
-    const stuck = hangReport(script, [{ name: "bash", run: want }, { name: "deno", run: js }]);
+    const js = await runDeno(script);
+    // A bound that fired is not an answer — see `harness/bounded.ts` and issue 0128. The deno half
+    // raises its own, in `runDeno`.
+    const stuck = hangReport(script, [{ name: "bash", run: want }]);
     if (stuck !== null) throw new Error(stuck);
     assertEquals(js.out, want.out, `deno: ${script}`);
     // **And what it said when it failed.** Only stdout was compared against GNU here, with the two
@@ -308,23 +343,27 @@ Deno.test("the four grants are independent: write without read, on both hosts", 
   const native = await nativeBinary();
   if (native === null) return;
 
-  await buildApp(ENTRY, `${tmp}/wonly-deno`, { write: true });
   await buildNative(ENTRY, `${tmp}/wonly`, { write: true });
   const where = `${tmp}/tree`;
 
-  for (const [name, cmd, args] of [
-    ["deno", `${tmp}/wonly-deno`, [] as string[]],
-    ["native", native, [`${tmp}/wonly.json`]],
+  // The deno half is a worker holding the same single grant — the refusal below is the runtime's, and
+  // `appRunner` is the launcher half of the same built program rather than a stand-in for it.
+  const wonly = await appRunner(ENTRY, { write: true });
+
+  for (const [name, run] of [
+    ["deno", (script: string) => wonly.run(["-c", script], { cwd: where, env: HOST_ENV })],
+    ["native", (script: string) =>
+      Promise.resolve(runIt(native, [`${tmp}/wonly.json`, "-c", script], where))],
   ] as const) {
     fixture();
     // Writing works…
-    const wrote = runIt(cmd, [...args, "-c", "echo written > made; echo st=$?"], where);
+    const wrote = await run("echo written > made; echo st=$?");
     assertEquals(wrote.out.includes("st=0"), true, `${name}: could not write: ${wrote.err}`);
     // …and the bytes really landed, which `st=0` alone would not prove — a write that silently did
     // nothing would report the same.
     assertEquals(Deno.readTextFileSync(`${where}/made`), "written\n", `${name}: nothing was written`);
     // …and reading does not.
-    const read = runIt(cmd, [...args, "-c", "cat f"], where);
+    const read = await run("cat f");
     assertEquals(
       read.err.includes("Not granted to this application"),
       true,
@@ -344,6 +383,14 @@ Deno.test("a program reading its standard input answers the same on both hosts",
   // parent-fed queue finished at once, and `readChunk` read *that*, saw empty, and answered end of
   // input before reaching the process's own stdin. The comment beside the `finish` said the child
   // reads the process's input; the read path never let it.
+  // **Both halves stay processes, and this one is not a candidate for a worker.** The rest of this
+  // file now runs the deno host through `appRunner`, which is the same built program and saves a Deno
+  // startup per script. Here it would delete the subject: `appRunner`'s `stdin` option feeds the run by
+  // pushing onto the child's parent-fed queue — *the very queue that shadowed the process's own input*
+  // in the fault above. A worker run therefore exercises the queue path and never fd 0, so the
+  // comparison would be a queue-fed JavaScript host against an fd-fed native one, and the bug this test
+  // exists to catch lives exactly in that difference. Ten cases at roughly 130ms each is what reading
+  // real standard input costs to check.
   const native = await nativeBinary();
   if (native === null) return;
 
@@ -426,7 +473,10 @@ Deno.test("every capability that needs a grant is refused, the same way, on both
   // The same program with no grants at all. A shell that could still read would mean the manifest's
   // grants were decoration; one that trapped would mean a program could not find out.
   await buildNative(ENTRY, `${tmp}/nogrant`, {});
-  await buildApp(ENTRY, `${tmp}/nogrant-deno`, {});
+  // The deno half runs in a worker with the same empty grant set — `appRunner` builds the program the
+  // same way, and a refusal is the runtime's rather than the launcher's. Twelve scripts against a
+  // process were 134ms apiece.
+  const ungranted = await appRunner(ENTRY, {});
 
   // One per grant-gated capability the shell can reach from a script. `stat`, `readDir`, `readFile`,
   // `writeFile`, `mkdir`, `remove`, `rename`, `openInput` and `openOutput` — read and write both.
@@ -456,7 +506,10 @@ Deno.test("every capability that needs a grant is refused, the same way, on both
     fixture();
     const rs = runIt(native, [`${tmp}/nogrant.json`, "-c", `${script}; echo status=$?`], where);
     fixture();
-    const js = runIt(`${tmp}/nogrant-deno`, ["-c", `${script}; echo status=$?`], where);
+    const js = await ungranted.run(["-c", `${script}; echo status=$?`], {
+      cwd: where,
+      env: HOST_ENV,
+    });
 
     // It did not happen. `status=0` would mean the operation went through; the file contents are
     // checked separately because a read that succeeded prints rather than failing.

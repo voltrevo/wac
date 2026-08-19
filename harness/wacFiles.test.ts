@@ -25,18 +25,20 @@ Deno.test("wacFiles: a file rewritten between two walks is read again", async ()
   const dir = await Deno.makeTempDir({ prefix: "wacfiles-" });
   const entry = `${dir}/m.wac`;
   try {
-    await Deno.writeTextFile(entry, "export i32 one() { return 1; }\n");
-    const first = await wacFiles(entry);
-    assertEquals(first.get(entry)?.includes("return 1"), true, "the first walk read the first version");
-
-    // A second later would make the mtime differ on its own; the point is that it does not have to.
-    await Deno.writeTextFile(entry, "export i32 one() { return 2; }\n");
-    const second = await wacFiles(entry);
-    assertEquals(
-      second.get(entry)?.includes("return 2"),
-      true,
-      "the second walk was served a stale memo — the stamp did not notice the rewrite",
-    );
+    // **A loop, and the two versions are the same length on purpose.** One pass of this was flaky and
+    // that was the test being right: a stamp is `mtime:size`, an mtime is milliseconds, and a
+    // same-length rewrite inside the same millisecond has an identical stamp. Whether a single pass
+    // caught it depended on where the millisecond boundary fell — it failed about two runs in five,
+    // and it failed *for a reason*, which is how the memo's clock rule came to exist. Two hundred
+    // passes cross every boundary there is.
+    let stale = 0;
+    for (let i = 0; i < 200; i++) {
+      await Deno.writeTextFile(entry, "export i32 one() { return 1; }\n");
+      if (!(await wacFiles(entry)).get(entry)?.includes("return 1")) stale++;
+      await Deno.writeTextFile(entry, "export i32 one() { return 2; }\n");
+      if (!(await wacFiles(entry)).get(entry)?.includes("return 2")) stale++;
+    }
+    assertEquals(stale, 0, "walks served a stale memo — the stamp did not notice a same-length rewrite");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

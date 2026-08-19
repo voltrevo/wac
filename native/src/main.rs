@@ -549,7 +549,7 @@ fn run_seed(args: &[String]) -> Result<i32, wasmtime::Error> {
     let m: Arc<Manifest> = serde_json::from_str::<Manifest>(json).map(Arc::new)
         .map_err(|e| wasmtime::Error::msg(format!("the built-in manifest: {e}")))?;
     let program_args: Vec<Vec<u8>> = args.iter().map(|a| a.as_bytes().to_vec()).collect();
-    run(m, wasm, None, program_args)
+    run(m, wasm, program_args)
 }
 
 fn main() -> Result<(), wasmtime::Error> {
@@ -589,7 +589,7 @@ fn main() -> Result<(), wasmtime::Error> {
         .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", wasm_path.display())))?;
     let program_args: Vec<Vec<u8>> = argv[2..].iter().map(|a| a.as_bytes().to_vec()).collect();
 
-    let code = run(m, &wasm, Some(&wasm_path), program_args)?;
+    let code = run(m, &wasm, program_args)?;
     std::process::exit(code);
 }
 
@@ -665,23 +665,36 @@ const STOPPED: &str = "wacland: stopped by its parent";
 /// bound and the test reports the two hosts disagreeing (issue 0128). Raising the bound hides it;
 /// not compiling twenty times removes it.
 ///
-/// So the compiled artifact is cached beside the `.wasm`, which is where the tests already put one
-/// build and run it many times. `deserialize_file` is `unsafe` because it trusts the artifact to
-/// have been produced by this exact engine: the guard is that the file is written by this program,
+/// So the compiled artifact is cached. `deserialize_file` is `unsafe` because it trusts the artifact
+/// to have been produced by this exact engine: the guard is that the file is written by this program,
 /// keyed by the wasm's own bytes and this wasmtime's version, and any mismatch recompiles rather
 /// than being repaired.
 ///
 /// Written to a temporary name and renamed, because two of these run at once in the test suite and a
 /// half-written artifact that another process reads is the one failure worse than recompiling.
-fn compiled(engine: &Engine, wasm: &[u8], beside: Option<&Path>) -> Result<Module, wasmtime::Error> {
+///
+/// ## One shared directory, not beside the module
+///
+/// It used to live beside the `.wasm` — "which is where the tests already put one build and run it
+/// many times". True *within* a run and false across them: the tests build into a fresh temporary
+/// directory every time, so the artifact was written where nothing would ever look for it again, and
+/// the first run of each module paid the compile on every suite run. Measured 2026-08-19, `wacsh`
+/// built into a new temp directory twice: **2591ms then 22ms, 2816ms then 19ms.** Five test files
+/// build a native app, several build more than one.
+///
+/// The key is the wasm's own bytes and this wasmtime's version, so the location is free: an artifact
+/// that matches is correct wherever it sits. One shared directory means a program built into a
+/// hundred temporary directories compiles once — and the agents sharing this machine share it too,
+/// which is a hit rather than a race, since the same key means the same bytes and the write is a
+/// rename.
+///
+/// Bounded, because nothing else will do it: 4.8 MB apiece and one per distinct program. `sweep`
+/// keeps the newest `KEEP` and removes the rest, oldest first, after each write.
+fn compiled(engine: &Engine, wasm: &[u8]) -> Result<Module, wasmtime::Error> {
     let key = cache_key(wasm);
-    // Beside the `.wasm` when there is one — which is where the tests build once and run many. An
-    // embedded seed has no file to sit beside, so its artifact goes in the temporary directory under
-    // the same key: the alternative is compiling 411 KB on every invocation of a command-line tool.
-    let cached = match beside {
-        Some(p) => p.with_extension(format!("cwasm-{key:016x}")),
-        None => std::env::temp_dir().join(format!("wac-seed-{key:016x}.cwasm")),
-    };
+    let dir = std::env::temp_dir().join("wac-cwasm");
+    let _ = std::fs::create_dir_all(&dir);
+    let cached = dir.join(format!("{key:016x}.cwasm"));
     if cached.exists() {
         // SAFETY: written below by this program, from this engine, and named after the hash of the
         // wasm it was compiled from — a different module or a different wasmtime gets a different
@@ -694,12 +707,39 @@ fn compiled(engine: &Engine, wasm: &[u8], beside: Option<&Path>) -> Result<Modul
     }
     let module = Module::new(engine, wasm)?;
     if let Ok(bytes) = module.serialize() {
-        let tmp = cached.with_extension(format!("cwasm-{key:016x}.{}", std::process::id()));
+        let tmp = cached.with_extension(format!("cwasm.{}", std::process::id()));
         if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &cached).is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
+        sweep(&dir);
     }
     Ok(module)
+}
+
+/// How many compiled artifacts the shared directory keeps. Roughly 4.8 MB each.
+const KEEP: usize = 40;
+
+/// Keep the newest `KEEP` artifacts and remove the rest.
+///
+/// By modification time, which a hit does not touch — so this is "least recently *written*" rather
+/// than least recently used, and an artifact in daily use can be swept if forty newer ones arrive
+/// first. The cost of being wrong is one recompile, so the simpler rule is the right one; the cost
+/// of not sweeping at all is a temporary directory that grows without limit, which this repository
+/// has paid before (`issues/system/0068`, 23 GB of a cache nobody was watching).
+fn sweep(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut found: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "cwasm"))
+        .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()).map(|t| (t, e.path())))
+        .collect();
+    if found.len() <= KEEP {
+        return;
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in found.into_iter().skip(KEEP) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// The wasmtime this binary was built against, so an upgrade cannot reuse an artifact from the old one.
@@ -719,7 +759,7 @@ fn cache_key(wasm: &[u8]) -> u64 {
     h
 }
 
-fn run(m: Arc<Manifest>, wasm: &[u8], beside: Option<&Path>, args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
+fn run(m: Arc<Manifest>, wasm: &[u8], args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
     let mut config = Config::new();
     // The ABI is made of references — a wac string, a struct and a funcref all cross as one — so the
     // proposals that carry them are not optional here.
@@ -742,7 +782,7 @@ fn run(m: Arc<Manifest>, wasm: &[u8], beside: Option<&Path>, args: Vec<Vec<u8>>)
     config.epoch_interruption(true);
     let engine = Engine::new(&config)?;
     tick_epochs(&engine);
-    let module = compiled(&engine, wasm, beside)?;
+    let module = compiled(&engine, wasm)?;
     let world = Arc::new(World { engine: engine.clone(), module: module.clone(), manifest: m.clone() });
     let mut host = Host::new(m.callbacks.len(), args, m.grants.clone());
     host.world = Some(world);
@@ -1931,66 +1971,22 @@ fn dispatch(
                 );
                 return settle_now(caller, Kind::Exec, refused, results);
             }
-            // An argument *vector*, never a shell line: a value containing a space or a semicolon
-            // arrives whole. A caller who wants a shell names `/bin/sh -c`.
-            let mut cmd = std::process::Command::new(&path);
-            cmd.args(&argv)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            let outcome = match cmd.spawn() {
-                Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
-                Ok(mut child) => {
-                    // **Draining starts before the write, not after.** A child that answers while it
-                    // is still being fed — `cat`, `grep`, any filter — blocks on its own output once
-                    // the pipe buffer is full, and a host that writes the whole of stdin first blocks
-                    // on the write. Both waiting on the other.
-                    //
-                    // `wait_with_output` does drain both pipes, which is what the comment here used
-                    // to say, and it is not enough: it does not start until the write has finished.
-                    // Two megabytes through `cat` hung every host —
-                    // `packages/platform/test/wac/exec_test.wac`.
-                    let (out_tx, out_rx) = std::sync::mpsc::channel();
-                    let (err_tx, err_rx) = std::sync::mpsc::channel();
-                    let mut out_pipe = child.stdout.take();
-                    let mut err_pipe = child.stderr.take();
-                    std::thread::spawn(move || {
-                        use std::io::Read;
-                        let mut v = Vec::new();
-                        if let Some(p) = out_pipe.as_mut() {
-                            let _ = p.read_to_end(&mut v);
-                        }
-                        let _ = out_tx.send(v);
-                    });
-                    std::thread::spawn(move || {
-                        use std::io::Read;
-                        let mut v = Vec::new();
-                        if let Some(p) = err_pipe.as_mut() {
-                            let _ = p.read_to_end(&mut v);
-                        }
-                        let _ = err_tx.send(v);
-                    });
-                    // Dropped at the end of the block, which is what closes the child's input: a
-                    // program that reads to the end needs the end to arrive.
-                    if let Some(mut w) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = w.write_all(&stdin);
-                    }
-                    let out = out_rx.recv().unwrap_or_default();
-                    let err = err_rx.recv().unwrap_or_default();
-                    match child.wait() {
-                        Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
-                        // A signalled child has no code; -1 rather than 0, never read as success.
-                        Ok(status) => Outcome::Exec(
-                            status.code().unwrap_or(-1),
-                            out,
-                            err,
-                            String::new(),
-                        ),
-                    }
-                }
-            };
-            return settle_now(caller, Kind::Exec, outcome, results);
+            // **On a thread, so the ticket is handed back while the child is still running.**
+            // Everything above reads wasm memory and has to happen here; nothing below touches the
+            // module. This used to run the child to completion inside the call and settle the ticket
+            // in the same breath, which made a `Pending<Exec>` on this host a promise of something
+            // that had already happened — while the other three hosts dispatch and return at once
+            // (`packages/platform/host/respond.ts`). Three concurrent `sleep 1` were three seconds
+            // here and one on Deno: issue 0211, and `packages/platform/test/wac/exec_test.wac` is
+            // where it is held. The second half of what it cost is worse than the lost overlap: a
+            // ticket that only exists after the work is over cannot be watched by `waitAny`, so a
+            // wedged child had nothing bounding it.
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            std::thread::spawn(move || {
+                table.complete(id, run_host_program(path, argv, stdin));
+            });
+            return pending_for(caller, Kind::Exec, id, results);
         }
         Cap::SetExecutable => {
             let path = read_string(caller, &params[1])?;
@@ -2785,4 +2781,75 @@ fn write_raw(bytes: &[u8], to_stderr: bool) -> bool {
     // not have the prompt sitting in this process's buffer.
     let _ = if to_stderr { std::io::stderr().flush() } else { std::io::stdout().flush() };
     ok
+}
+
+/// A host program, run to completion, off the wasm thread — the body of `Cap::Exec`.
+///
+/// Named apart from `run_child` above, which starts a confined **wasm module**: `Cli.exec` and
+/// `spawn` are separate capabilities for exactly that reason, and two functions called the same
+/// thing would undo the distinction the capability list is built on.
+///
+/// Lifted out of the capability call so the ticket can be handed back before any of this happens;
+/// see the note at `Cap::Exec` and issue 0211. Nothing in here reads wasm memory, which is what
+/// makes it liftable at all.
+fn run_host_program(path: String, argv: Vec<String>, stdin: Vec<u8>) -> Outcome {
+    // An argument *vector*, never a shell line: a value containing a space or a semicolon
+    // arrives whole. A caller who wants a shell names `/bin/sh -c`.
+    let mut cmd = std::process::Command::new(&path);
+    cmd.args(&argv)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    match cmd.spawn() {
+        Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+        Ok(mut child) => {
+            // **Draining starts before the write, not after.** A child that answers while it
+            // is still being fed — `cat`, `grep`, any filter — blocks on its own output once
+            // the pipe buffer is full, and a host that writes the whole of stdin first blocks
+            // on the write. Both waiting on the other.
+            //
+            // `wait_with_output` does drain both pipes, which is what the comment here used
+            // to say, and it is not enough: it does not start until the write has finished.
+            // Two megabytes through `cat` hung every host —
+            // `packages/platform/test/wac/exec_test.wac`.
+            let (out_tx, out_rx) = std::sync::mpsc::channel();
+            let (err_tx, err_rx) = std::sync::mpsc::channel();
+            let mut out_pipe = child.stdout.take();
+            let mut err_pipe = child.stderr.take();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut v = Vec::new();
+                if let Some(p) = out_pipe.as_mut() {
+                    let _ = p.read_to_end(&mut v);
+                }
+                let _ = out_tx.send(v);
+            });
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut v = Vec::new();
+                if let Some(p) = err_pipe.as_mut() {
+                    let _ = p.read_to_end(&mut v);
+                }
+                let _ = err_tx.send(v);
+            });
+            // Dropped at the end of the block, which is what closes the child's input: a
+            // program that reads to the end needs the end to arrive.
+            if let Some(mut w) = child.stdin.take() {
+                use std::io::Write;
+                let _ = w.write_all(&stdin);
+            }
+            let out = out_rx.recv().unwrap_or_default();
+            let err = err_rx.recv().unwrap_or_default();
+            match child.wait() {
+                Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+                // A signalled child has no code; -1 rather than 0, never read as success.
+                Ok(status) => Outcome::Exec(
+                    status.code().unwrap_or(-1),
+                    out,
+                    err,
+                    String::new(),
+                ),
+            }
+        }
+    }
 }

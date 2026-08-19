@@ -117,7 +117,7 @@ export function wacFilesIn(all: Map<string, string>, entry: string): Map<string,
  * process invalidates it. That matters: `tools/testCli.test.ts` and friends write a `.wac` and build
  * it, and a memo that answered from before the write would hand the compiler yesterday's source.
  */
-type Walked = { files: Map<string, string>; stamps: Map<string, string> };
+type Walked = { files: Map<string, string>; stamps: Map<string, string>; readAt: number };
 const walked = new Map<string, Walked>();
 
 async function stampOf(path: string): Promise<string> {
@@ -129,11 +129,37 @@ async function stampOf(path: string): Promise<string> {
   }
 }
 
-async function stillTrue(stamps: Map<string, string>): Promise<boolean> {
+/**
+ * Whether every file still has the stamp it had when it was read.
+ *
+ * **`readAt` is the half that a stamp alone cannot do, and leaving it out was a real bug.** A stamp is
+ * `mtime:size` and an mtime is milliseconds, so a file rewritten to the *same length* inside the same
+ * millisecond as the walk that read it has an identical stamp — and was served stale. Measured before
+ * the fix, over a loop that wrote, walked, rewrote and walked again: **167 of 400 walks answered with
+ * the previous version.** It is not a corner: generated corpora are written in loops, and a test that
+ * rewrites a file and re-walks does it in microseconds.
+ *
+ * So a file whose mtime is close to the moment the read *began* is distrusted, because a write in that
+ * window could have landed after the read. That costs one re-read for a file being actively written
+ * and nothing at all for a source that has sat there for a minute.
+ *
+ * **`SLACK` is not padding, it is the two clocks disagreeing.** A file's mtime comes from the kernel's
+ * *coarse* clock, which is updated on a timer tick, while `Date.now()` reads the fine one — so a write
+ * that genuinely happened after the read can be stamped a few milliseconds *before* it, and a strict
+ * `mtime >= readAt` misses it. Measured with the comparison written strictly: still 349 of 800 walks
+ * stale, with traces showing hits whose stored mtime was a millisecond below the read that followed
+ * the write. Fifty milliseconds is far past a tick and far below the age of anything not being
+ * generated right now.
+ */
+const SLACK_MS = 50;
+
+async function stillTrue(stamps: Map<string, string>, readAt: number): Promise<boolean> {
   const paths = [...stamps.keys()];
   const now = await Promise.all(paths.map(stampOf));
   for (let i = 0; i < paths.length; i++) {
     if (now[i] !== stamps.get(paths[i])) return false;
+    const mtime = Number(now[i].split(":")[0]);
+    if (mtime >= readAt - SLACK_MS) return false;
   }
   return true;
 }
@@ -167,9 +193,16 @@ export async function wacFiles(entry: string): Promise<Map<string, string>> {
   const hit = walked.get(entry);
   // A copy, because a caller that adds a generated file to what it was handed must not write into the
   // memo — `packages/wacc`'s drivers do exactly that.
-  if (hit !== undefined && await stillTrue(hit.stamps)) { hits++; return new Map(hit.files); }
+  if (hit !== undefined && await stillTrue(hit.stamps, hit.readAt)) { hits++; return new Map(hit.files); }
 
   const files = new Map<string, string>();
+  // **Taken before the first read, not after the last stat**, which is the difference between a rule
+  // that holds and one that mostly holds. A write after this instant has an mtime of at least this
+  // millisecond, so a recorded mtime strictly below it cannot belong to a write we missed. Stamping
+  // afterwards and comparing against *that* leaves the case where the walk crosses a millisecond
+  // boundary: the stamp reads 684, the walk finishes at 685, and a second write still inside 684 is
+  // invisible. Measured: that window alone was 174 of 400 walks.
+  const readAt = Date.now();
   // **Read in waves rather than one at a time.** The graph is wide — `packages/box` is 171 files and
   // only a few deep — so a level's worth of reads goes out together and the walk costs about as much
   // as its depth rather than its size.
@@ -194,7 +227,7 @@ export async function wacFiles(entry: string): Promise<Map<string, string>> {
   const paths = [...files.keys()];
   const now = await Promise.all(paths.map(stampOf));
   for (let i = 0; i < paths.length; i++) stamps.set(paths[i], now[i]);
-  walked.set(entry, { files, stamps });
+  walked.set(entry, { files, stamps, readAt });
   readMs += performance.now() - began;
   return new Map(files);
 }

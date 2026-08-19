@@ -34,6 +34,7 @@ import { parseCert, verifyChain, Cert } from "../../src/x509.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
 import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { slice } from "../../../bytes/src/slice.wac";
+import { Tampered, sweepTampering } from "./certtamper.wac";
 
 /**
  * The key material a client needs, in the sizes `tlsClientInit` takes them.
@@ -314,22 +315,22 @@ export string test_a_malformed_certificate_is_refused_on_its_own_terms(Core core
   t.eqI32(verifyChain(parseCert(real), parseCert(ca), "wac.test".toBytes(), 1785715200), 0,
           "the genuine chain verifies");
 
-  i32 accepted = 0;
-  i32 unparseable = 0;
-  for (i32 i = 0; i < real.len(); i++) {
-    u8[] c = copyOf(real);
-    c[i] = c[i] ^ 0xFF;
-    Cert parsed = parseCert(c);
-    i32 v = verifyChain(parsed, parseCert(ca), "wac.test".toBytes(), 1785715200);
-    if (v == 0) { accepted++; }
-    if (!parsed.wellFormed) {
-      unparseable++;
-      t.eqI32(v, 13, "an unparseable certificate is refused as unparseable");
-    }
-  }
-  t.eqI32(accepted, 0, "no single-byte tampering is accepted");
-  t.isTrue(unparseable > 0,
-           "and some of those mutations genuinely broke the encoding rather than the signature");
+  // **A sample of the same population, not the first slice of it.** Every position is
+  // `certtamper_test.wac`, which is declared heavy: 456 positions at a P-256 verification each is
+  // 12ms apiece and **5.5s**, which was the largest test in this lane after the self-host ones. A
+  // stride takes a spread across the whole certificate — header, names, validity, key and signature —
+  // rather than the first fifty bytes, which are all structure and none of them content.
+  //
+  // The stride is 7 because the sample has to keep both halves of the claim: **66 positions, 3 of
+  // which break the encoding**, where the full sweep finds 14 of 456. Three is a thin margin and is
+  // meant to be read as one: a fixture whose structure moved could take it to zero, and the assertion
+  // below would then fail loudly rather than quietly stop checking the second half.
+  Tampered swept = sweepTampering(real, ca, "wac.test", 1785715200, 7, 0);
+  t.eqI32(swept.accepted, 0, "no single-byte tampering is accepted");
+  t.eqI32(swept.wrongCode, 0, "an unparseable certificate is refused as unparseable");
+  t.isTrue(swept.unparseable > 0,
+           "and some of those mutations genuinely broke the encoding rather than the signature: " +
+           itoa64(swept.unparseable as i64) + " of " + itoa64(swept.tried as i64));
   return t.report();
 }
 

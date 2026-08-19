@@ -1,0 +1,57 @@
+// Single-byte tampering of a real certificate, swept — shared by the sample and the full sweep.
+//
+// One flipped byte, one chain verification, one answer: **no tampering is accepted, and bytes that
+// stopped being a certificate are refused as unparseable rather than as a bad signature.** The second
+// half is the one that needs saying out loud — the signature check would catch a mangled encoding
+// anyway, but reporting "the signature did not verify" about bytes that were never a certificate is
+// the wrong answer, and a caller that only wanted to read a name never reaches that check.
+//
+// **Why it is a sweep rather than a test.** Each position costs a P-256 verification: 456 bytes,
+// **12ms apiece, 5.5s** — measured 2026-08-19, and that was the largest test in the `wac` lane after
+// the self-host ones. Fourteen of those 456 mutations break the encoding; the rest reach the
+// signature check, which is where the 12ms goes. The sweep is here so the regular lane can run a
+// *sample of the same population* and `certtamper_test.wac` can run every position, without either
+// being a second implementation of the other. That is the shape `packages/gzip`'s corruption sweep already uses.
+
+import { parseCert, verifyChain, Cert } from "../../src/x509.wac";
+
+/** What a sweep found. `wrongCode` is the interesting one: it should always be zero. */
+export struct Tampered {
+  /** How many positions were tried. */
+  i32 tried;
+  /** Chains that verified anyway. Any of these is a hole in the verifier. */
+  i32 accepted;
+  /** Mutations that broke the encoding, so the parser refused them. */
+  i32 unparseable;
+  /** Unparseable ones answered as something other than 13 — the wrong reason for the right refusal. */
+  i32 wrongCode;
+}
+
+/**
+ * Flip one byte of `leaf` at every `stride`th position from `start`, and verify the chain each time.
+ *
+ * `stride` of 1 is every position. The issuer is parsed **once**: it is the same bytes every time
+ * round, and re-parsing it per position was 456 parses for one answer.
+ */
+export Tampered sweepTampering(u8[] leaf, u8[] ca, string host, i64 now, i32 stride, i32 start) {
+  Cert issuer = parseCert(ca);
+  i32 tried = 0;
+  i32 accepted = 0;
+  i32 unparseable = 0;
+  i32 wrongCode = 0;
+  i32 step = stride < 1 ? 1 : stride;
+  for (i32 i = start; i < leaf.len(); i = i + step) {
+    u8[] c = u8[leaf.len()]();
+    for (i32 k = 0; k < leaf.len(); k++) { c[k] = leaf[k]; }
+    c[i] = c[i] ^ 0xFF;
+    Cert parsed = parseCert(c);
+    i32 v = verifyChain(parsed, issuer, host.toBytes(), now);
+    tried = tried + 1;
+    if (v == 0) { accepted = accepted + 1; }
+    if (!parsed.wellFormed) {
+      unparseable = unparseable + 1;
+      if (v != 13) { wrongCode = wrongCode + 1; }
+    }
+  }
+  return Tampered(tried, accepted, unparseable, wrongCode);
+}

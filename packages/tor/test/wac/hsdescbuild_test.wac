@@ -9,6 +9,13 @@
 // each variant, decrypted it, and found exactly the introduction points it was built with. What is
 // here is the part tor cannot see from outside — that the two lengths move independently, that the
 // name follows the period, and that bad inputs are refused rather than built around.
+//
+// **This file was 8.4s, and the reason was not in it.** Ten descriptor builds, each about ten ed25519
+// operations — the identity certificate, a certificate pair per introduction point, the outer
+// signature — and signing was 63ms because `ptAdd` derived the curve constant `2d` on every point
+// addition, a modular inversion apiece. With `d` and `2d` written out, signing is **2.6ms** and this
+// file is **0.96s**. `issues/system/0209` has the numbers and what is left of them: P-256 is still
+// 12ms and RSA 117ms, and `0210` is P-256 not being constant-time.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -24,7 +31,7 @@ import { ed25519ExpandedSecret, ed25519PublicKey, ed25519PublicKeyExpanded }
   from "../../../crypto/src/ed25519.wac";
 import { blindedSecretKey } from "../../src/hsblind.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
-import { PUB_OK, checkForPublication } from "../../src/hsstore.wac";
+import { Checked, PUB_OK, checkForPublication } from "../../src/hsstore.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 
 
@@ -259,11 +266,15 @@ export string test_tor_found_what_was_built(Core core, Cli cli) {
  */
 export string test_a_directory_would_accept_what_was_built(Core core, Cli cli) {
   T t = T.create();
+  // **Checked once and asserted twice.** `checkForPublication` verifies the certificate signature,
+  // which is the expensive half of this test; asking it the same question twice per descriptor
+  // doubled that for two fields of one answer.
   for (i32 n = 1; n <= 3; n++) {
     Built b = build(n, PERIOD);
-    t.eqI32(checkForPublication(b.document, 0).reason, PUB_OK,
+    Checked seen = checkForPublication(b.document, 0);
+    t.eqI32(seen.reason, PUB_OK,
             "a directory accepts the document, certificate signature included");
-    t.eqBytes(checkForPublication(b.document, 0).blindedKey, b.blindedKey,
+    t.eqBytes(seen.blindedKey, b.blindedKey,
               "and files it under the name the builder reports");
   }
   Built next = build(1, PERIOD + 1);

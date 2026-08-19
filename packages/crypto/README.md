@@ -10,8 +10,9 @@ Two things to read before the code. [Testing](#testing) — two oracles, because
 and most of the suite is written in wac rather than TypeScript. [Side channels](#side-channels) —
 a measurement rather than a disclaimer, which is what the warning below rests on.
 
-> **Not for production.** Two routines here are known to leak, and the rest are uniform
-> only at the level this can measure. See [Side channels](#side-channels) — that section
+> **Not for production.** Five of the routines measured below are known to leak — including
+> the scalar multiplication behind every P-256 and P-384 operation — and the rest are
+> uniform only at the level this can measure. See [Side channels](#side-channels) — that section
 > is now a measurement rather than a disclaimer, but the conclusion is unchanged: do not
 > use this where an attacker can observe timing.
 
@@ -504,6 +505,7 @@ which is how AES keys have been recovered from cache timing since 2005.
 | `aesExpandKey` | 515 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
 | `aesEncrypt` | 11,778 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges; not examined past that |
 | `bcryptPbkdf` | 8,177,000 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
+| `p256PublicKey` | ~2,000,000 | **leaks** — control flow diverges at `weierstrass.wac:120`, the ladder's conditional add |
 
 **The event counts changed on 2026-08-12 and the verdicts did not.** These are wacc's
 figures now (wac issue 0105): it instruments a slightly different set — an `else` point
@@ -513,6 +515,32 @@ move.
 
 The x25519 row is the one worth reading twice: the ladder is uniform across every one of
 1.6 million events, which is what "structurally uniform" was claiming without evidence.
+
+**And the P-256 row is the one to read beside it**, because the two are the same shape of
+routine with opposite answers. `x25519`'s ladder does the same work whatever the bit is;
+`weierstrass.wac`'s `jacMul` adds only when the bit is set:
+
+```wac
+for (i32 i = 0; i < bits; i++) {
+  acc = jacDouble(c, acc);
+  i32 bit = (scalar[i / 8] >> (7 - (i % 8))) & 1;
+  if (bit == 1) { acc = jacAdd(c, acc, p); }     // weierstrass.wac:120
+}
+```
+
+The scalar there is the private key in `curvePublicKey` and `curveEcdh`, and the **nonce**
+in ECDSA signing, where leaking bits of the nonce recovers the key rather than merely
+revealing it. It was measured for the first time on 2026-08-19 — the table above had no
+asymmetric row at all until then, and its silence read as "not applicable" rather than
+"not measured", which is the failure this section exists to avoid. `issues/system/0210`.
+
+It was also read, for a day, as most of why `p256Sign` was 12ms against `ed25519Sign`'s
+63ms. That turned out to be wrong and the correction is worth keeping: ed25519 was slow
+because `ptAdd` derived the curve constant `2d` — a modular inversion — on **every point
+addition**. Written out as limbs, signing is 2.6ms, and the ordering is the usual one
+again. What the leak buys P-256 is about half its point additions; what it costs is this
+row, and a constant-time fix here would put it near ed25519's number rather than far past
+it.
 
 **AES leaks in five places, not one.** Four are the key schedule's `SubWord` lookups
 (`aes.wac:113`–`116`) and the fifth is `SubBytes` itself (`aes.wac:149`), each indexing

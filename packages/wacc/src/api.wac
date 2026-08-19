@@ -255,11 +255,28 @@ export string bindgenDeclinedFiles(string[] paths, string[] sources, string entr
                          bindTypesLinked(paths, sources, entry));
 }
 
-/** The module with its manifest inside it, which is what makes it one artefact rather than two. */
+/**
+ * The module with its manifest inside it, which is what makes it one artefact rather than two.
+ *
+ * **One front end, not three.** This used to be `emitLinked` followed by `manifestFiles`, and
+ * `manifestFiles` derives the bind types and the export signatures with a full walk each — so a call
+ * that reads as "emit, then describe what you emitted" walked the graph three times, the second and
+ * third re-deriving what the first already knew. `buildLinked` is the call that answers both together
+ * (`issues/lang/0129`); `manifestWire` is the manifest built from those answers rather than from a
+ * program. Nine test files and every self-describing build go through here.
+ */
 export u8[] emitFilesSelfDescribing(string[] paths, string[] sources, string entry,
                                     string wasmName, i32 grants) {
-  u8[] wasm = emitLinked(paths, sources, entry);
-  return withManifestSection(wasm, manifestFiles(wasm, paths, sources, entry, wasmName, grants));
+  Built b = buildLinked(paths, sources, entry);
+  string sep = describeSep();
+  i32 first = b.described.indexOf(sep);
+  // No separator is a description that did not parse — an empty wire and empty signatures, which
+  // `manifestOf` turns into a manifest a host refuses loudly rather than one that is quietly wrong.
+  string rest = first < 0 ? "" : b.described.slice(first + sep.len(), b.described.len());
+  i32 second = rest.indexOf(sep);
+  string sigs = second < 0 ? rest : rest.slice(0, second);
+  string types = second < 0 ? "" : rest.slice(second + sep.len(), rest.len());
+  return withManifestSection(b.wasm, manifestOf(b.wasm, types, sigs, entry, wasmName, grants));
 }
 
 /** What each counter is: `index\tline\tcol\tkind` per line, in counter order. */
