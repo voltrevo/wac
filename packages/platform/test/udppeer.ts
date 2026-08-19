@@ -59,6 +59,12 @@ for (;;) {
     await new Promise((r) => setTimeout(r, 20));
     continue;
   }
+  // `JSON.parse` answers `null` for the four bytes `null`, so this is a real case rather than a
+  // formality the type checker asked for: a truncated write that happens to parse is not a request.
+  if (request === null) {
+    await new Promise((r) => setTimeout(r, 20));
+    continue;
+  }
   publish(`got-${n}.json`, await exchange(request.peer, request.to, unhex(request.hex)));
   n++;
 }
