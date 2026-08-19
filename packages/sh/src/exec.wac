@@ -16,7 +16,7 @@
 // nothing matches, which is bash's default; the last path component is the only one patterned, and the
 // README says so under what this does not do.
 
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Map } from "core/map.wac";
 import { Option } from "core/option.wac";
 import { hashString, stringEq } from "core/hash.wac";

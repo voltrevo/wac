@@ -30,7 +30,7 @@
 // ref from an accepted one; with it, `unpack ok` covers the pack and one line per ref covers each update.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Pkt, flushPkt, readPkt, writePkt } from "./pktline.wac";
 import { Ad, Advertised, parseAdvertisement } from "./fetch.wac";
 import { encode } from "../../codec/src/hex.wac";

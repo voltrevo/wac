@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0161](open/0161-an-aliased-import-of-an-already-imported-type-is-a-different-type-in-wacc.md) | `import { E as E2 }` beside `import { E }` makes two nominal types out of one declaration, so passing one where the other is wanted is a mismatch — wacc only, the reference accepts it | bug | compile error |
 | [0160](open/0160-a-lambda-capturing-a-parameter-loses-it-to-a-top-level-function-of-the-same-name.md) | a lambda's captured parameter resolves to a same-named top-level function instead — so any file importing `platform.wac` and declaring `f` builds an invalid module | bug | invalid wasm |
 | [0159](open/0159-arithmetic-on-a-string-operand-silently-deletes-the-function.md) | `s[0] - '0'` is `string - string`; both compilers exit 0 and silently drop the enclosing function from the module and the manifest | diagnostic | invalid wasm |
 | [0158](open/0158-the-checker-is-superlinear-in-one-files-import-count.md) | one file importing 600 others type-checks in 19.7s where the emitter takes 86ms — the cost is import edges in a single file, not files (1200 files with 10 imports: 8ms) | performance | no error |
@@ -33,7 +34,7 @@ has been fixed and why.
 
 ## Closed
 
-160 issues, 135 closed.
+161 issues, 135 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

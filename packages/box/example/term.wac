@@ -75,7 +75,7 @@ import { itoa } from "../../fmt/src/itoa.wac";
 import { boxApplet, boxNames, boxRun } from "../src/shrun.wac";
 import { Session } from "../src/lib/session.wac";
 import { mountSystem } from "../../fs/src/fs.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /**
  * The bytes a terminal sends for the three keys this loop reads.

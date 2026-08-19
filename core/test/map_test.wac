@@ -11,7 +11,7 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Map } from "core/map.wac";
-import { Vec } from "../../packages/std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Option } from "core/option.wac";
 import { hashString, stringEq, hashI32, i32Eq, hashI64, i64Eq, hashBytes, bytesEq } from "core/hash.wac";
 

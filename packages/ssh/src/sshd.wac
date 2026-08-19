@@ -48,7 +48,7 @@ import { Shell, runScript } from "../../sh/src/exec.wac";
 import { Line, Typed } from "../../tty/src/line.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../fs/src/image.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { AuthRequest, authFailure, authSuccess, channelClose, channelData, channelEof,
          pkOk,
          channelFailure, channelStderr, channelSuccess, ecdhReply, ephemeralPublic, exchangeHash, execCommand,

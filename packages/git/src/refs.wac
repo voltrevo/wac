@@ -17,7 +17,7 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { decode } from "../../codec/src/hex.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /** What a single ref file holds. */
 export enum RefValue {

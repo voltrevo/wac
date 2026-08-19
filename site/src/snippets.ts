@@ -227,9 +227,11 @@ export i32 pow(i32 base, i32 exp) {
   return result;
 }`;
 
-// `core` is the one import that is not a file. Two files that never mention each other, meeting
-// through a type neither declares — which is the whole point, and is why the pair is checked by
-// site/tools/site.test.ts rather than being prose.
+// The root of the tree the compiler ships. Two files that never mention each other, meeting through
+// a type neither declares — which is the whole point, and is why the pair is checked by
+// site/tools/site.test.ts rather than being prose. Bare here rather than `"core"` because the
+// playground compiles this with whichever compiler the page loaded, and the deployed asset can be
+// older than this file; both spellings work in the current one.
 export const EX_CORE_MAIN = `import { Read } from core;
 import { describe } from "./report.wac";
 

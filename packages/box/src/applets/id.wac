@@ -20,7 +20,7 @@ import { extraOperand } from "../lib/operands.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { User, parsePasswd, userNamed } from "../../../fs/src/passwd.wac";
-import { Vec } from "../../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 export i32 id(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }

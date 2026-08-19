@@ -19,7 +19,7 @@
 
 import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { configOf } from "../src/config.wac";
 import { configChain, expandTilde } from "../src/configfiles.wac";
 import { RepoAt, openRepo, statusOf } from "../src/repo.wac";

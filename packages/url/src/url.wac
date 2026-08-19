@@ -14,7 +14,7 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { bytesEq } from "core/hash.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Host, HostResult, parseHost, writeHost, isForbiddenHost } from "./host.wac";
 import { encodeInto, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECIAL_QUERY,
          SET_PATH, SET_USERINFO } from "./percent.wac";

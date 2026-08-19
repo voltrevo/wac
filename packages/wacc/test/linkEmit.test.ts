@@ -80,9 +80,11 @@ const cases: [string, Record<string, string>][] = [
     "/main.wac": `import { P as Point } from "./a.wac";\nexport i32 f() { Point p = Point(3, 4); return p.x * p.y; }`,
     "/a.wac": `export struct P { i32 x; i32 y; }`,
   }],
-  // `core` is not a file: it ships inside the compiler, and both compilers have to agree about what
-  // it holds. `Read` is the one type in it, and a `match` over its three variants is the whole of
-  // what a consumer does with one.
+  // The root of the tree the compiler ships, and both compilers have to agree about what it holds.
+  // `Read` is the one type in the *root*, and a `match` over its three variants is the whole of what
+  // a consumer does with one. Written bare here, which is the older of the two spellings the root
+  // takes — the quoted `"core"` reaches the same module and is covered by
+  // `§wac-core-unquoted-3nqk7vd`.
   ["a capability import", {
     "/main.wac": `import { Read } from core;\nexport i32 f() { Read r = Read.Data(u8[](1, 2, 3)); ` +
       `match (r) { case Data(b): { return b.len(); } case End: { return 0; } case Failed(w): { return -1; } } }`,

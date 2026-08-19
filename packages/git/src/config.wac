@@ -36,7 +36,7 @@
 // this does not, so a value ending in `\` is taken literally rather than joined to the next line.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /** One setting: the full dotted name, and its value. */
 export struct Setting {

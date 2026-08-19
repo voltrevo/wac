@@ -5,8 +5,8 @@
 // element types are deliberately mixed — a primitive, a string, a struct and a nested Vec
 // — because monomorphisation makes those four different pieces of generated code.
 
-import { T } from "../../../wactest/src/assert.wac";
-import { Vec } from "../../src/vec.wac";
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Vec } from "core/vec.wac";
 import { Option } from "core/option.wac";
 
 struct P { i32 v; }

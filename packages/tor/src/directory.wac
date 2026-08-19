@@ -26,7 +26,7 @@
 
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { decode } from "../../codec/src/base64.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Map } from "core/map.wac";
 import { hashString, stringEq } from "core/hash.wac";
 

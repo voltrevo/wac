@@ -17,7 +17,7 @@
 // What this does not do yet: `${x/a/b}` substitution, indirection, and
 // process substitution. Each is noted where it would go.
 
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 
 export enum Kind {

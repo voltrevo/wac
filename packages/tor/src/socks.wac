@@ -43,7 +43,7 @@
 // slots unable to complete.
 
 import { Core, Cli, Socket, Pending, FileResult, CALL_SLOTS } from "../../platform/src/platform.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { Network, Guard, Building, bootstrap, connectGuard, startCircuit, advanceCircuit,
          circuitReady, circuitFailed } from "./bootstrap.wac";
 import { Circuit, Received, gotData, gotEnd, gotConnected, gotBroken, gotDestroyed }

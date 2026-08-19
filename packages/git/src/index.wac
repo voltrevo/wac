@@ -42,7 +42,7 @@ import { Buf } from "../../bytes/src/buf.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 
 /** One path in the index. */
 export struct IndexEntry {

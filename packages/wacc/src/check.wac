@@ -8188,24 +8188,23 @@ export void checkModule(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Import(pathTok, prefixTok, items): {
-        // **`core` is the one specifier that is not a file**, so it is the one bare word allowed.
-        // `spec/spec/imports.md`: a quoted `"core"` is an error, because a quoted specifier says *a
-        // file lives at this path* and there is no path here to be right about — and *"so is any
-        // other bare word, which reports `unknown module 'x'`"*.
-        //
-        // The parser records the word without checking it, and says so in a comment that gives the
-        // reason as "matching the reference means a new error code". The spec asks for the check on
-        // its own terms, so here it is.
+        // **`core` is the one bare word allowed**, and any other reports `unknown module` —
+        // `spec/spec/imports.md`. The parser records the word without checking it, and says so in a
+        // comment that gives the reason as "matching the reference means a new error code". The
+        // spec asks for the check on its own terms, so here it is.
         if (prefixTok >= 0 && tokenText(c, prefixTok) != "core") {
           c.reportTok(errUnknownModule(), prefixTok, "");
         }
-        // Compared without its quotes rather than against a spelling with escaped ones: an escaped
-        // quote inside a literal is a shape `wapy`'s rendering of this file cannot read back, and
-        // this source round-trips through it on every suite run.
-        string quoted = pathTok < 0 ? "" : tokenText(c, pathTok);
-        if (quoted.len() >= 2 && quoted.slice(1, quoted.len() - 1) == "core") {
-          c.reportTok(errUnknownModule(), pathTok, "");
-        }
+        // A quoted `"core"` was refused here until `design/lang/0009` D5, on the argument that a
+        // quoted specifier says *a file lives at this path* and there was no path here to be right
+        // about. D4 removed the premise: `core` is a source tree, `core/option.wac` is one of its
+        // files and is imported quoted, and the root being the one member written bare is the odd
+        // spelling rather than the principled one. Both now resolve, to the same key.
+        //
+        // Worth recording, because it is the kind of thing that outlives the rule: this refusal
+        // reported `unknown module` while the reference reported `` `core` is not a file — import
+        // it unquoted `` for the same program. One rule, two implementations, two diagnostics, and
+        // nothing compared them — the corpus differential only asks *whether* each side complains.
         // **What `core` exports, and the bar for adding to it.** `spec/spec/imports.md` sets it:
         // a type earns a place here only if a value of it has to cross a *repository* boundary
         // through a funcref signature, because wac has nominal types and no closures. `Read` passes

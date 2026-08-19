@@ -27,7 +27,7 @@
 import { Cli, Core, Event, Page, Pending, Picked } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "../../bytes/src/buf.wac";
-import { Vec } from "../../std/src/vec.wac";
+import { Vec } from "core/vec.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { blocked, emitFiles } from "../src/api.wac";
