@@ -79,7 +79,7 @@ install_seed() {   # $1 is a directory holding wacc.wasm and wacc.json
 if [ "$bootstrap" -eq 1 ]; then
   mkdir -p "$tmp/0"
   deno run --allow-read --allow-write --allow-env --allow-run \
-    packages/platform/native.ts "$ENTRY" --allow-read --allow-write -o "$tmp/0/wacc" >/dev/null
+    packages/platform/native.ts "$ENTRY" --allow-read --allow-write --allow-env -o "$tmp/0/wacc" >/dev/null
   install_seed "$tmp/0"
 fi
 
@@ -108,13 +108,13 @@ fi
 # anybody should publish.
 MAX_ROUNDS=4
 
-"$BIN" build "$ENTRY" --allow-read --allow-write -o "$tmp/1/wacc" >/dev/null
+"$BIN" build "$ENTRY" --allow-read --allow-write --allow-env -o "$tmp/1/wacc" >/dev/null
 install_seed "$tmp/1"
 
 converged=0
 for n in $(seq 2 "$MAX_ROUNDS"); do
   mkdir -p "$tmp/$n"
-  "$BIN" build "$ENTRY" --allow-read --allow-write -o "$tmp/$n/wacc" >/dev/null
+  "$BIN" build "$ENTRY" --allow-read --allow-write --allow-env -o "$tmp/$n/wacc" >/dev/null
   if cmp -s "$tmp/$((n - 1))/wacc.wasm" "$tmp/$n/wacc.wasm"; then
     converged=$n
     break

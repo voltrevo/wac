@@ -15,7 +15,7 @@ import { lex, Lexed, tokenStride } from "./lex.wac";
 import { coreFile, coreSource } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
-import { resolveFrom, resolveFromIn } from "./path.wac";
+import { Res, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg,
   Param, Program, Stmt, StmtKind, Ty, TyKind,
@@ -2465,11 +2465,11 @@ i32 countLines(string s) {
 /**
  * The entry and everything it imports, linked into one blob.
  *
- * `roots` is the project each file sits in, for `@/` — `design/lang/0009` D7. A `roots` shorter than
+ * `res` is the project each file sits in, for `@/` — `design/lang/0009` D7. A `res` shorter than
  * `paths` is ordinary rather than a caller's mistake: only a file writing `@/` has a root worth
  * recording, so a program using none passes an empty array and the feature costs it nothing.
  */
-string linkFiles(string[] paths, string[] sources, string[] roots, string entry, i32[] starts,
+string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] starts,
                  i32[] edges, string[] names, string[] filePaths) {
   // **Sized for the largest program here, which is `packages/box` at 168 files and climbing.** These
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
@@ -2549,11 +2549,12 @@ string linkFiles(string[] paths, string[] sources, string[] roots, string entry,
           string quoted = tokenTextOf(b, lexed, pathTok);
           if (quoted.len() < 2) { continue; }
           if (qn >= queue.len()) { return ""; }
-          string rootHere = "";
-          for (i32 rp = 0; rp < paths.len() && rp < roots.len(); rp++) {
-            if (paths[rp] == path) { rootHere = roots[rp]; }
-          }
-          string target = resolveImportIn(path, quoted.slice(1, quoted.len() - 1), rootHere);
+          // **The reader's answer where it has one.** A mapping cannot be resolved here — it needs a
+          // manifest, a lockfile and a cache, and this function opens nothing — so `Res` carries
+          // what `gather` worked out and this looks it up. `design/lang/0009` predicted exactly this
+          // as the third place resolution lives, and it is why the `@/` attempt before it was
+          // reverted rather than left half-wired.
+          string target = resolveVia(res, paths, path, quoted.slice(1, quoted.len() - 1));
           // **`"core"` and `core` are one module, so they have to be one key.** The prefix form
           // above queues the carried path; a quoted one resolves to the specifier itself, and two
           // keys for one module is not a missing file — it is `Read` declared twice, and
@@ -2669,8 +2670,8 @@ bool grewTypesWhileEmitting(u8[] src, i32 entryDecls, i32[] starts, i32[] edges,
  * throws the bytes away — the numbering is emission order, so the only way to know it is to emit.
  */
 export u8[] emitLinkedCovered(string[] paths, string[] sources, string entry) {
-  string[] roots = string[0](fill: "");
-  return emitLinkedWith2(paths, sources, roots, entry, false, true, false);
+  Res res = Res.empty();
+  return emitLinkedWith2(paths, sources, res, entry, false, true, false);
 }
 
 /**
@@ -2681,8 +2682,8 @@ export u8[] emitLinkedCovered(string[] paths, string[] sources, string entry) {
  * `harness/ctTrace.ts` runs a function twice with one public input and two secrets and compares.
  */
 export u8[] emitLinkedTraced(string[] paths, string[] sources, string entry) {
-  string[] roots = string[0](fill: "");
-  return emitLinkedTracedSlots(paths, sources, roots, entry, 0);
+  Res res = Res.empty();
+  return emitLinkedTracedSlots(paths, sources, res, entry, 0);
 }
 
 /**
@@ -2692,12 +2693,12 @@ export u8[] emitLinkedTraced(string[] paths, string[] sources, string entry) {
  * a larger constant: 2^26 events is half a gigabyte, fine for a deliberate measurement and not for
  * every run. `issues/lang/0059`.
  */
-export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, string[] roots, string entry, i32 slots) {
+export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, Res res, string entry, i32 slots) {
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, roots, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
   if (blob == "") { return bareModule(); }
   Env env = Env.create();
   env.trace = true;
@@ -2707,12 +2708,12 @@ export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, string[] roo
 }
 
 /** `index\tline\tcol\tkind` per point, in counter order. */
-export string covTableLinked(string[] paths, string[] sources, string[] roots, string entry) {
+export string covTableLinked(string[] paths, string[] sources, Res res, string entry) {
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, roots, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
   if (blob == "") { return ""; }
   Env env = Env.create();
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
@@ -2720,12 +2721,12 @@ export string covTableLinked(string[] paths, string[] sources, string[] roots, s
 }
 
 /** `index\tline\tcol\tkind\tfile` per point of a *traced* build, which has the index points too. */
-export string traceTableLinked(string[] paths, string[] sources, string[] roots, string entry) {
+export string traceTableLinked(string[] paths, string[] sources, Res res, string entry) {
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, roots, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
   if (blob == "") { return ""; }
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths, true);
@@ -2768,19 +2769,19 @@ struct Front {
 }
 
 /** `null` where the callers each used to return `""`: the graph did not link. */
-Front? frontOf(string[] paths, string[] sources, string[] roots, string entry) {
+Front? frontOf(string[] paths, string[] sources, Res res, string entry) {
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, roots, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
   if (blob == "") { return null; }
   return frontOfRaw(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)),
                     starts, edges, names, filePaths, false, false, Env.create());
 }
 
-export string bindTypesLinked(string[] paths, string[] sources, string[] roots, string entry) {
-  Front? f = frontOf(paths, sources, roots, entry);
+export string bindTypesLinked(string[] paths, string[] sources, Res res, string entry) {
+  Front? f = frontOf(paths, sources, res, entry);
   if (f is null) { return ""; }
   return bindTypesOf(f!);
 }
@@ -2929,8 +2930,8 @@ string methodLines(Env env, u8[] src, Lexed lexed, string bind, string owner, Me
  * what they take. This is the half of bindgen that cannot live outside the compiler; the rest is
  * text, and `packages/wacc/tools/waccBindgen.ts` writes it.
  */
-export string exportSigsLinked(string[] paths, string[] sources, string[] roots, string entry) {
-  Front? f = frontOf(paths, sources, roots, entry);
+export string exportSigsLinked(string[] paths, string[] sources, Res res, string entry) {
+  Front? f = frontOf(paths, sources, res, entry);
   if (f is null) { return ""; }
   return exportSigsOf(f!);
 }
@@ -2951,12 +2952,12 @@ export string exportSigsLinked(string[] paths, string[] sources, string[] roots,
  * `bindTypesOf` writes, and that is a property somebody can break without noticing —
  * `test/wac/describewac_test.wac` compares this against the two separate calls for that reason.
  */
-export string describeLinked(string[] paths, string[] sources, string[] roots, string entry) {
-  Front? f = frontOf(paths, sources, roots, entry);
+export string describeLinked(string[] paths, string[] sources, Res res, string entry) {
+  Front? f = frontOf(paths, sources, res, entry);
   // A graph that does not link is not silence: `blockedFiles` says which of the two ways it failed
   // and the other two answer `""`, so the folded form has to fill the same three slots or a build
   // would carry on with no signatures and nothing said.
-  if (f is null) { return linkFailure(paths, sources, roots, entry) + describeSep() + describeSep(); }
+  if (f is null) { return linkFailure(paths, sources, res, entry) + describeSep() + describeSep(); }
   // Blocked first: it is the one that gates the build, so it runs against the `Env` exactly as it
   // found it when it had one to itself. The other two are then checked against their standalone
   // answers by `test/wac/describewac_test.wac`, which is the only reason to believe this is safe.
@@ -2989,11 +2990,11 @@ export struct Built {
  * idempotent. That the order is safe is not an argument, it is a byte comparison of every emitted
  * module — see `issues/lang/0129`.
  */
-export Built buildLinked(string[] paths, string[] sources, string[] roots, string entry) {
-  Front? f = frontOf(paths, sources, roots, entry);
+export Built buildLinked(string[] paths, string[] sources, Res res, string entry) {
+  Front? f = frontOf(paths, sources, res, entry);
   if (f is null) {
     return Built(bareModule(),
-                 linkFailure(paths, sources, roots, entry) + describeSep() + describeSep());
+                 linkFailure(paths, sources, res, entry) + describeSep() + describeSep());
   }
   string sigs = exportSigsOf(f!);
   string types = bindTypesOf(f!);
@@ -3031,13 +3032,13 @@ export Built buildLinked(string[] paths, string[] sources, string[] roots, strin
   // `settleEmittable`, so a table that overflowed during collection is known here.
   if (f!.env.full) {
     return Built(bareModule(),
-                 blockedAgain(paths, sources, roots, entry, f!.env) + describeSep() + sigs +
+                 blockedAgain(paths, sources, res, entry, f!.env) + describeSep() + sigs +
                  describeSep() + types);
   }
   u8[] wasm = emitModuleOfFront(f!, false, false);
   if (f!.env.full) {
     return Built(bareModule(),
-                 blockedAgain(paths, sources, roots, entry, f!.env) + describeSep() + sigs +
+                 blockedAgain(paths, sources, res, entry, f!.env) + describeSep() + sigs +
                  describeSep() + types);
   }
   return Built(wasm, "" + describeSep() + sigs + describeSep() + types);
@@ -3051,8 +3052,8 @@ export Built buildLinked(string[] paths, string[] sources, string[] roots, strin
  * is worth its cost. `fullWhy` is the fallback when the fresh walk finds nothing, which happens when
  * the decline is one only the emit path can see (`emitDeclineLinked`'s whole reason for existing).
  */
-string blockedAgain(string[] paths, string[] sources, string[] roots, string entry, Env spent) {
-  Front? again = frontOf(paths, sources, roots, entry);
+string blockedAgain(string[] paths, string[] sources, Res res, string entry, Env spent) {
+  Front? again = frontOf(paths, sources, res, entry);
   if (again is not null) {
     string said = blockedOf(again!);
     if (said != "") { return said; }
@@ -3110,17 +3111,17 @@ export u8[] emitLinked(string[] paths, string[] sources, string entry) {
 }
 
 u8[] emitLinkedWith(string[] paths, string[] sources, string entry, bool checked) {
-  string[] roots = string[0](fill: "");
-  return emitLinkedWith2(paths, sources, roots, entry, checked, false, false);
+  Res res = Res.empty();
+  return emitLinkedWith2(paths, sources, res, entry, checked, false, false);
 }
 
-u8[] emitLinkedWith2(string[] paths, string[] sources, string[] roots, string entry, bool checked, bool covered,
+u8[] emitLinkedWith2(string[] paths, string[] sources, Res res, string entry, bool checked, bool covered,
                      bool traced) {
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, roots, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
   if (blob == "") { return bareModule(); }
   return emitModuleOfWith(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
                           names, filePaths, checked, covered, traced);
@@ -3138,12 +3139,12 @@ u8[] emitLinkedWith2(string[] paths, string[] sources, string[] roots, string en
  * a hypothesis about which type had grown when the real answer was somewhere else entirely. An
  * instrument that says what `env.fullWhy` holds turns that into one reading.
  */
-export string emitDeclineLinked(string[] paths, string[] sources, string[] roots, string entry) {
+export string emitDeclineLinked(string[] paths, string[] sources, Res res, string entry) {
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, roots, entry, starts, edges, names, filePaths);
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
   if (blob == "") { return "the graph did not link"; }
   Env env = Env.create();
   emitModuleOfInto(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
@@ -3161,8 +3162,8 @@ export string emitDeclineLinked(string[] paths, string[] sources, string[] roots
  * module that still compiles and reads the wrong field. Building the observation first is what turned
  * the emission work from four failed guesses into one reading.
  */
-export string lambdaReportLinked(string[] paths, string[] sources, string[] roots, string entry) {
-  Front? f = frontOf(paths, sources, roots, entry);
+export string lambdaReportLinked(string[] paths, string[] sources, Res res, string entry) {
+  Front? f = frontOf(paths, sources, res, entry);
   if (f is null) { return "did not link"; }
   Env env = f!.env;
   string out = "";
@@ -10027,9 +10028,9 @@ export string emitBlocked(u8[] src) {
 }
 
 /** Why a linked module was not emitted in full, over the same file set `emitLinked` takes. */
-export string blockedLinked(string[] paths, string[] sources, string[] roots, string entry) {
-  Front? f = frontOf(paths, sources, roots, entry);
-  if (f is null) { return linkFailure(paths, sources, roots, entry); }
+export string blockedLinked(string[] paths, string[] sources, Res res, string entry) {
+  Front? f = frontOf(paths, sources, res, entry);
+  if (f is null) { return linkFailure(paths, sources, res, entry); }
   return blockedOf(f!);
 }
 
@@ -10040,12 +10041,12 @@ export string blockedLinked(string[] paths, string[] sources, string[] roots, st
  * links a second time to tell them apart — which is free in the only case it runs, the case where
  * there is nothing else to do.
  */
-string linkFailure(string[] paths, string[] sources, string[] roots, string entry) {
+string linkFailure(string[] paths, string[] sources, Res res, string entry) {
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
-  linkFiles(paths, sources, roots, entry, starts, edges, names, filePaths);
+  linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
   return starts[0] == 1 ? "more import edges than the linker was given room for"
                         : "an import of a file that was not supplied";
 }
@@ -10811,11 +10812,11 @@ void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
  * function of two hundred it was; with it, the index is a name.
  */
 /** The emitted functions of a linked program, in order — the same answer for a file set. */
-export string namesLinked(string[] paths, string[] sources, string[] roots, string entry) {
+export string namesLinked(string[] paths, string[] sources, Res res, string entry) {
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
-  string blob = linkFiles(paths, sources, roots, entry, starts, edges, names, string[512]());
+  string blob = linkFiles(paths, sources, res, entry, starts, edges, names, string[512]());
   return blob == "" ? "" : emitNamesOf(blob.toBytes(), starts, edges, names);
 }
 
@@ -12026,7 +12027,7 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
   // No package showed the original defect: a package exports functions, and only a *program* takes
   // `main(Core, Cli)`.
   string[] crossing = string[512]();
-  // The callback walk asks the same question about the same roots, and it is handed the blob rather
+  // The callback walk asks the same question about the same res, and it is handed the blob rather
   // than the file list — so it takes the bound from the environment the emitter already set up.
   i32 cn = collectBindStructs(env, src, lexed, prog, crossing, env.entryDecls);
   for (i32 i = 0; i < cn; i++) {
@@ -12561,7 +12562,7 @@ i32 structGetOp(string t) {
  * `FseTable` carries three, and neither is reachable without the getters.
  */
 /**
- * `entryDecls` bounds the **roots**, not the walk.
+ * `entryDecls` bounds the **res**, not the walk.
  *
  * What crosses the boundary is what the *entry* exposes. A linked blob holds every imported file's
  * declarations too, and `export struct` in one of those means "visible to the file that imported me"

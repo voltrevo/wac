@@ -113,3 +113,59 @@ export string normalisePath(string path) {
   for (i32 i = 0; i < n; i++) { out = out + (i > 0 ? "/" : "") + parts[i]; }
   return absolute ? "/" + out : out;
 }
+
+/**
+ * What the reader worked out about a graph's specifiers, for the two places that resolve them again.
+ *
+ * **Because some specifiers cannot be resolved twice.** A relative path is arithmetic and anyone can
+ * redo it; `@/` needs the importing file's project, which is why `roots` is here; and a *mapping* —
+ * `design/lang/0009` D9 — needs a manifest, a lockfile and a cache, none of which the compiler may
+ * read. So for a mapped import the reader records the answer and the compiler is told, rather than
+ * being given the ingredients and a way to open files.
+ *
+ * `roots` is parallel to the graph's `paths`. The three `map*` arrays are one entry per mapped
+ * import: the file that wrote it, the specifier as written, and the key it resolved to. Empty for
+ * every program that uses no mappings, which is all of them until somebody writes a `wac.json5`.
+ */
+export struct Res {
+  string[] roots;
+  string[] mapFrom;
+  string[] mapSpec;
+  string[] mapTo;
+
+  /** Nothing known — what every caller without a filesystem passes. */
+  Res empty() { return Res(string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), string[0](fill: "")); }
+
+  /** Just the roots, for a caller that has those and no mappings. */
+  Res of(string[] roots) {
+    return Res(roots, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""));
+  }
+
+  /** The project `path` sits in, or "" — keyed by position against the graph's `paths`. */
+  string rootAt(const this, string[] paths, string path) {
+    for (i32 i = 0; i < paths.len() && i < this.roots.len(); i++) {
+      if (paths[i] == path) { return this.roots[i]; }
+    }
+    return "";
+  }
+
+  /** The key `from` importing `spec` resolved to, or "" when it was not a mapping. */
+  string mappedTo(const this, string from, string spec) {
+    for (i32 i = 0; i < this.mapFrom.len() && i < this.mapSpec.len() && i < this.mapTo.len(); i++) {
+      if (this.mapFrom[i] == from && this.mapSpec[i] == spec) { return this.mapTo[i]; }
+    }
+    return "";
+  }
+}
+
+/**
+ * `spec` as `from` means it, using what the reader worked out.
+ *
+ * A mapping first, because only the reader could have resolved one; then the ordinary rule with the
+ * importing file's project root.
+ */
+export string resolveVia(Res res, string[] paths, string from, string spec) {
+  string mapped = res.mappedTo(from, spec);
+  if (mapped != "") { return mapped; }
+  return resolveFromIn(from, spec, res.rootAt(paths, from));
+}

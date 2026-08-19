@@ -1,0 +1,206 @@
+// A Git-mapped specifier resolves from the lockfile and the cache — `design/lang/0009` D9-D11.
+//
+// `[§wac-import-mapped-6np2rkq]`
+//
+// **wacc only, and that is a decision rather than a gap.** Resolving a mapping means reading a
+// manifest, a lockfile and a checkout cache; D11 says package policy does not get a second
+// implementation, and `compiler/README.md` records the reference's omission in the table a reader
+// consults to tell "the reference disagrees" from "the reference does not have that". The reference
+// exists to build the first `wacc.wasm` from a cold checkout, and that compile has no dependencies
+// by construction — every import in this repository is relative or built-in.
+//
+// **Nothing here touches the network.** The cache is a directory this test fills in, which is what
+// the resolution reads: D10 makes `wac update` the explicit operation and forbids an ordinary
+// command from advancing a pin because a branch moved, so `wac build` fetching would be the same
+// mistake in a different place. That also makes this test fast and offline.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { escapeRepo } from "../../../wacpkg/src/cache.wac";
+import { Change, Cli, Core, Exec } from "../../../platform/src/platform.wac";
+
+const string REPO = "https://example.invalid/dep.git";
+const string COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+/** One file, with its directory made first. */
+bool put(Cli cli, string path, string text) {
+  i32 cut = -1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
+  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
+  return cli.writeFile(path, text.toBytes()).wait().ok();
+}
+
+/** `wac <cmd> …` with `$WAC_HOME` pointed at the fixture's cache. */
+Exec wacc(Cli cli, string home, string dir, string cmd, string entry) {
+  return withEnv(cli, string[]("WAC_HOME"), string[](home),
+                 "/bin/sh",
+                 string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " " + cmd + " " + entry));
+}
+
+/** A project that maps `dep/` at `subdir: "src"`, with the manifest written but no lock yet. */
+string project(Cli cli, T t, string dir) {
+  t.isTrue(put(cli, dir + "/wac.json5",
+               "{\n  imports: {\n    \"dep/\": { git: \"" + REPO +
+               "\", ref: \"main\", subdir: \"src\" },\n  },\n}\n"), "the manifest");
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { two } from \"dep/lib.wac\";\n" +
+               "export i32 main() { return two() + 5; }\n"), "the entry");
+  return dir;
+}
+
+/** The lockfile pinning `dep/` to a commit. */
+bool lockAt(Cli cli, string dir, string commit) {
+  return put(cli, dir + "/wac.lock",
+             "{\n  imports: {\n    \"dep/\": {\n      git: \"" + REPO + "\",\n" +
+             "      ref: \"main\",\n      subdir: \"src\",\n      commit: \"" + commit + "\",\n" +
+             "    },\n  },\n}\n");
+}
+
+/** The dependency's own checkout, where `cachePath` says it goes. */
+bool checkout(Cli cli, string home, string commit, string body) {
+  return put(cli, home + "/cache/git/" + escapeRepo(REPO) + "/" + commit + "/src/lib.wac", body);
+}
+
+export string test_a_mapped_specifier_resolves_from_the_lock_and_the_cache(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "mapped-ok");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(dir, true).wait();
+  project(cli, t, dir);
+  t.isTrue(lockAt(cli, dir, COMMIT), "the lockfile");
+  t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
+
+  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    // `two()` came from the mapped dependency; 5 is the entry's own. The answer is the evidence
+    // that the *right* file was found, which "it compiled" would not be.
+    t.eqI32(r.status, 7, "answered " + itoa(r.status) + ", want 7: " + string.fromBytes(r.stderr));
+  }
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}
+
+export string test_a_mapping_with_no_lock_entry_says_to_update(Core core, Cli cli) {
+  // D10: an ordinary command does not fetch and does not invent a pin. The refusal has to name the
+  // command that would fix it, or the reader is left with "cannot read dep/lib.wac" and no idea
+  // that a lockfile is the missing thing.
+  T t = T.create();
+  string dir = scratch(cli, "mapped-nolock");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(dir, true).wait();
+  project(cli, t, dir);
+  t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
+
+  Exec r = wacc(cli, home, dir, "check", "src/main.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    t.isTrue(r.status != 0, "a mapping with no lock entry was accepted: " + said);
+    t.isTrue(contains(said, "wac update"), "it did not name the command to run: " + said);
+    t.isTrue(contains(said, "dep/"), "it did not name the mapping: " + said);
+  }
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}
+
+export string test_a_commit_that_is_not_in_the_cache_says_where_it_looked(Core core, Cli cli) {
+  // **The canary for the first case.** A resolution that fell back to *anything* — the working
+  // directory, the project root, the first checkout it found — would pass that test and this one,
+  // so this pins a lock to a commit nothing has fetched and requires the refusal. Naming the path
+  // is what separates a wrong commit from a wrong subdir from an empty cache, which are three
+  // different things to do about it.
+  T t = T.create();
+  string dir = scratch(cli, "mapped-nocache");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(dir, true).wait();
+  project(cli, t, dir);
+  t.isTrue(lockAt(cli, dir, "89abcdef0123456789abcdef0123456789abcdef"), "a lock on another commit");
+  t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the other commit's checkout");
+
+  Exec r = wacc(cli, home, dir, "check", "src/main.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    t.isTrue(r.status != 0, "a commit that is not in the cache was accepted: " + said);
+    t.isTrue(contains(said, "wac update"), "it did not name the command to run: " + said);
+    t.isTrue(contains(said, "89abcdef"), "it did not say which commit it wanted: " + said);
+  }
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}
+
+export string test_two_mappings_at_one_commit_are_one_module(Core core, Cli cli) {
+  // **D8, through the half that mappings make reachable.** Identity is the repository, the resolved
+  // commit and the repository-relative path — so a file reached through two different mapping
+  // *names* at the same commit is one module, and in wac that is load-bearing: types are nominal,
+  // so two modules would be two `Two`s and passing one where the other is wanted would not compile.
+  //
+  // **What this case can and cannot catch, because it is weaker than it looks.** The key a mapped
+  // file is filed under *is* the path it is read from, and that path is `cachePath(repo, commit)`
+  // plus the repository-relative part — so identity is the D8 triple by construction, not by a
+  // canonicalisation step that could be got wrong. I went looking for a mutation that would make
+  // this case fail and there is not one: anything that changes the key changes where the file is
+  // read from, so it fails as "not in the cache" rather than as two types with one name.
+  //
+  // So this guards the *construction* — that the cache layout is what the module is keyed by —
+  // rather than an independent rule. It would catch somebody adding a per-mapping component to the
+  // cache path, or keying by the specifier as written. It would not catch a canonicalisation bug,
+  // because there is no canonicalisation to have a bug in. Worth saying, because a case named after
+  // D8 that cannot fail for D8's reason is exactly the kind of test that reads as coverage.
+  T t = T.create();
+  string dir = scratch(cli, "mapped-onemodule");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  // Two names, one repository, one commit, one subdir — D9 permits this: the names do not overlap.
+  t.isTrue(put(cli, dir + "/wac.json5",
+               "{\n  imports: {\n" +
+               "    \"one/\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"src\" },\n" +
+               "    \"two/\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"src\" },\n" +
+               "  },\n}\n"), "a manifest with two names for one repository");
+  t.isTrue(put(cli, dir + "/wac.lock",
+               "{\n  imports: {\n" +
+               "    \"one/\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"src\", commit: \"" + COMMIT + "\" },\n" +
+               "    \"two/\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"src\", commit: \"" + COMMIT + "\" },\n" +
+               "  },\n}\n"), "both pinned to one commit");
+  t.isTrue(put(cli, home + "/cache/git/" + escapeRepo(REPO) + "/" + COMMIT + "/src/lib.wac",
+               "export struct Two { i32 v; i32 get(const this) { return this.v; } }\n" +
+               "export Two make() { return Two(2); }\n"), "the checkout");
+  // One file reaches it as `one/`, the other as `two/`, and a value crosses between them.
+  t.isTrue(put(cli, dir + "/src/a.wac",
+               "import { Two, make } from \"one/lib.wac\";\n" +
+               "export Two mk() { return make(); }\n"), "a");
+  t.isTrue(put(cli, dir + "/src/b.wac",
+               "import { Two } from \"two/lib.wac\";\n" +
+               "export i32 take(Two x) { return x.get(); }\n"), "b");
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { mk } from \"./a.wac\";\n" +
+               "import { take } from \"./b.wac\";\n" +
+               "export i32 main() { return take(mk()) + 5; }\n"), "main");
+
+  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    t.eqI32(r.status, 7,
+            "answered " + itoa(r.status) + ", want 7 — one repository at one commit is one module " +
+            "however many mappings name it: " + string.fromBytes(r.stderr));
+  }
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}

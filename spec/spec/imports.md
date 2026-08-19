@@ -125,6 +125,37 @@ A project using only relative imports needs no manifest. An empty `wac.json5` is
 presence is what `@/` asks about, and nothing reads its contents to answer.
 
 
+### A mapped specifier
+
+```json5
+// wac.json5
+{ imports: { "dep/": { git: "https://example.com/dep.git", ref: "main", subdir: "src" } } }
+```
+
+```wac
+import { two } from "dep/lib.wac";
+```
+
+`[§wac-import-mapped-6np2rkq]` A specifier that is neither relative, nor `@/`, nor a built-in may
+name a **mapping** declared in the project's `wac.json5`. The name is exact or a slash-terminated
+prefix; for a prefix the unmatched suffix is appended to the mapping's `subdir` and rejected if it
+climbs out. Mappings may not overlap, so at most one can match and there is no precedence rule to
+learn.
+
+Resolution reads the lockfile, never the network: `wac.lock` records the commit each mapping is
+pinned to, and the file is read from the checkout cache. **A missing lock entry, or a commit that is
+not in the cache, is a compile error naming `wac update`** — an ordinary command does not fetch, and
+does not advance a pin because a branch moved.
+
+Identity is the repository, the resolved commit and the repository-relative path — so two mappings
+naming one repository at one commit are one module, and two commits are two. That falls out of where
+the cache puts a checkout rather than being computed separately.
+
+> **The reference compiler does not resolve mappings** — `compiler/README.md` records it as a stated
+> omission. Reading a manifest, a lockfile and a cache is package policy, and that gets one
+> implementation; the reference exists to build the first `wacc.wasm` from a cold checkout, which has
+> no dependencies by construction.
+
 ### Import resolution
 
 The compiler resolves the import graph depth-first, visiting each file at most
