@@ -17,7 +17,7 @@ both, on `packages/platform/example/wc.wac` (233,661 bytes) and on `packages/wac
 *name* is embedded in the module, so a comparison across two names always fails. The grants are in
 there too, and that is what this measurement missed: building `wc.wac` with two grants and with four,
 through one compiler, gives files two bytes apart. Hold the name and the grants equal and the two
-pipelines agree. The 18 was that, or a drift since fixed — `test/wac/manifest_test.wac` exists because
+pipelines agree. The 18 was that, or a drift since fixed — the two-derivation test existed because
 these two derivations have parted before, once over a trailing comma on the `net` line, and it is what
 keeps them together.
 

@@ -12,9 +12,12 @@
 // same wasm type, and records the second spelling as an alias. The manifest carries both names,
 // pointing at one type [issue 0106].
 //
-// Host-side until 2026-08-19, `issues/system/0161`. `native.ts` is run rather than imported, and its
-// `.json` is read with `packages/json` — the same route `test/wac/../wacc/test/wac/manifest_test.wac`
-// takes to compare the two derivations of this file.
+// Host-side until 2026-08-19, `issues/system/0161`. **Built with `wac build`**, which is the producer:
+// it writes the module and the `.json` beside it, from `manifest.wac`. That was `deno run native.ts`
+// until 2026-08-19, when the two were re-measured as byte-identical and the Deno path stopped being
+// the one anything is built with — see `tools/seed.sh` and `issues/system/0214`. Testing the manifest
+// the toolchain actually writes is the point; testing that a second derivation agrees with it was a
+// separate file, and it is gone.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
@@ -65,11 +68,11 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
 
-  Exec r = cli.exec("deno",
-    string[]("run", "-A", "packages/platform/native.ts", "packages/platform/example/wc.wac",
-             "--allow-read", "-o", dir + "/wc"), u8[0]()).wait();
+  Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
+    string[]("build", "packages/platform/example/wc.wac",
+             "--allow-read", "-o", dir + "/wc", "--quiet"), u8[0]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           "native.ts built it — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+           "wac build wrote it — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
   if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
   JsonObject m = jsonFile(cli, dir + "/wc.json");

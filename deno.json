@@ -57,7 +57,6 @@
     "mutate:operators": "deno run -A tools/mutate.ts --operators",
     "serve": "deno run -A packages/server/host/serve.ts",
     "app:build": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/build.ts",
-    "app:native": "deno run --allow-read --allow-write --allow-env packages/platform/native.ts",
     "seed": "bash tools/seed.sh",
     "seed:bootstrap": "bash tools/seed.sh --bootstrap",
     "app:binary": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/binary.ts",

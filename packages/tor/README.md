@@ -92,7 +92,7 @@ which the proxy costs **19.5 KiB** over the fetch-and-exit program. Measured 202
 ```sh
 deno task app:build packages/tor/src/app.wac   --allow-net --allow-read --allow-write -o tor
 deno task app:build packages/tor/src/socks.wac --allow-net --allow-read --allow-write -o torsocks
-deno task app:native packages/tor/src/app.wac  --allow-net --allow-read --allow-write -o torn
+wac build packages/tor/src/app.wac  --allow-net --allow-read --allow-write -o torn
 ```
 
 Dated, because it is a snapshot and the last one sat here saying 386.7 KiB until this file was read

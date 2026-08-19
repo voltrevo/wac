@@ -36,6 +36,17 @@ over the same import. Then:
 The second spelling gives `2 passed, 0 failed`. Toggled back and forth twice, with no rebuild of the
 seed in between — `graph.wac` is a test file, so the only thing that changed is that line.
 
+## The reproduction's file was deleted — 2026-08-19, agent-b
+
+`packages/wacc/test/wac/manifest_test.wac` is gone. It compared the manifest `packages/platform/native.ts`
+derives against the one `manifest.wac` derives, and the Deno side stopped being a producer once the two
+were re-measured as byte-identical (`tools/seed.sh`, `issues/system/0214`).
+
+Nothing here says the bug went with it — this issue is about the compiler, and that file was a
+*trigger*. Whatever graph it pulled in is the thing to reconstruct; it imported `packages/json`,
+`packages/wactest/src/jsonfile.wac` and `../../src/api.wac`, which is a wide one. Sorry for moving the
+furniture mid-investigation.
+
 ## What is not the difference
 
 - **Not the module set.** `wac check packages/wacc/test/wac/manifest_test.wac` says
