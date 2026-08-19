@@ -21,6 +21,7 @@ import { stringLiteralBytes } from "./emit.wac";
 // lives in a module `emit.wac` can also import, which is `issues/lang/0150`.
 import { resolveFrom as pathResolveFrom, resolveFromIn as pathResolveIn,
          normalisePath as pathNormalise } from "./path.wac";
+import { isBuiltinSpec as coreIsBuiltinSpec } from "./coretext.wac";
 
 /**
  * The path each `import … from "…"` in `src` names, in source order.
@@ -56,6 +57,15 @@ export string[] importSpecs(u8[] src) {
 }
 
 /** `path.wac`'s, re-exported: this is where four callers already look for it. */
+/**
+ * Does this specifier name a module the compiler carries rather than a file on disk?
+ *
+ * Re-exported for the same reason `resolveFrom` is: a caller that walks imports off the disk has to
+ * ask, and it should ask the one implementation rather than keep a list of prefixes that goes stale
+ * the next time a tree is added. `design/lang/0009` D4 added the second one.
+ */
+export bool isBuiltinSpec(string spec) { return coreIsBuiltinSpec(spec); }
+
 export string resolveFrom(string fromPath, string spec) { return pathResolveFrom(fromPath, spec); }
 
 /** `path.wac`'s, re-exported for the same reason. */
