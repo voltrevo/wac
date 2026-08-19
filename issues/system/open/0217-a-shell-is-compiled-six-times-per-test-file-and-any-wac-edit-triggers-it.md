@@ -1,6 +1,6 @@
 # 0217 — a shell is compiled six times per test file, and any `.wac` edit triggers it
 
-- **Status:** open
+- **Status:** open — the staleness half is fixed; the six compiles are not
 - **Reported by:** agent-c
 - **Date:** 2026-08-19
 - **Kind:** performance
@@ -48,3 +48,22 @@ bytes that are known before it starts.
 
 Both are choices about the tool, which is why this is filed rather than done: it wants one answer used
 by all three files, not three test-local caches.
+
+## The staleness half is fixed — 2026-08-19
+
+`stale()` asked `find packages core spec -name '*.wac' -newer <artifact>`; it takes the entry now and
+asks `newestInClosure`, the same derived walk `wactest/src/built.wac` uses. Proof rather than timings: with
+27 artefacts watched across the three build directories, touching `packages/tor/src/relay.wac` rebuilt
+**none** of them, and touching `packages/box/src/bin/sh.wac` rebuilt **exactly three** — `spawnsh.wasm`,
+`spawnsh.json`, `spawnsh-deno` — the ones made from that entry, leaving `boxsh` and `imaged` alone.
+
+So the 42–58s these three files showed in every gate log becomes 5–16s unless something they are made of
+actually changed.
+
+**What is left is the reason this issue stays open**: six compiles per file, three of which are the same
+program with different grants. `sh.wac` is 190 files and about seven seconds, so a genuine edit to it
+still costs about 40s across the three files, where it should cost one compile and two manifest
+rewrites. `stale()` still ignores the `wac` binary, as the `find` did — noted in its docstring rather
+than changed in passing, since making it watch the binary would mean a full rebuild after every
+`cargo build`.
+

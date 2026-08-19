@@ -133,12 +133,12 @@ Shells shells(Cli cli) {
   string[] none = string[0](fill: "");
 
   string why = "";
-  if (stale(cli, s.deno)) { why = why + buildOne(cli, false, s.deno, rw); }
-  if (stale(cli, s.manifest)) { why = why + buildOne(cli, true, dir + "/wacsh", rw); }
-  if (stale(cli, s.wonlyDeno)) { why = why + buildOne(cli, false, s.wonlyDeno, w); }
-  if (stale(cli, s.wonly)) { why = why + buildOne(cli, true, dir + "/wonly", w); }
-  if (stale(cli, s.nograntDeno)) { why = why + buildOne(cli, false, s.nograntDeno, none); }
-  if (stale(cli, s.nogrant)) { why = why + buildOne(cli, true, dir + "/nogrant", none); }
+  if (stale(cli, s.deno, ENTRY)) { why = why + buildOne(cli, false, s.deno, rw); }
+  if (stale(cli, s.manifest, ENTRY)) { why = why + buildOne(cli, true, dir + "/wacsh", rw); }
+  if (stale(cli, s.wonlyDeno, ENTRY)) { why = why + buildOne(cli, false, s.wonlyDeno, w); }
+  if (stale(cli, s.wonly, ENTRY)) { why = why + buildOne(cli, true, dir + "/wonly", w); }
+  if (stale(cli, s.nograntDeno, ENTRY)) { why = why + buildOne(cli, false, s.nograntDeno, none); }
+  if (stale(cli, s.nogrant, ENTRY)) { why = why + buildOne(cli, true, dir + "/nogrant", none); }
   if (why != "") { s.ok = false; s.error = why; }
   return s;
 }

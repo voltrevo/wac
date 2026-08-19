@@ -114,12 +114,12 @@ Built builds(Cli cli) {
   string[] none = string[0](fill: "");
   string[] rwe = string[]("--allow-read", "--allow-write", "--allow-env");
   string why = "";
-  if (stale(cli, b.sealedDeno)) { why = why + buildOne(cli, false, SEALED, b.sealedDeno, none); }
-  if (stale(cli, b.sealedManifest)) { why = why + buildOne(cli, true, SEALED, dir + "/sealed", none); }
-  if (stale(cli, b.grantedDeno)) { why = why + buildOne(cli, false, SEALED, b.grantedDeno, rwe); }
-  if (stale(cli, b.grantedManifest)) { why = why + buildOne(cli, true, SEALED, dir + "/granted", rwe); }
-  if (stale(cli, b.openDeno)) { why = why + buildOne(cli, false, OPEN, b.openDeno, rwe); }
-  if (stale(cli, b.openManifest)) { why = why + buildOne(cli, true, OPEN, dir + "/open", rwe); }
+  if (stale(cli, b.sealedDeno, SEALED)) { why = why + buildOne(cli, false, SEALED, b.sealedDeno, none); }
+  if (stale(cli, b.sealedManifest, SEALED)) { why = why + buildOne(cli, true, SEALED, dir + "/sealed", none); }
+  if (stale(cli, b.grantedDeno, SEALED)) { why = why + buildOne(cli, false, SEALED, b.grantedDeno, rwe); }
+  if (stale(cli, b.grantedManifest, SEALED)) { why = why + buildOne(cli, true, SEALED, dir + "/granted", rwe); }
+  if (stale(cli, b.openDeno, OPEN)) { why = why + buildOne(cli, false, OPEN, b.openDeno, rwe); }
+  if (stale(cli, b.openManifest, OPEN)) { why = why + buildOne(cli, true, OPEN, dir + "/open", rwe); }
   if (why != "") { b.ok = false; b.error = why; }
   return b;
 }
