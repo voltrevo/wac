@@ -179,7 +179,7 @@ export string test_check_refuses_a_program_the_checker_refuses_and_says_where(Co
 export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, Cli cli) {
   // **The last piece of the toolchain that only existed in TypeScript.** `waccx bindgen` wrote glue
   // and the `wac` binary could not, which is a tooling-parity gap rather than a missing language
-  // feature — `src/bindgen.wac` closes it, and `test/bindgenWac.test.ts` holds the two generators to
+  // feature — `src/bindgen.wac` closes it, and `test/wac/bindgenwac_test.wac` holds the two generators to
   // the same text byte for byte.
   //
   // Here the assertion is the *running*, not the reading: a generator that dropped a cast it needed

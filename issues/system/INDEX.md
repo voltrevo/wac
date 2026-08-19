@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0214](open/0214-an-opt-in-test-has-been-red-and-four-of-its-seven-cases-are-wrong.md) | `nativeBinary.test.ts` fails 3 of 7 — 4 once the first three are fixed — and nothing noticed — it is opt-in and nobody opts in; two are defects in the test, one is the 18-byte pipeline difference `seed.sh` already documents | bug | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
 | [0212](open/0212-the-mutation-recall-floor-is-decided-by-filenames-not-by-the-checker.md) | rung 3 pairs each corpus file with `MUTATIONS[i % 7]` over an alphabetical list, so adding one file re-pairs every later one — two gate runs failed under the 97% floor for that reason | bug | wrong answer |
 | [0210](open/0210-the-weierstrass-ladder-branches-on-the-secret-scalar.md) | `jacMul` adds only when the scalar bit is set, so P-256 and P-384 leak the private key — and the ECDSA *nonce* — through control flow; measured with `ctTrace`, one divergent site at `weierstrass.wac:120`, and the README's side-channel table had no asymmetric row at all | bug | no error |
@@ -66,7 +67,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-219 issues, 165 closed.
+220 issues, 165 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

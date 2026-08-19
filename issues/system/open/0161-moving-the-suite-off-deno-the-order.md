@@ -1357,3 +1357,69 @@ So the remaining order is: `0204` first (57 files), then the 38 unclassified, th
 tool. The `quic` files are a shape worth naming — each holds *both* pure tests and tests that need
 Deno's QUIC as a peer, so converting them splits a file rather than removing one, and the Deno lane
 keeps paying for the file either way.
+
+### 2026-08-19 (agent-b): eleven files, and three that stay for reasons worth writing down
+
+Moved: `tor/network`, `tor/dird`, `tor/network_tor`, `tls/client` and both `tls` interop files,
+`platform/native_hostfs`, `native_shell`, `native_examples`, `conformance`, `v8host`, `native`,
+`arrival`, `arrival_users`, `order`, `handles`, `node_net`, seven of ten in `spawn`, `http/interop`,
+`wacc/specMulti`, `wacc/manifest`, `wacc/binary`, `wacc/bindgenWac`. `packages/tls` and
+`packages/platform` have no portable `.test.ts` left.
+
+**Two of this issue's own rejections were wrong, and both in the same way.** `http/interop.test.ts`
+was kept because "half the grid is host bindings" and `manifest.test.ts` because "a cargo build and JS
+glue as the subject". Neither described what the file *measured*: `packages/http/src/client.wac`
+exports `request`, so the client is a library a wac test calls directly, and `manifest.test.ts` runs no
+cargo and has no glue in it. Both reasons were about how the old test *reached* its subject. Both
+entries are corrected above. The lesson is cheap to state and was not: **a rejection has to name what
+the test measures, not what it imports.**
+
+**`nativeBinary.test.ts` stays, and not for the reason it looks like.** It is portable — it builds
+programs and compares bytes, and `issues/system/0214` got it from 4/7 to 7/7 first, because porting a
+red test moves the failure rather than the coverage. What stops it is that it rebuilds the crate into
+`native/v8/target/release/wac`, which **is** the binary `wac test` is. As TypeScript that is merely
+untidy, because Deno runs it. Under `wac test` the file replaces its own runner mid-run and leaves the
+next file in the lane running whatever payload it built — a `wc`, if that is what was last written.
+`CARGO_TARGET_DIR` would avoid the clobber and forces a full rebuild of the V8 crate's dependencies,
+which is minutes. So the port would make the file worse, and it is opt-in either way.
+
+**`crypto/constanttime.test.ts` stays**: `harness/ctTrace.ts` compiles in the compiler's trace mode and
+then *instantiates and traces a wasm module* to compare branch and memory-index sequences. wac has no
+capability to instantiate wasm, so this is not blocked on a flag — it is the one shape on this list a
+wac program cannot express at all.
+
+**`tor/ctor_live.test.ts` is not blocked, it is unverifiable here**: there is no C tor on this machine,
+so a port could only be shown to take its skip path. Worth doing by someone who can run it, and not
+worth shipping blind.
+
+**The `packages/wacc` remainder — and the number I first gave for it was wrong.** I sorted these by
+grepping for `wacCompile|wacLex|wacParse|reference` and called seventeen of them reference-oracle
+tests. That counted the *word* "reference" in prose. Read by their imports instead, **nine** import
+`wac/wac*`: `tour`, `sweep`, `linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `mutateCheck`,
+`corpusMutate`, `parse_errors`.
+
+`specSingle.test.ts` was on my wrong list and has since moved — it imported `wacBind` and
+`specCases.ts`, exactly what `specMulti` imported. A count of a word is not a reading of a file, which
+is the same lesson as the two rejections corrected above, made by me this time.
+
+The other eight that do *not* use the reference, and what each is actually waiting on:
+
+| file | what it needs |
+| --- | --- |
+| `bindHelpers` (178) | a wasm section walker in wac — LEB128, type/function/export sections. `emit.wac` has a writer, not a reader, so this is a second parser rather than a reuse. Portable, not blocked. |
+| `bindgen` (392) | the same oracle shape `bindgenwac_test.wac` now has. Portable, not blocked. |
+| `ctTrace` (195) | *reads* as portable; its subject is `harness/ctTrace.ts`'s trace mode, so check what it measures before believing that. |
+| `specCheck` (68), `specAccept` (66) | `specCorpus.ts`, the text extractor. A second reader of one corpus is the trap named above — and `specCases.json` already records what these read, so the honest move may be to delete them rather than port them. |
+| `jsBindgen` (113), `jsxBoundary` (97) | JavaScript is half the differential. Stay. |
+| `nativeBinary` (510) | see above. |
+
+So the count blocked on the reference decision is nine, and the count that is simply unstarted work is
+three or four.
+
+**The nine that do use the reference as an oracle.** On 2026-08-19 the operator deleted the whole-repository lex and
+parse differentials and every `// only: wacc` marker, on the grounds that **the reference's only job
+is bootstrapping** — holding it up as a second implementation made it a constraint on the language.
+That principle reaches `parse_errors` (which compares diagnostics by position) more clearly than it
+reaches `corpusMutate` and `mutateCheck` (which use it to *generate* known-bad programs and only ask
+whether wacc notices). Porting them would entrench an arrangement that may be about to go. Left
+alone deliberately, pending that decision.

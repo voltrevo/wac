@@ -5,7 +5,7 @@
 // binary cannot, which is a tooling-parity gap rather than a missing language feature. This is that
 // generator in wac.
 //
-// **Byte-identical to the TypeScript one, or it is not a port.** `test/bindgenWac.test.ts` compares
+// **Byte-identical to the TypeScript one, or it is not a port.** `test/wac/bindgenwac_test.wac` compares
 // the two outputs character for character over a corpus that grows as this covers more; a generator
 // that emitted *equivalent* glue would be a second implementation to keep in step, which is the thing
 // this repository spends its time avoiding. The wire formats and the conversion rules are shared with
@@ -623,7 +623,7 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
   // so shipped startup was never affected by either spelling.
   //
   // Must stay byte-identical to `packages/wacc/tools/waccBindgen.ts`, which changed in `ab1f97f8`
-  // while this port did not — caught as eighteen failures in `packages/wacc/test/bindgenWac.test.ts`,
+  // while this port did not — caught as eighteen failures in `packages/wacc/test/wac/bindgenwac_test.wac`,
   // every one of them this line.
   line(o, "const $b = atob(WASM);");
   line(o, "const bytes = new Uint8Array($b.length);");

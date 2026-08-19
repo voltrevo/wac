@@ -317,7 +317,7 @@ compile still says so, on stderr.
 `packages/wacc/tools/waccBindgen.ts` was the last piece of the toolchain that existed only in
 TypeScript — `waccx bindgen` wrote glue and this could not. `packages/wacc/src/bindgen.wac` is that
 generator in wac, held to the TypeScript one **byte for byte** by
-`packages/wacc/test/bindgenWac.test.ts` — over seven small programs in both modes, over
+`packages/wacc/test/wac/bindgenwac_test.wac` — over seven small programs in both modes, over
 `packages/platform/example/wc.wac` (the whole capability boundary: callbacks in, funcrefs out,
 `Pending<T>` and its aliases) and over the compiler's own 431 KB of glue. A one-space change in the
 wac generator fails that comparison at the line, which is how you know it is comparing.

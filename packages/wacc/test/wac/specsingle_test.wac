@@ -1,0 +1,152 @@
+// **The contract, for the programs a single file states — all 671 of them.**
+//
+// This replaces what `specCheck.test.ts` and `specAccept.test.ts` measured by reading
+// `wacSpec.test.ts` as text. That extractor finds 101 illegal programs; the suite *executes* 304. The
+// gap is the ceiling of reading a file whose test data is wac source inside template literals — a
+// regular expression finds the calls written in the shape it knows, and the spec does not confine
+// itself to one shape. Recording what the compiler was handed finds all of them, and keeps finding
+// them when the spec grows.
+//
+// The widening was worth three times the corpus and immediately worth more than that: it exposed
+// **14 legal programs this checker refuses**, none of which any oracle here had ever looked at. A
+// false alarm is the failure this package minds most, so they are named individually below rather
+// than counted.
+//
+// Both lists fail in both directions. A new miss breaks this file, and fixing a named one breaks it
+// too, which is what makes them shrink instead of rot.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The corpus and the ledger machinery are shared
+// with `specmulti_test.wac` through `speccases.wac`; what is here is the single-file half — which
+// refuses with `dumpTypeErrors` where the other uses `dumpTypeErrorsFiles`, because a one-file program
+// has no file map to consult.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { Case, load, listed, assertKeysExist } from "./speccases.wac";
+import { dumpErrors, dumpTypeErrors } from "../../src/api.wac";
+
+/** A program is refused when any phase says no; which phase is not the language's business. */
+bool refuses(Case c) {
+  if (c.sources.len() == 0) { return false; }
+  u8[] b = c.sources[0].toBytes();
+  return dumpErrors(b).len() > 0 || dumpTypeErrors(b).len() > 0;
+}
+
+/** The cases a single file states. */
+Case[] singleFile(Case[] all, bool wantOk) {
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].paths.len() == 1 && all[i].ok == wantOk) { n = n + 1; }
+  }
+  Case[] out = Case[n](fill: all.len() > 0 ? all[0]
+                                           : Case("", "", string[0](fill: ""), string[0](fill: ""),
+                                                  false, ""));
+  i32 at = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].paths.len() == 1 && all[i].ok == wantOk) { out[at] = all[i]; at = at + 1; }
+  }
+  return out;
+}
+
+/**
+ * The one program the spec calls illegal that this checker still accepts. It was 47, then 16.
+ *
+ * And it is not a rule: the case is a *multi-file* program recorded with one file. What the spec writes
+ * is `main.wac` importing `foo` from a `b.wac` that does not export it, and the recording kept the file
+ * that carries the `// error:` marker — so what reaches this test is an import of a file nobody
+ * supplied. Refusing it would mean refusing every import, which is the opposite of right. The
+ * multi-file contract next door holds the rule that governs it, and it passes 15 of 15.
+ *
+ * **The number is positional and moves.** `#N` is the runner's index over cases sharing a test name, so
+ * it names a program only against the sequence that produced it: it was `#28` until `spec/spec/control.md`
+ * and `functions.md` gained `// error:` blocks earlier in the sequence, and the failure then read as this
+ * checker having regressed on a block it never saw. Identified by its message rather than its index when
+ * you are looking for it: *file not found in programs map: 'b.wac'*.
+ *
+ * **"The miss is the runner's scope rather than the checker's" is what this said, and it is wrong** —
+ * measured 2026-08-18. `diagnoseFiles(["main.wac"], [src], "main.wac")` has the whole map and reports
+ * nothing either; what refuses is the *emitter*, through `blockedFiles`, with no position and no file
+ * name. The checker has no rule for it at all. `issues/lang/0157` carries the measurements, including
+ * the one that says the rule is safe to add: of the 688 single-file cases recorded, **zero** legal ones
+ * import a relative path, so refusing an unsupplied import cannot make a legal program illegal here.
+ */
+string[] knownMisses() {
+  return string[]("every block the spec marks `// error:` is still an error#34");
+}
+
+/**
+ * The legal programs this checker refuses. **None.** It was fourteen when the corpus was recorded.
+ *
+ * Eleven were one bug: a local aliasing something const could not be *rebound*, so every linked-list
+ * walk in the spec was illegal. A twelfth was `match` used as an expression not narrowing its subject.
+ * The thirteenth was the parser not accepting `trap` with a message. The last was a generic enum's
+ * constructor: `Wrap.W(Box(5))` could not be built, because the payload's written type kept the enum's
+ * `T` and the bare `Box(5)` was then asked to be one.
+ */
+string[] knownFalseAlarms() { return string[0](fill: ""); }
+
+string[] firstOf(string[] all, i32 n) {
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = all[i]; }
+  return out;
+}
+
+export string test_rung_3_every_single_file_program_the_spec_calls_illegal_refused(
+    Core core, Cli cli) {
+  T t = T.create();
+  Case[] all = load(cli);
+  Case[] cases = singleFile(all, false);
+  t.isTrue(cases.len() >= 280, "only " + itoa(cases.len()) + " single-file rejections recorded");
+  string[] ledger = knownMisses();
+  assertKeysExist(t, ledger, all, "KNOWN_MISSES");
+
+  string[] missed = string[cases.len()](fill: "");
+  i32 nMissed = 0;
+  string[] caught = string[cases.len()](fill: "");
+  i32 nCaught = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    bool refused = refuses(cases[i]);
+    bool known = listed(ledger, cases[i].key);
+    if (!refused && !known) { missed[nMissed] = cases[i].key; nMissed = nMissed + 1; }
+    if (refused && known) { caught[nCaught] = cases[i].key; nCaught = nCaught + 1; }
+  }
+  core.log("    rung 3, one file: " + itoa(cases.len() - nMissed - ledger.len()) + " of " +
+           itoa(cases.len()) + " refused, " + itoa(ledger.len()) + " known misses");
+
+  t.eqI32(nMissed, 0, "the spec calls these illegal and wacc accepts them: " +
+          joined(firstOf(missed, nMissed), " | "));
+  t.eqI32(nCaught, 0, "now refused — take them out of KNOWN_MISSES: " +
+          joined(firstOf(caught, nCaught), " | "));
+  return t.report();
+}
+
+export string test_rung_3_every_single_file_program_the_spec_calls_legal_accepted(
+    Core core, Cli cli) {
+  T t = T.create();
+  Case[] all = load(cli);
+  Case[] cases = singleFile(all, true);
+  t.isTrue(cases.len() >= 340, "only " + itoa(cases.len()) + " single-file acceptances recorded");
+  string[] ledger = knownFalseAlarms();
+  assertKeysExist(t, ledger, all, "KNOWN_FALSE_ALARMS");
+
+  string[] alarms = string[cases.len()](fill: "");
+  i32 nAlarms = 0;
+  string[] silent = string[cases.len()](fill: "");
+  i32 nSilent = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    bool refused = refuses(cases[i]);
+    bool known = listed(ledger, cases[i].key);
+    if (refused && !known) { alarms[nAlarms] = cases[i].key; nAlarms = nAlarms + 1; }
+    if (!refused && known) { silent[nSilent] = cases[i].key; nSilent = nSilent + 1; }
+  }
+  core.log("    rung 3, one file: " + itoa(cases.len() - nAlarms - ledger.len()) + " of " +
+           itoa(cases.len()) + " silent, " + itoa(ledger.len()) + " known false alarms");
+
+  t.eqI32(nAlarms, 0, "the spec calls these legal and wacc refuses them: " +
+          joined(firstOf(alarms, nAlarms), " | "));
+  t.eqI32(nSilent, 0, "now silent — take them out of KNOWN_FALSE_ALARMS: " +
+          joined(firstOf(silent, nSilent), " | "));
+  return t.report();
+}
