@@ -18,8 +18,8 @@ import { ALPHABET_STANDARD, encode as b64Encode } from "../../../codec/src/base6
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Said, buildClient, ourSsh, ourSshEnv } from "./wacsshd.wac";
-import { Sshd, copyPreserving, haveSshd, publicBlobText, restrict, startSshd, stopSshd }
-  from "./fixture.wac";
+import { Sshd, haveSshd, startSshd, stopSshd } from "./fixture.wac";
+import { copyPreserving, publicBlobText, restrict } from "../../../wactest/src/keys.wac";
 import { ramp } from "./build.wac";
 
 /** A HOME with an `.ssh` the program will find by its own defaults. */

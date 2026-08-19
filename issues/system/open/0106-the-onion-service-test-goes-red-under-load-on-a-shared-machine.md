@@ -147,7 +147,23 @@ buffers back before anything is awaited.
 `withDeadline` **rejects; it does not cancel**. A wedged body keeps waiting, so its own `finally` does
 not run and a dump written there never happens — I wrote one first and it printed nothing, which is
 how this was found. `testBounded` takes an `onTimeout` now, called on any failure of the case, and
-`network_tor.test.ts` keeps the running network in a module-level slot for it to read.
+`network_tor.test.ts` kept the running network in a module-level slot for it to read.
+
+## 2026-08-19: the same problem, answered by moving the bound inside
+
+The file is `packages/tor/test/wac/network_tor_test.wac` now (`issues/system/0161`), and none of the
+machinery above came with it. It runs the launcher as `cd <dir> && exec timeout 330 ./network net.txt`
+and reads what `exec` answers.
+
+That is the whole of it, because the shape of the problem changes when the bound is *inside* the
+line: `timeout` kills the child, the child's pipes close, and `exec` returns everything written up to
+then. There is nothing to stream into, no buffer to hand back before awaiting, and no slot for a hook
+to read — the thing that gives up on the network is its own parent, so a wedged network cannot outlive
+it either. `timeout` exits 124, which is carried as a `wedged` flag rather than compared as a status,
+and the report prints the last 25 lines of each stream with the load beside them exactly as before.
+
+The TypeScript's answer was not wrong; it was the only one available to a runner whose bound is a
+promise that rejects. This one was available because a shell line is.
 
 Canaried by setting `CASE_TIMEOUT` to four seconds. Instead of a bare timeout the run says:
 

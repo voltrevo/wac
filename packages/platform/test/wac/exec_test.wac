@@ -152,12 +152,15 @@ export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, C
  * socket. `exec` is one of them, so taking three tickets before waiting on any of them must overlap
  * the three children.
  *
- * **It did not, on one host of four.** `native/src/main.rs` ran the child to completion inside the
- * capability call and handed back a ticket that was already settled — 3006ms here against 1009ms for
- * the same program on the Deno host, which is issue 0211 — and 0206, filed the same day by another
- * agent, is `receiveFrom` with the same fault. Two things came with it: no test that
- * shells out could overlap its oracle, and a child that wedged had no ticket to bound, since
- * `waitAny` needs a ticket that exists while the work is still running.
+ * **It did not, on two hosts of four.** Both Rust hosts ran the child to completion inside the
+ * capability call and handed back a ticket that was already settled — `native/src/main.rs` at 3007ms
+ * and `native/v8/src/main.rs` at 3012ms, against the Deno host's 1001ms for the same program. Issue
+ * 0211, found twice on the same day by two agents from opposite directions, which is why the wording
+ * here was "one host of four" for a few hours: the wasmtime host is the one a person notices, and the
+ * V8 host is the one every `wac test` runs on. 0206 is `receiveFrom` with the same fault.
+ *
+ * Two things came with it: no test that shells out could overlap its oracle, and a child that wedged
+ * had no ticket to bound, since `waitAny` needs a ticket that exists while the work is still running.
  *
  * The bound is 2.5s rather than 1.2s deliberately — this machine is shared by three agents, so the
  * number that separates "concurrent" from "serial" is the one with three seconds on the other side of
@@ -170,6 +173,9 @@ export string test_three_children_run_at_once(Core core, Cli cli) {
   for (i32 i = 0; i < ps.len(); i++) {
     ps[i] = cli.exec("/bin/sleep", string[]("1"), u8[0]());
   }
+  // The submit phase on its own, which is what names *where* the blocking was rather than only that
+  // it happened: this read 3006ms before the fix and reads 0ms after it.
+  i64 submitMs = (core.monotonicNanos().wait() - t0) / (1000000 as i64);
   i32 ran = 0;
   for (i32 i = 0; i < ps.len(); i++) {
     Exec r = ps[i].wait();
@@ -181,5 +187,8 @@ export string test_three_children_run_at_once(Core core, Cli cli) {
   t.eqI32(ran, 3, "all three slept");
   t.isTrue(ms >= (900 as i64), "and really took a second: " + itoa(ms as! i32) + "ms");
   t.isTrue(ms < (2500 as i64), "three concurrent `sleep 1` in one second, not three: " + itoa(ms as! i32) + "ms");
+  t.isTrue(submitMs < (900 as i64),
+           "taking three tickets took " + itoa(submitMs as! i32) +
+           "ms, so `exec` blocked at the call rather than at the wait");
   return t.report();
 }

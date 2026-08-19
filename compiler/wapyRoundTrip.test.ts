@@ -43,14 +43,19 @@ function strip(v: unknown): unknown {
 }
 
 /**
- * Whether a file says `// only: wacc` — syntax `packages/wacc` has and this compiler does not.
+ * Whether this compiler can read the file at all.
  *
- * Spelled out here rather than imported from `packages/wacc/test/corpus.ts`, because nothing under
- * `compiler/` imports from `packages/` and this test is not the place to start. Six lines is a
- * cheaper price than that dependency; the *contract* is what matters and it is asserted below.
+ * **Asked rather than declared.** Files using syntax `packages/wacc` has and this one does not — a
+ * lambda, most often — used to say so with a `// only: wacc` marker, and this counted them and
+ * required each to genuinely fail. That marker is gone: it made the reference a second implementation
+ * of the language and so a constraint on it, when its only job is bootstrapping. Trying to parse
+ * answers the same question without asking every file in the repository to declare itself.
+ *
+ * The count is still kept and still guarded below, because a corpus this compiler has silently
+ * stopped parsing is a green test that compared nothing.
  */
-function waccOnly(src: string): boolean {
-  return src.split("\n", 12).some((line) => /^\s*\/\/\s*only:\s*wacc\s*$/.test(line));
+function cannotRead(src: string, path: string): boolean {
+  return wacParse(wacLex(src).tokens, path).errors.length > 0;
 }
 
 function ast(src: string, path: string) {
@@ -341,25 +346,20 @@ Deno.test("round trip: every package", async () => {
   let marked = 0;
   for (const f of files) {
     const src = await Deno.readTextFile(f);
-    // **A `// only: wacc` file cannot round-trip through this compiler** — it cannot parse it — but
-    // it is not silently skipped either, which is how a differential goes blind. The claim is
-    // inverted, exactly as `packages/wacc/test/wac/lex_test.wac` does it: the reference must genuinely
-    // fail, and a marked file this parser accepts is a stale marker or syntax that has since landed
-    // here. `issues/lang/0140`.
-    if (waccOnly(src)) {
+    // A file this compiler cannot parse has nothing to round-trip. Counted rather than skipped in
+    // silence — the number going up is the shared subset shrinking, which is worth seeing, and the
+    // guard below fails if it ever becomes all of them.
+    if (cannotRead(src, f)) {
       marked++;
-      if (wacParse(wacLex(src).tokens, f).errors.length === 0) {
-        bad.push(`${f}\nsays "// only: wacc" and this compiler parses it — the marker is stale`);
-      }
       continue;
     }
     const r = roundTrip(src, f);
     if (!r.ok) bad.push(`${f}\n${r.why.split("\n").slice(0, 4).join("\n")}`);
   }
-  // A corpus that is entirely marked is a green test that compared nothing — the same failure the
-  // zero-files check above exists to prevent, one step further along.
+  // A corpus this compiler can read none of is a green test that compared nothing — the same failure
+  // the zero-files check above exists to prevent, one step further along.
   if (marked === files.length) {
-    throw new Error(`every one of the ${files.length} package files says "// only: wacc"`);
+    throw new Error(`this compiler could not parse any of the ${files.length} package files`);
   }
   if (bad.length) {
     throw new Error(

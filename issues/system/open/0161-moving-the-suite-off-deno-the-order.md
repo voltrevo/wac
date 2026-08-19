@@ -934,10 +934,13 @@ capability nobody declared — so `oracle_node.mjs` grew `--nudge-ms=` beside
 `WAC_HTTP_ORACLE_NUDGE_MS`. That flag was canaried before being trusted: a patient run that is
 secretly the hurried run passes `oracle_test.wac` for nothing.
 
-**What is left, and why.** `interop.test.ts` is the 2×2 — wac client against a Node server, `fetch`
-against the wac server — and its diagonal is the whole point. It is blocked on the same gap as
+**What was left, and why.** `interop.test.ts` is the 2×2 — wac client against a Node server, `fetch`
+against the wac server — and its diagonal is the whole point. It was blocked on the same gap as
 `packages/ethrpc`: `issues/system/0165`'s **start a process and leave it running**. `Cli.exec` waits
-for exit, and a server that has exited is not one a client can talk to. `tunnel.test.ts` builds
+for exit, and a server that has exited is not one a client can talk to. **Unblocked on 2026-08-19**,
+not by a new capability but by `packages/wactest/src/daemon.wac`, which is `exec`, `connect` and
+`listen` arranged so a shell line can background a server and a log file can say when it bound. Both
+servers here are started that way and the file has moved. `tunnel.test.ts` builds
 `example/tunnel.wac` and runs it against this container's Squid; that one is only blocked on wanting
 a build step, and is smaller.
 
@@ -1225,18 +1228,33 @@ second copy of the quoting, so `quoted`, `withEnv`, `withHome` and `withoutEnv` 
 `packages/wactest/src/childenv.wac` and the six `packages/git` files import it from there. `shQuoted`
 lost its prefix in the move — one name for one thing.
 
-**`packages/server/test/live.test.ts` and `packages/http/test/interop.test.ts` stay**, and the reason
-is the same for both and worth writing down so nobody re-derives it. `packages/server`'s wac surface
+**`packages/server/test/live.test.ts` stays.** This paragraph said `packages/http/test/interop.test.ts`
+did too, for the same reason, and that half was wrong — see the correction after it. The reason,
+worth writing down so nobody re-derives it: `packages/server`'s wac surface
 is `serve(u8[] input, i64 nowMillis) -> Served` — a function from bytes to bytes. The *connection*
 loop is `host/serve.ts`: the buffering, the keep-alive, the pipelining, the connection limit. Those
 socket-level properties are precisely what the live test exists to check, and they are properties of
 the TypeScript. Porting it would mean **writing a wac server loop**, which is new production code
 rather than a test conversion — and there is no `packages/server/example/` to run.
 
-`http/interop.test.ts` is the same shape one layer up: its 2×2 drives the wac client through
-`http/host/client.ts` against `server/host/serve.ts`, so half the grid is host bindings. Both belong
-with `packages/stream/test/stream.test.ts` in the list of files whose subject is the JavaScript, not
-files waiting for a capability.
+`packages/stream/test/stream.test.ts` belongs with it: its subject is `host/bridge.ts`, a WHATWG
+`TransformStream`, and there is nothing else there to test.
+
+**Correction, 2026-08-19: `http/interop.test.ts` was not the same shape, and it has moved.** The
+reason given was that "its 2×2 drives the wac client through `http/host/client.ts`", and that is true
+of the TypeScript and not of the thing being tested: `packages/http/src/client.wac` exports
+`request`, `get` and `post`, so a wac test calls the client as a **library** and `host/client.ts`
+turns out to have been harness rather than subject. The server half does still go through
+`host/serve.ts` — but the test starts it as a *program*, the way `deno task serve` does, and talks to
+it over a socket. A TypeScript socket loop on the far end of a socket does not make the test
+TypeScript.
+
+The distinction that survives is the one `live.test.ts` rests on, and it is sharper for having been
+tested against a case that looked identical: **what is under test there is the connection loop
+itself** — buffering, keep-alive, pipelining, the connection limit — and those are properties of
+`host/serve.ts`. `interop.test.ts`'s subject is the response *parser* and the response *writer*, and
+both of those are wac. "Half the grid is host bindings" was a fact about how the old test reached
+them, not about what it measured.
 
 ### Two build features the CLI does not have, and one host divergence — 2026-08-18
 

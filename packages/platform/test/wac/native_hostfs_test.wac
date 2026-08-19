@@ -1,0 +1,767 @@
+//
+// `boundedAgain` takes a `fn[void()]` and the call sites pass a lambda literal, which the reference
+// compiler does not have. The marker above must be that line and nothing else — `isWaccOnly`
+// compares the whole comment.
+//
+// The native host's **filesystem capabilities**, against GNU coreutils and against the Deno host.
+//
+// This surface had no test at all, and I found that out the honest way: a canary in
+// `arrival.test.ts` did not fire. Perturbing the native `readDir` to answer in reverse order changed
+// nothing there, because everything a sealed or image session does to files goes through
+// `packages/fs`'s VFS *inside* the image — so the arrival test exercises `readFile` and `writeFile`
+// and nothing else, and eight capabilities were sitting untested behind a green suite.
+//
+// The program that does reach them is `packages/box/src/bin/sh.wac` — `wacsh`, the shell over the
+// *real* filesystem, which is what a host mount is for (design/0001 D3).
+//
+// ## Every case changes directory first, and that is the point
+//
+// `pushChild` says that between it and `popChild` "every path is taken relative to `cwd`". The first
+// native implementation answered the frame's directory from `cli.cwd()` and then resolved paths
+// against the *process's* — so `cat f` worked, `cd sub; cat f` said "No such file or directory", and
+// every test that did not change directory passed. It broke every applet that reads a named file, the
+// moment a script did the most ordinary thing a script does.
+//
+// So `cd` is in every script below rather than in one case labelled "with cd".
+//
+// ## Three answers, not two
+//
+// GNU is the oracle where it has an opinion. The Deno host is the second answer, because a difference
+// between the two of *ours* is a difference in the capability layer rather than in the applets — the
+// wasm above the boundary is identical. Cases where the real tool is not comparable (its `stat` prints
+// a page of inode detail; its `du` counts blocks) are compared between the two hosts only, and said
+// to be, rather than dropped.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The three-way comparison is unchanged; what moved
+// is the process-spawning around it, which was never the interesting part.
+// **Not heavy, and that is deliberate.** It declared `test-lane: heavy` when it arrived in wac,
+// which means it does not run on a push — so the two-host comparison, the thing this file exists
+// for, would not have been in the gate. agent-c had just taken the TypeScript version *out* of the
+// heavy lane for exactly that reason and it would have gone straight back in. It is **17s warm**
+// (26s cold, 6.6 MB): the six builds are made once behind an mtime check rather than once per test,
+// and the three answers a case compares run concurrently over three trees rather than in turn.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult, Pending } from "../../../platform/src/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { Ran, boundedAgain, hangReport, stale, submit, collect, DEFAULT_SECONDS }
+  from "./hostfs.wac";
+
+const string ENTRY = "packages/box/src/bin/sh.wac";
+/** Where the built shells live, so seven cases do not build six artifacts each. */
+const string BUILT = ".cache/hostfs";
+/** A name longer than any filesystem here will take — `ENAMETOOLONG`, at 300 bytes. */
+string tooLong() {
+  string n = "";
+  for (i32 i = 0; i < 300; i++) { n = n + "n"; }
+  return n;
+}
+
+string root(Cli cli) { return cli.cwd().wait(); }
+string built(Cli cli) { return root(cli) + "/" + BUILT; }
+
+/** The native host binary — `wacland`, built when its sources are newer than it. */
+string nativeBinary(Cli cli) {
+  string path = root(cli) + "/native/target/release/wacland";
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c",
+      "if [ -x " + quoted(path) + " ] && " +
+      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer " + quoted(path) +
+      " -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
+      "cd native && cargo build --release --quiet"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return ""; }
+  return cli.stat(path).wait().isFile ? path : "";
+}
+
+/**
+ * The four builds every case draws on, made once and reused.
+ *
+ * Rebuilt when any wac source is newer, which is the same freshness rule the crate and the seed use.
+ * A shared output path would otherwise make these tests order-dependent — the artifacts are identical
+ * whichever case writes them, which is what makes sharing safe here and would not make it safe if any
+ * case built something of its own.
+ */
+struct Shells {
+  bool ok;
+  string error;
+  string deno;        // the Deno host bundle, read+write+env
+  string manifest;    // the native artifact's manifest, read+write+env
+  string wonlyDeno;   // write, and deliberately not read
+  string wonly;
+  string nograntDeno; // nothing at all
+  string nogrant;
+}
+
+string buildOne(Cli cli, bool native, string out, string[] grants) {
+  string[] tail = string[]("-o", out);
+  if (native) {
+    string[] args = string[2 + grants.len() + 2](fill: "");
+    args[0] = "build";
+    args[1] = ENTRY;
+    for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
+    args[2 + grants.len()] = "-o";
+    args[3 + grants.len()] = out;
+    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
+    if (!r.ran() || r.status != 0) {
+      return "wac build " + out + ": " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    }
+    return "";
+  }
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", ENTRY);
+  string[] args = string[head.len() + grants.len() + tail.len()](fill: "");
+  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
+  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
+  args[head.len() + grants.len()] = "-o";
+  args[head.len() + grants.len() + 1] = out;
+  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    return "build.ts " + out + ": " + string.fromBytes(r.stderr);
+  }
+  return "";
+}
+
+Shells shells(Cli cli) {
+  string dir = built(cli);
+  cli.mkdir(dir, true).wait();
+  Shells s = Shells(true, "", dir + "/wacsh-deno", dir + "/wacsh.json",
+                    dir + "/wonly-deno", dir + "/wonly.json",
+                    dir + "/nogrant-deno", dir + "/nogrant.json");
+  string[] rw = string[]("--allow-read", "--allow-write", "--allow-env");
+  string[] w = string[]("--allow-write");
+  string[] none = string[0](fill: "");
+
+  string why = "";
+  if (stale(cli, s.deno)) { why = why + buildOne(cli, false, s.deno, rw); }
+  if (stale(cli, s.manifest)) { why = why + buildOne(cli, true, dir + "/wacsh", rw); }
+  if (stale(cli, s.wonlyDeno)) { why = why + buildOne(cli, false, s.wonlyDeno, w); }
+  if (stale(cli, s.wonly)) { why = why + buildOne(cli, true, dir + "/wonly", w); }
+  if (stale(cli, s.nograntDeno)) { why = why + buildOne(cli, false, s.nograntDeno, none); }
+  if (stale(cli, s.nogrant)) { why = why + buildOne(cli, true, dir + "/nogrant", none); }
+  if (why != "") { s.ok = false; s.error = why; }
+  return s;
+}
+
+/**
+ * The tree every case works over, rebuilt before each script so one cannot see another's writes.
+ *
+ * The symlinks have to be made from here: there is no `ln` in this system, so a script cannot create
+ * its own — and `linkStat` is the one filesystem question no two-host script used to ask. `loop`
+ * leads to itself, which is `ELOOP`, a state no corpus script could reach and which both hosts
+ * reported as the operating system's sentence with `(os error 40)` still attached.
+ */
+string tmpFor(Cli cli, string name) { return root(cli) + "/.cache/hostfs-" + name; }
+
+void fixtureAt(Cli cli, string tree) {
+  cli.remove(tree, true).wait();
+  cli.mkdir(tree + "/sub", true).wait();
+  cli.writeFile(tree + "/f", ("a\nb\nc\n").toBytes()).wait();
+  cli.writeFile(tree + "/n", ("3\n1\n2\n").toBytes()).wait();
+  cli.writeFile(tree + "/sub/deep", ("x\n").toBytes()).wait();
+  cli.exec("/bin/sh", string[]("-c",
+    "cd " + quoted(tree) + " && ln -s f link && ln -s nosuch dangling && ln -s loop loop"),
+    u8[0]()).wait();
+}
+
+void fixture(Cli cli, string tmp) { fixtureAt(cli, tmp + "/tree"); }
+
+/**
+ * One tree per answer, so the three runs of a case can be in flight together.
+ *
+ * The TypeScript rebuilt *the* tree before each of the three, which made them serial by construction:
+ * a script that writes — `echo new > made; cat made; rm made; ls` — would otherwise see the previous
+ * run's leftovers. Three trees is the same isolation and does not order them, which halves the wall
+ * clock now that `exec` returns a ticket rather than an answer (`issues/system/0211`).
+ */
+string treeFor(Cli cli, string tmp, string which) {
+  string tree = tmp + "/tree-" + which;
+  fixtureAt(cli, tree);
+  return tree;
+}
+
+/** The real tools, through bash, in the same directory the shells are told to change to. */
+Ran gnu(Core core, Cli cli, string tmp, string script) {
+  return boundedAgain(core, cli, tmp, tmp, "bash", string[]("-c", "cd tree; " + script), u8[0](),
+                      () => { fixture(cli, tmp); });
+}
+
+Ran shell(Core core, Cli cli, string tmp, string cmd, string[] pre, string script) {
+  string[] args = string[pre.len() + 2](fill: "");
+  for (i32 i = 0; i < pre.len(); i++) { args[i] = pre[i]; }
+  args[pre.len()] = "-c";
+  args[pre.len() + 1] = "cd tree; " + script;
+  return boundedAgain(core, cli, tmp, tmp, cmd, args, u8[0](), () => { fixture(cli, tmp); });
+}
+
+/**
+ * bash prefixes a *builtin's* failure with `bash: line N: ` and ours has no line number to give.
+ *
+ * The deliberate difference `sh/test/differential.test.ts` already strips, and the reason the stderr
+ * comparison is possible at all: without it the three-way check would have to drop the half that
+ * matters, which is what it used to do.
+ */
+string strip(string text) {
+  string out = "";
+  i32 at = 0;
+  while (at <= text.len()) {
+    i32 nl = -1;
+    for (i32 i = at; i < text.len(); i++) { if (text.slice(i, i + 1) == "\n") { nl = i; break; } }
+    i32 end = nl < 0 ? text.len() : nl;
+    string line = text.slice(at, end);
+    i32 bash = line.indexOf("bash: line ");
+    if (bash >= 0) {
+      i32 colon = line.slice(bash + 11, line.len()).indexOf(": ");
+      if (colon >= 0) { line = line.slice(bash + 11 + colon + 2, line.len()); }
+    } else if (line.len() >= 4 && line.slice(0, 4) == "sh: ") {
+      line = line.slice(4, line.len());
+    }
+    out = out + line;
+    if (nl < 0) { break; }
+    out = out + "\n";
+    at = nl + 1;
+  }
+  // `.trim()` on the whole, as the TypeScript did: the two shells differ on a trailing newline after
+  // the last diagnostic and nothing reads it.
+  return trimmed(out);
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\n" || c == "\t" || c == "\r"; }
+
+/** Scripts the real tools and both shells all answer the same way. */
+string[] agreed() {
+  string long = tooLong();
+  return string[](
+    "cat f",
+    "cat f sub/deep",
+    "wc -c f",
+    "wc -l n",
+    "head -1 n",
+    "sort -n n | head -1",
+    "grep -c b f",
+    "ls",
+    "ls sub",
+    "ls nosuch",
+    "cat nosuch",
+    "wc -l nosuch",
+    "echo new > made; cat made; rm made; ls",
+    "mkdir d2; ls; rmdir d2; ls",
+    "cp f copy; cat copy; rm copy",
+    "mv f moved; ls; mv moved f",
+    "cat sub/deep > out; wc -c out; rm out",
+    // `ENOTDIR`: `f` is a file, so every one of these walks into it. The failure any path can reach,
+    // and the last one with no fault category — it fell to `FAULT_OTHER`, so each host printed its own
+    // runtime's sentence and the two disagreed by construction. `FAULT_NOT_A_DIR` is the category,
+    // `fault_of` in `native/src` learned it at the same time, and these are what say both ends arrived.
+    "cat f/g",
+    "ls f/g",
+    "wc -c f/g",
+    "rm f/g",
+    "rm -f f/g; echo st=$?",
+    "mkdir f/g",
+    "rmdir f/g",
+    "touch f/g",
+    "test -e f/g; echo st=$?",
+    "cd f/g",
+    "echo y > f/g",
+    // ── `linkStat`: the difference between a link and what it points at ──
+    "test -h link; echo st=$?",
+    "test -h f; echo st=$?",
+    "test -h dangling; echo st=$?",
+    "test -h nosuch; echo st=$?",
+    // `-e` follows, so it disagrees with `-h` on both of them — the pair is what says the two calls
+    // are actually different calls rather than one answering for both.
+    "test -e link; echo st=$?",
+    "test -e dangling; echo st=$?",
+    "cat link",
+    "cat dangling",
+    "wc -c link",
+    // ── Failures the fault table had no category for, so the errno reached the user ──
+    //
+    // Each of these printed GNU's sentence *plus* `(os error N)` on both hosts, which is why no
+    // two-host differential ever saw it: they agreed, and what they agreed on was wrong. Found by
+    // hand, against the real tool.
+    "cat loop",
+    "wc -c loop",
+    "echo x > loop",
+    "cat " + long,
+    "echo x > " + long,
+    "mkdir " + long,
+    // ── A *path* that is not a program. A name with a slash is not searched for and does not fall
+    // back to a builtin, so what the shell says about it is what the filesystem says — on both hosts,
+    // and the same as GNU. All four of these used to be `command not found` and 127.
+    "./nosuch",
+    "./sub",
+    "sub/",
+    "./nosuch a b",
+    "./sub | cat; echo st=$?",
+    "cat f | ./sub; echo st=$?",
+    "./nosuch | wc -l; echo st=$?");
+}
+
+export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(Core core, Cli cli) {
+  T t = T.create();
+  Shells s = shells(cli);
+  t.isTrue(s.ok, "the shells built — " + s.error);
+  if (!s.ok) { return t.report(); }
+  string native = nativeBinary(cli);
+  string tmp = tmpFor(cli, "agreed");
+  cli.mkdir(tmp, true).wait();
+
+  string[] scripts = agreed();
+  for (i32 i = 0; i < scripts.len(); i++) {
+    string script = scripts[i];
+    // One tree each and all three submitted before any is collected: the three answers are
+    // independent runs and there is no reason to take them in turn. `issues/system/0211`.
+    string bashTree = treeFor(cli, tmp, "bash");
+    string denoTree = treeFor(cli, tmp, "deno");
+    string nativeTree = native == "" ? "" : treeFor(cli, tmp, "native");
+
+    Pending<Exec> pw = submit(cli, DEFAULT_SECONDS, bashTree, tmp, "bash",
+                               string[]("-c", script), u8[0]());
+    Pending<Exec> pj = submit(cli, DEFAULT_SECONDS, denoTree, tmp, s.deno,
+                               string[]("-c", script), u8[0]());
+    bool haveNative = native != "";
+    Pending<Exec> pr = haveNative
+      ? submit(cli, DEFAULT_SECONDS, nativeTree, tmp, native, string[](s.manifest, "-c", script),
+               u8[0]())
+      : pj;
+
+    Ran want = collect(pw);
+    Ran js = collect(pj);
+    // A bound that fired is not an answer — see `hostfs.wac` and issue 0128. A retry is serial and
+    // rare, so it goes through `boundedAgain`'s path rather than complicating the batch above.
+    if (want.hung) { want = gnu(core, cli, tmp, script); }
+    if (js.hung) { js = shell(core, cli, tmp, s.deno, string[0](fill: ""), script); }
+    string stuck = hangReport(script, string[]("bash", "deno"), Ran[](want, js));
+    if (stuck != "") { t.fail(stuck); continue; }
+
+    t.eqStr(js.out, want.out, "deno: " + script);
+    // **And what it said when it failed.** Only stdout was compared against GNU here, with the two
+    // hosts' stderr compared against each other below — so `ls nosuch`, `cat nosuch` and `wc -l
+    // nosuch` sat in this list with the half that matters unchecked, and two hosts agreeing on a
+    // sentence GNU does not use would have passed.
+    t.eqStr(strip(js.err), strip(want.err), "deno stderr: " + script);
+    if (!haveNative) { continue; }
+    Ran rs = collect(pr);
+    if (rs.hung) { rs = shell(core, cli, tmp, native, string[](s.manifest), script); }
+    string stuckNative = hangReport(script, string[]("native"), Ran[](rs));
+    if (stuckNative != "") { t.fail(stuckNative); continue; }
+    t.eqStr(rs.out, want.out, "native: " + script);
+    t.eqStr(rs.err, js.err, "native stderr: " + script);
+    t.eqI32(rs.code, js.code, "native status: " + script);
+  }
+
+  // The canary: GNU must actually have answered something, or every assertion above holds vacuously.
+  fixture(cli, tmp);
+  t.eqStr(gnu(core, cli, tmp, "cat f").out, "a\nb\nc\n",
+          "bash did not run — nothing was compared");
+  t.isTrue(native != "", "the native half ran; without cargo only the Deno half above was checked");
+  cli.remove(tmp, true).wait();
+  return t.report();
+}
+
+export string test_the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ(Core core, Cli cli) {
+  // A file that exists, is not a directory, and is not a program. The three cases above are the
+  // filesystem's to answer and are the same everywhere; **this one is the runtime's**, and the two
+  // runtimes do not have the same answer to give. A JavaScript host would run a worker bundle and this
+  // is not one; the native host cannot run a foreign program at all, whatever it contains — see
+  // `Cap::Spawn` in `native/src/main.rs`, which answers -1 with a reason rather than -2 so that the
+  // shell reports the program rather than giving up on spawning.
+  //
+  // So the sentences are pinned rather than compared. What *is* the same on both, and is what a script
+  // can see, is the status and the shell naming the path it was given. If someone makes the two agree,
+  // this fails and says so — which is the right way round for a difference nobody has decided to keep.
+  T t = T.create();
+  Shells s = shells(cli);
+  t.isTrue(s.ok, "the shells built — " + s.error);
+  if (!s.ok) { return t.report(); }
+  string tmp = tmpFor(cli, "notaprogram");
+  cli.mkdir(tmp, true).wait();
+
+  fixture(cli, tmp);
+  Ran js = shell(core, cli, tmp, s.deno, string[0](fill: ""), "./f");
+  t.eqI32(js.code, 126, "deno status");
+  t.eqStr(js.err, "sh: ./f: not a wac worker bundle: build one with --worker\n", "deno");
+  // GNU's is `Permission denied` and neither host can say that: there is no execute bit in this
+  // system to have refused. What both hosts do say is 126, which is the part a script reads.
+  fixture(cli, tmp);
+  t.eqI32(gnu(core, cli, tmp, "./f").code, 126,
+          "bash disagrees about the status, which is the comparable part");
+
+  string native = nativeBinary(cli);
+  if (native == "") { cli.remove(tmp, true).wait(); return t.report(); }
+  fixture(cli, tmp);
+  Ran rs = shell(core, cli, tmp, native, string[](s.manifest), "./f");
+  t.eqI32(rs.code, 126, "native status");
+  t.eqStr(rs.err,
+          "sh: ./f: spawning a program from its source is not implemented in the native runtime; " +
+          "spawnSelf works\n", "native");
+  cli.remove(tmp, true).wait();
+  return t.report();
+}
+
+/** The timestamp `stat` prints, masked: the fixture is rewritten between the two runs. */
+string maskWhen(string s) {
+  string out = "";
+  i32 i = 0;
+  while (i < s.len()) {
+    // `YYYY-MM-DDT…Z` — recognised by the four digits, the dashes and the terminating Z.
+    if (i + 20 <= s.len() && digits(s, i, 4) && s.slice(i + 4, i + 5) == "-" &&
+        digits(s, i + 5, 2) && s.slice(i + 7, i + 8) == "-" && digits(s, i + 8, 2) &&
+        s.slice(i + 10, i + 11) == "T") {
+      i32 z = i + 11;
+      while (z < s.len() && s.slice(z, z + 1) != "Z") { z = z + 1; }
+      if (z < s.len()) {
+        out = out + "<when>";
+        i = z + 1;
+        continue;
+      }
+    }
+    out = out + s.slice(i, i + 1);
+    i = i + 1;
+  }
+  return out;
+}
+
+bool digits(string s, i32 at, i32 n) {
+  u8[] b = s.toBytes();
+  if (at + n > b.len()) { return false; }
+  for (i32 i = at; i < at + n; i++) { if (b[i] < '0' || b[i] > '9') { return false; } }
+  return true;
+}
+
+export string test_the_two_hosts_agree_where_the_real_tool_prints_more_than_this_system_has(
+    Core core, Cli cli) {
+  T t = T.create();
+  string native = nativeBinary(cli);
+  if (native == "") {
+    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    return t.report();
+  }
+  Shells s = shells(cli);
+  t.isTrue(s.ok, "the shells built — " + s.error);
+  if (!s.ok) { return t.report(); }
+  string tmp = tmpFor(cli, "hostsonly");
+  cli.mkdir(tmp, true).wait();
+
+  // Scripts where the real tool prints more than this system has, so the two hosts are the oracle.
+  string[] scripts = string[]("stat f", "stat sub", "find .", "du .");
+  for (i32 i = 0; i < scripts.len(); i++) {
+    fixture(cli, tmp);
+    Ran js = shell(core, cli, tmp, s.deno, string[0](fill: ""), scripts[i]);
+    fixture(cli, tmp);
+    Ran rs = shell(core, cli, tmp, native, string[](s.manifest), scripts[i]);
+    t.eqStr(maskWhen(rs.out), maskWhen(js.out), "native: " + scripts[i]);
+    t.eqI32(rs.code, js.code, "native status: " + scripts[i]);
+  }
+
+  // And one thing the mask must not have eaten.
+  fixture(cli, tmp);
+  Ran st = shell(core, cli, tmp, native, string[](s.manifest), "stat f");
+  t.isTrue(st.out.len() >= 9 && st.out.slice(0, 9) == "f file 6 ", st.out);
+  cli.remove(tmp, true).wait();
+  return t.report();
+}
+
+/**
+ * Every operation that needs a grant, refused the same way on both hosts.
+ *
+ * **This was one operation.** `cat f` was the whole of it, out of the fourteen places `native/src` has
+ * a grant check and the dozen `host/deno.ts` has — so thirteen capabilities could have been ungated on
+ * one host, or refused in different words, and the suite would have said nothing.
+ *
+ * Two things are asserted per script and they are different claims:
+ *
+ *   - **the refusal happened** — the operation did not go through, and the status says so;
+ *   - **the two hosts said the same thing** — the wac above the boundary is byte-identical, so any
+ *     difference is the capability layer's, which is where a second host is most likely to diverge.
+ *
+ * The second is what found the two that were wrong: `du .` and `find .` reported a path they were not
+ * granted as `not found` — a denial arriving as absence, which is what `Stat.fault` exists to prevent
+ * — and `cat < f` printed the host's own sentence *and* named the resolved absolute path of a machine
+ * the program is not supposed to be able to see.
+ */
+export string test_every_capability_that_needs_a_grant_is_refused_the_same_way_on_both_hosts(
+    Core core, Cli cli) {
+  T t = T.create();
+  string native = nativeBinary(cli);
+  if (native == "") {
+    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    return t.report();
+  }
+  Shells s = shells(cli);
+  t.isTrue(s.ok, "the shells built — " + s.error);
+  if (!s.ok) { return t.report(); }
+  string tmp = tmpFor(cli, "nogrant");
+  cli.mkdir(tmp, true).wait();
+
+  // One per grant-gated capability the shell can reach from a script. `stat`, `readDir`, `readFile`,
+  // `writeFile`, `mkdir`, `remove`, `rename`, `openInput` and `openOutput` — read and write both.
+  string[] scripts = string[](
+    "cat f",              // readFile
+    "cat < f",            // openInput, through a redirection rather than an operand
+    "ls",                 // readDir
+    "stat f",             // stat
+    "du .",               // stat, then a walk
+    "find .",             // the same, by the other applet
+    "echo x > out",       // openOutput
+    "mkdir new",          // mkdir
+    "rm f",               // remove
+    "mv f g",             // rename
+    "touch t",            // writeFile
+    "cp f copy");         // read and write in one command
+
+  for (i32 i = 0; i < scripts.len(); i++) {
+    string script = scripts[i];
+    // **Started *in* the fixture rather than `cd`-ing into it**, and that is not tidiness. With
+    // `cd tree; …` in front, `cd` fails first — it has no read grant either — and puts its own
+    // "Not granted to this application" on stderr. Every assertion below that looks for that phrase
+    // was then satisfied by `cd`'s line whatever the script did, and the test could not fail: putting
+    // `du`'s old `not found` back left it green. Found by canarying it, which is the only way this
+    // kind of pass shows up.
+    string where = tmp + "/tree";
+    fixture(cli, tmp);
+    Ran rs = boundedAgain(core, cli, where, tmp, native,
+                          string[](s.nogrant, "-c", script + "; echo status=$?"), u8[0](),
+                          () => { fixture(cli, tmp); });
+    fixture(cli, tmp);
+    Ran js = boundedAgain(core, cli, where, tmp, s.nograntDeno,
+                          string[]("-c", script + "; echo status=$?"), u8[0](),
+                          () => { fixture(cli, tmp); });
+
+    // It did not happen. `status=0` would mean the operation went through; the file contents are
+    // checked separately because a read that succeeded prints rather than failing.
+    t.isFalse(contains(rs.out, "status=0"), "native: `" + script + "` succeeded: " + rs.out);
+    t.isFalse(contains(js.out, "status=0"), "deno: `" + script + "` succeeded: " + js.out);
+    t.isFalse(contains(rs.out, "a\nb\nc\n"), "native: `" + script + "` read the file: " + rs.out);
+    t.isFalse(contains(js.out, "a\nb\nc\n"), "deno: `" + script + "` read the file: " + js.out);
+
+    // And said the same thing about it. This is the comparison that matters: the wasm is identical, so
+    // a difference here is the capability layer's.
+    t.eqStr(rs.err, js.err, "the hosts word `" + script + "` differently");
+    t.eqStr(rs.out, js.out, "the hosts answer `" + script + "` differently");
+
+    // In the words `platform.wac` keeps for `FAULT_NOT_GRANTED`, which it holds apart from the
+    // operating system's own denial so that "this build cannot" and "this file will not" are different
+    // sentences. A host's raw message here would be a runtime leaking through the boundary.
+    t.isTrue(contains(rs.err, "Not granted to this application"),
+             "`" + script + "` did not say which kind of no: " + rs.err);
+    // Nothing about the machine underneath, either. `cat < f` named the resolved absolute path.
+    t.isFalse(contains(rs.err, tmp), "`" + script + "` leaked a host path: " + rs.err);
+  }
+
+  // The canary: a *granted* build must actually do these, or every assertion above holds because the
+  // shell cannot do anything at all.
+  fixture(cli, tmp);
+  Ran granted = boundedAgain(core, cli, tmp + "/tree", tmp, s.deno, string[]("-c", "cat f"),
+                             u8[0](), () => { fixture(cli, tmp); });
+  t.eqStr(granted.out, "a\nb\nc\n", "the granted build could not read either: " + granted.err);
+  // And that the *stderr* comparison is not comparing two empties: a refusal really did say something.
+  fixture(cli, tmp);
+  Ran said = boundedAgain(core, cli, tmp + "/tree", tmp, s.nograntDeno, string[]("-c", "cat f"),
+                          u8[0](), () => { fixture(cli, tmp); });
+  t.isTrue(said.err.len() > 0, "a refused read said nothing at all");
+  cli.remove(tmp, true).wait();
+  return t.report();
+}
+
+export string test_the_four_grants_are_independent_write_without_read_on_both_hosts(
+    Core core, Cli cli) {
+  // `platform.wac` says a child's grants are "a ceiling of the parent's own, intersected by the host
+  // rather than trusted", which reads as four separate switches — and on three hosts out of four it
+  // is. This is the check that it is not four switches *in name only*: a build given write and not
+  // read must be able to write and unable to read, rather than getting both or neither.
+  //
+  // **The fourth host cannot do it, and that is the platform rather than a bug.** In a page, reaching
+  // a file to write it means walking directory handles from the root, and holding the root handle is
+  // the read capability — there is no path-based open to separate them.
+  T t = T.create();
+  string native = nativeBinary(cli);
+  if (native == "") {
+    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    return t.report();
+  }
+  Shells s = shells(cli);
+  t.isTrue(s.ok, "the shells built — " + s.error);
+  if (!s.ok) { return t.report(); }
+  string tmp = tmpFor(cli, "wonly");
+  cli.mkdir(tmp, true).wait();
+  string where = tmp + "/tree";
+
+  string[] names = string[]("deno", "native");
+  for (i32 i = 0; i < 2; i++) {
+    string cmd = i == 0 ? s.wonlyDeno : native;
+    string[] pre = i == 0 ? string[0](fill: "") : string[](s.wonly);
+    fixture(cli, tmp);
+    // Writing works…
+    string[] wargs = string[pre.len() + 2](fill: "");
+    for (i32 k = 0; k < pre.len(); k++) { wargs[k] = pre[k]; }
+    wargs[pre.len()] = "-c";
+    wargs[pre.len() + 1] = "echo written > made; echo st=$?";
+    Ran wrote = boundedAgain(core, cli, where, tmp, cmd, wargs, u8[0](),
+                             () => { fixture(cli, tmp); });
+    t.isTrue(contains(wrote.out, "st=0"), names[i] + ": could not write: " + wrote.err);
+    // …and the bytes really landed, which `st=0` alone would not prove — a write that silently did
+    // nothing would report the same.
+    FileResult made = cli.readFile(where + "/made").wait();
+    t.eqStr(made.ok ? string.fromBytes(made.bytes) : "", "written\n",
+            names[i] + ": nothing was written");
+    // …and reading does not.
+    string[] rargs = string[pre.len() + 2](fill: "");
+    for (i32 k = 0; k < pre.len(); k++) { rargs[k] = pre[k]; }
+    rargs[pre.len()] = "-c";
+    rargs[pre.len() + 1] = "cat f";
+    Ran read = boundedAgain(core, cli, where, tmp, cmd, rargs, u8[0](),
+                            () => { fixture(cli, tmp); });
+    t.isTrue(contains(read.err, "Not granted to this application"),
+             names[i] + ": a write-only build read a file: " + read.out + " / " + read.err);
+  }
+  cli.remove(tmp, true).wait();
+  return t.report();
+}
+
+export string test_a_program_reading_its_standard_input_answers_the_same_on_both_hosts(
+    Core core, Cli cli) {
+  // **Nothing compared this, and it was broken.** `conformance_test.wac` named it: every two-host
+  // runner in this repository passes `stdin: "null"`, so the one thing none of them exercised was a
+  // program reading its input. Under the native runtime every filter run by a shell that *spawns* —
+  // `cat`, `wc`, `head`, `sort`, `grep` — produced nothing at all, while working in a sealed shell
+  // that calls its applets in process, and while working when run directly.
+  //
+  // The cause was a queue shadowing the real thing: a child spawned with `inheritInput` has its
+  // parent-fed queue finished at once, and `readChunk` read *that*, saw empty, and answered end of
+  // input before reaching the process's own stdin.
+  T t = T.create();
+  string native = nativeBinary(cli);
+  if (native == "") {
+    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    return t.report();
+  }
+  Shells s = shells(cli);
+  t.isTrue(s.ok, "the shells built — " + s.error);
+  if (!s.ok) { return t.report(); }
+  string tmp = tmpFor(cli, "stdin");
+  cli.mkdir(tmp, true).wait();
+
+  string[] scripts = string[](
+    "cat",
+    "wc -c",
+    "cat; echo [done]",
+    "cat | wc -l",
+    "read x; echo [$x]",
+    // No trailing newline, which is where a reader that waits for one hangs or truncates.
+    "cat; echo [end]",
+    // Bytes rather than text: a name and a line are bytes, and so is standard input.
+    "wc -c",
+    // Past one chunk, which is the only case that exercises `readChunk` looping at all.
+    "wc -c",
+    // A reader that stops early, so the writer's end is closed under it.
+    "head -1",
+    "sort");
+  u8[][] inputs = u8[][10](fill: u8[0]());
+  inputs[0] = ("hello\nworld\n").toBytes();
+  inputs[1] = ("12345").toBytes();
+  inputs[2] = u8[0]();
+  inputs[3] = ("a\nb\nc\n").toBytes();
+  inputs[4] = ("typed\nmore\n").toBytes();
+  inputs[5] = ("partial").toBytes();
+  inputs[6] = u8[](0xff, 0xfe, 0x00, 0x01);
+  u8[] big = u8[300000](fill: 'x');
+  inputs[7] = big;
+  inputs[8] = ("one\ntwo\nthree\n").toBytes();
+  inputs[9] = ("c\na\nb\n").toBytes();
+
+  for (i32 i = 0; i < scripts.len() && i < inputs.len(); i++) {
+    string label = "`" + scripts[i] + "` (" + itoa(inputs[i].len()) + " bytes in)";
+    Ran js = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", scripts[i]), inputs[i],
+                          () => { });
+    Ran rs = boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", scripts[i]),
+                          inputs[i], () => { });
+    t.eqStr(rs.out, js.out, label + ": the hosts read different input");
+    t.eqStr(rs.err, js.err, label + ": stderr");
+    t.eqI32(rs.code, js.code, label + ": status");
+  }
+
+  // The canary: the JavaScript host really did read the input, so the comparison above is not two
+  // programs agreeing that they saw nothing — which is exactly the state this test was written in.
+  Ran sanity = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", "wc -c"),
+                            ("12345").toBytes(), () => { });
+  t.eqStr(trimmed(sanity.out), "5", "the reference host read nothing either");
+  cli.remove(tmp, true).wait();
+  return t.report();
+}
+
+export string test_kill_percent_one_ends_a_background_job_on_both_hosts(Core core, Cli cli) {
+  // design/0001 step 3's criterion, and the one place a signal in this system does what a kernel's
+  // does: a background job is a separate instance, so nothing cooperative can reach it, and `kill`
+  // delivers by `closeSocket` — which both hosts implement and which is the whole reason `kill` can
+  // end a job where it cannot end a pipeline stage.
+  //
+  // Here rather than only in `packages/box` because the *mechanism* is the capability layer's, and
+  // the two hosts stop a child differently underneath: Deno terminates the worker, and the native
+  // runtime finishes the child's queues so that its next write answers false. For every program in
+  // this repo that is the same observable behaviour, which is what this asserts — and the difference
+  // itself is wac-mono 0123.
+  T t = T.create();
+  string native = nativeBinary(cli);
+  if (native == "") {
+    core.warn("native_hostfs: skipped — cargo did not build `native`, so nothing was compared");
+    return t.report();
+  }
+  Shells s = shells(cli);
+  t.isTrue(s.ok, "the shells built — " + s.error);
+  if (!s.ok) { return t.report(); }
+  string tmp = tmpFor(cli, "kill");
+  cli.mkdir(tmp, true).wait();
+
+  const string SCRIPT = "seq 1 300000 & kill %1; wait";
+  fixture(cli, tmp);
+  Ran js = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", SCRIPT), u8[0](),
+                        () => { fixture(cli, tmp); });
+  fixture(cli, tmp);
+  Ran rs = boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", SCRIPT), u8[0](),
+                        () => { fixture(cli, tmp); });
+
+  t.isTrue(lines(js.out) < 1000, "deno: the kill did not stop it: " + itoa(lines(js.out)) + " lines");
+  t.isTrue(lines(rs.out) < 1000,
+           "native: the kill did not stop it: " + itoa(lines(rs.out)) + " lines");
+  t.eqI32(rs.code, js.code, "the hosts disagree about the status");
+
+  // The canary: left alone the job really does produce all of it, on both. Without this, a job that
+  // failed to start would satisfy every assertion above.
+  const string WHOLE = "seq 1 300000 & wait";
+  fixture(cli, tmp);
+  t.eqI32(lines(boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", WHOLE), u8[0](),
+                             () => { fixture(cli, tmp); }).out), 300000, "deno ran no job");
+  fixture(cli, tmp);
+  t.eqI32(lines(boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", WHOLE),
+                             u8[0](), () => { fixture(cli, tmp); }).out), 300000, "native ran no job");
+  cli.remove(tmp, true).wait();
+  return t.report();
+}
+
+/** Non-empty lines, which is what "did the job produce its output" means here. */
+i32 lines(string text) {
+  u8[] b = text.toBytes();
+  i32 n = 0;
+  i32 runLen = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '\n') {
+      if (runLen > 0) { n = n + 1; }
+      runLen = 0;
+    } else {
+      runLen = runLen + 1;
+    }
+  }
+  if (runLen > 0) { n = n + 1; }
+  return n;
+}

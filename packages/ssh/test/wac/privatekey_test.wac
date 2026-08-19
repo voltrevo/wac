@@ -18,7 +18,8 @@ import { ALPHABET_STANDARD, decode as b64Decode, encode as b64Encode }
   from "../../../codec/src/base64.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { KeyError, PrivateKey, readEd25519 } from "../../src/privatekey.wac";
-import { copyPreserving, keygen, restrict, scratch } from "./fixture.wac";
+import { scratch } from "./fixture.wac";
+import { copyPreserving, keygen, restrict } from "../../../wactest/src/keys.wac";
 import { u32be, u32At, slice } from "./build.wac";
 
 string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }

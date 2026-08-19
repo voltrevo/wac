@@ -31,8 +31,8 @@ import { Incoming, Window, channelClose, defaultMaxPacket, execRequest, extended
          msgChannelOpenFailure, msgChannelRequest, openSession, parse, windowAdjust }
   from "../../src/channel.wac";
 import { Session, handshake } from "./handshake.wac";
-import { Sshd, haveSshd, keygen, publicBlobText, reapSelects, restrict, scratch, startSshd,
-         stopSshd } from "./fixture.wac";
+import { Sshd, haveSshd, reapSelects, scratch, startSshd, stopSshd } from "./fixture.wac";
+import { keygen, publicBlobText, restrict } from "../../../wactest/src/keys.wac";
 import { flipped, ramp, slice } from "./build.wac";
 
 string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }

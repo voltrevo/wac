@@ -33,7 +33,7 @@ a decision that is not on the path to the capture tools.
 
 **And it is one host short of covered.** `packages/platform/test/wac/exec_test.wac` takes
 `(Core, Cli)`, so it runs under `wac test` on the V8 host and is registered `ignore: true` in the
-Deno lane. The two-lane comparison every row of `conformance.test.ts`'s ledger relies on has no form
+Deno lane. The two-lane comparison every row of `conformance_test.wac`'s ledger relies on has no form
 for a capability test yet; `EXEC`'s entry there says so rather than claiming coverage it lacks.
 
 ## Re-measured 2026-08-18, against what is actually left

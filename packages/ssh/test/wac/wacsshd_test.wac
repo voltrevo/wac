@@ -19,8 +19,8 @@ import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Said, Wacsshd, buildClient, buildServer, ourSsh, realSsh, reapSelectsServers,
          startWacsshd, stopWacsshd, typedInto, typedIntoWatching } from "./wacsshd.wac";
-import { copyPreserving, haveSshd, keygen, publicBlobText, restrict, scratch, wouldReap }
-  from "./fixture.wac";
+import { haveSshd, scratch, wouldReap } from "./fixture.wac";
+import { copyPreserving, keygen, publicBlobText, restrict } from "../../../wactest/src/keys.wac";
 
 /** The ordinary read-only server, or `ok` false with `t` already told why. */
 Wacsshd server(T t, Core core, Cli cli, string name, string[] extra, bool writable) {

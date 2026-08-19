@@ -1,0 +1,391 @@
+// One program, two substantially different hosts, and the same answer.
+//
+// design/0001's arrival test in miniature — "load the same image in two substantially different hosts
+// and demonstrate the same behaviour in both", where **substantially different means one JavaScript
+// host and one that is not** (D9). Two JavaScript hosts satisfy the words and prove nothing: they
+// share the transport, the worker model and the event loop. This is the first test in the repo that
+// does not.
+//
+// The program is `example/wacland.wac`, whose stages are 0087's "done when" in the order a host
+// acquires them: output, arguments, two requests completing out of order, a `waitAny` that comes back
+// on its deadline, a spawned child waited for alongside a ticket of another kind, and a child given
+// less than its parent has. Both hosts reach the end, so the comparison is the whole run.
+//
+// **What is compared and what is not.** Two of the lines carry monotonic nanoseconds, which are a
+// measurement rather than an answer — two hosts that agreed on those would be suspicious rather than
+// correct, since one of them takes longer to start. So the transcripts are compared with those
+// numbers masked, and the *relationships* between them are asserted separately on each host: the
+// quick sleep settles before the slow one, and the gap is about what was asked for.
+//
+// The canary is that the masking is not doing the work: a run with every number masked and no other
+// assertion would report agreement between two hosts that printed nothing. So the test also pins the
+// exact line count, the stage-3 ordering, and that stage 4 timed out.
+//
+// ## When cargo is not there
+//
+// The runtime is Rust and the rest of the repo is not. If cargo is missing the native half is skipped
+// — **loudly**, and the Deno half still runs and still asserts, so a skip cannot be mistaken for a
+// pass. Silent skipping is how a differential test comes to compare nothing.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { jsonFile } from "../../../wactest/src/jsonfile.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+
+const string ENTRY = "packages/platform/example/wacland.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+struct Ran {
+  i32 code;
+  string out;
+  string err;
+}
+
+/**
+ * Run it with the machine's environment plus one name.
+ *
+ * Stage 6's environment half reads `WACLAND_PROBE`. Added rather than replacing the environment, so
+ * the two hosts are asked the same question whatever the shell happened to export — and through a
+ * shell line, because `Cli.exec` takes a program and arguments and not a world.
+ */
+Ran runIt(Cli cli, string cmd, string[] args) {
+  string line = "WACLAND_PROBE=seen exec " + quoted(cmd);
+  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  if (!r.ran()) { return Ran(-1, "", "the shell did not run — " + r.error); }
+  return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
+}
+
+/** The native host binary — `wacland`, built when its sources are newer than it. */
+string nativeBinary(Core core, Cli cli) {
+  string path = root(cli) + "/native/target/release/wacland";
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c",
+      "if [ -x '" + path + "' ] && " +
+      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer '" + path +
+      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
+      "cd native && cargo build --release --quiet"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0 || !cli.stat(path).wait().isFile) {
+    core.warn("SKIPPING the native half: cargo did not build `native`. The Deno half still runs.");
+    return "";
+  }
+  return path;
+}
+
+string buildOne(Cli cli, bool native, string out, string[] grants) {
+  if (native) {
+    string[] args = string[4 + grants.len()](fill: "");
+    args[0] = "build";
+    args[1] = ENTRY;
+    for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
+    args[2 + grants.len()] = "-o";
+    args[3 + grants.len()] = out;
+    Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]()).wait();
+    if (!r.ran() || r.status != 0) {
+      return "wac build: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    }
+    return "";
+  }
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", ENTRY);
+  string[] args = string[head.len() + grants.len() + 2](fill: "");
+  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
+  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
+  args[head.len() + grants.len()] = "-o";
+  args[head.len() + grants.len() + 1] = out;
+  Exec r = cli.exec("deno", args, u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return "build.ts: " + string.fromBytes(r.stderr); }
+  return "";
+}
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/native-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+/** The non-empty lines of `text`. */
+string[] linesOf(string text) {
+  u8[] b = text.toBytes();
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == '\n') {
+      if (i > at) { count = count + 1; }
+      at = i + 1;
+    }
+  }
+  string[] out = string[count](fill: "");
+  i32 n = 0;
+  at = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == '\n') {
+      if (i > at) { out[n] = text.slice(at, i); n = n + 1; }
+      at = i + 1;
+    }
+  }
+  return out;
+}
+
+/** The digits following `after`, or -1 when the marker is not there. */
+i64 numberAfter(string text, string after) {
+  i32 at = text.indexOf(after);
+  if (at < 0) { return -1 as i64; }
+  u8[] b = text.toBytes();
+  i32 i = at + after.len();
+  bool neg = false;
+  if (i < b.len() && b[i] == '-') { neg = true; i = i + 1; }
+  i64 n = 0 as i64;
+  i32 digits = 0;
+  while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
+    n = n * (10 as i64) + ((b[i] - '0') as i64);
+    digits = digits + 1;
+    i = i + 1;
+  }
+  if (digits == 0) { return -1 as i64; }
+  return neg ? -n : n;
+}
+
+/** The two lines carrying monotonic nanoseconds, with the number replaced by its name. */
+string masked(string out) {
+  string text = out;
+  string[] markers = string[]("stage 3 quick ", "stage 3 slow ");
+  for (i32 m = 0; m < markers.len(); m++) {
+    i32 at = text.indexOf(markers[m]);
+    if (at < 0) { continue; }
+    i32 from = at + markers[m].len();
+    u8[] b = text.toBytes();
+    i32 to = from;
+    while (to < b.len() && b[to] >= '0' && b[to] <= '9') { to = to + 1; }
+    text = text.slice(0, from) + "<nanos>" + text.slice(to, text.len());
+  }
+  return text;
+}
+
+bool holds(string[] lines, string want) {
+  for (i32 i = 0; i < lines.len(); i++) { if (lines[i] == want) { return true; } }
+  return false;
+}
+
+/** Everything the conformance program must have done, whichever host ran it. */
+void assertConformant(T t, Ran r, string host) {
+  string[] lines = linesOf(r.out);
+  t.eqI32(r.code, 0, host + " exited " + itoa(r.code) + ": " + r.err);
+  // The line count, so that masking a number cannot hide a stage that never ran.
+  t.eqI32(lines.len(), 16, host + ": " + r.out);
+  if (lines.len() == 0) { return; }
+  t.eqStr(lines[0], "wacland: stage 1 output", host);
+  t.isTrue(contains(r.err, "wacland: stage 1 warn"),
+           host + " put the warning on the wrong stream: " + r.err);
+  t.isTrue(holds(lines, "wacland: stage 2 argCount 2"), host + ": " + r.out);
+  t.isTrue(holds(lines, "wacland: stage 2 arg 1 two"), host + ": " + r.out);
+
+  // 0087's first criterion. The *long* sleep is submitted first, so a host that answered in
+  // submission order — or that resolved every ticket as it was made — says 0 here.
+  t.eqI64(numberAfter(r.out, "stage 3 first "), 1 as i64,
+          host + " settled the two sleeps in submission order");
+  i64 quick = numberAfter(r.out, "stage 3 quick ");
+  i64 slow = numberAfter(r.out, "stage 3 slow ");
+  t.isTrue(quick < slow, host + ": quick " + itoa(quick as~ i32) + " did not settle before slow");
+  // Both are monotonic nanoseconds from the host's own origin, so only the *gap* is comparable. 120
+  // and 10 were asked for; anything between 50 and 500 ms of separation says the two sleeps really
+  // slept for different lengths rather than both returning at once.
+  i64 gapMs = (slow - quick) / (1000000 as i64);
+  t.isTrue(gapMs > (50 as i64) && gapMs < (500 as i64),
+           host + ": the sleeps were " + itoa(gapMs as~ i32) + "ms apart");
+
+  // 0087's second criterion: a deadline with nothing ready comes back rather than hanging, and -1 is
+  // what `platform.wac` says "nothing settled" is spelled.
+  t.isTrue(holds(lines, "wacland: stage 4 timeout -1"), host + ": " + r.out);
+
+  // Stage 6, both halves. **The env half is the one that discriminates**: `GRANT_READ` is bit 1 and
+  // every encoding of these flags agrees about bit 1, so a host that decoded the higher bits
+  // differently would pass the read half and this whole file. `GRANT_ENV` is bit 8.
+  //
+  // **A child gets what its parent granted, and no more.** Asked twice on purpose: a child refused
+  // when its parent had nothing to give is not evidence of an intersection, so this program is built
+  // *with* reading and the two answers must differ. One answer would pass on a host that denied
+  // everything and on a host that granted everything.
+  t.isTrue(holds(lines, "wacland: stage 6 withheld denied"), host + ": " + r.out);
+  t.isTrue(holds(lines, "wacland: stage 6 granted ok"), host + ": " + r.out);
+  t.isTrue(holds(lines, "wacland: stage 6 env withheld denied"), host + ": " + r.out);
+  t.isTrue(holds(lines, "wacland: stage 6 env granted seen"), host + ": " + r.out);
+
+  // 0087's third criterion, and the one it calls the point: a child spawned, its bytes read back, and
+  // its exit waited for *alongside* a ticket of a completely different kind. A readiness table that
+  // only handles one sort of event fails here and nowhere else.
+  t.isTrue(holds(lines, "wacland: stage 5 first 0"), host + " did not wait over both: " + r.out);
+  t.isTrue(holds(lines, "wacland: stage 5 heard wacland: I am the child"), host + ": " + r.out);
+  t.isTrue(holds(lines, "wacland: stage 5 status 7"), host + ": the child's own status");
+
+  t.eqStr(lines[lines.len() - 1], "wacland: reached the end of what is implemented", host);
+}
+
+export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "wacland");
+  string denoProgram = dir + "/wacland-deno";
+  // **With reading**, which stage 6 needs: it hands a child `GRANT_NONE` and then `GRANT_READ`, and a
+  // parent that could not read either way would prove nothing about the ceiling.
+  string why = buildOne(cli, false, denoProgram, string[]("--allow-read", "--allow-env"));
+  t.eqStr(why, "", "the Deno half built");
+  if (why != "") { return t.report(); }
+  Ran js = runIt(cli, denoProgram, string[]("one", "two"));
+
+  // The Deno half on its own, so that a skipped native half still tests something.
+  assertConformant(t, js, "deno");
+
+  string native = nativeBinary(core, cli);
+  if (native == "") { cli.remove(dir, true).wait(); return t.report(); }
+  why = buildOne(cli, true, dir + "/wacland", string[]("--allow-read", "--allow-env"));
+  t.eqStr(why, "", "the native half built");
+  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
+  Ran rs = runIt(cli, native, string[](dir + "/wacland.json", "one", "two"));
+  assertConformant(t, rs, "native");
+
+  // And the transcripts are the same, once the two measurements are masked.
+  t.eqStr(masked(rs.out), masked(js.out), "the two hosts disagree");
+  t.eqStr(rs.err, js.err, "the two hosts disagree about the error stream");
+  // The canary for the masking itself: it must not have eaten the whole line.
+  t.isTrue(contains(masked(rs.out), "stage 3 quick <nanos>"), masked(rs.out));
+  t.isFalse(contains(masked(rs.out), "<nanos><nanos>"), "the mask is too greedy");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+string[] namesOf(JsonArray items) {
+  string[] out = string[items.len()](fill: "");
+  for (i32 i = 0; i < items.len(); i++) {
+    match (items.get(i)) {
+      case Object(members): {
+        JsonValue? n = members.getStr("name");
+        if (n is not null) {
+          match (n!) {
+            case Str(bytes): { out[i] = string.fromBytes(bytes); }
+            else: { }
+          }
+        }
+      }
+      else: { }
+    }
+  }
+  return out;
+}
+
+JsonObject? structNamed(JsonArray structs, string want) {
+  for (i32 i = 0; i < structs.len(); i++) {
+    match (structs.get(i)) {
+      case Object(members): {
+        JsonValue? n = members.getStr("name");
+        if (n is not null) {
+          match (n!) {
+            case Str(bytes): { if (string.fromBytes(bytes) == want) { return members; } }
+            else: { }
+          }
+        }
+      }
+      else: { }
+    }
+  }
+  return null;
+}
+
+JsonArray arrayIn(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return JsonArray.create(); }
+  match (v!) {
+    case Array(items): { return items; }
+    else: { return JsonArray.create(); }
+  }
+}
+
+string stringIn(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return ""; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { return ""; }
+  }
+}
+
+export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_holding_a_copy(
+    Core core, Cli cli) {
+  // The failure this guards is silent and expensive: insert a capability in the middle of `Core` in
+  // `platform.wac`, and a runtime with its own idea of the order builds a `Core` whose `log` is the
+  // previous field's function. Every call would go somewhere plausible.
+  T t = T.create();
+  string dir = scratch(cli, "order");
+  string why = buildOne(cli, true, dir + "/order", string[0](fill: ""));
+  t.eqStr(why, "", "the manifest built");
+  if (why != "") { return t.report(); }
+
+  JsonObject m = jsonFile(cli, dir + "/order.json");
+  JsonArray structs = arrayIn(m, "structs");
+  JsonObject? core0 = structNamed(structs, "Core");
+  t.isTrue(core0 is not null, "no Core in the manifest");
+  if (core0 is null) { cli.remove(dir, true).wait(); return t.report(); }
+
+  JsonArray fields = arrayIn(core0!, "fields");
+  t.eqStrArray(namesOf(fields), string[](
+    "nowMillis",
+    "monotonicNanos",
+    "sleepMillis",
+    "randomBytes",
+    "log",
+    "warn",
+    "waitAny",
+    // Appended, not inserted, and that is the whole discipline this test enforces: a capability added
+    // in the *middle* of `Core` shifts every field after it, and a runtime with its own idea of the
+    // order would build a `Core` whose `log` is the previous field's function.
+    "askInterrupt",
+    // The scheduler, and the one field here a host does not *implement* — it builds it by calling the
+    // module's own `Sched.create` and hands it back, which is how a program is given somewhere for
+    // its continuations to wait without any host knowing what a continuation is.
+    "sched"), "Core's field order");
+
+  // Every *funcref* field names a signature that is in the callback table — the lookup the runtime
+  // does when it wires one. A field that is not a funcref is not wired at all: the runtime builds it
+  // by calling the module's own `create` and hands it straight back, which is what `Core.sched` is.
+  // Checked rather than skipped, because a field that is neither is a manifest nobody can build from.
+  JsonArray callbacks = arrayIn(m, "callbacks");
+  string[] callbackTypes = string[callbacks.len()](fill: "");
+  for (i32 i = 0; i < callbacks.len(); i++) {
+    match (callbacks.get(i)) {
+      case Object(members): { callbackTypes[i] = stringIn(members, "type"); }
+      else: { }
+    }
+  }
+  for (i32 i = 0; i < fields.len(); i++) {
+    match (fields.get(i)) {
+      case Object(f): {
+        string name = stringIn(f, "name");
+        string ty = stringIn(f, "type");
+        if (ty.len() >= 3 && ty.slice(0, 3) == "fn[") {
+          bool wired = false;
+          for (i32 k = 0; k < callbackTypes.len(); k++) { if (callbackTypes[k] == ty) { wired = true; } }
+          t.isTrue(wired, "Core." + name + " wants " + ty + ", which is in no callback");
+          continue;
+        }
+        JsonObject? spec = structNamed(structs, ty);
+        bool makeable = false;
+        if (spec is not null) {
+          string[] methods = namesOf(arrayIn(spec!, "methods"));
+          for (i32 k = 0; k < methods.len(); k++) { if (methods[k] == "create") { makeable = true; } }
+        }
+        t.isTrue(makeable,
+                 "Core." + name + " is " + ty +
+                 ", which is neither a callback nor a struct the module can make");
+      }
+      else: { }
+    }
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

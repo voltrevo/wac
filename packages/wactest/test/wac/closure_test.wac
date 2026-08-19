@@ -9,7 +9,6 @@
 // real package emitting an invalid module — was found by building for the native host and by nothing
 // else, after every Deno-side test had passed.
 
-// only: wacc
 //
 // Lambdas are wacc-only syntax, so the reference cannot read this file and the whole-repository
 // differentials must not try. `issues/lang/0140`.

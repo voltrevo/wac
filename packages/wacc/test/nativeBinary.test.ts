@@ -261,7 +261,7 @@ Deno.test({
   name: "the two runners agree about this repository's wac tests, file by file",
   ignore: Deno.env.get("WAC_V8_SEED") !== "1",
   fn: async () => {
-    // **Two runners, one corpus, one answer** — the same shape `v8host.test.ts` uses for programs,
+    // **Two runners, one corpus, one answer** — the same shape `v8host_test.wac` uses for programs,
     // applied to tests. The single file asserted above says the runner works; this says it works the
     // *same way* as the harness every one of these files was written against, which is the only
     // thing that makes running them natively worth anything.

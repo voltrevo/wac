@@ -298,7 +298,7 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
  *
  * **`buildNative` is 1.9 seconds where `buildApp` is 0.3, and this is why.** `waccArtifacts` caches the
  * *wasm* on disk, so a repeat build fetches it; `bindTypesFiles` and `exportSigsFiles` are two more full
- * front-end passes over the same graph and were run every time. `packages/platform/test/native_hostfs.test.ts`
+ * front-end passes over the same graph and were run every time. `packages/platform/test/wac/native_hostfs_test.wac`
  * builds `wacsh` four times for four grant sets — 7.6s, all of it re-deriving one program's bind tables.
  *
  * Keyed on the content of every file plus the entry, so a source that changed is a different key: the

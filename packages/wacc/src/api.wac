@@ -3,7 +3,7 @@
 // Everything else in this package traffics in structs and sum types, which bindgen
 // cannot marshal — and should not, since an AST is not a value to hand across a
 // boundary. So the surface is bytes in, text out: the caller passes source and gets
-// the canonical dump that `test/wac/parse_test.wac` compares against the reference.
+// the canonical dump the parser's own tests read.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor } from "./diag.wac";

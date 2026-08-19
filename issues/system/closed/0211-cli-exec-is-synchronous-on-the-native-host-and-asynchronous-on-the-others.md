@@ -22,7 +22,7 @@ for (i32 i = 0; i < ps.len(); i++) { Exec r = ps[i].wait(); }
 | --- | ---: |
 | Deno (`buildApp`, run as a program) | **1009ms** |
 | native/v8 (`wac test --allow-run`, the host the `wac` binary is) | **3013ms** |
-| native (wasmtime, `native/src/main.rs` — read, not measured: same shape) | serial |
+| native (wasmtime, `native/src/main.rs`) | **3007ms** — measured separately by agent-b, same day |
 
 Expected: the same, whatever that is. `Pending<T>` is one type with one contract, and every other
 capability that hands one out means "asked for, not yet answered".

@@ -1,6 +1,5 @@
 // expect: answers f = 5
 // why: a struct of lambdas is a working substitute for a capability, collecting into a captured local
-// only: wacc
 // from: design/lang/0002 tier two — the shape the closure workarounds in this repo were built around
 //
 // **This is the case the feature was wanted for.** `packages/box/src/shrun.wac` says it plainly:

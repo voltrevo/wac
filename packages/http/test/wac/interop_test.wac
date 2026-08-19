@@ -1,0 +1,279 @@
+// The 2×2: two clients, two servers, and the diagonal is what matters.
+//
+//                       wac server            Node server
+//   wac client          the loop closes       tests the client's parser
+//   fetch / Node        tests the writer      the control
+//
+// A round trip through my own writer and my own parser proves nothing: two halves wrong in opposite
+// ways agree perfectly. The diagonal is the evidence. A wac client reading a Node server's responses
+// tests the response parser against output nobody wrote to please it; `fetch` reading the wac server's
+// responses tests the writer the same way. Passing both means each half is right on its own, which is
+// exactly what the round trip cannot show.
+//
+// This is the same argument as `packages/datetime`, where `Date.UTC` checks the day arithmetic
+// directly rather than by round-tripping it against itself.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The wac client is now called as a library rather
+// than through `host/client.ts`, which is the shorter route and the one a wac program takes. The two
+// foreign ends stay where they are and say so in their own first lines: `nodeserver.js` is `node:http`
+// and `strictfetch.ts` is `fetch`, and both are the thing under comparison rather than harness.
+//
+// **`packages/server`'s socket loop is TypeScript**, and that is the package's design rather than
+// something this port left behind: `host/serve.ts` accepts the connection and calls into
+// `src/serve.wac` to route and answer. So the wac server here is started as a program, the way
+// `deno task serve` starts it, and what is under test is the routing and the response writer.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/src/daemon.wac";
+import { Fetched, request } from "../../src/client.wac";
+import { Incoming } from "../../src/incoming.wac";
+import { jsonFile, numOf, strOf } from "../../../wactest/src/jsonfile.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/httpinterop-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+/** A started server and the port it took, or why there is not one. */
+struct Peer {
+  Daemon d;
+  i32 port;
+  string error;
+}
+
+/** The digits following `after` in `text`, or -1. */
+i32 numberAfter(string text, string after) {
+  i32 at = text.indexOf(after);
+  if (at < 0) { return -1; }
+  u8[] b = text.toBytes();
+  i32 i = at + after.len();
+  i32 n = 0;
+  i32 digits = 0;
+  while (i < b.len() && b[i] >= '0' && b[i] <= '9') {
+    n = n * 10 + (b[i] - '0');
+    digits = digits + 1;
+    i = i + 1;
+  }
+  return digits == 0 ? -1 : n;
+}
+
+/** Node's server, on a port it chose, which it prints as `{"port":N}`. */
+Peer startNode(Core core, Cli cli, string dir) {
+  Daemon d = start(cli, "node packages/http/test/nodeserver.js", dir + "/node.log");
+  if (!d.ok()) { return Peer(d, -1, "node did not start — " + d.error); }
+  if (!waitForLogWithin(core, cli, d, "{\"port\":", 20000)) {
+    stop(cli, d);
+    return Peer(d, -1, "the node server did not start: " + logOf(cli, d));
+  }
+  i32 port = numberAfter(logOf(cli, d), "{\"port\":");
+  return Peer(d, port, port > 0 ? "" : "no port in " + logOf(cli, d));
+}
+
+/** Our server, started the way `deno task serve` starts it, on a port it chooses. */
+Peer startWac(Core core, Cli cli, string dir) {
+  Daemon d = start(cli, "deno run -A packages/server/host/serve.ts 0", dir + "/wac.log");
+  if (!d.ok()) { return Peer(d, -1, "the wac server did not start — " + d.error); }
+  const string MARK = "listening on http://127.0.0.1:";
+  if (!waitForLogWithin(core, cli, d, MARK, 20000)) {
+    stop(cli, d);
+    return Peer(d, -1, "the wac server never listened: " + logOf(cli, d));
+  }
+  i32 port = numberAfter(logOf(cli, d), MARK);
+  return Peer(d, port, port > 0 ? "" : "no port in " + logOf(cli, d));
+}
+
+string bodyOf(Incoming r) { return string.fromBytes(r.body); }
+
+/** Whether a header with this name is present, compared without case. */
+bool hasHeader(Incoming r, string want) {
+  string lower = want;
+  for (i32 i = 0; i < r.headers.len(); i++) {
+    if (lowered(string.fromBytes(r.headers.nameAt(i))) == lower) { return true; }
+  }
+  return false;
+}
+
+string headerValue(Incoming r, string want) {
+  for (i32 i = 0; i < r.headers.len(); i++) {
+    if (lowered(string.fromBytes(r.headers.nameAt(i))) == want) {
+      return string.fromBytes(r.headers.valueAt(i));
+    }
+  }
+  return "";
+}
+
+string lowered(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len()](fill: 0);
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i] = (b[i] >= 'A' && b[i] <= 'Z') ? b[i] + 32 : b[i];
+  }
+  return string.fromBytes(out);
+}
+
+Fetched get(Cli cli, i32 port, string path) {
+  return request(cli, ("GET").toBytes(), "127.0.0.1", port, path, u8[0](), "");
+}
+
+export string test_wac_client_to_node_server_the_response_parser_against_a_real_server(
+    Core core, Cli cli) {
+  // The diagonal that tests the parser. None of these responses was written to please it.
+  T t = T.create();
+  string dir = scratch(cli, "parser");
+  Peer node = startNode(core, cli, dir);
+  t.eqStr(node.error, "", "the node server is up");
+  if (node.port <= 0) { return t.report(); }
+
+  Fetched plain = get(cli, node.port, "/plain");
+  t.isTrue(plain.ok, "/plain: " + plain.error);
+  t.eqI32(plain.response.status, 200, "/plain status");
+  t.eqStr(bodyOf(plain.response), "hello", "/plain body");
+
+  // Node chose chunked here, because it did not know the length in advance. That is the coding path,
+  // exercised by a server that picked it rather than by a test that asked for it.
+  Fetched chunked = get(cli, node.port, "/chunked");
+  t.isTrue(chunked.ok, "/chunked: " + chunked.error);
+  t.eqStr(bodyOf(chunked.response), "chunked", "/chunked body");
+  t.isTrue(hasHeader(chunked.response, "transfer-encoding"),
+           "/chunked was not actually chunked, so this proves nothing");
+
+  Fetched empty = get(cli, node.port, "/empty");
+  t.isTrue(empty.ok && empty.response.status == 204, "/empty: " + empty.error);
+  t.eqStr(bodyOf(empty.response), "", "/empty had a body");
+
+  // Rule 5, from a server that really does close the connection to end the message.
+  Fetched closed = get(cli, node.port, "/close");
+  t.isTrue(closed.ok, "/close: " + closed.error);
+  t.eqStr(bodyOf(closed.response), "until close", "/close body");
+  t.isTrue(closed.response.closeDelimited, "/close was not reported as close-delimited");
+
+  Fetched headers = get(cli, node.port, "/headers");
+  t.isTrue(headers.ok, "/headers: " + headers.error);
+  t.isTrue(hasHeader(headers.response, "x-one") && hasHeader(headers.response, "x-two"),
+           "/headers lost fields");
+
+  Fetched missing = get(cli, node.port, "/nope");
+  t.isTrue(missing.ok && missing.response.status == 404, "/nope was not a 404");
+  stop(cli, node.d);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_wac_client_to_node_server_head_has_no_body_however_long_the_header_says(
+    Core core, Cli cli) {
+  // The trap this parser exists to avoid. Node answers HEAD with `Content-Length: 4` and no bytes; a
+  // client that waits for four is stuck, and one that reads four takes them from the next response.
+  T t = T.create();
+  string dir = scratch(cli, "head");
+  Peer node = startNode(core, cli, dir);
+  t.eqStr(node.error, "", "the node server is up");
+  if (node.port <= 0) { return t.report(); }
+
+  Fetched head = request(cli, ("HEAD").toBytes(), "127.0.0.1", node.port, "/echo-method",
+                         u8[0](), "");
+  t.isTrue(head.ok, "HEAD: " + head.error);
+  t.eqStr(bodyOf(head.response), "", "HEAD returned a body");
+  string cl = headerValue(head.response, "content-length");
+  t.isTrue(cl != "" && cl != "0",
+           "the server did not send a non-zero Content-Length, so this proves nothing");
+
+  Fetched g = get(cli, node.port, "/echo-method");
+  t.isTrue(g.ok && bodyOf(g.response) == "GET", "GET: " + g.error + bodyOf(g.response));
+  stop(cli, node.d);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_wac_client_to_wac_server_the_loop_closes(Core core, Cli cli) {
+  // Both ends mine, so this proves less on its own — but it is the whole stack in one call, and it is
+  // what "a server and a client written in wac" actually means.
+  T t = T.create();
+  string dir = scratch(cli, "loop");
+  Peer wac = startWac(core, cli, dir);
+  t.eqStr(wac.error, "", "the wac server is up");
+  if (wac.port <= 0) { return t.report(); }
+
+  Fetched rootPage = get(cli, wac.port, "/");
+  t.isTrue(rootPage.ok, "/: " + rootPage.error);
+  t.eqStr(bodyOf(rootPage.response), "wac http server\n", "/ body");
+
+  Fetched echo = get(cli, wac.port, "/echo?a=1&b=two");
+  t.isTrue(echo.ok, "/echo: " + echo.error);
+  t.eqStr(bodyOf(echo.response), "{\"a\":\"1\",\"b\":\"two\"}", "/echo body");
+
+  Fetched posted = request(cli, ("POST").toBytes(), "127.0.0.1", wac.port, "/json",
+                           ("{\"z\":[1,2],\"a\":null}").toBytes(), "application/json");
+  t.isTrue(posted.ok, "/json: " + posted.error);
+  t.eqStr(bodyOf(posted.response), "{\"z\":[1,2],\"a\":null}", "/json body");
+
+  Fetched missing = get(cli, wac.port, "/nope");
+  t.isTrue(missing.ok && missing.response.status == 404, "/nope was not a 404");
+  stop(cli, wac.d);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_fetch_to_wac_server_the_response_writer_against_a_strict_client(
+    Core core, Cli cli) {
+  // The other diagonal. `fetch` rejects a malformed response outright rather than coping.
+  T t = T.create();
+  string dir = scratch(cli, "fetch");
+  Peer wac = startWac(core, cli, dir);
+  t.eqStr(wac.error, "", "the wac server is up");
+  if (wac.port <= 0) { return t.report(); }
+
+  Exec r = cli.exec("deno",
+    string[]("run", "-A", "packages/http/test/strictfetch.ts",
+             "http://127.0.0.1:" + itoa(wac.port) + "/time"), u8[0]()).wait();
+  t.isTrue(r.ran(), "strictfetch ran — " + r.error);
+  string said = string.fromBytes(r.stdout);
+  cli.writeFile(dir + "/said.json", said.toBytes()).wait();
+  t.isFalse(contains(said, "\"error\""), "fetch refused the response: " + said);
+  if (contains(said, "\"error\"")) { stop(cli, wac.d); return t.report(); }
+
+  t.eqI32(numOf(jsonFile(cli, dir + "/said.json"), "status"), 200, "status");
+  // The body is JSON with a timestamp in it. What is checked is that it parses and dates — the value
+  // is a clock reading and two runs would not agree on it.
+  string body = strOf(jsonFile(cli, dir + "/said.json"), "body");
+  t.isTrue(contains(body, "\"now\""), "/time did not answer a `now`: " + body);
+  t.isTrue(contains(body, "T") && contains(body, "Z"),
+           "/time's answer is not an ISO instant: " + body);
+  stop(cli, wac.d);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_same_request_bytes_are_accepted_by_both_servers(Core core, Cli cli) {
+  // The writer, checked by sending its output to two independent servers. A request only one accepts
+  // is a request with something wrong in it.
+  T t = T.create();
+  string dir = scratch(cli, "both");
+  Peer node = startNode(core, cli, dir);
+  Peer wac = startWac(core, cli, dir);
+  t.eqStr(node.error, "", "the node server is up");
+  t.eqStr(wac.error, "", "the wac server is up");
+  if (node.port <= 0 || wac.port <= 0) { return t.report(); }
+
+  string[] targets = string[]("/", "/plain", "/nope");
+  for (i32 i = 0; i < targets.len(); i++) {
+    Fetched fromWac = get(cli, wac.port, targets[i]);
+    Fetched fromNode = get(cli, node.port, targets[i]);
+    t.isTrue(fromWac.ok, "the wac server refused " + targets[i] + ": " + fromWac.error);
+    t.isTrue(fromNode.ok, "the node server refused " + targets[i] + ": " + fromNode.error);
+    // Both answered something; the statuses differ because the routes differ, and that is fine.
+    t.isTrue(fromWac.response.status != 0 && fromNode.response.status != 0,
+             targets[i] + ": a server did not produce a status");
+  }
+  stop(cli, node.d);
+  stop(cli, wac.d);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
