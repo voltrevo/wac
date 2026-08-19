@@ -14,7 +14,7 @@
 //
 // It is also what refuses a *borrowed* ClientHello sent from an id its author did not use — quinn
 // answers `TRANSPORT_PARAMETER_ERROR` with the reason `CID authentication failure`, which is how
-// this file came to exist rather than being read out of the RFC. See `test/seal.test.ts`.
+// this file came to exist rather than being read out of the RFC. See `test/wac/seal_test.wac`.
 //
 // Everything else here has a default, and the defaults are zero: no data may be sent and no streams
 // may be opened until the peer says otherwise. That is fine for reaching a ServerHello and is not

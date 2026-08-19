@@ -1,0 +1,206 @@
+// **The application epoch: quinn's own 1-RTT packet, opened here.**
+//
+// `complete_test.wac` ends where the handshake does. It sees the server's next packet and asserts
+// one thing about it — that the top bit is clear, so it is a short header — and says in its own
+// comment that nothing here could read further. This reads it.
+//
+// A short header differs from a long one in three ways that all have to be right at once, and none
+// of them is visible in the packet:
+//
+//   1. the packet number is protected with **five** bits of the first byte rather than four, because
+//      a short header's low bits carry the key phase and the number length together;
+//   2. the destination connection id has **no length field** — a receiver knows it because it chose
+//      it — so the offset of everything after it comes from state rather than from the bytes;
+//   3. the payload runs to the end of the datagram, since there is no length field either.
+//
+// Opening one is therefore the whole application epoch at once, including the one thing this file
+// exists for: that the master secret and the `s ap traffic` label were taken at the right point in
+// the transcript.
+//
+// The frames inside are asserted separately, because opening proves the keys and says nothing about
+// whether we can then read what is in there.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. The handshake is redone per test rather than
+// shared across the file, which the host-side version did at module scope: a server per case is a
+// second of wall clock and makes one failure attributable to one case.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Socket } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { applicationKeyPhase, clientFinishedPacket, firstNewCidShape, flight, frameCountIn,
+         frameKinds, openApplication, receiveInto } from "./hello_probe.wac";
+import { Server, receiveWithin, startServer, stopServer } from "./peer.wac";
+
+u8[] dcid() { return decoded("8394c8f03e515708"); }
+u8[] scid() { return decoded("11223344"); }
+
+/** The server's handshake flight, and whatever it sent after our Finished. */
+struct Completed {
+  bool ok;
+  string error;
+  u8[] reply;
+  u8[] after;
+}
+
+Completed completed(Cli cli, Core core, string name) {
+  Server s = startServer(cli, name, false);
+  if (!s.ok) { return Completed(false, s.error, u8[0](), u8[0]()); }
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) {
+    stopServer(cli, s);
+    return Completed(false, "our socket did not bind — " + sock.error, u8[0](), u8[0]());
+  }
+
+  cli.sendTo(sock.handle, "127.0.0.1", s.port, flight(dcid(), scid(), "localhost")).wait();
+  u8[] reply = receiveWithin(core, cli, sock, 5000);
+  if (reply.len() == 0) {
+    cli.closeSocket(sock.handle);
+    stopServer(cli, s);
+    return Completed(false, "the server did not answer our first flight", u8[0](), u8[0]());
+  }
+
+  cli.sendTo(sock.handle, "127.0.0.1", s.port,
+             clientFinishedPacket(reply, dcid(), scid(), "localhost")).wait();
+  u8[] after = receiveWithin(core, cli, sock, 2500);
+  cli.closeSocket(sock.handle);
+  stopServer(cli, s);
+  if (after.len() == 0) {
+    return Completed(false, "the server sent nothing after the handshake", reply, u8[0]());
+  }
+  return Completed(true, "", reply, after);
+}
+
+export string test_the_servers_first_application_packet_opens_under_keys_we_derived(
+    Core core, Cli cli) {
+  T t = T.create();
+  Completed h = completed(cli, core, "app-open");
+  t.isTrue(h.ok, h.error);
+  if (!h.ok) { return t.report(); }
+
+  t.eqI32(h.after[0] & 0x80, 0, "the server's next packet is a short header");
+
+  u8[] payload = openApplication(h.reply, h.after, dcid(), scid(), "localhost");
+  t.isTrue(payload.len() > 0,
+           "the 1-RTT packet did not open. AES-128-GCM's tag is 128 bits, so this is not a near " +
+           "miss: it is the master secret, the `s ap traffic` label, the transcript point those " +
+           "are taken at (through the server's Finished, not the ServerHello), the id length the " +
+           "header does not carry, the five protected bits, or the ciphertext running to the end " +
+           "of the datagram.");
+  return t.report();
+}
+
+export string test_the_key_phase_is_zero(Core core, Cli cli) {
+  // Not decoration: this bit is *inside* header protection, so reading it as 0 rather than as
+  // garbage is the evidence that five bits were unmasked rather than four. A long header's four-bit
+  // mask leaves this bit exactly where it was, and it would then be whatever the mask made it.
+  T t = T.create();
+  Completed h = completed(cli, core, "app-phase");
+  t.isTrue(h.ok, h.error);
+  if (!h.ok) { return t.report(); }
+  t.eqI32(applicationKeyPhase(h.reply, h.after, dcid(), scid(), "localhost"), 0,
+          "a fresh connection's first application packet is phase 0");
+  return t.report();
+}
+
+export string test_the_frames_inside_are_ones_we_can_walk(Core core, Cli cli) {
+  T t = T.create();
+  Completed h = completed(cli, core, "app-frames");
+  t.isTrue(h.ok, h.error);
+  if (!h.ok) { return t.report(); }
+
+  u8[] payload = openApplication(h.reply, h.after, dcid(), scid(), "localhost");
+  t.isTrue(payload.len() > 0, "the packet opened");
+  if (payload.len() == 0) { return t.report(); }
+  i32 kinds = frameKinds(payload);
+
+  // Bit 31 means the walk stopped at a frame type this package cannot size, bit 30 that the payload
+  // ended mid-frame, and bit 27 that a frame arrived in a packet type table 3 does not permit it in.
+  // All three are failures and they are different ones: work to do, a reader that is wrong, and a
+  // peer that is wrong.
+  //
+  // **This expectation used to be the opposite**, and it said so: it asserted the walk *stopped*,
+  // because `frame.wac` covered only the five frames an Initial may carry and quinn's first
+  // application flight carries HANDSHAKE_DONE and NEW_CONNECTION_ID. The rest of table 3 is now
+  // implemented, so the walk reaches the end of the payload — a much stronger statement, since
+  // every frame's length had to be right for the one after it to be found at all.
+  t.eqI32(kinds & (1 << 31), 0, "stopped at an unknown frame type");
+  t.eqI32(kinds & (1 << 30), 0, "the payload ended mid-frame");
+  t.eqI32(kinds & (1 << 27), 0, "a frame arrived where table 3 forbids it");
+
+  // What is actually in quinn's first application flight is **NEW_CONNECTION_ID**, several of them:
+  // a server hands a peer spare ids as soon as it can, so the peer can migrate without being
+  // linkable. Not HANDSHAKE_DONE, which was the guess when this test was written — it arrives in a
+  // later packet, and asserting it here would have been asserting quinn's packing rather than our
+  // reading.
+  t.neI32(kinds & (1 << 24), 0, "no NEW_CONNECTION_ID");
+
+  // The walk reached the end: `frameCountIn` answers -1 if any frame could not be read whole, so a
+  // count at all is the payload accounted for byte for byte with nothing left over. It is one frame,
+  // and the first draft of this line asserted "several" — that was guessing at quinn's packing
+  // again, one paragraph after saying not to.
+  t.isTrue(frameCountIn(payload) >= 1,
+           "the walk did not reach the end of the payload (" + itoa(frameCountIn(payload)) + ")");
+
+  // And the fields inside one, not merely its size: RFC 9000 §19.15 fixes the token at 16 bytes and
+  // the id at 1 to 20. A frame whose *size* is right with the id and token misplaced within it would
+  // satisfy every check above and fail this one.
+  i32 shape = firstNewCidShape(payload);
+  i32 cidLen = shape / 100;
+  i32 tokenLen = shape % 100;
+  t.eqI32(tokenLen, 16, "a stateless-reset token is 16 bytes (shape " + itoa(shape) + ")");
+  t.isTrue(cidLen >= 1 && cidLen <= 20, "a connection id is 1..20 bytes, got " + itoa(cidLen));
+
+  // And something was read before it stopped. A walk that halted on the very first byte would set
+  // the same bit and prove nothing about the payload being frames at all.
+  t.neI32(kinds & 0x07ffffff, 0, "no frame was recognised at all");
+  return t.report();
+}
+
+export string test_a_wrong_connection_id_length_does_not_open_the_packet(Core core, Cli cli) {
+  // The canary for difference (2) in the header, and the reason it is worth a test of its own: this
+  // is the one field a short header does not carry, so getting it wrong is not detectable from the
+  // packet. A client that guessed would see exactly this — nothing — and have no way to know why.
+  //
+  // Driven by lying about our own id: a `Client` whose scid is 8 bytes reads the id as 8 bytes, and
+  // the packet number and sample both move by four.
+  T t = T.create();
+  Completed h = completed(cli, core, "app-wrongid");
+  t.isTrue(h.ok, h.error);
+  if (!h.ok) { return t.report(); }
+
+  u8[] wrong = decoded("1122334455667788");
+  t.eqI32(openApplication(h.reply, h.after, dcid(), wrong, "localhost").len(), 0,
+          "an 8-byte id length must not open a packet addressed to a 4-byte id");
+  return t.report();
+}
+
+export string test_a_packet_that_does_not_open_leaves_the_window_where_it_was(Core core, Cli cli) {
+  // RFC 9000 §A.3 decodes a truncated packet number against the largest **processed**, and the
+  // distinction is the point: anybody who can reach the four-tuple can send a packet, so a window
+  // that moved on *receipt* would be a window a stranger moves with noise — and a window moved far
+  // enough makes the peer's real packets decode to the wrong numbers.
+  T t = T.create();
+  Completed h = completed(cli, core, "app-window");
+  t.isTrue(h.ok, h.error);
+  if (!h.ok) { return t.report(); }
+
+  // The real packet: it opens, and the window moves to the number it carried.
+  i32 good = receiveInto(h.reply, h.after, dcid(), scid(), "localhost");
+  t.eqI32(good % 10, 1, "the server's own packet should have opened");
+  t.isTrue(good >= 10, "and moved the window off -1: " + itoa(good));
+
+  // The same packet with one ciphertext byte flipped. It cannot open, so nothing is read — and the
+  // window must still be -1, which is `(−1 + 1) * 10 + 0`.
+  u8[] tampered = u8[h.after.len()]();
+  tampered.copyFrom(h.after, 0, 0, h.after.len());
+  tampered[tampered.len() - 20] = tampered[tampered.len() - 20] ^ 1;
+  t.eqI32(receiveInto(h.reply, tampered, dcid(), scid(), "localhost"), 0,
+          "a packet that failed authentication moved the window, which lets a stranger move it " +
+          "with noise");
+
+  // And something that is not a packet at all.
+  t.eqI32(receiveInto(h.reply, u8[8](), dcid(), scid(), "localhost"), 0,
+          "eight zero bytes are not a packet");
+  return t.report();
+}

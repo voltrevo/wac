@@ -10,7 +10,7 @@ connection. design/system 0007 step 4, done 2026-08-13.
 
 `src/client.wac` is the client — through the handshake and into the application epoch, where
 `openShort` reads the 1-RTT packets a server sends once it has accepted — and `example/handshake.wac`
-is the program; `test/program.test.ts`
+is the program; `test/wac/program_test.wac`
 runs it against quinn on both the Deno host and the one with no JavaScript in it. The library was
 finished before either existed, and writing the program is what found the two things missing from
 it — a client that could not have a fresh key, because it recomputed its ClientHello rather than
@@ -139,7 +139,7 @@ computable, which the borrowed version could never be. Canaried by removing the 
 (all three tests fail) and by removing the ALPN (two do). `test/wac/hello_probe.wac` is that client
 with its scalar and client random pinned to constants, which is what makes those comparisons
 reproducible — and which is why the freshness of a real client's key is checked by
-`test/program.test.ts` instead, where two runs of the program must differ.
+`test/wac/program_test.wac` instead, where two runs of the program must differ.
 
 **A bidirectional stream, both directions.** `Client.streamPacket` seals a STREAM frame into a 1-RTT
 packet and quinn's own application API yields the bytes on stream 0; an echo server written against
