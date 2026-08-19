@@ -99,7 +99,7 @@ workaround stays — it is faster anyway, one compile instead of one per invocat
 
 ## The test, and why it is worth reading
 
-`platform/test/app.test.ts` starts a program through the launcher, kills the launcher, and then **looks
+`platform/test/wac/app_test.wac` starts a program through the launcher, kills the launcher, and then **looks
 for the child in the process table**. Asserting that the launcher exited proves nothing about what it
 left behind, which is exactly how this survived: the tests that leaked 57 servers passed the whole time.
 
