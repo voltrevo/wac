@@ -695,6 +695,154 @@ fn test_exports_of(path: &str) -> Vec<(String, String)> {
 /// Sharing one module across files is safe because wac has no module-level variables: a trap unwinds
 /// the call and leaves nothing behind, which is the same reason `test_traps_*` has always been able to
 /// run beside its neighbours.
+/// Every `.wac` file the aggregate reaches, with its bytes — the input a compile of it actually has.
+///
+/// A plain scan for `from "…"`, resolved against the importing file's directory, followed
+/// transitively. That is exactly what the compiler does with a *file* import; a builtin — `from core`
+/// — has no path and lives in the seed, which the key below covers separately. There are no
+/// conditional imports in wac, so a scan and a compile see the same set.
+fn closure_of(entry: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut queue = vec![entry.to_path_buf()];
+    while let Some(at) = queue.pop() {
+        let Ok(text) = std::fs::read(&at) else { continue };
+        let name = at.display().to_string();
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let dir = at.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+        let src = String::from_utf8_lossy(&text);
+        let mut rest = src.as_ref();
+        while let Some(from) = rest.find("from") {
+            rest = &rest[from + 4..];
+            let Some(open) = rest.find('"') else { break };
+            let after = &rest[open + 1..];
+            let Some(close) = after.find('"') else { break };
+            let spec = &after[..close];
+            rest = &after[close + 1..];
+            if !spec.ends_with(".wac") {
+                continue;
+            }
+            // Normalised here rather than by `canonicalize`, which would follow symlinks and answer a
+            // different name for the same file depending on where the suite was started.
+            let joined = dir.join(spec);
+            let whole = joined.to_string_lossy().into_owned();
+            let mut parts: Vec<&str> = Vec::new();
+            for part in whole.split('/') {
+                match part {
+                    "." | "" => {}
+                    ".." => {
+                        parts.pop();
+                    }
+                    p => parts.push(p),
+                }
+            }
+            queue.push(std::path::PathBuf::from(parts.join("/")));
+        }
+        out.push((name, text));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// The name a built aggregate is cached under: everything a compile of it reads, and what compiled it.
+///
+/// The sources are keyed by *content*, because that is what a compile depends on — an mtime says a
+/// file was touched, which is not the same question. The seed is in there because it is the compiler,
+/// and the binary's own version because the manifest shape is its. Grants and `--coverage` are in
+/// there because they change what is emitted.
+fn test_module_key(entry: &str, sources: &[(String, Vec<u8>)], flags: &[String], coverage: bool) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut eat = |bytes: &[u8]| {
+        for b in bytes {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    };
+    eat(b"wac-test-module 1");
+    // **The aggregate by its content, never by its name.** Its path carries this process's pid —
+    // `.cache/wac-aggregate-<pid>-<n>_test.wac` — so hashing the name made every run a fresh key and
+    // the cache a write-only directory. It cost one round of "faster, and three new entries a run" to
+    // notice, which is what a hit rate would have said immediately.
+    for (name, bytes) in sources {
+        if name == entry {
+            eat(bytes);
+            continue;
+        }
+        eat(name.as_bytes());
+        eat(bytes);
+    }
+    for f in flags {
+        eat(f.as_bytes());
+    }
+    eat(if coverage { b"coverage" } else { b"plain" });
+    eat(env!("CARGO_PKG_VERSION").as_bytes());
+    eat(SEED.unwrap_or(&[]));
+    h
+}
+
+/// How many built aggregates the shared directory keeps. A megabyte or two each.
+const KEEP_MODULES: usize = 60;
+
+/// A built aggregate from the cache, or `None`.
+///
+/// **Why this exists.** `wac test <dir>` compiles the directory's aggregate every run, and for a small
+/// directory that is most of the cost: measured 2026-08-19, `packages/url/test/wac` is 674ms of compile
+/// in an 887ms run, `packages/json` 934ms of 1426ms, `packages/fmt` 686ms of 1631ms. Fifty-one chunks
+/// of that is tens of seconds of the suite and it is the whole of an agent's re-run of one directory.
+/// `issues/system/0204`.
+///
+/// The artefact is the wasm; the manifest is read back out of it exactly as after a fresh build, so a
+/// hit and a miss answer the same four things.
+fn cached_module(key: u64) -> Option<Vec<u8>> {
+    let path = std::env::temp_dir().join("wac-testmod").join(format!("{key:016x}.wasm"));
+    let bytes = std::fs::read(&path).ok()?;
+    // Touched so that sweeping drops what is genuinely unused rather than what was built first.
+    let now = std::time::SystemTime::now();
+    let _ = filetime_set(&path, now);
+    Some(bytes)
+}
+
+/// Remember a built aggregate, and bound the directory.
+fn remember_module(key: u64, wasm: &[u8]) {
+    let dir = std::env::temp_dir().join("wac-testmod");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join(format!("{key:016x}.wasm"));
+    let tmp = dir.join(format!("{key:016x}.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, wasm).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    sweep_modules(&dir);
+}
+
+/// Keep the newest `KEEP_MODULES` and remove the rest — the same rule, and the same reason, as the
+/// compiled-artefact sweep above: nothing else would ever bound this.
+fn sweep_modules(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut found: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "wasm"))
+        .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()).map(|t| (t, e.path())))
+        .collect();
+    if found.len() <= KEEP_MODULES {
+        return;
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in found.into_iter().skip(KEEP_MODULES) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// `utimes` on a path, so a cache hit counts as use. Best effort: a failure only affects sweeping.
+fn filetime_set(path: &std::path::Path, when: std::time::SystemTime) -> std::io::Result<()> {
+    let f = std::fs::OpenOptions::new().append(true).open(path)?;
+    f.set_modified(when)?;
+    Ok(())
+}
+
 fn write_aggregate(
     files: &[String],
     which: &[usize],
@@ -1018,7 +1166,35 @@ fn test_command(rest: &[String]) -> i32 {
         let at = std::path::Path::new(".cache")
             .join(format!("wac-aggregate-{}-{g}_test.wac", std::process::id()));
         let made = write_aggregate(&files, members, &at).and_then(|(agg, carried)| {
-            let m = build_module(&grants, &agg, false).ok();
+            // **The same aggregate, compiled once across runs.** `issues/system/0204`: this file is
+            // written and compiled on every `wac test`, and for a small directory that is most of the
+            // cost — `packages/url/test/wac` was 674ms of compile in an 887ms run. The key is the
+            // aggregate's text, the content of every `.wac` it reaches, the grants, and the seed that
+            // would compile it, so a hit is the same bytes a fresh build would have produced.
+            let sources = closure_of(std::path::Path::new(&agg));
+            let key = test_module_key(&agg, &sources, &grants, false);
+            let m = match cached_module(key) {
+                // **V8 is started here as well, because the fresh path starts it inside
+                // `build_module`.** Without this a hit panicked with "Invalid global state" the moment
+                // it tried to *run* what it had not compiled — and it looked like a 4ms directory with
+                // no failures, which is what a run that never happened looks like from the outside.
+                Some(wasm) => {
+                    start_v8();
+                    manifest_in(&wasm)
+                        .and_then(|text| {
+                            serde_json::from_str::<Manifest>(&text)
+                                .ok()
+                                .map(|man| (wasm.clone(), text, man, None))
+                        })
+                }
+                None => {
+                    let fresh = build_module(&grants, &agg, false).ok();
+                    if let Some((wasm, _, _, _)) = fresh.as_ref() {
+                        remember_module(key, wasm);
+                    }
+                    fresh
+                }
+            };
             // **A failed aggregate says so.** Falling back to a build per file is the right answer — the
             // tests still run, and one directory's shared build is an optimisation rather than a
             // promise — but doing it silently turns a broken aggregate into a directory that is
@@ -4001,7 +4177,12 @@ fn dispatch(
             let id = t.submit();
             let worker = t.clone();
             std::thread::spawn(move || {
-                worker.complete(id, run_host_program(path, argv, stdin));
+                // **Dropped deliberately, and the `#[must_use]` is why this says so.** An answer
+                // nobody took means the ticket was cancelled while the child ran. A datagram in that
+                // position is a packet lost (`issues/system/0207`); a finished process is not — it
+                // ran, its effects happened, and its output is a computation the caller stopped
+                // wanting. There is nothing to hand back to.
+                let _ = worker.complete(id, run_host_program(path, argv, stdin));
             });
             match ticket_pending(scope, "Exec", id) {
                 Some(p) => rv.set(p),
