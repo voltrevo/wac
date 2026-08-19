@@ -35,6 +35,8 @@ import { Vec } from "core/vec.wac";
 import { Ad, AdRef, findPack, offers, parseAdvertisement, wantRequest, Reply }
   from "../../git/src/fetch.wac";
 import { Got, Indexed, Pack, indexPack, objectNamed, openIndexed } from "../../git/src/pack.wac";
+import { Entry, Tree, parseTree } from "../../git/src/tree.wac";
+import { Parsed, parseCommit } from "../../git/src/commit.wac";
 import { PackIndex } from "../../git/src/idx.wac";
 import { Store } from "../../tls/src/roots.wac";
 import { Answer, Remote, parseRemote, request, systemStore } from "../../git/src/transport.wac";
@@ -204,6 +206,13 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   // **The check that makes it trustworthy.** A pack is content-addressed, so one mis-parsed cannot
   // produce an object whose SHA-1 is the name we asked for.
   i32 objects = 0;
+  // **Where it goes, decided before the pack is opened**, so the checkout can use the `Pack` the
+  // verification below already has. Indexing a pack twice is half a million objects twice.
+  string into = cachePath(wacHome, map.git, hit.commit);
+  if (into == "") { core.warn("wacfetch: " + map.name + ": no cache path"); return ""; }
+  Change made = cli.mkdir(into, true).wait();
+  if (!made.ok()) { core.warn("wacfetch: cannot make " + into + ": " + made.message); return ""; }
+
   match (indexPack(pack)) {
     case Unindexable(why4): {
       core.warn("wacfetch: " + map.name + ": the pack did not index: " + why4);
@@ -232,15 +241,27 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
                       + " came back as kind " + itoa(kind) + " rather than a commit");
             return "";
           }
+          // **And the files, because a pack is not something the compiler can read.** Fetching that
+          // stopped at the pack left the cache holding what only git understands, while `wac build`
+          // resolving a mapped specifier opens an ordinary path — so the two halves of D9-D11 each
+          // worked and did not meet. This is the join, and it reuses the `Pack` the check above
+          // opened rather than indexing the same objects a second time.
+          Parsed c = parseCommit(data);
+          match (c) {
+            case Malformed(why6): {
+              core.warn("wacfetch: " + map.name + ": unreadable commit: " + why6);
+              return "";
+            }
+            case Understood(commit): {
+              if (!writeTreeOut(core, cli, p, commit.tree, into)) { return ""; }
+              core.log("  checked out " + commit.treeHex().slice(0, 8) + " -> " + into);
+            }
+          }
         }
       }
     }
   }
 
-  string into = cachePath(wacHome, map.git, hit.commit);
-  if (into == "") { core.warn("wacfetch: " + map.name + ": no cache path"); return ""; }
-  Change made = cli.mkdir(into, true).wait();
-  if (!made.ok()) { core.warn("wacfetch: cannot make " + into + ": " + made.message); return ""; }
   Change wrotePack = cli.writeFile(into + "/pack.pack", pack).wait();
   if (!wrotePack.ok()) {
     core.warn("wacfetch: cannot write " + into + "/pack.pack: " + wrotePack.message);
@@ -248,7 +269,74 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   }
   core.log("  " + itoa(pack.len()) + " bytes, " + itoa(objects) + " objects -> "
            + into + "/pack.pack");
+
   return hit.commit;
+}
+
+/**
+ * Write a commit's tree out of a pack, as files, under `into`.
+ *
+ * **The cache has to hold files, not a pack, because the compiler reads files.** `wac build` resolves
+ * a mapped specifier to `cachePath(repo, commit)` plus the repository-relative path and opens it —
+ * see `packages/wacc/example/wacc.wac`. A pack there would mean the compiler doing git, which is the
+ * opposite of the split `design/lang/0009` D11 draws: fetching is wac, and what it leaves behind is
+ * an ordinary directory anything can read.
+ *
+ * The whole tree, not just the `subdir`, and that is deliberate: the cache is keyed by repository and
+ * commit alone, so two mappings with different `subdir`s share one checkout. Extracting per mapping
+ * would make the cache a function of three things and quietly break the identity D8 rests on.
+ *
+ * Submodules — mode `160000` — are skipped rather than failed on: the pack does not contain them, so
+ * there is nothing to write, and a dependency that happens to have one is not thereby unusable.
+ * Symlinks (`120000`) are written as the ordinary files their content makes them, which is what a
+ * reader wanting a `.wac` file needs and avoids handing a fetched repository the power to point
+ * outside its own checkout.
+ */
+bool writeTreeOut(Core core, Cli cli, Pack pk, u8[] treeHash, string into) {
+  Got got = objectNamed(pk, treeHash);
+  match (got) {
+    case Absent(why): {
+      core.warn("wacfetch: a tree is missing from the pack: " + why);
+      return false;
+    }
+    case Found(kind, data): {
+      Tree t = parseTree(data);
+      match (t) {
+        case Bad(why): { core.warn("wacfetch: unreadable tree: " + why); return false; }
+        case Ok(entries): {
+          for (i32 i = 0; i < entries.len(); i++) {
+            Entry e = entries.get(i);
+            string at = into + "/" + e.name;
+            if (e.mode == "160000") { continue; }
+            if (e.isTree()) {
+              Change made = cli.mkdir(at, true).wait();
+              if (!made.ok()) {
+                core.warn("wacfetch: cannot make " + at + ": " + made.message);
+                return false;
+              }
+              if (!writeTreeOut(core, cli, pk, e.hash, at)) { return false; }
+              continue;
+            }
+            Got blob = objectNamed(pk, e.hash);
+            match (blob) {
+              case Absent(why2): {
+                core.warn("wacfetch: " + e.name + " is missing from the pack: " + why2);
+                return false;
+              }
+              case Found(k2, bytes): {
+                Change wrote = cli.writeFile(at, bytes).wait();
+                if (!wrote.ok()) {
+                  core.warn("wacfetch: cannot write " + at + ": " + wrote.message);
+                  return false;
+                }
+              }
+            }
+          }
+          return true;
+        }
+      }
+    }
+  }
 }
 
 string join(string dir, string name) {
