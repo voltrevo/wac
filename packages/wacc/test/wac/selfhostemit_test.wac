@@ -16,12 +16,23 @@
 // `test/wac/selfemit_test.wac` and the corpus test are measuring all along.
 //
 //
-// **9.6s, and it is two compilers.** Measured 2026-08-18, the most expensive single test in the
-// `wac test` lane. Stage A builds `wacc` with the reference and stage B builds it with stage A's
-// output; comparing the two means both exist, and each is the whole compiler. There is nothing to
-// amortise across the ladder's other rungs either: they run in the same process but wac has no
-// module-level state to hold a built stage in, and writing one to disk to be reused is the cache
-// `issues/system/0204` is about, with the staleness question that comes with it.
+// **11s cold, 5.4s warm, and it is two compilers.** Measured 2026-08-19. Split, at 9.2s of test body:
+//
+//     reference    5731ms      deno, the reference compiling a 1.4 MB driver, three exports
+//     stage B emit  708ms
+//     stage B run  2225ms      `fold` re-derives the whole compiler twice, plus `blockedFiles`
+//     direct        529ms      the third opinion
+//
+// So most of it was one process, and **stage A is a pure function of the driver and the reference** —
+// the driver carries every wacc source as a literal, so its checksum moves when any of them does.
+// Those three answers are cached under `.cache`, keyed on that checksum, on `compiler/`'s newest
+// mtime and on the binary's. Cold — a wacc source changed, `compiler/` changed, or the host was
+// rebuilt — it costs what it always did, which is the run where this test has something to say.
+//
+// **Stage A only.** Stage B is recomputed every run whatever the cache holds: a differential with one
+// remembered side is still a differential, and one with two is nothing. Canaried three ways — a wacc
+// source's *content*, the reference's mtime, and a poisoned cache file, which fails the comparison
+// rather than passing it.
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
 // The reference answers through `referenceRun.ts <driver> <export…>`, which prints a whole `i32`;
@@ -45,7 +56,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
-import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, Stat, FileResult } from "../../../platform/src/platform.wac";
 import { emitFiles, emitFilesSelfDescribing } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
@@ -112,6 +123,72 @@ string driverFor(string[] paths, string[] sources) {
   return string.fromBytes(out.take());
 }
 
+const string STAGE_A = ".cache/_selfhost_stageA.txt";
+
+/**
+ * What produced stage A's answers: the driver, and the compiler that runs it.
+ *
+ * The driver carries every one of wacc's sources as string literals, so its checksum moves whenever
+ * any of them does — one number covering the whole input. The other half is the *reference*, which is
+ * `compiler/` and `harness/referenceRun.ts`: its newest modification time, by the rule
+ * `tools/seedFresh.test.ts` uses for the seed. Both halves matter and neither implies the other.
+ *
+ * The binary is in there too, and it is the half a source walk cannot see: stage B is emitted by the
+ * seed inside `wac` and *run* by its runtime, so a rebuilt host can change this test's answer with
+ * every source in the repository untouched.
+ */
+string stageAKey(Cli cli, u8[] driver) {
+  i64 newest = 0 as i64;
+  Stat run = cli.stat("harness/referenceRun.ts").wait();
+  if (run.exists) { newest = run.modifiedMillis; }
+  Stat bin = cli.stat(cli.cwd().wait() + "/native/v8/target/release/wac").wait();
+  if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
+  string[]? names = cli.readDir("compiler").wait();
+  if (names is null) { return ""; }
+  string[] here = names!;
+  for (i32 i = 0; i < here.len(); i++) {
+    Stat f = cli.stat("compiler/" + here[i]).wait();
+    if (f.exists && f.modifiedMillis > newest) { newest = f.modifiedMillis; }
+  }
+  // An empty key is "cannot say", and a cache that cannot say is not read or written.
+  if (newest == (0 as i64)) { return ""; }
+  return itoa(checksum(driver)) + ":" + itoa((newest / (1000 as i64)) as! i32);
+}
+
+/**
+ * Stage A's three answers, from `.cache` when the key still holds.
+ *
+ * **5.7s of this test's 9.2s was this one process**, measured 2026-08-19: deno starting, the
+ * reference compiling a 1.4 MB driver, and three exports that each re-derive a whole compiler. It is
+ * a pure function of the driver and the reference, so it is cached — and stage B, the half this test
+ * is actually about, is recomputed on every run whatever the cache says. A differential where one
+ * side is remembered is still a differential; one where *both* sides are remembered is nothing, which
+ * is why the cache holds stage A alone.
+ *
+ * Cold — a wacc source changed, or `compiler/` did — it costs exactly what it always did, which is
+ * the run where this test has something to say.
+ */
+i32[] cachedStageA(Cli cli, string key, i32 want, i32[] okOut) {
+  okOut[0] = 0;
+  if (key == "") { return i32[want](); }
+  FileResult f = cli.readFile(STAGE_A).wait();
+  if (!f.ok) { return i32[want](); }
+  string[] lines = splitLines(string.fromBytes(f.bytes));
+  if (lines.len() < want + 1) { return i32[want](); }
+  if (trimmed(lines[0]) != key) { return i32[want](); }
+  i32[] out = i32[want]();
+  for (i32 i = 0; i < want; i++) { out[i] = atoi(trimmed(lines[i + 1])); }
+  okOut[0] = 1;
+  return out;
+}
+
+void writeStageA(Cli cli, string key, i32[] said) {
+  if (key == "") { return; }
+  string body = key + "\n";
+  for (i32 i = 0; i < said.len(); i++) { body = body + itoa(said[i]) + "\n"; }
+  cli.writeFile(STAGE_A, body.toBytes()).wait();
+}
+
 /**
  * Stage A's answers to several exports, one line each, in **one** process.
  *
@@ -172,14 +249,22 @@ export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
   paths[near.len()] = DRIVER;
 
   string dir = scratchDir(cli);
-  Change wrote = cli.writeFile(DRIVER, driverFor(cp, cs).toBytes()).wait();
+  // **Built once.** It is 1.4 MB of generated source and was built twice — once to write for the
+  // reference and once to hand to stage B — for a string that is the same both times.
+  string driver = driverFor(cp, cs);
+  Change wrote = cli.writeFile(DRIVER, driver.toBytes()).wait();
   t.eqI32(wrote.fault, 0, "the driver was written to " + DRIVER);
   if (wrote.fault != 0) { return t.report(); }
 
   // **The canaries, before the comparison.** A stage that declined the whole compiler would emit an
   // eight-byte header, and two eight-byte headers agree about nothing at all.
   i32[] ok = i32[1]();
-  i32[] said = referenceAnswers(cli, "blockedLen,wholeLen,fold", 3, ok);
+  string key = stageAKey(cli, driver.toBytes());
+  i32[] said = cachedStageA(cli, key, 3, ok);
+  if (ok[0] != 1) {
+    said = referenceAnswers(cli, "blockedLen,wholeLen,fold", 3, ok);
+    if (ok[0] == 1) { writeStageA(cli, key, said); }
+  }
   t.eqI32(ok[0], 1, "the reference ran the driver and answered all three");
   if (ok[0] != 1) { cli.remove(DRIVER, false).wait(); return t.report(); }
   i32 blocked = said[0];
@@ -190,7 +275,7 @@ export string test_rung_5_wacc_compiled_by_wacc_compiles_wacc_to_the_same_bytes(
            "stage A emitted only " + itoa(said[1]) + " bytes for the whole compiler");
   i32 theirs = said[2];
 
-  sources[near.len()] = driverFor(cp, cs);
+  sources[near.len()] = driver;
   u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "selfhost.wasm", 0);
   Ran r = runModule(cli, wasm, dir, "selfhost.wasm", string[]("fold"));
   cli.remove(DRIVER, false).wait();
