@@ -71,7 +71,7 @@ for the answer"* instead of quietly working.
 
 ## What to check afterwards
 
-`packages/platform/test/native_manifest.test.ts` holds the property the host depends on — every
+`packages/platform/test/wac/native_manifest_test.wac` holds the property the host depends on — every
 funcref field names a signature the manifest has a dispatcher for. The counterpart here is that
 every enum a host builds has a named constructor in the manifest, which the same test can assert
 once the field exists. `native/v8` running `sha256sum` byte-identically to `sha256sum(1)` is the

@@ -8,7 +8,7 @@
 // It exists to be *killed*. `deno task app` builds an application and spawns it, and until wac-mono
 // issue 0017 nothing forwarded signals: killing the launcher left the application running with no
 // handle left to stop it, which is invisible for a program that ends on its own and permanent for one
-// that does not. `platform/test/app.test.ts` starts this through the launcher, kills the launcher, and
+// that does not. `platform/test/wac/app_test.wac` starts this through the launcher, kills the launcher, and
 // looks for a survivor.
 //
 // The first line matters as much as the sleeping. A test that only killed the launcher could not tell

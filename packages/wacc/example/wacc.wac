@@ -6,6 +6,8 @@
 //     wacc bindgen main.wac [--js]   # main.gen.ts — the glue a host calls the module through
 //
 // `build` also takes `--coverage`: a counter per branch point, and `<stem>.cov` saying what each is.
+// `--trace` is the other instrumented build — an ordered journal rather than counts, with
+// `<stem>.trace` naming each site. `wac ctcompare` is what reads one.
 //                                    #    --quiet for the success line, --allow-* for the grants
 //
 // A TypeScript CLI (`waccx`) did the same job until it was retired, and this was never a port for
@@ -24,7 +26,8 @@ import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
          covTableFilesIn, describeSeparator, diagnoseGraphIn, exportSigsFilesIn,
          wireHasErrors,
-         emitFilesCoveredIn, manifestWire } from "../src/api.wac";
+         emitFilesCoveredIn, emitFilesTraced, emitFilesTracedSlots, traceTableFiles,
+         manifestWire } from "../src/api.wac";
 import { Built } from "../src/emit.wac";
 import { withManifestSection } from "../src/manifest.wac";
 import { renderDiagnostics } from "../src/render.wac";
@@ -391,7 +394,7 @@ string[] exactly(string[] xs, i32 n) {
  */
 string usage() {
   return "usage: wac check|compile|bindgen <entry.wac> [out]   # --js for bindgen's glue\n"
-       + "       wac build <entry.wac> -o <stem> [--coverage] [--quiet]\n"
+       + "       wac build <entry.wac> -o <stem> [--coverage|--trace [--trace-slots n]] [--quiet]\n"
        + "                [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]";
 }
 
@@ -413,7 +416,7 @@ string[] positionals(Cli cli, i32 argc) {
   i32 i = 1;
   while (i < argc) {
     string a = string.fromBytes(cli.arg(i).wait());
-    if (a == "-o") { i = i + 2; continue; }
+    if (a == "-o" || a == "--trace-slots") { i = i + 2; continue; }
     if (a.len() > 0 && a.slice(0, 1) == "-") { i = i + 1; continue; }
     out[n] = a;
     n = n + 1;
@@ -463,11 +466,36 @@ string unknownFlag(Cli cli, i32 argc) {
     string a = string.fromBytes(cli.arg(i).wait());
     if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
     if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
-        && a != "--allow-run" && a != "--quiet" && a != "--js" && a != "--coverage") {
+        && a != "--allow-run" && a != "--quiet" && a != "--js" && a != "--coverage"
+        && a != "--trace" && a != "--trace-slots") {
       return a;
     }
   }
   return "";
+}
+
+/**
+ * The number after `--trace-slots`, or 0 for the compiler's own size.
+ *
+ * **A journal a caller can size is why this exists.** The default is 2^22 events, and a routine that
+ * produces more cannot be checked for secret dependence at all — the routines that overflow being
+ * exactly the ones designed to be expensive. A KDF's cost is the function rather than a parameter of
+ * it: one bcrypt hash is 8.2 million events. `wac tracestat` reports what a run *wanted*, so the
+ * second attempt is sized rather than doubled. `issues/lang/0059`.
+ */
+i32 traceSlots(Cli cli, i32 argc) {
+  for (i32 i = 1; i + 1 < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) != "--trace-slots") { continue; }
+    u8[] d = string.fromBytes(cli.arg(i + 1).wait()).toBytes();
+    if (d.len() == 0) { return 0; }
+    i32 v = 0;
+    for (i32 k = 0; k < d.len(); k++) {
+      if (d[k] < 48 || d[k] > 57) { return 0; }
+      v = v * 10 + (d[k] - 48);
+    }
+    return v;
+  }
+  return 0;
 }
 
 /** The value after `-o`, or "". */
@@ -607,13 +635,30 @@ export i32 main(Core core, Cli cli) {
   // path keeps the separate calls, because there is no folded form of it and a coverage build is
   // something a person waits for on purpose.
   bool covered = hasFlag(cli, argc, "--coverage");
+  // **`--trace` is the other instrumented build**, and it is the same three exports meaning something
+  // else: a journal of `(site, value)` in the order events happened rather than a count per point.
+  // `wac ctcompare` reads it. The two cannot be asked for together — they are one counter array, and a
+  // build that tried to be both would answer whichever question was asked last.
+  bool traced = hasFlag(cli, argc, "--trace");
+  if (covered && traced) {
+    core.warn("wacc: --coverage and --trace are one counter array; ask for one of them");
+    return 2;
+  }
   string blocked = "";
   string sigs = "";
   string types = "";
   u8[] wasm = u8[0]();
-  if (covered) {
+  if (covered || traced) {
+    // **`*In` where the callee reads `res`, plain where it does not.** `blockedFilesIn`,
+    // `exportSigsFilesIn` and `bindTypesFilesIn` pass the carrier through to the linker, so a
+    // `@/` or a mapped import resolves the same way it did when the graph was gathered — that is
+    // `design/lang/0009` D7. The traced emitters have no `In` variant yet and build a `Res.empty()`
+    // of their own, so a traced build of a program using either feature resolves from nothing.
     blocked = blockedFilesIn(paths, texts, res, entry);
-    wasm = emitFilesCoveredIn(paths, texts, res, entry);
+    i32 slots = traceSlots(cli, argc);
+    wasm = covered ? emitFilesCoveredIn(paths, texts, res, entry)
+                   : (slots > 0 ? emitFilesTracedSlots(paths, texts, entry, slots)
+                                : emitFilesTraced(paths, texts, entry));
     sigs = exportSigsFilesIn(paths, texts, res, entry);
     types = bindTypesFilesIn(paths, texts, res, entry);
   } else {
@@ -711,6 +756,16 @@ export i32 main(Core core, Cli cli) {
       Change wroteCov = fs.writeFile(stem + ".cov", covTableFilesIn(paths, texts, res, entry).toBytes());
       if (!wroteCov.ok()) {
         core.warn("wacc: cannot write " + stem + ".cov — " + wroteCov.message);
+        return 1;
+      }
+    }
+    // The same table for a traced build, under its own suffix. Both or neither, for the reason above:
+    // a table without the module it describes names positions in a program that was not built.
+    if (traced) {
+      Change wroteTrace = fs.writeFile(stem + ".trace",
+                                       traceTableFiles(paths, texts, entry).toBytes());
+      if (!wroteTrace.ok()) {
+        core.warn("wacc: cannot write " + stem + ".trace — " + wroteTrace.message);
         return 1;
       }
     }

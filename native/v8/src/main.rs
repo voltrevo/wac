@@ -1762,6 +1762,15 @@ fn main() {
     if SEED.is_some() && stem == "covdump" {
         std::process::exit(covdump_command(&args[2..]));
     }
+    // **The comparison, not the two journals.** A traced run of a real routine is millions of events,
+    // and shipping both out as text to be compared by the caller costs tens of megabytes to learn one
+    // number. `issues/system/0161`.
+    if SEED.is_some() && stem == "ctcompare" {
+        std::process::exit(ctcompare_command(&args[2..]));
+    }
+    if SEED.is_some() && stem == "tracestat" {
+        std::process::exit(tracestat_command(&args[2..]));
+    }
     if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
         start_v8();
         std::process::exit(run_seed(&args[1..]));
@@ -2004,18 +2013,16 @@ fn uninstall_command(args: &[String]) -> i32 {
     0
 }
 
-fn covdump_command(rest: &[String]) -> i32 {
-    let Some(path) = rest.first() else {
-        eprintln!("usage: wac covdump <module.wasm>");
-        return 2;
-    };
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("wac: cannot read {path} — {e}");
-            return 1;
-        }
-    };
+/// Instantiate an instrumented module, run `main`, and hand back the counter array.
+///
+/// Extracted from `covdump_command` when `ctcompare` wanted the same six steps. The array means
+/// different things in the two modes and this does not care which: under `--coverage` slot `i` is how
+/// many times point `i` ran, and under the trace mode slot 0 is how many entries are live, then
+/// `(site, value)` pairs, and the last slot is how many events happened. Both are the same read.
+///
+/// The module is instantiated with no imports, which is what an instrumented single file needs.
+fn counters_of(path: &str) -> Result<Vec<i32>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {path} — {e}"))?;
     start_v8();
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
@@ -2023,8 +2030,7 @@ fn covdump_command(rest: &[String]) -> i32 {
     let scope = &mut v8::ContextScope::new(handle_scope, context);
 
     let Some(module) = v8::WasmModuleObject::compile(scope, &bytes) else {
-        eprintln!("wac: {path} was rejected by the engine");
-        return 1;
+        return Err(format!("{path} was rejected by the engine"));
     };
     let imports = v8::Object::new(scope);
     let global = context.global(scope);
@@ -2037,15 +2043,13 @@ fn covdump_command(rest: &[String]) -> i32 {
         .and_then(|sc| sc.run(scope))
         .and_then(|v| v.to_object(scope))
     else {
-        eprintln!("wac: {path} did not instantiate — an import it wants is missing");
-        return 1;
+        return Err(format!("{path} did not instantiate — an import it wants is missing"));
     };
 
     // The counters are allocated by a call, not by instantiation: skip this and every instrumented
     // function traps on its first branch with a message about the program rather than the omission.
     let Some(init) = get_export(scope, exports, "__cov_init") else {
-        eprintln!("wac: {path} carries no counters — was it built with coverage?");
-        return 1;
+        return Err(format!("{path} carries no counters — was it built with coverage or tracing?"));
     };
     init.call(scope, exports.into(), &[]);
     if let Some(main) = get_export(scope, exports, "main") {
@@ -2053,8 +2057,7 @@ fn covdump_command(rest: &[String]) -> i32 {
     }
 
     let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
-        eprintln!("wac: {path} has __cov_init and no __cov_len");
-        return 1;
+        return Err(format!("{path} has __cov_init and no __cov_len"));
     };
     let len = len_fn
         .call(scope, exports.into(), &[])
@@ -2062,19 +2065,204 @@ fn covdump_command(rest: &[String]) -> i32 {
         .map(|v| v.value())
         .unwrap_or(0);
     let Some(get_fn) = get_export(scope, exports, "__cov_get") else {
-        eprintln!("wac: {path} has __cov_len and no __cov_get");
-        return 1;
+        return Err(format!("{path} has __cov_len and no __cov_get"));
     };
+    let mut out = Vec::with_capacity(len.max(0) as usize);
     for i in 0..len {
         let idx = v8::Integer::new(scope, i);
-        let n = get_fn
-            .call(scope, exports.into(), &[idx.into()])
-            .and_then(|v| v.to_int32(scope))
-            .map(|v| v.value())
-            .unwrap_or(-1);
+        out.push(
+            get_fn
+                .call(scope, exports.into(), &[idx.into()])
+                .and_then(|v| v.to_int32(scope))
+                .map(|v| v.value())
+                .unwrap_or(-1),
+        );
+    }
+    Ok(out)
+}
+
+/// `wac covdump <module.wasm>` — run `main` under the counters and print each one.
+///
+/// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
+/// `i`th row describes counter `i`, and a test asserting "the loop ran three times" needs the pair.
+/// The aggregated report `--coverage` prints answers a different question — how much was reached —
+/// and cannot say how often.
+fn covdump_command(rest: &[String]) -> i32 {
+    let Some(path) = rest.first() else {
+        eprintln!("usage: wac covdump <module.wasm>");
+        return 2;
+    };
+    let counters = match counters_of(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("wac: {e}");
+            return 1;
+        }
+    };
+    for (i, n) in counters.iter().enumerate() {
         println!("{i}\t{n}");
     }
-    println!("{len} counter(s)");
+    println!("{} counter(s)", counters.len());
+    0
+}
+
+/// `wac tracestat <module.wasm>` — one traced run's size, without shipping the journal out.
+///
+/// `events` is what was recorded, `wanted` is what happened whether or not there was room, and `slots`
+/// is the room there was. They differ exactly when the journal overflowed, and `wanted` is the number
+/// to pass to `--trace-slots` to make the next run fit — which is the whole reason it is reported
+/// rather than left for a caller to double and try again.
+fn tracestat_command(rest: &[String]) -> i32 {
+    let Some(path) = rest.first() else {
+        eprintln!("usage: wac tracestat <module.wasm>");
+        return 2;
+    };
+    let counters = match counters_of(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("wac: {e}");
+            return 1;
+        }
+    };
+    if counters.len() < 2 {
+        eprintln!("wac: a journal is at least two slots; got {}", counters.len());
+        return 1;
+    }
+    println!(
+        "events {} wanted {} slots {}",
+        counters[0].max(0) / 2,
+        counters[counters.len() - 1],
+        counters.len()
+    );
+    0
+}
+
+/// `wac ctcompare <a.wasm> <b.wasm>` — two traced runs, and where their journals first differ.
+///
+/// **The comparison happens where the modules are.** A journal is `(site, value)` pairs and a real
+/// one is large — `x25519Base` produces about 1.6 million events — so `covdump`'s line-per-slot
+/// output is the wrong wire for it: a caller would parse tens of megabytes twice to learn one number.
+/// This prints one line.
+///
+///     same <n>                  the two journals are identical, over `n` events
+///     differs <i> <sa> <va> <sb> <vb>   at event `i`, where each side stood
+///     truncated <a> <b>         a side recorded fewer events than happened, so the answer is not
+///                               a comparison — the journal was sized too small for the run
+///
+/// `--all` answers with every divergent site instead of the first, which is what a caller checking a
+/// published list of leaking lines needs. Its walk stops at a **path split** — where the two runs are
+/// at different points rather than at one point with different values — because past that the two
+/// journals are not comparable event by event and every later "difference" is an artefact of the
+/// misalignment. The split is reported as its own line naming both sides:
+///
+///     split <i> <sa> <sb>       the runs parted; nothing after this is a comparison
+///     site <i> <site> <va> <vb> one point, reached by both, with different values — once per site
+///     longer <n> <site>         one run kept going; this is where the longer one stood at `n`
+///
+/// `truncated` is its own answer rather than a difference, because two journals that both overflowed
+/// can agree on every event they kept while differing in the ones they dropped. A caller that read
+/// that as "no divergence" would be told the routine is uniform on the strength of the part that fit.
+fn ctcompare_command(rest: &[String]) -> i32 {
+    let all = rest.iter().any(|a| a == "--all");
+    let paths: Vec<&String> = rest.iter().filter(|a| !a.starts_with("--")).collect();
+    let (Some(a_path), Some(b_path)) = (paths.first().copied(), paths.get(1).copied()) else {
+        eprintln!("usage: wac ctcompare [--all] <a.wasm> <b.wasm>");
+        return 2;
+    };
+    let (a, b) = match (counters_of(a_path), counters_of(b_path)) {
+        (Ok(a), Ok(b)) => (a, b),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("wac: {e}");
+            return 1;
+        }
+    };
+    // Slot 0 is how many entries are live; the last is how many events happened whether or not there
+    // was room. Anything shorter than both cannot be a journal.
+    if a.len() < 2 || b.len() < 2 {
+        eprintln!("wac: a journal is at least two slots; got {} and {}", a.len(), b.len());
+        return 1;
+    }
+    let (used_a, used_b) = (a[0].max(0) as usize, b[0].max(0) as usize);
+    let (want_a, want_b) = (a[a.len() - 1], b[b.len() - 1]);
+    // **Truncation is only checked when nothing diverged**, and getting this the other way round was
+    // the first version's bug. A difference found inside the prefix both journals kept is a real
+    // difference: the events are aligned up to there, and what was dropped after it cannot un-differ
+    // them. Refusing to answer would have made the expensive routines unmeasurable for a reason that
+    // does not apply to them — a ladder parts at the first differing bit, long before either journal
+    // fills. What truncation *does* invalidate is `same`, because two runs that overflowed can agree
+    // on every event they kept and differ in the ones they dropped.
+    let overflowed = want_a as usize * 2 > used_a || want_b as usize * 2 > used_b;
+    let (n_a, n_b) = (used_a / 2, used_b / 2);
+    if all {
+        // **`same` is printed when nothing diverged**, because no output at all is what a command that
+        // did not run also produces, and a caller reading silence as "no leak" would be told a routine
+        // is uniform by a broken pipe.
+        let mut said = false;
+        let mut seen: std::collections::HashSet<i32> = std::collections::HashSet::new();
+        let n = n_a.min(n_b);
+        for i in 0..n {
+            let (sa, va) = (a[1 + 2 * i], a[2 + 2 * i]);
+            let (sb, vb) = (b[1 + 2 * i], b[2 + 2 * i]);
+            if sa == sb && va == vb {
+                continue;
+            }
+            if sa != sb {
+                // Not a leaking site: it is where *this* run happened to be when the two stopped
+                // agreeing, and the other was somewhere else. Naming both is the only honest report,
+                // and nothing after it is a comparison.
+                println!("split {i} {sa} {sb}");
+                return 0;
+            }
+            if seen.insert(sa) {
+                said = true;
+                println!("site {i} {sa} {va} {vb}");
+            }
+        }
+        if n_a != n_b {
+            let longer = if n_a > n_b { &a } else { &b };
+            said = true;
+            println!("longer {n} {}", longer[1 + 2 * n]);
+        }
+        if !said {
+            if overflowed {
+                println!("truncated {want_a} {want_b}");
+            } else {
+                println!("same {}", n_a.min(n_b));
+            }
+        }
+        return 0;
+    }
+    for i in 0..n_a.max(n_b) {
+        let ev = |v: &[i32], n: usize| -> Option<(i32, i32)> {
+            if i < n { Some((v[1 + 2 * i], v[2 + 2 * i])) } else { None }
+        };
+        match (ev(&a, n_a), ev(&b, n_b)) {
+            (Some(x), Some(y)) if x == y => continue,
+            (Some(x), Some(y)) => {
+                println!("differs {i} {} {} {} {}", x.0, x.1, y.0, y.1);
+                return 0;
+            }
+            // One side ended. The site is whichever side still has one, which is what names the
+            // point a caller should look at.
+            (Some(x), None) => {
+                println!("differs {i} {} {} -1 -1", x.0, x.1);
+                return 0;
+            }
+            (None, Some(y)) => {
+                println!("differs {i} -1 -1 {} {}", y.0, y.1);
+                return 0;
+            }
+            (None, None) => break,
+        }
+    }
+    if overflowed {
+        println!("truncated {want_a} {want_b}");
+    } else {
+        // **The count, because `same` over nothing is not agreement.** A mistyped export name calls
+        // nothing and records nothing, and two empty journals match perfectly — which would report
+        // every routine in the repository as constant-time. A caller checks the number.
+        println!("same {}", n_a.min(n_b));
+    }
     0
 }
 

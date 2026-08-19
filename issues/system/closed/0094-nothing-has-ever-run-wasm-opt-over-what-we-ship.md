@@ -133,7 +133,7 @@ emitter, stays open and stays wac's rather than this repo's.
     wc      274 KB -> 219 KB     1s
     box sh  927 KB -> 636 KB    19s
 
-`packages/platform/test/optimize.test.ts` holds three things: that the artifact gets materially
+`packages/platform/test/wac/optimize_test.wac` holds three things: that the artifact gets materially
 smaller, that it is **still the same program** (a build that dropped the module would pass on size
 alone — so both binaries run and their answers are compared), and that a coverage build refuses the
 flag. The refusal is not caution: counters are branch-indexed globals and an optimiser may merge or

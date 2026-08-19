@@ -1,0 +1,69 @@
+// The slot count is in two places, and they have to agree.
+//
+// `host/layout.ts` decides how many control records the shared buffer holds; `src/platform.wac` states
+// the same number as `CALL_SLOTS` so a guest can derive its own limits from it instead of transcribing
+// one. Two copies of a number that has already changed twice is exactly the shape that goes stale
+// quietly: the guest would keep watching twelve sockets on a ring of 128, or — far worse in the other
+// direction — submit more calls than there are slots and park for ever with the held slots unable to
+// complete.
+//
+// Checked by reading both sources as text, the way `test/wac/order_test.wac` checks the field order it
+// depends on. A compile would be a heavier way to learn the same thing.
+//
+// ## Host-side until 2026-08-19, `issues/system/0161`
+//
+// **Both sides are now extracted, and only one was before.** The TypeScript imported `SLOTS` and read
+// `platform.wac` as text, so a renamed constant on the TypeScript side was a compile error. From here
+// neither side can be imported, which puts a second extractor between the test and its subject — and
+// an extractor that finds nothing would otherwise make the comparison vacuous. So each side traps if
+// its declaration is not found, and the two numbers are asserted to be numbers before being compared:
+// "no such declaration" has to be a failure, not a zero.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string WAC = "std/platform.wac";
+const string LAYOUT = "packages/platform/host/layout.ts";
+
+string readOr(T t, Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  t.isTrue(r.ok, path + " — " + r.error);
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+/**
+ * The digits following `marker`, or -1 when the marker is not there.
+ *
+ * -1 rather than 0 because 0 is a number a slot count could in principle be, and this has to be able
+ * to say "the declaration is gone" in a way no comparison can mistake for an answer.
+ */
+i32 numberAfter(string src, string marker) {
+  i32 at = -1;
+  for (i32 i = 0; i + marker.len() <= src.len() && at < 0; i++) {
+    if (src.slice(i, i + marker.len()) == marker) { at = i + marker.len(); }
+  }
+  if (at < 0) { return -1; }
+  u8[] b = src.toBytes();
+  i32 v = -1;
+  for (i32 i = at; i < b.len(); i++) {
+    if (b[i] < 48 || b[i] > 57) { break; }
+    v = (v < 0 ? 0 : v) * 10 + (b[i] - 48);
+  }
+  return v;
+}
+
+export string test_platform_wacs_call_slots_is_the_rings_real_size(Core core, Cli cli) {
+  T t = T.create();
+  i32 guest = numberAfter(readOr(t, cli, WAC), "export const i32 CALL_SLOTS = ");
+  i32 host = numberAfter(readOr(t, cli, LAYOUT), "export const SLOTS = ");
+
+  t.isTrue(guest >= 0, "platform.wac no longer declares CALL_SLOTS");
+  t.isTrue(host >= 0, "layout.ts no longer declares SLOTS");
+  if (guest < 0 || host < 0) { return t.report(); }
+
+  t.eqI32(guest, host,
+          "platform.wac says " + itoa(guest) + " and layout.ts says " + itoa(host) +
+          "; a guest sizing itself from the wrong one deadlocks");
+  return t.report();
+}

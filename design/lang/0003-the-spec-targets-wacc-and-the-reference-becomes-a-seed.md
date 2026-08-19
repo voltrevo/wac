@@ -60,7 +60,7 @@ implement, what is wacc-only, and what the reference keeps solely to build the s
 2026-08-11 alone, in both directions.
 
 **4. Everything that compiles through the reference has a deadline.** `harness/wacBind.ts`,
-`tools/coverage.ts`, `harness/ctTrace.ts`, `site/src/snippets.ts` and the rest call `wacCompile`, and
+`tools/coverage.ts`, `site/src/snippets.ts` and the rest call `wacCompile`, and
 none of them can compile a file using a wacc-only feature. `WAC_BIND_FROM=wacc` binds every package with wacc's
 own metadata and generator (34 of 34, 1,663 tests) and **`deno task app:build` compiles
 applications with wacc by default** — all 55 programs here emit through it, box's `wc`, `grep`,

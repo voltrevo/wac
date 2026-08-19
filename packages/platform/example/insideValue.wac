@@ -14,7 +14,7 @@
 // what the child collects, `childCli` and `childCore` are the capabilities built over it, and the
 // host is not involved at all.
 //
-// **It exists to be compared, not only to work.** `packages/platform/test/frame.test.ts` runs this
+// **It exists to be compared, not only to work.** `packages/platform/test/wac/frame_test.wac` runs this
 // and `inside.wac` and requires their output to be identical, byte for byte, which is the only claim
 // worth making here: that a child cannot tell which of the two ran it. The child — `shout` below —
 // is copied from `inside.wac` unchanged, because a child that had to be adapted would prove nothing.

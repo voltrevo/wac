@@ -27,7 +27,7 @@
 // capability had nowhere to put what it collected, and `platform` answered with
 // `pushChild`/`popChild`: the host held the child's world between two calls. `design/lang/0002` tier
 // two landed on 2026-08-16 and the premise stopped being true — `issues/lang/0137`. The two
-// implementations still agree byte for byte, which `packages/platform/test/frame.test.ts` is a
+// implementations still agree byte for byte, which `packages/platform/test/wac/frame_test.wac` is a
 // differential for; what changed is that the state is a local this function can see rather than a
 // stack inside the host, and that there is no second call to forget.
 //

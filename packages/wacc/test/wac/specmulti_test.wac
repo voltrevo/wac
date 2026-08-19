@@ -1,6 +1,6 @@
 // **The contract, where it takes more than one file to state it.**
 //
-// `specCheck.test.ts` and `specAccept.test.ts` hold this checker to the programs a single file states.
+// `specsingle_test.wac` holds this checker to the programs a single file states.
 // They cannot reach the rules that are *about* files — export visibility, re-export, cross-file type
 // identity and type-name scope — because none of those can be written down in one file. Those programs
 // sit in `compiler/wacSpec.test.ts` as `Map`s, and nothing looked at them until the corpus started

@@ -489,7 +489,7 @@ broken compilation.
 
 ## Side channels
 
-`test/constanttime.test.ts` runs each routine twice with different secrets and the same
+`test/wac/constanttime_test.wac` runs each routine twice with different secrets and the same
 public input, and compares the ordered sequence of **branches taken and memory indices
 used**. Both matter: a secret-dependent branch is the obvious leak, and a secret-dependent
 *index* has no branch at all — `SBOX[key_byte]` touches a cache line chosen by the key,
@@ -497,15 +497,15 @@ which is how AES keys have been recovered from cache timing since 2005.
 
 | routine | events per run | result |
 |---|---:|---|
-| `sha256` | 1,540 | uniform |
-| `chachaBlock` | 509 | uniform |
-| `poly1305` | 138 | uniform |
-| `x25519Base` | 1,755,783 | uniform |
-| `ghash` | 739 | **leaks** — control flow diverges; not examined past that |
-| `aesExpandKey` | 515 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
-| `aesEncrypt` | 11,778 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges; not examined past that |
-| `bcryptPbkdf` | 8,177,000 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
-| `p256PublicKey` | ~2,000,000 | **leaks** — control flow diverges at `weierstrass.wac:120`, the ladder's conditional add |
+| `sha256` | 1,543 | uniform |
+| `chachaBlock` | 510 | uniform |
+| `poly1305` | 140 | uniform |
+| `x25519Base` | 1,812,173 | uniform |
+| `ghash` | 740 | **leaks** — control flow diverges where one run stood at `ghash.wac:36`; not examined past that |
+| `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
+| `aesEncrypt` | 11,779 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges where one run stood at `aes.wac:66`; not examined past that |
+| `p256PublicKey` | 3,065,278 | **leaks** — control flow diverges where one run stood at `weierstrass.wac:120`; not examined past that |
+| `bcryptPbkdf` | 8,177,005 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
 
 **The event counts changed on 2026-08-12 and the verdicts did not.** These are wacc's
 figures now (wac issue 0105): it instruments a slightly different set — an `else` point
@@ -568,7 +568,22 @@ password 129 times over. Cache-timing resistance was never among its goals, and 
 that had it would not be bcrypt. **Predicting a result is not measuring it**, which is why
 the row stayed empty until it could be filled.
 
-Regenerate this table with `deno run -A packages/crypto/ct.ts`. It is generated rather
+Regenerate this table with
+
+```sh
+wac run --allow-read --allow-write --allow-run packages/crypto/tools/ct.wac
+```
+
+**Every figure is one higher than the table this replaced**, and uniformly so: a run is now a small
+program whose `main` calls the routine, and `main`'s own entry point is an event like any other. The
+counts describe the program that was traced, which is what "events per run" says. `p256PublicKey` was
+`~2,000,000` here for as long as the row existed, and named `weierstrass.wac:120` — a hand-written
+number and a hand-written line in a generated table, because the tool had no case for it. It has one
+now, and both are measured. Where a split is named, the wording is careful for the reason `ghash`'s row
+shows: `ghash.wac:36` is where *one* run stood when the two stopped agreeing, and the point itself need
+not be the one that depends on the secret.
+
+It is generated rather
 than hand-written because published figures that cannot be reproduced go stale silently —
 which is what `issues/closed/0007` was about.
 

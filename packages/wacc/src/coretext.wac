@@ -1979,7 +1979,7 @@ export string stdFile(string path) {
            + " *\n"
            + " * Stated here rather than transcribed into each program, because it has already changed twice (four,\n"
            + " * sixteen, 128) and every copy of the old number becomes a limit nobody can explain.\n"
-           + " * `test/slots.test.ts` fails if this and `host/layout.ts` disagree.\n"
+           + " * `test/wac/slots_test.wac` fails if this and `host/layout.ts` disagree.\n"
            + " */\n"
            + "export const i32 CALL_SLOTS = 128;\n"
            + "\n"

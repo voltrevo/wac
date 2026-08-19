@@ -37,7 +37,7 @@ const i32 HINT = 6;
 const i32 SPAN = 7;
 
 /** One single-file case from the corpus: its path, its source, and whether it should compile. */
-struct GapCase {
+struct Recorded {
   string path;
   string source;
   bool ok;
@@ -53,17 +53,17 @@ string strOf(JsonValue v) {
  * `files` is `[[path, source], …]`, so a single-file case is one pair. The multi-file ones are what
  * `specMulti` is about and carry no extra diagnostics shape.
  */
-GapCase[] singleFileCases(Cli cli) {
+Recorded[] singleFileCases(Cli cli) {
   FileResult f = cli.readFile(CORPUS).wait();
-  if (!f.ok) { return GapCase[0](fill: GapCase("", "", true)); }
+  if (!f.ok) { return Recorded[0](fill: Recorded("", "", true)); }
   JsonValue? doc = parse(f.bytes);
-  if (doc is null) { return GapCase[0](fill: GapCase("", "", true)); }
+  if (doc is null) { return Recorded[0](fill: Recorded("", "", true)); }
   JsonObject top = match (doc!) { case Object(m): m, else: JsonObject.create() };
   JsonValue? cases = top.getStr("cases");
-  if (cases is null) { return GapCase[0](fill: GapCase("", "", true)); }
+  if (cases is null) { return Recorded[0](fill: Recorded("", "", true)); }
   JsonArray all = match (cases!) { case Array(a): a, else: JsonArray.create() };
 
-  GapCase[] out = GapCase[all.len()](fill: GapCase("", "", true));
+  Recorded[] out = Recorded[all.len()](fill: Recorded("", "", true));
   i32 n = 0;
   for (i32 i = 0; i < all.len(); i++) {
     JsonObject c = match (all.get(i)) { case Object(m): m, else: JsonObject.create() };
@@ -75,10 +75,10 @@ GapCase[] singleFileCases(Cli cli) {
     if (pair.len() < 2) { continue; }
     JsonValue? okv = c.getStr("ok");
     bool ok = okv is null ? true : match (okv!) { case Bool(b): b, else: true };
-    out[n] = GapCase(strOf(pair.get(0)), strOf(pair.get(1)), ok);
+    out[n] = Recorded(strOf(pair.get(0)), strOf(pair.get(1)), ok);
     n = n + 1;
   }
-  GapCase[] exact = GapCase[n](fill: GapCase("", "", true));
+  Recorded[] exact = Recorded[n](fill: Recorded("", "", true));
   for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
   return exact;
 }
@@ -190,7 +190,7 @@ export string test_how_many_of_waccs_diagnostics_carry_their_operands(Core core,
   // code and a position at 135 call sites and the operands at ten of them; this says what that is
   // worth where it is actually used, which is the number to move.
   T t = T.create();
-  GapCase[] cases = singleFileCases(cli);
+  Recorded[] cases = singleFileCases(cli);
   t.isTrue(cases.len() > 100,
            "only " + itoa(cases.len()) + " single-file cases — the corpus is not being read");
   if (cases.len() <= 100) { return t.report(); }

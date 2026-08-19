@@ -19,6 +19,7 @@
 // old test called `generate` and its five parsers in process.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { askArgvCached } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -51,38 +52,60 @@ string firstDifference(string a, string b) {
   return "no line differs; lengths " + itoa(a.len()) + " and " + itoa(b.len());
 }
 
-string askOracle(T t, Cli cli, string[] args, string what) {
+/**
+ * The reference generator's answer, cached on the question and on the reference.
+ *
+ * Six calls a run — three programs by two languages — at about 1.4s each, one of them generating the
+ * glue for `packages/wacc/src/api.wac`: 11s of this file's 13s. The answers are a pure function of the
+ * program's sources and of `compiler/`, so `askArgvCached` keys on both. `inputs` carries the *content*
+ * the arguments only point at, which is why the caller hands over the sources it already holds.
+ *
+ * **Only the reference is remembered.** `bindgenFiles` and `bindgenWire` — ours — run on every pass
+ * whatever the cache holds, and the assertions below are what they always were: a differential with
+ * one remembered side is still a differential, and one with two is nothing.
+ */
+string askOracle(T t, Cli cli, string[] args, string what, string[] inputs) {
   string[] argv = string[args.len() + 3](fill: "");
   argv[0] = "run";
   argv[1] = "-A";
   argv[2] = ORACLE;
   for (i32 i = 0; i < args.len(); i++) { argv[3 + i] = args[i]; }
-  Exec r = cli.exec("deno", argv, u8[0]()).wait();
-  t.isTrue(r.ran() && r.status == 0,
-           what + ": the reference generator ran — " + string.fromBytes(r.stderr));
-  return (r.ran() && r.status == 0) ? string.fromBytes(r.stdout) : "";
+  return askArgvCached(t, cli, "deno", argv, what + ": the reference generator", "bindgen",
+                       string[]("compiler", "harness"), inputs);
 }
 
-/** One inline program, written where both generators can be pointed at the same path. */
-struct BindCase {
+/**
+ * One inline program, written where both generators can be pointed at the same path.
+ *
+ * **Not `Case`**, which is what this was called: `speccases.wac` exports a `Case` and
+ * `diagnosticgap_test.wac` declared a third, so `wac test`'s shared build for this directory could
+ * not emit — `the name Case, which more than one file declares` — and all 53 files were built one at
+ * a time instead. `issues/lang/0162b` is the same collision arriving as something much worse.
+ *
+ * **It did not make the lane faster, which is worth saying.** Measured either side: 616s with the
+ * shared build restored against a run that had not finished at 580s without it. The fallback is real
+ * and the warning is gone, but the cost here is not compiling — `corpusemit` 217s, `checked` 176s and
+ * `names` 128s are 521s of the 616, and they are doing their own work.
+ */
+struct Program {
   string what;
   string src;
 }
 
-BindCase[] cases() {
-  return BindCase[](
-    BindCase("a scalar and nothing else",
+Program[] cases() {
+  return Program[](
+    Program("a scalar and nothing else",
          "export i32 add(i32 a, i32 b) { return a + b; }\n"),
-    BindCase("a string, both ways",
+    Program("a string, both ways",
          "export string greet(string who) { return \"hello \" + who; }\n"),
-    BindCase("a struct with a method",
+    Program("a struct with a method",
          "struct Point {\n" +
          "  i32 x;\n" +
          "  i32 y;\n" +
          "  i32 sum(const this) { return this.x + this.y; }\n" +
          "}\n" +
          "export Point origin(i32 x, i32 y) { return Point(x, y); }\n"),
-    BindCase("an enum built and matched",
+    Program("an enum built and matched",
          "enum Shape { Circle(i32 r), Square(i32 s) }\n" +
          "export i32 area(Shape s) {\n" +
          "  match (s) {\n" +
@@ -90,15 +113,15 @@ BindCase[] cases() {
          "    case Square(q): return q * q;\n" +
          "  }\n" +
          "}\n"),
-    BindCase("a numeric array in both directions",
+    Program("a numeric array in both directions",
          "export i32[] doubled(i32[] xs) {\n" +
          "  i32[] out = i32[xs.len()]();\n" +
          "  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i] * 2; }\n" +
          "  return out;\n" +
          "}\n"),
-    BindCase("an array of strings, whose elements are references",
+    Program("an array of strings, whose elements are references",
          "export string[] echo(string[] xs) { return xs; }\n"),
-    BindCase("everything at once",
+    Program("everything at once",
          "struct Point {\n" +
          "  i32 x;\n" +
          "  i32 y;\n" +
@@ -121,7 +144,12 @@ void compare(T t, Cli cli, string dir, string what, string entry, string[] paths
   string[] langs = string[]("ts", "js");
   for (i32 k = 0; k < langs.len(); k++) {
     string lang = langs[k];
-    string theirs = askOracle(t, cli, string[]("files", entry, lang), what + " (" + lang + ")");
+    // The sources are the key's other half: the oracle reads the entry from disk, so the arguments
+    // alone would name a question whose answer had changed.
+    string[] inputs = string[sources.len() + paths.len()](fill: "");
+    for (i32 j = 0; j < paths.len(); j++) { inputs[j] = paths[j]; }
+    for (i32 j = 0; j < sources.len(); j++) { inputs[paths.len() + j] = sources[j]; }
+    string theirs = askOracle(t, cli, string[]("files", entry, lang), what + " (" + lang + ")", inputs);
     if (theirs == "") { continue; }
     u8[] wasm = emitFiles(paths, sources, entry);
     string mine = bindgenFiles(wasm, paths, sources, entry, lang);
@@ -137,7 +165,7 @@ void compare(T t, Cli cli, string dir, string what, string entry, string[] paths
 export string test_the_two_generators_write_the_same_glue_for_each_shape(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "cases");
-  BindCase[] all = cases();
+  Program[] all = cases();
   for (i32 i = 0; i < all.len(); i++) {
     // Both generators are pointed at the *same path*, because the module's own name is in the output:
     // comparing across two names always differs and says nothing.
@@ -177,7 +205,8 @@ export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enu
   for (i32 k = 0; k < langs.len(); k++) {
     string lang = langs[k];
     string theirs = askOracle(t, cli,
-      string[]("wire", WASM_HEX, dir + "/sigs", dir + "/wire", lang), "a keyed enum (" + lang + ")");
+      string[]("wire", WASM_HEX, dir + "/sigs", dir + "/wire", lang), "a keyed enum (" + lang + ")",
+      string[](SIGS, WIRE));
     if (theirs == "") { continue; }
     string mine = bindgenWire(wasm, SIGS, WIRE, lang);
 

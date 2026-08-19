@@ -1,0 +1,102 @@
+// A child's world as a value: `Frame`, `childCli`, `childCore` — against the host frame it replaces.
+//
+// The claim is not that `insideValue.wac` works. It is that a child **cannot tell which of the two
+// ran it**, so the test is a differential: `example/inside.wac` uses `pushChild`/`popChild` and
+// `example/insideValue.wac` uses a substitute capability built from lambdas, the child function is
+// copied between them unchanged, and their output must be identical.
+//
+// That is a real oracle rather than two runs of the same code: the host frame is 250 lines of
+// TypeScript in `host/child.ts` written long before closures existed, and nothing in the wac
+// implementation was derived from it beyond the behaviours its comments name.
+//
+// ## Both halves run on the Deno host, and that is the whole of what this asserts
+//
+// `build.ts` builds them and the built artefacts run them, which is exactly what the TypeScript did.
+// **Run the same two programs under `wac run` and they disagree** — the native host does not apply a
+// pushed child's `cwd`, so the child is told `note.txt: No such file or directory` in the directory
+// that has it. `issues/system/0199`.
+//
+// So the stronger test — the same differential with the binary running both halves — is not here and
+// would be red. It is worth having and is a second pair of runs in this file on the day 0199 closes.
+// Until then this file says what its TypeScript said, and no more: read it as a claim about one host.
+//
+// Host-side until 2026-08-19, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+const string HOST = "packages/platform/example/inside.wac";
+const string VALUE = "packages/platform/example/insideValue.wac";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+/** What one run said. */
+struct Said {
+  string out;
+  string err;
+  i32 status;
+  bool ran;
+  string error;
+}
+
+/**
+ * Build one example and run it in a directory of its own.
+ *
+ * A directory each, because the child opens a file by a relative path and writes it — two runs
+ * sharing one would differ for a reason that has nothing to do with which frame served them.
+ */
+Said run(T t, Cli cli, string name, string entry, u8[] stdin) {
+  string dir = root(cli) + "/.cache/frame-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string app = dir + "/app";
+  Exec built = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/build.ts", entry,
+             "--allow-read", "--allow-write", "-o", app), u8[0]()).wait();
+  if (!built.ran() || built.status != 0) {
+    cli.remove(dir, true).wait();
+    return Said("", "", -1, false,
+                entry + " did not build — " + string.fromBytes(built.stderr));
+  }
+  Exec r = cli.exec(app, string[](dir), stdin).wait();
+  Said said = Said(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status,
+                   r.ran(), r.error);
+  cli.remove(dir, true).wait();
+  return said;
+}
+
+export string test_a_substitute_capability_answers_exactly_as_the_host_frame_does(
+    Core core, Cli cli) {
+  T t = T.create();
+  Said host = run(t, cli, "host", HOST, u8[0]());
+  Said value = run(t, cli, "value", VALUE, u8[0]());
+  t.isTrue(host.ran, "the host-frame program ran — " + host.error);
+  t.isTrue(value.ran, "the substitute-frame program ran — " + value.error);
+  if (!host.ran || !value.ran) { return t.report(); }
+
+  // Sanity before the comparison: two programs that both failed would agree perfectly.
+  t.eqI32(host.status, 0, host.err);
+  t.isTrue(contains(host.out, "FROM STDIN"), host.out);
+
+  // The child's arguments, its input, the file it opened by a relative path, `write` and `log` in
+  // the order it wrote them, `warn` on the other stream, the status, and `truncated`.
+  t.eqStr(value.out, host.out, "the two frames told different stories");
+  t.eqStr(value.err, host.err, "and on the other stream");
+  t.eqI32(value.status, host.status, "and exited differently");
+  return t.report();
+}
+
+export string test_a_substitute_capability_does_not_let_the_child_reach_the_real_standard_input(
+    Core core, Cli cli) {
+  // The same property `test/wac/inside_test.wac` pins for the host frame, and the one a shell depends
+  // on: a filter running in process must not swallow the terminal. Here it is `Frame.take` answering
+  // from its own bytes rather than the host being asked at all.
+  T t = T.create();
+  Said value = run(t, cli, "stdin", VALUE, "THE PARENT'S OWN INPUT\n".toBytes());
+  t.isTrue(value.ran, "the substitute-frame program ran — " + value.error);
+  if (!value.ran) { return t.report(); }
+  t.isTrue(contains(value.out, "FROM STDIN"), "the child read its own feed: " + value.out);
+  t.isTrue(!contains(value.out, "PARENT"), "the child read the real standard input: " + value.out);
+  return t.report();
+}
