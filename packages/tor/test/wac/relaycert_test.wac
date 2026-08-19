@@ -38,7 +38,7 @@ import {
 } from "../../src/relaycert.wac";
 import { certSignedWithKey, certCertifiedKey, certType} from "../../src/hsdesc.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
-import { jsonFile, strOf, arrayOf, objectOf } from "./jsonfile.wac";
+import { jsonFile, strOf, arrayOf, objectOf } from "../../../wactest/src/jsonfile.wac";
 import { JsonArray } from "../../../json/src/value.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";

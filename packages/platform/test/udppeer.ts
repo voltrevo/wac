@@ -52,7 +52,7 @@ async function exchange(which: number, to: number, payload: Uint8Array) {
 
 let n = 0;
 for (;;) {
-  let request: { peer: number; hex: string; to: number } | null = null;
+  let request: { peer: number; hex: string; to: number };
   try {
     request = JSON.parse(Deno.readTextFileSync(`${dir}/send-${n}.json`));
   } catch {

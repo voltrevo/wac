@@ -1526,7 +1526,7 @@ three sequences to a real HSDir settled it in one run —
 | revision 42, then 42 | the second **refused** |
 
 The third row is the one with teeth. An unchanged descriptor uploaded twice is a **400**, not a
-no-op 200 — and `dird.test.ts` asserted 200 until the sequence was put to a real cache. That case had
+no-op 200 — and `test/wac/dird_test.wac` asserted 200 until the sequence was put to a real cache. That case had
 been pinning our behaviour rather than tor's, which is the failure mode a home-made oracle always
 has: it agrees with whatever it was written against.
 

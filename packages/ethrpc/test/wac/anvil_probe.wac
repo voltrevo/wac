@@ -5,7 +5,7 @@
 // tests send a request over a socket and let a node decide what comes back.
 //
 // **The skip says why.** A skip that prints nothing reads as coverage — the failure
-// `packages/tls/test/openssl35.ts` exists to stop, after two ML-KEM interop tests spent their whole
+// `packages/tls/test/wac/openssl.wac` exists to stop, after two ML-KEM interop tests spent their whole
 // lives "2 ignored". `~/tools/foundry` rather than `/tmp` for the same reason: /tmp does not survive a
 // restart, and a reference that vanishes is one the tests quietly stop using.
 //
