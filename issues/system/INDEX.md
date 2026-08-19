@@ -5,7 +5,8 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0212](open/0212-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
+| [0213](open/0213-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
+| [0212](open/0212-the-mutation-recall-floor-is-decided-by-filenames-not-by-the-checker.md) | rung 3 pairs each corpus file with `MUTATIONS[i % 7]` over an alphabetical list, so adding one file re-pairs every later one — two gate runs failed under the 97% floor for that reason | bug | wrong answer |
 | [0210](open/0210-the-weierstrass-ladder-branches-on-the-secret-scalar.md) | `jacMul` adds only when the scalar bit is set, so P-256 and P-384 leak the private key — and the ECDSA *nonce* — through control flow; measured with `ctTrace`, one divergent site at `weierstrass.wac:120`, and the README's side-channel table had no asymmetric row at all | bug | no error |
 | [0209](open/0209-ed25519-is-five-times-slower-than-p-256-which-is-the-wrong-way-round.md) | `ed25519Sign` is 63ms and `p256Sign` is 12ms — five times slower on the curve that should be faster, so it is this code rather than the mathematics; `ptDouble` is `ptAdd(p, p)` and there is no precomputed base table | performance | no error |
 | [0208](open/0208-nothing-owns-the-wasmtime-hosts-build-so-five-callers-do-it-themselves.md) | nothing owns the wasmtime host's build, so five callers each do it themselves | missing feature | not implemented |

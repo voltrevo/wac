@@ -231,8 +231,14 @@ guessed linear from a delta that was mostly one-off machinery, which was the wro
 the right observation. `vec` at 5,934 bytes should therefore cost about 16 KB, and the whole of
 `packages/std` in `core` is roughly 9% on a seed that began this session at 777 KB.*
 
-*It is not the concatenation — that was measured and reverted at 0.1%. So it is what a wasm module
-costs to carry a string literal: the bytes, plus the code that materialises them. Worth knowing
+*It is not the concatenation — that was measured and reverted at 0.1%. **And it is not what a wasm
+module costs to carry a string literal, which is what this paragraph used to say and was written from
+a model rather than from `emitExprAt`.** There are no bytes to carry: `packages/wacc/src/emit.wac`
+emits a literal as one `i32.const` **per character**, then `array.new_fixed`. That is one byte of
+opcode plus one byte of signed LEB below `0x40` and two at or above it — and lowercase letters are
+`0x61`-`0x7A`, so identifiers and prose take the three-byte path. Predicted from the byte
+distribution of the two files measured here, 4,104 below and 6,929 at or above: 28,995 bytes, 2.63x,
+against 31,096 measured. The rest is the per-line concatenation and function overhead. `issues/lang/0162`. Worth knowing
 before `core` grows past collections, and worth measuring again rather than extrapolating, since
 this is the second extrapolation in this paragraph and the first was wrong.)*
 
@@ -350,10 +356,13 @@ Three things to weigh, and none of them is obvious:
 - **It is mostly one file.** 105 KB of the 137 KB, and 437 of the 475 import edges, are
   `platform.wac`. Whatever is decided can be decided about that file alone; `frame` and `stream` are
   38 importers between them and could stay packages without weakening anything D4 says.
-- **2.8x is a measurement of the current representation**, and the one-literal experiment showed the
-  generated shape is not the driver — it is what a wasm module costs to carry a string. If 384 KB is
-  judged too much, that is the thing to attack, and it has not been attacked yet: nothing has tried
-  storing the tree as a single data section read at parse time rather than as per-file literals.
+- **2.8x is a measurement of one emitter choice, and `issues/lang/0162` names it.** A string
+  literal is emitted as one `i32.const` per character — so text costs 2.6-2.8x its length in
+  *code*, with no data segment anywhere. Through a data segment and `array.new_data` the same
+  137 KB would be roughly 140 KB rather than 384 KB, and the objection below largely goes away.
+  So this bullet is the load-bearing one rather than a hedge: **the 384 KB is not a fact about
+  embedding, it is a fact about how literals are emitted**, and if that number is the reason not
+  to move `platform.wac` then the thing to attack is the emitter.
 
 Recommendation: **do not move `platform.wac` on the strength of D4 alone.** Reserve `std/` and the
 specifier, move `frame` and `stream` if they are wanted, and treat the big file as its own decision
