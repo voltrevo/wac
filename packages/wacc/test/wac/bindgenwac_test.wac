@@ -1,0 +1,212 @@
+// The generator, ported: `src/bindgen.wac` against `packages/wacc/tools/waccBindgen.ts`.
+//
+// `waccBindgen.ts` is the last piece of the toolchain that exists only in TypeScript — `waccx
+// bindgen` writes glue and the `wac` binary cannot. That is a tooling-parity gap rather than a
+// missing language feature, which is why it is worth closing and why the bar is what it is here.
+//
+// **Byte-identical, or it is not a port.** Comparing behaviour would leave two generators to keep in
+// step; comparing the text means a difference is a bug in one of them and is found at the character
+// where they diverge. Both modes are compared, because JavaScript is the TypeScript minus its
+// annotations and a port could get one right while dropping a cast from the other.
+//
+// The corpus grows as the port covers more. Each program is here for a shape rather than for a
+// feature list: a scalar and a string say the conversions work, a struct and an enum say the classes
+// do, an array in both directions says the staging buffer does.
+//
+// Host-side until 2026-08-19, `issues/system/0161`. **The TypeScript generator stays TypeScript** —
+// it is the thing being compared, not the harness — and `test/bindgenOracle.ts` is the smallest
+// wrapper that lets a wac test ask it a question, since it has no command line of its own and the
+// old test called `generate` and its five parsers in process.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { contains, splitLines } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Graph, graphOf } from "./graph.wac";
+import { emitFiles, bindgenFiles, bindgenWire } from "../../src/api.wac";
+
+const string ORACLE = "packages/wacc/test/bindgenOracle.ts";
+
+string root(Cli cli) { return cli.cwd().wait(); }
+
+string scratch(Cli cli, string name) {
+  string dir = root(cli) + "/.cache/bindgenwac-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  return dir;
+}
+
+/** Where two long texts first differ, as a line rather than an offset. */
+string firstDifference(string a, string b) {
+  string[] x = splitLines(a);
+  string[] y = splitLines(b);
+  i32 n = x.len() > y.len() ? x.len() : y.len();
+  for (i32 i = 0; i < n; i++) {
+    string xi = i < x.len() ? x[i] : "<no line>";
+    string yi = i < y.len() ? y[i] : "<no line>";
+    if (xi != yi) {
+      return "line " + itoa(i + 1) + ": waccBindgen.ts: " + xi + " | bindgen.wac: " + yi;
+    }
+  }
+  return "no line differs; lengths " + itoa(a.len()) + " and " + itoa(b.len());
+}
+
+string askOracle(T t, Cli cli, string[] args, string what) {
+  string[] argv = string[args.len() + 3](fill: "");
+  argv[0] = "run";
+  argv[1] = "-A";
+  argv[2] = ORACLE;
+  for (i32 i = 0; i < args.len(); i++) { argv[3 + i] = args[i]; }
+  Exec r = cli.exec("deno", argv, u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           what + ": the reference generator ran — " + string.fromBytes(r.stderr));
+  return (r.ran() && r.status == 0) ? string.fromBytes(r.stdout) : "";
+}
+
+/** One inline program, written where both generators can be pointed at the same path. */
+struct Case {
+  string what;
+  string src;
+}
+
+Case[] cases() {
+  return Case[](
+    Case("a scalar and nothing else",
+         "export i32 add(i32 a, i32 b) { return a + b; }\n"),
+    Case("a string, both ways",
+         "export string greet(string who) { return \"hello \" + who; }\n"),
+    Case("a struct with a method",
+         "struct Point {\n" +
+         "  i32 x;\n" +
+         "  i32 y;\n" +
+         "  i32 sum(const this) { return this.x + this.y; }\n" +
+         "}\n" +
+         "export Point origin(i32 x, i32 y) { return Point(x, y); }\n"),
+    Case("an enum built and matched",
+         "enum Shape { Circle(i32 r), Square(i32 s) }\n" +
+         "export i32 area(Shape s) {\n" +
+         "  match (s) {\n" +
+         "    case Circle(r): return 3 * r * r;\n" +
+         "    case Square(q): return q * q;\n" +
+         "  }\n" +
+         "}\n"),
+    Case("a numeric array in both directions",
+         "export i32[] doubled(i32[] xs) {\n" +
+         "  i32[] out = i32[xs.len()]();\n" +
+         "  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i] * 2; }\n" +
+         "  return out;\n" +
+         "}\n"),
+    Case("an array of strings, whose elements are references",
+         "export string[] echo(string[] xs) { return xs; }\n"),
+    Case("everything at once",
+         "struct Point {\n" +
+         "  i32 x;\n" +
+         "  i32 y;\n" +
+         "  i32 sum(const this) { return this.x + this.y; }\n" +
+         "}\n" +
+         "enum Shape { Circle(i32 r), Square(i32 s) }\n" +
+         "export i32 add(i32 a, i32 b) { return a + b; }\n" +
+         "export string greet(string who) { return \"hello \" + who; }\n" +
+         "export Point origin(i32 x, i32 y) { return Point(x, y); }\n" +
+         "export i32 area(Shape s) {\n" +
+         "  match (s) {\n" +
+         "    case Circle(r): return 3 * r * r;\n" +
+         "    case Square(q): return q * q;\n" +
+         "  }\n" +
+         "}\n" +
+         "export u8[] bytes(u8[] b) { return b; }\n"));
+}
+
+void compare(T t, Cli cli, string dir, string what, string entry, string[] paths, string[] sources) {
+  string[] langs = string[]("ts", "js");
+  for (i32 k = 0; k < langs.len(); k++) {
+    string lang = langs[k];
+    string theirs = askOracle(t, cli, string[]("files", entry, lang), what + " (" + lang + ")");
+    if (theirs == "") { continue; }
+    u8[] wasm = emitFiles(paths, sources, entry);
+    string mine = bindgenFiles(wasm, paths, sources, entry, lang);
+
+    // **Asserted, not merely compared.** Two empty strings are equal, and a generator that wrote
+    // nothing would agree with one that wrote nothing.
+    t.isTrue(contains(theirs, "export function"),
+             what + ": the reference generator emitted no exports");
+    t.eqStr(mine, theirs, what + " (" + lang + ") — " + firstDifference(theirs, mine));
+  }
+}
+
+export string test_the_two_generators_write_the_same_glue_for_each_shape(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "cases");
+  Case[] all = cases();
+  for (i32 i = 0; i < all.len(); i++) {
+    // Both generators are pointed at the *same path*, because the module's own name is in the output:
+    // comparing across two names always differs and says nothing.
+    string entry = dir + "/case" + itoa(i) + ".wac";
+    cli.writeFile(entry, all[i].src.toBytes()).wait();
+    compare(t, cli, dir, all[i].what, entry, string[](entry), string[](all[i].src));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enum_name(
+    Core core, Cli cli) {
+  // A name the linker keyed, which no program can be made to produce on demand.
+  //
+  // `Node@2` is what the metadata carries where two files declare one name and the declaring file is
+  // not known, and `@` is not a TypeScript identifier: every position the generator writes a type name
+  // in goes through `classNameOf`, and two of them did not, producing glue that would not parse
+  // (`SyntaxError: Expected '{', got '@'`). The corpus above cannot reach it, because every case there
+  // derives its wire from a real program — so the wire is written by hand and both generators are
+  // handed the same one.
+  //
+  // This is the only check either generator has for that property. `test/wac/keyedenum_test.wac`
+  // asserts it of `bindgen.wac` alone; comparing the text here is what extends it to `waccBindgen.ts`.
+  T t = T.create();
+  const string WIRE = "E\tNode@2\tNode__two\tElement:tag:string;Text:\n";
+  const string SIGS = "make\tNode@2\t\n";
+  // A bare wasm header — nothing here instantiates it.
+  const string WASM_HEX = "0061736d01000000";
+  u8[] wasm = u8[](0, 0x61, 0x73, 0x6d, 1, 0, 0, 0);
+
+  string dir = scratch(cli, "keyed");
+  cli.writeFile(dir + "/sigs", SIGS.toBytes()).wait();
+  cli.writeFile(dir + "/wire", WIRE.toBytes()).wait();
+
+  string[] langs = string[]("ts", "js");
+  for (i32 k = 0; k < langs.len(); k++) {
+    string lang = langs[k];
+    string theirs = askOracle(t, cli,
+      string[]("wire", WASM_HEX, dir + "/sigs", dir + "/wire", lang), "a keyed enum (" + lang + ")");
+    if (theirs == "") { continue; }
+    string mine = bindgenWire(wasm, SIGS, WIRE, lang);
+
+    // **Asserted, not merely compared.** Two generators that both dropped the enum would agree, and a
+    // keyed name that reaches nothing is sanitised in the sense that matters least.
+    t.isTrue(contains(theirs, "class Node$2"),
+             "the reference generator wrote no class for the keyed enum: " + theirs.slice(0, 300));
+    t.eqStr(mine, theirs, "a linker-keyed enum name (" + lang + ") — " + firstDifference(theirs, mine));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_two_generators_write_the_same_glue_for_whole_programs(Core core, Cli cli) {
+  // The shapes that are not reachable from a one-file program, so they are named by their entry.
+  T t = T.create();
+  string[] entries = string[](
+    // A callback going in, a funcref coming out, `Pending<T>` and its aliases, and 40-odd dispatchers:
+    // the whole capability boundary, which is the hardest thing this generator is ever handed.
+    "packages/platform/example/wc.wac",
+    // The compiler itself — half a megabyte of module through the base64 writer, and the program whose
+    // glue the website actually ships.
+    "packages/wacc/src/api.wac");
+
+  for (i32 i = 0; i < entries.len(); i++) {
+    Graph g = graphOf(cli, entries[i]);
+    t.isTrue(g.ok, entries[i] + ": the import graph — " + g.error);
+    if (!g.ok) { continue; }
+    compare(t, cli, "", entries[i], entries[i], g.paths, g.sources);
+  }
+  return t.report();
+}
