@@ -237,8 +237,21 @@ for attempt in 1 2 3; do
         fi
         echo "   Re-run when the machine is quiet; see issues/system 0142 before believing anything below."
       fi
+      # **What a failure looks like has to include the `wac test` lane's words.** `FAILED` and
+      # `error:` are Deno's, and this pattern was written when Deno ran everything. `wac test` says
+      # `FAIL`, and its per-directory summary says `1 with failures` and `3 that did not run` — none
+      # of which match. So a run with real failing tests printed *nothing matched FAILED or error:,
+      # so no test reported anything — the run itself died … usually a worker killed for memory*, and
+      # the reader went to look at `free -m`. That happened three times in one morning before anybody
+      # read the log by hand; the tell was that two runs produced an identical count of summaries,
+      # which is not what a memory kill looks like.
+      #
+      # `cannot emit` and `did not build` are here for a failure with no failing test at all: a
+      # directory whose files collide on a name builds one at a time instead, every test passes, and
+      # the suite still exits non-zero. Without them the summary is empty and truthful and useless.
+      fails='FAILED|^FAIL |error:|wacc: cannot emit|did not build|with failures|did not run'
       echo "-- failures --"
-      if ! grep -qE 'FAILED|error:' "$log"; then
+      if ! grep -qE "$fails" "$log"; then
         # **A failure with no failures in it means the run died rather than reported.** This happened on
         # 2026-08-05: the suite type-checked all 140 files, printed its last `Check` line, and exited
         # non-zero in nine seconds with no diagnostic — fifteen minutes after a host reboot, with other
@@ -246,12 +259,12 @@ for attempt in 1 2 3; do
         # issue 0075 has already seen reported as though the test were wrong. The exit code above is what
         # tells them apart, and it was not printed at the time, so the only diagnosis available was a
         # guess. Somebody made a confident one and it was wrong.
-        echo "   Nothing in the log matched FAILED or error:, so no test reported anything — the run"
+        echo "   Nothing in the log looked like a failure, so no test reported anything — the run"
         echo "   itself died. Exit $status. 1 with no output is usually a worker killed for memory;"
         echo "   check /proc/loadavg and free -m, and try again on a quieter machine before believing"
         echo "   the change is at fault."
       fi
-      grep -E 'FAILED|error:' "$log" | head -20
+      grep -E "$fails" "$log" | head -20
       # Any test that outstayed Deno's warning threshold is worth naming even on a plain failure:
       # it is the likeliest cause of a slow run somebody is about to blame on their own change.
       slow=$(grep -oE "'[^']+' has been running for over[^)]*.\)" "$log" | sort -u | head -5)
