@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0215](open/0215-a-socket-can-only-be-closed-outright-so-a-wac-client-cannot-say-it-is-done-speaking.md) | a wac program can `closeSocket` but cannot half-close, so a client that must signal EOF and then read the reply has no call for it; `closeFeed` is the same thing for a child's stdin and its doc comment makes the argument, with the same `wc` example | missing feature | not implemented |
 | [0214](open/0214-an-opt-in-test-has-been-red-and-four-of-its-seven-cases-are-wrong.md) | `nativeBinary.test.ts` fails 3 of 7 — 4 once the first three are fixed — and nothing noticed — it is opt-in and nobody opts in; two are defects in the test, one is the 18-byte pipeline difference `seed.sh` already documents | bug | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
 | [0212](open/0212-the-mutation-recall-floor-is-decided-by-filenames-not-by-the-checker.md) | rung 3 pairs each corpus file with `MUTATIONS[i % 7]` over an alphabetical list, so adding one file re-pairs every later one — two gate runs failed under the 97% floor for that reason | bug | wrong answer |
@@ -67,7 +68,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-220 issues, 165 closed.
+221 issues, 165 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

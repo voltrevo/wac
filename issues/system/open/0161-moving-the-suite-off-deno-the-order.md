@@ -1406,15 +1406,59 @@ The other eight that do *not* use the reference, and what each is actually waiti
 
 | file | what it needs |
 | --- | --- |
-| `bindHelpers` (178) | a wasm section walker in wac — LEB128, type/function/export sections. `emit.wac` has a writer, not a reader, so this is a second parser rather than a reuse. Portable, not blocked. |
-| `bindgen` (392) | the same oracle shape `bindgenwac_test.wac` now has. Portable, not blocked. |
-| `ctTrace` (195) | *reads* as portable; its subject is `harness/ctTrace.ts`'s trace mode, so check what it measures before believing that. |
+| `bindHelpers` (178) | **done.** The walker was already there: `test/wac/wasm_probe.wac` had the LEB reader and the section loop for four other tests, and what was missing was the type section — so this grew `exportArities` beside them rather than a second parser. It reports `ok: false` with the tag it did not know rather than guessing, which the canary check needed: skipping the rec-group byte turns every arity into `-1`, and a walker that guessed would have reported the wrong helper. |
+| `bindgen` (392) | **stays.** I wrote "portable, not blocked" here without opening it, which is the third time in one day I have classified a file by its imports instead of its assertions. Its cases are JavaScript expressions against the *generated API* — `p.y = 10` writing through a reference, `c.Circle_r` being a getter rather than a method, a wrapper handed straight back into the module and returning as another wrapper. Moving them would put the JavaScript in a script and leave wac comparing printed strings, which deletes the claim. Same category as `jsxBoundary`. |
+| `ctTrace` (195) | **moved.** Its subject is the *compiler's* half, not `harness/ctTrace.ts` — the header said so and I did not read it. The blocker looked like `WebAssembly.instantiate`, and was not: a traced module reuses `__cov_init`/`__cov_len`/`__cov_get` and only changes what the array means, so `wac covdump` — written for `coverage_test.wac` — already prints the journal. What changed is that a run is a module rather than a call: `covdump` runs `main`, so each argument is its own module differing in one constant. The cost of that wrapper is one extra `entry` event, which the ordering test now states rather than filters. |
 | `specCheck` (68), `specAccept` (66) | `specCorpus.ts`, the text extractor. A second reader of one corpus is the trap named above — and `specCases.json` already records what these read, so the honest move may be to delete them rather than port them. |
 | `jsBindgen` (113), `jsxBoundary` (97) | JavaScript is half the differential. Stay. |
 | `nativeBinary` (510) | see above. |
 
-So the count blocked on the reference decision is nine, and the count that is simply unstarted work is
-three or four.
+So the count blocked on the reference decision is nine, and `wacc`'s unstarted work is now none.
+Every line of this table was checked by opening the file, after the `bindgen` row above was written
+from its import list and turned out to be wrong.
+
+### `packages/platform`, read the same way — 2026-08-19
+
+`platform` is the next block by size, and the same discriminator sorts it. What is **already
+recorded above** is that `marshal.test.ts`, the three `*_model.test.ts` and `browser.test.ts` never
+move: their subject is the TypeScript beside them. Four more were opened and three of those stay:
+
+| file | verdict |
+| --- | --- |
+| `inside` (94) | **moved**, whole. `native_examples_test.wac` already runs this example on both hosts, but what it checks is that the hosts *agree* — which two hosts that had both lost the child's standard error would also do. The port pins the transcript itself and the parent's own streams staying empty. |
+| `pipeline` (114) | **half.** The stdin→child→child→stdout test moved. The socket one cannot: the client must signal EOF and then read the reply, and wac has `closeSocket` and no half-close. Filed as `issues/system/0215`, whose argument is already written one capability over — `closeFeed`'s doc comment makes exactly this case for a child's stdin, with `wc` as the example. |
+| `aliasing` (161) | **stays**, and says so itself: it drives the world's handlers directly because a first attempt through a wac program *passed with the bug deliberately put back*. Nothing about running a wac program makes two reads pending simultaneously, which is what the race needs. |
+| `trapMessage` (72) | **stays**, already argued in its own header: three of its four cases moved in August, and the one left is the JavaScript route — `bindgen`'s `$trapped` guard and `host/entry.ts`, both TypeScript. |
+| `timeout` (209) | **mixed, and mostly stays.** Two end-to-end tests build `patience.wac` and run it; three drive `newBridge`/`submit`/`waitAny`/`collect` and assert on slot statuses in the control block, which is `host/layout.ts` and `host/call.ts`. Splitting it buys ~55 lines. |
+| `platform.test.ts` (554) | **done — thirteen of seventeen moved**, into `world_test.wac` (the application and `wc`, a withheld capability, a missing file, stdin, env unset-vs-empty, the hexdump filter, `stat`/`readDir` gating), `runtimes_test.wac` (the built executable's shebang and execute bit, three runs, Deno against Node, the whole-filesystem transcript, the ungranted `stat`) and `chunking_test.wac` (a megabyte in both directions through `box`). The four that stay have no wac in them at all: a `Worker` posting to a `SharedArrayBuffer` and `serveHostCalls` answering, which is `host/layout.ts` and `host/call.ts`. Two translation slips the canaries did not catch and the first run did: the example prints a fourth field (the filename), and `splitLines` does not leave JavaScript's empty element after a trailing newline — so `split("\n").length == 2` had to become the two facts it stands for. The `wc` counts are now checked against **coreutils** rather than against arithmetic the test did itself. |
+
+### `packages/server` — 2026-08-19
+
+`live.test.ts` (230, nine tests) **moved whole**. It reads as the hardest kind to move — three
+independent clients against a real socket — and was among the easiest, because the split was already
+clean: the raw-socket cases are wac's own sockets now, and the two client cases became one script
+each, which is what they always were. `fetchclient.ts` and `nodeclient.js` are halves of a
+differential, not harness: being *someone else's implementation* is the whole of what they
+contribute.
+
+Two things came out of it that were not the port:
+
+  - **`host/serve.ts`'s limits could not be set from its command line.** `listen(port, limits)` has
+    taken them since it was written and the only way to choose them was to import the function — so
+    the one test that exercised them had to run in the same process, and anyone actually running the
+    server got `DEFAULT_LIMITS` with no way to say otherwise. `--request-ms`, `--idle-ms` and
+    `--max-connections` are now flags. The 408 case is its own canary: with the default 10s request
+    timeout it would exceed the test's 5s read bound and fail, so a flag that did not reach `listen`
+    could not pass.
+  - **`serve.ts` opens with "wasm has no sockets and no clock", and that is dated.** It predates
+    `packages/platform`; wac has had both for a while. The accept loop could be wac now. Not done
+    here — it is a rewrite of working code rather than a port of a test — but the sentence is the
+    kind of comment that reads as a constraint and is a date.
+
+**The lesson this block repeats:** three of these six carry their own verdict in their own header,
+written by whoever last thought about them. Reading the header first would have saved opening four
+files — and `aliasing`'s says not just *that* it stays but that the obvious port was tried and
+passed against a reinstated bug, which is the part no classifier would have derived.
 
 **The nine that do use the reference as an oracle.** On 2026-08-19 the operator deleted the whole-repository lex and
 parse differentials and every `// only: wacc` marker, on the grounds that **the reference's only job

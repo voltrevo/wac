@@ -34,9 +34,9 @@ Served serve(u8[] input, i64 nowMillis)
 ```
 
 `host/serve.ts` is the whole of the host side — an accept loop, a buffer, and `writeAll`. It makes
-no decisions. That split is why the server is testable by *calling* it: `test/serve.test.ts` drives
-every case including pipelining and truncation with no socket in sight, and `test/live.test.ts`
-then checks the answers survive real clients.
+no decisions. That split is why the server is testable by *calling* it: `test/wac/serve_test.wac` drives
+every case including pipelining and truncation with no socket in sight, and
+`test/wac/live_test.wac` then checks the answers survive real clients.
 
 `consumed` is what makes keep-alive work, and the host keeping the remainder rather than clearing
 the buffer is what makes pipelining work — a client may have sent the next request already and it
@@ -58,17 +58,17 @@ source span: a re-formatter would have written `100`.
 
 ## Tests
 
-**`test/serve.test.ts`** — the function. Routes, error statuses, HEAD, `Allow` on a 405, the
+**`test/wac/serve_test.wac`** — the function. Routes, error statuses, HEAD, `Allow` on a 405, the
 keep-alive rules for 1.0 and 1.1, every prefix of a request being answered as "not yet", framing
 refusals closing the connection, and that the server's own responses are well-formed: exactly one
 `Content-Length`, no `Transfer-Encoding`, and a length that matches the bytes.
 
-**`test/live.test.ts`** — the server, behind a socket, driven by three clients:
+**`test/wac/live_test.wac`** — the server, behind a socket, driven by three clients:
 
 - **`fetch`**, which is strict and rejects a malformed response outright;
 - **Node's `http.request`**, a second independent implementation — a response both accept is a
   response, not merely something self-consistent;
-- **a raw socket**, for what no client will do on purpose: two requests pipelined in one packet,
+- **a raw socket**, wac's own, for what no client will do on purpose: two requests pipelined in one packet,
   a request delivered one byte at a time, a smuggling-shaped message, and a client that vanishes
   mid-request.
 

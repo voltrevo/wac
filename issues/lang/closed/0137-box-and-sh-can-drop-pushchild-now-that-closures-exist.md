@@ -116,7 +116,7 @@ exactly the mistake the host frame's own comments say its first version made.
 **`pushChild`/`popChild` are still in `platform`**, so the title's "can drop" is a *may*, not a
 *did*. Two reasons, both worth stating rather than leaving as an unfinished job:
 
-- `example/inside.wac` and `test/inside.test.ts` are the other half of the differential. Removing the
+- `example/inside.wac` and `test/wac/inside_test.wac` are the other half of the differential. Removing the
   capability deletes the only independent implementation this work is checked against.
 - `issues/system/0166` is open against both implementations: a child inside a frame is told its
   `openOutput` redirection worked and it is silently ignored. `childCli` reproduces that on purpose so

@@ -167,5 +167,5 @@ which needed the three things the note above scoped, and one it did not:
         1  a static Shell.capturing, declined      (sh)
 
 **Neither is a name.** Both are emitter declines with their own reason, which is where this issue
-said the finish line was. `test/bindHelpers.test.ts` pins the mangling, including the `_arr` case
+said the finish line was. `test/wac/bindhelpers_test.wac` pins the mangling, including the `_arr` case
 that the first attempt got wrong.

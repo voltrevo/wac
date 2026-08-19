@@ -163,8 +163,38 @@ async function writeAll(conn: Deno.Conn, data: Uint8Array): Promise<void> {
 }
 
 if (import.meta.main) {
-  const port = Number(Deno.args[0] ?? "8080");
-  const listener = await listen(port);
+  // **The limits are on the command line, and were not.** `listen` has taken them since it was
+  // written, and the only way to choose them was to import the function — so anyone actually running
+  // this server got `DEFAULT_LIMITS` and had no way to say otherwise, and the one test that exercised
+  // them had to be in the same process to do it. A limit the launcher cannot set is a limit nobody
+  // running the program can choose.
+  const argv = Deno.args;
+  const flag = (name: string, fallback: number): number => {
+    const i = argv.indexOf(`--${name}`);
+    if (i < 0) return fallback;
+    const v = Number(argv[i + 1]);
+    if (!Number.isFinite(v) || v <= 0) {
+      console.error(`--${name} wants a positive number, got ${JSON.stringify(argv[i + 1])}`);
+      Deno.exit(2);
+    }
+    return v;
+  };
+  // The port is the first argument that is neither a flag nor a flag's value. Written out rather
+  // than `find(a => !a.startsWith("--"))`, which would take `120` out of `--idle-ms 120`.
+  const takesValue = new Set(["--request-ms", "--idle-ms", "--max-connections"]);
+  let positional: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    if (takesValue.has(argv[i])) { i++; continue; }
+    if (argv[i].startsWith("--")) continue;
+    positional = argv[i];
+    break;
+  }
+  const port = Number(positional ?? "8080");
+  const listener = await listen(port, {
+    requestMs: flag("request-ms", DEFAULT_LIMITS.requestMs),
+    idleMs: flag("idle-ms", DEFAULT_LIMITS.idleMs),
+    maxConnections: flag("max-connections", DEFAULT_LIMITS.maxConnections),
+  });
   const address = listener.addr as Deno.NetAddr;
   console.log(`listening on http://127.0.0.1:${address.port}`);
 }
