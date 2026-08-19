@@ -19,7 +19,7 @@
 // old test called `generate` and its five parsers in process.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Graph, graphOf } from "./graph.wac";
