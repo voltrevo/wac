@@ -6,7 +6,7 @@
 // The native host's **filesystem capabilities**, against GNU coreutils and against the Deno host.
 //
 // This surface had no test at all, and I found that out the honest way: a canary in
-// `arrival.test.ts` did not fire. Perturbing the native `readDir` to answer in reverse order changed
+// `arrival_test.wac` did not fire. Perturbing the native `readDir` to answer in reverse order changed
 // nothing there, because everything a sealed or image session does to files goes through
 // `packages/fs`'s VFS *inside* the image — so the arrival test exercises `readFile` and `writeFile`
 // and nothing else, and eight capabilities were sitting untested behind a green suite.

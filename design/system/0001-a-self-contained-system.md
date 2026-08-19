@@ -47,7 +47,7 @@ the same image in two substantially different hosts and demonstrate the same use
 programs, shell behaviour and system services in both, with no implicit access to either host.
 
 > **Passed on 2026-08-08.** All five: files, installed programs and shell behaviour in
-> `packages/platform/test/arrival.test.ts` — an image written under Deno is the same system under
+> `packages/platform/test/wac/arrival_test.wac` — an image written under Deno is the same system under
 > wasmtime and back again, all 817 of the shell's differential corpus agree across the two, and a
 > session that changes nothing writes a byte-identical image on either host — and **users and system
 > services** in `arrival_users_test.wac`: `packages/ssh`'s `sshd` under wasmtime serves the image the
