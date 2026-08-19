@@ -21,7 +21,7 @@
 // The cache is `.cache/`, which is per workspace and therefore per agent. Nothing here writes to
 // `/tmp`, where three agents would share a name.
 
-import { Cli, Exec, Stat } from "../../platform/src/platform.wac";
+import { Cli, Exec, Stat, FileResult } from "../../platform/src/platform.wac";
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
 export i64 newestUnder(Cli cli, string dir) {
@@ -80,4 +80,54 @@ export string builtProgram(Cli cli, string entry, string name, string[] grants, 
   for (i32 i = 0; i < grants.len(); i++) { args[4 + i] = grants[i]; }
   cli.exec(wac, args, u8[0]()).wait();
   return stem + ".wasm";
+}
+
+/**
+ * The same idea for `packages/platform/build.ts`, which is the *Deno* builder: a program built for the
+ * deno or node host, or the worker half a `spawn` takes.
+ *
+ * **`build.ts` already caches the work** — `appKey` keys a build on the content of every file it
+ * reads — so what this saves is the process: a warm call is 180-410ms of Deno starting, and
+ * `packages/platform/test/wac/spawn_test.wac` makes fourteen of them across seven tests, most for the
+ * same three programs. The artefact lands in one place and the caller copies it where it wants, which
+ * is what keeps the per-test directories that stop one case reading another's files.
+ *
+ * `name` must distinguish everything that changes the output — the entry, the grants, the target and
+ * whether it is the worker half — because they all land under it. `WAC_PROFILE` is cleared for the
+ * same reason `spawn_test` clears it: an instrumented build carries a scoped `--allow-write` for its
+ * counter dump, and a test asserting on a shebang would see it.
+ */
+export string builtByDeno(Cli cli, string entry, string name, string[] grants, string target,
+                          bool worker, string[] trees) {
+  string dir = cli.cwd().wait() + "/.cache/built-" + name;
+  cli.mkdir(dir, true).wait();
+  string out = dir + "/" + name + (worker ? ".worker.js" : "");
+  Stat have = cli.stat(out).wait();
+
+  i64 newest = 0 as i64;
+  for (i32 i = 0; i < trees.len(); i++) {
+    i64 deep = newestUnder(cli, trees[i]);
+    if (deep > newest) { newest = deep; }
+  }
+  Stat builder = cli.stat("packages/platform/build.ts").wait();
+  if (builder.exists && builder.modifiedMillis > newest) { newest = builder.modifiedMillis; }
+  if (have.exists && have.modifiedMillis > newest) { return out; }
+
+  string line = "exec env -u WAC_PROFILE deno run -A packages/platform/build.ts \"" + entry + "\"";
+  for (i32 i = 0; i < grants.len(); i++) { line = line + " " + grants[i]; }
+  line = line + " --target " + target;
+  if (worker) { line = line + " --worker"; }
+  line = line + " -o \"" + out + "\"";
+  Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) { return ""; }
+  return out;
+}
+
+/** `from` to `to`, since `Cli` has no copy. Answers whether it landed. */
+export bool copyBuilt(Cli cli, string from, string to, bool executable) {
+  FileResult r = cli.readFile(from).wait();
+  if (!r.ok) { return false; }
+  if (!cli.writeFile(to, r.bytes).wait().ok()) { return false; }
+  if (executable) { cli.setExecutable(to, true).wait(); }
+  return true;
 }
