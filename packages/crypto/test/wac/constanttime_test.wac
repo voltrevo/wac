@@ -24,11 +24,31 @@
 // different shapes parts at event 1, which is the driver rather than the routine. Every driver here
 // comes from one template with one array literal substituted.
 //
+// ## What it costs, and why that is builds rather than crypto — 2026-08-19
+//
+// **14.8s to 6.8s by starting the builds together.** Every comparison needs two *modules*, because
+// `ctcompare` runs `main` and a run is therefore a program; the four secrets of a uniform routine are
+// four programs differing in one array literal, and each is a `wac build --trace` process that
+// compiles the routine and its imports again. Twenty-eight builds for seven routines, and they were
+// serial — so the file cost the sum of them rather than the slowest.
+//
+// Nothing here depends on another, so they are submitted and then collected. That is a thing wac could
+// not do until `issues/system/0211`: both Rust hosts ran the child to completion inside `exec` and
+// handed back a ticket that had already settled, so four tickets taken before any wait still took four
+// times as long.
+//
+// Measured with `--filter`, which is per-file: the floor is **0.6s** — `wac test` compiling this file
+// and running nothing — and each test is about **1s** on top of it. So this file is its builds. What
+// would move it further is the compiler not re-compiling `sha256.wac` for each of four drivers, which
+// is the same floor `packages/wacc/test/wac/corpuscheck_test.wac` reaches from the other side: an
+// incremental front end. The tracing itself is not the cost — `p256PublicKey` is three million events
+// and `ctcompare` answers about them in half a second.
+//
 // **`same` is checked to carry a count.** Two journals of nothing match perfectly, and a mistyped
 // export name is a call that never happens.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, Pending } from "../../../platform/src/platform.wac";
 import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -93,27 +113,49 @@ string driver(T t, Cli cli, string dir, string name, string src, string body, i3
   return program;
 }
 
-/** Write a driver, build it traced, and answer with its stem. */
-string built(T t, Cli cli, string dir, string tag, string program) {
+/**
+ * Write a driver and **start** its traced build, without waiting for it.
+ *
+ * A routine is compared across four secrets, which is four builds of four programs that differ in one
+ * array literal — and each is a `wac build` process compiling the routine and its imports again. They
+ * are independent, so they are submitted together and collected below: `Cli.exec` has been able to
+ * hold more than one child since `issues/system/0211`, where both Rust hosts ran the child to
+ * completion inside `exec` and handed back a ticket that had already settled.
+ */
+Pending<Exec> submitBuild(T t, Cli cli, string dir, string tag, string program) {
   string entry = dir + "/" + tag + ".wac";
   Change wrote = cli.writeFile(entry, program.toBytes()).wait();
   t.isTrue(wrote.ok(), tag + ": writing the driver — " + wrote.message);
-  if (!wrote.ok()) { return ""; }
-  Exec r = cli.exec(binary(cli),
-                    string[]("build", entry, "--trace", "-o", dir + "/" + tag, "--quiet"),
-                    u8[0]()).wait();
+  return cli.exec(binary(cli),
+                  string[]("build", entry, "--trace", "-o", dir + "/" + tag, "--quiet"),
+                  u8[0]());
+}
+
+/** The stem a submitted build produced, or `""` — asserted here so a failure names its tag. */
+string collectBuild(T t, Cli cli, string dir, string tag, Pending<Exec> p) {
+  Exec r = p.wait();
   t.isTrue(r.ran() && r.status == 0,
            tag + ": the traced build — " + r.error + string.fromBytes(r.stderr));
   return (r.ran() && r.status == 0) ? dir + "/" + tag : "";
 }
 
-/** `wac ctcompare`, whole answer trimmed. */
-string compared(T t, Cli cli, string a, string b, bool all) {
+/** `wac ctcompare`, started. Every comparison of one routine is against the same first module. */
+Pending<Exec> submitCompare(Cli cli, string a, string b, bool all) {
   string[] argv = all ? string[]("ctcompare", "--all", a + ".wasm", b + ".wasm")
                       : string[]("ctcompare", a + ".wasm", b + ".wasm");
-  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+  return cli.exec(binary(cli), argv, u8[0]());
+}
+
+/** Its whole answer, trimmed. */
+string collected(T t, Pending<Exec> p) {
+  Exec r = p.wait();
   t.isTrue(r.ran() && r.status == 0, "ctcompare ran — " + r.error + string.fromBytes(r.stderr));
   return (r.ran() && r.status == 0) ? trimmed(string.fromBytes(r.stdout)) : "<did not run>";
+}
+
+/** `wac ctcompare`, whole answer trimmed — for the callers that want exactly one. */
+string compared(T t, Cli cli, string a, string b, bool all) {
+  return collected(t, submitCompare(cli, a, b, all));
 }
 
 /** Digits to an integer; -1 when it is not one. */
@@ -175,6 +217,20 @@ string siteAt(Cli cli, string stem, i32 site) {
 }
 
 /**
+ * The two modules of a leak test, built together.
+ *
+ * The same reason as `noSecretDependence`: two programs differing in one literal, two independent
+ * `wac build` processes, and no order between them.
+ */
+string[] pair(T t, Cli cli, string dir, string nameA, string progA, string progB) {
+  Pending<Exec> pa = submitBuild(t, cli, dir, "a", progA);
+  Pending<Exec> pb = submitBuild(t, cli, dir, "b", progB);
+  string a = collectBuild(t, cli, dir, "a", pa);
+  string b = collectBuild(t, cli, dir, "b", pb);
+  return string[](a, b);
+}
+
+/**
  * Every secret in `keys` produces the journal the first one does.
  *
  * The empty-journal case is a failure rather than a pass, which is what `same` carrying its count is
@@ -183,16 +239,31 @@ string siteAt(Cli cli, string stem, i32 site) {
 void noSecretDependence(T t, Cli cli, string label, string src, string name, string body,
                         i32[] which, i32 len) {
   string dir = scratchDir(cli, label);
-  string base = built(t, cli, dir, "k0", driver(t, cli, dir, name, src, body, keyOf(which[0], len)));
-  if (base == "") { cli.remove(dir, true).wait(); return; }
-  for (i32 i = 1; i < which.len(); i++) {
-    string other = built(t, cli, dir, "k" + itoa(i),
-                         driver(t, cli, dir, name, src, body, keyOf(which[i], len)));
-    if (other == "") { continue; }
-    string said = compared(t, cli, base, other, false);
+  i32 n = which.len();
+
+  // **All of them at once.** The builds do not depend on each other, and the wall time of a routine is
+  // then its slowest build rather than the sum of four.
+  Pending<Exec>[] builds = Pending<Exec>[n]();
+  for (i32 i = 0; i < n; i++) {
+    builds[i] = submitBuild(t, cli, dir, "k" + itoa(i),
+                            driver(t, cli, dir, name, src, body, keyOf(which[i], len)));
+  }
+  string[] stems = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { stems[i] = collectBuild(t, cli, dir, "k" + itoa(i), builds[i]); }
+  if (stems[0] == "") { cli.remove(dir, true).wait(); return; }
+
+  // The comparisons are all against `stems[0]`, so they wait for the builds and then run together too.
+  Pending<Exec>[] cmps = Pending<Exec>[n]();
+  for (i32 i = 1; i < n; i++) {
+    if (stems[i] == "") { continue; }
+    cmps[i] = submitCompare(cli, stems[0], stems[i], false);
+  }
+  for (i32 i = 1; i < n; i++) {
+    if (stems[i] == "") { continue; }
+    string said = collected(t, cmps[i]);
     t.isTrue(startsWith(said, "same "),
              label + ": behaviour depends on the secret — #0 against #" + itoa(i) + ": " + said +
-             (startsWith(said, "differs ") ? " at " + siteAt(cli, base, numberOf(word(said, 2))) : ""));
+             (startsWith(said, "differs ") ? " at " + siteAt(cli, stems[0], numberOf(word(said, 2))) : ""));
     t.isTrue(startsWith(said, "same ") && numberOf(word(said, 1)) > 0,
              label + ": recorded no events at all — did the call actually happen? " + said);
   }
@@ -238,12 +309,12 @@ export string test_ghash_branches_on_the_bits_of_h_known_leak(Core core, Cli cli
   T t = T.create();
   string dir = scratchDir(cli, "ghash");
   const string SRC = "packages/crypto/src/ghash.wac";
-  string a = built(t, cli, dir, "a",
-                   driver(t, cli, dir, "ghash", SRC,
-                          "ghash($KEY, " + literal(block16()) + ")", keyOf(0, 16)));
-  string b = built(t, cli, dir, "b",
-                   driver(t, cli, dir, "ghash", SRC,
-                          "ghash($KEY, " + literal(block16()) + ")", keyOf(1, 16)));
+  string call = "ghash($KEY, " + literal(block16()) + ")";
+  string[] ab = pair(t, cli, dir, "ghash",
+                     driver(t, cli, dir, "ghash", SRC, call, keyOf(0, 16)),
+                     driver(t, cli, dir, "ghash", SRC, call, keyOf(1, 16)));
+  string a = ab[0];
+  string b = ab[1];
   if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
 
   string said = compared(t, cli, a, b, false);
@@ -284,10 +355,11 @@ export string test_the_weierstrass_ladder_branches_on_the_scalar_known_leak(Core
   const string SRC = "packages/crypto/src/p256.wac";
   // Not the all-zero key: `curvePublicKey` traps on a scalar of zero or one past the group order, so
   // the secrets here have to be valid keys as well as different.
-  string a = built(t, cli, dir, "a",
-                   driver(t, cli, dir, "p256PublicKey", SRC, "p256PublicKey($KEY)", keyOf(2, 32)));
-  string b = built(t, cli, dir, "b",
-                   driver(t, cli, dir, "p256PublicKey", SRC, "p256PublicKey($KEY)", keyOf(3, 32)));
+  string[] ab = pair(t, cli, dir, "p256PublicKey",
+                     driver(t, cli, dir, "p256PublicKey", SRC, "p256PublicKey($KEY)", keyOf(2, 32)),
+                     driver(t, cli, dir, "p256PublicKey", SRC, "p256PublicKey($KEY)", keyOf(3, 32)));
+  string a = ab[0];
+  string b = ab[1];
   if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
 
   string said = compared(t, cli, a, b, false);
@@ -313,8 +385,11 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
   string dir = scratchDir(cli, "aes");
   const string SRC = "packages/crypto/src/aes.wac";
   string call = "aesEncrypt($KEY, " + literal(block16()) + ")";
-  string a = built(t, cli, dir, "a", driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(0, 16)));
-  string b = built(t, cli, dir, "b", driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(1, 16)));
+  string[] ab = pair(t, cli, dir, "aesEncrypt",
+                     driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(0, 16)),
+                     driver(t, cli, dir, "aesEncrypt", SRC, call, keyOf(1, 16)));
+  string a = ab[0];
+  string b = ab[1];
   if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
 
   string said = compared(t, cli, a, b, false);
