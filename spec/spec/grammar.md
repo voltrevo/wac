@@ -32,9 +32,10 @@ program        = { import | struct_decl | enum_decl | func_decl | const_decl } ;
 import         = "import" , "{" , import_list , "}" , "from" , source , ";" ;
                  (* `from` here is contextual: an ordinary identifier elsewhere *)
 source         = STRING | "core" ;
-                 (* A quoted specifier is a relative file path. `core` is the module the
-                    compiler ships and is written bare, because it is not a file — quoting
-                    it is an error rather than a synonym [see imports.md] *)
+                 (* A quoted specifier is a relative file path, or one of the modules the
+                    compiler ships: `"core"` and its files, `"core/option.wac"` and the
+                    rest. The bare `core` is the same module as `"core"` and is the older
+                    spelling of it — accepted, but write the quoted one [see imports.md] *)
 import_list    = import_item , { "," , import_item } , [ "," ] ;
 import_item    = IDENT , [ "as" , IDENT ] ;
 

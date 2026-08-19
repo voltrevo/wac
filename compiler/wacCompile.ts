@@ -268,8 +268,16 @@ export function wacCompile(
   // `core` ships inside the compiler, so it arrives here rather than through the caller's file map:
   // the CLI has no path to read it from and the playground has no filesystem at all. Only when
   // something imports it — an unused enum would otherwise be emitted into every module.
+  // **Either spelling asks for it.** `from core` arrives as a prefix and `from "core"` as a path,
+  // and since D5 both are accepted; a predicate that saw only the prefix left the quoted form
+  // resolving to a key nothing had injected, which is reported as an ordinary missing file and
+  // reads as a typo in the specifier rather than as a compiler that never carried the module.
   const wantsCore = [...programs.values()].some((p) =>
-    p.items.some((i) => i.tag === "import" && (i as Import).prefix === CORE.key)
+    p.items.some((i) =>
+      i.tag === "import" &&
+      ((i as Import).prefix === CORE.key ||
+        ((i as Import).prefix === undefined && (i as Import).path === CORE.key))
+    )
   );
   // **The tree's siblings, reserved before the filesystem.** `core/option.wac` is a module inside the
   // compiler exactly as `core` is; the caller's file map cannot hold it, and a resolver that fell

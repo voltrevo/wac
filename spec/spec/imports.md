@@ -24,29 +24,39 @@ resolve naming collisions.
 ### `core`
 
 ```wac
-import { Read } from core;
+import { Read } from "core";            // the root of the tree
+import { Option } from "core/option.wac";   // one of its files
 ```
 
-> **This inverts under [design/lang/0009](../../design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md).**
-> `core` becomes an embedded *source tree* with a manifest at its root, so `core/option.wac` does
-> name a file and specifiers are quoted throughout. The rule below is what the compiler does today
-> and is accurate until that lands; it is stated here so a reader does not adopt the unquoted form
-> for new code.
+`core` is a small source tree that ships **inside the compiler**. Nothing on disk answers for it:
+the CLI has no path to read it from and the playground has no filesystem at all, so the compiler
+carries the text and serves it. A project cannot shadow these names with a `core/` directory of its
+own, which is the other half of the same property — a built-in that the filesystem could take over
+is not a built-in.
 
-`core` is the one import that is not a file. It ships inside the compiler, so it is written without
-quotes: a quoted specifier says *a file lives at this path*, and there is no path here to be right
-or wrong about. `[§wac-core-unquoted-3nqk7vd]` `import { Read } from "core";` is an error —
-`` `core` is not a file — import it unquoted, as `from core` `` — and so is any other bare word,
-which reports `unknown module 'x'`.
+The root is what `core` alone names, and its files are named the way any other file is. `[§wac-core-unquoted-3nqk7vd]`
+The root may be written either way — `from "core"` or `from core` — and both reach the same module,
+so `Read` obtained through one is the same type as `Read` obtained through the other. **Write the
+quoted form.** Every other member of the tree is quoted, and a root that is the one bare word in the
+language is a spelling to remember rather than a rule to know. Any bare word that is *not* `core`
+reports `unknown module 'x'`.
 
-> **The bar changes under design/lang/0009 D4**: `core` becomes the pure-code shelf and takes
-> `Option`, `Result`, `Vec`, `Map`, hashing, equality and the JSX types. Until then this is the rule.
+> The unquoted form was for a while the only accepted one, and the argument was that a quoted
+> specifier says *a file lives at this path* while there was no path here to be right or wrong
+> about. [design/lang/0009](../../design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md)
+> D4 removed the premise rather than the argument: there are paths now, `core/option.wac` is one,
+> and it is right. D5 accepts both spellings so that the files already using the bare one keep
+> compiling while they are moved over.
 
-It holds one type today, and the bar for a second is high: a type earns a place in `core` only if it
-has to cross a *repository* boundary through a funcref signature. wac has nominal types and no
-closures, so two declarations of the same shape are two types and nothing can convert between them
-— which is fine within a tree, where both sides can import one file, and impossible across repos.
-Anything else is a library and belongs in a package. See `design/0001`.
+What belongs in the tree is decided per file. The **root** holds only types that have to cross a
+*repository* boundary through a funcref signature: wac has nominal types and no closures, so two
+declarations of the same shape are two types and nothing can convert between them — fine within a
+tree, where both sides can import one file, and impossible across repos. `Read` passes that bar, and
+`Node` and `Attr` pass it more strongly, since the compiler emits their constructors for JSX and no
+author picks the name to be able to fix a mismatch. The **rest of the tree** is the pure-code shelf
+D4 describes — `Option`, `Result`, `Vec`, `Map`, hashing and equality — which is there because a
+program that wants a map should not have to find a package first. Anything with a capability in it
+is a library and belongs in a package. See `design/0001`.
 
 ```wac
 // producer.wac

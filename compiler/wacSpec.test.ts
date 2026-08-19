@@ -2513,9 +2513,20 @@ Deno.test("[§wac-core-one-type-8fjm2wq] a hand-written copy of Read is still a 
   eq(msg, "type mismatch: expected Read, got Copy", "copy vs core");
 });
 
-Deno.test("[§wac-core-unquoted-3nqk7vd] `core` quoted is an error, and so is any other bare word", () => {
-  eq(errMulti(new Map([["main.wac", `import { Read } from "core";  export i32 run() { return 0; }`]])),
-    "`core` is not a file — import it unquoted, as `from core`", "quoted core");
+Deno.test("[§wac-core-unquoted-3nqk7vd] the root takes either spelling; any other bare word does not", async () => {
+  // Quoted `"core"` was an error until D5, and the case is kept rather than deleted because what it
+  // has to show is now the opposite. **Both spellings reach one module**, which is more than "both
+  // compile": a change that gave the quoted form a key of its own would declare `Read` twice and
+  // still pass a test that only asked for the absence of a diagnostic. So the program below obtains
+  // a value through one spelling and passes it to a function declared with the other. wac has
+  // nominal types, so two keys is a type mismatch here rather than a subtle difference later.
+  const inst = await runMulti(new Map([["main.wac", `
+    import { Read } from "core";
+    import { Read as R2 } from core;
+    i32 take(R2 r) { return match (r) { case End: 1, else: 0 }; }
+    export i32 run() { Read r = Read.End; return take(r); }
+  `]]));
+  eq(inst.call("run", []), 1, "both spellings, one type");
   eq(err(`import { Read } from cor;  export i32 run() { return 0; }`),
     "unknown module 'cor' — an unquoted import reads only from `core`", "bare word");
 });

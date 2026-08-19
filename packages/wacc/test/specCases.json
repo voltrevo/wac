@@ -1,6 +1,6 @@
 {
   "source": "compiler/wacSpec.test.ts",
-  "sha256": "ad994fe9dc79ade25acda97b7a5ccc2564b3d1006b5b7287f00ede4537adeca1",
+  "sha256": "460e4567cb053e5708778617acb4916c5c0b40437d8a596bb55b0d36e6422cd0",
   "cases": [
     {
       "test": "[§wac-int32-dfkqg8u] int32() returns 42",
@@ -2719,19 +2719,19 @@
       "message": "type mismatch: expected Read, got Copy"
     },
     {
-      "test": "[§wac-core-unquoted-3nqk7vd] `core` quoted is an error, and so is any other bare word",
+      "test": "[§wac-core-unquoted-3nqk7vd] the root takes either spelling; any other bare word does not",
       "entry": "main.wac",
       "files": [
         [
           "main.wac",
-          "import { Read } from \"core\";  export i32 run() { return 0; }"
+          "\n    import { Read } from \"core\";\n    import { Read as R2 } from core;\n    i32 take(R2 r) { return match (r) { case End: 1, else: 0 }; }\n    export i32 run() { Read r = Read.End; return take(r); }\n  "
         ]
       ],
-      "ok": false,
-      "message": "`core` is not a file — import it unquoted, as `from core`"
+      "ok": true,
+      "message": ""
     },
     {
-      "test": "[§wac-core-unquoted-3nqk7vd] `core` quoted is an error, and so is any other bare word",
+      "test": "[§wac-core-unquoted-3nqk7vd] the root takes either spelling; any other bare word does not",
       "entry": "main.wac",
       "files": [
         [

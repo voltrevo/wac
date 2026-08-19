@@ -2496,6 +2496,15 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
           if (quoted.len() < 2) { continue; }
           if (qn >= queue.len()) { return ""; }
           string target = resolveImport(path, quoted.slice(1, quoted.len() - 1));
+          // **`"core"` and `core` are one module, so they have to be one key.** The prefix form
+          // above queues the carried path; a quoted one resolves to the specifier itself, and two
+          // keys for one module is not a missing file — it is `Read` declared twice, and
+          // `qualifiedName` below leaves one of them unqualified because it recognises only the
+          // carried spelling. Normalised here rather than in `resolveFrom`, which has to keep
+          // answering what `compiler/wacResolve.ts` answers: the reference's key for the root is
+          // the specifier, and a resolver that quietly returned something else would disagree with
+          // it in the one place nothing compares them. `design/lang/0009` D5.
+          if (target == "core") { target = " core"; }
           queue[qn] = target;
           qn = qn + 1;
           // The edge is recorded by *path*, and turned into file indices once every file has one:
