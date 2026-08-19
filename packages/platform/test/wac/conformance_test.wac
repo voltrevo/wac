@@ -99,7 +99,7 @@ Cover[] coverage() {
       "and 1001ms. Neither of those was found by a row here; the first came from batching a corpus " +
       "through `grep`, the second from porting a test that ran its cases three at a time. That is " +
       "twice that a difference between the three implementations was found by writing a program that " +
-      "needed the capability, and never by comparing them. issues/system/0165, 0173, 0209"),
+      "needed the capability, and never by comparing them. issues/system/0165, 0173, 0211"),
     where("OPEN_INPUT", "native_hostfs: `cat < f`, refused with no grant"),
     where("OPEN_OUTPUT", "native_hostfs: `echo new > made`"),
     where("READ_CHUNK",

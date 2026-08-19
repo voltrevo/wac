@@ -145,43 +145,50 @@ export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, C
 }
 
 /**
- * Two `exec` calls in flight at once — the ticket is a ticket, not a return value.
+ * Three children at once, because a ticket is a thing that has been *asked for*.
  *
- * **This is the shape `platform.wac` promises and two hosts did not keep.** `waitAny`'s own
- * documentation says the deadline belongs to the wait rather than to each capability, which is only
- * true if the capability *returns* before the work is done. Both Rust hosts ran the child inline and
- * handed back a ticket that was already answered, so a caller blocked at the call: three one-second
- * sleeps submitted together took 3012ms to submit and 1ms to wait. The Deno host had it right from
- * the start — 8ms and 1001ms — so a program that runs two things at once worked under one host and
- * silently serialised under the other, with nothing anywhere saying so. `issues/system/0209`.
+ * Every capability that hands back a `Pending<T>` means "asked for, not yet answered" — that is what
+ * makes `waitAny` a thing a program can write, and it is why `core.delay` can be waited on beside a
+ * socket. `exec` is one of them, so taking three tickets before waiting on any of them must overlap
+ * the three children.
  *
- * Three seconds of sleeping in under two is the assertion, and it is deliberately loose: what is
- * being tested is that the three overlap at all, and a bound tight enough to be exact would fail on a
- * machine three agents share. It fails at 3s either way, which is the only number that matters.
+ * **It did not, on two hosts of four.** Both Rust hosts ran the child to completion inside the
+ * capability call and handed back a ticket that was already settled — `native/src/main.rs` at 3007ms
+ * and `native/v8/src/main.rs` at 3012ms, against the Deno host's 1001ms for the same program. Issue
+ * 0211, found twice on the same day by two agents from opposite directions, which is why the wording
+ * here was "one host of four" for a few hours: the wasmtime host is the one a person notices, and the
+ * V8 host is the one every `wac test` runs on. 0206 is `receiveFrom` with the same fault.
+ *
+ * Two things came with it: no test that shells out could overlap its oracle, and a child that wedged
+ * had no ticket to bound, since `waitAny` needs a ticket that exists while the work is still running.
+ *
+ * The bound is 2.5s rather than 1.2s deliberately — this machine is shared by three agents, so the
+ * number that separates "concurrent" from "serial" is the one with three seconds on the other side of
+ * it, not the one that is tight against a perfect run.
  */
-export string test_two_execs_can_be_in_flight_at_once(Core core, Cli cli) {
+export string test_three_children_run_at_once(Core core, Cli cli) {
   T t = T.create();
-  string[] args = string[]("-c", "sleep 1; echo done");
-  i64 start = core.nowMillis().wait();
-
-  Pending<Exec>[] jobs = Pending<Exec>[3](fill: cli.exec("/bin/sh", string[]("-c", "true"), u8[0]()));
-  for (i32 i = 0; i < 3; i++) { jobs[i] = cli.exec("/bin/sh", args, u8[0]()); }
-  i64 submitted = core.nowMillis().wait();
-
-  for (i32 i = 0; i < 3; i++) {
-    Exec r = jobs[i].wait();
-    t.isTrue(r.ran(), "sleep " + itoa(i) + " ran — " + r.error);
-    t.eqStr(text(r.stdout), "done\n", "and said what it was told to");
+  i64 t0 = core.monotonicNanos().wait();
+  Pending<Exec>[] ps = Pending<Exec>[3]();
+  for (i32 i = 0; i < ps.len(); i++) {
+    ps[i] = cli.exec("/bin/sleep", string[]("1"), u8[0]());
   }
-  i64 whole = core.nowMillis().wait() - start;
-
-  // The submit loop must not have done the waiting. This is the assertion that fails on the old
-  // hosts: 3012ms here, against 0ms now.
-  t.isTrue((submitted - start) < (1000 as i64),
-           "submitting three one-second sleeps took " + itoa((submitted - start) as~ i32) +
+  // The submit phase on its own, which is what names *where* the blocking was rather than only that
+  // it happened: this read 3006ms before the fix and reads 0ms after it.
+  i64 submitMs = (core.monotonicNanos().wait() - t0) / (1000000 as i64);
+  i32 ran = 0;
+  for (i32 i = 0; i < ps.len(); i++) {
+    Exec r = ps[i].wait();
+    if (r.ran() && r.status == 0) { ran = ran + 1; }
+  }
+  i64 ms = (core.monotonicNanos().wait() - t0) / (1000000 as i64);
+  // The canary: three sleeps that never ran would finish instantly and pass a timing assertion by
+  // doing nothing at all.
+  t.eqI32(ran, 3, "all three slept");
+  t.isTrue(ms >= (900 as i64), "and really took a second: " + itoa(ms as! i32) + "ms");
+  t.isTrue(ms < (2500 as i64), "three concurrent `sleep 1` in one second, not three: " + itoa(ms as! i32) + "ms");
+  t.isTrue(submitMs < (900 as i64),
+           "taking three tickets took " + itoa(submitMs as! i32) +
            "ms, so `exec` blocked at the call rather than at the wait");
-  // And they really did overlap, rather than one being slow and two being instant.
-  t.isTrue(whole < (2500 as i64),
-           "three one-second sleeps took " + itoa(whole as~ i32) + "ms in total, so they ran in turn");
   return t.report();
 }

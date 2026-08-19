@@ -307,6 +307,21 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
  */
 const wireOf = new Map<string, { wire: string; sigWire: string }>();
 
+/**
+ * ...and on disk as well, because a test file is a process and the memo above dies with it.
+ *
+ * Measured: with the wasm already cached, a cold `buildNative` is 1.6-1.9s and **1.5s of it is these
+ * two calls** — `waccArtifacts` is 44ms, `waccApi` 86ms, reading the module's exports 3ms. Nine test
+ * files build a native app; several build two, and every one of them paid the 1.5s again.
+ *
+ * **The key has to name whatever *produced* the wire, not just what it was produced from.** These
+ * answers come out of wacc, which `waccApi` builds with the reference — so the key carries the
+ * reference compiler's own hash (`compilerKeyParts`, the same one the artefact cache uses) *and* the
+ * import closure of `packages/wacc/src/api.wac`. Change a bindgen rule in wacc and the key moves;
+ * change the program and it moves. When `compilerKeyParts` cannot say what the compiler is, there is
+ * nothing to key against and the cache is skipped rather than guessed at — the in-process memo still
+ * applies.
+ */
 async function nativeWire(
   api: { bindTypesFiles: (p: string[], s: string[], e: string) => string;
          exportSigsFiles: (p: string[], s: string[], e: string) => string },
@@ -314,17 +329,40 @@ async function nativeWire(
   sources: string[],
   entry: string,
 ): Promise<{ wire: string; sigWire: string }> {
-  const { contentKey } = await import("../../harness/buildCache.ts");
-  const key = await contentKey(["native-wire 1", entry, ...paths.flatMap((p, i) => [p, sources[i]])]);
+  const { cached, compilerKeyParts, contentKey, filesParts } = await import(
+    "../../harness/buildCache.ts"
+  );
+  const { wacFiles } = await import("../../harness/wacFiles.ts");
+  const compiler = await compilerKeyParts();
+  const producer = compiler === null ? null : [...compiler, ...filesParts(await wacFiles(WACC_API))];
+  const key = await contentKey([
+    "native-wire 2",
+    entry,
+    ...(producer ?? ["unkeyed"]),
+    ...paths.flatMap((p, i) => [p, sources[i]]),
+  ]);
   const hit = wireOf.get(key);
   if (hit !== undefined) return hit;
-  const made = {
+
+  const make = () => ({
     wire: api.bindTypesFiles(paths, sources, entry),
     sigWire: api.exportSigsFiles(paths, sources, entry),
-  };
+  });
+  let made: { wire: string; sigWire: string };
+  if (producer === null) {
+    made = make();
+  } else {
+    const path = await cached("native-wire", key, ".json", async (at) => {
+      await Deno.writeTextFile(at, JSON.stringify(make()));
+    });
+    made = JSON.parse(await Deno.readTextFile(path));
+  }
   wireOf.set(key, made);
   return made;
 }
+
+/** What `waccApi` builds, and therefore part of the wire cache's key. */
+const WACC_API = "packages/wacc/src/api.wac";
 
 async function buildNativeWithWacc(
   entry: string,

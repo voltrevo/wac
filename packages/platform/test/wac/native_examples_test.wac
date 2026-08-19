@@ -26,13 +26,14 @@
 // agree about everything else, and that each printed *one of the two* legal answers rather than
 // something else. design/0001's D12 is the decision that would make this deterministic.
 //
-// Host-side until 2026-08-19, `issues/system/0161`. Porting it is what found `issues/system/0209`:
+// Host-side until 2026-08-19, `issues/system/0161`. Porting it is what found `issues/system/0211`
+// from one direction while agent-c found it from another on the same day:
 // the file runs three cases at once, deliberately, and `Cli.exec` blocked at the call on both Rust
 // hosts, so the concurrency below could not be written until that was fixed. It is written the same
 // way here — submit, then collect — because that is what a ticket is for.
 // test-lane: heavy — 11s cold and 37 MB of built artifacts: fourteen examples built and run on two
 // hosts, three at a time. Serially it is 20s, measured — which is what the concurrency buys and
-// what `issues/system/0209` had to be fixed for.
+// what `issues/system/0211` had to be fixed for.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Pending } from "../../../platform/src/platform.wac";
@@ -215,7 +216,7 @@ struct Ready {
 
 /**
  * Start a build. **Submitted, not waited for** — the builds dominate this file's wall clock and are
- * as parallelisable as the runs, which is the whole reason `issues/system/0209` had to be fixed first.
+ * as parallelisable as the runs, which is the whole reason `issues/system/0211` had to be fixed first.
  */
 Pending<Exec> submitBuild(Cli cli, bool native, string entry, string out, string[] grants) {
   if (native) {
@@ -271,7 +272,7 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
     i32 n = upto - base;
 
     // ── Build, three at a time. Submitting first and collecting after is what makes it concurrent;
-    //    `issues/system/0209` is why that had to be fixed in two hosts before it was.
+    //    `issues/system/0211` is why that had to be fixed in two hosts before it was.
     Pending<Exec>[] builds = Pending<Exec>[n * 2](fill: cli.exec("/bin/sh", string[]("-c", "true"),
                                                                  u8[0]()));
     for (i32 i = 0; i < n; i++) {
