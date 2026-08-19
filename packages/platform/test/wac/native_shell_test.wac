@@ -38,7 +38,7 @@ import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac"
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
-import { Ran, boundedAgain, hangReport, stale } from "./hostfs.wac";
+import { Ran, boundedAgain, denoBatch, hangReport, stale, DEFAULT_SECONDS } from "./hostfs.wac";
 
 const string SEALED = "packages/box/src/bin/sealedsh.wac";
 const string OPEN = "packages/box/src/bin/sh.wac";
@@ -137,6 +137,25 @@ string scratch(Cli cli, string name) {
  * `boundedAgain`, not a single attempt: a bound that fires on a five-core machine three agents share
  * is a claim about the moment, and the way to tell that from a hang is to ask again. 0128.
  */
+
+/**
+ * The Deno half of many scripts in one process — `harness/appRunMany.ts` behind one `exec`.
+ *
+ * A built Deno bundle is 133ms to start against the native host's 17ms, and this file runs it
+ * forty-odd times; that was most of its 17s. `hostfs.wac`'s `denoBatch` is the same program through
+ * the same `appRunner`, and `issues/system/0213` is the whole argument. **A sealed session needs no
+ * fixture**, which is what makes it a plain list here: its filesystem is synthesised inside the image,
+ * so every run may share one directory — the reason `native_hostfs_test.wac` builds a tree per script
+ * and this does not.
+ */
+Ran[] denoAll(Cli cli, string tmp, string[] grants, string[] scripts) {
+  string[] cwds = string[scripts.len()](fill: tmp);
+  string[][] argv = string[][scripts.len()](fill: string[0](fill: ""));
+  u8[][] stdins = u8[][scripts.len()](fill: u8[0]());
+  for (i32 i = 0; i < scripts.len(); i++) { argv[i] = string[]("-c", scripts[i]); }
+  return denoBatch(cli, DEFAULT_SECONDS * 2, SEALED, grants, tmp, cwds, argv, stdins);
+}
+
 Ran shell(Core core, Cli cli, string tmp, string cmd, string[] pre, string script) {
   string[] args = string[pre.len() + 2](fill: "");
   for (i32 i = 0; i < pre.len(); i++) { args[i] = pre[i]; }
@@ -181,8 +200,14 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
   string[] scripts = corpus();
   i32 n = scripts.len() < SAMPLE ? scripts.len() : SAMPLE;
   t.eqI32(n, SAMPLE, "the corpus is big enough to take a sample from");
+  string[] sample = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { sample[i] = scripts[i]; }
+  Ran[] denoAnswers = denoAll(cli, tmp, string[0](fill: ""), sample);
+
   for (i32 i = 0; i < n; i++) {
-    Ran a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), scripts[i]);
+    Ran a = denoAnswers[i];
+    // A batch that did not answer marks every case hung; the retry is the process this replaced.
+    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), scripts[i]); }
     Ran c = shell(core, cli, tmp, native, string[](b.sealedManifest), scripts[i]);
     // **A bound that fired is not an answer.** `timeout` reports 124, which no program chose, so a
     // run that never finished used to be printed as a host that disagreed — `native "" (124)` — and
@@ -220,8 +245,10 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
     "cat /proc/self/cmdline | wc -c",
     "echo hello | sha256sum",
     "for i in 1 2 3; do echo $i; done | tac");
+  Ran[] denoAnswers = denoAll(cli, tmp, string[0](fill: ""), scripts);
   for (i32 i = 0; i < scripts.len(); i++) {
-    Ran a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), scripts[i]);
+    Ran a = denoAnswers[i];
+    if (a.hung) { a = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), scripts[i]); }
     Ran c = shell(core, cli, tmp, native, string[](b.sealedManifest), scripts[i]);
     string stuck = hangReport(scripts[i], string[]("deno", "native"), Ran[](a, c));
     if (stuck != "") { t.fail(stuck); continue; }
@@ -342,8 +369,13 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
     "",
     "bin\ndev\nproc\ntmp\n");
 
+  // Built *with* read, write and env, which is what makes this a test of the seal rather than of a
+  // build that could not reach anything — so the batch is given the same three grants.
+  string[] granted = string[]("--allow-read", "--allow-write", "--allow-env");
+  Ran[] denoAnswers = denoAll(cli, tmp, granted, scripts);
   for (i32 i = 0; i < scripts.len() && i < wants.len(); i++) {
-    Ran a = shell(core, cli, tmp, b.grantedDeno, string[0](fill: ""), scripts[i]);
+    Ran a = denoAnswers[i];
+    if (a.hung) { a = shell(core, cli, tmp, b.grantedDeno, string[0](fill: ""), scripts[i]); }
     Ran c = shell(core, cli, tmp, native, string[](b.grantedManifest), scripts[i]);
     string stuck = hangReport(scripts[i], string[]("deno", "native"), Ran[](a, c));
     if (stuck != "") { t.fail(stuck); continue; }

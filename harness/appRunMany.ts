@@ -19,19 +19,21 @@
 //
 //     deno run -A harness/appRunMany.ts <entry.wac> [--allow-…]
 //
-// One request per line of standard input, as JSON:
+// One request per line of standard input, and one answer per line of standard output, in the same
+// order — **hex, not JSON**, because the caller is a wac test and both sides already have hex:
+// `wactest/src/oracle.wac`'s `hex` writes it and `codec/src/hex.wac`'s `decoded` reads it. JSON would
+// mean an encoder on the wac side that does not exist and escaping rules on both.
 //
-//     {"argv":["-c","echo hi"],"cwd":"/tmp/x","stdin":"","env":{"LC_ALL":"C"}}
+//     run <argv> <cwd> <stdin> <env>   argv and env are joined by NUL, every field hex
+//     ran <code> <stdout> <stderr>     code in decimal, the two streams hex
 //
-// One answer per line of standard output, in the same order:
+// `env` is `K=V` pairs joined by NUL. Given, the program sees exactly those and nothing else — which
+// is what a differential wants: `LC_ALL=C`, a known `PATH`, and no inheritance from whatever started
+// the suite. Empty means the grant decides, as `appRun.ts` documents.
 //
-//     {"code":0,"out":"hi\n","err":""}
-//
-// and `DONE <n>` at the end, because a reader has to be able to tell "answered everything" from
-// "died half way" — the same last line `wactest`'s oracles use.
-//
-// **Output is text.** A program whose output is not UTF-8 is not what these tests compare; the byte
-// form stays inside `appRun.ts` for callers that need it.
+// A field that is empty is the empty string, which hex writes as nothing — so `run 2d63...  ` is a
+// run with no cwd and no input. The last line is `DONE <n>`, because a reader has to be able to tell
+// "answered everything" from "died half way", and it is the line `wactest`'s oracles already look for.
 //
 // ## What it is not
 //
@@ -73,37 +75,53 @@ for (const a of args) {
   }
 }
 
-type Request = {
-  argv?: string[];
-  cwd?: string;
-  stdin?: string;
-  env?: Record<string, string>;
-};
-
 const runner = await appRunner(entry, grants);
 
-const text = new TextDecoder().decode(await new Response(Deno.stdin.readable).arrayBuffer());
+const dec = new TextDecoder();
+const enc = new TextEncoder();
+
+/** The bytes a hex field stands for. An empty field is no bytes. */
+function unhex(field: string): Uint8Array {
+  const out = new Uint8Array(field.length >> 1);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(field.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+function hex(bytes: Uint8Array): string {
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+const text = dec.decode(await new Response(Deno.stdin.readable).arrayBuffer());
 const lines = text.split("\n").filter((l) => l.trim().length > 0);
 
-let answered = 0;
 const out: string[] = [];
+let answered = 0;
 for (const line of lines) {
-  let request: Request;
-  try {
-    request = JSON.parse(line) as Request;
-  } catch (e) {
-    // A malformed request is this harness's fault or the caller's, and either way the run it stands
-    // for did not happen — so it is an answer that says so rather than a silent gap in the sequence.
-    out.push(JSON.stringify({ code: -1, out: "", err: `appRunMany: ${e instanceof Error ? e.message : e}` }));
+  const [word, argvHex = "", cwdHex = "", stdinHex = "", envHex = ""] = line.split(" ");
+  if (word !== "run") {
+    // An unknown request is this harness's fault or the caller's, and either way the run it stands
+    // for did not happen — so it is an answer saying so rather than a gap in the sequence.
+    out.push(`ran -1  ${hex(enc.encode(`appRunMany: not a request: ${line}`))}`);
     answered++;
     continue;
   }
-  const r = await runner.run(request.argv ?? [], {
-    cwd: request.cwd,
-    stdin: request.stdin,
-    env: request.env,
+  const joined = dec.decode(unhex(argvHex));
+  const argv = joined.length === 0 ? [] : joined.split("\u0000");
+  const cwd = dec.decode(unhex(cwdHex));
+  const pairs = dec.decode(unhex(envHex));
+  const env: Record<string, string> = {};
+  for (const kv of pairs.length === 0 ? [] : pairs.split("\u0000")) {
+    const at = kv.indexOf("=");
+    if (at > 0) env[kv.slice(0, at)] = kv.slice(at + 1);
+  }
+  const r = await runner.run(argv, {
+    cwd: cwd.length === 0 ? undefined : cwd,
+    stdin: unhex(stdinHex),
+    env: pairs.length === 0 ? undefined : env,
   });
-  out.push(JSON.stringify({ code: r.code, out: r.out, err: r.err }));
+  out.push(`ran ${r.code} ${hex(enc.encode(r.out))} ${hex(enc.encode(r.err))}`);
   answered++;
 }
 
