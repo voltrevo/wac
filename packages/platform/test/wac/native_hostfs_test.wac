@@ -683,7 +683,15 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
   // batched Deno half would exercise the queue and never the process's own input, and the comparison
   // would be a queue-fed JavaScript host against an fd-fed native one. The bug this test exists to
   // catch lives exactly in that difference. Ten cases at one process each is what checking real
-  // standard input costs.
+  // standard input costs — but not one *after another*: measured 2026-08-19, interleaved and warm,
+  // this test is **2.3–2.6s serial against 1.6–1.9s** with the twenty runs started together, over a
+  // 0.7s floor for `wac test` compiling the file and running nothing.
+  //
+  // Worth recording what that floor exposed, since this test used to be described as the file's
+  // expense: it is not. Warm and one at a time, the seven tests here are 4.1s, 1.7, 1.2, 1.2, 1.2,
+  // 0.7, 0.5 including that floor — the real filesystem sweep is the big one, and the whole file
+  // varies 12.8s to 16.5s between runs on identical input, which is two other agents sharing the
+  // machine rather than anything here.
   T t = T.create();
   string native = nativeBinary(cli);
   if (native == "") {
@@ -724,12 +732,34 @@ export string test_a_program_reading_its_standard_input_answers_the_same_on_both
   inputs[8] = ("one\ntwo\nthree\n").toBytes();
   inputs[9] = ("c\na\nb\n").toBytes();
 
-  for (i32 i = 0; i < scripts.len() && i < inputs.len(); i++) {
+  // **One process each, all started together.** Keeping a process per case is the point above; running
+  // them one after another is not. Twenty runs of a shell reading its input are independent — nothing
+  // here writes to the tree — so they are submitted and then collected, and the cost is the slowest
+  // rather than the sum. `denoBatch` is still the thing that must not be used: it would feed the child
+  // through the parent-fed queue that shadowed fd 0, which is the whole subject.
+  i32 n = scripts.len() < inputs.len() ? scripts.len() : inputs.len();
+  Pending<Exec>[] pjs = Pending<Exec>[n]();
+  Pending<Exec>[] prs = Pending<Exec>[n]();
+  for (i32 i = 0; i < n; i++) {
+    pjs[i] = submit(cli, DEFAULT_SECONDS, tmp, tmp, s.deno, string[]("-c", scripts[i]), inputs[i]);
+    prs[i] = submit(cli, DEFAULT_SECONDS, tmp, tmp, native, string[](s.manifest, "-c", scripts[i]),
+                    inputs[i]);
+  }
+  for (i32 i = 0; i < n; i++) {
     string label = "`" + scripts[i] + "` (" + itoa(inputs[i].len()) + " bytes in)";
-    Ran js = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", scripts[i]), inputs[i],
-                          () => { });
-    Ran rs = boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", scripts[i]),
-                          inputs[i], () => { });
+    Ran js = collect(pjs[i]);
+    Ran rs = collect(prs[i]);
+    // **A run that hit its bound is asked again alone**, which is what `boundedAgain` is for and why
+    // the batch does not replace it: twenty concurrent processes on a shared machine can make a slow
+    // run look like a wedged one, and the retry is where that is told apart — a case that hangs with
+    // nothing else competing is a hang. Same shape as the batch above, at line 356.
+    if (js.hung) {
+      js = boundedAgain(core, cli, tmp, tmp, s.deno, string[]("-c", scripts[i]), inputs[i], () => { });
+    }
+    if (rs.hung) {
+      rs = boundedAgain(core, cli, tmp, tmp, native, string[](s.manifest, "-c", scripts[i]),
+                        inputs[i], () => { });
+    }
     t.eqStr(rs.out, js.out, label + ": the hosts read different input");
     t.eqStr(rs.err, js.err, label + ": stderr");
     t.eqI32(rs.code, js.code, label + ": status");
