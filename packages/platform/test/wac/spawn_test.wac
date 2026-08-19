@@ -62,8 +62,7 @@ string build(Cli cli, string entry, string out, string[] grants, string target, 
     string g = grants[i];
     name = name + "-" + (g.len() > 8 ? g.slice(8, g.len()) : g);
   }
-  string made = builtByDeno(cli, entry, name, grants, target, worker,
-                            string[]("packages/platform/src", "packages/platform/example"));
+  string made = builtByDeno(cli, entry, name, grants, target, worker);
   if (made == "") { return entry + " did not build"; }
   if (!copyBuilt(cli, made, out, !worker)) { return entry + ": the build did not copy to " + out; }
   return "";

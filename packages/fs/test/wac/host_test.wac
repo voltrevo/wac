@@ -59,16 +59,15 @@ string workDir(Cli cli) {
  * two lines below contradicted; a `wac build` of `ops` is about 1.9s and eight of them were 16.5s of
  * CPU, the fourth most expensive file in the lane. It is 0.2s warm now.
  *
- * `packages/wacc/src` is in `trees` because `std/platform.wac` is embedded in the compiler now, so what
- * `ops` depends on is `coretext.wac` rather than a file it imports.
+ * `ops` reaches nine files, and `std/platform.wac` is not one of them — it is embedded in the compiler,
+ * so a change to it arrives as a new `wac` binary, whose mtime `builtProgram` checks anyway.
  */
 string buildOps(T t, Core core, Cli cli) {
   Stat bin = cli.stat(binary(cli)).wait();
   t.isTrue(bin.exists, "the binary that builds ops is where the seed task writes it");
   if (!bin.exists) { return ""; }
   string mod = builtProgram(cli, OPS, "fs-ops",
-                            string[]("--allow-read", "--allow-write"),
-                            string[]("packages/fs", "packages/wacc/src"));
+                            string[]("--allow-read", "--allow-write"));
   t.isTrue(cli.stat(mod).wait().exists, "ops builds — see .cache/built-fs-ops");
   return cli.stat(mod).wait().exists ? mod : "";
 }

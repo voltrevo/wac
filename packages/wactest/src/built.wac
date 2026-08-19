@@ -12,11 +12,26 @@
 //
 // ## Freshness
 //
-// mtimes, the rule `tools/seedFresh.test.ts` uses for the seed: the built module is rebuilt when
-// anything under `trees` — or the binary that builds it — is newer. The caller names those trees
-// because only the caller knows what its program is made of. Coarser than an import walk on purpose,
-// because the failure mode that matters is "somebody edited the package and the test kept using
-// yesterday's build", and a directory mtime scan catches that for the price of a few dozen stats.
+// mtimes, the rule `tools/seedFresh.test.ts` uses for the seed: the built module is rebuilt when any
+// file **the program is made of** — or the binary that builds it — is newer.
+//
+// It used to be the newest file under trees the caller named, and this comment defended that as
+// "coarser than an import walk on purpose". The cost was measured on 2026-08-19 and it is not a
+// rounding error: `arrival_users_test.wac` named `packages`, so *any* of the 902 `.wac` files in the
+// tree sent it back to a 12s build of `sshd` — and the gate pulls before it runs, so that was most
+// gates. `sshd` reaches 190 files, a fifth of the tree; `packages/fs/example/ops.wac` reaches **nine**
+// against the hundreds its caller was naming, and `packages/platform/example/clocks.wac` reaches
+// **one**.
+//
+// So the closure is derived rather than declared, by scanning for `from "…"` and following it. That is
+// what `source_probe.wac` does for the corpus and what `closure_of` does in the Rust host, and the
+// scan is deliberately a *superset*: prose in a comment that looks like an import adds a path that does
+// not exist and is skipped, which costs a `stat`. What it must not do is *miss* one, so it takes the
+// text rather than the parse — an import written across two lines still has `from "` in it — and a file
+// it cannot read counts as newer than the artefact rather than older.
+//
+// `std/` and `core/` are not on disk: they are embedded in the compiler, so a change to them arrives as
+// a new `wac` binary, whose mtime is checked here anyway.
 //
 // The cache is `.cache/`, which is per workspace and therefore per agent. Nothing here writes to
 // `/tmp`, where three agents would share a name.
@@ -43,6 +58,104 @@ export i64 newestUnder(Cli cli, string dir) {
   return newest;
 }
 
+/** The `"…"` after each `from` in a source, which is every import spec plus any prose that looks like one. */
+string[] importsOf(string src) {
+  i32 found = 0;
+  for (i32 i = 0; i + 6 <= src.len(); i++) {
+    if (src.slice(i, i + 6) == "from \"") { found = found + 1; }
+  }
+  string[] out = string[found](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i + 6 <= src.len(); i++) {
+    if (src.slice(i, i + 6) != "from \"") { continue; }
+    i32 from = i + 6;
+    i32 to = from;
+    while (to < src.len() && src.slice(to, to + 1) != "\"") { to = to + 1; }
+    if (to <= src.len() && n < out.len()) { out[n] = src.slice(from, to); n = n + 1; }
+  }
+  return out;
+}
+
+/** `a/b/c.wac` → `a/b`, and `c.wac` → `""`. */
+string dirOfPath(string path) {
+  for (i32 i = path.len() - 1; i >= 0; i--) {
+    if (path.slice(i, i + 1) == "/") { return path.slice(0, i); }
+  }
+  return "";
+}
+
+/**
+ * `spec` resolved against the file that wrote it, with `.` and `..` folded out.
+ *
+ * Repo-relative on the way in and on the way out — these paths are handed to `cli.stat`, so a leading
+ * slash would make every one of them miss.
+ */
+string resolvedFrom(string fromPath, string spec) {
+  string joinedPath = dirOfPath(fromPath) + "/" + spec;
+  string[] parts = string[64](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= joinedPath.len(); i++) {
+    if (i < joinedPath.len() && joinedPath.slice(i, i + 1) != "/") { continue; }
+    string part = joinedPath.slice(from, i);
+    from = i + 1;
+    if (part == "" || part == ".") { continue; }
+    if (part == "..") { if (n > 0) { n = n - 1; } continue; }
+    if (n >= parts.len()) { return ""; }
+    parts[n] = part;
+    n = n + 1;
+  }
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = (i == 0 ? parts[i] : out + "/" + parts[i]); }
+  return out;
+}
+
+/** How many files one program's closure is allowed to reach. `sshd` is the largest here at 190. */
+const i32 CLOSURE_CAP = 1024;
+
+/**
+ * The newest modification time among `entry` and every file it imports, transitively.
+ *
+ * A file that cannot be read answers `now`, so an artefact is rebuilt rather than trusted when the walk
+ * cannot see what it is made of — the safe direction, since the alternative is asserting against
+ * yesterday's build.
+ */
+export i64 newestInClosure(Cli cli, string entry) {
+  string[] seen = string[CLOSURE_CAP](fill: "");
+  seen[0] = entry;
+  i32 n = 1;
+  i32 at = 0;
+  i64 newest = 0 as i64;
+  while (at < n) {
+    string path = seen[at];
+    at = at + 1;
+    Stat s = cli.stat(path).wait();
+    // `std/…` and `core/…` resolve to nothing on disk: they live in the compiler, and the binary's own
+    // mtime below is what covers them.
+    if (!s.isFile) { continue; }
+    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; }
+    FileResult f = cli.readFile(path).wait();
+    if (!f.ok) { return nowMillis(cli); }
+    string[] specs = importsOf(string.fromBytes(f.bytes));
+    for (i32 i = 0; i < specs.len(); i++) {
+      string next = resolvedFrom(path, specs[i]);
+      if (next == "") { continue; }
+      bool have = false;
+      for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }
+      if (have || n >= seen.len()) { continue; }
+      seen[n] = next;
+      n = n + 1;
+    }
+  }
+  return newest;
+}
+
+/** A stand-in for "newer than anything", used when the closure cannot be read. */
+i64 nowMillis(Cli cli) {
+  Stat s = cli.stat(wacBinary(cli)).wait();
+  return s.exists ? s.modifiedMillis + (1000000 as i64) : 1000000000000000;
+}
+
 /** The path of the `wac` binary these tests build and run with. */
 export string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
@@ -56,18 +169,14 @@ export string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/
  * Answers the path either way. A build that fails leaves no module, and the caller's first run says
  * so: `wac` reports the missing file and the test's own assertion on the exit status carries it.
  */
-export string builtProgram(Cli cli, string entry, string name, string[] grants, string[] trees) {
+export string builtProgram(Cli cli, string entry, string name, string[] grants) {
   string wac = wacBinary(cli);
   string dir = cli.cwd().wait() + "/.cache/built-" + name;
   cli.mkdir(dir, true).wait();
   string stem = dir + "/" + name;
   Stat have = cli.stat(stem + ".wasm").wait();
 
-  i64 newest = 0 as i64;
-  for (i32 i = 0; i < trees.len(); i++) {
-    i64 deep = newestUnder(cli, trees[i]);
-    if (deep > newest) { newest = deep; }
-  }
+  i64 newest = newestInClosure(cli, entry);
   Stat bin = cli.stat(wac).wait();
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
   if (have.exists && have.modifiedMillis > newest) { return stem + ".wasm"; }
@@ -98,17 +207,17 @@ export string builtProgram(Cli cli, string entry, string name, string[] grants, 
  * counter dump, and a test asserting on a shebang would see it.
  */
 export string builtByDeno(Cli cli, string entry, string name, string[] grants, string target,
-                          bool worker, string[] trees) {
+                          bool worker) {
   string dir = cli.cwd().wait() + "/.cache/built-" + name;
   cli.mkdir(dir, true).wait();
   string out = dir + "/" + name + (worker ? ".worker.js" : "");
   Stat have = cli.stat(out).wait();
 
-  i64 newest = 0 as i64;
-  for (i32 i = 0; i < trees.len(); i++) {
-    i64 deep = newestUnder(cli, trees[i]);
-    if (deep > newest) { newest = deep; }
-  }
+  i64 newest = newestInClosure(cli, entry);
+  // **And `compiler/`**, which is the other half of this path: `build.ts` binds `wacc` through the
+  // *reference* compiler, so an edit there changes what comes out even when no `.wac` moved.
+  i64 ref = newestUnder(cli, "compiler");
+  if (ref > newest) { newest = ref; }
   Stat builder = cli.stat("packages/platform/build.ts").wait();
   if (builder.exists && builder.modifiedMillis > newest) { newest = builder.modifiedMillis; }
   if (have.exists && have.modifiedMillis > newest) { return out; }

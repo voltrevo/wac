@@ -111,11 +111,10 @@ World world(Cli cli, string name) {
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   string[] grants = string[]("--allow-read", "--allow-write");
-  string[] trees = string[]("packages/platform/src", "packages/box/src", "packages/fs/src");
 
-  string madeDeno = builtByDeno(cli, ENTRY, "arrival-imaged", grants, "deno", false, trees);
+  string madeDeno = builtByDeno(cli, ENTRY, "arrival-imaged", grants, "deno", false);
   string madeNative = builtProgram(cli, ENTRY, "arrival-imaged-native",
-                                   string[]("--allow-read", "--allow-write", "--quiet"), trees);
+                                   string[]("--allow-read", "--allow-write", "--quiet"));
   if (madeDeno == "") { return World(false, "imaged did not build for deno", dir, "", ""); }
 
   string deno = dir + "/imaged-deno";

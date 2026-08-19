@@ -72,12 +72,14 @@ string nativeBinary(Core core, Cli cli) {
  * warm one in 0.26s. Nothing else here is close: four `ssh-keygen`s together are 0.01s.
  *
  * So both halves go through `wactest/src/built.wac`, which keeps the artefact in `.cache/built-<name>`
- * and rebuilds it when anything under `trees` — or the `wac` binary itself — is newer. `packages` is
- * the whole tree rather than the six directories `sshd` happens to reach today: under-naming a tree is
- * how a test comes to assert against a binary built from code that has since changed, and a directory
- * walk is cheap against a 12s compile.
+ * and rebuilds it when any file `sshd` is made of — or the `wac` binary itself — is newer.
+ *
+ * **This used to name `packages`, the whole tree**, on the argument that under-naming a tree is how a
+ * test comes to assert against a stale binary. That was the right worry and the wrong fix: any of the
+ * 902 `.wac` files in the tree sent this back to a 12s build, and the gate pulls before it runs, so it
+ * paid that on most gates. The closure is derived now — `sshd` reaches 190 files — so the question is
+ * asked about the program rather than about the repository.
  */
-const string[] TREES = string[]("packages");
 
 string[] SSHD_GRANTS() {
   return string[]("--allow-read", "--allow-write", "--allow-net", "--allow-env");
@@ -158,7 +160,7 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
   cli.remove(tmp, true).wait();
   cli.mkdir(tmp, true).wait();
 
-  string denoBin = builtByDeno(cli, ENTRY, "sshd-arrival-deno", SSHD_GRANTS(), "deno", false, TREES);
+  string denoBin = builtByDeno(cli, ENTRY, "sshd-arrival-deno", SSHD_GRANTS(), "deno", false);
   t.isTrue(denoBin != "" && cli.stat(denoBin).wait().exists,
            "the Deno sshd built — see .cache/built-sshd-arrival-deno");
   if (denoBin == "") { return t.report(); }
@@ -208,7 +210,7 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
 
   string native = nativeBinary(core, cli);
   if (native == "") { cli.remove(tmp, true).wait(); return t.report(); }
-  string mod = builtProgram(cli, ENTRY, "sshd-arrival", SSHD_GRANTS(), TREES);
+  string mod = builtProgram(cli, ENTRY, "sshd-arrival", SSHD_GRANTS());
   string manifest = mod.slice(0, mod.len() - 5) + ".json";
   t.isTrue(cli.stat(mod).wait().exists && cli.stat(manifest).wait().exists,
            "the native sshd built — see .cache/built-sshd-arrival");

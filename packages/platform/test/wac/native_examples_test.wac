@@ -206,18 +206,6 @@ string lineFor(string where, string prog, string[] args) {
 }
 
 /**
- * The trees whose newest file decides whether an example needs rebuilding.
- *
- * The examples themselves, what little of `packages/platform` is still on disk, and `packages/wacc/src`
- * — because `std/platform.wac` is *embedded* in the compiler now, so an example's real dependency is
- * `coretext.wac` rather than a file it imports. `builtProgram` adds the `wac` binary's own mtime, which
- * is what covers a rebuilt seed.
- */
-string[] exampleTrees() {
-  return string[]("packages/platform/example", "packages/platform/src", "packages/wacc/src");
-}
-
-/**
  * Build one example for both hosts, or reuse what is there, and put the artefacts where the run step
  * expects them.
  *
@@ -225,7 +213,7 @@ string[] exampleTrees() {
  * against 8.6s of wall — the highest in the lane once the ranking stopped being wall-clock — and about
  * fourteen of those seconds were rebuilding the examples. What it asks is whether the two hosts *agree*,
  * so the artefacts are inputs to the question rather than part of it, and `wactest/src/built.wac` keeps
- * them in `.cache/built-<name>` until something under `exampleTrees()` or the binary is newer. The runs
+ * them in `.cache/built-<name>` until a file the example is made of, or the binary, is newer. The runs
  * still happen every time, three cases at a time, which is where the comparison lives.
  *
  * **The cache name is the final name.** A native module's manifest records the module by basename, so a
@@ -235,13 +223,13 @@ string[] exampleTrees() {
  */
 string builtOnce(Cli cli, string tmp, Case c, bool haveNative) {
   string entry = "packages/platform/example/" + c.name + ".wac";
-  string deno = builtByDeno(cli, entry, c.name + "-deno", c.grants, "deno", false, exampleTrees());
+  string deno = builtByDeno(cli, entry, c.name + "-deno", c.grants, "deno", false);
   if (deno == "") { return entry + " did not build for the JavaScript host\n"; }
   if (!copyBuilt(cli, deno, tmp + "/" + c.name + "-deno", true)) {
     return entry + ": its built script would not copy into " + tmp + "\n";
   }
   if (!haveNative) { return ""; }
-  string mod = builtProgram(cli, entry, c.name, c.grants, exampleTrees());
+  string mod = builtProgram(cli, entry, c.name, c.grants);
   string manifest = mod.slice(0, mod.len() - 5) + ".json";
   if (!copyBuilt(cli, mod, tmp + "/" + c.name + ".wasm", false)
       || !copyBuilt(cli, manifest, tmp + "/" + c.name + ".json", false)) {
