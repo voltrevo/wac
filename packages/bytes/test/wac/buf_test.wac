@@ -381,3 +381,42 @@ export string test_push_repeat_grows_the_buffer() {
   t.eqI32(out[16], 'a', "as is one from the middle");
   return t.report();
 }
+
+/**
+ * `pushDecimal`, including the two values that make a naive version wrong.
+ *
+ * It arrived here by deduplication: `packages/http` had written the loop twice, byte for byte, in
+ * `outgoing.wac` for a `Content-Length` and in `response.wac` for a status code. Both copies started
+ * `while (x > 0)` over an i32 and neither could take a negative — correct for their callers and not
+ * for a method on `Buf`, so the sign is handled here and asserted below.
+ *
+ * **`i32.MIN` is the case worth having.** Negating it in i32 gives `i32.MIN` back, so a version that
+ * wrote `x = -x` would print `-2147483648` as nothing at all after the minus, and only for that one
+ * input. Widening to i64 before negating is what makes it come out.
+ */
+export string test_push_decimal_writes_the_number_including_its_sign() {
+  T t = T.create();
+  Buf b = Buf.create();
+  b.pushDecimal(0);
+  t.eqStr(string.fromBytes(b.take()), "0", "zero is a digit, not an empty string");
+
+  b.pushDecimal(7);
+  t.eqStr(string.fromBytes(b.take()), "7", "one digit");
+  b.pushDecimal(1234567890);
+  t.eqStr(string.fromBytes(b.take()), "1234567890", "ten digits, most significant first");
+  b.pushDecimal(2147483647);
+  t.eqStr(string.fromBytes(b.take()), "2147483647", "the largest i32");
+
+  b.pushDecimal(-1);
+  t.eqStr(string.fromBytes(b.take()), "-1", "a negative carries its sign");
+  b.pushDecimal(-2147483647 - 1);
+  t.eqStr(string.fromBytes(b.take()), "-2147483648",
+          "and the most negative i32 survives the negation");
+
+  // Appending rather than replacing, since every caller writes it into the middle of something.
+  b.pushAll("Content-Length: ".toBytes());
+  b.pushDecimal(42);
+  b.pushAll("\r\n".toBytes());
+  t.eqStr(string.fromBytes(b.take()), "Content-Length: 42\r\n", "written into a longer buffer");
+  return t.report();
+}

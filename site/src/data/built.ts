@@ -21,30 +21,30 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 131107,
+  lines: 131188,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2582,
+  tests: 2594,
   programs: 81,
   pages: 11,
   /**
-   * The whole repository: the packages (2582), and the compiler, harness and tooling
+   * The whole repository: the packages (2594), and the compiler, harness and tooling
    * around them (1374).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3956,
+  testsAll: 3968,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 498,
+  wacTests: 501,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
 export const BUILT: BuiltPackage[] = [
-  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 339, tests: 39 },
+  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 361, tests: 40 },
   { name: "unicode", what: "UTF-8 as code points, simple case mapping, and whether a code point is printable.", lines: 251, tests: 13 },
   { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 50 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 368, tests: 10 },
@@ -57,7 +57,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1219, tests: 27 },
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 72 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
-  { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1327, tests: 40 },
+  { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1311, tests: 46 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 57 },
   { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4305, tests: 222 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1071, tests: 27 },
@@ -78,7 +78,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 185 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17363, tests: 313 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34693, tests: 283 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34768, tests: 288 },
   { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 1749, tests: 45 },
   { name: "wactest", what: "Assertions for tests written in wac.", lines: 2103, tests: 34 },
   { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3711, tests: 73 },

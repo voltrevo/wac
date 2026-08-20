@@ -1,0 +1,120 @@
+// http's coverage, and the file that was not being measured at all.
+//
+//   deno task coverage:http
+//   deno task coverage:http --verbose
+//
+// **505 of 523**, from 404 of 447. Two-way ratchet over `tools/wac/covledger.wac`: anything not
+// listed must be covered, and anything listed that *is* covered fails too. `issues/system/0205`.
+//
+// ## The denominator was short, not the numerator
+//
+// `src/proxy.wac` did not appear in the report — not as a low percentage, not as a list of uncovered
+// lines, but not at all. The exercise imported two probes and neither reached it, so eighty-six branch
+// points were outside the module graph and the total said 447. Wiring the package's own tests brought
+// the file in and the total became 533. **A coverage figure names the points it can see**, and the one
+// number that cannot warn you it is wrong is the one in the denominator.
+//
+// `src/client.wac` is still outside it, and deliberately: its only tests are the five in
+// `interop_test.wac` that bind a port.
+//
+// ## The grants have to reach the exercise, not the tool
+//
+// `covreport` takes its grants *after* the entry and the prefix, and passes them to the build of the
+// exercise; a `--allow-run` written before `covreport.wac` grants the reporting tool instead. With the
+// flag on the wrong side of `--`, every test that spawns `node` failed inside the driver, the driver
+// only warns, and the report was 473 of 533 rather than 492 — nineteen points quietly missing with no
+// error anywhere. This ledger passes them through `measure` for the same reason the other twelve do.
+//
+// ## What the grants are worth
+//
+// **Dropping them takes this from 505 of 523 to 486** — the nineteen points the tests that spawn
+// `node` reach. Which is the same nineteen the misplaced flag was costing, arrived at from the other
+// direction and the reason that mistake was findable at all.
+//
+// ## What the tests found
+//
+//   * **the reason-phrase table**, seventeen rows of string literals that nothing had ever read. A
+//     response saying `405 Not Found` is wire-legal and passes every framing test in this package,
+//     because a client reads the *code*. Now checked against Node's `http.STATUS_CODES`, with 413 as
+//     a named exception: RFC 9110 §15.5.14 renamed it to *Content Too Large* and Node still says
+//     *Payload Too Large*, so that row asserts the disagreement and fails if Node catches up;
+//   * **the body-size refusals**, five of them, one per route into a body — declared length, one
+//     chunk, the running total, a size too wide for an i32, and the close-delimited case where
+//     nothing was declared at all. `maxBody` is this implementation's number, so no oracle-driven
+//     corpus will ever contain a message that exceeds it: a limit is exactly what an agreement test
+//     cannot check;
+//   * **the header table's growth**, eight entries doubling, where a copy one short loses a field
+//     silently and the message still parses;
+//   * **`Outgoing.create` and `Outgoing.set`**, the client's request builder, which nothing called —
+//     the tests inside the package build the struct positionally, which a caller outside it cannot.
+//
+// And one duplicate removed: `writeDecimal` was written twice, byte for byte, for a `Content-Length`
+// and for a status code. It is `Buf.pushDecimal` now, in `packages/bytes`, with the sign handling its
+// two callers did not need and a method on `Buf` does — the ten points that left this package are
+// seven that arrived there.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/http/test/cov_exercise.wac";
+const string PREFIX = "packages/http/";
+
+/** What the tests need: a process to ask `node`, and the environment to find it in. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/http/src/request.wac", 66, "if (hi <= lo) { return false; }", true,
+        "**An empty target is refused fourteen lines before this can see one.** `isValidTarget` has " +
+        "one caller, at `:123`, and `:112` — `if (sp2 == sp1 + 1) { return Parsed.Bad(ERR_TARGET()); }` " +
+        "— is the same condition said about the same two indices. So `hi <= lo` cannot hold here.\n" +
+        "         Kept because the two guards answer different questions that happen to coincide: " +
+        "`:112` is *the request line has an empty middle field*, and this is *this function was " +
+        "handed an empty range*. `GET  HTTP/1.1` is refused as `ERR_TARGET` rather than `ERR_LINE`, " +
+        "which is the more specific code and is what `test_the_shapes_a_node_generated_corpus_does_" +
+        "not_contain` pins — I expected `ERR_LINE` and the code was right.")
+  );
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/http/src/proxy.wac", "replyCap", "decl", false,
+         "**How much of a reply to read before giving up, which only the socket path asks.** One " +
+         "line, one caller, and that caller is `connectThrough` below — so this is uncovered for " +
+         "exactly the reason the rule under it gives, and is listed separately only because a rule " +
+         "matches an enclosing declaration and this is its own."),
+    Rule("packages/http/src/proxy.wac", "connectThrough", "decl", false,
+         "**The only thing in this package that owns a socket, and the driver must not open one.**\n" +
+         "         Every uncovered point in `proxy.wac` is inside `connectThrough` — the dial, the " +
+         "send, the three `recv` arms, the four reply outcomes and the reply cap. It is tested, by " +
+         "`test/wac/tunnel_test.wac`'s three cases, which dial this container's *actual* proxy and " +
+         "pass in the suite. They are left out of the exercise on purpose: a coverage driver that " +
+         "needs the network reports a different number when the network is down, and a floor over a " +
+         "figure like that is a floor over the weather. `packages/server`'s ledger leaves its " +
+         "`live_test.wac` out for the same reason, and `interop_test.wac`'s five are out of this one " +
+         "for the port-binding half of it — `issues/system/0216`.\n" +
+         "         `proven: false`, and the distinction matters here more than usual: this is not " +
+         "code no input reaches, it is code whose inputs exist, are written down, and run every " +
+         "time the suite does. What is unreachable is not the branch but the *driver*.\n" +
+         "         `readReply`, `parseProxy` and `connectRequest` — the pure functions this splits " +
+         "the work into so that most of it needs no socket — are fully covered by " +
+         "`proxy_test.wac`'s eight, which is the argument for having split them.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No trap cases: none of the 38 tests wired into the exercise expects a trap.
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}
