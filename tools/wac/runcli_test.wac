@@ -19,9 +19,15 @@
 //
 // ## Host-side until 2026-08-20 — `issues/system/0161`
 //
-// Three of `tools/runCli.test.ts`'s four tests, which spawned the two binaries and read what they said.
-// The fourth stays there: it builds a **Deno application** with `buildApp` and runs that, so its
-// subject is `packages/platform/build.ts` and the JavaScript world it makes.
+// All four of what was runCli.test.ts, in tools/. Three spawned the two host binaries and read what they
+// said; the fourth builds a **Deno application** and runs that, and was left behind on the grounds that
+// its subject is `packages/platform/build.ts` and the JavaScript world it makes.
+//
+// **That is true of the subject and says nothing about the harness.** The world stays JavaScript and is
+// asserted against unchanged; what moved is `builtByDeno` plus an `exec`, which
+// `packages/platform/test/wac/spawn_test.wac` and four other wac tests already do. The same correction
+// applies to `packages/platform/test/wac/trapmessage_test.wac`, whose last case moved the same day for
+// the same reason.
 //
 // The wasmtime program is built with `wac build` rather than `packages/platform/native.ts`, which the
 // TypeScript used. The two produce byte-identical output — measured on `wc.wac` and `wacc.wac`,
@@ -29,6 +35,7 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, nativeBinaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { builtByDeno, copyBuilt } from "../../packages/wactest/src/built.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 
@@ -100,6 +107,37 @@ export string test_a_main_naming_a_capability_this_host_cannot_build_still_says_
   t.isTrue(r.status != 0, "a capability no host binary builds is not a success: " + said(r));
   // Names the capability, rather than reporting a missing manifest struct or trapping inside.
   t.isTrue(contains(said(r), "Page"), "and says which one: " + said(r));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * **And the third host: a Deno application**, where the same defect had its own shape.
+ *
+ * `worldFor` built a `Core` from the module's exported classes unconditionally, and a program that
+ * declares no capabilities has no `Core` class to build from — so it died with `Cannot read properties
+ * of undefined (reading 'of')` before `main` ran. The two Rust hosts read `main`'s parameter list; here
+ * the absent class is the same signal, and the assertion is that the message does not appear.
+ *
+ * The world is `packages/platform/build.ts` and stays JavaScript. This builds it and runs it.
+ */
+export string test_a_built_deno_app_whose_main_takes_no_capabilities_runs(Core core, Cli cli) {
+  T t = T.create();
+  string dir = programIn(cli, t, "runcli-app", NOCAPS);
+
+  string made = builtByDeno(cli, dir + "/p.wac", "runcli-nocaps-app", string[0](fill: ""),
+                            "deno", false);
+  t.isTrue(made != "", "the app built");
+  if (made == "") { cli.remove(dir, true).wait(); return t.report(); }
+  string app = dir + "/p";
+  t.isTrue(copyBuilt(cli, made, app, true), "the build copied to " + app);
+
+  Exec r = cli.exec(app, string[0](fill: ""), u8[0]()).wait();
+  t.isTrue(r.ran(), "the app did not run — " + r.error);
+  t.isTrue(!contains(said(r), "reading 'of'"),
+           "a program that declares nothing must not die in `worldFor`: " + said(r));
+  t.eqI32(r.status, 3, "and its answer is the exit status: " + said(r));
 
   cli.remove(dir, true).wait();
   return t.report();
