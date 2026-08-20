@@ -7801,7 +7801,11 @@ export void declareModule(C c, Program prog, string[] only) {
           // and `spec/tour.wac` itself. What it loses is the bare *type*: `spec/cases/0042`.
           bool bare = typeParams.len() == 0;
           if (bare) { c.declareStruct(vname, "", string[0]()); }
-          c.declareVariant(tokenText(c, nameTok), vname, variants[vi].fields.len());
+          // **Under the name this file calls the enum**, which is `c.renamed` — the same wrapper
+          // `declareEnum` seventeen lines above already uses. Without it an aliased import registered
+          // the *enum* as `E2` and its variants as belonging to `E`, so `E2.A` was "no variant of that
+          // name" while `E2` worked perfectly as a parameter type (`issues/lang/0161`).
+          c.declareVariant(c.renamed(tokenText(c, nameTok)), vname, variants[vi].fields.len());
           c.markVariantBare(vname, bare);
           for (i32 fi = 0; fi < variants[vi].fields.len(); fi++) {
             c.declareFieldConst(vname, tokenText(c, variants[vi].fields[fi].nameTok),

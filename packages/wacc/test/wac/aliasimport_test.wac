@@ -1,0 +1,53 @@
+// An aliased import names the same declaration, and its variants come with it.
+//
+//     wac test --allow-read packages/wacc/test/wac/aliasimport_test.wac
+//
+// `import { E as E2 }` registered the *enum* under `E2` — `declareEnum(c.renamed(…))` — and its
+// variants under `E`, because `declareVariant` seventeen lines below was the one call in that walk not
+// wrapped in `c.renamed`. So `E2` worked perfectly as a parameter type and `E2.A` was *"no variant of
+// that name"*, which is a confusing pair of facts to be handed. `issues/lang/0161`.
+//
+// **The third test is the one that matters.** A fix that stopped checking variant names at all would
+// satisfy the first two, so a genuinely absent variant has to stay refused — the same shape as the
+// control in every other case added today.
+//
+// Multi-file, so it cannot live in `spec/cases`: a single-file runner has no `lib.wac` to supply, and
+// an import naming a file nobody gave is not refused by this checker anyway (`issues/lang/0157`).
+
+import { T } from "../../../wactest/src/assert.wac";
+import { dumpTypeErrorsFiles } from "../../src/api.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli } from "std/platform.wac";
+
+string LIB() { return "export enum E { A, B }\n"; }
+
+/** How many type errors this pair of files produces. */
+i32 errs(string main) {
+  return dumpTypeErrorsFiles(string[]("/main.wac", "/lib.wac"),
+                             string[](main, LIB()), "/main.wac").len();
+}
+
+export string test_a_variant_is_reachable_through_an_aliased_enum(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = errs("import { E as E2 } from \"/lib.wac\";\n" +
+               "export i32 f() { E2 e = E2.A; return 1; }\n");
+  t.eqI32(n, 0, "an aliased enum's variant is not reachable — " + itoa(n) + " diagnostic(s)");
+  return t.report();
+}
+
+export string test_the_unaliased_form_is_unaffected(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = errs("import { E } from \"/lib.wac\";\n" +
+               "export i32 f() { E e = E.A; return 1; }\n");
+  t.eqI32(n, 0, "the plain import stopped working — " + itoa(n) + " diagnostic(s)");
+  return t.report();
+}
+
+export string test_a_variant_that_does_not_exist_is_still_refused(Core core, Cli cli) {
+  T t = T.create();
+  // The canary. Reaching a real variant through an alias must not be bought by no longer checking.
+  i32 n = errs("import { E as E2 } from \"/lib.wac\";\n" +
+               "export i32 f() { E2 e = E2.Nope; return 1; }\n");
+  t.isTrue(n > 0, "`E2.Nope` is accepted — the variant check was lost, not fixed");
+  return t.report();
+}
