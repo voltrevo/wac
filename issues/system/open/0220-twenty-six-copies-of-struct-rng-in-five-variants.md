@@ -93,3 +93,42 @@ over half, which is what a signed remainder on a value with the top bit set give
 
 So this issue's *"a claim nothing checks"* now has two named pairs and a number behind it, which is
 probably where a sweep should start rather than at the thirteen identical copies.
+
+### Which of the two variants is *right*, measured against the thing they claim to match
+
+The table at the top calls the eighteen "one generator split by whether the result is cast", which reads
+as a tidying job. It is not symmetric: one of the two matches the host-side generator and the other does
+not, and four files that use the wrong one **say in a comment that they use the right one**.
+
+The host-side generators, recovered from git history because the files are deleted —
+`packages/{regex,unicode,datetime,url}/cov.ts` — are all:
+
+```js
+x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x;    // unsigned
+```
+
+The wac copies' **state evolution is a faithful port**: `(this.x >> 17) & 0x7FFF` is a signed shift masked
+to fifteen bits, which is bit-for-bit `x >>> 17` on a 32-bit value either side of zero. The only
+difference is the *return* — the host hands back an unsigned value, `as@ u32` reproduces that, and plain
+does not.
+
+So **the cast variant is correct and the plain one is wrong**, and these four carry the claim while being
+the wrong one:
+
+| file | claim | bare `%` |
+|---|---|---|
+| `regex/test/wac/regex_test.wac` | "matching the host-side generator so the patterns are the same" | yes |
+| `unicode/test/wac/unicode_test.wac` | "…so the corpora are the same ones" | yes |
+| `datetime/test/wac/datetime_test.wac` | "…so the corpus is the same one" | yes |
+| `url/test/wac/fuzz_test.wac` | "…so the corpus is the same one" | no |
+
+Three of the four read the draw through a bare `%`, where signedness decides the answer — and the
+measurement above says **21 of 40 draws differ**. So those three test a corpus that is about half new,
+while saying it is the recorded one.
+
+**And nothing in the tree can check any of it**, which is the sharpest form of this issue's point: the
+host-side files those comments refer to were deleted by the port. The claim's referent exists only in git
+history, so it is not stale — it is unverifiable from HEAD.
+
+That gives the sweep a direction it did not have: converge on the **cast** form, and the three bare-`%`
+tests are the ones whose numbers should be expected to move.
