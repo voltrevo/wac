@@ -476,6 +476,114 @@ A comment saying a branch is unreachable is worth reading closely: two of the th
 caller they were unreachable *through*, which is a different claim, and both were reachable from a
 test.
 
+### The same defect, one level up: the sweep counts 21 packages and 38 exist
+
+This issue was filed because a summary line read `19/19 passed` over drivers that could not fail. The
+line is honest about that now. It is **not** honest about what it is a sweep of.
+
+`tools/coverageAll.ts` derives `PACKAGES` from the `coverage:` tasks in `deno.json`, and its own header
+gives the reason — "deriving it means adding a task is the whole of adding it to the sweep", which is
+right. The consequence nobody had written down is that a package with **no task at all** is not
+reported as having no driver. It is not reported. It does not exist to the file.
+
+So `17 hold a coverage floor … 4 report and cannot fail` counts twenty-one packages while eighteen more
+sit on disk with no measurement of any kind:
+
+    abi, bls, box, ens, ethrpc, git, lightclient, mpt, platform, quic, rlp, ssz, tls, tor, tty,
+    wacc, wactest, webrtc
+
+**By source lines that is 82,762 unmeasured against 36,918 measured** — a little over a third of the
+packages' code is in the numbers this issue tracks. `wacc` is 33,575 lines of it and `tor` 15,913.
+
+This is the same shape as `packages/http`'s `proxy.wac` earlier in this issue: eighty-six branch points
+that were absent from the report rather than uncovered, so the total said 447 instead of 533. **The
+denominator is the one number that cannot warn you it is wrong**, and it has now been the answer twice.
+
+Counted rather than failed, and printed under the summary:
+
+    21/21 ran in 92s (297s of work at 4 workers) — 17 hold a coverage floor, 0 only check their own
+    exemptions have not drifted, 4 report and cannot fail
+       18 package(s) have no coverage task and are not in the numbers above: abi, bls, box, …
+
+A package acquiring a driver is work; a sweep that went red the moment this was noticed would have gone
+red for everyone, on somebody else's push, over a fact that has been true since the sweep existed.
+
+**What this does not settle** is whether those eighteen should have drivers, which is a bigger decision
+than the one this issue opened with and belongs to whoever owns them — `box` and `sh` are agent-c's,
+`wacc` is the compiler, and `wactest` is test support whose consumers are tests by construction. What
+has changed is that the number is on the screen instead of implied by its absence.
+
+### `fmt` thirteenth: 383 of 429 → **418 of 429**, and the seed sensitivity was a missing test
+
+**18 hold a coverage floor, 0 only check their own exemptions have not drifted, 3 report and cannot
+fail.**
+
+`fmt` was held back because its figure moved with the seed — 383 and 382 — and a floor over a number
+that changes when nothing changes is a floor over a lottery. Right reason to wait, wrong diagnosis.
+
+The cause was that **none of its 21 tests were being called**. Wiring them put deterministic coverage
+over the branch the draw had been reaching by luck, and the number stopped moving: **418 under both
+seeds**. The sampling is still there and still worth having; it is no longer the only thing reaching
+anything. That is the answer for `url` too, if its number settles the same way.
+
+**`src/itoa.wac` was at 10 of 29** — every test file here is about floats, so the integer writer was
+reached only through whatever `ftoa` happened to call. `atoi` was uncovered entirely, and its own doc
+comment records having been wrong twice: "a leading `-` failed the digit test on the first character
+and the answer was 0. It surfaced in `box`'s `seq` as `seq 10 -3 1` refusing a step of zero it had
+invented itself." A function with two recorded regressions, tested in neither package that hit them and
+not in the one that owns it. There is an `itoa_test.wac` now and the file is at 29 of 29.
+
+**`add` and `setSum` in `bigint.wac` are near copies** — same carry, same limb-count max — and `add` is
+reached only from `mulU64`, where its operand is always the longer, so half its arms never ran. They
+are checked against each other now, in both orders.
+
+### Two things this package taught that the previous twelve did not
+
+**A `tail`-truncated report cost a wrong pin.** I read `atof.wac:203` as covered from a list cut by
+`tail -12`, and wrote a pin for its neighbour reasoning from that. Three `--verbose` runs say both are
+uncovered — a different and simpler fact. The pin says so in place; the general form is that a report
+read through a pipe is a report you have not read.
+
+**Grants buy the comparison, not the coverage.** Dropping them leaves `fmt` at 418 — the only package
+where they are worth nothing, against 280 in `json` and 104 in `bignum`. These tests call `atof` over
+their whole case list first and ask the host once at the end, so the code runs whether or not a process
+can be spawned; what fails is the assertion. **A coverage figure cannot tell you whether the assertions
+ran.** The grants stay: without them fifteen tests pass vacuously inside a driver that only warns.
+
+### `url` fourteenth: 716 of 727 → **721 of 726**, and the blocker had expired
+
+**19 hold a coverage floor, 0 only check their own exemptions have not drifted, 2 report and cannot
+fail.**
+
+`url` was held back because its corpus is a sampled cross product and its figure was recorded as moving
+with the seed. **It does not move** — 721 under two seeds, checked rather than assumed. All 27 tests
+were already wired, so the deterministic coverage that settled `fmt` was here all along; what was stale
+was the note. A blocker recorded once is worth re-measuring before it is worked around, which is the
+second time today that has been the answer.
+
+**`parseOpaqueHost`'s bracket rule was written twice and neither copy ran.** A non-special host is
+"percent-encoded rather than decoded", with one exception its doc names: "Brackets still mean IPv6".
+Three uncovered points sat in that exception, inside a function the fuzz corpus exercises thousands of
+times — because `parseHost` tested for the bracket *before* delegating and then handled it itself, the
+same three lines differing only in how they spell failure. One function now, `bracketedIpv6`, called by
+both; both keep their own bracket test because both are entry points.
+
+`parseHost`'s empty-host arm closed the same way: `http://` is refused before a host is parsed, so an
+empty host reaches it only from a direct caller — and the answer is an empty *name*, not a refusal,
+which a caller conflating null and empty gets wrong.
+
+**Two packages now where the grant canary cannot speak.** Dropping the grants leaves `url` at 721 and
+`fmt` at 418, because both parse their whole case list first and ask Node once at the end: the code
+runs regardless and what fails is the assertion. A coverage figure measures what executed, and tests
+passing vacuously execute exactly as much as tests passing. Worth stating in both ledgers rather than
+leaving the canary out.
+
+### Where this leaves the sweep
+
+Every package that had a driver now holds a floor except `core` and `sh`. What remains for this issue
+is the eighteen packages with no driver at all, recorded above, which is a larger question than the one
+it opened with.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,

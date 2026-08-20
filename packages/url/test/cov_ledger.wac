@@ -1,0 +1,126 @@
+// url's coverage, and a rule that was written twice so neither copy was reached.
+//
+//   deno task coverage:url
+//   deno task coverage:url --verbose
+//
+// **721 of 726**, from 716 of 727. Two-way ratchet over `tools/wac/covledger.wac`: anything not listed
+// must be covered, and anything listed that *is* covered fails too. `issues/system/0205`.
+//
+// ## Why this was report-only, and why it is not any more
+//
+// `url` was held back for the same reason `packages/fmt` was: its corpus is a *sampled* cross product,
+// and its figure was recorded as moving with the seed — a floor over a number that changes when
+// nothing changes is a floor over a lottery.
+//
+// It does not move. **721 with `0x1234abcd` and 721 with `0x9e3779b9`**, checked rather than assumed,
+// which is the whole of what was needed. All 27 of this package's tests were already wired, so the
+// deterministic coverage that settled `fmt` was here all along; what was stale was the note saying
+// otherwise. A blocker recorded once is worth re-measuring before it is worked around.
+//
+// ## `parseOpaqueHost`'s bracket rule was written twice, and neither copy ran
+//
+// A non-special scheme's host is "percent-encoded rather than decoded", with one structural exception
+// its doc names: "Brackets still mean IPv6, which is why this is not simply the bytes." Three uncovered
+// points sat in that exception, inside a function the fuzz corpus exercises thousands of times.
+//
+// The reason is that `parseHost` tested for the bracket *before* delegating, and then required the
+// closing one and parsed the interior itself — the same three lines, differing only in how they spell
+// failure. So the copy inside `parseOpaqueHost` was unreachable through the only caller it had.
+//
+// It is one function now, `bracketedIpv6`, called by both. Both keep their own test for the bracket,
+// because both are entry points and a caller of either has to get the same answer; what they no longer
+// keep is two copies of what to do about it. And `parseOpaqueHost` has a direct test, because the
+// caller that holds it is outside this package.
+//
+// The same shape closed `parseHost`'s empty-host arm: `http://` with nothing after it is refused before
+// a host is parsed, so an empty host reaches `parseHost` only from a direct caller. The answer is an
+// empty *name* rather than a refusal, which a caller conflating null and empty would get wrong.
+//
+// ## The canaries, including one that says nothing
+//
+// A different seed leaves it at 721. Dropping a pin fails naming exactly that point. **Dropping the
+// grants also leaves it at 721** — the second package where they are worth nothing, after
+// `packages/fmt`, and for the same reason: these tests parse their whole case list first and ask Node
+// once at the end through `checkAll`, so the code runs whether or not a process can be spawned and
+// what fails without the grant is the *assertion*.
+//
+// So the grant canary is the one that cannot speak here, and it is worth saying so rather than
+// omitting it: a coverage figure measures what executed, and eighteen tests passing vacuously execute
+// exactly as much as eighteen tests passing. The grants stay because the driver only warns.
+//
+// ## The five that are left
+//
+// One is a defensive clamp on a private helper. The other four are corners of the WHATWG state
+// machine, and each says what it would take.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/url/test/cov_exercise.wac";
+const string PREFIX = "packages/url/";
+
+/** What the tests need: a process to ask Node's own `URL`, and the environment to find it. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/url/src/host.wac", 147, "if (hi < lo) { hi = lo; }", false,
+        "**A slice whose end is before its start.** `slicing` is private and has four callers, every " +
+        "one of which passes a range it has just computed from a found index — `1` and `len - 1` " +
+        "either side of a bracket, a label boundary, the two ends of a port. None can invert.\n" +
+        "         Kept, and `proven: false` rather than `true`: what it prevents is `u8[hi - lo]()` " +
+        "with a negative length, which traps. A guard whose absence turns a caller's arithmetic " +
+        "mistake into a crash is worth one comparison, and the next caller to compute a range from " +
+        "two searches that can both fail is the one that needs it."),
+    Pin("packages/url/src/url.wac", 108, "if (n == 2) { return true; }", false,
+        "**A Windows drive letter that ends the input** — `c:` with nothing after it, so there is no " +
+        "third byte to test for a separator. `file:///c:`, `file:///c|` and `file:///C:` are in " +
+        "`parse_test.wac` and none reaches this: by the time the path state asks, the pointer has " +
+        "moved past the drive and `n` is smaller.\n" +
+        "         Reachable, and I did not build it. What would do it is a *base* whose path ends " +
+        "exactly at the drive with a reference that re-enters the path state at that offset, which " +
+        "is a two-part input rather than a URL — the reason it is not in a list of strings."),
+    Pin("packages/url/src/url.wac", 430, "if (!startsWithWindowsDrive(input, pointer)) {", false,
+        "**The `else`: a drive letter found where a path segment would otherwise be shortened.** " +
+        "This is the rule that stops `..` climbing out of `file:///c:/a` into `file:///`, and it is " +
+        "the one place the standard treats a drive as a floor rather than a segment.\n" +
+        "         `parse_test.wac` resolves `..`, `../..`, `d:/y` and `/d:/y` against three `file:` " +
+        "bases, and the shortening arm runs every time; this one wants the pointer sitting *on* the " +
+        "drive at the moment of the check, which is the same offset problem as the pin above and " +
+        "unbuilt for the same reason. Both would fall to one input, and it is worth someone finding " +
+        "it: what is untested here is a path escape."),
+    Pin("packages/url/src/url.wac", 498, "if (c != '/') { continue; }", false,
+        "**Entering the path state on a byte that is not a slash**, which re-reads that byte as the " +
+        "first of a segment rather than consuming it. Every route into `S_PATH` from this state in " +
+        "the corpus arrives on a `/`.\n" +
+        "         Reachable — a non-special URL whose authority ends at a byte that begins a path — " +
+        "and not built. The `continue` is what makes the byte not be swallowed, so what an uncovered " +
+        "arm here would cost is a lost first character of a path."),
+    Pin("packages/url/src/url.wac", 563, "} else if (state == S_FRAGMENT()) {", true,
+        "**The end of the state chain: no state matched.** The parser's states are an exhaustive " +
+        "`else if` ladder over the WHATWG list, and `S_FRAGMENT` is the last of them — so the `else` " +
+        "the report names is the ladder falling off its end, which needs a state value that is none " +
+        "of the ones the parser sets.\n" +
+        "         Kept because a ladder with no final arm is a silent no-op if a state is ever added " +
+        "and its case forgotten, and this is the shape that turns that into nothing happening rather " +
+        "than into a diagnosis. Uncovered is what correct looks like here.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No trap cases: none of this package's 28 tests expects a trap.
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

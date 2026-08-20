@@ -21,25 +21,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 131201,
+  lines: 131212,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2602,
+  tests: 2607,
   programs: 81,
   pages: 11,
   /**
-   * The whole repository: the packages (2602), and the compiler, harness and tooling
+   * The whole repository: the packages (2607), and the compiler, harness and tooling
    * around them (1374).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3976,
+  testsAll: 3981,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 505,
+  wacTests: 508,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -49,12 +49,12 @@ export const BUILT: BuiltPackage[] = [
   { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 50 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 368, tests: 10 },
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 12 },
-  { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 21 },
+  { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 25 },
   { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2024, tests: 128 },
   { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1550, tests: 26 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 496, tests: 8 },
-  { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1219, tests: 27 },
+  { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1230, tests: 28 },
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 72 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1311, tests: 46 },

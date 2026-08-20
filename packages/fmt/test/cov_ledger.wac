@@ -1,0 +1,199 @@
+// fmt's coverage, and the seed sensitivity that turned out to be a missing test.
+//
+//   deno task coverage:fmt
+//   deno task coverage:fmt --verbose
+//
+// **418 of 429**, from 383 of 429. Two-way ratchet over `tools/wac/covledger.wac`: anything not listed
+// must be covered, and anything listed that *is* covered fails too. `issues/system/0205`.
+//
+// ## Why this was the last of the sampled packages to get a floor
+//
+// `fmt` was held back because its figure **moved with the seed** — 383 with one, 382 with another —
+// and a floor over a number that changes when nothing changes is a floor over a lottery. That was the
+// right reason to wait and the wrong diagnosis of the cause.
+//
+// The cause was that **none of the package's 21 tests were being called**. Fifteen take `(Core, Cli)`:
+// every claim this package makes is against the host's own `Number`, so its tests spawn a process, and
+// before `issues/system/0221` a coverage driver could call none of them. What was left was a driver
+// that formats floats, and one branch in it was reached only when the draw happened to produce the
+// right decimal.
+//
+// Wiring the tests put deterministic coverage over that branch, and **the number no longer moves**:
+// 418 with `0x2545f491` and 418 with `0x6d2b79f5`. The sampling is still there and is still worth
+// having; it is no longer the only thing reaching anything.
+//
+// ## `src/itoa.wac` was at 10 of 29, and `atoi` had a recorded bug and no test
+//
+// Every test file here is about floats, so the integer writer was reached only through whatever `ftoa`
+// happened to call. `atoi` was uncovered entirely — a function whose own doc comment records having
+// been wrong twice: "The sign is read, which one copy of this did not: a leading `-` failed the digit
+// test on the first character and the answer was 0. It surfaced in `box`'s `seq` as `seq 10 -3 1`
+// refusing a step of zero it had invented itself."
+//
+// A function with two recorded regressions, tested in neither package that hit them, and not in the
+// one that owns it. `test/wac/itoa_test.wac` is new and `itoa.wac` is at 29 of 29.
+//
+// ## And `add` versus `setSum`, which are near copies
+//
+// `bigint.wac` has both, with the same carry and the same limb-count max. `add` is reached only from
+// `mulU64`, where its operand is always the longer of the two — so half its arms never ran, and a
+// change made to one loop and not the other was invisible. They are checked against each other now, in
+// both orders, with the receiver deliberately the longer side in half the cases.
+//
+// ## The grants buy the comparison, not the coverage
+//
+// **Dropping them leaves this at 418** — the only package measured this way where they are worth
+// nothing, against 280 points in `packages/json` and 104 in `packages/bignum`.
+//
+// The reason is the shape of the tests rather than anything about `fmt`: each one calls `atof` or
+// `ftoa` over its whole case list *first*, accumulating lines, and asks the host once at the end
+// through `checkDeno`. So the code under test runs whether or not a process can be spawned; what fails
+// without the grant is the assertion. **A coverage figure cannot tell you whether the assertions ran**
+// — it is a measure of what executed, and an oracle that could not be reached executes nothing.
+//
+// Which is worth writing down here because the grants are still needed. A ledger that dropped them on
+// the evidence of this number would leave fifteen tests passing vacuously inside the driver, and the
+// driver only warns.
+//
+// ## The eleven that are left
+//
+// Three are unreachable and say why. Eight are `proven: false`: reachable, and I did not build the
+// input.
+// That is the honest flag, and each entry names what was tried — this file's slow path is a bisection
+// over exact big-integer comparisons, and the inputs that reach its corners are decimals chosen to sit
+// a few ulps from a boundary rather than anything a test writes down by hand.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/fmt/test/cov_exercise.wac";
+const string PREFIX = "packages/fmt/";
+
+/** What the tests need: a process to ask the host's own `Number`, and the environment to find it. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/fmt/src/atof.wac", 203, "if (c != '0') { p.sticky = true; }", false,
+        "**More significant digits than the buffer holds — the whole `else` is unreached.** " +
+        "`MAX_DIGITS` digits are stored and the rest are dropped, and this arm plus the one below it " +
+        "are what dropping *means*: remember that something non-zero was thrown away, and count the " +
+        "ones thrown away before the point.\n" +
+        "         I first read this as covered, from a truncated report, and wrote a pin for its " +
+        "neighbour arguing from that. Three runs of `--verbose` say both are uncovered, which is a " +
+        "different and simpler fact: **no input in the corpus reaches the digit loop with more than " +
+        "`MAX_DIGITS` significant digits still to come.**\n" +
+        "         Tried and did not reach it: `123456789012345678901234567890123456789`, " +
+        "`1234567890123456789012345678901234567890000000000`, " +
+        "`1.000000000000000000000000000000000000001` and " +
+        "`10000000000000000000000000000000000000000000000000e-30`, through both `atof` and `scan`. " +
+        "The likeliest explanation is that the range checks at `:240`-`:246` answer a value of that " +
+        "magnitude before the digit tail matters — but that is a guess, and `proven: false` is what " +
+        "a guess is worth. What these two lines defend is a rounding decision: a dropped non-zero " +
+        "digit that failed to set the sticky bit rounds a tie the wrong way."),
+    Pin("packages/fmt/src/atof.wac", 204, "if (!seenPoint) { dropped++; }", false,
+        "The second half of the same unreached `else`, counting the dropped digits that came before " +
+        "the decimal point so the exponent can be corrected for them. Same inputs tried, same " +
+        "answer — see the entry above, which is where the reasoning is."),
+    Pin("packages/fmt/src/atof.wac", 236, "if (p.count == 0) { return 0.0; }", false,
+        "**Every digit was a zero, on the path that does exact arithmetic.** `exactMagnitude` is " +
+        "reached when the fast path declines, and an all-zeros input is the easiest thing there is " +
+        "for the fast path — so the two conditions pull in opposite directions. " +
+        "`0.00000000000000000000000000000000000000000` and a forty-zero mantissa with `e-300` are in " +
+        "`atof_test.wac` and neither arrives here.\n" +
+        "         Kept because it is what makes `exactMagnitude` total: the code below it indexes " +
+        "`p.digits[0]` to find the leading digit, and a count of zero would read a digit that was " +
+        "never written."),
+    Pin("packages/fmt/src/atof.wac", 254, "case 0:  { return 1.0; }        case 1:  { return 10.0; }",
+        true,
+        "**`pow10Exact(0)` — no caller asks for it.** All three call sites exclude zero by " +
+        "construction: `:159` is `e > 0 && e <= 22`, `:160` is `e < 0 && e >= -22` and passes `-e`, " +
+        "and `:385` is `if (e > 0) … else if (e < 0)`. An exponent of zero means no scaling, which " +
+        "every caller expresses by not calling.\n" +
+        "         Kept because a table of powers of ten that omitted 10^0 would be a table with a " +
+        "hole in it, and the next caller to compute an exponent rather than branch on it would find " +
+        "the hole rather than the answer. The `case 1` on the same line is covered; they share a line " +
+        "and the report names the point, not the row."),
+    Pin("packages/fmt/src/atof.wac", 266, "default: { trap; }", false,
+        "**An exponent outside the exactly-representable range.** Two of the three callers bound it " +
+        "to 22 in the same expression that calls; `:385` does not — it is `if (e > 0) { m = m * " +
+        "pow10Exact(e); }` with no upper bound of its own, and relies on its own caller having " +
+        "chosen `e`.\n" +
+        "         `proven: false` deliberately, and it is the reason to keep the trap rather than " +
+        "return something: 10^23 is not exactly representable, so an unguarded call would return a " +
+        "*plausible* double and the parse would be quietly wrong. Stopping is the answer, and the " +
+        "arm being uncovered is the evidence that the bound has held so far rather than that it " +
+        "cannot be crossed."),
+    Pin("packages/fmt/src/atof.wac", 321, "if (compareMidpoint(c, maxFinite) >= 0) { return 1.0 / 0.0; }",
+        false,
+        "**Overflow decided by the midpoint rather than by magnitude.** Reaching it needs a decimal " +
+        "above the largest finite double that also survives the `top >= 310` early return at `:244` " +
+        "— so a value a few ulps above `1.7976931348623157e308`, not `1e309`. The corpus has " +
+        "`1e309`, `1.8e308` and `1.7976931348623159e308`; all are decided earlier.\n" +
+        "         What it defends is stated above it: \"The largest finite has an odd significand, so " +
+        "an exact tie goes to infinity under round-half-to-even.\" That is a rounding rule with one " +
+        "input, and building it means computing the midpoint of the largest finite and its absent " +
+        "successor by hand. Reachable, not built."),
+    Pin("packages/fmt/src/atof.wac", 337, "u64 gLo = guess > window ? guess - window : 0;", false,
+        "**The bisection window clamped at the bottom** — an estimate within four ulps of zero, which " +
+        "is the smallest few subnormals. `5e-324` and `4.9406564584124654e-324` are in the corpus and " +
+        "the fast path declines for both, so `approxBits` answers 0 and the guard above at `:335` " +
+        "(`guess > 0`) sends them past this line entirely.\n" +
+        "         So the input is narrower than it looks: a decimal whose *estimate* lands on bits 1 " +
+        "through 4 while the estimate is still trusted. Reachable, not built."),
+    Pin("packages/fmt/src/atof.wac", 338,
+        "u64 gHi = guess + window < maxFinite ? guess + window : maxFinite;", false,
+        "The same window clamped at the top: an estimate within four ulps of the largest finite. The " +
+        "mirror of the pin above and unbuilt for the mirror reason — the values that get that close " +
+        "are the ones the range check at `:244` answers first."),
+    Pin("packages/fmt/src/atof.wac", 517, "if (r == 0 && c.sticky) { return 1; }", false,
+        "**An exact tie whose dropped digits were not zero.** The comparison of the decimal against a " +
+        "candidate double came out equal, *and* digits past the nineteenth were discarded, *and* one " +
+        "of them was non-zero — so the true value is above what was compared and the tie must break " +
+        "upward.\n" +
+        "         Three conditions at once, and the corpus reaches the first two: " +
+        "`1.000000000000000000000000000000000000001` sets the sticky bit and " +
+        "`9007199254740993` produces ties. Putting them on the same input means constructing a " +
+        "decimal that is exactly a midpoint for its first nineteen digits and non-zero after, which " +
+        "is a calculation rather than a case. Reachable, not built — and it is the line that decides " +
+        "a rounding direction, so it is worth someone doing."),
+    Pin("packages/fmt/src/ftoa.wac", 230, "if (count != 0) { trap; }", true,
+        "**A carry out of the first digit, which the comment above it proves cannot happen after any " +
+        "later digit.** The proof is worth reading in place; its shape is that a carry at digit k+1 " +
+        "implies the loop's stopping condition already held at digit k, so only the first digit has " +
+        "no previous step to contradict.\n" +
+        "         The trap is deliberate and its reason is written down: \"An earlier version walked " +
+        "back over the emitted digits absorbing the carry. Branch coverage showed that path never " +
+        "taken by 60 000 random doubles nor by 60 000 neighbours of round decimals, which prompted " +
+        "the proof above. The trap is here rather than a comment because an untested branch that " +
+        "silently does the wrong thing is worse than one that stops.\" This entry exists so that a " +
+        "coverage report cannot be read as an argument for deleting it."),
+    Pin("packages/fmt/src/ftoa.wac", 342, "if (v == 0) { out.push('0'); return; }", true,
+        "**`writeSmallInt` is never handed a zero.** Its one caller is `:337`, and the value is " +
+        "`exp = n - 1` after `if (exp < 0) { out.push('-'); exp = -exp; }` — so `exp` is zero only " +
+        "when `n` is 1, and `n == 1` is a value in [1, 10), which takes the plain form fifteen lines " +
+        "above and never reaches the exponential branch at all.\n" +
+        "         Kept because it is what makes the function total on its own terms: the loop below " +
+        "it is `while (m > 0)`, which writes nothing for zero, and a general small-integer writer " +
+        "that emitted the empty string for zero would be wrong for the next caller rather than for " +
+        "this one.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No trap cases: none of the 24 tests wired into the exercise expects a trap.
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

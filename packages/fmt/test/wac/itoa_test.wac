@@ -1,0 +1,117 @@
+// The integer half of `packages/fmt`, which had no test file at all.
+//
+// Every other test here is about floats — `atof`, `ftoa`, `f32` — because that is where the hard part
+// is, and `src/itoa.wac` was reached only through whatever `ftoa` happened to call on the way. It read
+// 10 of 29 branch points when `issues/system/0205` looked: `itoa64`'s negative arm, all of `atoi`, and
+// `utoa64`'s loop had never run from here.
+//
+// **`atoi` has a recorded bug and no test**, which is the pairing that made this worth writing rather
+// than noting. Its own doc comment says: "The sign is read, which one copy of this did not: a leading
+// `-` failed the digit test on the first character and the answer was 0. It surfaced in `box`'s `seq`
+// as `seq 10 -3 1` refusing a step of zero it had invented itself, and the same shape was still in
+// `packages/sh` until this became one function." A function that has been wrong twice, in two copies,
+// tested in neither of the packages that hit it — and not here, where it lives.
+//
+// The expectations are written out rather than compared against a host. That is the right oracle for
+// this file: the decimal spelling of an integer is not in doubt, and what is being checked is that
+// *this* code produces it — a host comparison would restate the same table with more machinery. The
+// float tests next door use a host because rounding genuinely is in doubt.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa, itoa64, utoa64, atoi } from "../../src/itoa.wac";
+
+/**
+ * `itoa` and `itoa64` over the values where a sign or a width goes wrong.
+ *
+ * The two most-negative values are the point. `-n` on `i32.MIN` is `i32.MIN` again, so `itoa` special-
+ * cases it as a literal — with the bit pattern `0x80000000` rather than the decimal, because
+ * `2147483648` does not fit an i32 and would type as i64 and stay there. `itoa64` takes the other
+ * route, negating in u64 where the value does fit. Both are one input each and neither had one.
+ */
+export string test_itoa_writes_the_sign_and_the_extremes() {
+  T t = T.create();
+
+  t.eqStr(itoa(0), "0", "zero");
+  t.eqStr(itoa(7), "7", "one digit");
+  t.eqStr(itoa(-7), "-7", "one negative digit");
+  t.eqStr(itoa(1234567890), "1234567890", "ten digits");
+  t.eqStr(itoa(-1234567890), "-1234567890", "ten negative digits");
+  t.eqStr(itoa(2147483647), "2147483647", "the largest i32");
+  t.eqStr(itoa(0x80000000), "-2147483648", "the most negative i32, which cannot be negated");
+  t.eqStr(itoa(10), "10", "a trailing zero survives the loop");
+  t.eqStr(itoa(-100), "-100", "and two of them");
+
+  // `itoa64`, whose negative arm negates in u64 rather than special-casing.
+  t.eqStr(itoa64(0), "0", "zero, as an i64");
+  t.eqStr(itoa64(9223372036854775807), "9223372036854775807", "the largest i64");
+  t.eqStr(itoa64(-9223372036854775807 - 1), "-9223372036854775808",
+          "the most negative i64 — the arm that negates into u64");
+  t.eqStr(itoa64(-1), "-1", "an ordinary negative i64");
+  t.eqStr(itoa64(4294967296), "4294967296", "past what an i32 holds");
+
+  // `utoa64` over the top of the range, which has no signed spelling at all.
+  t.eqStr(utoa64(0), "0", "zero, unsigned");
+  t.eqStr(utoa64(18446744073709551615), "18446744073709551615", "the largest u64");
+  t.eqStr(utoa64(9223372036854775808), "9223372036854775808",
+          "a value with no i64 spelling, which is why this function exists");
+
+  // The three agree wherever their ranges do, which is the check that catches one of them being
+  // rewritten and the others left behind — three implementations of one idea live in this file.
+  i32[] shared = i32[](0, 1, 9, 10, 99, 100, 12345, 2147483647);
+  for (i32 i = 0; i < shared.len(); i++) {
+    t.eqStr(itoa(shared[i]), itoa64(shared[i] as i64),
+            "itoa and itoa64 disagree about " + itoa(shared[i]));
+    t.eqStr(itoa64(shared[i] as i64), utoa64((shared[i] as i64) as! u64),
+            "itoa64 and utoa64 disagree about " + itoa(shared[i]));
+  }
+  return t.report();
+}
+
+/**
+ * `atoi`, including the sign that two copies of this function have got wrong.
+ *
+ * "Leading digits only, zero when there are none — a command line is not a parser." So the contract has
+ * three parts: read an optional sign, read digits, stop at the first byte that is not one. Each of the
+ * three has a way of being wrong that the other two hide, which is why they are asserted separately
+ * rather than through a handful of realistic arguments.
+ *
+ * **`-3` is the regression.** `box`'s `seq 10 -3 1` read a step of 0 and refused it as invalid — a
+ * program rejecting an argument it had misread, blaming the caller.
+ */
+export string test_atoi_reads_the_sign_and_stops_at_the_first_non_digit() {
+  T t = T.create();
+
+  t.eqI32(atoi(""), 0, "an empty string is zero, not a trap");
+  t.eqI32(atoi("0"), 0, "zero");
+  t.eqI32(atoi("7"), 7, "one digit");
+  t.eqI32(atoi("42"), 42, "two digits");
+  t.eqI32(atoi("2147483647"), 2147483647, "the largest i32");
+
+  // The recorded bug, and its siblings.
+  t.eqI32(atoi("-3"), -3, "a leading minus — `seq 10 -3 1` is why this line exists");
+  t.eqI32(atoi("-0"), 0, "minus zero is zero");
+  t.eqI32(atoi("+5"), 5, "a leading plus is read and discarded");
+  t.eqI32(atoi("+0"), 0, "plus zero");
+  t.eqI32(atoi("-2147483647"), -2147483647, "a large negative");
+
+  // Leading digits only: stop at the first byte that is not one, and answer with what came before.
+  t.eqI32(atoi("12abc"), 12, "digits then letters");
+  t.eqI32(atoi("5 "), 5, "digits then a space");
+  t.eqI32(atoi("7,8"), 7, "digits then a comma");
+  t.eqI32(atoi("-9x"), -9, "a sign, digits, then a letter");
+
+  // No digits at all is zero, which is the answer a caller has to be able to tell from a real zero
+  // by looking at the argument rather than at the result — the doc comment says as much.
+  t.eqI32(atoi("abc"), 0, "no digits at all");
+  t.eqI32(atoi("-"), 0, "a sign and nothing else");
+  t.eqI32(atoi("+"), 0, "a plus and nothing else");
+  t.eqI32(atoi(" 5"), 0, "a leading space is not skipped — this is not a parser");
+  t.eqI32(atoi("--5"), 0, "a second sign is not a digit, so the answer is what came before it");
+
+  // And the round trip, over the range where it is defined.
+  i32[] round = i32[](0, 1, -1, 9, -9, 10, -10, 99999, -99999, 2147483647, -2147483647);
+  for (i32 i = 0; i < round.len(); i++) {
+    t.eqI32(atoi(itoa(round[i])), round[i], "atoi(itoa(" + itoa(round[i]) + ")) is not itself");
+  }
+  return t.report();
+}

@@ -126,6 +126,23 @@ export bool endsInNumber(u8[] s) {
   return parseIpv4Number(last).ok;
 }
 
+/**
+ * The address inside `[...]`, or null if the brackets do not close or what is between them is not one.
+ *
+ * One function because it was two: `parseHost` tests for a bracket and so does `parseOpaqueHost`, and
+ * both then required the closing one and parsed the interior — the same three lines, differing only in
+ * how they spell failure. `parseHost` handles the bracket *before* it delegates, so the copy inside
+ * `parseOpaqueHost` was unreachable through the only caller either had, which is how
+ * `issues/system/0205` found it: three uncovered points in a function that is exercised constantly.
+ *
+ * Both keep their own test for the bracket, because both are entry points and a caller of either has
+ * to get the same answer. What they no longer keep is two copies of what to do about it.
+ */
+Host? bracketedIpv6(u8[] s) {
+  if (s[s.len() - 1] != ']') { return null; }
+  return parseIpv6(slicing(s, 1, s.len() - 1));
+}
+
 u8[] slicing(u8[] s, i32 lo, i32 hi) {
   if (hi < lo) { hi = lo; }
   u8[] out = u8[hi - lo]();
@@ -300,10 +317,7 @@ export Host? parseIpv6(u8[] s) {
  * Brackets still mean IPv6, which is why this is not simply "the bytes".
  */
 export Host? parseOpaqueHost(u8[] s) {
-  if (s.len() > 0 && s[0] == '[') {
-    if (s[s.len() - 1] != ']') { return null; }
-    return parseIpv6(slicing(s, 1, s.len() - 1));
-  }
+  if (s.len() > 0 && s[0] == '[') { return bracketedIpv6(s); }
   for (i32 i = 0; i < s.len(); i++) {
     if (isForbiddenHost(s[i])) { return null; }
   }
@@ -325,10 +339,7 @@ export struct HostResult {
 }
 
 export HostResult parseHost(u8[] s, bool special) {
-  if (s.len() > 0 && s[0] == '[') {
-    if (s[s.len() - 1] != ']') { return HostResult(null, false); }
-    return HostResult(parseIpv6(slicing(s, 1, s.len() - 1)), false);
-  }
+  if (s.len() > 0 && s[0] == '[') { return HostResult(bracketedIpv6(s), false); }
   if (!special) { return HostResult(parseOpaqueHost(s), false); }
   if (s.len() == 0) { return HostResult(Host.Named(u8[0]()), false); }
 

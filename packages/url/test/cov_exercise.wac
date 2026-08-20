@@ -57,6 +57,7 @@ import {
   test_ipv6_serializes_compressed as url__ipv6_serializes_compressed,
   test_ipv4_canonicalises as url__ipv4_canonicalises,
   test_ends_in_number_selects_ipv4 as url__ends_in_number_selects_ipv4,
+  test_an_opaque_host_still_reads_brackets_as_an_address as url__an_opaque_host_still_reads_brackets_as_an_address,
 } from "./wac/url_test.wac";
 
 
@@ -338,6 +339,10 @@ export i32 main(Core core, Cli cli) {
   }
   if (url__ipv4_canonicalises().len() > 0) {
     core.warn("error: FAILED url_test test_ipv4_canonicalises");
+    bad = bad + 1;
+  }
+  if (url__an_opaque_host_still_reads_brackets_as_an_address().len() > 0) {
+    core.warn("error: FAILED url_test test_an_opaque_host_still_reads_brackets_as_an_address");
     bad = bad + 1;
   }
   if (url__ends_in_number_selects_ipv4().len() > 0) {

@@ -6,7 +6,8 @@
 // no input selects, and the host serializer applied to a host built by hand.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Host, writeHost, parseIpv4, parseIpv6, endsInNumber } from "../../src/host.wac";
+import { Host, HostResult, writeHost, parseIpv4, parseIpv6, endsInNumber, parseOpaqueHost,
+         parseHost } from "../../src/host.wac";
 import { encode, decode, inEncodeSet, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECIAL_QUERY,
          SET_PATH, SET_USERINFO, SET_COMPONENT } from "../../src/percent.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
@@ -120,5 +121,74 @@ export string test_ends_in_number_selects_ipv4() {
   t.eqI32(endsInNumber("example.com".toBytes()) ? 1 : 0, 0, "a name does not");
   t.eqI32(endsInNumber("1.2.3.4a".toBytes()) ? 1 : 0, 0, "nor a digit run with a letter after it");
   t.eqI32(endsInNumber("".toBytes()) ? 1 : 0, 0, "nor the empty host");
+  return t.report();
+}
+
+/**
+ * `parseOpaqueHost` called directly, which is the only way its bracket rule runs.
+ *
+ * A non-special scheme's host is "percent-encoded rather than decoded", with one structural exception
+ * its doc comment names: "Brackets still mean IPv6, which is why this is not simply the bytes."
+ *
+ * Its only caller inside this package is `parseHost`, which tests for a bracket **before** it
+ * delegates — so through the parser those three lines never run, and `issues/system/0205` listed them
+ * as uncovered in a function the fuzz corpus exercises thousands of times. The rule is one function
+ * now, shared by both entry points, and this is the test for the entry point that had none: a caller
+ * outside this package holds `parseOpaqueHost`, not `parseHost`.
+ */
+export string test_an_opaque_host_still_reads_brackets_as_an_address() {
+  T t = T.create();
+
+  // A well-formed address keeps its meaning: the result is an Ipv6 host, not the six bytes `[::1]`
+  // percent-encoded.
+  Host? h = parseOpaqueHost("[::1]".toBytes());
+  t.isTrue(h is not null, "a bracketed address under an opaque host was refused");
+  if (h is not null) {
+    Buf out = Buf.create();
+    writeHost(out, h!);
+    t.eqStr(string.fromBytes(out.take()), "[::1]", "an opaque host's address did not round-trip");
+  }
+
+  Host? full = parseOpaqueHost("[1:2:3:4:5:6:7:8]".toBytes());
+  t.isTrue(full is not null, "a full-length address was refused");
+
+  // No closing bracket is a refusal, not a name that happens to start with one.
+  t.isTrue(parseOpaqueHost("[::1".toBytes()) is null, "an unclosed bracket was accepted");
+  t.isTrue(parseOpaqueHost("[".toBytes()) is null, "a lone bracket was accepted");
+
+  // Brackets that close around something that is not an address are refused too — the bracket
+  // decides *how* to read it, and reading fails on its own terms.
+  t.isTrue(parseOpaqueHost("[]".toBytes()) is null, "empty brackets were accepted");
+  t.isTrue(parseOpaqueHost("[zz]".toBytes()) is null, "a non-address in brackets was accepted");
+  t.isTrue(parseOpaqueHost("[1:2:3:4:5:6:7:8:9]".toBytes()) is null, "too many pieces were accepted");
+
+  // And without a bracket it is the bytes, percent-encoded rather than parsed — so the assertions
+  // above are about the bracket rather than about everything being refused.
+  Host? name = parseOpaqueHost("a.b.c".toBytes());
+  t.isTrue(name is not null, "an ordinary opaque host was refused");
+  if (name is not null) {
+    Buf out = Buf.create();
+    writeHost(out, name!);
+    t.eqStr(string.fromBytes(out.take()), "a.b.c", "an opaque name did not round-trip");
+  }
+  // **An empty host for a special scheme**, which `parseHost` answers with an empty name rather than
+  // a refusal. The parser never asks: `http://` with nothing after it is refused before a host is
+  // parsed at all, so this arm is reachable only by the direct caller — which is what an exported
+  // function has. The distinction matters because the answer is *not* a refusal: a caller that
+  // treated null and empty alike would turn a legal empty host into an error.
+  HostResult empty = parseHost(u8[0](), true);
+  t.isTrue(empty.host is not null, "an empty special host was refused rather than answered");
+  t.isFalse(empty.neededIdna, "an empty host claimed to need IDNA");
+  HostResult emptyOpaque = parseHost(u8[0](), false);
+  t.isTrue(emptyOpaque.host is not null, "an empty opaque host was refused");
+
+  Host? digits = parseOpaqueHost("1.2.3.4".toBytes());
+  t.isTrue(digits is not null, "an opaque host that looks like IPv4 was refused");
+  if (digits is not null) {
+    Buf out = Buf.create();
+    writeHost(out, digits!);
+    // Not canonicalised: an opaque host does no IPv4 parsing, which is the other half of the rule.
+    t.eqStr(string.fromBytes(out.take()), "1.2.3.4", "an opaque host was read as an address");
+  }
   return t.report();
 }
