@@ -336,3 +336,28 @@ possibly caused by these changes and as a reason not to push. It is not: `checke
 `emitFiles`/`emitFilesChecked`, so **neither the export-parity walk nor `wac build`'s validation is on
 its path at all.** Load was 5-9 with another agent's suite up for the whole window. Contention is the
 remaining candidate and the gate's own timing block is the instrument for it.
+
+## The stronger net, and the one thing that decides whether it works
+
+`missingExport` asks about **exports**. The general statement of the disagreement it catches is wider:
+*the checker was clean and the emitter declined something.* A non-exported function that gets dropped
+is the same fault and nothing asks about it.
+
+`blockedOf` does walk every declaration — but against a **fresh front**, which is the whole reason
+`missingExport` had to exist: the fresh front does not reproduce the drop. So the stronger net is the
+same trick applied to the whole table — after the real emit, walk *the emitting* `Env` and report the
+first `funcOk[i]` that is false, exported or not.
+
+**What decides it:** whether `funcOk[i] == false` is routine. A generic function is a template and
+emits nothing — `blockedOf`'s walk `continue`s past `typeParams.len() > 0` for exactly that reason. If
+templates take a slot and leave it false, a net over every slot fires on every program in this
+repository and is useless. If they take no slot, the net is free and strictly better than the export
+one.
+
+I have not tested which, and it is not answerable by reading `addFunc` with confidence, because the
+routine-false question is about what the *linker* leaves behind and not about one function. It costs a
+seed build to find out: widen the walk, build the repo, and count. Worth doing — but it is the kind of
+change whose failure mode is a compiler that refuses everything, so it wants its own cycle and a canary
+program that must still build.
+
+Recorded here rather than attempted at the end of a session with unpushed work in the tree.
