@@ -157,6 +157,10 @@ function wrapSock(sock) {
     recv: () => new Promise((res) => { waiting = res; pump(); }),
     send: (b) => new Promise((res, rej) => sock.write(b, (e) => (e ? rej(e) : res()))),
     close: () => sock.destroy(),
+    // end() sends FIN and leaves the readable side open, which is what a half-close is;
+    // destroy() above tears down both. See issues/system 0215. No backticks in this comment:
+    // it is inside the template literal that generates the launcher, and one would close it.
+    closeSend: () => sock.end(),
     // Who is at the other end, for a server that wants to log it or refuse it. Node gives an
     // IPv4-mapped form for a v6 socket ("::ffff:127.0.0.1"), which is the same address said longer,
     // so it is unwrapped here rather than at every call site.

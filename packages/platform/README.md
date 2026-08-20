@@ -60,7 +60,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 | | `readFile`, `stat`, `linkStat`, `readDir` | `--allow-read` |
 | | `writeFile`, `mkdir`, `remove`, `rename`, `setExecutable` | `--allow-write` |
 | | `openOutput` (to a file) | `--allow-write` |
-| | `connect`, `listen`, `accept`, `recv`, `send`, `closeSocket` | `--allow-net` |
+| | `connect`, `listen`, `accept`, `recv`, `send`, `closeSocket`, `closeSend` | `--allow-net` |
 | | `bindDatagram`, `receiveFrom`, `sendTo` | `--allow-net` — UDP, and the same one grant |
 | | `spawn`, `spawnSelf`, `closeFeed`, `exitCode` | — (the child gets what you pass, never more) |
 | | `cwd` | — (a read; there is no `chdir`) |

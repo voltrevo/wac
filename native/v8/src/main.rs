@@ -172,6 +172,7 @@ enum Cap {
     Recv,
     Send,
     CloseSocket,
+    CloseSend,
     BindDatagram,
     ReceiveFrom,
     SendTo,
@@ -246,6 +247,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "recv") => Cap::Recv,
         ("Cli", "send") => Cap::Send,
         ("Cli", "closeSocket") => Cap::CloseSocket,
+        ("Cli", "closeSend") => Cap::CloseSend,
         ("Cli", "bindDatagram") => Cap::BindDatagram,
         ("Cli", "receiveFrom") => Cap::ReceiveFrom,
         ("Cli", "sendTo") => Cap::SendTo,
@@ -4742,6 +4744,27 @@ fn dispatch(
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<bool> to answer send with"),
             }
+        }
+        // **End the outbound direction and keep reading** — `issues/system/0215`.
+        //
+        // Only a connected stream has two directions to separate, so a listener, a datagram socket
+        // and a child's queue are left alone rather than half-closed by analogy. The handle stays in
+        // the table: `recv` on it is the whole point, and the socket is closed by `closeSocket` as
+        // before.
+        //
+        // An error from `shutdown` is dropped for the same reason `closeSocket` drops one — a peer
+        // that has already gone is not a failure of this call, and a program that tidies up on every
+        // path should not have to know which paths already did it.
+        Cap::CloseSend => {
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            HOST.with(|h| {
+                if let Some(st) = h.borrow().as_ref() {
+                    if let Some(Sock::Stream(s)) = st.sockets.lock().unwrap().get(&handle) {
+                        let _ = s.shutdown(std::net::Shutdown::Write);
+                    }
+                }
+            });
+            rv.set_undefined();
         }
         Cap::CloseSocket => {
             let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);

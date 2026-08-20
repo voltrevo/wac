@@ -883,6 +883,21 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       while (at < body.length) at += await c.write(body.subarray(at));
       return EMPTY;
     },
+    /**
+     * End the outbound direction and keep reading — `issues/system/0215`.
+     *
+     * Only a connected stream has two directions to separate. A listener has none, and a child is
+     * `closeFeed`'s job, so neither is touched here: a handle that is not a socket is left alone
+     * rather than half-closed by analogy.
+     *
+     * Already-closed is not an error, the same rule as `CLOSE_SOCKET`, and for the same reason —
+     * a program that tidies up on every path should not have to track which paths did it.
+     */
+    [OP.CLOSE_SEND]: (p) => {
+      const h = readI32le(p);
+      try { sockets.get(h)?.closeWrite(); } catch { /* already closed, or not a stream */ }
+      return EMPTY;
+    },
     [OP.CLOSE_SOCKET]: (p) => {
       const h = readI32le(p);
       // Closing an already-closed socket is not an error; a program that tidies up on

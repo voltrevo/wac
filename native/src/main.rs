@@ -116,6 +116,7 @@ enum Cap {
     Recv,
     Send,
     CloseSocket,
+    CloseSend,
     BindDatagram,
     ReceiveFrom,
     SendTo,
@@ -1121,6 +1122,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "send") => Cap::Send,
         ("Core", "askInterrupt") => Cap::Interrupted,
         ("Cli", "closeSocket") => Cap::CloseSocket,
+        ("Cli", "closeSend") => Cap::CloseSend,
         ("Cli", "bindDatagram") => Cap::BindDatagram,
         ("Cli", "receiveFrom") => Cap::ReceiveFrom,
         ("Cli", "sendTo") => Cap::SendTo,
@@ -1749,6 +1751,22 @@ fn dispatch(
             };
             return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
         }
+        // **End the outbound direction and keep reading** — `issues/system/0215`.
+        //
+        // `Shutdown::Write` against `CloseSocket`'s `Shutdown::Both`, and the handle stays open in
+        // the table: `recv` on it afterwards is the whole point of the call. Only a connected stream
+        // has two directions, so a listener, a datagram socket and a child are not touched — a child
+        // that wants its input ended has `closeFeed`, which is the same distinction one layer up.
+        Cap::CloseSend => {
+            let h = match arg(1) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            if let Some(Sock::Open(s)) = socket_at(caller, h) {
+                let _ = s.shutdown(std::net::Shutdown::Write);
+            }
+        }
+
         Cap::CloseSocket => {
             // **Stops the child outright**, which is what `closeSocket` means and what `closeFeed`
             // deliberately does not: `head -1` ending `seq` is the ordinary case.

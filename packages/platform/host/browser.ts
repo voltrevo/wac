@@ -987,6 +987,13 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       }
       return deny("network access");
     },
+    /**
+     * No raw sockets in a page, so there is no outbound direction to end — `issues/system/0215`.
+     *
+     * Refused by the same `deny` as `connect` and `listen` above rather than passed over quietly: a
+     * program that half-closes a socket it could never have opened should hear about the socket.
+     */
+    [OP.CLOSE_SEND]: () => deny("network access"),
     [OP.CLOSE_SOCKET]: (p) => {
       const h = readI32le(p);
       // Closing a child's handle ends its standard input *and* stops it. A program that wants only

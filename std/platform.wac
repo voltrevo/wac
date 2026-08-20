@@ -1644,6 +1644,31 @@ export struct Cli {
   fn[void(i32)] closeSocket;
 
   /**
+   * **Say "that is all" without saying "goodbye"**: end the outbound direction and keep reading.
+   *
+   * `closeSocket` stops the socket both ways, so a client that used it to signal end-of-input could
+   * never receive the answer. That is the exchange every request/response protocol over a raw socket
+   * needs — the server reads to the end and only then replies — and until 2026-08-20 there was no
+   * call for it. `issues/system/0215`.
+   *
+   * The argument was already written one capability over: `closeFeed` says *"a program that reads to
+   * the end before answering — `wc` is the obvious one — needs the end to arrive while it is still
+   * running, and killing it instead means it never speaks."* The same sentence, and the same example
+   * program, for a socket instead of a child. `closeFeed` is the child case and this is the socket
+   * one; a handle is a handle everywhere else, and this is the one place the two differ, because a
+   * child has a standard input to end and a socket has a direction.
+   *
+   * **A separate call rather than a flag on `closeSocket`**, deliberately. A host that did not know
+   * about a new argument would read it as an ordinary close, so the program would hang waiting for a
+   * reply that the host had just made unreachable — where an unrecognised call fails and says so.
+   *
+   * After this, `send` on the handle is over; `recv` keeps working until the peer closes its own
+   * side. Under `--allow-net` with everything else here: the authority is "speak to something that
+   * is not this process", and stopping speaking is not a second question.
+   */
+  fn[void(i32)] closeSend;
+
+  /**
    * Datagrams, under the same one `--allow-net` grant.
    *
    * The authority is "speak to something that is not this process", and the transport does not change
@@ -1916,6 +1941,7 @@ export struct Cli {
     fn[Pending<Read>(i32)] recv,
     fn[Pending<bool>(i32, u8[])] send,
     fn[void(i32)] closeSocket,
+    fn[void(i32)] closeSend,
     fn[Pending<Socket>(string, i32)] bindDatagram,
     fn[Pending<Datagram>(i32)] receiveFrom,
     fn[Pending<bool>(i32, string, i32, u8[])] sendTo,
@@ -1931,7 +1957,7 @@ export struct Cli {
     return Cli(
       argCount, arg, env, readStdin, write, writeErr, readFile, writeFile, stat, linkStat, readDir,
       mkdir, remove, rename, setExecutable, openInput, readChunk, outputError, openOutput,
-      connect, listen, accept, recv, send, closeSocket, bindDatagram, receiveFrom, sendTo,
+      connect, listen, accept, recv, send, closeSocket, closeSend, bindDatagram, receiveFrom, sendTo,
       spawn, spawnSelf, closeFeed, exitCode, cwd,
       pushChild, popChild, exec
     );

@@ -330,6 +330,9 @@ export Cli childCli(Frame f, const Cli parent) {
     parent.recv,
     parent.send,
     parent.closeSocket,
+    // Straight through, exactly as `closeSocket` is: a frame narrows *which* capabilities a child
+    // has, not what one of them means. `issues/system/0215`.
+    parent.closeSend,
     parent.bindDatagram,
     parent.receiveFrom,
     parent.sendTo,

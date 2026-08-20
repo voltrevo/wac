@@ -226,6 +226,8 @@ Pending<bool> fakeSend(i32 handle, u8[] data) {
   return Pending.of(0, resolveFromId, alwaysSettled, ignoreDrop);
 }
 void fakeCloseSocket(i32 handle) {}
+/** The half-close — `issues/system/0215`. A shell never half-closes; `Cli.of` takes every field. */
+void fakeCloseSend(i32 handle) {}
 
 // The datagram half of the same surface. A shell has no use for it and never calls these — they exist
 // because `Cli.of` takes every field, which is what makes this fake break the moment the capability
@@ -351,7 +353,7 @@ Cli fakeCli() {
   return Cli.of(fakeArgCount, fakeArg, fakeEnv, fakeStdin, fakeWrite, fakeWriteErr, fakeReadFile, fakeWriteFile,
                 fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeSetExecutable, fakeOpenInput,
                 fakeReadChunk, fakeOutputError, fakeOpenOutput, fakeConnect, fakeListen, fakeAccept, fakeRecv,
-                fakeSend, fakeCloseSocket, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
+                fakeSend, fakeCloseSocket, fakeCloseSend, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
                 fakeCwd, fakePushChild, fakePopChild, fakeExec);
 }
 

@@ -109,6 +109,14 @@ export type NodeSock = {
   recv(): Promise<Uint8Array>;   // empty when the peer has closed
   send(b: Uint8Array): Promise<void>;
   close(): void;
+  /**
+   * End the outbound direction and keep reading — `issues/system/0215`.
+   *
+   * Optional because a `NodeSock` is whatever the generated launcher hands over, and one built
+   * before this existed has no such method; `CLOSE_SEND` on a socket without it does nothing rather
+   * than throwing, which is the same shape as closing an already-closed socket.
+   */
+  closeSend?(): void;
   /** The address at the other end, where the runtime says. Absent for one this program dialled. */
   peer?: string;
   /** This end's port, so a socket given an ephemeral one can say which it got. */
@@ -721,6 +729,12 @@ export function nodeWorld(
       const c = sockets.get(readI32le(p));
       if (c === undefined) throw new Error("not an open socket");
       await c.send(p.subarray(4));
+      return EMPTY;
+    },
+    /** End the outbound direction and keep reading — `issues/system/0215`. */
+    [OP.CLOSE_SEND]: (p) => {
+      const h = readI32le(p);
+      try { sockets.get(h)?.closeSend?.(); } catch { /* already closed, or not a stream */ }
       return EMPTY;
     },
     [OP.CLOSE_SOCKET]: (p) => {

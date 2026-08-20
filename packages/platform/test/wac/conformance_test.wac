@@ -116,6 +116,10 @@ Cover[] coverage() {
       "than only its output"),
     where("EXIT_CODE", "native_hostfs: the status of every AGREED script"),
     where("CLOSE_SOCKET", "native_hostfs: `kill %1` is delivered by closing the child"),
+    where("CLOSE_SEND",
+      "native_examples: `halfclose` runs both ends in one program and prints two lines — the " +
+      "server reaching `End`, and the client still reading afterwards. One line alone is passed " +
+      "by a wrong host in each direction: a no-op fails the first, a full close the second"),
     where("CLOSE_FEED",
       "native_shell: pipelines in the corpus slice — and native_examples' `feed`, which is the only " +
       "place the *distinction* from `closeSocket` is asked on both hosts: the child has to stay alive " +
