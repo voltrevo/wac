@@ -1,6 +1,7 @@
 # 0164a — wacc never compares array types, so any array satisfies any slot
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
@@ -67,3 +68,37 @@ one line. Two compilers is what turned a confusing seed failure into a two-minut
 Worth checking whether the same hole exists for other unnamed types — funcrefs, nullables of arrays,
 `i31ref` — since the pattern looks like "the comparison is by declared name, and a type with no name
 falls through" rather than anything specific to arrays.
+
+## Fixed — 2026-08-20
+
+`typeOfExpr` had thirteen arms and an `else: { return typeNone(); }`, and **`ArrNew` was not one of
+them** — so every array construction was untyped. Untyped is what every caller skips
+(`if (got == typeNone()) { continue; }`), which is the whole of "any array satisfies any slot".
+
+Neither of the two things this looked like was wrong. `assignable` ends in `return false` and would have
+caught `Box` against `i32[]`; `nameableType` admits arrays explicitly. The rule existed and could not see
+its input, which is the shape of every gap `issues/lang/0170a` found.
+
+One arm, returning `typeOfTy(c, elem) + "[]"`. All five positions from the table above are now refused,
+each by the check that owns it:
+
+| position | diagnostic |
+|---|---|
+| argument | argument does not match the parameter's type |
+| assignment | initialiser does not match the declared type |
+| return | return type does not match the function's |
+| field | field does not match the declared type |
+
+The control from this issue — `B` into an `A` slot — still reports, so the widening did not replace the
+named-type path with a blunter one.
+
+**Measured, because a checker widening is where false alarms come from:** no package in the repository is
+newly refused — crypto, tor, std/platform, box, git, ssh, zstd and wacc's own example all still check —
+the generated sweep is **10,013 programs with 0 false alarms and 0 contradictions**, 53 typecheck cases
+pass, and the seed is a fixed point. Unlike the packed-element widening earlier the same day, this one
+found no existing defects in our code, which fits: an array in a struct slot is not a mistake anyone
+writes and leaves.
+
+The note at the end of this issue asked whether funcrefs and nullables have the same hole. They do not
+have *this* one — `typeOfExpr` types both — but the question is the right one and belongs to whoever next
+touches `typeOfExpr`'s `else`.

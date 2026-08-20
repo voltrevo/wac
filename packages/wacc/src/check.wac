@@ -2893,6 +2893,18 @@ export string typeOfExpr(C c, Expr e) {
       if (c.funcGenerics[at]) { return genericCallReturn(c, at, args); }
       return c.funcReturns[at];
     }
+    // **An array construction has a type, and this had no arm for it.** `i32[0]()` answered unknown,
+    // and unknown is what every caller skips — `if (got == typeNone()) { continue; }` — so *any array
+    // satisfied any slot*, including a slot that is not an array at all. `take(i32[0]())` where `take`
+    // wants a struct passed the checker and produced a module the engine refused, blaming the compiler
+    // for a plain type error (`issues/lang/0164a`).
+    //
+    // `assignable` was never the problem and neither was `nameableType`, which admits arrays. The rule
+    // existed and could not see its input, which is the shape of every gap `issues/lang/0170a` found.
+    case ArrNew(elem, size, fill, elements): {
+      string el = typeOfTy(c, elem);
+      return el == "" || el == typeNone() ? typeNone() : el + "[]";
+    }
     else: { return typeNone(); }
   }
 }

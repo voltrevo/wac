@@ -1,0 +1,12 @@
+// expect: answers f = 15
+// why: `c ? 1 : null` into an `i32?` slot cannot be boxed as a whole — that asks the `null` branch to
+//      produce a number. A ternary threads the slot's type to each arm, so each one boxes or nulls on
+//      its own. Both directions are taken here, so a compiler that boxed the whole expression fails
+//      rather than passes.
+// from: issues/lang/0171a
+export i32 f() {
+  bool c = true;
+  i32? a = c ? 1 : null;
+  i32? b = !c ? 1 : null;
+  return (a is null ? 0 : a! * 10) + (b is null ? 5 : 0);
+}

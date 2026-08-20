@@ -865,6 +865,26 @@ bool isBoxedPrimName(string t) {
   return isWritableValType(t.slice(0, t.len() - 1));
 }
 
+/**
+ * Whether an expression's **branches** carry the slot's type rather than the expression itself.
+ *
+ * A ternary and a match already thread `want` down to each arm — the ternary arm falls back to `want`
+ * when neither branch types itself — so boxing the whole thing is wrong twice: `c ? 1 : null` would be
+ * emitted at the *inner* type, asking the `null` branch to produce a number. Left to their own arms,
+ * each branch reaches this function again and boxes or nulls on its own, which is what
+ * `§wac-nullable-primitive-4mzq7vp`'s `ternary` needs.
+ *
+ * Found because `specEmit` *logged* it: the case emitted and then failed to instantiate, which lands in
+ * `wontLoad` — a list that is reported and not asserted. Reading the output is what caught it.
+ */
+bool boxesAtBranches(Expr e) {
+  match (e.kind) {
+    case Ternary(cond, then, els): { return true; }
+    case MatchExpr(subject, arms): { return true; }
+    else: { return false; }
+  }
+}
+
 /** Whether an expression is literally `null`, which a `T?` slot takes without boxing. */
 bool isNullLit(Expr e) {
   match (e.kind) {
@@ -6431,7 +6451,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
   // one into a reference slot. `null` is excluded: it is the absent value, not a value to wrap, and its
   // own arm already emits a null box. An operand that is *already* a `T?` — passing one along — is
   // excluded too, or it would be boxed twice.
-  if (isBoxedPrimName(want) && !isNullLit(e)
+  if (isBoxedPrimName(want) && !isNullLit(e) && !boxesAtBranches(e)
       && typeOfE(src, lexed, env, e) != want) {
     string inner = boxedPrimInner(want);
     emitExprAt(fb, src, lexed, env, e, inner);

@@ -146,9 +146,19 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
 
   console.log(`    spec: ${agreed}/${compared} answers agree (${whole} of ${accept.length} ` +
     `programs emitted whole), ${rejected}/${reject.length} rejections are also wacc's`);
+  // **Asserted, not logged, since 2026-08-20.** This was a `console.log` and it cost a real bug: after
+  // nullable primitives were implemented, `§wac-nullable-primitive-4mzq7vp` emitted a module the engine
+  // refused — `c ? 1 : null` boxed as a whole instead of per branch — and this test stayed green,
+  // because a program that does not instantiate never reaches a comparison and so cannot spoil the
+  // answer count either. It was one line in the output of a passing run.
+  //
+  // The list is empty, so the assertion is free. If something lands here, it is a module wacc wrote and
+  // wasm rejected, which is worse than a decline and never worth tolerating.
   if (wontLoad.length > 0) {
-    console.log(`    and ${wontLoad.length} emit but do not instantiate:\n      ` +
-      wontLoad.join("\n      "));
+    throw new Error(
+      `${wontLoad.length} program(s) emit but do not instantiate — wacc wrote a module the engine ` +
+        `refuses, which is worse than declining it:\n      ` + wontLoad.join("\n      "),
+    );
   }
 
   // The canary: a run that emitted nothing would agree about nothing and say so as a triumph.
