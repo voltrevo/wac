@@ -253,6 +253,12 @@ void writeValType(B out, Env env, string t) {
   //
   // The whole module, not one function: this runs past the gate, mid-emission, so there is no function
   // left to decline. A byte is still written to keep the buffer well-formed — the bytes are discarded.
+  // A nullable primitive is a reference to its box.
+  if (isBoxedPrimName(t)) {
+    out.byte(99);
+    out.i32leb(env.boxType(boxedPrimInner(t)));
+    return;
+  }
   if (!isWritableValType(t)) {
     env.declineFor(t == "" ? "a value whose type this emitter could not work out"
                            : "a value of a type this emitter cannot write: " + t);
@@ -348,8 +354,17 @@ i32 storageType(string elem) {
  * of the same places.
  */
 void registerNamed(Env env, string t) {
-  if (isArrayType(t)) { env.arrayType(t); }
+  if (isArrayType(t)) {
+    env.arrayType(t);
+    // **And whatever the elements are.** `i32?[]` needs its element's box, and the element of a
+    // nested array is another array — so recursing here covers both, and registering a type twice is
+    // free. Without it, `i32?[] xs = i32?[3]();` was "a type this emitter names only while emitting".
+    registerNamed(env, t.slice(0, t.len() - 2));
+  }
   if (isFuncrefType(t)) { env.sigType(t); }
+  // A nullable primitive's box, for the same reason an array's type is registered here: the type
+  // section is written before the bodies, so a type first named while emitting is too late.
+  if (isBoxedPrimName(t)) { env.boxType(boxedPrimInner(t)); }
 }
 
 /**
@@ -768,6 +783,46 @@ string pairMark() { return "pair:"; }
 
 /** Whether a signature-table entry is a pair struct. */
 bool isPairEntry(string t) { return t.len() > 5 && t.slice(0, 5) == pairMark(); }
+
+/**
+ * The marker that makes a signature-table entry a **box** — the one-field struct a nullable primitive
+ * is, per `spec/spec/types.md`: *"a reference to a one-field struct the compiler synthesises, and `!`
+ * reads the field back"*.
+ *
+ * Same table and same reason as `pairMark`: it is grown lazily during emission, so nothing may sit
+ * after it, and an index emitted early would move when it grew.
+ *
+ * **Not `ref.i31`**, which is free and is what this used to be. 31 bits made `i32? a = 2000000000` come
+ * back as `-147483648` — a wrong answer with no diagnostic, at exactly the values a program is careful
+ * about. `issues/lang/0045` bought the allocation deliberately.
+ */
+string boxMark() { return "box:"; }
+
+/** Whether a signature-table entry is a nullable primitive's box. */
+bool isBoxEntry(string t) { return t.len() > 4 && t.slice(0, 4) == boxMark(); }
+
+/** The primitive a box entry boxes. */
+string boxInner(string t) { return t.slice(boxMark().len(), t.len()); }
+
+/** Whether a type name is a nullable primitive — `i32?`, `bool?` — and so a box rather than a number. */
+bool isBoxedPrimName(string t) {
+  if (t.len() < 2) { return false; }
+  if (t.slice(t.len() - 1, t.len()) != "?") { return false; }
+  return isWritableValType(t.slice(0, t.len() - 1));
+}
+
+/** Whether an expression is literally `null`, which a `T?` slot takes without boxing. */
+bool isNullLit(Expr e) {
+  match (e.kind) {
+    case NullLit: { return true; }
+    else: { return false; }
+  }
+}
+
+/** The primitive inside a `T?`, or `t` unchanged when it is not one. */
+string boxedPrimInner(string t) {
+  return isBoxedPrimName(t) ? t.slice(0, t.len() - 1) : t;
+}
 
 /** The `fn[…]` a pair entry is the pair for. */
 string pairInner(string t) { return t.slice(pairMark().len(), t.len()); }
@@ -1290,6 +1345,14 @@ export struct Env {
    * grows lazily during emission, so nothing may sit after it, and sharing it keeps the pair and its
    * env-taking funcref allocated together.
    */
+  /**
+   * The struct type index for a nullable primitive's box, allocated the way a pair is and for the same
+   * reason — see `boxMark`.
+   */
+  i32 boxType(this, string prim) {
+    return this.sigType(boxMark() + prim);
+  }
+
   i32 pairType(this, string t) {
     // The funcref type first, so the struct's field type exists before the struct is written.
     i32 e = this.sigType(envSig(t));
@@ -4295,6 +4358,15 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     // **A pair, not a function.** `fn[…]` values are `{funcref, env}` — `design/lang/0002` — and the
     // pair shares this table behind a marker because the table is grown lazily and so must stay last.
     // Two fields, both mutable-free: the env-taking funcref, then the env itself as `anyref`.
+    // **A box, not a function.** One immutable field holding the primitive — a nullable primitive is
+    // a reference to this, so `null` is the absent value and `!` reads field 0.
+    if (isBoxEntry(sig)) {
+      types.byte(95);                       // struct
+      types.u32leb(1);
+      types.byte(valType(boxInner(sig)));   // the primitive itself, one byte
+      types.byte(0);                        // immutable
+      continue;
+    }
     if (isPairEntry(sig)) {
       string inner = pairInner(sig);
       types.byte(95);            // struct
@@ -5005,7 +5077,19 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
           // as *a null in a slot of no known type* for the whole of `packages/sh`. A `string` was
           // already excepted here for exactly this reason; there are three such names, not one.
           // `spec/cases/0098`.
-          return pn == "string" || pn == "anyref" || pn == "i31ref" ? pn : "";
+          if (pn == "string" || pn == "anyref" || pn == "i31ref") { return pn; }
+          // **A nullable primitive is its box**, spelled with the `?` so it is not mistaken for the
+          // number. This answered `""` — the emitter's "I don't know" — which is why `canEmit` approved
+          // these functions and the emitter then dropped them (`issues/lang/0171a`).
+          //
+          // `u8` and `u16` are deliberately absent: a *packed* type cannot be nullable, which is
+          // `spec/cases/0025` and is the checker's rule, so widening this list would accept something
+          // the spec refuses.
+          if (pn == "i32" || pn == "u32" || pn == "i64" || pn == "u64"
+              || pn == "f32" || pn == "f64" || pn == "bool") {
+            return pn + "?";
+          }
+          return "";
         }
         else: { return typeOfTyName(env, src, lexed, inner); }
       }
@@ -5130,6 +5214,12 @@ void emitNull(B fb, Env env, string t) {
   if (isArrayType(t)) { fb.byte(208); fb.i32leb(env.arrayType(t)); return; }
   if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.pairType(t)); return; }
   if (env.isStructName(t)) { fb.byte(208); fb.i32leb(env.structType(t)); return; }
+  // A nullable primitive's absent value is a null *box* — and unlike a plain `T`, whose default is a
+  // defaulted value, a `T?` really does default to null. That distinction is the whole reason
+  // `isNullableTy` exists as a flag rather than a spelling.
+  if (isBoxedPrimName(t)) {
+    fb.byte(208); fb.i32leb(env.boxType(boxedPrimInner(t))); return;
+  }
   emitDefault(fb, env, t);
 }
 
@@ -6279,6 +6369,22 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
  * the wanted type is passed down every arm rather than special-cased at the few places one is likely.
  */
 void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
+  // **A number going into a `T?` slot is boxed.** `spec/spec/types.md`: `i32?` is a reference to a
+  // one-field struct, so `i32? b = 5;` allocates one — the cost the spec accepts deliberately, since
+  // `ref.i31` would be free and would silently truncate above 2^30 (`issues/lang/0045`).
+  //
+  // Before the dispatch, because every arm that could produce a number would otherwise produce a bare
+  // one into a reference slot. `null` is excluded: it is the absent value, not a value to wrap, and its
+  // own arm already emits a null box. An operand that is *already* a `T?` — passing one along — is
+  // excluded too, or it would be boxed twice.
+  if (isBoxedPrimName(want) && !isNullLit(e)
+      && typeOfE(src, lexed, env, e) != want) {
+    string inner = boxedPrimInner(want);
+    emitExprAt(fb, src, lexed, env, e, inner);
+    fb.byte(251); fb.u32leb(0);            // struct.new
+    fb.u32leb(env.boxType(inner));
+    return;
+  }
   match (e.kind) {
     // **A lambda is its hoisted function's wrapper, with a null env** — `design/lang/0002` tier two.
     // Identical to `emitFuncPair` except for which wrapper: a lambda has no declaration to look up,
@@ -7126,6 +7232,16 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     case Unwrap(operand): {
       emitExpr(fb, src, lexed, env, operand);
       fb.byte(212);   // ref.as_non_null
+      // **A boxed primitive needs two operations, not one.** `ref.as_non_null` is the whole of `!` for
+      // a nullable *reference*, because the reference is the value. A nullable primitive is a reference
+      // to a one-field struct (`spec/spec/types.md`), so the slot wants the number *inside* it — the
+      // null check and then the field read. `issues/lang/0171a`.
+      string ut = typeOfE(src, lexed, env, operand);
+      if (isBoxedPrimName(ut)) {
+        fb.byte(251); fb.u32leb(2);            // struct.get
+        fb.u32leb(env.boxType(boxedPrimInner(ut)));
+        fb.u32leb(0);
+      }
     }
     case Incr(target, op, prefix): { emitIncrExpr(fb, src, lexed, env, target, op, prefix); }
     case Ternary(cond, then, els): {
@@ -7303,7 +7419,12 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     case Is(left, target, other, negated): { return "bool"; }
     case Incr(target, op, prefix): { return typeOfLv(src, lexed, env, peelLv(target)); }
-    case Unwrap(operand): { return typeOfE(src, lexed, env, operand); }
+    case Unwrap(operand): {
+      // Unwrapping a boxed primitive yields the primitive; for a nullable reference `T?` and `T` are
+      // already one name here, so this changes nothing for those.
+      string ut = typeOfE(src, lexed, env, operand);
+      return isBoxedPrimName(ut) ? boxedPrimInner(ut) : ut;
+    }
     case MatchExpr(subject, arms): {
       // **With the arm's names in scope.** An arm whose value is its own binding — `case B(x): x`,
       // which is most of them — is untyped to anyone who cannot see `x`, and a match whose type is
@@ -9482,7 +9603,7 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
 /** Whether a wac type is a reference, which is the only kind of slot a `null` can fill. */
 bool isRefType(Env env, string t) {
   return isArrayType(t) || t == "string" || env.isStructName(t) || isFuncrefType(t) ||
-         t == "anyref" || t == "i31ref";
+         t == "anyref" || t == "i31ref" || isBoxedPrimName(t);
 }
 
 /**

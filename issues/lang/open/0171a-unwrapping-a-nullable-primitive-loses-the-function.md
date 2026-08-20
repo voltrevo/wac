@@ -1,11 +1,11 @@
 # 0171a — a nullable primitive is unimplemented in the emitter; the parameter alone makes an invalid module
 
-- **Status:** open
+- **Status:** open — the emitter is done (2026-08-20); the host-boundary decision below is not
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
 - **Kind:** missing feature
-- **Symptom:** the build fails and names the parameter (was: invalid wasm)
+- **Symptom:** was invalid wasm, then a named refusal, now implemented
 
 ## Reproduction
 
@@ -313,3 +313,39 @@ needed, which means someone thought about this boundary and decided it should wo
 
 Worth saying that the refusal is the **right kind** of wrong: it declines rather than emitting broken
 glue. It simply contradicts the prose, and one of the two has to move.
+
+## Implemented — 2026-08-20
+
+A nullable primitive is now the boxed reference the spec describes. Six pieces, each verified as it went
+in rather than at the end:
+
+| piece | what it does |
+|---|---|
+| `boxMark` / `isBoxEntry` / `boxInner` / `boxType` | a `box:i32` entry in the signature table, allocated exactly as a `fn[…]` pair is and for the reason `pairMark` gives — the table grows lazily so nothing may sit after it |
+| the type-section arm | writes a box as a one-field immutable struct holding the primitive |
+| `typeOfTyName` | answers `"i32?"` where it answered `""`. `u8`/`u16` are deliberately absent — a packed type cannot be nullable, which is `spec/cases/0025` |
+| `writeValType`, `isRefType` | a `T?` is a reference to its box |
+| `emitNull` | the absent value is a null box |
+| `emitExprAt` | a number going into a `T?` slot is boxed with `struct.new`, before the dispatch so no arm can put a bare number in a reference slot |
+| the `Unwrap` arm | `ref.as_non_null` **and** `struct.get 0` — two operations, which is what made this look like an unwrap bug in the first place |
+| `registerNamed` | recurses into an array's element, so `i32?[]` registers its element's box |
+
+**The measurements.** `specEmit`'s ledger went from **seven entries to one**, and the numbers it moved
+are the point: programs emitted whole 251 → **257**, answers agreeing 390 → **400**, all of them. The
+ledger is what told me each time, failing with *"N known-unemittable case(s) emit now — take them out"*.
+
+`spec/cases/0215`, `0216`, `0217` were added, and the middle one is the one to keep: it asserts a
+2,000,000,000 round-trip through an `i64?`. That is the exact value `issues/lang/0045` records `ref.i31`
+silently turning into `-147483648`, so it is the case that fails if anyone reaches for the cheap encoding
+again. 219 of 219 cases met.
+
+**What was left out on purpose.** `u8?` and `u16?` still refuse. The spec case that looked like a packed
+nullable — `§wac-packed-nullable-2knq6wv` — turned out to be an `i32?[]`, an array of nullable
+primitives, not a `u8?`; reading the program rather than the tag name is what settled it.
+
+Verified: seed a fixed point after one round at each step; `packages/crypto`, `packages/tor`,
+`std/platform` and `packages/wacc/example/wacc.wac` all build; emit, declined, typecheck, genericenum,
+downcast and checkalone lanes green; `deno task check` clean.
+
+**Why this issue stays open:** the host boundary still refuses a nullable primitive, so the spec's own
+accessor still gets no glue. That decision is above and is not mine to take unilaterally.
