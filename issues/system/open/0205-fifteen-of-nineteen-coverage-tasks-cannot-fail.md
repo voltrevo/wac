@@ -550,6 +550,40 @@ their whole case list first and ask the host once at the end, so the code runs w
 can be spawned; what fails is the assertion. **A coverage figure cannot tell you whether the assertions
 ran.** The grants stay: without them fifteen tests pass vacuously inside a driver that only warns.
 
+### `url` fourteenth: 716 of 727 → **721 of 726**, and the blocker had expired
+
+**19 hold a coverage floor, 0 only check their own exemptions have not drifted, 2 report and cannot
+fail.**
+
+`url` was held back because its corpus is a sampled cross product and its figure was recorded as moving
+with the seed. **It does not move** — 721 under two seeds, checked rather than assumed. All 27 tests
+were already wired, so the deterministic coverage that settled `fmt` was here all along; what was stale
+was the note. A blocker recorded once is worth re-measuring before it is worked around, which is the
+second time today that has been the answer.
+
+**`parseOpaqueHost`'s bracket rule was written twice and neither copy ran.** A non-special host is
+"percent-encoded rather than decoded", with one exception its doc names: "Brackets still mean IPv6".
+Three uncovered points sat in that exception, inside a function the fuzz corpus exercises thousands of
+times — because `parseHost` tested for the bracket *before* delegating and then handled it itself, the
+same three lines differing only in how they spell failure. One function now, `bracketedIpv6`, called by
+both; both keep their own bracket test because both are entry points.
+
+`parseHost`'s empty-host arm closed the same way: `http://` is refused before a host is parsed, so an
+empty host reaches it only from a direct caller — and the answer is an empty *name*, not a refusal,
+which a caller conflating null and empty gets wrong.
+
+**Two packages now where the grant canary cannot speak.** Dropping the grants leaves `url` at 721 and
+`fmt` at 418, because both parse their whole case list first and ask Node once at the end: the code
+runs regardless and what fails is the assertion. A coverage figure measures what executed, and tests
+passing vacuously execute exactly as much as tests passing. Worth stating in both ledgers rather than
+leaving the canary out.
+
+### Where this leaves the sweep
+
+Every package that had a driver now holds a floor except `core` and `sh`. What remains for this issue
+is the eighteen packages with no driver at all, recorded above, which is a larger question than the one
+it opened with.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
