@@ -84,10 +84,37 @@ far-date loop left coverage at 123 of 123, because the day-by-day loop below it 
 branches. A perturbation that removes redundant work proves nothing, and it looked like a passing
 canary for a moment.
 
-The ordering for the rest is by how much argument each needs, which is how many points are uncovered:
-`codec` 186/190, `unicode` 105/108, `bytes` 73/80, `stream` 28/32, `regex` 573/649. A package at 88%
-wants seventy-six arguments, and writing seventy-six is how a ledger becomes a list nobody reads — so
-the low ones first, and the high ones may want their coverage raised before their floor is set.
+### `codec` second, and three of its four gaps were closed rather than blessed
+
+**7 hold a coverage floor, 0 only check their own exemptions have not drifted, 14 report and cannot
+fail.**
+
+It read 186 of 190, and writing four pins would have been the quick way. Three were not exemptions:
+
+- `hex.wac:73` was `decoded`'s **entry**. That file offers two decodes — `decode` answering `null` for
+  a caller that must handle malformed input, and `decoded` trapping for one asserting there is none —
+  and `test/probe.wac` wrapped only the first, so nothing in this package's coverage had ever called
+  the trapping one;
+- `hex.wac:75`'s two arms follow. The `else` is an ordinary call now; the `then` is a named trap case.
+
+**An uncovered *entry* is the strongest form of a lead**: not a branch nobody took but a function
+nobody called, which means nothing was asserting anything about it. Pinning one is how a ledger becomes
+a list of things nobody looked at — which is the failure this issue is about, one level in.
+
+189 of 190 now, with one pin: `base32.wac`'s `digitsFor(0)`, whose two call sites both guard `> 0` and
+which is private to its file, so the argument is closed rather than probable. Kept because the function
+is total over its documented domain.
+
+Canaried both ways: breaking the pin's snippet reports "no longer holds", and dropping the trap case
+from `cases()` reports "1 reachable branch point(s) uncovered".
+
+### The ordering for the remaining fourteen
+
+By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
+`bytes` 73/80, `stream` 28/32, `regex` 573/649. A package at 88% wants seventy-six arguments, and
+writing seventy-six is how a ledger becomes a list nobody reads — so the low ones first, and the high
+ones may want their coverage *raised* before their floor is set rather than their gaps blessed. `codec`
+is the evidence for that: its report was four gaps and only one of them was a fact about the code.
 
 ## One trap for whoever does this, measured
 

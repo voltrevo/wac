@@ -1,0 +1,73 @@
+// codec's coverage, and the argument for the one point nothing reaches.
+//
+//   deno task coverage:codec
+//   deno task coverage:codec --verbose
+//
+// **189 of 190**, and the one below is a total function's unused arm rather than a gap. Two-way
+// ratchet over `tools/wac/covledger.wac`: anything not listed here must be covered, and anything
+// listed that *is* covered fails too, because the reason has stopped holding. `issues/system/0205`.
+//
+// ## Three of the four gaps were closed rather than blessed, which is the interesting part
+//
+// The report read 186 of 190 when this package was picked as the second to get a floor, and it would
+// have been easy to write four entries and call it done. Three of the four were not exemptions at all:
+//
+//   - `hex.wac:73` was `decoded`'s **entry**. `hex.wac` offers two decodes — `decode` answering `null`
+//     for a caller that must handle malformed input, and `decoded` trapping for one asserting there is
+//     none — and `test/probe.wac` wrapped only the first. So nothing in this package's own coverage had
+//     ever called the trapping one. Nothing was unreachable; nobody had called it;
+//   - `hex.wac:75`'s two arms follow from that. The `else` is covered by an ordinary call now, and the
+//     `then` — the trap — by `trap_hex_decoded_on_input_that_is_not_hex`, named in `cases()` below,
+//     which `covdump` calls with the trap caught.
+//
+// **A named gap is a lead.** An uncovered *entry* is the strongest form of it: not a branch nobody
+// happened to take, but a function nobody happened to call, which means nothing was asserting anything
+// about it. Writing a pin for one is how a ledger becomes a list of things nobody looked at.
+//
+// ## The one that is a genuine exemption
+//
+// `base32.wac`'s `digitsFor(0)`. See the pin.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/codec/test/cov_exercise.wac";
+const string PREFIX = "packages/codec/";
+
+/**
+ * The exports that trap by contract, called one at a time with the trap caught.
+ *
+ * One, and it is the `then` of an `is null` check that exists so a caller can assert its input is
+ * well-formed. The only way to reach it is input that is not.
+ */
+string[] cases() { return string[]("trap_hex_decoded_on_input_that_is_not_hex"); }
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/codec/src/base32.wac", 44, "if (leftover == 4) { return 7; }", true,
+        "The fall-through to `return 0` — `digitsFor(0)`. Both call sites guard against it: the " +
+        "encoder computes `left = data.len() - i` and only enters the block `if (left > 0)`, and the " +
+        "decoder likewise `if (leftover > 0)`. `digitsFor` is private to the file, so those two are " +
+        "the whole set of callers and the argument is closed rather than probable.\n" +
+        "         Kept because the function is *total over its documented domain* — its comment says " +
+        "\"a final group of 0..4 leftover bytes\" and 0 is one of them. A version that trapped or " +
+        "returned garbage for 0 would be correct only by the habits of its callers, which is the " +
+        "same argument `packages/gzip`'s ledger makes for `copyBytes`. Answering 0 digits for 0 " +
+        "bytes is also the arithmetically right answer, so there is nothing here to get wrong later."));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No grants: the exercise's `main` takes nothing, reads nothing and spawns nothing.
+  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}
