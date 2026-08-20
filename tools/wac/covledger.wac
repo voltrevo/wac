@@ -79,6 +79,36 @@ export struct Pin {
 }
 
 /**
+ * A **class** of accounted-for points, matched by a pattern rather than named one at a time.
+ *
+ * `packages/fs` is why this exists. Its ledger speaks for 127 uncovered points, and 94 of them are
+ * one fact repeated: an arm that needs a `Cli` only a built program has, or a peer only a real parent
+ * process can be. Ninety-four pins would each carry the same sentence, and the sentence is what
+ * matters — so a rule states it once and says which points it covers.
+ *
+ * `scope` decides what `holds` is matched against:
+ *
+ *   - `"line"` — the uncovered point's own line;
+ *   - `"decl"` — its enclosing declaration, the nearest line at or above it that opens a block at the
+ *     top level *or one level in*. That is what a channel needs: the points are inside
+ *     `remoteReadFile` and its fifteen siblings rather than on a line that says `Chan`, and naming the
+ *     signature is both more accurate and harder to leave behind, since renaming the parameter breaks
+ *     the rule;
+ *   - `"struct"` — its enclosing `struct`, for a type whose *methods* are the unreachable thing, where
+ *     each signature differs and only the type they hang off is shared.
+ *
+ * **A rule that matches nothing fails the run**, exactly as a moved pin does: it explains something
+ * that is no longer there. That is what keeps a rule from being a blanket.
+ */
+export struct Rule {
+  string file;
+  string holds;
+  string scope;
+  bool proven;
+  string why;
+}
+
+/**
  * `s` cut at every newline, **keeping the empty ones**.
  *
  * Not `splitLines` from `packages/wactest/src/strings.wac`, which drops them — that is right for a
@@ -465,16 +495,102 @@ export i32 uncoveredLines(Point[] points, i32 nPoints, i32[] counts, string pref
   return n;
 }
 
+/** Whether the first non-space is at column 0, 1 or 2 — "top level, or one level in". */
+bool startsShallow(string l) {
+  for (i32 i = 0; i < 3 && i < l.len(); i++) {
+    string c = l.slice(i, i + 1);
+    if (c != " ") { return c != "\t"; }
+  }
+  return false;
+}
+
+/**
+ * Whether `l` opens a declaration: shallow, brace-bearing, and not a control-flow keyword.
+ *
+ * **Crude on purpose.** A wac file nests exactly one deep — `struct` then its methods — and anything
+ * cleverer would need the parser this tool deliberately does not carry.
+ *
+ * **One level in, not column 0**, which is the part that was got wrong once: every constructor
+ * `Fs.overChan` and every method of `Chan` is indented inside its `struct`, so a column-0 rule walked
+ * past all of them to the `struct` line and reported four points as unaccounted that the rule above
+ * them already spoke for.
+ */
+bool opensDecl(string l) {
+  if (!startsShallow(l)) { return false; }
+  string t = trimmed(l);
+  string[] keywords = string[]("if", "for", "while", "match", "else", "case", "}", "/", "*");
+  for (i32 i = 0; i < keywords.len(); i++) {
+    if (startsWith(t, keywords[i])) { return false; }
+  }
+  return endsWith(t, "{") || (contains(t, "{") && endsWith(t, "}"));
+}
+
+/** The enclosing declaration of `line`, 1-based, or "". */
+string declOf(string[] ls, i32 line) {
+  for (i32 i = line - 1; i >= 0; i--) {
+    if (i < ls.len() && opensDecl(ls[i])) { return ls[i]; }
+  }
+  return "";
+}
+
+/** The enclosing `struct`: the nearest line at or above that starts in column 0 and opens a block. */
+string structOf(string[] ls, i32 line) {
+  for (i32 i = line - 1; i >= 0; i--) {
+    if (i >= ls.len()) { continue; }
+    string l = ls[i];
+    if (l.len() > 0 && l.slice(0, 1) != " " && l.slice(0, 1) != "\t" && endsWith(trimmed(l), "{")) {
+      return l;
+    }
+  }
+  return "";
+}
+
+/** Whether `rule` speaks for a point at `file:line`, given that file's lines. */
+bool rulePicks(Rule rule, string[] ls, string file, i32 line) {
+  if (rule.file != file) { return false; }
+  if (rule.scope == "decl") { return contains(declOf(ls, line), rule.holds); }
+  if (rule.scope == "struct") { return contains(structOf(ls, line), rule.holds); }
+  return line >= 1 && line <= ls.len() && contains(ls[line - 1], rule.holds);
+}
+
 /**
  * Check a ledger against a measurement and say what is wrong. `true` when the run should fail.
  *
  * Everything printed here is read by a person and by `tools/coverageAll.ts`, in that order.
  */
+/** The file part of a `file:line` key — everything before the last colon. */
+string fileOf(string where) {
+  i32 at = -1;
+  for (i32 i = 0; i < where.len(); i++) { if (where.slice(i, i + 1) == ":") { at = i; } }
+  return at < 0 ? where : where.slice(0, at);
+}
+
+/** The line part of a `file:line` key, or 0. */
+i32 lineOfKey(string where) {
+  i32 at = -1;
+  for (i32 i = 0; i < where.len(); i++) { if (where.slice(i, i + 1) == ":") { at = i; } }
+  if (at < 0) { return 0; }
+  u8[] b = where.slice(at + 1, where.len()).toBytes();
+  if (b.len() == 0) { return 0; }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < 48 || b[i] > 57) { return 0; }
+    v = v * 10 + (b[i] - 48);
+  }
+  return v;
+}
+
 export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] counts, string prefix,
-                    Pin[] pins) {
+                    Pin[] pins, Rule[] rules) {
   bool failed = false;
   string[] uncovered = string[nPoints > 0 ? nPoints : 1](fill: "");
   i32 nUncovered = uncoveredLines(points, nPoints, counts, prefix, uncovered);
+  // **Which points have been spoken for, as a set.** A point named by a pin *and* matched by a rule was
+  // counted twice in the driver this generalises, so its ratchet reported fewer unaccounted points than
+  // it then listed — 8 against 22 — and would have gone green with fourteen branches nobody had spoken
+  // for. Counting what is spoken for rather than how many times it was spoken for is the same
+  // distinction the report itself draws between points and mentions.
+  bool[] spoken = bool[nUncovered > 0 ? nUncovered : 1](fill: false);
 
   for (i32 i = 0; i < pins.len(); i++) {
     Pin u = pins[i];
@@ -521,16 +637,49 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
     }
   }
 
+  for (i32 i = 0; i < nUncovered; i++) {
+    for (i32 k = 0; k < pins.len(); k++) {
+      if (pins[k].file + ":" + itoa(pins[k].line) == uncovered[i]) { spoken[i] = true; }
+    }
+  }
+
+  // Rules, applied to the points that are actually uncovered.
+  for (i32 r = 0; r < rules.len(); r++) {
+    Rule rule = rules[r];
+    FileResult src = cli.readFile(rule.file).wait();
+    if (!src.ok) {
+      core.log("");
+      core.log("error: " + rule.file + " cannot be read — " + src.error);
+      failed = true;
+      continue;
+    }
+    string[] ls = linesOf(string.fromBytes(src.bytes));
+    i32 hits = 0;
+    for (i32 i = 0; i < nUncovered; i++) {
+      if (rulePicks(rule, ls, fileOf(uncovered[i]), lineOfKey(uncovered[i]))) {
+        spoken[i] = true;
+        hits = hits + 1;
+      }
+    }
+    if (hits == 0) {
+      core.log("");
+      core.log(rule.file + " no longer holds any uncovered point matching \"" + rule.holds +
+               "\" — the rule explains something that is gone; delete it or fix it.");
+      failed = true;
+      continue;
+    }
+    core.log("");
+    core.log(itoa(hits) + "x " + (rule.proven ? "unreachable" : "reachable, NOT COVERED") + ": " +
+             rule.file + " — " + rule.holds);
+    core.log("  " + rule.why);
+  }
+
   // What is uncovered and unspoken for. Named rather than counted, because a count is a number
   // somebody learns to ignore and a list is a thing to go and look at.
   string[] unexpected = string[nUncovered > 0 ? nUncovered : 1](fill: "");
   i32 nUnexpected = 0;
   for (i32 i = 0; i < nUncovered; i++) {
-    bool pinned = false;
-    for (i32 k = 0; k < pins.len(); k++) {
-      if (pins[k].file + ":" + itoa(pins[k].line) == uncovered[i]) { pinned = true; }
-    }
-    if (!pinned) { unexpected[nUnexpected] = uncovered[i]; nUnexpected = nUnexpected + 1; }
+    if (!spoken[i]) { unexpected[nUnexpected] = uncovered[i]; nUnexpected = nUnexpected + 1; }
   }
   if (nUnexpected > 0) {
     core.log("");

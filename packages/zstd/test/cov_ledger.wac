@@ -36,7 +36,7 @@
 // entry listed but covered, because a point that does not exist is never in the uncovered set.
 
 import { Core, Cli } from "std/platform.wac";
-import { Pin, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
 
 const string EXERCISE = "packages/zstd/test/cov_exercise.wac";
 const string PREFIX = "packages/zstd/";
@@ -211,5 +211,5 @@ export i32 main(Core core, Cli cli) {
   if (m.nPoints == 0) { return 1; }
 
   report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
-  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins()) ? 1 : 0;
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
 }
