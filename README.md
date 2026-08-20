@@ -89,7 +89,7 @@ stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    16 sources, 960,310 bytes, identical
+B == C    16 sources, 965,855 bytes, identical
 ```
 
 Every rung was checked against the TypeScript compiler before the next was started — token streams,
