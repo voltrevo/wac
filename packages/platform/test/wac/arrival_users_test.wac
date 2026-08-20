@@ -211,13 +211,13 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
   string native = nativeBinary(core, cli);
   if (native == "") { cli.remove(tmp, true).wait(); return t.report(); }
   string mod = builtProgram(cli, ENTRY, "sshd-arrival", SSHD_GRANTS());
-  string manifest = mod.slice(0, mod.len() - 5) + ".json";
-  t.isTrue(cli.stat(mod).wait().exists && cli.stat(manifest).wait().exists,
+  // One artefact: the module is what the native host is handed, manifest section and all.
+  t.isTrue(cli.stat(mod).wait().exists,
            "the native sshd built — see .cache/built-sshd-arrival");
   if (!cli.stat(mod).wait().exists) { cli.remove(tmp, true).wait(); return t.report(); }
 
   // ── …and the host with no JavaScript in it serves the same file ─────────
-  Server second = serve(core, cli, tmp, native, string[](manifest), image,
+  Server second = serve(core, cli, tmp, native, string[](mod), image,
                         tmp + "/native.log");
   t.eqStr(second.error, "", "the native sshd is up");
   if (second.port <= 0) { cli.remove(tmp, true).wait(); return t.report(); }

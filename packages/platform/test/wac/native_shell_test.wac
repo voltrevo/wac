@@ -108,9 +108,12 @@ Built builds(Cli cli) {
   string dir = root(cli) + "/" + BUILT;
   cli.mkdir(dir, true).wait();
   Built b = Built(true, "",
-                  dir + "/sealed-deno", dir + "/sealed.json",
-                  dir + "/granted-deno", dir + "/granted.json",
-                  dir + "/open-deno", dir + "/open.json");
+                  // The native half is the module itself: `wac build` writes one artefact and both
+                  // hosts read the manifest out of its `wac.manifest` section. It was a `.json`
+                  // beside the module until 2026-08-20.
+                  dir + "/sealed-deno", dir + "/sealed.wasm",
+                  dir + "/granted-deno", dir + "/granted.wasm",
+                  dir + "/open-deno", dir + "/open.wasm");
   string[] none = string[0](fill: "");
   string[] rwe = string[]("--allow-read", "--allow-write", "--allow-env");
   string why = "";

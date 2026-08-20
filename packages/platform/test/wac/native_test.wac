@@ -30,12 +30,13 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { jsonFile } from "../../../wactest/src/jsonfile.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { customSection } from "./section.wac";
 
 const string ENTRY = "packages/platform/example/wacland.wac";
 
@@ -247,7 +248,7 @@ export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_tha
   why = buildOne(cli, true, dir + "/wacland", string[]("--allow-read", "--allow-env"));
   t.eqStr(why, "", "the native half built");
   if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
-  Ran rs = runIt(cli, native, string[](dir + "/wacland.json", "one", "two"));
+  Ran rs = runIt(cli, native, string[](dir + "/wacland.wasm", "one", "two"));
   assertConformant(t, rs, "native");
 
   // And the transcripts are the same, once the two measurements are masked.
@@ -326,7 +327,15 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
   t.eqStr(why, "", "the manifest built");
   if (why != "") { return t.report(); }
 
-  JsonObject m = jsonFile(cli, dir + "/order.json");
+  // Out of the module's `wac.manifest` section — it was a `.json` beside it until 2026-08-20.
+  FileResult mod = cli.readFile(dir + "/order.wasm").wait();
+  t.isTrue(mod.ok, "the build wrote no module — " + mod.error);
+  if (!mod.ok) { cli.remove(dir, true).wait(); return t.report(); }
+  string text = customSection(mod.bytes, "wac.manifest");
+  t.isTrue(text.len() > 0, "the module carries no `wac.manifest` section");
+  if (text.len() == 0) { cli.remove(dir, true).wait(); return t.report(); }
+  cli.writeFile(dir + "/order.manifest.json", text.toBytes()).wait();
+  JsonObject m = jsonFile(cli, dir + "/order.manifest.json");
   JsonArray structs = arrayIn(m, "structs");
   JsonObject? core0 = structNamed(structs, "Core");
   t.isTrue(core0 is not null, "no Core in the manifest");

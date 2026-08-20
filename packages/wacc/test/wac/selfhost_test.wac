@@ -100,7 +100,7 @@ u8[] read(Cli cli, string path) {
  * manifest is embedded in the module: building to `a` and `b` would differ in exactly those bytes and
  * prove nothing. What this file used to conclude from that is that they had to be built **in turn** to
  * one path, with the first copied aside — and the name is not the path. Two builds of `wacc` into two
- * directories are byte-identical, `.wasm` and `.json` both, so they can be started together: 13.0s of
+ * directories are byte-identical, so they can be started together: 13.0s of
  * this test became 7.0s, and the fixed point is still two fresh builds in one run rather than a cached
  * artefact compared against a new one.
  *

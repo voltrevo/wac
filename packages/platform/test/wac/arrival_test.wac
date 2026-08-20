@@ -130,12 +130,10 @@ World world(Cli cli, string name) {
   for (i32 i = 0; i < base.len(); i++) { if (base.slice(i, i + 1) == "/") { slash = i; } }
   if (slash >= 0) { base = base.slice(slash + 1, base.len()); }
   string stem = base.slice(0, base.len() - 5);
-  string jsonFrom = madeNative.slice(0, madeNative.len() - 5) + ".json";
-  if (!copyBuilt(cli, madeNative, dir + "/" + base, false) ||
-      !copyBuilt(cli, jsonFrom, dir + "/" + stem + ".json", false)) {
+  if (!copyBuilt(cli, madeNative, dir + "/" + base, false)) {
     return World(false, "the native build did not copy into " + dir, dir, "", "");
   }
-  return World(true, "", dir, deno, dir + "/" + stem + ".json");
+  return World(true, "", dir, deno, dir + "/" + stem + ".wasm");
 }
 
 /** One session over `image`, from the world's directory, bounded and asked twice if it wedges. */

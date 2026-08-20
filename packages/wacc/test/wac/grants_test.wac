@@ -73,7 +73,6 @@ void cleanUp(Cli cli, string path) {
   // it was not pointed at — the platform's own words for why it is an argument rather than a default.
   cli.remove(path, false).wait();
   cli.remove(probeDir(cli) + "/p.wasm", false).wait();
-  cli.remove(probeDir(cli) + "/p.json", false).wait();
 }
 
 export string test_grants_3qm7wv2_build_takes_a_grant_before_the_entry(Core core, Cli cli) {
