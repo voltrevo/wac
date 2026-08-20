@@ -273,8 +273,20 @@ bad way to spend a day.
 
 ### The measurement that does mean something
 
-The emitter has **40 bare `if (…) { return; }` bails in its expression walk, and not one records a
-reason.** The whole file contains **6** `declineFor` calls.
+The emitter has 40 bare `if (…) { return; }` returns and the whole file contains **6** `declineFor`
+calls — but 40 is not the number either, and I have now over-counted twice, so here it is broken down:
+
+| | |
+|---:|---|
+| 6 | **dedupe / idempotence guards** — "already recorded, do nothing". Correct early returns. |
+| 25 | **a failed lookup** — `if (at < 0) { return; }`, a name or index the emitter could not find. |
+| 9 | neither; each wants reading on its own. |
+
+So the number worth acting on is nearer **25 than 40**, and three of those 25 are guarded on
+`env.funcIndex[at] < 0` — a *callee* that was declined — which is the cascade working as designed and
+should be declining the caller through `unsupportedExpr` instead.
+
+None of them records a reason.
 
 Those bails are not meant to be reachable: `canEmit`/`unsupportedIn` decides emittability *before*
 emitting, so anything that got as far as the emitter should be emittable. They are defence in depth —
