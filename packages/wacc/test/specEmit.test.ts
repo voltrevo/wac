@@ -205,22 +205,13 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
    * primitive (`issues/lang/0171a`), so the rest are other gaps.
    */
   const KNOWN_UNEMITTABLE = new Set<string>([
-    // A nullable primitive, which the emitter has no type for at all — `issues/lang/0171a`. Six of
-    // the ten, and `spec/spec/types.md:455` gives one of them as *the* way to read one.
-    "wac-nullable-primitive-4mzq7vp",   // "local of an unspelled type"
-    "wac-ternary-nullable-9pqk3vm",     //   same
-    "wac-packed-nullable-2knq6wv",      //   same
-    "untagged",                         // "untyped name" — also a nullable primitive
-    // Two gaps of their own, each reason the emitter's own sentence — `issues/lang/0172a`:
-    "wac-generic-struct-9tkq4wm",       // "a construction of Parented<i32> with 2 of 1 fields"
-    // `enum-methods-6vkq2wn` left on 2026-08-20: the declaration walk that registers the types a body
-    // names had `case Func` and `case StructDecl` and an `else: { }` that swallowed `EnumDecl`, so a
-    // type first named inside an enum method was first named while emitting.
-    // Removed 2026-08-20, and this check is what said to: `wac-is-undefined-type-6qbn3wr` and
-    // `wac-type-name-scope-8vqk3mn` emit now. `p is Q` between unrelated structs is a constant rather
-    // than a refusal, and an upper-case local on the right of `is` is an identity test. The list going
-    // from ten to eight took `whole` from 248 to 250 and the agreeing answers from 380 to 389 — those
-    // nine had never been compared, because a program that does not emit has nothing to call.
+    // **Empty, as of 2026-08-20.** Every program the reference accepts and compiles, wacc now emits
+    // whole. It held ten entries when this check was written that morning; each left because the check
+    // failed with "emit now — take them out", which is what a shrink-only list is for.
+    //
+    // Keep it empty. An entry added here is a spec behaviour a wacc-only toolchain cannot produce, so
+    // it wants an issue beside it saying which and why — not a line that quietly restores the tolerance
+    // this list replaced.
   ]);
   const tagOf = (d: string) => d.match(/^§([a-z0-9-]+):/)?.[1] ?? "";
   const declinedTags = new Set(declined.map(tagOf));

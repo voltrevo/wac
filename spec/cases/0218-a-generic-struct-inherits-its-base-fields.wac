@@ -1,0 +1,12 @@
+// expect: answers f = 42
+// why: `Parented<i32>` has `Base`'s field and its own, so it constructs with two arguments. The
+//      instantiation is registered after the pass that resolves parent names, so it has to resolve its
+//      own — carrying the token alone changes nothing. Reads the inherited field *and* the own field
+//      through a method, so a layout that dropped either fails rather than passes.
+// from: issues/lang/0172a
+struct Base { i32 a; }
+struct Parented<T> : Base { T v; T get(const this) { return this.v; } }
+export i32 f() {
+  Parented<i32> p = Parented(7, 35);
+  return p.a + p.get();
+}
