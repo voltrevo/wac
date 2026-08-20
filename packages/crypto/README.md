@@ -515,8 +515,8 @@ which is how AES keys have been recovered from cache timing since 2005.
 | `ghash` | 740 | **leaks** — control flow diverges where one run stood at `ghash.wac:36`; not examined past that |
 | `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
 | `aesEncrypt` | 11,779 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges where one run stood at `aes.wac:66`; not examined past that |
-| `p256PublicKey` | 8,190,725 | uniform |
-| `p256Sign` | 35,804,281 | **leaks** — control flow diverges where one run stood at `weierstrass.wac:276`; not examined past that |
+| `p256PublicKey` | 8,190,814 | uniform |
+| `p256Sign` | 92,938,962 | uniform |
 | `bcryptPbkdf` | 8,177,005 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
 
 **The event counts changed on 2026-08-12 and the verdicts did not.** These are wacc's
@@ -558,35 +558,39 @@ both answers and select, `lessThan` is gone from the reduction path because its 
 early on the first differing limb, and the carry fold runs a fixed four passes instead of
 until it is done.
 
-So `p256PublicKey` is **uniform over 8,190,725 events**, which is the whole of a P-256
+So `p256PublicKey` is **uniform over 8,190,814 events**, which is the whole of a P-256
 scalar multiplication.
 
-**And `p256Sign` is not, at `weierstrass.wac:276`, which is the same defect a second time.**
+**And `p256Sign` was not, at `weierstrass.wac:276`, which was the same defect a third time.**
 `scMul` — multiplication modulo the group *order*, a different field from the coordinates —
-is byte-at-a-time double-and-add, and it adds only when the bit is set:
+was byte-at-a-time double-and-add, adding only when the bit was set. `ecdsaSign` calls it as
+`scMul(c, r, priv)`, so `b` was the private key, and again inside `scInvert(c, k)`, where the
+squarings are `scMul(c, base, base)` over a base derived from the nonce. Both secrets a
+signature has passed through that operand. `issues/system/0224`.
 
-```wac
-for (i32 i = 8 * len - 1; i >= 0; i--) {
-  i32 bit = (b[i / 8] >> (7 - (i % 8))) & 1;
-  if (bit == 1) { acc = scAdd(c, acc, addend); }     // weierstrass.wac:276
-  addend = scAdd(c, addend, addend);
-}
-```
+It adds on every bit now and keeps the answer with a mask, `scAdd` does its reduction either
+way and selects, and `scReduce` is one conditional subtraction rather than a loop. **92,938,962
+events, uniform.**
 
-`ecdsaSign` calls it as `scMul(c, r, priv)`, so `b` is the private key, and again inside
-`scInvert(c, k)`, where the squarings are `scMul(c, base, base)` over a base derived from the
-nonce. Both operands of a signature that must stay secret pass through the `b` position.
-`issues/system/0224`.
+**`cmpBE` was in there too, and no measurement caught it.** It returned on the first byte that
+differed, so how many bytes it read was a function of the value — and `curvePublicKey` and
+`ecdsaSign` both call it on the secret, to check it is below n. The table said
+`p256PublicKey` was uniform over 8.19 million events while that was still true of it, because
+both secrets the tool compares differ from n in their *first* byte, so both runs left the loop
+at i=0 and agreed. **A differential is only as wide as its inputs**, and this one was found by
+reading rather than by measuring. It reads every byte now, which is the 89 extra events in the
+`p256PublicKey` row.
 
-**Which is worth saying plainly: the routine most worth measuring was the one not measured.**
-The table had `p256PublicKey` and no `p256Sign` row, so `scMul` was never in a trace that was
-compared — and a public key leaking its private key is bad where a signature leaking its nonce
-is worse, because a partial nonce leak recovers the key from signatures the attacker already
-holds. The row that mattered most was missing because the row that was easiest to add went in
-first. It is in `ct.wac` now, and it costs 35.8 million events a run, four times a public key.
+**The signing row was missing until 2026-08-20, and that is the finding rather than the leak.**
+The table had `p256PublicKey`, which does not call `scMul` at all — so the routine most worth
+measuring was the one not measured, and a public key leaking its private key is bad where a
+signature leaking its nonce is worse, because a partial nonce leak recovers the key from
+signatures the attacker already holds. The row that mattered most was missing because the row
+that was easiest to add went in first.
 
-**What the field fix cost, measured rather than predicted.** 120 operations each, before and
-after, on one program:
+## What the two fixes cost
+
+**The field reduction**, 120 operations each on one program:
 
 | | before | after |
 |---|---:|---:|
@@ -597,13 +601,32 @@ Fourteen per cent on the scalar multiplication, and events per run 6,266,534 →
 earlier fix — the ladder itself — cost 1.3ms → 2.0ms against a prediction that it would "put
 P-256 near ed25519's number", which it did not come close to doing.
 
-**Signing does not move at all, and that is a finding rather than a relief.** The scalar
-multiplication is 2.37ms of a 13.0ms signature, so ten and a half milliseconds are somewhere
-else, and `scInvert` is where: Fermat's inversion modulo the order is about 384 `scMul` calls,
-each 256 rounds of a 32-byte `scAdd`, which is roughly three million byte operations per
-signature. So the same function is both the leak above and the reason P-256 signing is five
-times `ed25519Sign`'s 2.4ms — `issues/system/0209` asked where that factor came from, and this
-is a large part of the answer. Coordinates are 32-bit limbs; the order arithmetic is bytes.
+**The order arithmetic cost far more**, three A/B rounds with `ed25519Sign` as a control that
+does not touch this code:
+
+| | before | after |
+|---|---:|---:|
+| `p256PublicKey` | 2.52ms | 2.50ms |
+| `p256Sign` | 13.4ms | **24.9ms** |
+| `p256Verify` | 16.0ms | **26.9ms** |
+| `ed25519Sign` (control) | 2.4ms | 2.3ms |
+
+**Verification has no secret in it at all, so its 1.68× is bought for nothing** — `ecdsaVerify`
+inverts `s` and multiplies by `r` and the digest scalar, every one of which is on the wire. It
+is paid anyway, because the alternative is a second implementation of the same arithmetic
+selected by whether the caller believes its operands are public, and that is how a fast path
+ends up on a secret. The right answer is to make the constant-time version faster than the
+variable-time one it replaced, and that is a layout change rather than a branch change: the
+coordinates are 32-bit limbs and the order is still bytes, so every pass in `scAdd` is 32 bytes
+where it could be 8 limbs, and `scMul` is bit-serial where a limb layout makes it a schoolbook
+`n²` multiply — 64 products against 256 rounds of a 32-byte add. `issues/system/0224` is open
+for it, and X.509 chain verification being `packages/tls`'s hot path is the argument for soon.
+
+**Signing did not move at all when the field was fixed, and that was the lead to all of the
+above.** The scalar multiplication is 2.4ms of it, so the other eleven milliseconds were always
+somewhere else, and `scInvert` — Fermat over ~384 `scMul` calls, each 256 rounds of a 32-byte
+add, about three million byte operations per signature — is where. `issues/system/0209` asked
+where P-256's factor of five over ed25519 came from; this is it.
 
 **AES leaks in five places, not one.** Four are the key schedule's `SubWord` lookups
 (`aes.wac:113`–`116`) and the fifth is `SubBytes` itself (`aes.wac:149`), each indexing

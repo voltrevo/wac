@@ -278,8 +278,13 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
     t.isTrue(startsWith(said, "same "),
              label + ": behaviour depends on the secret — #0 against #" + itoa(i) + ": " + said +
              (startsWith(said, "differs ") ? " at " + siteAt(cli, stems[0], numberOf(word(said, 2))) : ""));
-    t.isTrue(startsWith(said, "same ") && numberOf(word(said, 1)) > 0,
-             label + ": recorded no events at all — did the call actually happen? " + said);
+    // **Only when it says `same`.** This used to be one assertion with the check above, so a
+    // `differs` answer failed twice — once correctly, and once claiming the call never happened. The
+    // empty-journal case it is really for is `same 0`: two routines that never ran agree perfectly.
+    if (startsWith(said, "same ")) {
+      t.isTrue(numberOf(word(said, 1)) > 0,
+               label + ": recorded no events at all — did the call actually happen? " + said);
+    }
   }
 }
 
@@ -342,6 +347,25 @@ export string test_p256_public_key_does_not_vary_with_the_private_key(Core core,
   T t = T.create();
   noSecretDependence(t, cli, "p256", "packages/crypto/src/p256.wac", "p256PublicKey",
                      "p256PublicKey($KEY)", i32[](2, 3), 32, 16777216);
+  return t.report();
+}
+
+export string test_the_scalar_multiply_mod_the_order_does_not_vary_with_its_operand(Core core,
+                                                                                    Cli cli) {
+  // **The routine, not the signature, and on purpose.** `scMul` — multiplication modulo the group
+  // *order*, a different field from the coordinates — was double-and-add adding only when the bit was
+  // set, which is `issues/system/0210`'s defect a second time. `ecdsaSign` puts the private key in
+  // that operand at `scMul(c, r, priv)` and the nonce in it again inside `scInvert`.
+  //
+  // A whole `p256Sign` is 93 million traced events, so a journal that holds one is over a gigabyte and
+  // two of them are not something a shared test suite should ask for. One `scMul` is about fifty
+  // thousand and isolates exactly the loop that leaked, which is why `p256_probe.wac` exports it.
+  //
+  // The four structured secrets all work here: unlike a private key, an operand of `scMul` has no
+  // range condition to satisfy, so zero is a legal input and is the extreme worth having.
+  T t = T.create();
+  noSecretDependence(t, cli, "scmul", "packages/crypto/test/wac/p256_probe.wac", "scalarMulOrder",
+                     "scalarMulOrder($KEY)", i32[](0, 1, 2, 3), 32, 0);
   return t.report();
 }
 

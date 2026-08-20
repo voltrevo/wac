@@ -223,12 +223,33 @@ export u8[] curveEncode(Curve c, Jac p) {
 
 // ── Scalars, modulo the group order n ─────────────────────────────────────────
 
-/** Compare two equal-length big-endian scalars. */
+/**
+ * Compare two equal-length big-endian scalars: -1, 0 or 1, **reading every byte**.
+ *
+ * This used to return on the first byte that differed, which made *how many bytes it read* a
+ * function of the values — and one of the values is routinely a private key or a nonce, since
+ * `curvePublicKey` and `ecdsaSign` both call it to check the secret is below n. `issues/system/0224`.
+ *
+ * Walking from the least significant end lets each byte's verdict override the ones below it with no
+ * branch: `d >> 31` is the sign, `d | -d` has its sign bit set exactly when `d` is non-zero, and
+ * `1 - ne` is the mask that keeps the lower verdict when this byte is equal.
+ *
+ * **No measurement caught this**, which is the part worth remembering. `p256PublicKey` reported
+ * uniform over 8.19 million events while it was still here, because the two secrets `ct.wac` compares
+ * both differ from n in their *first* byte — so both runs left the old loop at i=0 and agreed. A
+ * differential is only as wide as its inputs.
+ */
 export i32 cmpBE(u8[] a, u8[] b) {
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return a[i] < b[i] ? -1 : 1; }
+  i32 lt = 0;
+  i32 gt = 0;
+  for (i32 i = a.len() - 1; i >= 0; i--) {
+    i32 d = a[i] - b[i];
+    i32 ne = ((d | (0 - d)) >> 31) & 1;
+    i32 isLt = (d >> 31) & 1;
+    lt = (lt & (1 - ne)) | isLt;
+    gt = (gt & (1 - ne)) | (ne & (1 - isLt));
   }
-  return 0;
+  return gt - lt;
 }
 
 export bool isZeroBE(u8[] a) {
@@ -237,7 +258,26 @@ export bool isZeroBE(u8[] a) {
   return acc == 0;
 }
 
-/** (a + b) mod n. */
+/**
+ * `out = pick ? t : out`, byte by byte and with no branch. `pick` must be 0 or 1.
+ *
+ * The sibling of `fieldp.wac`'s `selectInto`, over bytes rather than limbs. Both arrays are read in
+ * full whichever is kept, so the choice is invisible in the memory trace as well as in the control
+ * flow.
+ */
+void scSelect(u8[] out, u8[] t, i32 pick) {
+  i32 mask = 0 - pick;
+  for (i32 i = 0; i < out.len(); i++) { out[i] = (out[i] ^ (mask & (out[i] ^ t[i]))) & 255; }
+}
+
+/**
+ * (a + b) mod n, with the reduction done either way and one of the two answers kept.
+ *
+ * `a` and `b` are both below n, so the sum is below 2n and one subtraction is the whole reduction.
+ * Whether to keep it is `carry | !borrow`: the addition carrying out of the top byte means the true
+ * sum is at least 2^(8·len), which is above n for both curves, and a subtraction that does not borrow
+ * means the sum was at or above n to begin with.
+ */
 u8[] scAdd(Curve c, u8[] a, u8[] b) {
   u8[] n = c.order;
   i32 len = n.len();
@@ -248,32 +288,37 @@ u8[] scAdd(Curve c, u8[] a, u8[] b) {
     out[i] = s & 0xFF;
     carry = s >> 8;
   }
-  if (carry != 0 || cmpBE(out, n) >= 0) {
-    i32 borrow = 0;
-    for (i32 i = len - 1; i >= 0; i--) {
-      i32 d = out[i] - n[i] - borrow;
-      borrow = d < 0 ? 1 : 0;
-      out[i] = d & 0xFF;
-    }
+  u8[] t = u8[len]();
+  i32 borrow = 0;
+  for (i32 i = len - 1; i >= 0; i--) {
+    i32 d = out[i] - n[i] - borrow;
+    borrow = (d >> 31) & 1;
+    t[i] = d & 255;
   }
+  scSelect(out, t, carry | (1 - borrow));
   return out;
 }
 
 /**
- * (a * b) mod n, by double-and-add over the bits of b.
+ * (a * b) mod n, by double-and-add over the bits of b — **adding on every bit**.
  *
- * A modular doubling and a conditional modular addition per bit. Far slower than a
- * Montgomery multiplication and about a tenth the code, which is the right trade for
- * something that runs a handful of times per signature.
+ * A modular doubling and a modular addition per bit, with the addition's result kept or dropped by a
+ * mask. Far slower than a Montgomery multiplication and about a tenth the code.
+ *
+ * It added only when the bit was set until 2026-08-20, which is `issues/system/0210`'s defect in a
+ * second field and cost more than that one did: `ecdsaSign` calls this as `scMul(c, r, priv)`, so `b`
+ * is the private key, and again inside `scInvert(c, k)`, where the squarings are `scMul(c, base,
+ * base)` over a base derived from the nonce. A partial nonce leak recovers the key from signatures an
+ * attacker already holds, which makes it the worse of the two.
  */
-u8[] scMul(Curve c, u8[] a, u8[] b) {
+export u8[] scMul(Curve c, u8[] a, u8[] b) {
   i32 len = c.order.len();
   u8[] acc = u8[len]();
   u8[] addend = u8[len]();
   for (i32 i = 0; i < len; i++) { addend[i] = a[i]; }
   for (i32 i = 8 * len - 1; i >= 0; i--) {
     i32 bit = (b[i / 8] >> (7 - (i % 8))) & 1;
-    if (bit == 1) { acc = scAdd(c, acc, addend); }
+    scSelect(acc, scAdd(c, acc, addend), bit);
     addend = scAdd(c, addend, addend);
   }
   return acc;
@@ -300,19 +345,26 @@ u8[] scInvert(Curve c, u8[] a) {
   return result;
 }
 
-/** Reduce a big-endian value of the order's length mod n, by conditional subtraction. */
+/**
+ * Reduce a big-endian value of the order's length mod n, by one conditional subtraction.
+ *
+ * **One, not a loop.** Both curves' group orders are above 2^(8·len − 1) — each starts 0xFF — so a
+ * value of the order's length is below 2n and a single subtraction reduces it. This was
+ * `while (cmpBE(out, c.order) >= 0)`, whose trip count was a function of the value, and the value
+ * here is `r` from a signature and the digest scalar. `issues/system/0224`.
+ */
 u8[] scReduce(Curve c, u8[] a) {
   i32 len = c.order.len();
   u8[] out = u8[len]();
   for (i32 i = 0; i < len; i++) { out[i] = a[i]; }
-  while (cmpBE(out, c.order) >= 0) {
-    i32 borrow = 0;
-    for (i32 i = len - 1; i >= 0; i--) {
-      i32 d = out[i] - c.order[i] - borrow;
-      borrow = d < 0 ? 1 : 0;
-      out[i] = d & 0xFF;
-    }
+  u8[] t = u8[len]();
+  i32 borrow = 0;
+  for (i32 i = len - 1; i >= 0; i--) {
+    i32 d = out[i] - c.order[i] - borrow;
+    borrow = (d >> 31) & 1;
+    t[i] = d & 255;
   }
+  scSelect(out, t, 1 - borrow);
   return out;
 }
 

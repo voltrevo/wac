@@ -82,18 +82,58 @@ limbs; the order is bytes.
 So one rewrite answers both: the fix for the leak is also the fix for the factor of five over
 ed25519. That is worth saying because the two would otherwise be scheduled against each other.
 
-## The shape of the fix
+## The branches are fixed — 2026-08-20 — and the layout is what is left
 
-Not a straight copy of `0210`'s. Making `scMul` always-add doubles the byte work, which would take a
-signature from 13.7ms to something worse before the layout change brings it back — so the two halves
-want doing together rather than in either order:
+`scMul` adds on every bit and keeps the answer with a mask. `scAdd` does its reduction either way and
+selects on `carry | !borrow`. `scReduce` is one conditional subtraction rather than a loop, which is
+sound because both orders start `0xFF` and a value of the order's length is therefore below 2n. And
+`cmpBE` reads every byte.
 
-- the order as `i64[]` 32-bit limbs, like `fieldp.wac`, rather than `u8[]` big-endian bytes. This is
-  the larger change and is what the time is;
-- `scAdd`'s conditional subtraction as a mask-select on the carry, `cmpBE` as a branchless
-  comparison, `scReduce` as one conditional subtraction rather than a loop — all of which
-  `fieldp.wac` now has, and `selectInto` there is the helper;
-- `scMul` always adding and selecting, once the above makes that affordable.
+**`cmpBE` is the one no measurement caught.** It returned on the first byte that differed, so how many
+bytes it read was a function of the value — and `curvePublicKey` and `ecdsaSign` both call it on the
+secret to check it is below n. `p256PublicKey` measured *uniform over 8.19 million events* while that
+was still there, because both secrets `ct.wac` compares differ from n in their **first** byte, so both
+runs left the loop at i=0 and agreed. A differential is only as wide as its inputs; this one was fixed
+by reading the code, and the fix is by construction rather than by measurement.
+
+The three byte-level rewrites were model-checked exhaustively before being trusted — `cmpBE` against
+lexicographic order over all 46,656 three-byte pairs from a six-value alphabet, `scAdd` and
+`scReduce` against 30,000 random moduli and operands each at three lengths, zero mismatches — because
+"the NIST vectors still pass" says nothing about the inputs the vectors do not contain.
+
+`test_the_scalar_multiply_mod_the_order_does_not_vary_with_its_operand` guards it, and it guards
+`scMul` rather than `p256Sign`: a signature is 93 million traced events and a journal that holds one
+is over a gigabyte, where a single `scMul` is about fifty thousand. `p256_probe.wac` exports it for
+that. Canaried — putting `if (bit == 1)` back fails the test and names `weierstrass.wac:321`.
+
+### What it costs, and the part of it that is pure loss
+
+A/B on one program, three rounds, with `ed25519Sign` as a control that does not touch this code:
+
+| | before | after |
+|---|---:|---:|
+| `p256PublicKey` | 2.52ms | 2.50ms |
+| `p256Sign` | 13.4ms | **24.9ms** |
+| `p256Verify` | 16.0ms | **26.9ms** |
+| `ed25519Sign` (control) | 2.4ms | 2.3ms |
+
+Traced events for a signature: 35.8 million to 92.9 million, and the two runs now agree on the count.
+
+**Verification has no secret in it at all**, so its 1.68× is bought for nothing: `ecdsaVerify` inverts
+`s` and multiplies by `r` and the digest scalar, every one of which is on the wire. It is paid because
+the alternative is a second implementation of the same arithmetic selected by whether the caller
+thinks its operands are public, and that is how a fast path ends up on a secret. The right answer is
+to make the constant-time version *faster than the variable-time one it replaced*, which the layout
+change does — and X.509 chain verification is `packages/tls`'s hot path, so this is the strongest
+argument for doing it soon rather than the weakest.
+
+## The shape of the fix that remains
+
+**The branch half is done; what is left is the layout**, and it is the whole of the remaining time:
+the order as `i64[]` 32-bit limbs, like `fieldp.wac`, rather than `u8[]` big-endian bytes. Every pass
+in `scAdd` and `scSelect` is currently 32 or 48 bytes where it could be 8 or 12 limbs, and `scMul` is
+bit-serial where a limb layout makes it a schoolbook `n²` multiply — 64 products for P-256 against
+256 rounds of a 32-byte add. That is where the 24.9ms goes and where it comes back from.
 
 **The order is not a Solinas prime**, so `fieldp.wac`'s reduction does not carry over — that is
 `reduceWide` folding `2^(32n) mod p`, and for the order there is no such short vector. Montgomery
@@ -102,6 +142,6 @@ multiplication is the usual answer and is what to price first.
 ## Notes
 
 `packages/crypto/README.md`'s side-channel section carries the `p256Sign` row and says why the row
-was missing. There is no known-leak test for it in `test/wac/constanttime_test.wac`, unlike `ghash`
-and `aes`: two builds and two runs of 35.8 million events is about 30s, and that file is 9.1s today.
-When this is fixed, the *uniformity* assertion is worth that cost; the leak assertion is not.
+was missing. `test/wac/constanttime_test.wac` asserts the uniformity on
+`scMul` through `p256_probe.wac` rather than on `p256Sign`, which is what makes it affordable — a
+signature's journal is over a gigabyte and one `scMul` is fifty thousand events.

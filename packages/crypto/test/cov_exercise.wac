@@ -831,10 +831,13 @@ i32 nist(Core core, Cli cli) {
   reencode(pub);
   verifyDigest(pub, sha256(msg), sig);
 
-  // **A big-endian comparison that has to look past the first byte.** Random keys differ in their
-  // leading byte almost always, so `cmpBE`'s continue side was covered by chance and the ledger
-  // flickered between runs on it. Driven on purpose, and *checked*: a scalar sharing a leading byte
-  // with the group order is exactly what a bounds check against `n` has to get right.
+  // **A big-endian comparison that has to look past the first byte.** `cmpBE` reads every byte now
+  // and has no branch left to flicker — it used to return on the first byte that differed, which made
+  // how many bytes it read a function of a private key or a nonce (`issues/system/0224`). These three
+  // stay because the *answers* are what a bounds check against `n` depends on, and a branchless
+  // comparison is exactly the kind of thing that is wrong in one of its three cases: a scalar sharing
+  // a leading byte with the order is the case that accepts a key at or above it when the carry-the-
+  // lower-verdict mask is inverted.
   if (compareSharingAPrefix() != 0 - 1) {
     core.warn("error: cmpBE did not compare past the shared leading byte");
     return 1;
