@@ -1,6 +1,7 @@
 # 0190 — `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm`
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-17
@@ -120,3 +121,35 @@ run against a stale seed measured the compiler of two days ago in `0160`. Whiche
 below is taken, the freshness guard should cover both artefacts: the shell is embedded the same way, by
 the same `build.rs`, and is stale for the same reason.
 
+## Closed — 2026-08-20, and the premise had already gone stale
+
+The first of the three ways out has happened, without this issue being the reason. `deno task seed` now
+**builds all three payloads** — compiler, shell, fetcher — as of `issues/system/0216a` earlier the same
+day, so `native/v8/seed/sh.wasm` exists on every reseed and `wac sh -c 'echo hi'` runs. The sentence this
+issue turns on, *"`deno task seed` builds `wacc.wasm` and only that"*, stopped being true.
+
+So the conditional in `packages/wacc/test/wac/cli_test.wac` is gone: `sh` and `update` are asserted
+unconditionally, and the message points at `deno task seed`, because a build without them has a stale
+seed and that is the whole remedy.
+
+## And the assertion it was guarding was nearly vacuous
+
+Worth more than the fix. `holds` is `indexOf(needle) >= 0`, so `holds(out, "sh")` was satisfied by the
+usage's own prose — *"the shell, sealed unless granted"*. Measured on the current usage text:
+
+| command | substring hits | whole-word hits |
+|---|---|---|
+| `sh` | 2 | 1 |
+| `run` | **9** | 7 |
+| `test` | 2 | 2 |
+
+So the `sh` line would have survived the command being *removed*, and `run` was asserting almost nothing.
+`namesCommand` matches on word boundaries now, with two canaries: `frobnicate` must not match — a matcher
+saying yes to everything satisfies every line — and **`est` must not match either**, which is the case the
+old check got wrong. `est` occurs three times in the usage and never as a word, so it is exactly the
+substring/word discrimination the change is about. Verified both ways: asserting `!namesCommand(out,
+"shell")` fails, so the matcher can say yes.
+
+The issue's other observation stands and is not fixed here: `tools/mutate/nativeShare.test.ts` still
+opens with `if (!await haveBinary()) return;`, which is the same shape passing *vacuously* rather than
+failing. That is its own issue if anyone wants it.

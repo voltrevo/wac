@@ -131,3 +131,42 @@ Two shapes that would fix it, and picking is the decision this is filed for:
 
 Neither can be chosen without deciding what `main` returning that value should then do, which is why
 this is an issue rather than a patch.
+
+## The obvious fix is not available, and it is worth saying why — agent-a, 2026-08-20
+
+"Give a trap its own exit code" is the first thing anyone will reach for, and there is no code to give
+it. `spec/cli/wac.md`'s own words:
+
+> `run`'s status is the program's own answer — `export i32 main()` returning 3 exits 3 — so these are
+> what the toolchain says **before the program starts**.
+
+So 1, 2 and 3 are pre-start codes, and once `main` runs the status belongs to it. `main` returns `i32`
+and a process status is eight bits, so **the program's range is the whole of 0–255** — measured today by
+accident: a `main` returning 511 exits 255, because the status is masked. There is no value a trap could
+take that some program could not also answer, which makes this the sentinel-from-the-value's-own-range
+problem rather than an unassigned-number problem.
+
+That leaves the ways out looking different from "pick a code":
+
+1. **Reserve one anyway** — say 134, as a real `SIGABRT` death would give — and document that a `main`
+   returning it is indistinguishable from a trap. Cheap, and it makes the spec sentence above false in
+   one case, which is the kind of exception that is remembered for a year and then forgotten.
+2. **Die by signal instead of exiting.** A trap is a crash, and the process API already distinguishes a
+   process that *exited with a code* from one that was *signalled* — `WIFEXITED` against `WIFSIGNALED`.
+   That is a different field, not a reserved value, so it collides with nothing a program can return.
+   Every caller that asks gets an unambiguous answer, and a caller that only reads `$?` sees `128+N` and
+   is no worse off than today. This is what a real segfaulting process does and what tooling already
+   understands.
+3. **A machine-readable line rather than a status** — the run path already prints `wac: … trapped`, and
+   the issue's objection is that a message is not a contract. It becomes one if the spec says so and a
+   test pins it, which is cheaper than either of the above and keeps the status honest.
+
+**(2) looks right to me**, because it is the only one that adds no exception to the sentence the spec
+already commits to: the status stays the program's answer, and "it did not get to answer" is expressed by
+not having exited at all. I have not implemented it — whether the host may signal itself is a question
+about every host, not just this one, and `packages/platform`'s `Exec` would need a way to report it, which
+is the same fourth-parameter conversation as `issues/system/0182`.
+
+Recording it rather than doing it because the constraint above is the part that was missing: without it,
+the first attempt is a reserved code, and the reason that is wrong is not obvious until you look up what
+`main` may return.

@@ -23,11 +23,9 @@ record of what has been fixed and why.
 | [0197](open/0197-a-built-app-costs-107ms-to-start-and-the-same-program-costs-15ms.md) | a built app costs 107 ms to start and the same program through the `wac` binary costs 15 ms | performance | no error |
 | [0196](open/0196-the-caret-blink-precondition-still-reds-under-load.md) | the caret-blink test's precondition still reds under load, which is the half `0159` left in front of the guard | bug | wrong answer |
 | [0195](open/0195-a-frame-cannot-express-an-open-and-silent-standard-input.md) | a `Frame`'s standard input cannot be open and silent, which is the shape a terminal has | missing feature | a case that cannot be written in process |
-| [0194](open/0194-a-relative-frame-cwd-does-not-resolve.md) | a `Frame`'s `cwd` works when it is absolute and silently does not when it is relative | bug | wrong answer |
 | [0193](open/0193-boxs-tests-build-and-spawn-a-world-per-assertion.md) | box's tests build and spawn a world per assertion, and the differentials re-derive their oracle every run | performance | no error |
 | [0192](open/0192-wac-test-compiles-the-same-import-graph-once-per-test-file.md) | `wac test` compiles the same import graph once per test file, so a package pays for it N times | performance | no error |
 | [0191](open/0191-issue-numbers-are-allocated-by-a-read-modify-write-with-three-writers.md) | issue numbers are a read-modify-write with three writers, and every collision reds master | process | the shared suite goes red |
-| [0190](open/0190-the-usage-test-passes-or-fails-on-an-untracked-per-agent-file.md) | `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm` | bug | a gitignored file decides |
 | [0184](open/0184-a-run-programs-exit-status-cannot-tell-a-trap-from-an-answer-of-one.md) | a run program's exit status cannot tell a trap from an answer of 1 | missing feature | wrong answer |
 | [0183](open/0183-mutation-scoring-runs-deno-test-and-twenty-packages-no-longer-have-one.md) | mutation scoring runs `deno test`, and twenty packages no longer have one | bug | no error |
 | [0182](open/0182-cli-exec-passes-no-environment-so-a-test-cannot-drive-a-program-that-reads-one.md) | `Cli.exec` passes no environment, so a wac test cannot drive a program that reads one | missing feature | not implemented |
@@ -68,7 +66,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-234 issues, 178 closed.
+234 issues, 180 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
