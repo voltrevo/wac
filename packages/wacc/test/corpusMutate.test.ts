@@ -184,6 +184,10 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
  * `generateEmit()`'s cells, whose order is fixed by the generator's own source — nothing outside can
  * insert into it, and if the generator changes then the assignment *should* change. The instability
  * was specific to a corpus that grows from elsewhere in the repository.
+ *
+ * `issues/system/0212` is this, filed on 2026-08-19 with the hash proposal in it — and hit again
+ * on 2026-08-20 and re-diagnosed from scratch, because the failure names the checker rather than
+ * the harness and nobody grepped `issues/`.
  */
 function mutationFor(name: string): number {
   let h = 0x811c9dc5;

@@ -1,6 +1,6 @@
 # 0212 — the mutation recall floor is decided by filenames, not by the checker
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-19
@@ -64,6 +64,52 @@ measurement rather than a sample nobody chose.
 
 Whichever, the floor should not be a gate until the number under it is stable. A floor over a metric
 that moves when a file is renamed is a coin toss written as a threshold.
+
+## Fixed — 2026-08-20
+
+`mutationFor(name)` — FNV-1a over the file's path, modulo `MUTATIONS.length`. Which is the first thing
+this issue proposed: "a hash of the path modulo the mutation count would give a stable assignment that
+survives an insertion, and would keep the same one-mutation-per-file cost."
+
+**Canaried, because "it is stable now" is exactly the claim that needs testing.** A throwaway `.wac`
+added to the corpus and removed again:
+
+| | broken | reported | misses |
+|---|---:|---:|---|
+| with the extra file | 176 | 175 (99.4%) | `bytes/src/buf.wac` |
+| without it | 175 | 174 (99.4%) | `bytes/src/buf.wac` |
+
+One file's difference in the count and **the same single miss** — where the same experiment before the
+fix moved three misses into `webrtc/src/stun.wac`, `zstd/src/frame.wac` and `zstd/src/fse.wac`, and
+took one out of `zstd/src/huffenc.wac`.
+
+The figure went from 96.5% to 99.4% and **that is luck, not improvement**: a different assignment
+happens to avoid the hard cases, and nothing about the checker changed. This issue's own Notes said as
+much — "the recall figure itself is not in doubt… what is wrong is that *which* real misses you get is
+decided by an accident". The floor stays at 97%, which is now a few points under a stable number
+rather than sitting inside a swing.
+
+`mutateCheck.test.ts` and `missed.ts` keep `i % MUTATIONS.length` and should: they iterate
+`generateEmit()`'s cells, whose order is fixed by the generator's own source, so nothing outside can
+insert into it and a change to the generator *should* change the assignment. Noted in the code so
+nobody "fixes" them.
+
+The second, larger proposal — apply every mutation to every file, and move it out of the gate — is not
+done and is still the better measurement. It is a different scale of run and wants pricing first.
+
+### How it was found the second time, which is the part worth keeping
+
+**By hitting it again and diagnosing it from scratch.** The gate went red on `corpusMutate` while
+pushing a converted test, with six misses named in `crypto`, `json`, `quic`, `webrtc` and `zstd` and
+none in the file that had been added. Removing the file and re-running, diffing the two miss lists,
+reading `MUTATIONS[i % MUTATIONS.length]`, measuring the before and after — about half an hour, all of
+it repeating what is written above, filed by the same agent the previous day.
+
+`issues/` was never grepped. The failure names the checker rather than the harness, which this issue
+already says sends you to the wrong place — and it did, twice yesterday and once today. The lesson is
+not about mutation testing: **when a gate fails on something that looks like a property of the tree
+rather than of the change, grep `issues/` before measuring anything.** The cost may already be filed,
+and here it was filed with the fix in it.
 
 ## Notes
 
