@@ -11,6 +11,7 @@
 
 import {
   fpZero, fpOne, fpSmall, fpCopy, fpAdd, fpSub, fpMul, fpSquare, fpInvert,
+  fpIsZeroBit, fpEqualsBit, fpSelect,
   fpIsZero, fpEquals, fpToBytes, fpFromBytes, fpInRange,
 } from "./fieldp.wac";
 
@@ -62,7 +63,10 @@ export Jac curveBase(Curve c) {
  * be correct and slower.
  */
 export Jac jacDouble(Curve c, Jac p) {
-  if (jacIsInfinity(p)) { return jacInfinity(c); }
+  // **No guard for the identity, and none is needed**: `z3` below is `2YZ`, which is zero whenever `Z`
+  // is, so the formula answers the identity for the identity on its own. The guard that used to be here
+  // was an optimisation, and an optimisation that branches on the point — which in `jacMul` is the
+  // accumulator, and therefore on the secret scalar. `issues/system/0210`.
   i32 n = limbCount(c);
   i64[] zz = fpSquare(p.z);
   i64[] m = fpMul(fpSmall(n, 3), fpMul(fpSub(p.x, zz), fpAdd(p.x, zz)));   // 3(X-Z^2)(X+Z^2)
@@ -84,20 +88,12 @@ export Jac jacDouble(Curve c, Jac p) {
  * every input, which is the worst kind of wrong.
  */
 export Jac jacAdd(Curve c, Jac p, Jac q) {
-  if (jacIsInfinity(p)) { return Jac(fpCopy(q.x), fpCopy(q.y), fpCopy(q.z)); }
-  if (jacIsInfinity(q)) { return Jac(fpCopy(p.x), fpCopy(p.y), fpCopy(p.z)); }
-
   i64[] z1z1 = fpSquare(p.z);
   i64[] z2z2 = fpSquare(q.z);
   i64[] u1 = fpMul(p.x, z2z2);
   i64[] u2 = fpMul(q.x, z1z1);
   i64[] s1 = fpMul(p.y, fpMul(q.z, z2z2));
   i64[] s2 = fpMul(q.y, fpMul(p.z, z1z1));
-
-  if (fpEquals(u1, u2)) {
-    if (fpEquals(s1, s2)) { return jacDouble(c, p); }
-    return jacInfinity(c);                        // Q = -P
-  }
 
   i64[] h = fpSub(u2, u1);
   i64[] r = fpSub(s2, s1);
@@ -107,7 +103,43 @@ export Jac jacAdd(Curve c, Jac p, Jac q) {
   i64[] x3 = fpSub(fpSub(fpSquare(r), hhh), fpAdd(u1hh, u1hh));
   i64[] y3 = fpSub(fpMul(r, fpSub(u1hh, x3)), fpMul(s1, hhh));
   i64[] z3 = fpMul(fpMul(p.z, q.z), h);
-  return Jac(x3, y3, z3);
+  Jac general = Jac(x3, y3, z3);
+
+  // **Every exceptional case is computed and then selected, rather than branched to.** The four `if`s
+  // that used to stand here each tested a value derived from `p`, and in `jacMul` `p` is the
+  // accumulator — so each was a branch on the secret scalar. `issues/system/0210`.
+  //
+  // Two of the four need nothing but the general formula. When `u1 == u2` and `s1 != s2` the points are
+  // negations, `h` is zero, and `z3 = Z1·Z2·h` is zero — the identity, which is the right answer. When
+  // either operand is the identity its `Z` is zero, so `z3` is zero again — the identity, which is the
+  // *wrong* answer and is what the last two selects put right.
+  //
+  // The doubling case has to be computed separately, because the general formula divides by `h` in
+  // effect and `h` is zero there. So `jacDouble(c, p)` runs on every call. That is the cost: a
+  // scalar multiplication is now a double and an add-carrying-a-double per bit rather than a double and
+  // half an add.
+  Jac doubled = jacDouble(c, p);
+  i32 sameX = fpEqualsBit(u1, u2);
+  i32 sameY = fpEqualsBit(s1, s2);
+
+  Jac out = jacSelect(general, doubled, sameX & sameY);
+  // `q` when `q` is not the identity and `p` is — and `p` last, so that two identities answer the
+  // identity rather than whichever was tested first.
+  out = jacSelect(out, p, fpIsZeroBit(q.z));
+  out = jacSelect(out, q, fpIsZeroBit(p.z));
+  return out;
+}
+
+/**
+ * `pick` ? `b` : `a`, coordinate by coordinate and with no branch.
+ *
+ * Every limb of both points is read whichever is chosen. A select that copied only the winner would
+ * move the leak from the control flow into the memory trace, which `packages/crypto/tools/ct.wac`
+ * records as
+ * well and which is the harder one to see.
+ */
+Jac jacSelect(Jac a, Jac b, i32 pick) {
+  return Jac(fpSelect(a.x, b.x, pick), fpSelect(a.y, b.y, pick), fpSelect(a.z, b.z, pick));
 }
 
 /** scalar * P, most significant bit first. `scalar` is big-endian, `byteLen` long. */
@@ -117,7 +149,17 @@ export Jac jacMul(Curve c, u8[] scalar, Jac p) {
   for (i32 i = 0; i < bits; i++) {
     acc = jacDouble(c, acc);
     i32 bit = (scalar[i / 8] >> (7 - (i % 8))) & 1;
-    if (bit == 1) { acc = jacAdd(c, acc, p); }
+    // **Add on every bit and keep the answer only when the bit is set.** `if (bit == 1)` made the work
+    // — and the time — a function of the scalar's Hamming weight and of *which* bits were set;
+    // `packages/crypto/tools/ct.wac` put the first divergence between two P-256 keys at this line and
+    // at no
+    // other. The scalar here is the private key in `curvePublicKey` and `curveEcdh`, and the **nonce**
+    // in ECDSA signing, where a partial leak recovers the key rather than merely revealing it.
+    // `issues/system/0210`.
+    //
+    // `ed25519.wac`'s `ptMul` has always been written this way, which is why one of the pair leaked and
+    // the other did not — and is most of why `issues/system/0209` finds ed25519 five times slower.
+    acc = jacSelect(acc, jacAdd(c, acc, p), bit);
   }
   return acc;
 }

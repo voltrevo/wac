@@ -5,13 +5,13 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0223](open/0223-the-field-reduction-branches-on-limb-values-so-p-256-and-p-384-still-leak.md) | `reduceWide` in `fieldp.wac` skips a limb when it is zero and folds a carry a value-dependent number of times, so P-256 and P-384 still leak the scalar — it was behind the ladder that `issues/system/0210` fixed, and `ctcompare` only reports the first divergence | bug | no error |
 | [0220](open/0220-twenty-six-copies-of-struct-rng-in-five-variants.md) | twenty-six `.wac` files declare their own `struct Rng` in five variants; eighteen are one xorshift32 split by whether the result is cast, which changes what `next() % n` samples, and several claim to match a host-side generator that nothing checks | task | wrong answer |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
 | [0213a](open/0213a-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
 | [0212](open/0212-the-mutation-recall-floor-is-decided-by-filenames-not-by-the-checker.md) | rung 3 pairs each corpus file with `MUTATIONS[i % 7]` over an alphabetical list, so adding one file re-pairs every later one — two gate runs failed under the 97% floor for that reason | bug | wrong answer |
-| [0210](open/0210-the-weierstrass-ladder-branches-on-the-secret-scalar.md) | `jacMul` adds only when the scalar bit is set, so P-256 and P-384 leak the private key — and the ECDSA *nonce* — through control flow; measured with `ctTrace`, one divergent site at `weierstrass.wac:120`, and the README's side-channel table had no asymmetric row at all | bug | no error |
 | [0209](open/0209-ed25519-is-five-times-slower-than-p-256-which-is-the-wrong-way-round.md) | `ed25519Sign` is 63ms and `p256Sign` is 12ms — five times slower on the curve that should be faster, so it is this code rather than the mathematics; `ptDouble` is `ptAdd(p, p)` and there is no precomputed base table | performance | no error |
 | [0208](open/0208-nothing-owns-the-wasmtime-hosts-build-so-five-callers-do-it-themselves.md) | nothing owns the wasmtime host's build, so five callers each do it themselves | missing feature | not implemented |
 | [0205](open/0205-fifteen-of-nineteen-coverage-tasks-cannot-fail.md) | fifteen of nineteen coverage drivers end with `report(...)` and cannot fail, while the summary read "19/19 passed" — two hold a floor, two only check their own exemptions | missing feature | no error |
@@ -69,7 +69,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-230 issues, 173 closed.
+231 issues, 174 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

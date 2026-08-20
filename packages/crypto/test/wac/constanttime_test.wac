@@ -344,24 +344,32 @@ export string test_ghash_branches_on_the_bits_of_h_known_leak(Core core, Cli cli
   return t.report();
 }
 
-export string test_the_weierstrass_ladder_branches_on_the_scalar_known_leak(Core core, Cli cli) {
-  // **The first asymmetric routine measured here, and it leaks.** `jacMul` in `weierstrass.wac` is
-  // double-and-add with the add taken only when the bit is set:
+export string test_the_field_reduction_branches_on_limb_values_known_leak(Core core, Cli cli) {
+  // **The ladder was the leak here and is not any more, and this is what was behind it.**
   //
-  //     for (i32 i = 0; i < bits; i++) {
-  //       acc = jacDouble(c, acc);
-  //       i32 bit = (scalar[i / 8] >> (7 - (i % 8))) & 1;
-  //       if (bit == 1) { acc = jacAdd(c, acc, p); }     // <- weierstrass.wac:120
+  // `jacMul` was double-and-add with the add taken only when the bit was set, so the work — and the
+  // time — was a function of the scalar's Hamming weight and of *which* bits were set. It adds on every
+  // bit now and keeps the answer with a constant-time select, and `jacAdd`/`jacDouble` compute their
+  // exceptional cases and select between them rather than branching to them. `issues/system/0210`.
+  //
+  // The scalar is the private key in `curvePublicKey` and `curveEcdh`, and the **nonce** in ECDSA
+  // signing, where a partial leak recovers the key rather than merely revealing it. So this still
+  // matters, because the divergence did not go away — it **moved**, to `reduceWide` in `fieldp.wac`,
+  // which skips a limb when it is zero:
+  //
+  //     for (i32 j = c.len() - 1; j >= n; j--) {
+  //       i64 v = c[j];
+  //       if (v != 0) { … }          // <- fieldp.wac
   //     }
   //
-  // The scalar is the private key in `curvePublicKey` and `curveEcdh`, and the *nonce* in ECDSA
-  // signing, where a partial leak is key recovery rather than key disclosure. Every caller of P-256
-  // and P-384 in this repository goes through it, which is `packages/tls`'s certificate chains and
-  // `packages/ssh`'s host keys.
+  // That was always there. `ctcompare` reports the *first* divergence, and while the ladder parted at
+  // the first differing scalar bit nothing downstream of it could be seen — the same shape as fixing an
+  // instrument and finding what it was not reaching. Every field operation on both NIST curves runs
+  // through this, and so does RSA.
   //
-  // The journals overflow — about three million events against room for two — and it does not affect
-  // the verdict, because the traces part at the first differing bit and `ctcompare` only refuses to
-  // answer when *nothing* diverged inside what both kept.
+  // **The assertion is about the file rather than the line**, deliberately: a line number in a test is
+  // an entry that drifts, which is the whole argument of `tools/wac/covledger.wac`'s pins. What is
+  // load-bearing is that it is no longer `weierstrass.wac`, and that is asserted separately.
   T t = T.create();
   string dir = scratchDir(cli, "p256");
   const string SRC = "packages/crypto/src/p256.wac";
@@ -376,17 +384,17 @@ export string test_the_weierstrass_ladder_branches_on_the_scalar_known_leak(Core
 
   string said = compared(t, cli, a, b, false);
   t.isTrue(startsWith(said, "differs "),
-           "the ladder no longer leaks — update the README and delete this test: " + said);
+           "P-256 no longer diverges at all — update the README's table and delete this test: " + said);
   if (startsWith(said, "differs ")) {
-    // The expected place, in one constant used by both the check and the message — a message that
-    // spells the position a second time can say "expected 120, got 120" when it is wrong.
-    const string WANT = "then@packages/crypto/src/weierstrass.wac:120";
     string got = siteAt(cli, a, numberOf(word(said, 2)));
     string other = siteAt(cli, b, numberOf(word(said, 4)));
-    // One run stood on the taken side and the other on the untaken one; which of the two this names
-    // is not the claim, so both are accepted and both are shown.
-    t.isTrue(got == WANT || got == "else@packages/crypto/src/weierstrass.wac:120",
-             "the README says weierstrass.wac:120 leaks; the trace says " + got + " and " + other);
+    // The claim that the fix holds: whatever still diverges, it is not the ladder.
+    t.isTrue(!contains(got, "weierstrass.wac") && !contains(other, "weierstrass.wac"),
+             "the ladder branches on the scalar again — `jacMul` must add on every bit and select: " +
+             got + " and " + other);
+    // And where it went instead. The file rather than the line, so an edit above it is not a failure.
+    t.isTrue(contains(got, "packages/crypto/src/fieldp.wac"),
+             "the README says the field reduction leaks; the trace says " + got + " and " + other);
   }
   return t.report();
 }
