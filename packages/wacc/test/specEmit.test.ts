@@ -15,8 +15,16 @@
 // design — it never invents a diagnostic and never contradicts one — so it accepts programs the
 // reference refuses, and every one of those is a program a wacc-only toolchain would let through.
 //
-// Both numbers are asserted as **floors**, because they are meant to rise and a slot that adds a
-// feature must not quietly lose one.
+// Three things are asserted, and none of them is an editable number:
+//
+//   - every program the reference rejects, wacc rejects — all of them, not a count
+//   - no answer differs, `KNOWN_DIFFERENT` being empty and shrink-only
+//   - the programs wacc *declines* are exactly `KNOWN_UNEMITTABLE`, by tag and shrink-only
+//
+// The third was a `console.log` until 2026-08-20. `blocked()` is wacc's decline mechanism, so the loop
+// asked it "can you emit this?", got an explicit reason back, and `continue`d before the counter — so
+// ten spec behaviours wacc cannot produce were a number in a log line that nothing could fail on. That
+// is `issues/lang/0170a`'s silence living in the instrument instead of the compiler.
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
@@ -63,10 +71,30 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
    * message it was in never printed. Three of them had been sitting there. `issues/lang/0116`.
    */
   const wontLoad: string[] = [];
+  /**
+   * Programs wacc **declines**, with the reason it gave.
+   *
+   * This used to be `if (blocked(...) !== "") continue;` — and `blocked()` is the decline mechanism,
+   * so the test asked wacc "can you emit this?", received an explicit *no, because…*, and dropped the
+   * sentence on the floor. The skip also came before `whole++`, so a declined program could not make
+   * the answer count worse either — they sat behind a `console.log` that nothing asserted, which is
+   * the same silence `issues/lang/0170a` is about, in the instrument rather than the compiler.
+   *
+   * **The gap between 279 and `whole` is not the gap.** 279 minus 248 is 31, and reading that as "31
+   * programs wacc cannot emit" is wrong: 21 of them are refused by the *reference* and skipped one
+   * line above, because extracting a `run(` block does not guarantee a program that compiles alone.
+   * **Ten** are wacc's, which is what this list holds. Counting the wrong subtraction is why the
+   * reason is captured rather than the count.
+   */
+  const declined: string[] = [];
   for (const [tag, src] of accept) {
     const r = wacCompile(new Map([["/main.wac", src]]), "/main.wac");
     if (!r.ok) continue;                       // a case whose program the reference itself refuses
-    if (blocked(enc.encode(src)) !== "") continue;
+    const why = blocked(enc.encode(src));
+    if (why !== "") {
+      declined.push(`§${tag}: ${why.slice(0, 90)}`);
+      continue;
+    }
     whole++;
     let theirs: WebAssembly.Instance;
     let ours: WebAssembly.Instance;
@@ -162,5 +190,47 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
   if (rejected < reject.length) {
     throw new Error(`wacc rejects only ${rejected} of ${reject.length} programs the reference ` +
       `rejects, was all of them — rung 3 went backwards`);
+  }
+
+  /**
+   * Spec programs wacc declines, by tag. **Shrink-only, and not a floor.**
+   *
+   * A count would be the wrong shape here for the reason this file already gives about `rejected`: a
+   * ratchet whose number has to be edited when the corpus changes teaches people to edit the number.
+   * Keyed by tag it cannot drift with the corpus — a case that leaves `wacSpec.test.ts` takes its
+   * entry with it, and a case that starts emitting has to be taken out by hand.
+   *
+   * Every entry is a spec behaviour a wacc-only toolchain cannot produce, so this list is the thing
+   * worth reading in this file. It is not one bug: only six of the accept cases declare a nullable
+   * primitive (`issues/lang/0171a`), so the rest are other gaps.
+   */
+  const KNOWN_UNEMITTABLE = new Set<string>([
+    // A nullable primitive, which the emitter has no type for at all — `issues/lang/0171a`. Six of
+    // the ten, and `spec/spec/types.md:455` gives one of them as *the* way to read one.
+    "wac-nullable-primitive-4mzq7vp",   // "local of an unspelled type"
+    "wac-ternary-nullable-9pqk3vm",     //   same
+    "wac-packed-nullable-2knq6wv",      //   same
+    "untagged",                         // "untyped name" — also a nullable primitive
+    // Four gaps of their own, and each reason is the emitter's own sentence:
+    "wac-generic-struct-9tkq4wm",       // "a construction of Parented<i32> with 2 of 1 fields"
+    "enum-methods-6vkq2wn",             // "a type this emitter names only while emitting"
+    "wac-is-undefined-type-6qbn3wr",    // "a test for Q on a P"
+    "wac-type-name-scope-8vqk3mn",      // "a test for Other on a P"
+  ]);
+  const tagOf = (d: string) => d.match(/^§([a-z0-9-]+):/)?.[1] ?? "";
+  const declinedTags = new Set(declined.map(tagOf));
+  const newly = declined.filter((d) => !KNOWN_UNEMITTABLE.has(tagOf(d)));
+  if (newly.length > 0) {
+    throw new Error(
+      `${newly.length} spec program(s) wacc newly declines — a rule got stricter, or a feature ` +
+        `regressed. Each is a spec behaviour wacc cannot emit:\n  ` + newly.join("\n  "),
+    );
+  }
+  const nowEmitting = [...KNOWN_UNEMITTABLE].filter((t) => !declinedTags.has(t));
+  if (nowEmitting.length > 0) {
+    throw new Error(
+      `${nowEmitting.length} known-unemittable case(s) emit now — take them out of ` +
+        `KNOWN_UNEMITTABLE:\n  ` + nowEmitting.join("\n  "),
+    );
   }
 });
