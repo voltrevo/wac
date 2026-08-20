@@ -143,6 +143,19 @@ export string test_a_downcast_that_can_never_hold_warns_and_one_that_can_does_no
                    "export i32 f(Box<A> b) { return b.v.a; }\n";
   t.eqI32(warningsIn(generic).len(), 0,
           "warned about a generic: " + messagesOf(warningsIn(generic)));
+
+  // **And `anyref` is the top of the hierarchy, so a cast out of it is the way back down.**
+  // `spec/spec/casts.md` gives `i31ref x = val as! i31ref;` as the documented spelling, and the
+  // struct parent chain never reaches `anyref` — nothing declares it as a parent — so "no common
+  // ancestor" was answered for a cast that always succeeds. It warned where the reference did not,
+  // which made it a divergence and not only a false alarm (`issues/lang/0152`).
+  string top = "struct S { i32 v; }\n" +
+               "export bool f(anyref x) { S s = x as! S; return s.v > 0; }\n";
+  t.eqI32(warningsIn(top).len(), 0,
+          "warned on a downcast out of anyref, which succeeds: " + messagesOf(warningsIn(top)));
+  string toI31 = "export i32 f(anyref x) { i31ref i = x as! i31ref; return i as i32; }\n";
+  t.eqI32(warningsIn(toI31).len(), 0,
+          "warned on the spelling casts.md documents: " + messagesOf(warningsIn(toI31)));
   return t.report();
 }
 
