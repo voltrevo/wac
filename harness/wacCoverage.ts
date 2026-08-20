@@ -6,7 +6,13 @@
 // is the shared half, so each package can supply only its own half.
 //
 // A package adds `cov.ts` that instruments its entry points, runs whatever exercises
-// them, and calls `report`. See `packages/json/cov.ts`.
+// them, and calls `report`. See `packages/crypto/cov.ts`.
+//
+// **Twelve packages no longer have one** — `issues/system/0161`. Their exercises are wac now, a
+// program whose `main` runs the shapes, with `tools/wac/covreport.wac` as the shared half instead of
+// this file: `deno task coverage:json` is a `wac run`. The eight that remain are the ones with a
+// ledger of reasoned exemptions to move (`crypto`, `zstd`, `gzip`, `ssh`), one that belongs to
+// another package's owner (`sh`), and `fs`, `bignum` and `stream`.
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";

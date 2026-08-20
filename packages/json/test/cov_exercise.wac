@@ -1,0 +1,277 @@
+// Branch coverage for json: the exercises, and nothing else.
+//
+//   deno task coverage:json
+//   deno task coverage:json --verbose
+//
+// The exercises are deliberately the same ones the test suite runs — the vendored JSONTestSuite
+// corpus, the mutation seeds, the number corpora — because coverage measured against a *different*
+// workload tells you about that workload, not about what the tests actually check.
+//
+// ## This is the driver `issues/system/0221` was filed for
+//
+// It needs two things the coverage runner could not do. **A directory listing**: the conformance
+// corpus is 300-odd files read by name off disk, and `covdump` used to instantiate with no imports at
+// all, so an exercise could not hold a `Cli` — the module failed to instantiate rather than being
+// refused. **And four traps**: `bounds_test.wac`'s cases each end their function, so all four in one
+// `main` would lose three, and they are exports here for `covdump` to call one at a time.
+//
+// The JSON5 corpus is read and parsed **with this package's own parser**, which is circular only in
+// appearance: the file is JSON, we have a JSON parser, and the alternative was a second scanner in a
+// coverage driver written to avoid using the thing it measures. Without that corpus the report calls
+// the comments, the single-quoted strings and the ECMAScript numbers dead code — the opposite of the
+// truth, since `test/wac/json5_test.wac` drives every one of them against the reference.
+
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { JsonValue, JsonArray, JsonObject } from "../src/value.wac";
+import { parse, canonicalize, canonicalizeJson5, parseNumberValue } from "../src/json.wac";
+import { test_hex_digit, test_bytes_equal, test_json_array_growth,
+         test_lookup_agrees_across_the_index_threshold, test_push_after_indexing_is_visible,
+         test_json_object_lookup, test_tree_shape, test_string_accessors,
+         test_string_accessors_handle_utf8, test_member_order_is_source_order,
+         test_unescaped_string_contents, test_surrogate_pair_decodes_to_one_scalar,
+         test_unpaired_surrogate_becomes_replacement, test_number_keeps_its_source_span,
+         test_error_codes_and_positions, test_hand_built_tree_serializes,
+         test_hand_built_values_stay_valid_json, test_parsed_numbers_keep_their_span } from "./wac/json_test.wac";
+import { test_traps_when_an_array_index_is_past_the_end,
+         test_traps_when_an_array_index_is_negative,
+         test_traps_when_an_object_index_is_past_the_end,
+         test_traps_when_an_object_index_is_negative, test_at_returns_the_element_when_in_range } from "./wac/bounds_test.wac";
+
+const string SUITE = "packages/json/test/jsontestsuite";
+const string JSON5 = "packages/json/test/vendor/json5.json";
+
+/** Whether a name ends in `.json`, which is what the corpus directory is filtered by. */
+bool isJson(string name) {
+  return name.len() > 5 && name.slice(name.len() - 5, name.len()) == ".json";
+}
+
+/**
+ * Every document in the conformance corpus, through both parsers.
+ *
+ * The second pass is the superset invariant the tests assert: every JSON document is also JSON5.
+ */
+i32 corpus(Core core, Cli cli) {
+  string[]? entries = cli.readDir(SUITE).wait();
+  if (entries is null) {
+    core.warn("json coverage: cannot list " + SUITE + " — is --allow-read granted?");
+    return 0;
+  }
+  string[] names = entries!;
+  i32 seen = 0;
+  for (i32 i = 0; i < names.len(); i++) {
+    if (!isJson(names[i])) { continue; }
+    FileResult f = cli.readFile(SUITE + "/" + names[i]).wait();
+    if (!f.ok) { continue; }
+    canonicalize(f.bytes);
+    canonicalizeJson5(f.bytes);
+    seen = seen + 2;
+  }
+  return seen;
+}
+
+/**
+ * The three questions this driver asks of a parsed value, one arm each.
+ *
+ * An enum match names every variant — `spec/tour.wac`: *"there is no `default` to paper over a variant
+ * added later"* — so these exist to say "not that shape, no answer" once rather than at four nesting
+ * levels inside the walk below.
+ */
+JsonObject? objectOf(JsonValue v) {
+  match (v) {
+    case Object(o): { return o; }
+    case Null: { return null; }
+    case Bool(b): { return null; }
+    case Number(n, raw): { return null; }
+    case Str(t): { return null; }
+    case Array(a): { return null; }
+  }
+}
+
+JsonArray? arrayOf(JsonValue v) {
+  match (v) {
+    case Array(a): { return a; }
+    case Null: { return null; }
+    case Bool(b): { return null; }
+    case Number(n, raw): { return null; }
+    case Str(t): { return null; }
+    case Object(o): { return null; }
+  }
+}
+
+u8[]? bytesOf(JsonValue v) {
+  match (v) {
+    case Str(t): { return t; }
+    case Null: { return null; }
+    case Bool(b): { return null; }
+    case Number(n, raw): { return null; }
+    case Array(a): { return null; }
+    case Object(o): { return null; }
+  }
+}
+
+/** The JSON5 corpus: `{ cases: [ { input: "…" } ] }`, walked with our own parser. */
+i32 json5Corpus(Cli cli) {
+  FileResult f = cli.readFile(JSON5).wait();
+  if (!f.ok) { return 0; }
+  JsonValue? root = parse(f.bytes);
+  if (root is null) { return 0; }
+  JsonObject? top = objectOf(root!);
+  if (top is null) { return 0; }
+  JsonValue? cs = top!.getStr("cases");
+  if (cs is null) { return 0; }
+  JsonArray? items = arrayOf(cs!);
+  if (items is null) { return 0; }
+  i32 seen = 0;
+  for (i32 i = 0; i < items!.len(); i++) {
+    JsonObject? c = objectOf(items!.get(i));
+    if (c is null) { continue; }
+    JsonValue? inp = c!.getStr("input");
+    if (inp is null) { continue; }
+    u8[]? text = bytesOf(inp!);
+    if (text is null) { continue; }
+    canonicalizeJson5(text!);
+    seen = seen + 1;
+  }
+  return seen;
+}
+
+/** The number paths, which the corpus barely touches. */
+i32 numbers() {
+  i32 seen = 0;
+  string[] ns = string[](
+    "0", "-0", "1", "1.5", "-2.25", "1e5", "1E-5", "1e+5", "0.1",
+    "9007199254740993", "1e308", "1e309", "1e-400", "5e-324",
+    "123456789012345678901234567890", "0.1234567890123456789012345",
+    "1.7976931348623157e308", "2.2250738585072011e-308", "1e23");
+  for (i32 i = 0; i < ns.len(); i++) {
+    parseNumberValue(ns[i].toBytes());
+    canonicalize(ns[i].toBytes());
+    seen = seen + 2;
+  }
+  // The failure paths of `parseNumberValue`, which `number_test.wac` covers and this file once did
+  // not — the standing hazard of a second workload written by hand.
+  string[] bad = string[]("", "[", "1 2", "01", "-", "1e", "\"1\"", "true", "null", "[1]",
+                          "{\"a\":1}");
+  for (i32 i = 0; i < bad.len(); i++) { parseNumberValue(bad[i].toBytes()); seen = seen + 1; }
+  return seen;
+}
+
+/** Escapes and UTF-8, including the paths that reject. */
+i32 escapes() {
+  i32 seen = 0;
+  string[] ss = string[](
+    "\"\\u0041\\n\\t\\r\\b\\f\\/\\\\\\\"\"",
+    "\"\\ud83d\\ude00\"", "\"\\ud83d\"", "\"\\udc00\"",
+    "\"\\ud83dx\"", "\"\\u00e9\"", "\"café 日本 😀\"",
+    "\"\\uZZZZ\"", "\"\\u12\"", "\"\\q\"", "\"unterminated", "\"a\tb\"");
+  for (i32 i = 0; i < ss.len(); i++) { canonicalize(ss[i].toBytes()); seen = seen + 1; }
+  return seen;
+}
+
+/** A quoted string around a raw byte sequence: control bytes and malformed UTF-8. */
+i32 rawBytes() {
+  i32 seen = 0;
+  u8[][] bodies = u8[][](
+    u8[](0x81), u8[](0xC3), u8[](0xC3, 0x28), u8[](0xC0, 0x80), u8[](0xED, 0xA0, 0x80),
+    u8[](0xF5, 0x80, 0x80, 0x80), u8[](0xF4, 0x90, 0x80, 0x80), u8[](0xE0, 0x80, 0x80),
+    u8[](0xC2, 0x80), u8[](0xEF, 0xBF, 0xBF), u8[](0xF4, 0x8F, 0xBF, 0xBF), u8[](0x01),
+    // A valid lead with a bad *later* continuation byte, which reaches the loop rather than the
+    // first range check.
+    u8[](0xE6, 0x97, 0x41), u8[](0xF0, 0x9F, 0x41, 0x80), u8[](0xF0, 0x9F, 0x98, 0x41));
+  for (i32 i = 0; i < bodies.len(); i++) {
+    u8[] b = bodies[i];
+    u8[] quoted = u8[b.len() + 2]();
+    quoted[0] = 0x22;
+    for (i32 k = 0; k < b.len(); k++) { quoted[k + 1] = b[k]; }
+    quoted[b.len() + 1] = 0x22;
+    canonicalize(quoted);
+    seen = seen + 1;
+  }
+  // Sequences cut off by the end of input, with no closing quote to reject them.
+  u8[][] cut = u8[][](u8[](0xC3), u8[](0xE6), u8[](0xE6, 0x97), u8[](0xF0),
+                      u8[](0xF0, 0x9F, 0x98));
+  for (i32 i = 0; i < cut.len(); i++) {
+    u8[] b = cut[i];
+    u8[] open = u8[b.len() + 1]();
+    open[0] = 0x22;
+    for (i32 k = 0; k < b.len(); k++) { open[k + 1] = b[k]; }
+    canonicalize(open);
+    seen = seen + 1;
+  }
+  return seen;
+}
+
+/** Depth, both inside and past the limit; and containers big enough to grow several times. */
+i32 shapes() {
+  i32 seen = 0;
+  i32[] depths = i32[](1, 399, 400, 500);
+  for (i32 i = 0; i < depths.len(); i++) {
+    string open = "";
+    string close = "";
+    for (i32 k = 0; k < depths[i]; k++) { open = open + "["; close = close + "]"; }
+    canonicalize((open + close).toBytes());
+    seen = seen + 1;
+  }
+  string arr = "";
+  string obj = "";
+  for (i32 i = 0; i < 200; i++) {
+    string n = itoaLocal(i);
+    arr = arr + (i > 0 ? "," : "") + n;
+    obj = obj + (i > 0 ? "," : "") + "\"k" + n + "\":" + n;
+  }
+  canonicalize(("[" + arr + "]").toBytes());
+  canonicalize(("{" + obj + "}").toBytes());
+  canonicalize("{\"a\":1,\"a\":2}".toBytes());
+  return seen + 3;
+}
+
+/** Base ten, locally, so this file needs nothing from `packages/fmt`. */
+string itoaLocal(i32 n) {
+  if (n == 0) { return "0"; }
+  string out = "";
+  i32 v = n;
+  while (v > 0) {
+    out = string.fromCodepoint(48 + (v % 10)) + out;
+    v = v / 10;
+  }
+  return out;
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 seen = corpus(core, cli) + json5Corpus(cli) + numbers() + escapes() + rawBytes() + shapes();
+
+  // The package's own tests, which reach much of `value.wac` — the container accessors, the
+  // string-typed edge, lookup by key — that the four exports `json.wac` offers a host cannot.
+  seen = seen + test_hex_digit().len();
+  seen = seen + test_bytes_equal().len();
+  seen = seen + test_json_array_growth().len();
+  seen = seen + test_lookup_agrees_across_the_index_threshold().len();
+  seen = seen + test_push_after_indexing_is_visible().len();
+  seen = seen + test_json_object_lookup().len();
+  seen = seen + test_tree_shape().len();
+  seen = seen + test_string_accessors().len();
+  seen = seen + test_string_accessors_handle_utf8().len();
+  seen = seen + test_member_order_is_source_order().len();
+  seen = seen + test_unescaped_string_contents().len();
+  seen = seen + test_surrogate_pair_decodes_to_one_scalar().len();
+  seen = seen + test_unpaired_surrogate_becomes_replacement().len();
+  seen = seen + test_number_keeps_its_source_span().len();
+  seen = seen + test_error_codes_and_positions().len();
+  seen = seen + test_hand_built_tree_serializes().len();
+  seen = seen + test_hand_built_values_stay_valid_json().len();
+  seen = seen + test_parsed_numbers_keep_their_span().len();
+  seen = seen + test_at_returns_the_element_when_in_range().len();
+  return seen;
+}
+
+/** `test_traps_when_an_array_index_is_past_the_end`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_when_an_array_index_is_past_the_end() { test_traps_when_an_array_index_is_past_the_end(); return 0; }
+
+/** `test_traps_when_an_array_index_is_negative`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_when_an_array_index_is_negative() { test_traps_when_an_array_index_is_negative(); return 0; }
+
+/** `test_traps_when_an_object_index_is_past_the_end`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_when_an_object_index_is_past_the_end() { test_traps_when_an_object_index_is_past_the_end(); return 0; }
+
+/** `test_traps_when_an_object_index_is_negative`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_when_an_object_index_is_negative() { test_traps_when_an_object_index_is_negative(); return 0; }
