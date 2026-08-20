@@ -33,6 +33,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -197,36 +198,6 @@ export string test_fold_all_matches_fold_equal() {
   return t.report();
 }
 
-/**
- * xorshift32, seeded, so the sweep is reproducible.
- *
- * **The host-side generator is deleted; what it drew is not.** This said "matching the host-side
- * generator", and the driver it named went with `issues/system/0161` — but the expectations recorded
- * against that driver are still here, so its draw is still the one that has to be reproduced. The
- * sentence was not wrong, it was just no longer checkable by looking, which is worse.
- *
- * Those drivers returned an **unsigned** value (`x >>>= 0; return x`), so `next() % n` was an
- * unsigned remainder. A copy that returns the signed `i32` instead samples a different sweep — 37% of
- * draws differ — and `packages/datetime/test/wac/datetime_test.wac` was found that way rather than
- * reasoned about. `issues/system/0220` has the census and which side each copy is on.
- */
-struct Rng {
-  i32 x;
-
-  // **`as@ u32`, which is what the host returned** — its `cov.ts` ended `x >>>= 0; return x`. Handing
-  // back the signed `i32` made every `%` a signed remainder and the corpus a different one from the
-  // recorded one this file's comment claims. `issues/system/0220`.
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  // The fold that was here — `v < 0 ? v + n : v` — compensated for that signed return without restoring
-  // the host's sequence: `(-k) % n + n` is not `(unsigned x) % n`. Unsigned, there is nothing to fold.
-  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
-}
 
 /**
  * Code points this package's own table moves, which are exactly the ones the host maps singly.

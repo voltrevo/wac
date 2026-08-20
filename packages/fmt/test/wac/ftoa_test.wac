@@ -17,11 +17,26 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { ftoaBytes } from "../../src/ftoa.wac";
 import { atofSpan } from "../../src/atof.wac";
+
+/**
+ * Two draws as one `f64`, high half first.
+ *
+ * A free function rather than a method: `Rng` is `packages/wactest/src/rng.wac`'s now, and a wac
+ * struct's methods cannot be extended from another file. The draw order is preserved — high then
+ * low — because reversing it gives the same distribution and a different corpus.
+ * `issues/system/0220`.
+ */
+f64 nextDouble(Rng rng) {
+  u64 hi = rng.next() as u64;
+  u64 lo = rng.next() as u64;
+  return ofBits((hi << 32) | lo);
+}
 
 const string ORACLE = "packages/fmt/test/oracle.ts";
 
@@ -45,27 +60,6 @@ bool isFinite64(f64 x) {
   return ((b >> 52) & 2047) != 2047;
 }
 
-/** xorshift32, matching the host-side generators so the corpora are the same ones. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  /** Two draws, high half first, as the host-side `DataView` writes them. */
-  f64 nextDouble(this) {
-    u64 hi = this.next() as u64;
-    u64 lo = this.next() as u64;
-    return ofBits((hi << 32) | lo);
-  }
-
-  /** A draw in `[0, n)`. */
-  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
-}
 
 export string test_ftoa_specials_and_zeros() {
   T t = T.create();
@@ -163,7 +157,7 @@ export string test_ftoa_random_bit_patterns(Core core, Cli cli) {
   Lines lines = Lines.create();
   i32 checked = 0;
   for (i32 i = 0; i < 20000; i++) {
-    f64 x = rng.nextDouble();
+    f64 x = nextDouble(rng);
     if (!isFinite64(x)) { continue; }
     lines.add("f64 " + bits64(x) + " " + ftoa(x));
     checked = checked + 1;
@@ -214,7 +208,7 @@ export string test_ftoa_every_output_round_trips(Core core, Cli cli) {
   Lines lines = Lines.create();
   i32 checked = 0;
   for (i32 i = 0; i < 5000; i++) {
-    f64 x = rng.nextDouble();
+    f64 x = nextDouble(rng);
     if (!isFinite64(x)) { continue; }
     lines.add("p64 " + hex(ftoa(x).toBytes()) + " " + bits64(x));
     checked = checked + 1;

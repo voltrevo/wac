@@ -22,33 +22,8 @@
 
 import { mapLower, mapUpper, mapFold, printable, decodeCode, decodeSize, valid, scalarCount,
          encodeOne, lower, upper, casefold, equalFold } from "./probe.wac";
+import { Rng } from "../../wactest/src/rng.wac";
 
-/**
- * xorshift32, the same one `test/wac/unicode_test.wac` carries and the same one `cov.ts` had in
- * TypeScript — so the random corpus below is byte for byte the corpus this package's coverage has
- * always been measured against.
- *
- * `(x >> 17) & 0x7FFF` is `x >>> 17` on a signed 32-bit value: an arithmetic shift, then the sign
- * extension masked off. There are two dozen copies of this struct in the tree and they have drifted
- * into five variants — `issues/system/0220`.
- */
-struct Rng {
-  i32 x;
-
-  // **`as@ u32`, which is what the host returned** — its `cov.ts` ended `x >>>= 0; return x`. Handing
-  // back the signed `i32` made every `%` a signed remainder and the corpus a different one from the
-  // recorded one this file's comment claims. `issues/system/0220`.
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  // The fold that was here — `v < 0 ? v + n : v` — compensated for that signed return without restoring
-  // the host's sequence: `(-k) % n + n` is not `(unsigned x) % n`. Unsigned, there is nothing to fold.
-  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
-}
 
 /** Valid text of every encoded length, and the mapping paths over it. */
 string[] good() {

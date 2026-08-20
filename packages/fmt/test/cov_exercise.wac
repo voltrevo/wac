@@ -24,6 +24,7 @@ import { fmtF64, fmtF32, parseF64, parseF32, itoaOf } from "./probe.wac";
 import { ftoa, ftoa32, writeF32 } from "../src/ftoa.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { itoa } from "../src/itoa.wac";
+import { Rng } from "../../wactest/src/rng.wac";
 
 /** Finite, read off the exponent field, so no infinity literal is needed to ask. */
 bool finite(f64 x) {
@@ -31,20 +32,6 @@ bool finite(f64 x) {
   return ((b >> 52) & 0x7FF) != 0x7FF;
 }
 
-/**
- * xorshift32 with the TypeScript's seed. Two draws make one f64, high word first, which is what
- * `DataView.setUint32(0, …)` then `setUint32(4, …)` laid down.
- */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-}
 
 /** The two words as one u64, big-endian, the way the DataView wrote them. */
 f64 doubleOf(i32 hi, i32 lo) {
@@ -59,12 +46,14 @@ export i32 main() {
   // Random bit patterns, which is the only way to reach subnormals and huge exponents.
   Rng r = Rng(0x2545f491);
   for (i32 i = 0; i < 60000; i++) {
-    f64 x = doubleOf(r.next(), r.next());
+    // `next()` answers `u32` now, and `doubleOf` wants the two halves as `i32`. `as@` reinterprets
+    // rather than converts, so these are the same thirty-two bits the local copy handed over.
+    f64 x = doubleOf(r.next() as@ i32, r.next() as@ i32);
     seen = seen + fmtF64(x).len();
     // Round-tripped through *our* shortest form rather than the host's `String(x)`, which is the
     // same text whenever this package is right and is the only text available here.
     if (finite(x)) { seen = seen + (parseF64(fmtF64(x)) == x ? 1 : 0); }
-    seen = seen + fmtF32(f32.fromBits(r.next() as~ u32)).len();
+    seen = seen + fmtF32(f32.fromBits(r.next())).len();
   }
 
   // The values that pick out particular branches rather than a random sample.

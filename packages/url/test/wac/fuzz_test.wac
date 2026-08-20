@@ -21,6 +21,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -41,31 +42,6 @@ void ask(T t, Cli cli, Lines lines, string what) {
   check(t, cli, "deno", string[]("run", "--no-check", "--allow-run", ORACLE), lines, what);
 }
 
-/**
- * xorshift32, seeded, so the corpus is reproducible.
- *
- * **The host-side generator is deleted; what it drew is not.** This said "matching the host-side
- * generator", and the driver it named went with `issues/system/0161` — but the expectations recorded
- * against that driver are still here, so its draw is still the one that has to be reproduced. The
- * sentence was not wrong, it was just no longer checkable by looking, which is worse.
- *
- * Those drivers returned an **unsigned** value (`x >>>= 0; return x`), so `next() % n` was an
- * unsigned remainder. A copy that returns the signed `i32` instead samples a different corpus — 37% of
- * draws differ — and `packages/datetime/test/wac/datetime_test.wac` was found that way rather than
- * reasoned about. `issues/system/0220` has the census and which side each copy is on.
- */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-
-  i32 upto(this, i32 n) { return ((this.next() as@ u32) % (n as@ u32)) as@ i32; }
-}
 
 // Fragments to assemble inputs from.
 //

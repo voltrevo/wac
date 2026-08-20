@@ -22,6 +22,7 @@
 import { parse as parseRequest } from "./probe.wac";
 import { parse as parseResponse, buildRequest } from "./client_probe.wac";
 import { handle as serve } from "../../server/test/probe.wac";
+import { Rng } from "../../wactest/src/rng.wac";
 
 const i32 MAX_BODY = 1048576;
 /** 2020-06-15T00:00:00Z, the clock `packages/server`'s probe is pinned to. */
@@ -60,26 +61,6 @@ u8[] wire(string s) {
 /** One control byte, as a string, so a message can name it without a raw byte in the source. */
 string ctl(i32 c) { return string.fromCodepoint(c); }
 
-/**
- * xorshift32 with the TypeScript's seed, and `upto` because its draws were unsigned.
- * `issues/system/0220` is the two dozen copies of this.
- */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-
-  // **Cast, not folded.** `v < 0 ? v + n : v` corrects a signed remainder into range and does not
-  // reproduce the host's sequence — `(-k) % n + n` is not `(unsigned x) % n`, and the host's `cov.ts`
-  // ended `x >>>= 0; return x`. `packages/regex/test/wac/regex_test.wac`'s own docstring says it best:
-  // "a signed remainder corrected into range afterwards picks different atoms". `issues/system/0220`.
-  i32 upto(this, i32 n) { return ((this.next() as@ u32) % (n as@ u32)) as@ i32; }
-}
 
 string[] cases() {
   string SOH = ctl(1);

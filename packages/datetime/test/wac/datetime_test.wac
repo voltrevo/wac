@@ -30,6 +30,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Core, Cli } from "std/platform.wac";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
@@ -155,26 +156,6 @@ export string test_invalid_dates_are_rejected() {
   return t.report();
 }
 
-/**
- * xorshift32, matching the host-side generator so the corpus is the same one.
- *
- * **`as@ u32`, and that is the whole of the match.** The host's `cov.ts` was
- * `x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x` — it hands back an
- * *unsigned* value. The state evolution ports faithfully either way, since `(x >> 17) & 0x7FFF` is
- * bit-for-bit `x >>> 17` on a 32-bit value, but returning the signed `i32` made `next() % 4000000`
- * a signed remainder and the corpus a different one. `spreadMillis` below documents the range that
- * follows from the unsigned draw, and was getting a wider one. `issues/system/0220`.
- */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-}
 
 /** The random spread the host-side version used: about 1963 to 1976, in hundred-second steps. */
 i64 spreadMillis(Rng rng) {

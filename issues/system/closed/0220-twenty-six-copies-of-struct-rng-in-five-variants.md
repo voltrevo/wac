@@ -1,6 +1,6 @@
 # 0220 — twenty-six copies of `struct Rng`, in five variants
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-20
@@ -98,6 +98,45 @@ Of the 24 canonical copies remaining:
 become one import, with no corpus moving anywhere, because every copy already draws what the deleted
 host drivers drew. That is a different and much duller job than the one filed this morning, and it is
 duller because two agents measured the same thing from opposite ends within an hour.
+
+## Done — 2026-08-20
+
+**25 files import `packages/wactest/src/rng.wac`; 8 declarations remain and they are the ones this
+issue always said to keep** — two LCGs, a 64-bit mix, and five differently-shaped generators, none of
+which claims to match anything.
+
+No corpus moved. Every converted copy already drew what the shared one draws: 13 returned `u32`, and
+the other 12 either used `next` alone — where `as@` reinterprets, so the bits are identical — or cast
+at the use site, `((this.next() as@ u32) % (n as@ u32)) as@ i32`, which is what the shared `upto` is.
+`coverage:all` is 21/21 with no ledger re-pointed.
+
+The extras stayed with their callers as free functions over `Rng`, because a wac struct's methods
+cannot be extended from another file: `bit` twice, `nextDouble` twice, `pick` once, and `next64` once.
+Each carries the draw order in a comment, since reversing high and low gives the same distribution and
+a different corpus.
+
+### What the compiler caught that no plan would have
+
+Four sites where `next` changing from `i32` to `u32` mattered, every one a type error rather than a
+silent difference:
+
+| site | fix |
+|---|---|
+| `fmt/cov_exercise.wac` `doubleOf(r.next(), r.next())` | `as@ i32` on both halves — a reinterpret, so the same thirty-two bits |
+| `fmt/cov_exercise.wac` `f32.fromBits(r.next() as~ u32)` | the cast became `u32` to `u32`; dropped |
+| `codec_test.wac` `out[i] = rng.next() & 255` | mask in `u32`, reinterpret the result |
+| `fmt/bigint_test.wac` `rng.next64()` | a method the conversion had dropped, because the regex listing methods was `([a-zA-Z]+)\(this` and cannot match a digit |
+
+That last one is why this went file by file rather than as one sweep. The other three are the argument
+for `u32` being a *type* change and not a formatting one.
+
+### And three misplaced imports
+
+The `cov_exercise.wac` drivers do not import `assert.wac`, so the script anchoring on that import
+failed on six of them — loudly, and without writing. Anchoring on the last `import` line then put the
+new one *inside* a multi-line import statement in three files, which is another parse-by-line mistake
+of the kind this issue has collected all day. Anchoring on a complete statement — one ending in `";` —
+is the version that works.
 
 ## What to do, revised
 

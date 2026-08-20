@@ -15,29 +15,8 @@
 
 import { exec, accepts, execBasic, execExtended, basicAsExtended, whyBasic,
          whyExtended } from "./probe.wac";
+import { Rng } from "../../wactest/src/rng.wac";
 
-/**
- * xorshift32 with the seed the TypeScript used.
- *
- * `upto` rather than a bare `%` because the JavaScript took its remainder after `x >>>= 0`, so its
- * draws were never negative. Two dozen copies of this struct exist — `issues/system/0220`.
- */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-
-  // **Cast, not folded.** `v < 0 ? v + n : v` corrects a signed remainder into range and does not
-  // reproduce the host's sequence — `(-k) % n + n` is not `(unsigned x) % n`, and the host's `cov.ts`
-  // ended `x >>>= 0; return x`. `packages/regex/test/wac/regex_test.wac`'s own docstring says it best:
-  // "a signed remainder corrected into range afterwards picks different atoms". `issues/system/0220`.
-  i32 upto(this, i32 n) { return ((this.next() as@ u32) % (n as@ u32)) as@ i32; }
-}
 
 string[] subjects() {
   return string[](

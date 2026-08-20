@@ -5,7 +5,6 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0220](open/0220-twenty-six-copies-of-struct-rng-in-five-variants.md) | 24 `.wac` files declare their own `struct Rng`, all one byte-identical xorshift32; the signed-draw half is fixed as of 2026-08-20 — **no copy draws signed any more** — so what is left is mechanical, 24 declarations onto `packages/wactest/src/rng.wac` with no corpus moving | task | wrong answer |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
@@ -65,7 +64,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-234 issues, 181 closed.
+234 issues, 182 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

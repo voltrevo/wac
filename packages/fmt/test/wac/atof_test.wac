@@ -17,11 +17,26 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { approxBits, atofSpan, scan } from "../../src/atof.wac";
 import { ftoaBytes } from "../../src/ftoa.wac";
+
+/**
+ * Two draws as one `f64`, high half first.
+ *
+ * A free function rather than a method: `Rng` is `packages/wactest/src/rng.wac`'s now, and a wac
+ * struct's methods cannot be extended from another file. The draw order is preserved — high then
+ * low — because reversing it gives the same distribution and a different corpus.
+ * `issues/system/0220`.
+ */
+f64 nextDouble(Rng rng) {
+  u64 hi = rng.next() as u64;
+  u64 lo = rng.next() as u64;
+  return ofBits((hi << 32) | lo);
+}
 
 const string ORACLE = "packages/fmt/test/oracle.ts";
 
@@ -49,25 +64,6 @@ void parsed(Lines lines, string s) {
   lines.add("p64 " + hex(s.toBytes()) + " " + bits64(atof(s)));
 }
 
-/** xorshift32, matching the host-side generators so the corpora are the same ones. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  f64 nextDouble(this) {
-    u64 hi = this.next() as u64;
-    u64 lo = this.next() as u64;
-    return ofBits((hi << 32) | lo);
-  }
-
-  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
-}
 
 export string test_atof_the_cases_that_break_naive_conversions(Core core, Cli cli) {
   T t = T.create();
@@ -168,7 +164,7 @@ export string test_atof_round_trips_every_shortest_representation(Core core, Cli
   Lines lines = Lines.create();
   i32 checked = 0;
   for (i32 i = 0; i < 4000; i++) {
-    f64 x = rng.nextDouble();
+    f64 x = nextDouble(rng);
     if (!isFinite64(x)) { continue; }
     string s = string.fromBytes(ftoaBytes(x));
     t.eqStr(bits64(atof(s)), bits64(x), "\"" + s + "\" parsed back to a different double");

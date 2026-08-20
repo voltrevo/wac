@@ -29,6 +29,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -239,41 +240,6 @@ export string test_escapes_of_metacharacters(Core core, Cli cli) {
   return t.report();
 }
 
-/**
- * xorshift32, seeded, so the patterns is reproducible.
- *
- * **The host-side generator is deleted; what it drew is not.** This said "matching the host-side
- * generator", and the driver it named went with `issues/system/0161` — but the expectations recorded
- * against that driver are still here, so its draw is still the one that has to be reproduced. The
- * sentence was not wrong, it was just no longer checkable by looking, which is worse.
- *
- * Those drivers returned an **unsigned** value (`x >>>= 0; return x`), so `next() % n` was an
- * unsigned remainder. A copy that returns the signed `i32` instead samples a different patterns — 37% of
- * draws differ — and `packages/datetime/test/wac/datetime_test.wac` was found that way rather than
- * reasoned about. `issues/system/0220` has the census and which side each copy is on.
- */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-
-  /**
-   * A draw in `[0, n)`, taken from the **unsigned** value.
-   *
-   * `x >>> 0` in the host-side generator was not decoration: `next() % n` there is a modulo of a
-   * 32-bit unsigned, and a signed remainder corrected into range afterwards picks different atoms.
-   * The corpus would still be a corpus, and it would not be the same one — so a seed named in a
-   * failure would no longer reproduce it.
-   */
-  i32 upto(this, i32 n) {
-    return ((this.next() as@ u32) % (n as@ u32)) as@ i32;
-  }
-}
 
 string[] atoms() {
   return string[]("a", "b", "c", ".", "\\d", "\\w", "\\s", "[ab]", "[^a]", "[a-c]", "x", "1", "_",
