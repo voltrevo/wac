@@ -19,7 +19,7 @@ borrowed: the crypto is [`packages/crypto`](../crypto/README.md), the shell it s
 > attacker can observe timing.
 
 ```sh
-deno task app packages/ssh/src/ssh.wac --allow-read --allow-net --allow-env -- user@host uname -a
+wac run --allow-read --allow-net --allow-env packages/ssh/src/ssh.wac user@host uname -a
 deno task app:build packages/ssh/src/ssh.wac --allow-read --allow-net --allow-env -o wacssh
 ./wacssh -p 2222 user@host 'seq 1 100000 | wc -l'
 

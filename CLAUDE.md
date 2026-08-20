@@ -12,6 +12,23 @@ To learn the language itself, read [spec/tour.wac](spec/tour.wac) first — the 
 annotated file that compiles and self-tests. It is much faster than reading `spec/spec/*.md`, and is
 the right starting point before writing or reviewing any wac code.
 
+## wac is unstable by choice
+
+`spec/tour.wac` says it in its header and it governs more than the language: **there are no users and
+no legacy to support.** Nothing here has to keep working for someone outside this repository.
+
+So **when nothing needs a thing, delete it.** Not deprecate it, not keep it behind a flag, not keep it
+"as a convenience" or because a test happens to read it — change the test. A second copy of anything
+is a copy that drifts, and git remembers what was deleted.
+
+This applies to code, tasks, tests, files written beside other files, and whole subsystems. Two
+producers of one artefact is one producer too many. A differential that exists only to prove the old
+thing still agrees with the new one goes when the old thing stops being used — keeping it makes the
+retiree an oracle, which is the arrangement rather than evidence about it.
+
+**If you find yourself proposing to keep something, say what would break, and check that it is not
+just a test you could edit.** That question is the whole rule.
+
 Breaking changes are logged in `~/notes/living/wac/breaking-changes.md` — check there first if a
 program that used to compile has stopped.
 

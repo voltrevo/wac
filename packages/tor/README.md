@@ -331,7 +331,7 @@ test loose enough never to flake is loose enough to miss a real bias.
 Point any HTTPS client at the SOCKS port:
 
 ```sh
-deno task app packages/tor/src/socks.wac --allow-net --allow-read -- seed.txt auth.txt 9050
+wac run --allow-net --allow-read packages/tor/src/socks.wac seed.txt auth.txt 9050
 curl --socks5-hostname 127.0.0.1:9050 https://example.com/
 ```
 

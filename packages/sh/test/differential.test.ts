@@ -311,7 +311,7 @@ async function bash(script: string, cwd: string) {
 /**
  * The shell, built once as a standalone program.
  *
- * Not `deno task app` per script: that builds every time *and* spawns the result as a child, so a
+ * Not a build per script: building every time *and* spawning the result as a child means a
  * hundred and thirty scripts become several hundred nested processes. This container ran out of
  * process ids once already today for a related reason — see wac-mono 0017 — and the build is the
  * slow part regardless.

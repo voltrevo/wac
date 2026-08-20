@@ -4,7 +4,7 @@ A capability world for wac applications, so a program can be written **entirely 
 no TypeScript of its own — and still read files, tell the time and print output.
 
 ```sh
-deno task app packages/platform/example/wc.wac --allow-read -- README.md
+wac run --allow-read packages/platform/example/wc.wac README.md
 ```
 
 `example/wc.wac` is the whole application. There is no `main.ts` beside it, and that command
@@ -304,7 +304,7 @@ the host side, and is described under [Writing one](#writing-one).
 There used to be a separate `runApp` that compiled and spawned a worker by a route of its own,
 which meant two launchers and two workers: a dev loop that could be green while the shipped
 artifact was broken, and a change to the application contract that had to be made twice. Now
-there is one path, and the dev loop exercises it — which is why `deno task app` above and
+there is one path, and the dev loop exercises it — which is why `wac run` above and
 `app:build` here are the same machinery.
 
 ```sh

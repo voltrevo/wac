@@ -1,6 +1,6 @@
 // `sshd` — an SSH server, entire, in wac.
 //
-//   deno task app packages/ssh/src/sshd.wac --allow-read --allow-net --allow-env -- -p 2222 -h hostkey
+//   wac run --allow-read --allow-net --allow-env packages/ssh/src/sshd.wac -p 2222 -h hostkey
 //
 // Usage:
 //
