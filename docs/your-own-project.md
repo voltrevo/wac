@@ -5,13 +5,20 @@ does not work yet it says so and names the issue, rather than being left out.
 
 ## Getting the command
 
-There is one way today, and it needs a checkout of this repository and Deno:
+There is one way today, and it needs a checkout of this repository, Deno, and **Cargo**:
 
 ```sh
 git clone <this repo> wac && cd wac
 deno task seed:bootstrap     # once, from a fresh clone: builds the compiler the binary carries
 deno task wac:install        # builds `wac` and puts it on PATH
 ```
+
+Cargo because the seed is a wasm module the `wac` binary *carries*, so building it means building the
+binary, and `native/v8` is Rust. This said "a checkout of this repository and Deno" until 2026-08-20,
+and the omission was not harmless: without cargo the bootstrap stopped after about six seconds with
+its stderr discarded, so what you got was a command that quit for no stated reason. It now says which
+program is missing before it does any work — GitHub issue 21, from somebody following this page from a
+fresh checkout.
 
 `wac:install` writes four things under `$WAC_HOME` (default `$HOME/.wac`) — `bin/wac`, `cache/git/`,
 `env`, `install.json5` — and adds one marked line to whichever of `.bashrc`, `.zshrc`

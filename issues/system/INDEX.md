@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0228a](open/0228a-a-fresh-checkout-cannot-follow-the-install-documentation.md) | an outsider following `docs/your-own-project.md` from a fresh clone: cargo was required, undocumented, and failed with its stderr discarded — fixed; the npm prefetch, `@/` from outside the repo, and three more remain | bug | no error |
 | [0227a](open/0227a-the-wc-differentials-oracle-counts-words-in-whatever-locale-it-inherited.md) | the `wc` differential agrees because the child inherits `LC_ALL=C.UTF-8`; in the C locale the oracle says 472 where ours says 474, and the test neither sets the locale nor mentions it | untested behaviour | no error |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
@@ -64,7 +65,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-235 issues, 183 closed.
+236 issues, 183 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
