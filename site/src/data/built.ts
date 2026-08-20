@@ -21,25 +21,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 131024,
+  lines: 131107,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2573,
+  tests: 2582,
   programs: 81,
   pages: 11,
   /**
-   * The whole repository: the packages (2573), and the compiler, harness and tooling
+   * The whole repository: the packages (2582), and the compiler, harness and tooling
    * around them (1374).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3947,
+  testsAll: 3956,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 496,
+  wacTests: 498,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -51,7 +51,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 12 },
   { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 21 },
   { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2024, tests: 128 },
-  { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1530, tests: 23 },
+  { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1550, tests: 26 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 496, tests: 8 },
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1219, tests: 27 },
@@ -78,7 +78,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 185 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17363, tests: 313 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34630, tests: 277 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34693, tests: 283 },
   { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 1749, tests: 45 },
   { name: "wactest", what: "Assertions for tests written in wac.", lines: 2103, tests: 34 },
   { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3711, tests: 73 },

@@ -35,6 +35,7 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
 import { compile, compileIgnoreCase, search, slotCount } from "../../src/regex.wac";
+import { compileFlags } from "../../src/compile.wac";
 
 const string ORACLE = "packages/regex/test/oracle.ts";
 const i32 STEPS = 1000000;
@@ -457,3 +458,115 @@ export string test_a_leading_brace_is_nothing_to_repeat_here_as_in_javascript(Co
   checkDeno(t, cli, ORACLE, lines, "a leading brace against JavaScript");
   return t.report();
 }
+
+/**
+ * Every growable table in the compiler, grown at least once, and still meaning what it meant.
+ *
+ * `src/compile.wac` has four arrays that start small and double: the instruction buffer (`grow`), the
+ * character-class range table (`addRange`, 32 entries), and the `splits` and `jmps` position lists an
+ * alternation keeps while it patches itself (8 entries each). **A doubling loop that copies the wrong
+ * number of entries is the bug this is for** — the copy is `for (i32 i = 0; i < nSplits; i++)` and
+ * getting the bound wrong loses the last recorded position, which patches a jump to the wrong
+ * instruction and produces a program that matches the wrong thing rather than one that crashes.
+ *
+ * So the assertion is not "it compiled": every pattern here goes through the same `RegExp` oracle as
+ * every other sweep in this file, on the same subjects, and has to agree.
+ *
+ * **Found by `issues/system/0205`**, which listed these copies as uncovered — the hand-written corpus
+ * has nothing with nine alternation branches or thirty-three ranges in it, and the generator's
+ * patterns are short by construction. `test/cov_exercise.wac` already records one of these: more than
+ * eight classes in a pattern, reached once by luck out of 3,000 draws and then written down, because a
+ * branch reached by chance is one a reordered corpus loses again.
+ */
+export string test_the_compilers_tables_grow_and_keep_what_was_in_them(Core core, Cli cli) {
+  T t = T.create();
+
+  // **Nine branches, because `splits` and `jmps` hold eight.** The tenth `|` is what makes the copy
+  // run; the answer still has to be the leftmost branch that matches.
+  string alt = "";
+  for (i32 i = 0; i < 12; i++) {
+    if (i > 0) { alt = alt + "|"; }
+    alt = alt + "ab".slice(i % 2, i % 2 + 1);
+  }
+
+  // **Thirty-nine ranges, because the range table holds thirty-two.** One class of thirteen is under
+  // the limit, so three of them in one pattern is what reaches the growth — the table belongs to the
+  // whole compilation, not to a class.
+  string thirteen = "[a-bc-de-fg-hi-jk-lm-no-pq-rs-tu-vw-xy-z]";
+  string manyRanges = thirteen + thirteen + thirteen;
+
+  // **A group longer than everything before it, repeated** — `copy` asks the instruction buffer for a
+  // whole block at once rather than for one more, which is the only caller that can outrun a single
+  // doubling.
+  string big = "";
+  for (i32 i = 0; i < 30; i++) { big = big + "a?"; }
+
+  string[] patterns = string[](
+    "(" + alt + ")", "(" + alt + ")+", alt,
+    manyRanges, "(" + manyRanges + ")?",
+    "(" + big + "){2}", "(" + big + "){3}", "((" + big + "){2}){2}",
+    // The two tables at once: an alternation of many branches, each with a wide class.
+    "(" + thirteen + "|" + thirteen + "|" + thirteen + "|a|b|c|d|e|f|g)");
+  checkAll(t, cli, patterns, subjects(), "grown tables");
+
+  // **A named escape as the high end of a range**, which is the one arm of the range parser that reads
+  // a second escape — `[\0-\n]` is bytes 0 through 10, and JavaScript reads it the same way.
+  checkAll(t, cli, string[]("[\\0-\\n]", "[\\t-\\r]", "[\\0-\\n]+"), subjects(), "escaped range ends");
+
+  // And a shorthand there is refused rather than read as a byte, which `RegExp` is not the oracle for:
+  // JavaScript without the `u` flag accepts `[a-\d]` and reads the `\d` as a literal `d`. This engine
+  // documents the subset and refuses it.
+  t.isFalse(accepts("[a-\\d]"), "[a-\\d] was accepted — a shorthand is not a range end");
+  t.isFalse(accepts("[a-\\w]"), "[a-\\w] was accepted — a shorthand is not a range end");
+  t.isFalse(accepts("[a-\\"), "an unterminated escape at a range end was accepted");
+  return t.report();
+}
+
+/**
+ * The parser corners a generated corpus does not reach, and what each of them is defending.
+ *
+ * The generator in `test/cov_exercise.wac` composes *well-formed* pieces — it closes every brace it
+ * opens and never emits a quantifier with nothing to quantify — so the arms that handle a construct
+ * running off the end of the pattern are reached by nothing it draws. `issues/system/0205` listed them
+ * one by one; this is the list.
+ *
+ * `RegExp` is the oracle for the ones it accepts, and *not* for the refusals: JavaScript without the
+ * `u` flag reads `[a-\d]` as a range ending in a literal `d`, and this engine documents a subset that
+ * refuses it. Those are asserted against what the README claims instead, which is the only honest
+ * oracle for a deliberate difference.
+ */
+export string test_the_parser_corners_a_generated_corpus_misses(Core core, Cli cli) {
+  T t = T.create();
+
+  // Accepted, and JavaScript agrees about all of them.
+  //
+  //   `a{2`      an interval that never closes, which is three literals
+  //   `a{0,}`    an unbounded interval whose minimum is zero — `a*` by another spelling, and the one
+  //              arm of the expansion that wraps a star rather than a plus
+  //   `[a-\z]`   an escape as a range end that is not one of the named ones, so it is the byte itself
+  //   `a{2,1}`   a maximum below the minimum, which JavaScript refuses — see below
+  checkAll(t, cli, string[](
+    "a{2", "a{2,3", "a{,2", "a{0,}", "(a|b){0,}", "(a*){0,}", "x{0,}y",
+    "[a-\\z]", "[\\0-\\n]", "[a-\\z]+", "(a{2)"), subjects(), "parser corners");
+
+  // Refused, and each says which rule refused it. A shorthand is not a range end; a quantifier needs
+  // something to quantify; a construct that consumes nothing is refused rather than spun on.
+  t.isFalse(accepts("[a-"), "[a- was accepted — an unterminated range");
+  t.isFalse(accepts("a**"), "a** was accepted — JavaScript calls it nothing to repeat");
+  t.isFalse(accepts("^*"), "^* was accepted — an assertion is not an atom");
+  t.isFalse(accepts("a{2,1}"), "a{2,1} was accepted — the maximum is below the minimum");
+  t.isFalse(accepts("(?=a)(?=b)"), "a lookahead was accepted");
+  // A leading `{2,3}` is nothing to repeat in this dialect and a literal in the POSIX ones —
+  // `issues/lang/0146`, and the reason `parseBounds` takes a `posix` flag at all.
+  t.isFalse(accepts("{2,3}"), "{2,3} was accepted — a leading brace is nothing to repeat here");
+
+  // **And the first reason is the one kept**, which is what `C.refuse` promises: the pattern below has
+  // two things wrong with it and the message names the one nearest what the caller wrote. Without this
+  // the second refusal would overwrite the first, and every message would name the last rule to run.
+  t.eqStr(compile2why("(?=a)\\1"), "lookaround and named groups are not implemented",
+          "the first refusal is the one reported");
+  return t.report();
+}
+
+/** The reason a pattern was refused, for the one assertion above that is about the message. */
+string compile2why(string pattern) { return compileFlags(pattern.toBytes(), false, false).why; }
