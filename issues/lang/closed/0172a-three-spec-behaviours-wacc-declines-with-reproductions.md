@@ -274,3 +274,33 @@ dropped either fails rather than passes. Answers 42.
 **`specEmit`'s ledger is now empty.** It held ten entries when it was written this morning; every one
 left because the check failed with *"emit now — take them out"*. 258 of 279 programs emitted whole —
 the remaining 21 are refused by the reference itself — and **407 of 407 answers agree**.
+
+## A third shape of the same thing, found afterwards — 2026-08-20
+
+Gap 3b covered `p is Other` where `Other` is a **local**. A capitalised name on the right of `is` can
+also be a **const**, and that one was still declining:
+
+```wac
+const u64[] A = u64[](1, 2, 3);
+u64[] g() { return A; }
+export bool f() { return g() is A; }
+```
+
+    wacc check:  clean
+    wacc build:  cannot emit — a test for A on a u64[]
+
+Pre-existing rather than caused by gap 3b's fix — the message is the original decline's — but only
+*visible* once the parity net began quoting `funcWhy`, which is what turned "the exported function `f` is
+not in the module" into a sentence naming the cause.
+
+`identityConstIndex` handles it, mirroring `identityLocalName`, and **only for a const that has
+identity**: a scalar const is substituted at each use rather than living in a global, so it has no
+reference to compare and an identity test against it stays declined instead of answering about a copy.
+
+`spec/cases/0220` answers 41, and the middle term is the canary — `B` holds the same elements as `A` and
+is a different array, so a compiler answering true to any const identity test returns 51, and one
+comparing contents fails too.
+
+**Found by reading `issues/lang/0151`, which the operator ruled not worth fixing.** That ruling is about
+the *reference* refusing this program; it says nothing about wacc declining it, and wacc was. Worth
+remembering: an issue closed as "not our problem" can still contain a reproduction that is.

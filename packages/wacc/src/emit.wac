@@ -773,6 +773,32 @@ bool constantFalseIs(Env env, string target, string lty) {
  * be an ambiguity to settle deliberately rather than by whichever check ran first, and this returns
  * `""` for it so the existing decline still fires.
  */
+/**
+ * The **const with identity** an `is` target names, or -1 — the other half of `identityLocalName`.
+ *
+ * `const u64[] A = …; g() is A` is an identity test for the same reason `p is Other` is: the parser
+ * cannot tell a capitalised value from a type, and only something holding the scopes can. A local is not
+ * the only kind of value a capitalised name can be.
+ *
+ * **Only a const that has identity**, which is the ones living in a global. A scalar const is
+ * *substituted* at each use — `emitExpr`'s own comment: "one array shared by every use is the whole
+ * difference between the two" — so it has no reference to compare and an identity test against it stays
+ * declined rather than answering about a copy.
+ */
+i32 identityConstIndex(Env env, u8[] src, Lexed lexed, Ty target) {
+  match (target.kind) {
+    case Named(tok, typeArgs): {
+      if (typeArgs.len() > 0) { return -1; }
+      string nm = tokenTextOf(src, lexed, tok);
+      if (env.isStructName(nm) || env.isEnumName(nm) || env.variantAt(nm) >= 0) { return -1; }
+      i32 ci = env.constAt(nm);
+      if (ci < 0) { return -1; }
+      return env.constGlobal[ci] >= 0 ? ci : -1;
+    }
+    else: { return -1; }
+  }
+}
+
 string identityLocalName(Env env, u8[] src, Lexed lexed, Ty target) {
   match (target.kind) {
     case Named(tok, typeArgs): {
@@ -7272,6 +7298,16 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         // **A target that is really a local**: an identity test the parser put in the type slot. Same
         // instruction as the value-on-the-right form above — the value just arrives from a local
         // rather than from a parsed expression. `identityLocalName` says why this is resolved here.
+        // A const with identity, read from its global — see `identityConstIndex`.
+        i32 cidn = identityConstIndex(env, src, lexed, target!);
+        if (cidn >= 0 && isRefType(env, env.canonType(typeOfE(src, lexed, env, left)))) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(35);   // global.get
+          fb.u32leb(env.constGlobal[cidn]);
+          fb.byte(211);  // ref.eq
+          if (negated) { fb.byte(69); }
+          return;
+        }
         string idn = identityLocalName(env, src, lexed, target!);
         if (idn != "" && isRefType(env, env.canonType(typeOfE(src, lexed, env, left)))) {
           emitExpr(fb, src, lexed, env, left);
@@ -10298,6 +10334,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         // A target naming a local is an identity test, not a type test — see `identityLocalName`. The
         // left side still has to be a reference for `ref.eq` to mean anything.
         if (identityLocalName(env, src, lexed, target!) != "" && isRefType(env, lty)) { return ""; }
+        // And a const with identity, for the same reason — `identityConstIndex`.
+        if (identityConstIndex(env, src, lexed, target!) >= 0 && isRefType(env, lty)) { return ""; }
         return "a test for " + ty3 + " on a " + (lty == "" ? "value of no known type" : lty);
       }
       string il = unsupportedValue(src, lexed, env, left);
