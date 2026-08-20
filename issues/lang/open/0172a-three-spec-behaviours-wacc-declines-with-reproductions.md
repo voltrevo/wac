@@ -1,6 +1,6 @@
 # 0172a — three spec behaviours wacc declines: a generic struct with a base, an enum method naming a type late, and `is` against a non-ancestor
 
-- **Status:** open
+- **Status:** open — 3 and 3b fixed 2026-08-20; 1 and 2 remain
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
@@ -106,3 +106,32 @@ They used to be silent: `wac build` wrote a module without `f` and exited 0. The
 from `0170a` is what turns each into the message above, and the tag-keyed ledger in
 `specEmit.test.ts` is what will notice when one starts working — it fails with *"emit now — take them
 out of KNOWN_UNEMITTABLE"*, which is the acceptance test for any fix here and is already in the suite.
+
+## 3 and 3b are fixed — 2026-08-20
+
+Both were the same misreading in different places, and neither needed a new rule.
+
+**3, `p is Q`:** `ref.test` cannot ask it — wasm wants the tested heap type inside the operand's own
+hierarchy — so declining was the right conclusion from the wrong question. There is no instruction but
+there is an answer: evaluate `left`, drop it, push the constant. `constantFalseIs` is the guard, narrow
+on purpose: both sides must be known struct names, because an unknown left type is not evidence of
+anything.
+
+**3b, `p is Other`:** the parser was never wrong. `looksLikeTypeHere` decides type-or-value from the
+spelling and the next token, and an upper-case name followed by `)` reads as a type — but whether
+`Other` is a type or a variable is a question about *scope*, and the parser does not have scopes. So the
+resolution moved to where the locals exist, and the emission is the `ref.eq` the value-on-the-right form
+already used. `identityLocalName` returns `""` when a spelling is both a type and a local, so that
+ambiguity still declines rather than being settled by whichever check ran first.
+
+Both guards are one function consulted by the gate and the emitter, not two copies of a condition —
+and I still wrote the left-must-be-a-reference check into only one of them before noticing.
+
+**What it moved.** `specEmit`'s ledger went from ten to eight, and the ledger is what told me to update
+it: *"2 known-unemittable case(s) emit now — take them out"*. Programs emitted whole went 248 → 250 and
+agreeing answers went **380 → 389**. Those nine answers had never been compared, because a program that
+does not emit has nothing to call — which is the point about declines hiding more than themselves.
+
+Cases: `spec/cases/0211` (110 — `is` 0, `is not` 10, `is P` 100) and `0212` (101 — an aliased local is
+identity, a same-contents different object is not). Each carries a term that a compiler answering a
+blanket constant or a blanket true would fail rather than pass. 214 of 214 met; seed a fixed point.

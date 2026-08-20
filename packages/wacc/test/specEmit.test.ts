@@ -211,11 +211,14 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
     "wac-ternary-nullable-9pqk3vm",     //   same
     "wac-packed-nullable-2knq6wv",      //   same
     "untagged",                         // "untyped name" — also a nullable primitive
-    // Four gaps of their own, and each reason is the emitter's own sentence:
+    // Two gaps of their own, each reason the emitter's own sentence — `issues/lang/0172a`:
     "wac-generic-struct-9tkq4wm",       // "a construction of Parented<i32> with 2 of 1 fields"
     "enum-methods-6vkq2wn",             // "a type this emitter names only while emitting"
-    "wac-is-undefined-type-6qbn3wr",    // "a test for Q on a P"
-    "wac-type-name-scope-8vqk3mn",      // "a test for Other on a P"
+    // Removed 2026-08-20, and this check is what said to: `wac-is-undefined-type-6qbn3wr` and
+    // `wac-type-name-scope-8vqk3mn` emit now. `p is Q` between unrelated structs is a constant rather
+    // than a refusal, and an upper-case local on the right of `is` is an identity test. The list going
+    // from ten to eight took `whole` from 248 to 250 and the agreeing answers from 380 to 389 — those
+    // nine had never been compared, because a program that does not emit has nothing to call.
   ]);
   const tagOf = (d: string) => d.match(/^§([a-z0-9-]+):/)?.[1] ?? "";
   const declinedTags = new Set(declined.map(tagOf));

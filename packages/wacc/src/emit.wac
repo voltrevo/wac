@@ -659,6 +659,36 @@ bool constantFalseIs(Env env, string target, string lty) {
   return true;
 }
 
+/**
+ * The **local** an `is` target actually names, or `""` — an identity test the parser could not see.
+ *
+ * `p is Other` where `Other` is a local holding a value is an identity test, and the spec says so:
+ * `§wac-type-name-scope-8vqk3mn` asserts it, and an upper-case local being legal is the point of the
+ * case. But `parse.wac`'s `looksLikeTypeHere` decides type-or-value from **spelling and the next
+ * token** — upper-case initial, then `)`, reads as a type — so the node arrives with its target in the
+ * type slot and no value in the value slot.
+ *
+ * That is not a parser bug. Whether `Other` is a type or a variable is a question about scope, and the
+ * parser does not have scopes; only something holding the locals can answer it. So the resolution
+ * happens here, where they exist.
+ *
+ * **Only when the name resolves to no type at all.** A spelling that is both a type and a local would
+ * be an ambiguity to settle deliberately rather than by whichever check ran first, and this returns
+ * `""` for it so the existing decline still fires.
+ */
+string identityLocalName(Env env, u8[] src, Lexed lexed, Ty target) {
+  match (target.kind) {
+    case Named(tok, typeArgs): {
+      if (typeArgs.len() > 0) { return ""; }
+      string nm = tokenTextOf(src, lexed, tok);
+      if (env.isStructName(nm) || env.isEnumName(nm) || env.variantAt(nm) >= 0) { return ""; }
+      if (env.localAt(nm) < 0) { return ""; }
+      return isRefType(env, env.localType(nm)) ? nm : "";
+    }
+    else: { return ""; }
+  }
+}
+
 /** Whether a type is a function reference, which is decided by its spelling. */
 bool isFuncrefType(string t) {
   // **An array of funcrefs is an array.** `fn[void(i32)][]` starts with `fn[` as well, so a test that
@@ -7011,6 +7041,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           fb.i32leb(negated ? 1 : 0);
           return;
         }
+        // **A target that is really a local**: an identity test the parser put in the type slot. Same
+        // instruction as the value-on-the-right form above — the value just arrives from a local
+        // rather than from a parsed expression. `identityLocalName` says why this is resolved here.
+        string idn = identityLocalName(env, src, lexed, target!);
+        if (idn != "" && isRefType(env, env.canonType(typeOfE(src, lexed, env, left)))) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(32);   // local.get
+          fb.u32leb(env.localAt(idn));
+          fb.byte(211);  // ref.eq — identity, which is what `is` between two values means
+          if (negated) { fb.byte(69); }
+          return;
+        }
         return;
       }
       string en = env.variantOwners[vi];
@@ -10010,6 +10052,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         // gate and the emitter must agree here, which is why the condition is one function and not two
         // copies of a condition.
         if (constantFalseIs(env, env.canonType(ty3), lty)) { return ""; }
+        // A target naming a local is an identity test, not a type test — see `identityLocalName`. The
+        // left side still has to be a reference for `ref.eq` to mean anything.
+        if (identityLocalName(env, src, lexed, target!) != "" && isRefType(env, lty)) { return ""; }
         return "a test for " + ty3 + " on a " + (lty == "" ? "value of no known type" : lty);
       }
       string il = unsupportedValue(src, lexed, env, left);
