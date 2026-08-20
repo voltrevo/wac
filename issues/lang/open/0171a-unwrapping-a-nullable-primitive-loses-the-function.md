@@ -138,3 +138,49 @@ example was written. It is not free: it has to tell a self-contained example fro
 accepted one from a counter-example. The `// error:` comments are already in the source, which is most
 of the way there, and `spec/tour.wac` shows the appetite for documents that compile. Filed as a thought
 here rather than as its own issue until someone wants it.
+
+## The root cause, to the line
+
+`packages/wacc/src/emit.wac:4911`, in `typeOfTyName`'s `Nullable(Prim)` arm:
+
+```wac
+return pn == "string" || pn == "anyref" || pn == "i31ref" ? pn : "";
+```
+
+`i32?`, `i64?`, `f64?` and `bool?` all take the `""` branch, and **`""` is this emitter's "I don't
+know"**. So there is no wrong type here to object to — there is no type at all, which is why `canEmit`
+approves these functions, why the unwrap message I wrote could never fire, and why the module comes out
+with a hole in it. It is the exact shape the operator's audit is about: a case that is not implemented
+answering with an empty value instead of failing.
+
+The comment above that line says a nullable primitive *"has no representation — there is no null
+`i32`"*, and that has not been true since issue 0045.
+
+## What the spec says it should be, and the shortcut not to take
+
+`spec/spec/types.md:440` is unambiguous, and it rules out the cheap fix:
+
+> `i32?` … a reference to a one-field struct the compiler synthesises, and `!` reads the field back. So
+> `i32?` costs an allocation per non-null value.
+>
+> `ref.i31` would have been free, and is what this used to do. It holds 31 bits, so `i32? a =
+> 2000000000` silently came back as `-147483648`: a wrong answer with no diagnostic, at exactly the
+> values a program is most careful about. The allocation is the price of that not happening [issue 0045].
+
+So **do not map `i32?` to `i31ref`.** It is right there in the file, it is already supported, and it is
+the answer this design was changed *away* from — reaching for it reintroduces a silent wrong answer
+above 2^30, which is worse than today's loud failure.
+
+The work is three joined pieces: a synthesised one-field struct type per nullable primitive, boxing
+where a value is written into one, and a field read in the `Unwrap` arm where it currently emits
+`ref.as_non_null`.
+
+### The smaller change, if nobody wants the feature yet
+
+Make line 4911 **fail** instead of answering `""`. That is the operator's principle applied literally,
+it is a few lines, and it converts every program in the table above from *a module with a hole* or *an
+engine rejection* into a diagnostic that names the construct. It does not make any program work. It is
+strictly better than silence and strictly worse than the feature, and it is the right thing to land
+first if the feature is not being done immediately — with the caveat that it needs a check across this
+repository for a nullable primitive in existing code, which I have run: **there is none outside
+test-fixture strings**, so the blast radius is nil.
