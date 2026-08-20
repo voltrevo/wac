@@ -1,11 +1,13 @@
-# 0171a — a nullable primitive is unimplemented in the emitter; the parameter alone makes an invalid module
+# 0171a — a nullable primitive does not cross the host boundary, so the spec's own accessor gets no glue
 
-- **Status:** open
+*The filename says `unwrapping-a-nullable-primitive-loses-the-function`, which is what this was when it was filed. Kept, because renaming it would break every commit message and issue that cites it; the emitter half was implemented on 2026-08-20 and what remains is the decision at the end.*
+
+- **Status:** open — the emitter is done (2026-08-20); the host-boundary decision below is not
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
 - **Kind:** missing feature
-- **Symptom:** invalid wasm, or the build fails and names the function
+- **Symptom:** was invalid wasm, then a named refusal, now implemented
 
 ## Reproduction
 
@@ -246,3 +248,106 @@ removed it because 31 bits truncate silently.
 No new test is needed to drive this. `KNOWN_UNEMITTABLE` in `packages/wacc/test/specEmit.test.ts` holds
 the four tags, so a working implementation makes that test fail with *"emit now — take them out"*. That
 is the canary and the acceptance check in one, and it is already in the suite.
+
+## It fails by name now — 2026-08-20
+
+The feature is still unimplemented; what changed is that the compiler says so. Both programs below used
+to produce an invalid module or a module with a hole in it:
+
+    $ wac build n1.wac          # export i32 f(i32? x) { return 1; }
+    wacc: cannot emit n1.wac — a parameter of `f` whose type this emitter could not work out
+
+    $ wac build n2.wac          # the spec's own accessor, types.md:455
+    wacc: cannot emit n2.wac — a parameter of `read` whose type this emitter could not work out
+
+**The mechanism, and it is not what I predicted.** I expected `writeValType` to be handed `""` and turn
+it into a plain `i32` via `valType`'s catch-all `return 127`. It is not: parameter types reach the module
+through `signatureOf`, which builds `fn[ret(p0,p1)]` by **concatenation**. So an empty type does not
+become a wrong type — **the parameter disappears from the signature**. The function is emitted taking
+nothing while its body reads local 0, and that is why the engine rejected it and why the original report
+named `$bound$0`.
+
+I added the guard to `writeValType` first and it never fired. That is recorded here rather than quietly
+corrected, because the wrong prediction was reasonable and the next person will make it too.
+
+The guard that works is in **`Env.addFunc`**, the one place every function registration passes, and it
+covers the return type as well. `addFunc`'s own comment already described this hazard arriving from a
+*full table* — "an unknown slot type is how a literal argument becomes an `i32.const` in a reference
+slot" — so the failure mode was documented and only one of its two entrances was guarded.
+
+`valType`'s catch-all is still worth refusing on its own merits and now does (`isWritableValType`): it
+answered `i32` for `""`, `"i32?"` and any misspelling. It simply was not the path this bug took.
+
+**Blast radius, measured rather than assumed:** the seed is a fixed point, and `packages/crypto`,
+`packages/tor` and `std/platform` all still build. 216 of 216 cases, specEmit unchanged at 251 of 279 and
+390/390 answers — the six nullable entries still decline, now for a reason that names the parameter.
+
+## And the host boundary already refuses it, which is a decision to settle
+
+Found while planning the implementation, and it matters because it means the emitter is necessary but not
+sufficient for the spec's own example. There are **two** `isRefType`s — `emit.wac` and `bindgen.wac` —
+and the bindgen one governs the host boundary the spec paragraph is about. bindgen already knows `T?` in
+six places, including `tsType` mapping it to `T | null`. But `bindgen.wac:404`:
+
+```wac
+bool okType(G g, string t0) {
+  string t = endsWith(t0, "?") ? t0.slice(0, t0.len() - 1) : t0;
+  // **`T?` is `T` plus null**, and no boxed `i32?` at the boundary.
+  if (endsWith(t0, "?") && isScalar(t)) { return false; }
+```
+
+`isScalar` is `i32 u32 i64 u64 f32 f64 bool void`, so **no signature mentioning a nullable primitive gets
+glue** — and that includes `export i32 read(i32? x)`, which is the accessor `spec/spec/types.md:449`
+prescribes. The spec describes a host receiving an opaque reference and handing it back to a wac accessor;
+bindgen will not write glue for either end.
+
+So the documented usage pattern is unreachable through generated glue, independently of the emitter gap.
+**This is a decision rather than work**, and the options are:
+
+- **Lift `okType`'s refusal once boxes exist.** Consistent with the spec, and the paragraph then describes
+  something that works. Costs whatever glue a boxed scalar needs — which is the same glue a struct gets,
+  since that is what the spec says it is.
+- **Keep the refusal and change the spec paragraph** to say a nullable primitive does not cross the host
+  boundary at all. Cheaper, and honest about what the toolchain intends.
+
+Recommendation: the first. The paragraph is not describing an accident — it explains *why* the accessor is
+needed, which means someone thought about this boundary and decided it should work.
+
+Worth saying that the refusal is the **right kind** of wrong: it declines rather than emitting broken
+glue. It simply contradicts the prose, and one of the two has to move.
+
+## Implemented — 2026-08-20
+
+A nullable primitive is now the boxed reference the spec describes. Six pieces, each verified as it went
+in rather than at the end:
+
+| piece | what it does |
+|---|---|
+| `boxMark` / `isBoxEntry` / `boxInner` / `boxType` | a `box:i32` entry in the signature table, allocated exactly as a `fn[…]` pair is and for the reason `pairMark` gives — the table grows lazily so nothing may sit after it |
+| the type-section arm | writes a box as a one-field immutable struct holding the primitive |
+| `typeOfTyName` | answers `"i32?"` where it answered `""`. `u8`/`u16` are deliberately absent — a packed type cannot be nullable, which is `spec/cases/0025` |
+| `writeValType`, `isRefType` | a `T?` is a reference to its box |
+| `emitNull` | the absent value is a null box |
+| `emitExprAt` | a number going into a `T?` slot is boxed with `struct.new`, before the dispatch so no arm can put a bare number in a reference slot |
+| the `Unwrap` arm | `ref.as_non_null` **and** `struct.get 0` — two operations, which is what made this look like an unwrap bug in the first place |
+| `registerNamed` | recurses into an array's element, so `i32?[]` registers its element's box |
+
+**The measurements.** `specEmit`'s ledger went from **seven entries to one**, and the numbers it moved
+are the point: programs emitted whole 251 → **257**, answers agreeing 390 → **400**, all of them. The
+ledger is what told me each time, failing with *"N known-unemittable case(s) emit now — take them out"*.
+
+`spec/cases/0215`, `0216`, `0217` were added, and the middle one is the one to keep: it asserts a
+2,000,000,000 round-trip through an `i64?`. That is the exact value `issues/lang/0045` records `ref.i31`
+silently turning into `-147483648`, so it is the case that fails if anyone reaches for the cheap encoding
+again. 219 of 219 cases met.
+
+**What was left out on purpose.** `u8?` and `u16?` still refuse. The spec case that looked like a packed
+nullable — `§wac-packed-nullable-2knq6wv` — turned out to be an `i32?[]`, an array of nullable
+primitives, not a `u8?`; reading the program rather than the tag name is what settled it.
+
+Verified: seed a fixed point after one round at each step; `packages/crypto`, `packages/tor`,
+`std/platform` and `packages/wacc/example/wacc.wac` all build; emit, declined, typecheck, genericenum,
+downcast and checkalone lanes green; `deno task check` clean.
+
+**Why this issue stays open:** the host boundary still refuses a nullable primitive, so the spec's own
+accessor still gets no glue. That decision is above and is not mine to take unilaterally.

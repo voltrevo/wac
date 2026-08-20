@@ -33,15 +33,17 @@ import { ASSETS, c, font, space } from "./tokens";
  * when asked to compile wacc. B and C being the same bytes is the whole claim.
  *
  * **The two figures are typed here and go stale**, which they had: they said 11 sources and 266,818
- * bytes into 2026-08-20, when the compiler was 16 sources and the artefact 965,855. `deno task seed`
- * prints the byte count on every rebuild — it is a fixed point, checked rather than asserted — and
- * `packages/wacc/src` is the source count. Read on 2026-08-20.
+ * bytes into 2026-08-20, when the compiler was 16 sources and the artefact 968 KB. The size is rounded
+ * on purpose — it moved three times on the day this was written, 960,310 bytes to 965,855 to 968,370,
+ * because it moves with every change to the compiler. `deno task seed` prints it to the byte on every
+ * rebuild, and it is a fixed point, checked rather than asserted; `packages/wacc/src` is the source
+ * count. What the block is really claiming is the word at the end of the line.
  */
 const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    16 sources, 965,855 bytes, identical`;
+B == C    16 sources, 968 KB, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],

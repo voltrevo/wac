@@ -387,3 +387,77 @@ The ten, with the emitter's own words:
 | 1 | `a construction of Parented<i32> with 2 of 1 fields` | a generic struct's inherited fields |
 | 1 | `a type this emitter names only while emitting` | enum methods |
 | 2 | `a test for Q on a P`, `a test for Other on a P` | `is` against an unrelated type |
+
+## `valType`'s catch-all, and canarying a guard with no natural trigger — 2026-08-20
+
+`emit.wac`'s `valType` ended in `return 127` — a plain `i32` — so **every unrecognised type spelling
+became a number**: `""`, `"i32?"`, a misspelled struct name. A module written with the wrong type in it
+rather than refused, which is this issue in one line. `isWritableValType` now lists what genuinely
+belongs in that fallthrough (the i32 family plus the other numbers and the two abstract refs) and
+`writeValType` declines anything else by name, because it has the `Env` that `valType` does not.
+
+**It had no reachable trigger, so I made one.** Nothing I could write reached it: a nullable-primitive
+*parameter* is caught earlier by `addFunc` now, a nullable-primitive *local* still declines through the
+parity net without passing here, and a misspelled type name is refused by the checker first. A guard
+nothing can reach is a claim nothing checks — the same objection that keeps `issues/lang/0155` open.
+
+So I canaried it against a deliberate break: removed `f32` from `isWritableValType` and rebuilt.
+
+    wacc: cannot emit cf.wac — a value of a type this emitter cannot write: f32
+
+**And the seed build failed too**, which is the stronger half of the evidence: wacc's own source uses
+`f32`, so the guard is reached during real compilation and not only by a toy. Reverted, and recovery
+needed `seed:bootstrap` rather than `seed` — the canary-built seed could no longer compile wacc, which is
+exactly the escape hatch `CLAUDE.md` describes. Seed back to 969125 bytes and a fixed point, 216 of 216
+cases.
+
+Worth keeping as the method: when a guard has no natural trigger, break the thing it guards and watch it
+fire, rather than shipping it unproven or deleting it for being quiet.
+
+## What is left in this issue — 2026-08-20, end of the audit
+
+The measurement this was filed on is settled: **all fourteen ill-typed programs are refused**, and a
+function that goes missing is now named with its cause (`funcWhy`, quoted by the parity net). The spec
+corpus agrees completely — `specEmit`'s ledger is empty, 419 of 419 answers, and `wontLoad` is asserted
+rather than logged.
+
+Three things keep it open, and they are all *structural* rather than a list of programs:
+
+1. **25 lookup failures in the emitter bail without a reason.** `funcWhy` covers the function-level
+   verdict; these are the expression-level `if (at < 0) { return; }` returns underneath it. Three of the
+   25 are the decline cascade working as designed and should decline the caller through
+   `unsupportedExpr` instead.
+2. **The `emitFiles*` family is not netted.** Seven entry points in `api.wac`, which is what every test
+   and tool here calls, go through `emitLinked` and never ask `missingExport`. Options and a
+   recommendation are above; the recommendation is still to leave it.
+3. **`""` as an ordinary value meaning "I don't know."** Every gap closed today was an instance —
+   `typeOfTyName` for a nullable primitive, `typeOfExpr` for an array construction, `valType`'s
+   catch-all. The mechanism is untouched, so the *next* gap will be silent in the same way.
+
+Anyone taking (1) should read `issues/lang/0173a` first: it is the smallest instance of the same theme,
+and fixing it lets `writeValType` refuse a bare unresolved name outright instead of tolerating one.
+
+### Measured before touching the 25: our corpora do not reach any of them
+
+A bail that fires leaves the wasm stack wrong, so the function is invalid — and `wac build` validates
+what it writes now, so a reachable bail is *loud*. That makes reachability measurable rather than
+arguable:
+
+- **40 package sources** built, 0 failures.
+- **The spec corpus**: 258 of 279 emit whole, and `wontLoad` is empty and asserted.
+- **`spec/cases`**: 221 of 221.
+- **The generated sweep**: 10,013 programs, 0 contradictions.
+
+So none of the 25 fires on anything anybody here has written. That does **not** make them unreachable —
+it makes their reachability untested, which is a different and weaker statement.
+
+**Which is why the 25 messages are not being written.** I tried exactly that once today, on the `Unwrap`
+bail, and the message could never fire — `typeOfE` answered `""` before the bail was reached — so it was
+reverted as a claim nothing checks. Writing 25 of those would be 25 such claims, and the way to avoid it
+is the method that worked for `valType`'s catch-all: break what the guard guards, watch it fire, keep it.
+That is one canary per bail, and it is the honest cost of this item.
+
+**A cheaper first step, if anyone wants one:** three of the 25 are guarded on `env.funcIndex[at] < 0` —
+a callee that was already declined. Those are the cascade working as designed and should decline the
+*caller* through `unsupportedExpr` rather than bail; they need no canary, because the condition they test
+is one the fixpoint already computes.

@@ -1,0 +1,11 @@
+// expect: answers f = 15
+// why: an array's element type needs its box registered before the type section is written, and the
+//      element of a nested array is another array — so registration recurses. Without it this was
+//      "a type this emitter names only while emitting". Reads an absent element and a present one, so
+//      an array of bare numbers fails rather than passes.
+// from: issues/lang/0171a
+export i32 f() {
+  i32?[] xs = i32?[3]();
+  xs[1] = 200;
+  return (xs[0] is null ? 1 : 0) * 10 + (xs[1]! == 200 ? 5 : 0);
+}

@@ -1,0 +1,10 @@
+// expect: answers f = 42
+// why: `ref.i31` would be free and is what this used to be — it holds 31 bits, so `i32? a = 2000000000`
+//      came back as -147483648, a wrong answer with no diagnostic at exactly the values a program is
+//      careful about. `issues/lang/0045` bought the allocation to stop that. This is the case that
+//      fails if anyone reaches for the cheap encoding again.
+// from: issues/lang/0171a
+export i32 f() {
+  i64? big = 2000000000;
+  return (big! == 2000000000) ? 42 : 7;
+}

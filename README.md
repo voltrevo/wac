@@ -6,8 +6,8 @@
 
 A C-family language for WebAssembly GC, and the systems stack written in it.
 
-**[Website](https://voltrevo.github.io/wac/)** · **[Language](spec/)** · **[Packages](packages/)** ·
-**[Docs](docs/)** · **[Design](design/)**
+**[Website](https://voltrevo.github.io/wac/)** · **[Get the command](docs/your-own-project.md)** ·
+**[Language](spec/)** · **[Packages](packages/)** · **[Docs](docs/)** · **[Design](design/)**
 
 ## Meet wacland: userland written in wac
 
@@ -89,7 +89,7 @@ stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    16 sources, 965,855 bytes, identical
+B == C    16 sources, 968 KB, identical
 ```
 
 Every rung was checked against the TypeScript compiler before the next was started — token streams,
@@ -103,7 +103,8 @@ code written for other reasons arrives using things the emitter has not reached 
 
 Every number in this section is printed by the rung that produces it, and read on 2026-08-20:
 `wac test packages/wacc/test/wac/corpusemit_test.wac` for the corpus and the emitter — it is in the
-heavy lane, about twenty-five minutes, because it compiles the tree — and `deno task seed` for the bytes.
+heavy lane, about twenty-five minutes, because it compiles the tree — and `deno task seed` for the size, which is printed to the byte and rounded here because it
+moved three times on the day this was written — 960,310, then 965,855, then 968,370.
 Three days earlier they were 414 files, 411 whole, three partial and 431,705 bytes; six days before
 that, 354, 346, 8 and 266,164. The figures move because the repository does.
 
@@ -191,6 +192,7 @@ surprises you.
 
 | | |
 | --- | --- |
+| [`docs/your-own-project.md`](docs/your-own-project.md) | Installing `wac` and using it outside this repository — every step run in an empty directory |
 | [`docs/`](docs/) | Integer overflow, constant-time checking, the wasm floor, development |
 | [`spec/`](spec/) | The language, [the tour](spec/tour.wac), [bindgen](spec/spec/bindgen.md), [the command](spec/cli/wac.md) |
 | [`design/`](design/) | Why things are the way they are |

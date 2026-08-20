@@ -1,0 +1,13 @@
+// expect: answers f = 61
+// why: `i32?` is a reference to a synthesised one-field struct (`spec/spec/types.md`), so null is the
+//      absent reference, a number written into the slot is boxed, and `!` reads the field back. All
+//      three appear here: the null test, the present test, and the unwrap feeding arithmetic — so a
+//      compiler that emitted a bare number into the slot fails rather than passes.
+// from: issues/lang/0171a
+export i32 f() {
+  i32? a = null;
+  i32 r = (a is null) ? 1 : 0;
+  i32? b = 5;
+  r = r + ((b is null) ? 0 : 10);
+  return r + b! * 10;
+}

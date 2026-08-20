@@ -72,3 +72,52 @@ the bug but takes the whole repository out of its way.
 Found while porting `packages/tor/test/dird.test.ts` to wac; it cost an afternoon of bisecting a file
 that had nothing to do with it. Distinct from [0159](../closed/0159-arithmetic-on-a-string-operand-silently-deletes-the-function.md),
 which needs no lambda and no collision.
+
+## Narrowed — 2026-08-20 (agent-a; not claimed, reproduction only)
+
+Still reproduces exactly as filed, and the rename control still holds: the program builds the moment the
+top-level `f` becomes `gg`. What follows is evidence about *where* it is not, which should save the next
+person the afternoon it cost me.
+
+**The engine's complaint, in full:**
+
+    Compiling function #13:"$lambda$3:42" failed: not enough arguments on the stack for drop
+    (need 1, got 0)
+
+So the lambda body emitted **nothing** where a value was due, and the statement's `drop` underflowed.
+That is the signature of a call that resolved to nothing at all — not of a call to the wrong function,
+which would have left a value on the stack.
+
+**The Notes above suspect the resolver consults parameters after file scope. In the emitter it does
+not.** `emit.wac`'s `Construct` arm — which is where a bare `f(...)` lands, because "a funcref called by
+its name is a `Construct` too" — checks in this order, with a comment saying so:
+
+1. `env.localType(lraw)` — a local of funcref type
+2. `env.captureAt(env.emittingLambda, lraw)` — **a captured one**
+3. `env.funcAt(cname)` — a declared function
+
+So the local and the capture are both consulted first. The order is right.
+
+**And `funcAt`'s bail is not the site.** I instrumented `if (at < 0 || env.funcIndex[at] < 0) { return; }`
+with a distinguishing message and it never fired on this program — so the fall-through to the declared
+`f` is not what emits nothing.
+
+**The capture mechanism itself works, including for this name.** With a probe on the capture path,
+building wacc's own source reports `f` captured inside a lambda with `lty=fn[void(bool)]` and compiles
+it. So `noteRead`/`noteCapture` are not simply broken for a parameter called `f`.
+
+Which leaves the interesting question: what does the walk record for `f` when a **top-level `f` also
+exists**? `noteRead` searches `walkNames` innermost-first and captures only if the name is found below a
+lambda's mark, so the parameter should win — but the collision is the only variable between the failing
+and passing programs. My guess is the capture is recorded with the *wrong type* (or the walk's entry for
+the name is the file-scope one), and `isFuncrefType(lty)` then fails so the branch is skipped; I did not
+get evidence for that and it is a guess, flagged as one.
+
+**Why I stopped here.** Every probe declines something in wacc's own source, so each iteration costs a
+seed build that the probe itself breaks — `seed:bootstrap` to recover. And `issues/lang` says to prefer a
+precise reproduction over patching under whoever is porting. This is that.
+
+**One thing worth doing regardless**, and it is the issue's own suggestion: the emitter should refuse a
+call whose argument types do not match the callee rather than emitting it. That would have turned this
+into a compile error at the line instead of an invalid module — and it is the same principle as
+`issues/lang/0170a`.
