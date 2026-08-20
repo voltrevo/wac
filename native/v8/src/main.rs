@@ -714,18 +714,44 @@ fn test_exports_of(path: &str) -> Vec<(String, String)> {
 /// Sharing one module across files is safe because wac has no module-level variables: a trap unwinds
 /// the call and leaves nothing behind, which is the same reason `test_traps_*` has always been able to
 /// run beside its neighbours.
-/// Every `.wac` file the aggregate reaches, with its bytes — the input a compile of it actually has.
+/// Every `.wac` file the aggregate reaches, with its bytes — the input a compile of it actually has —
+/// and **whether that is all of them**.
 ///
 /// A plain scan for `from "…"`, resolved against the importing file's directory, followed
 /// transitively. That is exactly what the compiler does with a *file* import; a builtin — `from core`
 /// — has no path and lives in the seed, which the key below covers separately. There are no
-/// conditional imports in wac, so a scan and a compile see the same set.
-fn closure_of(entry: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+/// conditional imports in wac, so a scan and a compile see the same set of *file* imports.
+///
+/// ## The second return value, and why a silent drop was a correctness bug
+///
+/// Not every specifier is a path relative to the importing file. `dep/lib.wac` under a `wac.json5`
+/// mapping lives in `$WAC_HOME/cache/git/…`, and `@/x.wac` is relative to the dependency's own root.
+/// This scan joins both to the importing file's directory, gets a path that does not exist, and until
+/// 2026-08-20 simply `continue`d — so those files were **absent from the cache key while the key went
+/// on being used**, which is the one thing a content-addressed cache may not do.
+///
+/// What that cost: `packages/wacc/test/wac/mappedspec_test.wac` builds a mapped dependency that tries
+/// to import outside its `subdir`, and asserts the compiler refuses. Its own last case then compiles a
+/// legitimate entry of *identical bytes* and caches the module that entry produces. Every later run
+/// took the escape case straight out of the cache — no compile, so no refusal, and the program ran.
+/// The test was green on a clean `/tmp` and red on every run after, which is how it passed review and
+/// then failed for somebody else the same evening. `issues/system/0219`.
+///
+/// So an import that names a `.wac` this cannot read makes the closure **incomplete**, and an
+/// incomplete closure is not cacheable at all — the callers pass `None` as the key rather than a key
+/// that stands for less than it claims. `std/…` is the exception and not a hole: it is the embedded
+/// tree, there is no file to read and none is expected, and `test_module_key` already hashes the seed
+/// that carries it.
+fn closure_of(entry: &std::path::Path) -> (Vec<(String, Vec<u8>)>, bool) {
     let mut out: Vec<(String, Vec<u8>)> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
+    let mut whole = true;
     let mut queue = vec![entry.to_path_buf()];
     while let Some(at) = queue.pop() {
-        let Ok(text) = std::fs::read(&at) else { continue };
+        let Ok(text) = std::fs::read(&at) else {
+            whole = false;
+            continue;
+        };
         let name = at.display().to_string();
         if !seen.insert(name.clone()) {
             continue;
@@ -741,6 +767,12 @@ fn closure_of(entry: &std::path::Path) -> Vec<(String, Vec<u8>)> {
             let spec = &after[..close];
             rest = &after[close + 1..];
             if !spec.ends_with(".wac") {
+                continue;
+            }
+            // The embedded tree. Joining it to the importing directory would name a file that has
+            // never existed, and treating that as a hole would make every program in the repository
+            // uncacheable — almost all of them import `std/platform.wac`.
+            if spec.starts_with("std/") {
                 continue;
             }
             // Normalised here rather than by `canonicalize`, which would follow symlinks and answer a
@@ -762,7 +794,7 @@ fn closure_of(entry: &std::path::Path) -> Vec<(String, Vec<u8>)> {
         out.push((name, text));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
+    (out, whole)
 }
 
 /// The name a built aggregate is cached under: everything a compile of it reads, and what compiled it.
@@ -1233,9 +1265,12 @@ fn test_command(rest: &[String]) -> i32 {
             // cost — `packages/url/test/wac` was 674ms of compile in an 887ms run. The key is the
             // aggregate's text, the content of every `.wac` it reaches, the grants, and the seed that
             // would compile it, so a hit is the same bytes a fresh build would have produced.
-            let sources = closure_of(std::path::Path::new(&agg));
-            let key = test_module_key(&agg, &sources, &grants, false);
-            let m = match cached_module(key) {
+            let (sources, whole) = closure_of(std::path::Path::new(&agg));
+            // `None` when the scan could not read something an import named: see `closure_of`. A
+            // directory of tests that reaches a mapped dependency compiles every run, which is the
+            // cost of the cache being honest about what it covers.
+            let key = whole.then(|| test_module_key(&agg, &sources, &grants, false));
+            let m = match key.and_then(cached_module) {
                 // **V8 is started here as well, because the fresh path starts it inside
                 // `build_module`.** Without this a hit panicked with "Invalid global state" the moment
                 // it tried to *run* what it had not compiled — and it looked like a 4ms directory with
@@ -1251,8 +1286,8 @@ fn test_command(rest: &[String]) -> i32 {
                 }
                 None => {
                     let fresh = build_module(&grants, &agg, false).ok();
-                    if let Some((wasm, _, _, _)) = fresh.as_ref() {
-                        remember_module(key, wasm);
+                    if let (Some(k), Some((wasm, _, _, _))) = (key, fresh.as_ref()) {
+                        remember_module(k, wasm);
                     }
                     fresh
                 }
@@ -1610,12 +1645,12 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     } else {
         let mut key_flags = flags.clone();
         key_flags.push(format!("entry={entry}"));
-        Some(test_module_key(
-            &entry,
-            &closure_of(std::path::Path::new(&entry)),
-            &key_flags,
-            false,
-        ))
+        let (sources, whole) = closure_of(std::path::Path::new(&entry));
+        // Not cached at all when the scan hit an import it could not read — a mapped `dep/…` or an
+        // `@/…` inside one. `issues/system/0219`: keying on a closure with holes in it served a
+        // stale module for an entry whose *dependency* had changed, and the entry's own bytes are
+        // a relative path away from colliding across two unrelated projects.
+        whole.then(|| test_module_key(&entry, &sources, &key_flags, false))
     };
 
     let mut build = vec![
