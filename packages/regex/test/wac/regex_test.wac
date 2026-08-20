@@ -454,19 +454,28 @@ export string test_a_capture_heavy_quantifier_runs_out_of_room() {
  * dialects, where a leading brace *is* a literal, and tightening the JavaScript entry point is a
  * change to what several callers accept. `issues/lang/0146`.
  */
-export string test_a_leading_brace_is_a_known_divergence(Core core, Cli cli) {
+export string test_a_leading_brace_is_nothing_to_repeat_here_as_in_javascript(Core core, Cli cli) {
   T t = T.create();
-  t.isTrue(accepts("{2}"), "/{2}/ is accepted here, as a literal");
-  Answer a = matched("{2}", "a{2}b".toBytes(), false);
-  t.eqStr(a.text, "1,4", "and matches the three characters it spells");
-  // The other half, which is what makes this a record rather than a claim: the oracle still refuses
-  // it. The day it does not, this test says the note can go.
+  // Was `test_a_leading_brace_is_a_known_divergence`, which asserted that this engine accepted `/{2}/`
+  // as three literal characters while the oracle refused it, and said in as many words that the day one
+  // side moved the note could go. This engine moved: `issues/lang/0146`.
+  t.isTrue(!accepts("{2}"), "/{2}/ is nothing to repeat, as it is in JavaScript");
+
+  // The neighbours that must keep working, because JavaScript keeps them too (Annex B): a brace that
+  // begins no valid count is an ordinary character. `a{,2}` is the one the issue singled out.
+  t.isTrue(accepts("a{,2}"), "/a{,2}/ is a literal brace in JavaScript and here");
+  t.isTrue(accepts("{,2}"), "/{,2}/ likewise, with nothing before it");
+  t.isTrue(accepts("{a}"), "/{a}/ has no count in it at all");
+  t.isTrue(accepts("a{2}"), "/a{2}/ is the quantifier this is not");
+
+  // And the oracle agrees on every one of them, which is the half that makes this a check rather than
+  // a claim about what JavaScript does.
   Lines lines = Lines.create();
-  lines.add("accept 7b327d 1");
-  Exec r = cli.exec("deno", string[]("run", "--no-check", ORACLE), lines.buf.take()).wait();
-  t.isTrue(r.ran(), "the oracle ran — " + r.error);
-  if (!r.ran()) { return t.report(); }
-  t.isTrue(string.fromBytes(r.stdout).indexOf("not a valid JavaScript regex") >= 0,
-           "JavaScript still refuses /{2}/, so this is still a divergence rather than a bug fixed");
+  lines.add("accept " + hex("{2}".toBytes()) + " 0");
+  lines.add("accept " + hex("a{,2}".toBytes()) + " 1");
+  lines.add("accept " + hex("{,2}".toBytes()) + " 1");
+  lines.add("accept " + hex("{a}".toBytes()) + " 1");
+  lines.add("accept " + hex("a{2}".toBytes()) + " 1");
+  checkDeno(t, cli, ORACLE, lines, "a leading brace against JavaScript");
   return t.report();
 }

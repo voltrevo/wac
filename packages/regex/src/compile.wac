@@ -374,6 +374,21 @@ void parseAtom(C c) {
     // An empty branch, which is legal: `a|` matches "a" or "".
   } else if (ch == '*' || ch == '+' || ch == '?') {
     c.fail();                                  // a quantifier with nothing to quantify
+    } else if (ch == '{' && !c.posix && parseBounds(c).present) {
+    // **A leading `{2}` is nothing to repeat, and JavaScript says so.** `new RegExp("{2}")` is a
+    // SyntaxError, and this engine's dialect is JavaScript's — that rule is what makes `RegExp` a
+    // meaningful oracle for it, so accepting a pattern JavaScript refuses means we parsed it as
+    // something else. It matched the three characters `{`, `2`, `}` (`issues/lang/0146`).
+    //
+    // **Only when not `posix`**, which is the flag `compileBasic` and `compileExtended` already pass:
+    // GNU grep reads a leading brace as a literal in both POSIX dialects, and
+    // `packages/regex/test/wac/basic_test.wac` compares against it byte for byte. So this is the
+    // divergence the issue asked for — refuse in the JavaScript entry point, not in `compilePattern`.
+    //
+    // `parseBounds` is the discriminator rather than the byte: `{`, `{,2}` and `{a}` are literals in
+    // JavaScript too (Annex B), and it restores the position when the brace begins no valid count, so
+    // those still fall through to the literal below. `a{,2}` is the neighbour that must keep working.
+    c.fail();
   } else {
     c.bump();
     emitLiteral(c, ch);
