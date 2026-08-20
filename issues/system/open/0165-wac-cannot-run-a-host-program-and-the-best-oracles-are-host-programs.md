@@ -64,8 +64,13 @@ would unblock 25% of it, and the remaining 67% is waiting on nothing but the wor
 
 The files it does block are the ones where a server is the subject — `tor/dird.test.ts` stands
 `dird` up and talks to it over a socket, `tor/network.test.ts` starts and kills launcher children,
-and `tor/ctor_live.test.ts` needs a **C** tor, which no amount of `spawn` reaches: that one wants
-this capability specifically and cannot be rewritten around it.
+and `tor/ctor_live.test.ts` needed a **C** tor, which no amount of `spawn` reaches.
+
+> **The last one was rewritten around it on 2026-08-20** — `test/wac/ctor_live_test.wac`. `spawn` was
+> never the route and the file's own header said so; what a C tor needs is to be a peer on a socket, and
+> that is `packages/wactest/src/daemon.wac`, which starts a program in the background with its output to
+> a file and polls for it. The claim "cannot be rewritten around it" was about the capability the header
+> was discussing rather than about the test, and the two got run together.
 
 ## What was missing
 

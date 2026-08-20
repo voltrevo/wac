@@ -75,7 +75,7 @@ The neighbouring fix, applied here. [0106](0106-the-onion-service-test-goes-red-
 explains why it was needed: `withDeadline` **rejects and does not cancel**, so a wedged case keeps
 waiting and its own `finally` never runs — whatever the children had said is never printed.
 
-`ctor_live.test.ts` was already in better shape than its neighbour: `start()` streams each child into
+`ctor_live.test.ts` was already in better shape than its neighbour: `start()` streamed each child into
 a buffer, and two of its four `until` waits already dumped what they had (the tor log, and the
 relays' tails) when they failed. Two did not:
 
