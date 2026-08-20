@@ -6,7 +6,6 @@ record of what has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0220](open/0220-twenty-six-copies-of-struct-rng-in-five-variants.md) | twenty-six `.wac` files declare their own `struct Rng` in five variants; eighteen are one xorshift32 split by whether the result is cast, which changes what `next() % n` samples, and several claim to match a host-side generator that nothing checks | task | wrong answer |
-| [0218](open/0218-a-test-kills-the-shell-that-started-its-server-not-the-server.md) | `node_net_test.wac` kills the subshell it got `$!` from, not the `node` it started — 81 servers were live across three workspaces holding 5.1 GB and 81 ports, the oldest 11h47m; `wactest/src/daemon.wac` has the same shape | bug | wrong answer |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
@@ -70,7 +69,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-230 issues, 172 closed.
+230 issues, 173 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
