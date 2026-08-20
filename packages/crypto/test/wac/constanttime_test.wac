@@ -123,15 +123,6 @@ string driver(T t, Cli cli, string dir, string name, string src, string body, i3
 }
 
 /**
- * Write a driver and **start** its traced build, without waiting for it.
- *
- * A routine is compared across four secrets, which is four builds of four programs that differ in one
- * array literal — and each is a `wac build` process compiling the routine and its imports again. They
- * are independent, so they are submitted together and collected below: `Cli.exec` has been able to
- * hold more than one child since `issues/system/0211`, where both Rust hosts ran the child to
- * completion inside `exec` and handed back a ticket that had already settled.
- */
-/**
  * The driver written, built traced, and kept — the stem of what came out, or `""`.
  *
  * **Twenty-eight traced builds a run, for fourteen programs that are the same every time.** This file
@@ -143,12 +134,21 @@ string driver(T t, Cli cli, string dir, string name, string src, string body, i3
  *
  * The builds were submitted together before this and are serial now, which costs a slower first pass —
  * `issues/system/0211` is why concurrency was available at all, and it is still what the *runs* use.
+ *
+ * **`slots` is the journal's size, and 0 means the compiler's default of 2^22 events.** A routine
+ * that records more than the journal holds is not unmeasurable — a divergence inside the prefix both
+ * runs kept is still a divergence — but `same` is, and `ctcompare` says `truncated` rather than
+ * claiming agreement it cannot see. That is the failure this parameter exists for: `p256PublicKey`
+ * is 8.19 million events, so the *proof it is uniform* needs a journal twice the default's size,
+ * where the leak it used to have needed nothing.
  */
-string builtDriver(T t, Cli cli, string dir, string label, string tag, string program) {
+string builtDriver(T t, Cli cli, string dir, string label, string tag, string program, i32 slots) {
   string entry = dir + "/" + tag + ".wac";
   t.isTrue(writeIfDifferent(cli, entry, program.toBytes()), tag + ": writing the driver");
   string mod = builtProgram(cli, entry, "ct-" + label + "-" + tag,
-                            string[]("--trace", "--quiet"));
+                            slots > 0
+                              ? string[]("--trace", "--trace-slots", itoa(slots), "--quiet")
+                              : string[]("--trace", "--quiet"));
   if (!cli.stat(mod).wait().exists) {
     t.fail(tag + ": the traced build produced nothing — see " + mod);
     return "";
@@ -241,8 +241,8 @@ string siteAt(Cli cli, string stem, i32 site) {
  * `wac build` processes, and no order between them.
  */
 string[] pair(T t, Cli cli, string dir, string label, string progA, string progB) {
-  return string[](builtDriver(t, cli, dir, label, "a", progA),
-                  builtDriver(t, cli, dir, label, "b", progB));
+  return string[](builtDriver(t, cli, dir, label, "a", progA, 0),
+                  builtDriver(t, cli, dir, label, "b", progB, 0));
 }
 
 /**
@@ -252,7 +252,7 @@ string[] pair(T t, Cli cli, string dir, string label, string progA, string progB
  * for: a routine that never ran agrees with another routine that never ran.
  */
 void noSecretDependence(T t, Cli cli, string label, string src, string name, string body,
-                        i32[] which, i32 len) {
+                        i32[] which, i32 len, i32 slots) {
   string dir = scratchDir(cli, label);
   i32 n = which.len();
 
@@ -262,7 +262,7 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
   string[] stems = string[n](fill: "");
   for (i32 i = 0; i < n; i++) {
     stems[i] = builtDriver(t, cli, dir, label, "k" + itoa(i),
-                           driver(t, cli, dir, name, src, body, keyOf(which[i], len)));
+                           driver(t, cli, dir, name, src, body, keyOf(which[i], len)), slots);
   }
   if (stems[0] == "") { return; }
 
@@ -286,21 +286,21 @@ void noSecretDependence(T t, Cli cli, string label, string src, string name, str
 export string test_sha256_does_not_vary_with_its_inputs_content(Core core, Cli cli) {
   T t = T.create();
   noSecretDependence(t, cli, "sha256", "packages/crypto/src/sha256.wac", "sha256",
-                     "sha256($KEY)", i32[](0, 1, 2, 3), 16);
+                     "sha256($KEY)", i32[](0, 1, 2, 3), 16, 0);
   return t.report();
 }
 
 export string test_chacha20s_block_function_does_not_vary_with_the_key(Core core, Cli cli) {
   T t = T.create();
   noSecretDependence(t, cli, "chacha", "packages/crypto/src/chacha20.wac", "chachaBlock",
-                     "chachaBlock($KEY, 1, u8[12](fill: 1))", i32[](0, 1, 2, 3), 32);
+                     "chachaBlock($KEY, 1, u8[12](fill: 1))", i32[](0, 1, 2, 3), 32, 0);
   return t.report();
 }
 
 export string test_poly1305_does_not_vary_with_the_key(Core core, Cli cli) {
   T t = T.create();
   noSecretDependence(t, cli, "poly1305", "packages/crypto/src/poly1305.wac", "poly1305",
-                     "poly1305($KEY, " + literal(block16()) + ")", i32[](0, 1, 2, 3), 32);
+                     "poly1305($KEY, " + literal(block16()) + ")", i32[](0, 1, 2, 3), 32, 0);
   return t.report();
 }
 
@@ -310,7 +310,38 @@ export string test_x25519s_ladder_does_not_vary_with_the_scalar(Core core, Cli c
   // had it: each is a compile and a run of the ladder.
   T t = T.create();
   noSecretDependence(t, cli, "x25519", "packages/crypto/src/x25519.wac", "x25519Base",
-                     "x25519Base($KEY)", i32[](0, 1), 32);
+                     "x25519Base($KEY)", i32[](0, 1), 32, 0);
+  return t.report();
+}
+
+export string test_p256_public_key_does_not_vary_with_the_private_key(Core core, Cli cli) {
+  // **This was a known leak in two places, and is neither.** Both are worth stating, because the
+  // second was invisible while the first was live.
+  //
+  // `issues/system/0210` was the ladder: `jacMul` was double-and-add with the add taken only when
+  // the scalar bit was set, so the work — and the time — was a function of the scalar's Hamming
+  // weight and of *which* bits were set. It adds on every bit now and keeps the answer with a
+  // constant-time select.
+  //
+  // Fixing it moved the divergence rather than removing it, to `reduceWide` in `fieldp.wac`, which
+  // skipped a word of the product when it happened to be zero and folded the leftover carry a number
+  // of times that depended on its value. That was always there: `ctcompare` reports the *first*
+  // divergence, and while the ladder parted at the first differing scalar bit nothing downstream of
+  // it could be seen. `issues/system/0223` is that one, and the field reduction is now branchless —
+  // the conditional subtractions compute both answers and select, and the carry fold runs a fixed
+  // four passes.
+  //
+  // **Two secrets rather than four, and a journal twice the default.** Each secret is a build and a
+  // run of the whole scalar multiplication, and this is the most expensive thing measured here:
+  // 8.19 million events, up about a third from the 6.27 million the leaking version cost. Under the
+  // compiler's default 2^22 slots `ctcompare` answers `truncated`, which is not a pass — a run that
+  // recorded more than the journal held cannot be called uniform, only not-yet-caught.
+  //
+  // Not the all-zero key: `curvePublicKey` traps on a scalar of zero or one past the group order, so
+  // the secrets here have to be valid keys as well as different.
+  T t = T.create();
+  noSecretDependence(t, cli, "p256", "packages/crypto/src/p256.wac", "p256PublicKey",
+                     "p256PublicKey($KEY)", i32[](2, 3), 32, 16777216);
   return t.report();
 }
 
@@ -340,61 +371,6 @@ export string test_ghash_branches_on_the_bits_of_h_known_leak(Core core, Cli cli
     t.isTrue(startsWith(all, "split "),
              "expected a branch leak, got: " + all + " — " +
              siteAt(cli, a, numberOf(word(said, 2))));
-  }
-  return t.report();
-}
-
-export string test_the_field_reduction_branches_on_limb_values_known_leak(Core core, Cli cli) {
-  // **The ladder was the leak here and is not any more, and this is what was behind it.**
-  //
-  // `jacMul` was double-and-add with the add taken only when the bit was set, so the work — and the
-  // time — was a function of the scalar's Hamming weight and of *which* bits were set. It adds on every
-  // bit now and keeps the answer with a constant-time select, and `jacAdd`/`jacDouble` compute their
-  // exceptional cases and select between them rather than branching to them. `issues/system/0210`.
-  //
-  // The scalar is the private key in `curvePublicKey` and `curveEcdh`, and the **nonce** in ECDSA
-  // signing, where a partial leak recovers the key rather than merely revealing it. So this still
-  // matters, because the divergence did not go away — it **moved**, to `reduceWide` in `fieldp.wac`,
-  // which skips a limb when it is zero:
-  //
-  //     for (i32 j = c.len() - 1; j >= n; j--) {
-  //       i64 v = c[j];
-  //       if (v != 0) { … }          // <- fieldp.wac
-  //     }
-  //
-  // That was always there. `ctcompare` reports the *first* divergence, and while the ladder parted at
-  // the first differing scalar bit nothing downstream of it could be seen — the same shape as fixing an
-  // instrument and finding what it was not reaching. Every field operation on both NIST curves runs
-  // through this, and so does RSA.
-  //
-  // **The assertion is about the file rather than the line**, deliberately: a line number in a test is
-  // an entry that drifts, which is the whole argument of `tools/wac/covledger.wac`'s pins. What is
-  // load-bearing is that it is no longer `weierstrass.wac`, and that is asserted separately.
-  T t = T.create();
-  string dir = scratchDir(cli, "p256");
-  const string SRC = "packages/crypto/src/p256.wac";
-  // Not the all-zero key: `curvePublicKey` traps on a scalar of zero or one past the group order, so
-  // the secrets here have to be valid keys as well as different.
-  string[] ab = pair(t, cli, dir, "p256PublicKey",
-                     driver(t, cli, dir, "p256PublicKey", SRC, "p256PublicKey($KEY)", keyOf(2, 32)),
-                     driver(t, cli, dir, "p256PublicKey", SRC, "p256PublicKey($KEY)", keyOf(3, 32)));
-  string a = ab[0];
-  string b = ab[1];
-  if (a == "" || b == "") { return t.report(); }
-
-  string said = compared(t, cli, a, b, false);
-  t.isTrue(startsWith(said, "differs "),
-           "P-256 no longer diverges at all — update the README's table and delete this test: " + said);
-  if (startsWith(said, "differs ")) {
-    string got = siteAt(cli, a, numberOf(word(said, 2)));
-    string other = siteAt(cli, b, numberOf(word(said, 4)));
-    // The claim that the fix holds: whatever still diverges, it is not the ladder.
-    t.isTrue(!contains(got, "weierstrass.wac") && !contains(other, "weierstrass.wac"),
-             "the ladder branches on the scalar again — `jacMul` must add on every bit and select: " +
-             got + " and " + other);
-    // And where it went instead. The file rather than the line, so an edit above it is not a failure.
-    t.isTrue(contains(got, "packages/crypto/src/fieldp.wac"),
-             "the README says the field reduction leaks; the trace says " + got + " and " + other);
   }
   return t.report();
 }

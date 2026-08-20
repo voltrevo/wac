@@ -108,6 +108,19 @@ Pin[] pins() {
         "prime for a P-521 element."),
     Pin("packages/crypto/src/fieldp.wac", 66, "if (n != 12) { trap; }", true,
         "foldVector's copy of that same guard."),
+    Pin("packages/crypto/src/fieldp.wac", 327, "if (k != 0) { trap; }", true,
+        "**The bound `FOLD_ROUNDS` asserts, and the assertion is the reason it is here.** " +
+        "`reduceWide` folds the leftover carry a fixed four times rather than `while (k != 0)`, " +
+        "because the old loop's trip count was a function of the operands and therefore of the " +
+        "secret scalar — `issues/system/0223`. Four is not tight: the argument in that function's " +
+        "header allows three and this corpus needs two, so nothing reaches this side and nothing " +
+        "should.\n" +
+        "         Which is exactly the entry that deserves suspicion, so it was checked rather " +
+        "than argued: `FOLD_ROUNDS` at 1 traps `nistcurve_test.wac` immediately and at 2 the " +
+        "whole file passes. The guard is live code with a margin in front of it, not a branch " +
+        "wacc could have deleted. It cannot be driven from a test because `FOLD_ROUNDS` is a " +
+        "constant and a test cannot vary one — the canary is an experiment on the source, and if " +
+        "this ever goes green the reduction is wrong, not better covered."),
     Pin("packages/crypto/src/keccak.wac", 61, "n == 0 ? x", true,
         "**No call site passes zero, and the set is closed.** `rotl` is private to this file, " +
         "so its arguments are enumerable: every one is a literal — 1 in the θ step, and 6, 8, " +

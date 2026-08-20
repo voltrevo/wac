@@ -27,6 +27,37 @@ So the ordering below is no longer inverted, and what remains of this issue is t
 not explain: **P-256 at 12ms and RSA at 117ms**. `packages/tor/test/wac/consensus_test.wac` did not
 move at all, which fits — a consensus is signed with RSA.
 
+## Answered for P-256 too, 2026-08-20 — and it is not the curve either
+
+The row above says "P-256 at 12ms". It is `scMul`, the multiplication modulo the group *order*, which
+is double-and-add over the **bytes** of its operand where the coordinates are 32-bit limbs. `scInvert`
+is Fermat, so a signature runs it about 384 times, each 256 rounds of a 32-byte `scAdd` — roughly
+three million byte operations per signature.
+
+Measured on this machine, 40 operations each, after `issues/system/0210` and `issues/system/0223`:
+
+| | per call |
+|---|---:|
+| `p256PublicKey` | 2.5ms |
+| `p256Ecdh` | 2.2ms |
+| `p256Sign` | 13.7ms |
+| `p256Verify` | 15.5ms |
+| `ed25519PublicKey` | 1.1ms |
+| `ed25519Sign` | 2.3ms |
+| `ed25519Verify` | 2.2ms |
+| `x25519Base` | 0.6ms |
+
+**The scalar multiplication is 2.5ms of a 13.7ms signature**, so the curve is not where signing's time
+goes and never was — eleven milliseconds are the order arithmetic. That also means the ordering this
+issue is named after is now inverted the other way: ed25519 signs six times faster than P-256, rather
+than five times slower.
+
+`issues/system/0224` is that code, and it is a **leak** as well as slow: `scMul` adding only when the
+bit is set is `0210`'s defect in a second field, over the private key and the nonce. One rewrite is
+both fixes, which is why they should not be scheduled against each other.
+
+So what remains of this issue is **RSA at 117ms**, and nothing has looked at it.
+
 The original measurement follows.
 
 ## Measured

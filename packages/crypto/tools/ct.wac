@@ -94,6 +94,17 @@ Case[] cases() {
     // failure this file exists to prevent. Not the all-zero key: `curvePublicKey` traps on a scalar of
     // zero or one past the group order, so the secrets have to be valid keys as well as different.
     Case("p256PublicKey", "packages/crypto/src/p256.wac", "p256PublicKey($KEY)", 32, i32[](2, 3)),
+    // **Signing was the routine most worth measuring and the one not measured**, which is how a
+    // second leak of exactly the fixed shape sat in `scMul` while `p256PublicKey` went green. A
+    // public key exposes the private key to a side channel; a signature exposes the *nonce*, and a
+    // partial nonce leak recovers the key from signatures an attacker already has. The row that
+    // matters most was missing because the row that was easiest to add went in first.
+    //
+    // The private key is the secret varied here; the digest and `k` are held. Four times the events
+    // of a public key and by far the most expensive row, because `scInvert` is Fermat over
+    // byte-at-a-time `scMul`.
+    Case("p256Sign", "packages/crypto/src/p256.wac",
+         "p256Sign($KEY, u8[32](fill: 0), u8[32](fill: 9))", 32, i32[](2, 3)),
     // One round and two passwords: a single bcrypt hash is already 129 key expansions, so the event
     // count dwarfs everything above and a third password would say nothing more.
     //
