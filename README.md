@@ -6,8 +6,8 @@
 
 A C-family language for WebAssembly GC, and the systems stack written in it.
 
-**[Website](https://voltrevo.github.io/wac/)** · **[Language](spec/)** · **[Packages](packages/)** ·
-**[Docs](docs/)** · **[Design](design/)**
+**[Website](https://voltrevo.github.io/wac/)** · **[Get the command](docs/your-own-project.md)** ·
+**[Language](spec/)** · **[Packages](packages/)** · **[Docs](docs/)** · **[Design](design/)**
 
 ## Meet wacland: userland written in wac
 
@@ -191,6 +191,7 @@ surprises you.
 
 | | |
 | --- | --- |
+| [`docs/your-own-project.md`](docs/your-own-project.md) | Installing `wac` and using it outside this repository — every step run in an empty directory |
 | [`docs/`](docs/) | Integer overflow, constant-time checking, the wasm floor, development |
 | [`spec/`](spec/) | The language, [the tour](spec/tour.wac), [bindgen](spec/spec/bindgen.md), [the command](spec/cli/wac.md) |
 | [`design/`](design/) | Why things are the way they are |
