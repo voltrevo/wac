@@ -1,6 +1,6 @@
 # 0210 — the Weierstrass ladder branches on the secret scalar, so P-256 and P-384 leak it
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-c
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -79,3 +79,59 @@ Worth doing in the same pass: `jacAdd` and `jacDouble` are separate formulas, an
 that always calls both is only constant-time if neither of *them* branches on the point's value. The
 trace above says the only divergence is at line 120 today, which is evidence for the inputs tested
 rather than a proof; re-running it after the change is the check.
+
+## Fixed — 2026-08-20
+
+`jacMul` adds on every bit and keeps the answer with a constant-time select:
+
+```wac
+acc = jacDouble(c, acc);
+i32 bit = (scalar[i / 8] >> (7 - (i % 8))) & 1;
+acc = jacSelect(acc, jacAdd(c, acc, p), bit);
+```
+
+That alone was not enough, and the rest is what this issue's last paragraph asked for. `jacAdd` had
+four `if`s — either operand the identity, the two equal, the two negations — and each tested a value
+derived from `p`, which in the ladder is the accumulator and therefore the secret. They are computed and
+selected now:
+
+- **two need nothing.** When the points are negations, `h` is zero and `z3 = Z1·Z2·h` is zero, which is
+  the identity and the right answer. When either operand is the identity its `Z` is zero, so `z3` is
+  zero again — the identity, and the *wrong* answer, which the last two selects put right.
+- **the doubling case is computed on every call**, because the general formula divides by `h` in effect
+  and `h` is zero there. That is the cost.
+
+`jacDouble`'s own identity guard went too: `z3` is `2YZ`, zero whenever `Z` is, so the formula answers
+the identity for the identity without being told.
+
+`fieldp.wac` gains `fpIsZeroBit`, `fpEqualsBit` and `fpSelect` — 0/1 values and a mask, not `a == b ? 1
+: 0`, because a ternary is a branch: `spec/spec` counts `ternary-then` and `ternary-else` as branch
+points and the tool records every branch.
+
+### It cost far less than this issue predicted
+
+"It roughly doubles the additions, so expect P-256 to land near ed25519's current cost." The events per
+run did roughly double — 3,065,278 to **6,266,534** — and the time did not follow:
+
+| | before | after |
+|---|---:|---:|
+| `p256PublicKey` | 1.3ms | 2.0ms |
+| `p256Sign` | 12.1ms | 13.1ms |
+
+Signing barely moves because the ladder is a sixth of it. `ed25519Sign` is 2.4ms, so P-256 signing stays
+about five times ed25519's rather than landing beside it — and *where the other five sixths of
+`p256Sign` go* is not measured, which is a thread worth pulling.
+
+### And it revealed the leak behind it
+
+The trace no longer parts anywhere in `weierstrass.wac`. It still parts, at `reduceWide` in
+`fieldp.wac`, which skips a limb when it happens to be zero. **That was always there**: `ctcompare`
+reports the first divergence, and while the ladder parted at the first differing scalar bit nothing
+behind it could be seen. Filed as `issues/system/0223`; the impact this issue describes — every P-256
+and P-384 operation, and the ECDSA nonce — is unchanged until that one is fixed, so this is a closed bug
+rather than a solved problem.
+
+`packages/crypto/test/wac/constanttime_test.wac` asserts the new state in both directions: that nothing
+in `weierstrass.wac` diverges, and that `fieldp.wac` does. The first is the regression test for this
+fix; the second is the known leak, and it names the *file* rather than the line, because a line number
+in a test is an entry that drifts.
