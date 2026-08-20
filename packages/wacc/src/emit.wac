@@ -165,6 +165,20 @@ i32 valType(string t) {
   return 127;
 }
 
+/**
+ * The spellings `valType` actually knows, which is not the same as the ones it answers.
+ *
+ * `valType` returns 127 — a plain `i32` — for anything it does not recognise, so `""`, `"i32?"` and a
+ * misspelled struct name all come back as a number and the module is written with the wrong type in it
+ * rather than refused. This is the list of what genuinely belongs in that fallthrough: the i32 family.
+ * Everything else reaching it is a bug, and `writeValType` says so instead of guessing.
+ */
+bool isWritableValType(string t) {
+  return t == "i32" || t == "u32" || t == "u8" || t == "u16" || t == "bool"
+      || t == "i64" || t == "u64" || t == "f32" || t == "f64"
+      || t == "anyref" || t == "i31ref";
+}
+
 /** Whether a wac type is an array, which is a *reference* and so two bytes rather than one. */
 bool isArrayType(string t) {
   u8[] a = t.toBytes();
@@ -229,6 +243,20 @@ void writeValType(B out, Env env, string t) {
   if (isFuncrefType(t)) {
     out.byte(99);
     out.i32leb(env.pairType(t));
+    return;
+  }
+  // **A spelling this emitter cannot write is not an `i32`.** Everything above claimed a reference; what
+  // is left should be the i32 family and the other numbers, and `valType` answers 127 for anything else
+  // — so `""` (the "I don't know" a nullable primitive comes back as) declared a parameter as a number
+  // while its caller passed a reference, which is how `issues/lang/0171a` produces an invalid module
+  // instead of a diagnostic. Operator's principle, 2026-08-20: a case that is not implemented must fail.
+  //
+  // The whole module, not one function: this runs past the gate, mid-emission, so there is no function
+  // left to decline. A byte is still written to keep the buffer well-formed — the bytes are discarded.
+  if (!isWritableValType(t)) {
+    env.declineFor(t == "" ? "a value whose type this emitter could not work out"
+                           : "a value of a type this emitter cannot write: " + t);
+    out.byte(127);
     return;
   }
   out.byte(valType(t));
@@ -1456,8 +1484,23 @@ export struct Env {
         this.ranOut("function parameters");
         break;
       }
+      // **A parameter with no type is refused here, where it is still nameable.** The comment above
+      // describes the same hazard arriving from a full table; this is the other way in, and it is the
+      // commoner one: `typeOfTyName` answers `""` for anything it cannot work out, and `signatureOf`
+      // builds `fn[ret(p0,p1)]` by concatenation — so an empty type does not become a wrong type, the
+      // parameter **disappears from the signature**. The function then has fewer wasm parameters than
+      // its body has locals, and the module is invalid rather than refused. That is the whole mechanism
+      // of `issues/lang/0171a`: a nullable primitive has no type here, so `f(i32? x)` is emitted taking
+      // nothing. Operator's principle, 2026-08-20 — a case that is not implemented must fail.
+      if (ptypes[i] == "") {
+        this.declineFor("a parameter of `" + name + "` whose type this emitter could not work out");
+      }
       this.funcParamTypes[this.funcParamTotal] = ptypes[i];
       this.funcParamTotal = this.funcParamTotal + 1;
+    }
+    // The same for the return: an empty one is written as no result at all.
+    if (ret == "") {
+      this.declineFor("the return type of `" + name + "`, which this emitter could not work out");
     }
     // Assumed emittable until something says otherwise, which is what the fixed point below removes.
     this.funcOk[this.funcCount] = true;

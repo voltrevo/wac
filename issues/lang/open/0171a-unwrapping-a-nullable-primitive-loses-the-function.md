@@ -5,7 +5,7 @@
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
 - **Kind:** missing feature
-- **Symptom:** invalid wasm, or the build fails and names the function
+- **Symptom:** the build fails and names the parameter (was: invalid wasm)
 
 ## Reproduction
 
@@ -246,3 +246,36 @@ removed it because 31 bits truncate silently.
 No new test is needed to drive this. `KNOWN_UNEMITTABLE` in `packages/wacc/test/specEmit.test.ts` holds
 the four tags, so a working implementation makes that test fail with *"emit now — take them out"*. That
 is the canary and the acceptance check in one, and it is already in the suite.
+
+## It fails by name now — 2026-08-20
+
+The feature is still unimplemented; what changed is that the compiler says so. Both programs below used
+to produce an invalid module or a module with a hole in it:
+
+    $ wac build n1.wac          # export i32 f(i32? x) { return 1; }
+    wacc: cannot emit n1.wac — a parameter of `f` whose type this emitter could not work out
+
+    $ wac build n2.wac          # the spec's own accessor, types.md:455
+    wacc: cannot emit n2.wac — a parameter of `read` whose type this emitter could not work out
+
+**The mechanism, and it is not what I predicted.** I expected `writeValType` to be handed `""` and turn
+it into a plain `i32` via `valType`'s catch-all `return 127`. It is not: parameter types reach the module
+through `signatureOf`, which builds `fn[ret(p0,p1)]` by **concatenation**. So an empty type does not
+become a wrong type — **the parameter disappears from the signature**. The function is emitted taking
+nothing while its body reads local 0, and that is why the engine rejected it and why the original report
+named `$bound$0`.
+
+I added the guard to `writeValType` first and it never fired. That is recorded here rather than quietly
+corrected, because the wrong prediction was reasonable and the next person will make it too.
+
+The guard that works is in **`Env.addFunc`**, the one place every function registration passes, and it
+covers the return type as well. `addFunc`'s own comment already described this hazard arriving from a
+*full table* — "an unknown slot type is how a literal argument becomes an `i32.const` in a reference
+slot" — so the failure mode was documented and only one of its two entrances was guarded.
+
+`valType`'s catch-all is still worth refusing on its own merits and now does (`isWritableValType`): it
+answered `i32` for `""`, `"i32?"` and any misspelling. It simply was not the path this bug took.
+
+**Blast radius, measured rather than assumed:** the seed is a fixed point, and `packages/crypto`,
+`packages/tor` and `std/platform` all still build. 216 of 216 cases, specEmit unchanged at 251 of 279 and
+390/390 answers — the six nullable entries still decline, now for a reason that names the parameter.
