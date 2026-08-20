@@ -20,7 +20,7 @@ has a determination here.
 |---|---|---|
 | `box`, `sh` | 5,697 + 1,574 | another agent's packages |
 | `platform` | 6,411 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20 |
-| `wacc` | 2,229 | **nine wait on a decision that is the operator's**, three stay |
+| `wacc` | 2,091 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
 | `webrtc`, `raster`, `stream` | 899 + 218 + 297 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
 
 `tor` came off that last row on 2026-08-20. Its entry read "a C tor this machine has not got", and
@@ -89,14 +89,49 @@ being rewritten in wac, which is a different project from this issue.
 `crypto` reached zero on 2026-08-19, which is the first package to do so that needed a new command
 rather than a new test.
 
-**The nine in `wacc` are the whole of what is blocked and not by a missing feature**: `tour`,
-`sweep`, `linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `mutateCheck`, `corpusMutate`,
-`parse_errors` all use the reference compiler as an oracle. On 2026-08-19 the operator deleted the
+**The eight in `wacc` are the whole of what is blocked and not by a missing feature**: `sweep`,
+`linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `mutateCheck`, `corpusMutate`, `parse_errors` all
+use the reference compiler as an oracle. `tour` did too and no longer does — see the section below. On 2026-08-19 the operator deleted the
 whole-repository lex and parse differentials and every `// only: wacc` marker, on the grounds that
 **the reference's only job is bootstrapping**. That principle reaches `parse_errors` — which compares
 diagnostics by position — more clearly than it reaches `corpusMutate` and `mutateCheck`, which use it
 to *generate* known-bad programs and only ask whether wacc notices. Porting them would entrench an
 arrangement that may be about to go, and deleting them is not mine to decide.
+
+### The nine, classified — and `tour` was not blocked at all
+
+The role the reference plays is not the same in all nine, and until 2026-08-20 only three of them had
+been read for it. All nine, from what each does with `wacCompile`'s result:
+
+| | the reference is | files |
+|---|---|---|
+| **an oracle of correctness** | it produces the expected answer | `tour`, `sweep`, `linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `parse_errors` |
+| **a generator of input** | it builds known-bad programs and only wacc is asked | `mutateCheck`, `corpusMutate` |
+
+That is the split this issue guessed at, now evidenced per file: `tour` takes `want` from the
+reference's compiled function, `specEmit` instantiates `theirs` beside `ours`, and the two mutation
+files never assert anything about what the reference computed.
+
+**And then the question that was not asked: is there a better oracle already available?** For `tour`
+there is, in the subject itself. `spec/tour.wac` exports `selfTest()` — a conjunction over every
+function in the file, which the TypeScript *already asserted* and described as covering "far more than
+the calls listed above, which are only the ones needed to localise a failure". So the differential was
+the localiser, not the coverage.
+
+`packages/wacc/test/wac/tour_test.wac` is that port: compile the tour with wacc, assert `selfTest()`,
+and check the three `string` returns and `double(21)` against the answers the tour writes beside them.
+138 lines of TypeScript gone, no reference, and a superset of what was checked.
+
+**A port that removes the reference is safe whichever way the decision goes**, because it cannot
+entrench what it deletes. That is the test to apply to the other seven before calling them blocked —
+and it is the same question this issue already records one level down: not "can wac do this", but "is
+there a program that does this". One level up it reads: not "is the reference the oracle", but "is
+there a better one".
+
+What is lost is localisation. `selfTest()` says a conjunct disagrees, not which. The port says so at
+the failure and says how to find it, and the `double(21)` canary demonstrates the difference — with
+the tour perturbed, `selfTest()` reports "some conjunct disagrees" while the canary reports
+"got 43, want 42".
 
 ### The mistake this issue kept making, in one place
 
