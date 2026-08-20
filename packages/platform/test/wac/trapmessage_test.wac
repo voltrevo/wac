@@ -9,23 +9,29 @@
 // matched the statement without binding its payload, so a program could be refused for writing
 // `trap 7` and then have a correct message thrown away. `issues/lang/0147`.
 //
-// ## Host-side until 2026-08-18, `issues/system/0161`
+// ## Host-side until 2026-08-18, and the fourth case until 2026-08-20 — `issues/system/0161`
 //
-// Three of the four cases moved. They drive `wac run` and read what it said, which needs no host.
+// Three of the four cases moved first. They drive `wac run` and read what it said, which needs no host.
 //
-// **The fourth stayed, and the reason is not a missing capability.** It builds an *application* with
-// `buildApp` and runs the executable, because the message takes a different route there: a wac
-// `string` is a GC array and opaque to JavaScript, so it comes back through the module's staging
-// buffer, which means the **glue** carries it rather than the host. `bindgen` emits a `$trapped`
-// guard around each exported wrapper and the launcher prints `wac trap: …`. That launcher is
-// `host/entry.ts` and the glue is JavaScript; running the same module with `wac p.wasm` instead takes
-// the interpreter's own path and says `wac: p.wac trapped: …`, which is a different sentence produced
-// by different code. Asserting one against the other would have been a translation that changed the
-// subject, so `test/trapMessage.test.ts` keeps that case and says why.
+// **The fourth is here now, and the note that kept it away is worth keeping too**, because it is right
+// about everything except what follows from it. The message takes a different route through a built
+// *application*: a wac `string` is a GC array and opaque to JavaScript, so it comes back through the
+// module's staging buffer, which means the **glue** carries it rather than the host. `bindgen` emits a
+// `$trapped` guard around each exported wrapper and `host/entry.ts` prints `wac trap: …`. Running the
+// same module with `wac p.wasm` takes the interpreter's own path and says `wac: p.wac trapped: …` — a
+// different sentence produced by different code, and "asserting one against the other would be a
+// translation that changed the subject" was the reason given for leaving it in TypeScript.
+//
+// That reason is against *replacing* the case, and nobody was proposing to. The subject is the glue and
+// the launcher and both stay TypeScript; what moved is the driving, which is `builtByDeno` and an
+// `exec` — the same two calls `spawn_test.wac`, `arrival_test.wac` and three others already make. The
+// last case asserts the same string against the same artefact as before.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
+import { contains } from "../../../wactest/src/strings.wac";
 
 /** Write `program` to `.cache` and run it through `wac run`, both streams together. */
 struct Said {
@@ -78,5 +84,47 @@ export string test_a_bare_trap_claims_no_message(Core core, Cli cli) {
   // The colon is the whole assertion: a trap with nothing to say must not invent a message, and
   // "trapped" alone is what that looks like.
   t.isTrue(s.text.indexOf("trapped:") < 0, s.text);
+  return t.report();
+}
+
+/**
+ * **And through the JavaScript host**, where the message takes the staging-buffer route.
+ *
+ * A program *with capabilities* is the case that matters and the case that works: its exports cross
+ * strings, so its glue has a staging buffer to bring one back through. One that crosses none —
+ * `export i32 main() { trap "…"; }` — has no buffer and still shows `unreachable` there, which is in
+ * `issues/lang/0147` rather than pretended away. So this program takes `Core` and `Cli` and says
+ * something first, and both halves are asserted: the line it printed before the trap, and the trap.
+ */
+export string test_a_built_app_reports_the_message_the_program_gave(Core core, Cli cli) {
+  T t = T.create();
+  // Under `.cache` — in the tree, because the program imports `packages/platform` by a relative path,
+  // but not at the root where every walker over this repository's files sees it appear and vanish. See
+  // the note in `tools/wac/roottemp_test.wac` for what that cost.
+  string dir = cli.cwd().wait() + "/.cache/trapmsg-app";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change wrote = cli.writeFile(dir + "/p.wac",
+    ("import { Cli, Core } from \"std/platform.wac\";\n\n" +
+     "export i32 main(Core core, Cli cli) {\n" +
+     "  core.log(\"about to fail\");\n  trap \"the ring is full\";\n}\n").toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the program — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+
+  string made = builtByDeno(cli, dir + "/p.wac", "trapmsg-app", string[0](fill: ""), "deno", false);
+  t.isTrue(made != "", "the app built");
+  if (made == "") { cli.remove(dir, true).wait(); return t.report(); }
+  string app = dir + "/p";
+  t.isTrue(copyBuilt(cli, made, app, true), "the build copied to " + app);
+
+  Exec r = cli.exec(app, string[0](fill: ""), u8[0]()).wait();
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.isTrue(r.ran(), "the app did not run — " + r.error);
+  t.isTrue(contains(said, "about to fail"), said);
+  // `wac trap: …` rather than `wac: p.wac trapped: …` — the launcher's sentence, not the interpreter's,
+  // which is the whole reason this case exists beside the three above.
+  t.isTrue(contains(said, "wac trap: the ring is full"), said);
+
+  cli.remove(dir, true).wait();
   return t.report();
 }

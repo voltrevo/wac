@@ -170,6 +170,49 @@ export bool fpEquals(i64[] a, i64[] b) {
 }
 
 /**
+ * 1 when `acc` is zero and 0 otherwise, **as a value rather than a branch**.
+ *
+ * `acc | -acc` has its sign bit set exactly when `acc` is non-zero — including for the one input where
+ * the negation overflows, since `-i64.MIN` wraps to itself and that is still negative. An arithmetic
+ * shift of 63 then gives 0 or -1, and `& 1` gives 0 or 1.
+ *
+ * The point is what it is *not*: `acc == 0 ? 1 : 0` is a ternary, and wacc emits a branch for one —
+ * `spec/spec` counts `ternary-then` and `ternary-else` as branch points, and
+ * `packages/crypto/tools/ct.wac` records every branch. A predicate used to avoid leaking must not itself be a branch on the secret.
+ */
+i32 zeroBit(i64 acc) {
+  i64 t = acc | (0 - acc);
+  return 1 - ((t >> (63 as i64)) as~ i32 & 1);
+}
+
+/** `fpIsZero` as a 0/1 value, for a caller that must not branch on it. */
+export i32 fpIsZeroBit(i64[] a) {
+  i64 acc = 0;
+  for (i32 i = 0; i < a.len(); i++) { acc = acc | a[i]; }
+  return zeroBit(acc);
+}
+
+/** `fpEquals` as a 0/1 value, for a caller that must not branch on it. */
+export i32 fpEqualsBit(i64[] a, i64[] b) {
+  i64 acc = 0;
+  for (i32 i = 0; i < a.len(); i++) { acc = acc | (a[i] ^ b[i]); }
+  return zeroBit(acc);
+}
+
+/**
+ * `pick` ? `b` : `a`, limb by limb, with no branch — the shape `field25519.wac`'s `feSelect` uses.
+ *
+ * Both arrays are read in full whichever is chosen, which is the property: a select that read only the
+ * one it returns would leak through the memory trace instead of through the control flow.
+ */
+export i64[] fpSelect(i64[] a, i64[] b, i32 pick) {
+  i64 mask = 0 - (pick as i64);
+  i64[] h = i64[a.len()]();
+  for (i32 i = 0; i < a.len(); i++) { h[i] = a[i] ^ (mask & (a[i] ^ b[i])); }
+  return h;
+}
+
+/**
  * Carry-propagate a signed limb array into [0, 2^32) per limb, returning the carry out.
  *
  * The shift is arithmetic, which is what makes this work for negative limbs: `v >> 32`

@@ -50,7 +50,7 @@ green means something.
 ## What happened
 
 `src/remote.wac` arrived on 2026-08-09 with the `Remote` backing
-([0116](../closed/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md)) — 92 branch points
+([0116](0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md)) — 92 branch points
 the probe never calls — and `fs.wac` grew the arms that dispatch to it. Nothing said so, because
 `deno task coverage:*` is deliberately not in the gate: `tools/coverageAll.ts` explains why, and its
 own header is the prediction that came true — "a check nobody runs rots back into the state above".
@@ -60,7 +60,7 @@ The whole-repo sweep today, for whoever picks this up:
 | | |
 |---|---|
 | green | bignum, bytes, codec, datetime, fmt, http, json, regex, server, sh, ssh, std, stream, unicode, url, zstd |
-| red | **crypto** ([0101](../closed/0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md)), **fs** (this), **gzip** (one reachable point) |
+| red | **crypto** ([0101](0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md)), **fs** (this), **gzip** (one reachable point) |
 
 ## The work, and the part that is a decision
 

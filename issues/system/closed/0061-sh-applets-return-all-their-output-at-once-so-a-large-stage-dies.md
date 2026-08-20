@@ -112,7 +112,7 @@ Beyond those: a redirection collects a spawned child's output in the shell befor
 
 `sh.externalSpawnable = true` is on. The two platform bugs that held it back are fixed —
 [0065](0065-a-spawned-programs-arguments-are-not-byte-exact.md)'s first half (an argument is bytes)
-and [0066](../closed/0066-a-spawned-child-does-not-get-what-the-shell-has-left-of-its-input.md) — and
+and [0066](0066-a-spawned-child-does-not-get-what-the-shell-has-left-of-its-input.md) — and
 with the flag on the corpus agrees with bash on all 567 scripts and every script terminates on its own.
 
 What this issue was reported for is done: the applets stream, `seq 1 2000000000 | head -1` answers in

@@ -23,7 +23,7 @@ wac: requested new array is too large
 
 ## Notes
 
-The applets stream now ([0061](../closed/0061-sh-applets-return-all-their-output-at-once-so-a-large-stage-dies.md)),
+The applets stream now ([0061](0061-sh-applets-return-all-their-output-at-once-so-a-large-stage-dies.md)),
 so this is not the producer. It is the *redirection*: `runCommand` gathers a command's output into an
 `Output` — bytes in, bytes out — and the shell writes the file after the command finishes. So a
 redirected command is bounded by memory however well it streams.

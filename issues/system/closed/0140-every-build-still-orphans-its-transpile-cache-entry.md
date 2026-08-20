@@ -20,7 +20,7 @@ $ du -sh ~/.cache/deno/gen/file/tmp
 still be hit — on a disk with 13 GB free. Dropping them took it to 19 GB free.
 
 That is the same measurement
-[0068](../closed/0068-the-deno-transpile-cache-grows-without-bound-and-filled-the-shared-disk.md)
+[0068](0068-the-deno-transpile-cache-grows-without-bound-and-filled-the-shared-disk.md)
 took on 2026-08-05 (23 GB, 25,482 of 25,490 orphaned) and again the same evening (6.4 GB, 9,637 of
 11,139). It has happened three times now.
 

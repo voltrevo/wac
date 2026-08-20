@@ -504,7 +504,7 @@ which is how AES keys have been recovered from cache timing since 2005.
 | `ghash` | 740 | **leaks** — control flow diverges where one run stood at `ghash.wac:36`; not examined past that |
 | `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
 | `aesEncrypt` | 11,779 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges where one run stood at `aes.wac:66`; not examined past that |
-| `p256PublicKey` | 3,065,278 | **leaks** — control flow diverges where one run stood at `weierstrass.wac:120`; not examined past that |
+| `p256PublicKey` | 6,266,534 | **leaks** — control flow diverges where one run stood at `fieldp.wac:268`; not examined past that. The *ladder* is uniform since 2026-08-20 |
 | `bcryptPbkdf` | 8,177,005 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
 
 **The event counts changed on 2026-08-12 and the verdicts did not.** These are wacc's
@@ -516,15 +516,15 @@ move.
 The x25519 row is the one worth reading twice: the ladder is uniform across every one of
 1.6 million events, which is what "structurally uniform" was claiming without evidence.
 
-**And the P-256 row is the one to read beside it**, because the two are the same shape of
-routine with opposite answers. `x25519`'s ladder does the same work whatever the bit is;
-`weierstrass.wac`'s `jacMul` adds only when the bit is set:
+**And the P-256 row is the one to read beside it**, because the two started as the same
+shape of routine with opposite answers. `x25519`'s ladder does the same work whatever the
+bit is; `weierstrass.wac`'s `jacMul` used to add only when the bit was set:
 
 ```wac
 for (i32 i = 0; i < bits; i++) {
   acc = jacDouble(c, acc);
   i32 bit = (scalar[i / 8] >> (7 - (i % 8))) & 1;
-  if (bit == 1) { acc = jacAdd(c, acc, p); }     // weierstrass.wac:120
+  if (bit == 1) { acc = jacAdd(c, acc, p); }     // weierstrass.wac:120, until 2026-08-20
 }
 ```
 
@@ -534,13 +534,29 @@ revealing it. It was measured for the first time on 2026-08-19 — the table abo
 asymmetric row at all until then, and its silence read as "not applicable" rather than
 "not measured", which is the failure this section exists to avoid. `issues/system/0210`.
 
-It was also read, for a day, as most of why `p256Sign` was 12ms against `ed25519Sign`'s
-63ms. That turned out to be wrong and the correction is worth keeping: ed25519 was slow
-because `ptAdd` derived the curve constant `2d` — a modular inversion — on **every point
-addition**. Written out as limbs, signing is 2.6ms, and the ordering is the usual one
-again. What the leak buys P-256 is about half its point additions; what it costs is this
-row, and a constant-time fix here would put it near ed25519's number rather than far past
-it.
+**The ladder was fixed on 2026-08-20 and the row still says "leaks", which is the point of
+keeping both facts.** `jacMul` adds on every bit and keeps the answer with a constant-time
+select; `jacAdd` and `jacDouble` compute their exceptional cases and select between them
+rather than branching to them. The trace no longer parts anywhere in `weierstrass.wac` —
+and it still parts, one layer down, at `reduceWide` in `fieldp.wac`, which skips a limb
+when it happens to be zero. That was always there. `ctcompare` reports the *first*
+divergence, and while the ladder parted at the first differing scalar bit nothing behind it
+could be seen.
+
+**What it cost, measured rather than predicted.** This section used to say a constant-time
+fix "would put it near ed25519's number"; it does not come close to costing that much. The
+events per run roughly doubled, from 3,065,278 to 6,266,534, which is the always-add. In
+time, twenty operations each:
+
+| | before | after |
+|---|---:|---:|
+| `p256PublicKey` | 1.3ms | 2.0ms |
+| `p256Sign` | 12.1ms | 13.1ms |
+
+Signing barely moves because the ladder is a sixth of it — `p256Sign` is 13.1ms against a
+2.0ms scalar multiplication, and where the rest of that goes is not yet measured.
+`ed25519Sign` is 2.4ms, so P-256 signing stays about five times ed25519's rather than
+landing beside it.
 
 **AES leaks in five places, not one.** Four are the key schedule's `SubWord` lookups
 (`aes.wac:113`–`116`) and the fifth is `SubBytes` itself (`aes.wac:149`), each indexing

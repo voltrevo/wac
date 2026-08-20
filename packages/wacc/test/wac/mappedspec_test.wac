@@ -353,3 +353,135 @@ export string test_a_mapped_subdir_cannot_import_outside_itself(Core core, Cli c
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * A whole-repository mapping and a `subdir` one land on the same file, and it is one module — D8.
+ *
+ * **The spelling the existing case cannot reach.** `test_two_mappings_at_one_commit_are_one_module`
+ * above uses two names with the *same* `subdir`, and says of itself that it guards the construction
+ * rather than a rule: both names do identical arithmetic, so nothing could make them differ. These
+ * two do *different* arithmetic — `whole/lib/x.wac` appends the suffix to nothing, `part/x.wac`
+ * appends it to `lib` — and have to meet at one path. That is `locate`'s half of D9 and D8's
+ * identity in the same case.
+ *
+ * A value crosses between them, so agreement is not about paths looking alike: wac's types are
+ * nominal, and two modules would be two `Item`s that cannot be passed to one another.
+ *
+ * `design/lang/0009`'s D8 note asks for four spellings; with this one and
+ * `projectspec_test.wac`'s relative-against-`@/` case, three of the four are asserted. The fourth —
+ * two mappings at *different* commits being two modules — is the negative half and is still open.
+ */
+export string test_a_whole_repo_and_a_subdir_mapping_meet_at_one_module(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "mapped-twoshapes");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  // `whole/` takes the repository; `part/` takes `lib` out of the same commit. D9 permits both: the
+  // names do not overlap, which is the only thing it forbids.
+  t.isTrue(put(cli, dir + "/wac.json5",
+               "{\n  imports: {\n" +
+               "    \"whole/\": { git: \"" + REPO + "\", ref: \"main\" },\n" +
+               "    \"part/\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"lib\" },\n" +
+               "  },\n}\n"), "one whole-repository mapping and one subdir mapping");
+  t.isTrue(put(cli, dir + "/wac.lock",
+               "{\n  imports: {\n" +
+               "    \"whole/\": { git: \"" + REPO + "\", ref: \"main\", commit: \"" + COMMIT + "\" },\n" +
+               "    \"part/\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"lib\", commit: \"" +
+               COMMIT + "\" },\n" +
+               "  },\n}\n"), "both pinned to one commit");
+  t.isTrue(put(cli, home + "/cache/git/" + escapeRepo(REPO) + "/" + COMMIT + "/lib/item.wac",
+               "export struct Item { i32 v; i32 get(const this) { return this.v; } }\n" +
+               "export Item make() { return Item(4); }\n"), "the one file, under lib/");
+
+  // The two specifiers are spelled differently and resolve to the same path.
+  t.isTrue(put(cli, dir + "/src/a.wac",
+               "import { Item, make } from \"whole/lib/item.wac\";\n" +
+               "export Item mk() { return make(); }\n"), "reached through the whole repository");
+  t.isTrue(put(cli, dir + "/src/b.wac",
+               "import { Item } from \"part/item.wac\";\n" +
+               "export i32 take(Item x) { return x.get(); }\n"), "reached through the subdir");
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { mk } from \"./a.wac\";\n" +
+               "import { take } from \"./b.wac\";\n" +
+               "export i32 main() { return take(mk()) + 3; }\n"), "main");
+
+  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    t.eqI32(r.status, 7,
+            "answered " + itoa(r.status) + ", want 7 — a whole-repository mapping and a subdir " +
+            "mapping that land on one file are one module: " + string.fromBytes(r.stderr));
+  }
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}
+
+/**
+ * Two mappings at **different** commits are two modules — D8's negative half.
+ *
+ * **The half that can actually fail for D8's reason**, which is why the design note asks for it. The
+ * three positive spellings all assert that two routes meet; each of them passes as long as the key is
+ * the path, and the key *is* the path by construction. This one asserts they do **not** meet, and it
+ * is the only one a canonicalisation that over-merged would break: fold the commit out of the key —
+ * anything that keys a mapped file by repository and path alone — and these two become one module,
+ * this program compiles, and a value from one commit is passed to a function expecting the other's
+ * type.
+ *
+ * wac's types are nominal, so two modules mean two `Item`s and the program must be refused. The
+ * assertion is on the refusal rather than on a number, because there is no number a wrong answer
+ * would produce — it would compile and run.
+ */
+export string test_two_mappings_at_different_commits_are_two_modules(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "mapped-twocommits");
+  string home = dir + "-home";
+  string other = "89abcdef0123456789abcdef0123456789abcdef";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  t.isTrue(put(cli, dir + "/wac.json5",
+               "{\n  imports: {\n" +
+               "    \"old/\": { git: \"" + REPO + "\", ref: \"v1\" },\n" +
+               "    \"new/\": { git: \"" + REPO + "\", ref: \"v2\" },\n" +
+               "  },\n}\n"), "two names for one repository at two refs");
+  t.isTrue(put(cli, dir + "/wac.lock",
+               "{\n  imports: {\n" +
+               "    \"old/\": { git: \"" + REPO + "\", ref: \"v1\", commit: \"" + COMMIT + "\" },\n" +
+               "    \"new/\": { git: \"" + REPO + "\", ref: \"v2\", commit: \"" + other + "\" },\n" +
+               "  },\n}\n"), "pinned to two different commits");
+
+  // The *same* declaration in both checkouts. Identical source, so nothing but the commit
+  // distinguishes them — which is the whole point: if the commit is not part of the identity, these
+  // are one type.
+  string decl = "export struct Item { i32 v; i32 get(const this) { return this.v; } }\n" +
+                "export Item make() { return Item(4); }\n";
+  t.isTrue(put(cli, home + "/cache/git/" + escapeRepo(REPO) + "/" + COMMIT + "/item.wac", decl),
+           "the old checkout");
+  t.isTrue(put(cli, home + "/cache/git/" + escapeRepo(REPO) + "/" + other + "/item.wac", decl),
+           "the new checkout");
+
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { make } from \"old/item.wac\";\n" +
+               "import { Item } from \"new/item.wac\";\n" +
+               "export i32 main() { Item x = make(); return x.get(); }\n"),
+           "a value from one commit into the other's type");
+
+  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    t.isTrue(r.status != 0,
+             "two commits were treated as one module: a value from " + COMMIT.slice(0, 8) +
+             " was accepted as the type from " + other.slice(0, 8) + " — " + said);
+    // 4 is what it answers if they *are* merged, which is the specific wrong outcome.
+    t.isTrue(r.status != 4, "the two commits merged into one module and the program ran — " + said);
+  }
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}

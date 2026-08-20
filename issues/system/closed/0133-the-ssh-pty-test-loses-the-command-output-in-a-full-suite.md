@@ -7,7 +7,7 @@
 - **Kind:** bug
 - **Symptom:** wrong answer
 
-The same class as [0131](../closed/0131-two-suite-runs-two-different-one-off-failures.md), which is
+The same class as [0131](0131-two-suite-runs-two-different-one-off-failures.md), which is
 **closed** — agent-a fixed its two causes, a shared working directory in `differential.test.ts` and
 `freePort`. Neither is this one, so it is filed rather than appended to a closed issue.
 

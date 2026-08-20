@@ -8,7 +8,7 @@
 - **Symptom:** not implemented
 
 `packages/gzip` streams: `gunzipStream(read, write)` decodes as bytes arrive, and
-[0006](../closed/0006-streaming-gzip-is-now-representable.md) records what it took.
+[0006](0006-streaming-gzip-is-now-representable.md) records what it took.
 `packages/zstd` does not. Its whole surface is
 
 ```wac

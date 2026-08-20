@@ -66,10 +66,10 @@ const PACKAGES = Object.keys(TASKS)
  * Where a package's driver actually is, read out of the *command* rather than assumed.
  *
  * `packages/<pkg>/cov.ts` is wrong for `core`, whose tree is at the repository root — and the version
- * of this that assumed it reported `core` as having no driver at all while `core/cov.ts` sat there.
- * The same assumption would be wrong for the next tree that moves. The command names its own file, so
- * that is what is read: `deno run -A core/cov.ts` and
- * `… covreport.wac -- packages/codec/test/cov_exercise.wac …` both give it up to a regex.
+ * of this that assumed it reported `core` as having no driver at all while a `cov.ts` sat there. The
+ * same assumption would be wrong for the next tree that moves. The command names its own file, so that
+ * is what is read: `deno run -A <driver>.ts` and
+ * `… covreport.wac -- core/test/cov_exercise.wac …` both give it up to a regex.
  */
 const driverOf = (pkg: string): string | null =>
   (TASKS[`coverage:${pkg}`] ?? "").match(/\S+\.(?:ts|wac)(?=\s|$)/g)

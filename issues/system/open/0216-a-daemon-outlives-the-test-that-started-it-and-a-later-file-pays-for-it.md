@@ -51,3 +51,29 @@ once put it at **2.0–5.4s of CPU against 33.6s, 65.5s and 97.5s of wall** — 
 certainly on a port. That configuration does not arise in the suite, which runs each file once, so it is
 recorded here as a property of the test rather than as a problem to fix: it is a test that stops being
 about anything if two of it ever run at once.
+
+## Both hypotheses tested, and both are false — measured 2026-08-20
+
+This issue names two candidates and says "both are testable by starting a Deno peer, calling `stop`,
+and asking whether the pid is gone before the next statement runs". Done, with a throwaway wac program:
+
+- **`stop()` does not return early.** A `Deno.serve` peer started through `daemon.start`: `stop` returned
+  after **4ms** and `kill -0` on the pid answered *no* immediately — the process was already gone. So the
+  reap does not land later, at least not for a peer that handles SIGTERM.
+- **`echod_test.wac` leaves nothing running.** Run alone: four tests pass in 6.0s of wall and the count
+  of `deno run` processes is unchanged afterwards. The one that appeared during the measurement belonged
+  to another agent's suite.
+
+And the symptom does not reproduce in the small: `wac test echod_test.wac v8host_test.wac` in one process
+charges v8host **3.8s of CPU (2.2s here, 1.6s in children) and 5.7s of wall**, not 49.1s. The 1.6s in
+children is its own — `issues/system/0217` is the six shell compiles per file.
+
+**That is not proof the report was wrong**, and it is not a close. What was measured is two files run by
+hand; the gate ran an eleven-file chunk at four workers on a loaded box, and a daemon that dies promptly
+under SIGTERM when nothing else is competing may not when five cores are busy. What it does establish is
+that the mechanism as stated — `stop` returning before the process is gone — is not what is happening,
+so whoever picks this up should start from the chunk rather than from `daemon.wac`.
+
+One thing did change underneath it. `issues/system/0218` was the same family and is fixed:
+`node_net_test.wac` was leaking a 42 MB `node` per run, 36 were live in one workspace, and the memory
+they held is the kind of pressure this issue's wall-time half would show up as.

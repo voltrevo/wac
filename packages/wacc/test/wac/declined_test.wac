@@ -1,0 +1,117 @@
+// A function the emitter could not emit is **named**, and the build fails — `issues/lang/0170a`.
+//
+// Operator's principle, 2026-08-20: *it is better for the compiler to fail something correct than to
+// accept something incorrect. In every case where it hits a case that isn't implemented, it must
+// fail, not be silent.*
+//
+// **The silence this exists to keep out.** An ill-typed body wacc's checker does not have a rule for
+// reaches the emitter, which declines the function — correctly, and the decline cascades to its
+// callers, which is the documented fixed point in `settleEmittable`. Everything after that was
+// silent: `wac build` wrote a module without the function and exited 0. `declinedExport` was already
+// written to catch exactly this and did not fire, because it indexed the per-function arrays by
+// counting only top-level `Func` declarations while `addFunc` gives a slot to every *method* too —
+// including the methods of `core`'s own types, which are in the linked program before anything the
+// user wrote. So it read someone else's slot, found it `true`, and said nothing. The walk at
+// `emit.wac`'s export counter is the correct convention and is in the same file.
+//
+// The three cases are the ones that can each be wrong in a way the others would not catch:
+//
+//   1. an exported function that cannot be emitted fails the build and is named;
+//   2. **a method declared before it does not hide it** — the index bug, reproduced deliberately,
+//      because every case in this repository that used to pass had no method before the function;
+//   3. a program with nothing wrong still builds, so the check cannot be satisfied by refusing
+//      everything.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Change, Cli, Core, Exec } from "std/platform.wac";
+
+/** `wac build <file> -o <stem>` inside the fixture. */
+Exec build(Cli cli, string dir, string name) {
+  return cli.exec("/bin/sh",
+                  string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) +
+                                 " build " + name + " -o out"), u8[0]()).wait();
+}
+
+bool put(Cli cli, string path, string text) {
+  i32 cut = -1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
+  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
+  return cli.writeFile(path, text.toBytes()).wait().ok();
+}
+
+/** The body wacc has no rule for: `s[0]` is a one-character string, so this is `string - i32`. */
+string illTyped() { return "  return s[0] - 1;\n"; }
+
+export string test_an_export_that_cannot_be_emitted_fails_the_build(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "declined-plain");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  t.isTrue(put(cli, dir + "/m.wac",
+               "export i32 f(string s) {\n" + illTyped() + "}\n"), "wrote the entry");
+  Exec r = build(cli, dir, "m.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    t.isTrue(r.status != 0, "a build that lost an exported function reported success: " + said);
+    t.isTrue(contains(said, "f"), "the failure did not name the function — " + said);
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_method_declared_first_does_not_hide_it(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "declined-method");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  // **A struct with two methods, before the function.** Each takes a slot in the per-function arrays;
+  // an index that counts only top-level functions is two out by the time it reaches `f`, and reads a
+  // method's slot instead. That is why this case exists and why it has *two* methods rather than one:
+  // off-by-two is not off-by-one, and a fix that happened to align for one would fail here.
+  t.isTrue(put(cli, dir + "/m.wac",
+               "struct P {\n  i32 v;\n" +
+               "  i32 get(this) { return this.v; }\n" +
+               "  i32 twice(this) { return this.v * 2; }\n}\n" +
+               "export i32 f(string s) {\n" + illTyped() + "}\n"), "wrote the entry");
+  Exec r = build(cli, dir, "m.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    t.isTrue(r.status != 0,
+             "a method before the function hid the decline: exit " + itoa(r.status) + " — " + said);
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_program_with_nothing_wrong_still_builds(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "declined-ok");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  // The canary for the two above. A check that refuses everything satisfies them both.
+  t.isTrue(put(cli, dir + "/m.wac",
+               "struct P {\n  i32 v;\n  i32 get(this) { return this.v; }\n}\n" +
+               "export i32 f(i32 a) { P p = P(a); return p.get() + 1; }\n"), "wrote the entry");
+  Exec r = build(cli, dir, "m.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    t.eqI32(r.status, 0, "a program with nothing wrong was refused: " +
+                         string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

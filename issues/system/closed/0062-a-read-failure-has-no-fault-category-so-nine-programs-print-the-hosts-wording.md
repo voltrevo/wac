@@ -31,7 +31,7 @@ Same for `cat`, `head`, `tail`, `sort`, `uniq`, `rev`, `nl` and `grep` — every
 ## Notes
 
 The *mutating* side of this was fixed in
-[0014](../closed/0014-platform-has-no-way-to-write-bytes-to-standard-error.md)'s neighbourhood and in
+[0014](0014-platform-has-no-way-to-write-bytes-to-standard-error.md)'s neighbourhood and in
 the fault-category work: `Change` carries `fault`, `host/faults.ts` classifies an exception into
 `FAULT_NOT_FOUND`/`DENIED`/`EXISTS`/`NOT_EMPTY`/`OTHER`, and `reasonOf` in `exec.wac` turns that back
 into GNU's phrase — which is why `mkdir` and `rm` are compared against GNU's own stderr, word for

@@ -1,0 +1,4 @@
+// expect: refused
+// why: `s[0]` is a one-character string, so this is `string - i32` and no operator table defines it
+// from: issues/lang/0159
+export i32 main(string s) { return s[0] - 1; }

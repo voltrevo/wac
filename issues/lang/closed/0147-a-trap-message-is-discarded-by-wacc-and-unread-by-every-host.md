@@ -127,4 +127,4 @@ A program whose `main` declares no capabilities could not run on the JavaScript 
 built a `Core` from the module's exported classes unconditionally, and such a program has no `Core` class
 — *Cannot read properties of undefined (reading 'of')*, before `main` ran. The two Rust hosts learnt this
 earlier the same day by reading `main`'s parameter list; here the absent class is the same signal. Fixed,
-with a case in `tools/runCli.test.ts`, which now covers all three host families.
+with a case in `tools/wac/runcli_test.wac`, which covers all three host families.

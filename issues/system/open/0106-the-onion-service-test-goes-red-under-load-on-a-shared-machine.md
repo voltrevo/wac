@@ -122,7 +122,9 @@ note above warns about), and the same two cases passed in 18 seconds immediately
 whole case rather than one wait inside it." `harness/deadline.ts` grew `testBounded`, which is
 `Deno.test` with a deadline on the **whole case** — five minutes, against eleven seconds for the
 slowest of these on an idle machine — and every case in the exclusive lane uses it: 28 of them,
-across `tor/network_tor`, `tor/ctor_live`, `ssh/server`, `ssh/cli` and `ssh/transport`.
+across `tor/network_tor`, `tor/ctor_live`, `ssh/server`, `ssh/cli` and `ssh/transport`. All of those
+are wac now — `ctor_live` last, on 2026-08-20 — so the bound each one carries is `daemon.wac`'s
+`waitForLogWithin` rather than `harness/deadline.ts`.
 
 A case that trips it now fails with `timed out after 300000ms waiting for the whole of "<name>"` and
 the run carries on. Canaried by setting the bound to 50 ms.

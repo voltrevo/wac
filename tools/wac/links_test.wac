@@ -50,41 +50,14 @@
 // anyway. `issues/system/0161`.
 
 import { T } from "../../packages/wactest/src/assert.wac";
+// `tracked` and `nonEmptyLines` moved to `packages/wactest/src/repo.wac` when
+// `duplicatedline_test.wac` became the second guard to want them.
+import { tracked, nonEmptyLines } from "../../packages/wactest/src/repo.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { hashString } from "core/hash.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 // ── the corpus ───────────────────────────────────────────────────────────────
-
-/** Every file git tracks, which is the set a link may point into. */
-string[] tracked(Core core, Cli cli) {
-  Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("links: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
-    trap;
-  }
-  return nonEmptyLines(string.fromBytes(r.stdout));
-}
-
-string[] nonEmptyLines(string s) {
-  u8[] b = s.toBytes();
-  i32 n = 0;
-  i32 start = 0;
-  for (i32 i = 0; i <= b.len(); i++) {
-    if (i < b.len() && b[i] != '\n') { continue; }
-    if (i > start) { n = n + 1; }
-    start = i + 1;
-  }
-  string[] out = string[n](fill: "");
-  i32 at = 0;
-  start = 0;
-  for (i32 i = 0; i <= b.len(); i++) {
-    if (i < b.len() && b[i] != '\n') { continue; }
-    if (i > start) { out[at] = s.slice(start, i); at = at + 1; }
-    start = i + 1;
-  }
-  return out;
-}
 
 string read(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();
@@ -554,8 +527,14 @@ bool markerCandidate(string f) {
  * That is what the pattern said, and it is faster over seven hundred files than compiling one.
  */
 string[] rootedPaths(string text) {
+  // **`core/` was missing until 2026-08-20**, and it is the same omission `LANE_ROOTS` in
+  // `harness/testLane.ts` had: `core/` became a source tree with tests of its own in
+  // `design/lang/0009` step 3 and is deliberately not under `packages/`, so every list of the
+  // repository's roots had to learn about it separately and this one did not. A backticked `core/…`
+  // path had therefore never been checked: `core/`'s own coverage driver was deleted with four live
+  // references to it still in the tree, and this test stayed green until `core/` was added here.
   string[] roots = string[]("packages/", "tools/", "harness/", "compiler/", "spec/", "design/",
-                            "issues/", "native/", "site/");
+                            "issues/", "native/", "site/", "core/", "docs/");
   string[] out = string[512](fill: "");
   i32 n = 0;
   u8[] b = text.toBytes();

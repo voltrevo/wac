@@ -27,7 +27,7 @@ instantiate** — the list this issue is named after is empty. What each of the 
 block returning a `Circle` and then handed it a `Shape` — `type error in fallthru[0]`. It takes the
 type the arms *share* now: a parent and a child give the parent, two siblings give their common
 ancestor. `spec/cases/0142`, which also shows the narrowing from
-[0116](../closed/0116-is-narrowing-does-not-choose-the-narrowed-types-method.md) applying to the
+[0116](0116-is-narrowing-does-not-choose-the-narrowed-types-method.md) applying to the
 result, since the two rules meet there.
 
 **A comparison's slot is a `bool`, which knows nothing about its operands.** The emitter already fell
@@ -53,7 +53,7 @@ suite red for everyone until all five are done.
 Two are ternaries whose arms have different but related types — a parent and a child, and two
 siblings. A ternary declares a block type, and it has to be a type both arms fit; picking one arm's
 is what fails to validate. That is the same corner as the struct downcast fixed in
-[0116](../closed/0116-is-narrowing-does-not-choose-the-narrowed-types-method.md), one expression over.
+[0116](0116-is-narrowing-does-not-choose-the-narrowed-types-method.md), one expression over.
 
 ### The float comparison, which is fixed — and how it was nearly fixed wrongly
 

@@ -1,6 +1,6 @@
 # 0200 — `coverage:crypto` is red: 127 points uncovered, 48 of them in `mlkem.wac`
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-08-18
 - **Kind:** bug
@@ -180,3 +180,33 @@ per-point table, and `native/v8/src/main.rs` reads it out of a temp directory th
 A flag that wrote it out would let any driver *union* the binary's measurement with its own instead of
 choosing between them, which is what a whole-package answer needs — on `rsa.wac` the Deno driver reaches
 125 where the binary's own run of `rsa_test.wac` reaches 115, so neither is a superset.
+
+## Closed — 2026-08-20, and the open question dissolved rather than being answered
+
+`packages/crypto`'s driver moved to wac with `issues/system/0222`. The three files this issue named
+now read, with every uncovered point carrying a written reason in
+`packages/crypto/test/cov_ledger.wac`:
+
+| file | then | now | left |
+|---|---|---|---|
+| `mlkem.wac` | 48 uncovered | **131 of 132** | 1, pinned: rejection sampling reading past its XOF stream |
+| `keccak.wac` | 16 uncovered | **35 of 37** | 2, pinned: `rotl(x, 0)` and a rate no caller passes |
+| `rsa.wac` | 6 uncovered | **125 of 128** | 3, pinned: an overflow guard, and both halves of `unusedBits > 0` |
+
+That is 127 points down to 6, and the 6 are ledger entries rather than silence.
+
+**The larger question — "whether the ratchets should take their numbers from `wac test --coverage`
+generally" — did not need answering.** The proposed answer was a flag that wrote `prog.cov` out so a
+driver could *union* the binary's measurement with its own, on the evidence that neither is a superset:
+"on `rsa.wac` the Deno driver reaches 125 where the binary's own run of `rsa_test.wac` reaches 115".
+
+There is nothing to union. Both numbers came from the same instrument being asked twice because
+`harness/wacCoverage.ts`'s `runTestExports` skips any test taking an argument — `instrument` cannot
+supply a capability, so the driver ran none of the tests that need one, and the binary ran only that
+file's. `wac covdump` runs the ordinary program path (`issues/system/0221`), so a wac exercise's `main`
+has a real `Core` and `Cli` and calls every test itself: one run, one counter array, and the union is
+what the array already is. `MEASURED_BY_THE_BINARY` — the mechanism this issue's "Green" section
+describes as the honest workaround — is deleted with it.
+
+`issues/system/0205` keeps the part that is still a decision: whether the sixteen drivers that only
+report should hold floors.

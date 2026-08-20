@@ -7,7 +7,7 @@
 - **Kind:** bug
 - **Symptom:** wrong answer — a datagram arrives, is read by nobody, and is gone
 
-**Mine, and it arrived with the fix for [0206](../closed/0206-receivefrom-blocks-at-the-call-so-a-datagram-read-cannot-be-time-bounded.md).**
+**Mine, and it arrived with the fix for [0206](0206-receivefrom-blocks-at-the-call-so-a-datagram-read-cannot-be-time-bounded.md).**
 That made `Cap::ReceiveFrom` submit a ticket and do `recv_from` on a thread, so `waitAny` can bound
 it. What it did not do is say what happens to the thread when the caller gives up: it stays blocked
 on the socket, and the *next* datagram to arrive is taken by it and handed to `Tickets::complete`

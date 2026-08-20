@@ -635,6 +635,60 @@ bool isNullableTy(Ty t) {
   }
 }
 
+/**
+ * Whether `left is Target` has a **constant answer** because the two share no ancestor.
+ *
+ * `ref.test` cannot ask this: wasm wants the tested heap type inside the operand's own hierarchy, so
+ * `p is Q` between unrelated structs is not a question the format will type. That is why the emitter
+ * used to give up here — but giving up is the wrong conclusion, because the answer is known. The
+ * checker already says so, in `diag.wac` code 201: *these types share no ancestor, so the test is
+ * always false*. So both compilers diagnose it as a warning and the reference then emits a constant,
+ * while this one declined the whole function over something it had just called a warning.
+ *
+ * `spec/spec/types.md` settles which constant, and the spec's own case is blunter than the prose —
+ * `§wac-is-undefined-type-6qbn3wr` asserts `otherType()` is `0` with the comment *"an unrelated type is
+ * false, not an error"*.
+ *
+ * **Deliberately narrow: both sides must be known struct names.** An unknown left type is not evidence
+ * of anything, and answering `false` for one would be the same guess-instead-of-refuse this whole audit
+ * is about (`issues/lang/0170a`). Anything else still declines.
+ */
+bool constantFalseIs(Env env, string target, string lty) {
+  if (!env.isStructName(target) || !env.isStructName(lty)) { return false; }
+  if (env.isSubtypeOf(target, lty) || env.isSubtypeOf(lty, target)) { return false; }
+  return true;
+}
+
+/**
+ * The **local** an `is` target actually names, or `""` — an identity test the parser could not see.
+ *
+ * `p is Other` where `Other` is a local holding a value is an identity test, and the spec says so:
+ * `§wac-type-name-scope-8vqk3mn` asserts it, and an upper-case local being legal is the point of the
+ * case. But `parse.wac`'s `looksLikeTypeHere` decides type-or-value from **spelling and the next
+ * token** — upper-case initial, then `)`, reads as a type — so the node arrives with its target in the
+ * type slot and no value in the value slot.
+ *
+ * That is not a parser bug. Whether `Other` is a type or a variable is a question about scope, and the
+ * parser does not have scopes; only something holding the locals can answer it. So the resolution
+ * happens here, where they exist.
+ *
+ * **Only when the name resolves to no type at all.** A spelling that is both a type and a local would
+ * be an ambiguity to settle deliberately rather than by whichever check ran first, and this returns
+ * `""` for it so the existing decline still fires.
+ */
+string identityLocalName(Env env, u8[] src, Lexed lexed, Ty target) {
+  match (target.kind) {
+    case Named(tok, typeArgs): {
+      if (typeArgs.len() > 0) { return ""; }
+      string nm = tokenTextOf(src, lexed, tok);
+      if (env.isStructName(nm) || env.isEnumName(nm) || env.variantAt(nm) >= 0) { return ""; }
+      if (env.localAt(nm) < 0) { return ""; }
+      return isRefType(env, env.localType(nm)) ? nm : "";
+    }
+    else: { return ""; }
+  }
+}
+
 /** Whether a type is a function reference, which is decided by its spelling. */
 bool isFuncrefType(string t) {
   // **An array of funcrefs is an array.** `fn[void(i32)][]` starts with `fn[` as well, so a test that
@@ -3065,6 +3119,14 @@ export Built buildLinked(string[] paths, string[] sources, Res res, string entry
     return Built(bareModule(),
                  blockedAgain(paths, sources, res, entry, f!.env) + describeSep() + sigs +
                  describeSep() + types);
+  }
+  // **Every guard above answers a particular question; this one answers the operator's.** A table
+  // overflowed, a name was ambiguous, the settling declined something — each of those was added for
+  // one hole, and each leaves `blocked` empty for a function that vanished any other way. So the last
+  // thing asked is whether the module contains what the source said to export. `issues/lang/0170a`.
+  string gone = missingExport(f!.env, f!.src, f!.lexed, f!.prog, f!.entryDecls);
+  if (gone != "") {
+    return Built(bareModule(), gone + describeSep() + sigs + describeSep() + types);
   }
   return Built(wasm, "" + describeSep() + sigs + describeSep() + types);
 }
@@ -6966,6 +7028,31 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           if (negated) { fb.byte(69); }
           return;
         }
+        // **Unrelated types: a constant, because the format cannot be asked.** `ref.test` needs the
+        // tested type inside the operand's hierarchy, so there is no instruction for `p is Q` — but
+        // there is an answer, and `constantFalseIs` explains why it is this one. `left` is still
+        // evaluated and dropped: it may have side effects, and the test being decidable does not make
+        // the expression it is asked about disappear.
+        if (constantFalseIs(env, env.canonType(tt3),
+                            env.canonType(typeOfE(src, lexed, env, left)))) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(26);   // drop
+          fb.byte(65);   // i32.const
+          fb.i32leb(negated ? 1 : 0);
+          return;
+        }
+        // **A target that is really a local**: an identity test the parser put in the type slot. Same
+        // instruction as the value-on-the-right form above — the value just arrives from a local
+        // rather than from a parsed expression. `identityLocalName` says why this is resolved here.
+        string idn = identityLocalName(env, src, lexed, target!);
+        if (idn != "" && isRefType(env, env.canonType(typeOfE(src, lexed, env, left)))) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(32);   // local.get
+          fb.u32leb(env.localAt(idn));
+          fb.byte(211);  // ref.eq — identity, which is what `is` between two values means
+          if (negated) { fb.byte(69); }
+          return;
+        }
         return;
       }
       string en = env.variantOwners[vi];
@@ -9961,6 +10048,13 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         // the two are unrelated is one the format would refuse to type.
         if (env.isStructName(ty3) && env.isSubtypeOf(env.canonType(ty3), lty)) { return ""; }
         if (ty3 == "i31ref" && env.isSubtypeOf("i31ref", lty)) { return ""; }
+        // Unrelated structs have a constant answer, so this is emittable — see `constantFalseIs`. The
+        // gate and the emitter must agree here, which is why the condition is one function and not two
+        // copies of a condition.
+        if (constantFalseIs(env, env.canonType(ty3), lty)) { return ""; }
+        // A target naming a local is an identity test, not a type test — see `identityLocalName`. The
+        // left side still has to be a reference for `ref.eq` to mean anything.
+        if (identityLocalName(env, src, lexed, target!) != "" && isRefType(env, lty)) { return ""; }
         return "a test for " + ty3 + " on a " + (lty == "" ? "value of no known type" : lty);
       }
       string il = unsupportedValue(src, lexed, env, left);
@@ -10210,6 +10304,22 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
           for (i32 m = 0; m < methods.len(); m++) {
             canEmit(src, lexed, env, methods[m].params, methods[m].body,
                     methods[m].hasThis ? sowner : "",
+                    typeOfTyName(env, src, lexed, methods[m].returnType));
+          }
+        }
+        // **An enum's methods, for the reason above.** This walk exists because a call to a generic
+        // function is the only instance nothing declares — its type arguments are inferred from
+        // *locals*, so only a walk with locals in scope can find it. An enum method has locals like
+        // any other body, and without this arm `pick(x, 9)` inside one registered no instance and the
+        // module lost the function. The identical call from a plain function builds, which is what
+        // isolates it. Found by enumerating this file's declaration walks after `issues/lang/0172a`
+        // gap 2, not by a failing corpus case — nothing in `spec/` exercises it.
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          string eowner = nameKeyOf(env, src, lexed, nameTok);
+          for (i32 m = 0; m < methods.len(); m++) {
+            canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                    methods[m].hasThis ? eowner : "",
                     typeOfTyName(env, src, lexed, methods[m].returnType));
           }
         }
@@ -10649,6 +10759,21 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
         }
       }
+      // **An enum's methods are bodies too**, and this walk had only `Func` and `StructDecl` — so a
+      // type first named inside an enum method was first named *while emitting*, which is a decline
+      // in those words (`issues/lang/0172a`). `Q[] qs = Q[2](fill: Q(helper()));` in an enum method
+      // was enough; the array is what does it, not the enum.
+      //
+      // This is the third `EnumDecl` arm missing from a declaration walk in this file today — after
+      // `declinedExport`'s, which made it read another function's slot (`issues/lang/0170a`). The
+      // shape to distrust is `case Func` and `case StructDecl` followed by `else: { }`: enums have
+      // methods, so a walk that wants bodies wants theirs.
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) {
+          collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+        }
+      }
       else: { }
     }
   }
@@ -10675,13 +10800,65 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
  * shortage. Only exports are asked about, because a private function that is declined and never
  * called costs the module nothing.
  */
+/**
+ * An export the source declared that the emitted module does not have — or `""`.
+ *
+ * **Asked after emitting, of the `Env` that emitted.** That is the whole point: `declinedExport`
+ * below runs against a *fresh* front (`blockedOf` is a dry run), and a fresh front does not
+ * reproduce every drop — for the cases in `issues/lang/0170a` it reports the function as perfectly
+ * fine while the module it was asked about does not contain it. `funcIndex` in the spent `Env` is
+ * the list the export section was built from, so it is the one that knows.
+ *
+ * **And it does not care why.** Every other guard here answers a particular question — did the
+ * settling decline something, did a table overflow, is a name ambiguous — and each was added for one
+ * hole. This one asks the question the operator's rule asks: *you told me to export this name and it
+ * is not in here.* Whatever the reason, including reasons nobody has found yet.
+ *
+ * Indexing follows the export counter in `emitModule`: a slot per top-level function and one per
+ * method of a struct or an enum. Getting that wrong is how `declinedExport` came to read someone
+ * else's verdict for a day.
+ */
+string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecls) {
+  i32 at = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        // Only the entry file's exports become the module's, which is what the counter checks too.
+        bool mine = entryDecls < 0 || d < entryDecls;
+        if (exported && mine && env.funcIndex[at] < 0) {
+          return "the exported function `" + tokenTextOf(src, lexed, nameTok) +
+                 "` is not in the module the emitter produced";
+        }
+        at = at + 1;
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
+      }
+      else: { }
+    }
+  }
+  return "";
+}
+
 string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
   i32 at = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        if (exported && !env.funcOk[at]) {
+        // **Two questions, because they have different answers.** `funcOk` is the settling's
+        // verdict — "did anything unsupported stop this" — and `funcIndex` is whether the function
+        // actually reached the module, which is what the export section is built from. A function
+        // can be approved and still be absent, and that case was silent: `wac build` wrote a module
+        // without it and exited 0. Asking both is the difference between reporting a decline and
+        // reporting *the export you asked for is not in here*. `issues/lang/0170a`.
+        if (exported && (!env.funcOk[at] || env.funcIndex[at] < 0)) {
           string was = env.blocked;
           env.blocked = "";
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
@@ -10693,6 +10870,19 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
         at = at + 1;
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
+      }
+      // **An enum's methods take slots exactly as a struct's do, and this walk had no arm for them.**
+      // `addFunc` gives every method a slot in the per-function arrays, so an index that counts one
+      // kind and not the other drifts by the number of enum methods before it — and `core` is enums
+      // with methods, in every linked program there is. So `funcOk[at]` was somebody else's verdict,
+      // usually `true`, and an export the settling had declined was reported as fine: `wac build`
+      // wrote a module without the function and exited 0. `issues/lang/0170a`.
+      //
+      // `settleEmittable` below and the export counter in `emitModule` both have all three arms and
+      // are the convention; this was the one walk of the four that did not.
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
       }

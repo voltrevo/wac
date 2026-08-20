@@ -106,7 +106,7 @@ symptom is an entry that no longer matches, which is the same message a construc
 instrumented produces.
 
 Implement the five methods in the reference compiler, so both agree. The shape is settled — `wacc`'s
-is in `71303564` and [0069](../closed/0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md) proposed
+is in `71303564` and [0069](0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md) proposed
 it — so this is the port's usual direction run backwards, which is unusual enough to be worth saying
 out loud: the reference is the seed and is normally ahead.
 
@@ -156,7 +156,7 @@ switch bought.
 
 The decision here was already taken: the reference stays as it is and `instrument` uses wacc. What
 was left was the three ledgers, and they closed under
-[0112](../closed/0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md): `fs` by
+[0112](0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md): `fs` by
 driving its last arm and recording the one that cannot fire, `gzip` by an argument about deflate's
 smallest block, `crypto` by seven driven guards, a PSS malleability test, four recorded entries and
 one branch removed.

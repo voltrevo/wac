@@ -2,14 +2,15 @@
 //
 // **Because everything that reads this repository's own files walks that root**, and a directory that
 // exists for four milliseconds is still there when a walker reaches it and gone by the time it opens
-// it. `tools/wacProbesReached.test.ts` died on exactly that, in a gate run on 2026-08-18:
+// it. `tools/wac/wacprobesreached_test.wac` — then TypeScript — died on exactly that, in a gate run
+// on 2026-08-18:
 //
 //     error: NotFound: No such file or directory (os error 2):
 //            readdir '/home/claude/agent-c/workspaces/wac/wac-grantskip-8ba5ba4dcfa726e'
 //
 // — a test failing on a directory belonging to a test in a different file, with a message that names
-// neither of them. Three tests were doing it (`tools/wac/testcli_test.wac`, `tools/runCli.test.ts`,
-// `packages/platform/test/trapMessage.test.ts`) and five walkers could trip on it
+// neither of them. Three tests were doing it (`tools/wac/testcli_test.wac`, `tools/wac/runcli_test.wac`,
+// `packages/platform/test/wac/trapmessage_test.wac`) and five walkers could trip on it
 // (`wacProbesReached`, `deadexports`, `duplicatedLine`, `lane`, `checkTypes`), so the failure was one
 // of fifteen races a run rather than a coincidence.
 //

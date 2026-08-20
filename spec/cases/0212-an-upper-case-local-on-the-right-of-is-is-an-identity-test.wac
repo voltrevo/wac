@@ -1,0 +1,16 @@
+// expect: answers f = 101
+// why: `p is Other` where `Other` is a local holding a value is an identity test, not a type test —
+//      the parser reads an upper-case name followed by `)` as a type, so only something holding the
+//      scopes can tell. `Diff` has equal contents and is a different object, so a compiler answering
+//      true to any upper-case local would return 111 and fail this case rather than pass it.
+// from: issues/lang/0172a
+struct P { i32 x; }
+export i32 f() {
+  P p = P(1);
+  P Other = p;
+  P Diff = P(1);
+  i32 a = (p is Other) ? 1 : 0;
+  i32 b = (p is Diff) ? 10 : 0;
+  i32 c = (p is not Diff) ? 100 : 0;
+  return a + b + c;
+}

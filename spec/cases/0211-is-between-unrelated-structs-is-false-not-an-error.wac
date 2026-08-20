@@ -1,0 +1,14 @@
+// expect: answers f = 110
+// why: `p is Q` between structs sharing no ancestor is a warning and a constant false, not a refusal —
+//      and `is not` is the constant true. The same-type test is here so a compiler that answered a
+//      constant to every `is` would fail this case rather than pass it.
+// from: issues/lang/0172a
+struct P { i32 x; }
+struct Q { i32 y; }
+export i32 f() {
+  P p = P(1);
+  i32 a = (p is Q) ? 1 : 0;
+  i32 b = (p is not Q) ? 10 : 0;
+  i32 c = (p is P) ? 100 : 0;
+  return a + b + c;
+}

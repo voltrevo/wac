@@ -1,0 +1,18 @@
+// expect: answers f = 10
+// why: an enum method's body is a body — a type it is the first to name must be registered before
+//      emission, like a function's or a struct method's. `Q[]` appears nowhere else here, so if the
+//      declaration walk skips enum methods the array type is first named while emitting and the
+//      function is declined. The two array reads and the match arm all contribute to the answer, so a
+//      wrong layout does not pass as 10.
+// from: issues/lang/0172a
+struct Q { i32 v; }
+i32 helper() { return 3; }
+enum E {
+  A(i32 v), B,
+  i32 sum(const this) {
+    Q[] qs = Q[2](fill: Q(helper()));
+    i32 base = match (this) { case A(v): v, case B: 0 };
+    return base + qs[0].v + qs[1].v;
+  }
+}
+export i32 f() { return E.A(4).sum(); }

@@ -725,7 +725,9 @@ string literalFor(string ty, string answer, i32[] okOut) {
     // not fit a wac literal either, and no case here produces one.
     if (ty == "u64") { okOut[0] = 0; return answer; }
     i64 v = 0;
-    for (i32 i = 1; i < answer.len(); i++) { v = v * 10 + (answer.toBytes()[i] - '0'); }
+    // `toBytes()[i]` reads as an `i32`, and `v` is an `i64` — the widening is written rather than
+    // assumed, which nothing noticed while a packed read had no type at all.
+    for (i32 i = 1; i < answer.len(); i++) { v = v * 10 + ((answer.toBytes()[i] - '0') as i64); }
     return itoa64(4294967296 - v);
   }
   return answer;

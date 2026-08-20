@@ -1,0 +1,4 @@
+// expect: refused
+// why: a string index reads as a string, and the initialiser rule refuses it as it does a bare string
+// from: issues/lang/0159
+export i32 main(string s) { i32 n = s[0]; return n; }
