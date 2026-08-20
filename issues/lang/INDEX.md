@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0173a](open/0173a-a-signature-mentioning-an-unsubstituted-type-parameter-is-registered-as-a-type.md) | a generic method's signature is registered with its type parameter unsubstituted — harmless, and it blocks refusing unwritable types | cleanliness | none visible |
+| [0173a](open/0173a-a-signature-mentioning-an-unsubstituted-type-parameter-is-registered-as-a-type.md) | not a stray entry: `Box<U>` is instantiated with the method's own type parameter, emitting 9 functions and 3 exports for a method nobody calls — measured, with a ledger test and two failed fixes recorded | bug | 467 wasted bytes |
 | [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | bindgen refuses a nullable primitive at the host boundary, so `export i32 read(i32? x)` — the accessor the spec prescribes — gets no glue; the emitter half is done | decision | no glue for a signature the spec shows |
 | [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | the standing one: the emitter has 25 lookup failures that bail without a reason, and the `emitFiles*` family is not covered by the export-parity net. The original 14 programs are all refused | bug | a decline with no cause, or none at all |
 | [0163](open/0163-one-file-under-two-keys-is-silent-in-the-reference-and-an-invalid-module-in-wacc.md) | refused now, naming both keys, instead of an invalid module the checker was silent about — what is left is D8 deciding whether refusing is right, with a recommendation that it is | decision | no error |
