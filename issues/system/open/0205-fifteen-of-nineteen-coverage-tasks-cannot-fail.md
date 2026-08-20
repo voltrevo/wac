@@ -292,6 +292,50 @@ So the test is not "does it use an `Rng`" — it is "does the number move when t
 insensitive because their sampling *adds* to a hand-written set of edge cases; `url` and `fmt` are the
 two where the sample is load-bearing, and both want that dealt with before a floor.
 
+### `regex` eighth: 573 of 649 → **639 of 652**, and two bugs in our own code
+
+**13 hold a coverage floor, 0 only check their own exemptions have not drifted, 8 report and cannot
+fail.**
+
+This is the package where reading the gaps paid in defects rather than only in coverage.
+
+**The `i` flag was measured by nothing, in either POSIX dialect.** The three largest gaps were
+*function entries* — `regex.wac:14`, `basic.wac:58`, `posix.wac:46`, which are `compileIgnoreCase`,
+`compileBasicIgnoreCase` and `compileExtendedIgnoreCase`. The probe's `execFlags` takes an
+`ignoreCase` argument and every call in the driver passed `false`; the two POSIX ones had **no test in
+this package at all**, their only consumer being `packages/box`'s grep. Closed against `grep -i`,
+which agrees — including on `[^a]`, the case an implementation gets wrong by folding a negated class
+after complementing it.
+
+**`a\{2` was accepted and matched nothing.** GNU refuses it — *Unmatched \{* — and `basic.wac`
+translated it to `a{2`, which compiles and reads the brace as three literals. One of grep's two
+answers became neither. Now refused in GNU's own words, which `test_a_refusal_says_whose_problem_it_is`
+checks against grep's stderr.
+
+**`a**` and four siblings were accepted where JavaScript refuses them.** ECMAScript's Term is
+`Atom Quantifier?` — at most one — so `a**`, `a*+`, `a++`, `a???` and `a*?*` are all *Nothing to
+repeat*. `parseRepeat` looped and applied each in turn, and **the comment beside the loop said `a**`
+was a syntax error in JavaScript while the code compiled it**. The loop is what the POSIX dialects
+need, so the refusal is gated on the same `posix` flag as the leading brace.
+
+Neither pattern is in the corpus, and neither could be: the generator composes well-formed pieces, so
+it never emits an interval it does not close or a quantifier on a quantifier. **The arms that handle
+malformed input are the ones a generator cannot reach**, which is the general lesson for the six
+drivers left.
+
+Also written: a test for the four growable tables in `compile.wac` — nine alternation branches and
+thirty-nine ranges, since the lists start at eight and thirty-two — because a doubling loop that
+copies the wrong count loses the last recorded jump and produces a program that matches the wrong
+thing rather than one that crashes.
+
+Thirteen points remain, all pinned with an argument: nine defensive arms whose conditions a caller
+already guarantees, and four `proven: false` where the input is buildable and I did not build it. The
+three `program.wac` ones share one argument — a backtracking frame costs a step, so the step budget
+always fires before the stack bound can.
+
+Grants are worth 20 points here (639 → 619 without them), and the figure does not move when the seed
+does.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,

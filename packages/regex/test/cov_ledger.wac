@@ -1,0 +1,210 @@
+// regex's coverage, and the two bugs reading its gaps found.
+//
+//   deno task coverage:regex
+//   deno task coverage:regex --verbose
+//
+// **639 of 652**, from 573 of 649. Two-way ratchet over `tools/wac/covledger.wac`: anything not listed
+// must be covered, and anything listed that *is* covered fails too. `issues/system/0205`.
+//
+// ## The `i` flag was measured by nothing, in either dialect
+//
+// The largest single gap was not a branch — it was two *function entries*, `regex.wac:14` and
+// `basic.wac:58`, plus `posix.wac:46`. `compileIgnoreCase`, `compileBasicIgnoreCase` and
+// `compileExtendedIgnoreCase` are three of this package's public entry points, and the exercise
+// reached none of them: `test/probe.wac`'s `execFlags` takes an `ignoreCase` argument and every call
+// in the driver passed `false`. The two POSIX ones had no test in this package **at all** — their only
+// consumer is `packages/box`'s grep, so each was exercised through the cases that applet's own tests
+// happen to reach, which is the arrangement `test/wac/basic_test.wac`'s header was written to end for
+// the case-sensitive half.
+//
+// Closed by `test_the_i_flag_in_both_posix_dialects_agrees_with_grep`, against `grep -i` — the same
+// oracle one flag over. It agrees, including on `[^a]`, which is the one an implementation gets wrong
+// by folding a negated class after complementing it rather than before.
+//
+// ## And two disagreements, both ours, both found by a pattern nobody had written
+//
+// **`a\{2` was accepted and matched nothing.** GNU refuses it — *Unmatched \{* — and this translated
+// it to the extended `a{2`, which compiles, reads `{2` as three literals and matches only a subject
+// containing them. One of grep's two answers became neither. `src/basic.wac` refuses it now, in GNU's
+// own words, which `test_a_refusal_says_whose_problem_it_is` checks against grep's stderr rather than
+// against a string written from memory.
+//
+// **`a**` and its four siblings were accepted where JavaScript refuses them.** ECMAScript's Term is
+// `Atom Quantifier?` — at most one — so `a**`, `a*+`, `a++`, `a???` and `a*?*` are all *Nothing to
+// repeat*, while `(a*)*` is fine because the inner `*` belongs to the group's Atom. `parseRepeat`
+// looped, applying each quantifier in turn, and the comment beside the loop *said* `a**` was a syntax
+// error in JavaScript while the code went on to compile it. The loop is still what the POSIX dialects
+// need, where `grep "a**"` matches every line, so the refusal is gated on the same `posix` flag as the
+// leading brace.
+//
+// Both were reached by patterns written *because* a coverage report named the arm that handles them.
+// Neither the hand-written corpus nor the 3,000-pattern generator has an interval it never closes or a
+// quantifier on a quantifier: the generator composes well-formed pieces by construction, so the arms
+// for a construct running off the end of the pattern are ones it cannot draw.
+//
+// ## What the grants are worth, and why this is not a floor over a lottery
+//
+// **Dropping the grants takes this from 639 of 652 to 619**, because the twenty-two tests that ask
+// `node` or `/bin/grep` then fail. That is the size of what `issues/system/0221` unlocked here.
+//
+// `cov_exercise.wac` seeds an `Rng` and draws 3,000 patterns, and a figure that moves with the seed
+// cannot hold a floor — `packages/url`'s does exactly that and is deliberately still report-only.
+// Checked rather than assumed: **changing the seed from `0x0badc0de` leaves this at 639 of 652**. The
+// generated patterns add to a hand-written corpus rather than being it, which is the same reason
+// `datetime`, `unicode`, `bignum` and `http` are insensitive and `fmt` is not.
+//
+// ## The thirteen that are left
+//
+// Nine are defensive arms whose conditions two callers already guarantee, and the argument for each is
+// below rather than the word "unreachable". Four say `proven: false` because they are reachable and I
+// did not build the input — the honest flag, and each names what the next person would have to do.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/regex/test/cov_exercise.wac";
+const string PREFIX = "packages/regex/";
+
+/** What the tests need: a process to ask `node` and `/bin/grep`, and the environment to find them. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/regex/src/compile.wac", 58, "while (cap < want * 3) { cap = cap * 2; }", true,
+        "**One doubling is always enough, by arithmetic.** `grow(want)` is called from three places: " +
+        "twice as `grow(this.len + 1)`, and once as `grow(this.len + n)` from `copyRange`, where `n` " +
+        "is the length of a block already in the buffer. Write `C` for `code.len()` and `L` for " +
+        "`this.len`; the buffer holds three integers per instruction, so `C >= 3L`. This loop runs " +
+        "only when `C * 2 < (L + n) * 3`, and since a copied block is part of the program that " +
+        "contains it, `n <= L` — giving `(L + n) * 3 <= 6L <= C * 2`. The first grow is the other " +
+        "case and takes the branch above it: `C == 0` sets `cap` to 96, which covers 32 instructions " +
+        "at once.\n" +
+        "         Kept because the bound it defends is `copyRange`'s, not `emit`'s, and a later " +
+        "expansion that copied a block twice in one call would need it. Issue 0040 is the allocation " +
+        "this file is careful about."),
+    Pin("packages/regex/src/compile.wac", 146, "if (a >= lo && a <= hi) { a = a + shift; }", false,
+        "**Reachable in principle, and I did not establish how.** This is `copyRange` relocating a " +
+        "jump inside a block it is duplicating; the `else` is a `JMP` or `SPLIT` in the block whose " +
+        "target lies outside it. Every body I tried keeps its jumps inside itself — `(a?){2}`, " +
+        "`(a|b){2}`, `(a*|b){3}` and thirty `a?` in a group all took the `then` for every " +
+        "instruction.\n" +
+        "         `proven: false` rather than `true`: a well-formed body's jumps being self-contained " +
+        "is a property of *this* compiler's emitters, not of the copy, and the copy is written to be " +
+        "correct without depending on them. I did not prove it holds for every emitter, and saying so " +
+        "is better than a pin that claims it does."),
+    Pin("packages/regex/src/compile.wac", 165, "if (!this.failed) { this.why = why; }", false,
+        "**The promise in `refuse`'s own doc comment, and nothing tests it.** \"The first reason is " +
+        "kept: it is the one nearest what the caller wrote\" — this `else` is what keeps it, by " +
+        "declining to overwrite. Reaching it needs two refusals in one compile, and every caller " +
+        "returns as soon as it has failed, so a second `refuse` would need a caller that does not " +
+        "check. `(?=a)\\1` has two things wrong with it and only the first refusal runs.\n" +
+        "         `proven: false`, because a new refusal site added without a `return` would reach " +
+        "this immediately and the guard is exactly what would keep the message right. What a test " +
+        "would need is a caller that continues after failing, which today would be a bug in that " +
+        "caller — so this is a guard for a state the parser is written never to be in."),
+    Pin("packages/regex/src/compile.wac", 373, "} else if (ch < 0 || ch == '|' || ch == ')') {", true,
+        "**The same condition, written twice, and the other copy runs first.** This is `parseAtom`'s " +
+        "empty-branch arm — end of pattern, `|` or `)` — and `parseAlternation` at `:649` opens with " +
+        "`if (ch < 0 || ch == '|' || ch == ')') { return; }` before it calls anything. So `parseAtom` " +
+        "is never entered on one of those three, and `a|`, `|a`, `(|a)` and `(a|)` are all in the " +
+        "corpus.\n" +
+        "         Kept because it is what makes `parseAtom` total on its own terms rather than by its " +
+        "caller's habits, which is the same argument `packages/server`'s ledger makes for `writeInt`'s " +
+        "sign handling. The comment in the arm is the whole body, and an empty block *is* recorded " +
+        "when it runs — checked, because a branch the instrument could not see would look exactly " +
+        "like this."),
+    Pin("packages/regex/src/compile.wac", 418, "if (c.peek() != '{') { return Bounds(0, 0, false); }",
+        true,
+        "**Both callers have already checked.** `parseBounds` is called at `:377` under " +
+        "`ch == '{' && !c.posix && ...` and at `:462` under `if (ch == '{')`, and neither moves the " +
+        "cursor in between. So the first thing it does is restate a precondition it is always given.\n" +
+        "         Kept: it is what makes `parseBounds` safe to call speculatively, which is how `:377` " +
+        "uses it — the call is inside a condition, and a caller that reached for it without the guard " +
+        "would otherwise consume a byte it should not."),
+    Pin("packages/regex/src/compile.wac", 447, "if (c.len == start) { return; }", true,
+        "**Nothing to quantify, and the caller has already returned.** `parseRepeat` calls " +
+        "`parseAtom` and then checks whether it emitted anything; the cases where it emits nothing are " +
+        "exactly the three at `:373`, which `parseAlternation` refuses to enter the loop for. Same " +
+        "argument as that pin, one frame out.\n" +
+        "         Kept because without it the `while (true)` below would apply a quantifier to a body " +
+        "of zero instructions, and `wrapStar` on an empty range is a jump to itself."),
+    Pin("packages/regex/src/compile.wac", 512, "if (c.failed) { return; }", false,
+        "**Reachable if any of the four wrappers can fail, and today none of them does.** The " +
+        "`EXPANSION_LIMIT` check eight lines above returns on its own rather than falling through to " +
+        "here, so the only way to arrive failed is for `wrapStar`, `wrapPlus`, `wrapOptional` or " +
+        "`expandBounded` to set it — and none of them calls `fail` or `refuse` today.\n" +
+        "         `proven: false` deliberately: this is a guard against a *future* wrapper that can " +
+        "fail, in a loop that would otherwise go round again with a half-built program. A pin saying " +
+        "\"unreachable\" would be read as \"delete it\", and the day someone gives `expandBounded` a " +
+        "refusal is the day it matters."),
+    Pin("packages/regex/src/compile.wac", 606, "if (min == 0) {", true,
+        "**`expandBounded` is never called with an unbounded maximum and a zero minimum**, because " +
+        "`parseRepeat` takes that case itself: `min == 0 && max == -1` is `wrapStar` at `:503`, one of " +
+        "three shapes short-circuited before the general expansion. So inside this function `max < 0` " +
+        "implies `min >= 2` — `min == 1` is `wrapPlus` — and the `then` cannot run.\n" +
+        "         Kept because the two arms are the same decision `parseRepeat` makes, and an " +
+        "expansion that stopped short-circuiting `a*` would arrive here needing exactly this."),
+    Pin("packages/regex/src/compile.wac", 653, "if (c.len == before && c.peek() == ch) {", true,
+        "**The spin guard, and `parseRepeat` cannot return without consuming or failing.** Its own " +
+        "comment says what it is for: \"a construct the parser does not consume. Refuse rather than " +
+        "spin.\" Every path through `parseRepeat` either emits at least one instruction, sets " +
+        "`failed`, or returns after `parseAtom` emitted nothing — and that last case needs one of the " +
+        "three characters `parseAlternation` has already returned on.\n" +
+        "         Kept, and this is the pin least worth deleting: it is the difference between a " +
+        "malformed pattern being refused and this compiler hanging. The condition it tests is not " +
+        "*that* the parser is correct but that it made progress, which is the one property a caller " +
+        "can check without knowing the grammar."),
+    Pin("packages/regex/src/program.wac", 155, "if (stackPc.len() >= budget) { return BUDGET(); }",
+        true,
+        "**The step budget always fires first — a frame costs a step.** The loop counts one step per " +
+        "instruction and returns `BUDGET()` when `steps > budget`, and each iteration pushes at most " +
+        "one backtracking frame. So after `k` steps the stack holds at most `k` frames. Reaching this " +
+        "needs the stack *full* at `stackPc.len()` frames with `stackPc.len() >= budget`, which needs " +
+        "at least `budget` pushes, which needs at least `budget` steps — and step `budget + 1` has " +
+        "already returned.\n" +
+        "         `grown` caps growth at the budget, which is what makes the two bounds meet exactly: " +
+        "the stack can reach `budget` entries and never exceed them. Kept because without it `grown` " +
+        "would return an array of the same length and the write below it would be out of bounds — the " +
+        "guard is what turns a trap into an answer, and the argument that it cannot happen lives in " +
+        "the step counter, three hundred lines away."),
+    Pin("packages/regex/src/program.wac", 167, "if (undoSlot.len() >= budget) { return BUDGET(); }",
+        true,
+        "The same bound on the capture-undo log, which grows on `OP_SAVE` rather than on `OP_SPLIT`. " +
+        "One entry per step at most, so the argument in the pin above applies unchanged: `budget` " +
+        "entries need `budget` steps, and the step check has already returned."),
+    Pin("packages/regex/src/program.wac", 192, "if (undoSlot.len() >= budget) { return BUDGET(); }",
+        true,
+        "And the third, on the same log from `OP_CLEAR`. Three sites, one argument — which is the " +
+        "reason to write it once above and point at it twice rather than to pin them as three " +
+        "unrelated facts."),
+    Pin("packages/regex/src/program.wac", 222, "} else if (op == OP_PROGRESS()) {", false,
+        "**The `else` past this arm: an opcode the machine does not know, which only a hand-built " +
+        "`Program` can carry.** " +
+        "Everything `compile.wac` emits is one of the ops above; this arm traps rather than falling " +
+        "through, so a corrupt program stops instead of matching the wrong thing.\n" +
+        "         `proven: false`, and the route is short: `Program` is an exported struct, so a test " +
+        "can build one with an opcode of -1 and assert the trap. It needs a `trapCase` sweep in " +
+        "`cov_exercise.wac` — a trap in `main` ends the run and the report then looks exactly like " +
+        "the one before the change, which cost half an hour in `packages/bytes`. Worth doing; not " +
+        "done here, and this entry is what says so rather than a silent 100%.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No trap cases: not one of this package's 26 tests expects a trap, so every one of them is called
+  // from the exercise's `main`.
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

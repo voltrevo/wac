@@ -14,8 +14,40 @@
 // file with `/test/` in its path, so a driver's own branches cannot appear in the number.
 
 import { exec, accepts, execBasic, execExtended, basicAsExtended, whyBasic,
-         whyExtended } from "./probe.wac";
+         whyExtended, execBudget } from "./probe.wac";
 import { Rng } from "../../wactest/src/rng.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Core, Cli } from "std/platform.wac";
+import {
+  test_literals_dot_and_anchors as rx__literals_dot_and_anchors,
+  test_character_classes as rx__character_classes,
+  test_shorthand_classes as rx__shorthand_classes,
+  test_greedy_quantifiers as rx__greedy_quantifiers,
+  test_lazy_quantifiers as rx__lazy_quantifiers,
+  test_groups_and_alternation as rx__groups_and_alternation,
+  test_word_boundaries as rx__word_boundaries,
+  test_backtracking_order_is_the_whole_answer as rx__backtracking_order_is_the_whole_answer,
+  test_empty_matching_loops_terminate_and_agree as rx__empty_matching_loops_terminate_and_agree,
+  test_patterns_outside_the_subset_are_rejected as rx__patterns_outside_the_subset_are_rejected,
+  test_escapes_of_metacharacters as rx__escapes_of_metacharacters,
+  test_fuzz_flat_patterns_agree_with_regexp as rx__fuzz_flat_patterns_agree_with_regexp,
+  test_fuzz_nested_groups_agree_with_regexp as rx__fuzz_nested_groups_agree_with_regexp,
+  test_the_i_flag_agrees_with_regexp_over_ascii as rx__the_i_flag_agrees_with_regexp_over_ascii,
+  test_the_i_flag_changes_nothing_when_nothing_is_cased as rx__the_i_flag_changes_nothing_when_nothing_is_cased,
+  test_a_capture_heavy_quantifier_runs_out_of_room as rx__a_capture_heavy_quantifier_runs_out_of_room,
+  test_a_leading_brace_is_nothing_to_repeat_here_as_in_javascript as rx__a_leading_brace_is_nothing_to_repeat_here_as_in_javascript,
+  test_the_compilers_tables_grow_and_keep_what_was_in_them as rx__the_compilers_tables_grow_and_keep_what_was_in_them,
+  test_the_parser_corners_a_generated_corpus_misses as rx__the_parser_corners_a_generated_corpus_misses,
+} from "./wac/regex_test.wac";
+import {
+  test_basic_patterns_mean_what_gnu_grep_says as bs__basic_patterns_mean_what_gnu_grep_says,
+  test_generated_basic_patterns_mean_what_gnu_grep_says as bs__generated_basic_patterns_mean_what_gnu_grep_says,
+  test_bracket_expressions_byte_by_byte as bs__bracket_expressions_byte_by_byte,
+  test_gnus_backslash_anchors_are_anchors as bs__gnus_backslash_anchors_are_anchors,
+  test_a_refusal_says_whose_problem_it_is as bs__a_refusal_says_whose_problem_it_is,
+  test_a_leading_brace_is_a_literal_in_both_posix_dialects as bs__a_leading_brace_is_a_literal_in_both_posix_dialects,
+  test_the_i_flag_in_both_posix_dialects_agrees_with_grep as bs__the_i_flag_in_both_posix_dialects_agrees_with_grep,
+} from "./wac/basic_test.wac";
 
 
 string[] subjects() {
@@ -89,7 +121,7 @@ string piece(Rng r, string[] ats, string[] qs, i32 depth) {
   return ats[r.upto(ats.len())] + qs[r.upto(qs.len())];
 }
 
-export i32 main() {
+export i32 main(Core core, Cli cli) {
   i32 seen = 0;
 
   string[] subs = subjects();
@@ -120,6 +152,21 @@ export i32 main() {
       if (r.upto(6) == 0) { pattern = pattern + "|"; }
     }
     seen = seen + exec(pattern.toBytes(), subs[r.upto(subs.len())].toBytes(), 0).len();
+  }
+
+  // ── Budgets small enough to run out while the machine is still growing its stacks ──
+  //
+  // `runAt` grows three parallel stacks on demand and refuses when the growth would pass the budget,
+  // which is a different answer from "the step budget ran out" and reached by a different route: the
+  // step budget is a count of instructions, this is the *depth* the pattern asks for. Nothing called
+  // `execBudget` at all before `issues/system/0205` — the probe exported it and every caller above
+  // takes the default — so all three refusals were measured by nothing.
+  i32[] budgets = i32[](1, 2, 3, 4, 8, 16, 64);
+  string[] deep = string[]("(a|a|aa)+b", "(a*)*b", "((a)|(b))*c", "a?a?a?a?aaaa", "(a|b|c|d|e)+z");
+  for (i32 i = 0; i < deep.len(); i++) {
+    for (i32 b = 0; b < budgets.len(); b++) {
+      seen = seen + execBudget(deep[i].toBytes(), "aaaaaaaaab".toBytes(), 0, budgets[b]).len();
+    }
   }
 
   // A pattern that exhausts the step budget, which is its own return value. Forty `a`s.
@@ -168,6 +215,123 @@ export i32 main() {
     u8[] pb = why[i].toBytes();
     seen = seen + whyBasic(pb).len() + whyExtended(pb).len();
   }
+
+  // ── The package's own 24 tests, which reach what the probe cannot ──
+  //
+  // **Twenty-two of the 24 take `(Core, Cli)`** — they judge this engine against JavaScript's `RegExp`
+  // and against `/bin/grep`, both of which are a spawned process — so before `issues/system/0221` a
+  // coverage driver could not call one of them. What the exercise above measures is what a driver with
+  // no capabilities could reach, which turned out not to include the `i` flag at all: the probe's
+  // `execFlags` takes an `ignoreCase` argument and every call above passes `false`.
+  //
+  // None of them expects a trap, so there is no `trapCase` sweep here.
+  i32 bad = 0;
+  if (rx__literals_dot_and_anchors(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_literals_dot_and_anchors");
+    bad = bad + 1;
+  }
+  if (rx__character_classes(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_character_classes");
+    bad = bad + 1;
+  }
+  if (rx__shorthand_classes(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_shorthand_classes");
+    bad = bad + 1;
+  }
+  if (rx__greedy_quantifiers(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_greedy_quantifiers");
+    bad = bad + 1;
+  }
+  if (rx__lazy_quantifiers(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_lazy_quantifiers");
+    bad = bad + 1;
+  }
+  if (rx__groups_and_alternation(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_groups_and_alternation");
+    bad = bad + 1;
+  }
+  if (rx__word_boundaries(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_word_boundaries");
+    bad = bad + 1;
+  }
+  if (rx__backtracking_order_is_the_whole_answer(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_backtracking_order_is_the_whole_answer");
+    bad = bad + 1;
+  }
+  if (rx__empty_matching_loops_terminate_and_agree(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_empty_matching_loops_terminate_and_agree");
+    bad = bad + 1;
+  }
+  if (rx__patterns_outside_the_subset_are_rejected(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_patterns_outside_the_subset_are_rejected");
+    bad = bad + 1;
+  }
+  if (rx__escapes_of_metacharacters(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_escapes_of_metacharacters");
+    bad = bad + 1;
+  }
+  if (rx__fuzz_flat_patterns_agree_with_regexp(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_fuzz_flat_patterns_agree_with_regexp");
+    bad = bad + 1;
+  }
+  if (rx__fuzz_nested_groups_agree_with_regexp(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_fuzz_nested_groups_agree_with_regexp");
+    bad = bad + 1;
+  }
+  if (rx__the_i_flag_agrees_with_regexp_over_ascii(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_the_i_flag_agrees_with_regexp_over_ascii");
+    bad = bad + 1;
+  }
+  if (rx__the_i_flag_changes_nothing_when_nothing_is_cased().len() > 0) {
+    core.warn("error: FAILED regex_test test_the_i_flag_changes_nothing_when_nothing_is_cased");
+    bad = bad + 1;
+  }
+  if (rx__a_capture_heavy_quantifier_runs_out_of_room().len() > 0) {
+    core.warn("error: FAILED regex_test test_a_capture_heavy_quantifier_runs_out_of_room");
+    bad = bad + 1;
+  }
+  if (rx__the_parser_corners_a_generated_corpus_misses(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_the_parser_corners_a_generated_corpus_misses");
+    bad = bad + 1;
+  }
+  if (rx__the_compilers_tables_grow_and_keep_what_was_in_them(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_the_compilers_tables_grow_and_keep_what_was_in_them");
+    bad = bad + 1;
+  }
+  if (rx__a_leading_brace_is_nothing_to_repeat_here_as_in_javascript(core, cli).len() > 0) {
+    core.warn("error: FAILED regex_test test_a_leading_brace_is_nothing_to_repeat_here_as_in_javascript");
+    bad = bad + 1;
+  }
+  if (bs__basic_patterns_mean_what_gnu_grep_says(core, cli).len() > 0) {
+    core.warn("error: FAILED basic_test test_basic_patterns_mean_what_gnu_grep_says");
+    bad = bad + 1;
+  }
+  if (bs__generated_basic_patterns_mean_what_gnu_grep_says(core, cli).len() > 0) {
+    core.warn("error: FAILED basic_test test_generated_basic_patterns_mean_what_gnu_grep_says");
+    bad = bad + 1;
+  }
+  if (bs__bracket_expressions_byte_by_byte(core, cli).len() > 0) {
+    core.warn("error: FAILED basic_test test_bracket_expressions_byte_by_byte");
+    bad = bad + 1;
+  }
+  if (bs__gnus_backslash_anchors_are_anchors(core, cli).len() > 0) {
+    core.warn("error: FAILED basic_test test_gnus_backslash_anchors_are_anchors");
+    bad = bad + 1;
+  }
+  if (bs__a_refusal_says_whose_problem_it_is(core, cli).len() > 0) {
+    core.warn("error: FAILED basic_test test_a_refusal_says_whose_problem_it_is");
+    bad = bad + 1;
+  }
+  if (bs__a_leading_brace_is_a_literal_in_both_posix_dialects(core, cli).len() > 0) {
+    core.warn("error: FAILED basic_test test_a_leading_brace_is_a_literal_in_both_posix_dialects");
+    bad = bad + 1;
+  }
+  if (bs__the_i_flag_in_both_posix_dialects_agrees_with_grep(core, cli).len() > 0) {
+    core.warn("error: FAILED basic_test test_the_i_flag_in_both_posix_dialects_agrees_with_grep");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("regex: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  seen = seen + bad;
 
   return seen;
 }
