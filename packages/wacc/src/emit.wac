@@ -635,6 +635,30 @@ bool isNullableTy(Ty t) {
   }
 }
 
+/**
+ * Whether `left is Target` has a **constant answer** because the two share no ancestor.
+ *
+ * `ref.test` cannot ask this: wasm wants the tested heap type inside the operand's own hierarchy, so
+ * `p is Q` between unrelated structs is not a question the format will type. That is why the emitter
+ * used to give up here — but giving up is the wrong conclusion, because the answer is known. The
+ * checker already says so, in `diag.wac` code 201: *these types share no ancestor, so the test is
+ * always false*. So both compilers diagnose it as a warning and the reference then emits a constant,
+ * while this one declined the whole function over something it had just called a warning.
+ *
+ * `spec/spec/types.md` settles which constant, and the spec's own case is blunter than the prose —
+ * `§wac-is-undefined-type-6qbn3wr` asserts `otherType()` is `0` with the comment *"an unrelated type is
+ * false, not an error"*.
+ *
+ * **Deliberately narrow: both sides must be known struct names.** An unknown left type is not evidence
+ * of anything, and answering `false` for one would be the same guess-instead-of-refuse this whole audit
+ * is about (`issues/lang/0170a`). Anything else still declines.
+ */
+bool constantFalseIs(Env env, string target, string lty) {
+  if (!env.isStructName(target) || !env.isStructName(lty)) { return false; }
+  if (env.isSubtypeOf(target, lty) || env.isSubtypeOf(lty, target)) { return false; }
+  return true;
+}
+
 /** Whether a type is a function reference, which is decided by its spelling. */
 bool isFuncrefType(string t) {
   // **An array of funcrefs is an array.** `fn[void(i32)][]` starts with `fn[` as well, so a test that
@@ -6974,6 +6998,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           if (negated) { fb.byte(69); }
           return;
         }
+        // **Unrelated types: a constant, because the format cannot be asked.** `ref.test` needs the
+        // tested type inside the operand's hierarchy, so there is no instruction for `p is Q` — but
+        // there is an answer, and `constantFalseIs` explains why it is this one. `left` is still
+        // evaluated and dropped: it may have side effects, and the test being decidable does not make
+        // the expression it is asked about disappear.
+        if (constantFalseIs(env, env.canonType(tt3),
+                            env.canonType(typeOfE(src, lexed, env, left)))) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(26);   // drop
+          fb.byte(65);   // i32.const
+          fb.i32leb(negated ? 1 : 0);
+          return;
+        }
         return;
       }
       string en = env.variantOwners[vi];
@@ -9969,6 +10006,10 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         // the two are unrelated is one the format would refuse to type.
         if (env.isStructName(ty3) && env.isSubtypeOf(env.canonType(ty3), lty)) { return ""; }
         if (ty3 == "i31ref" && env.isSubtypeOf("i31ref", lty)) { return ""; }
+        // Unrelated structs have a constant answer, so this is emittable — see `constantFalseIs`. The
+        // gate and the emitter must agree here, which is why the condition is one function and not two
+        // copies of a condition.
+        if (constantFalseIs(env, env.canonType(ty3), lty)) { return ""; }
         return "a test for " + ty3 + " on a " + (lty == "" ? "value of no known type" : lty);
       }
       string il = unsupportedValue(src, lexed, env, left);
