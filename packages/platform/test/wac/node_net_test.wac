@@ -52,11 +52,18 @@ string build(Cli cli, string out, string target) {
   return "";
 }
 
-/** A server that is running, its log, and where its exit status will appear. */
+/**
+ * A server that is running, its log, where its exit status will appear, and **where its own pid is**.
+ *
+ * `pid` is the wrapper subshell's; `pidfile` is where that subshell writes the *program's*. The two are
+ * different processes and killing the first does not kill the second — see `kill` below, and
+ * `issues/system/0218`, which is 81 of these left running across three workspaces holding 5.1 GB.
+ */
 struct Server {
   i32 pid;
   string log;
   string status;
+  string pidfile;
   string error;
 }
 
@@ -77,18 +84,29 @@ struct Server {
 Server start(Cli cli, string dir, string name, string prog, string[] args) {
   string log = dir + "/" + name + ".log";
   string status = dir + "/" + name + ".status";
+  string pidfile = dir + "/" + name + ".pid";
   string line = quoted(prog);
   for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  // **The program is backgrounded inside the subshell and writes down its own pid**, which is the
+  // whole of `issues/system/0218`. `$!` out here is the *subshell's*, and killing that leaves the
+  // program running and reparented to init with its port still bound — 81 of them were live across
+  // three workspaces, the oldest 11h47m. The subshell still gets its `$?`, because `wait` hands it
+  // over: this is the first of the two fixes that issue proposes, and the second — `setsid` and kill
+  // the group — was chosen there on the grounds that it generalises to
+  // `packages/wactest/src/daemon.wac`. It does not need to: that file uses `exec` inside the braces,
+  // so its `$!` is already the program's, and its own header says why.
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "( " + line + "; echo EXIT=$? > " + quoted(status) + " ) >" + quoted(log) +
+    string[]("-c", "( " + line + " & child=$!; echo $child > " + quoted(pidfile) +
+                   "; wait $child; echo EXIT=$? > " + quoted(status) + " ) >" + quoted(log) +
                    " 2>&1 & echo $!"), u8[0]()).wait();
   if (!r.ran() || r.status != 0) {
-    return Server(-1, log, status, "the shell did not start it — " + string.fromBytes(r.stderr));
+    return Server(-1, log, status, pidfile,
+                  "the shell did not start it — " + string.fromBytes(r.stderr));
   }
   u8[] b = r.stdout;
   i32 pid = 0;
   for (i32 i = 0; i < b.len(); i++) { if (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] - '0'); } }
-  return Server(pid, log, status, pid > 0 ? "" : "no pid from the shell");
+  return Server(pid, log, status, pidfile, pid > 0 ? "" : "no pid from the shell");
 }
 
 string readOr(Cli cli, string path, string fallback) {
@@ -153,9 +171,47 @@ i32 exitStatus(Core core, Cli cli, Server s, i32 millis) {
   return -1;
 }
 
-void kill(Cli cli, Server s) {
-  if (s.pid <= 0) { return; }
+/** The pid the subshell wrote down, or 0 — it appears a moment after the shell answers. */
+i32 childPid(Core core, Cli cli, Server s) {
+  for (i32 tries = 0; tries < 100; tries++) {
+    FileResult f = cli.readFile(s.pidfile).wait();
+    if (f.ok) {
+      u8[] b = f.bytes;
+      i32 pid = 0;
+      for (i32 i = 0; i < b.len(); i++) {
+        if (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] - '0'); }
+      }
+      if (pid > 0) { return pid; }
+    }
+    core.sleepMillis(10).wait();
+  }
+  return 0;
+}
+
+/**
+ * Stop the server, **the program and then its wrapper**, and answer whether the program is gone.
+ *
+ * The child first, so `wait` returns and the subshell writes its `EXIT=` before it is asked to leave.
+ * The answer is what makes this checkable: the assertions in these tests had all happened by the time
+ * `kill` ran, so a `kill` that killed the wrong process passed every one of them for weeks.
+ */
+bool kill(Core core, Cli cli, Server s) {
+  if (s.pid <= 0) { return true; }
+  i32 child = childPid(core, cli, s);
+  if (child > 0) {
+    cli.exec("/bin/sh", string[]("-c", "kill -9 " + itoa(child) + " 2>/dev/null; true"),
+             u8[0]()).wait();
+  }
   cli.exec("/bin/sh", string[]("-c", "kill -9 " + itoa(s.pid) + " 2>/dev/null; true"), u8[0]()).wait();
+  if (child <= 0) { return false; }
+  // `kill -0` asks whether the pid exists without touching it; a reaped child answers no.
+  for (i32 tries = 0; tries < 200; tries++) {
+    Exec alive = cli.exec("/bin/sh", string[]("-c", "kill -0 " + itoa(child) + " 2>/dev/null"),
+                          u8[0]()).wait();
+    if (!alive.ran() || alive.status != 0) { return true; }
+    core.sleepMillis(10).wait();
+  }
+  return false;
 }
 
 /** What one runtime's server said to a client, and what it logged. */
@@ -171,13 +227,16 @@ Greeted greet(Core core, Cli cli, string dir, string name, string prog, string[]
   if (s.error != "") { return Greeted("", "", -1, s.error); }
   i32 port = waitForPort(core, cli, s, 30000);
   if (port < 0) {
-    kill(cli, s);
+    kill(core, cli, s);
     return Greeted("", readOr(cli, s.log, ""), -1, "the server never said its port");
   }
   string said = greetedBy(core, cli, port);
   i32 code = exitStatus(core, cli, s, 30000);
-  kill(cli, s);
-  return Greeted(said, readOr(cli, s.log, ""), code, "");
+  // A server that greeted and exited is already gone, so `kill` has nothing to do and says so; a
+  // `false` here would mean the program outlived a kill aimed at it.
+  bool stopped = kill(core, cli, s);
+  return Greeted(said, readOr(cli, s.log, ""), code,
+                 stopped ? "" : "the server was still running after kill");
 }
 
 export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_client(
@@ -246,7 +305,7 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
     i32 got = waitForPort(core, cli, s, 30000);
     string log = readOr(cli, s.log, "");
     if (got < 0) {
-      kill(cli, s);
+      kill(core, cli, s);
       // A bind failure is retried, and only that: the child's own words are kept so `Address already
       // in use` can be told from a real failure rather than guessed at.
       if (contains(log, "Address already in use") || contains(log, "EADDRINUSE")) {
@@ -267,8 +326,13 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
     t.isTrue(contains(line, "127.0.0.1:" + itoa(port)),
              "bound elsewhere: " + (line == "" ? table : line) +
              (log == "" ? "" : " | node said: " + log));
-    // Tidy: the server is waiting for a connection nobody is going to make.
-    kill(cli, s);
+    // **Not tidiness — the assertion this file was missing.** The server is waiting for a connection
+    // nobody is going to make, and every other assertion here has already happened, so a `kill` that
+    // killed the wrapper instead of the program passed all of them. `issues/system/0218` is the 81
+    // servers that left, holding 5.1 GB and 81 ports across three workspaces.
+    t.isTrue(kill(core, cli, s),
+             "the node server is gone after kill — otherwise it is holding port " + itoa(port) +
+             " and 42 MB until somebody notices");
     break;
   }
   cli.remove(dir, true).wait();

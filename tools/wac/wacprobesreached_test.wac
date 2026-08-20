@@ -1,0 +1,128 @@
+// A probe file is reached by something.
+//
+// A `*probe*.wac` under `test/wac/` exists to be called from somewhere else — that is its whole
+// purpose, and it is why `tools/deadexports.ts` exempts these files by name: every export is meant to
+// be unused *from wac*, so the dead-export check would report all of them.
+//
+// **That exemption is also a blind spot.** A probe whose caller is deleted keeps compiling, keeps being
+// swept by `corpusEmit`, and is reported by nothing. Three sat that way for two weeks — two in
+// `packages/tor` that outlived the TypeScript driving them (`d8ea860e`, *"tor: delete the TypeScript —
+// the client is wac, and it works"*) and one in `packages/crypto` that outlived its test. They were
+// found by hand while converting a *different* package, which is not a way to find the next one.
+//
+// **No probe is named here on purpose.** This file is part of the corpus it searches, so writing a
+// probe's filename into it would make that file count as the thing reaching it — the guard would answer
+// its own question. The deleted three are described rather than named for the same reason.
+//
+// So: every probe must be named by at least one other file. The check is deliberately a text search for
+// the basename rather than an import graph, because the ways a probe gets reached are various —
+// `wacBind("…/probe.wac")`, an `instrument(…)` call, a bench, a design note that points at it — and
+// every one of them writes the name.
+//
+// This is the sibling of the rule that keeps catching citations during conversions: `deno task docs`
+// checks backticked paths, and a path passed as an argument is invisible to it. Same gap, other
+// direction.
+//
+// ## `git grep` rather than reading the corpus — `issues/system/0161`
+//
+// It was wacProbesReached.test.ts in tools/ until 2026-08-20, where it walked the tree and read every
+// `.ts`, `.wac`, `.md` and `.json` into a map once, then searched the map per probe. Reading 2,000
+// files from wac is 2,000 host round trips and about four seconds — `tools/wac/duplicatedline_test.wac`
+// pays exactly that and says so — where **38 `git grep -lF` calls are ten milliseconds each**. The
+// search is a fixed string over tracked files, which is what `git grep` is, so this is the same
+// question asked of something that already has the answer indexed.
+//
+// The corpus is therefore git's rather than a walk's, which drops untracked files. That is the right
+// set: a probe reached only from a file nobody has committed is not reached.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
+import { tracked, nonEmptyLines } from "../../packages/wactest/src/repo.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** The part of `path` after the last slash. */
+string basename(string path) {
+  i32 at = -1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { at = i; } }
+  return at < 0 ? path : path.slice(at + 1, path.len());
+}
+
+/**
+ * Every tracked `packages/<pkg>/test/wac/*probe*.wac`.
+ *
+ * The shape is matched rather than the directory walked, so a package with no wac tests is not a
+ * finding and neither is a probe somewhere unexpected — it would simply not be checked, which is why
+ * the floor below matters.
+ */
+string[] probeFiles(Core core, Cli cli) {
+  string[] all = tracked(core, cli);
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) { if (isProbe(all[i])) { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (isProbe(all[i])) { out[at] = all[i]; at = at + 1; }
+  }
+  return out;
+}
+
+bool isProbe(string path) {
+  if (!contains(path, "/test/wac/")) { return false; }
+  if (path.len() < 4 || path.slice(path.len() - 4, path.len()) != ".wac") { return false; }
+  string base = basename(path);
+  return contains(base, "probe") && contains(path, "packages/");
+}
+
+/**
+ * The tracked files naming `needle`, as a fixed string.
+ *
+ * `git grep` exits 1 for no matches, which is an answer rather than a failure — only a status above
+ * one is a broken search, and that is asserted rather than read as "nothing names it".
+ */
+string[] naming(Core core, Cli cli, string needle, i32[] status) {
+  Exec r = cli.exec("git",
+    string[]("grep", "-lF", needle, "--", "*.ts", "*.wac", "*.md", "*.json", ":!site/"),
+    u8[0]()).wait();
+  if (!r.ran()) {
+    status[0] = -1;
+    core.warn("probes: git grep did not run — " + r.error);
+    return string[0](fill: "");
+  }
+  status[0] = r.status;
+  return nonEmptyLines(string.fromBytes(r.stdout));
+}
+
+export string test_every_probe_file_is_named_by_something_that_could_reach_it(Core core, Cli cli) {
+  T t = T.create();
+  string[] probes = probeFiles(core, cli);
+
+  // A floor, so a search that silently resolved nothing cannot pass. There were 38 when this moved;
+  // the number only matters as evidence the search ran.
+  t.isTrue(probes.len() >= 20,
+           "only " + itoa(probes.len()) + " probe file(s) found — did the corpus resolve?");
+  if (probes.len() < 20) { return t.report(); }
+
+  string orphans = "";
+  i32 n = 0;
+  i32[] status = i32[1]();
+  for (i32 i = 0; i < probes.len(); i++) {
+    string[] hits = naming(core, cli, basename(probes[i]), status);
+    t.isTrue(status[0] <= 1,
+             "git grep failed with " + itoa(status[0]) + " for " + basename(probes[i]));
+    if (status[0] > 1) { return t.report(); }
+    bool reached = false;
+    for (i32 k = 0; k < hits.len(); k++) {
+      // A file naming itself proves nothing.
+      if (hits[k] != probes[i]) { reached = true; }
+    }
+    if (!reached) { orphans = orphans + "\n  " + probes[i]; n = n + 1; }
+  }
+
+  t.eqI32(n, 0, itoa(n) + " probe file(s) nothing names:" + orphans +
+                "\nA probe exists to be reached from somewhere else. One that nothing reaches is a " +
+                "file that still compiles and tests nothing — delete it, or say what reaches it. " +
+                "`deadexports` cannot report these: it exempts probe files by name, which is right " +
+                "for a live one.");
+  return t.report();
+}

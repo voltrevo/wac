@@ -1,6 +1,6 @@
 # 0218 — a test kills the shell that started its server, not the server
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-c
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -46,3 +46,37 @@ Four to five gigabytes held by finished tests is most of the headroom on a machi
 and `issues/system/0203` is a list of gate failures that "track the machine's load rather than a
 particular file". That is not proof they are the same thing, but a suite that leaks 65 MB and a port per
 run is a plausible contributor, and it is worth fixing before the next attempt to explain those.
+
+## Fixed — 2026-08-20
+
+`start()` now backgrounds the program *inside* the subshell and has it write down its own pid:
+
+```
+( <line> & child=$!; echo $child > <pidfile>; wait $child; echo EXIT=$? > <status> ) >log 2>&1 & echo $!
+```
+
+`kill()` reads that pidfile, kills the program first so `wait` returns and the subshell still records
+its `EXIT=`, then kills the wrapper — and **answers whether the program is gone**, polled with
+`kill -0`. That answer is the part that was missing: this issue's own diagnosis says "the test passes
+either way, because everything it asserts has already happened by then", so the bind case now asserts
+it.
+
+This is the *first* of the two fixes proposed above. The second — `setsid` and kill the group — was
+preferred here on the grounds that it generalises, because "`packages/wactest/src/daemon.wac`'s
+`start`/`stop` has the same shape". **It does not.** That file's line is
+`{ exec <line>; } >log 2>&1 & echo $!`, and its own header explains the `exec` at length: *"Without it
+the shell forks a subshell, backgrounds that, and `$!` names the subshell rather than the program — so
+`stop` kills a shell and leaves the server running, which showed up as 'still answering after stop'."*
+`daemon.wac` had this bug and fixed it; `node_net_test.wac` could not use the same fix because it needs
+`$?`, which is why it kept the subshell and why it kept the leak. So there was nothing to generalise to,
+and the local fix is the whole of it.
+
+Canaried by putting the old `kill` back: the new assertion fails with the port it is holding, and an
+orphan appears — 3 live `greet-node` processes became 4. With the fix, two runs left the count
+unchanged.
+
+**Measured on the way in**, because the memory floor in `tools/suiteGate.ts` refused a push: 45 orphans
+were live, 36 of them in this workspace, the oldest 11h53m. Killing them took memory *available* from
+4,706 MB to 6,030 MB on a box with 11,931 — past the 5,500 the gate asks for. `issues/system/0203`'s
+list of gate failures that "track the machine's load rather than a particular file" now has one fewer
+plausible contributor.

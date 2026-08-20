@@ -13,8 +13,9 @@
 // — so a check placed there would be one nothing runs. `issues/system/0146` is what that cost.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { Core, Cli, Exec, Stat } from "std/platform.wac";
+import { Core, Cli, Exec, Stat, FileResult } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
 
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
@@ -53,4 +54,81 @@ export string test_the_sites_generated_copy_is_current(Core core, Cli cli) {
           "site/src/data/built.ts is out of date — run `deno task site:map`. It said: " +
           string.fromBytes(r.stderr));
   return t.report();
+}
+
+/**
+ * **The two lists of test-registering spellings say the same thing.**
+ *
+ * `harness/testRegistrars.ts` calls itself "every spelling that registers a Deno test, in one place"
+ * and `tools/wac/map.wac` has its own copy of three of them, because there is no way for a wac file
+ * and a TypeScript file to share a list of strings. So "one place" is a wish, and this is what makes
+ * it true in the only way available: read both, compare.
+ *
+ * The incident is the reason. `testBounded` was added to the TypeScript and not to the counter, five
+ * files in `ssh` and `tor` stopped having a literal `Deno.test(` in them, and **28 tests became
+ * invisible** — MAP said the suite was smaller and nothing was wrong with the suite. Both files record
+ * that, and neither could have caught it.
+ *
+ * `wacTestRun` is the fourth registrar and is deliberately *not* in the counter: it registers one test
+ * per `export string test*` in a wac file, and those are counted from the wac. So the comparison is
+ * over the ones marked `countsHere: true`, and the fourth being absent from `map.wac` is asserted too
+ * — otherwise adding it there would double-count every wac test and this would say nothing.
+ */
+export string test_the_two_lists_of_test_registrars_agree(Core core, Cli cli) {
+  T t = T.create();
+  FileResult ts = cli.readFile("harness/testRegistrars.ts").wait();
+  FileResult wac = cli.readFile("tools/wac/map.wac").wait();
+  t.isTrue(ts.ok && wac.ok, "could not read both lists");
+  if (!ts.ok || !wac.ok) { return t.report(); }
+  string tsText = string.fromBytes(ts.bytes);
+  string wacText = string.fromBytes(wac.bytes);
+
+  string[] here = countsHere(tsText);
+  // A floor, because a parser that found nothing would make every assertion below vacuous — which is
+  // the shape of failure this file is about one level up.
+  t.isTrue(here.len() >= 3,
+           "only " + itoa(here.len()) + " `countsHere: true` registrar(s) parsed out of " +
+           "harness/testRegistrars.ts — the shape of that file has changed");
+  if (here.len() < 3) { return t.report(); }
+
+  for (i32 i = 0; i < here.len(); i++) {
+    t.isTrue(contains(wacText, "occurrences(src, \"" + here[i] + "\")"),
+             "harness/testRegistrars.ts counts `" + here[i] + "` here and tools/wac/map.wac does " +
+             "not — add it to `countTestsDeclaredHere`, or MAP will undercount every file that uses " +
+             "it");
+  }
+  // And the delegate must stay out, or every wac test is counted twice.
+  t.isTrue(!contains(wacText, "occurrences(src, \"wacTestRun(\")"),
+           "tools/wac/map.wac counts `wacTestRun(` here, which double-counts every wac test: those " +
+           "are counted from the wac file itself");
+  return t.report();
+}
+
+/**
+ * The `call:` strings in `testRegistrars.ts` whose entry says `countsHere: true`.
+ *
+ * A scan rather than `indexOf` from an offset, which wac's `string.indexOf` does not take. Each entry
+ * is one line of the form `{ call: "…", countsHere: … },`, so the line is the unit and the parse is
+ * two slices — and a shape change makes the floor in the caller fire rather than making this lie.
+ */
+string[] countsHere(string text) {
+  string[] out = string[16](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i < text.len() && text.slice(i, i + 1) != "\n") { continue; }
+    string line = text.slice(from, i);
+    from = i + 1;
+    if (!contains(line, "{ call: \"") || !contains(line, "countsHere: true")) { continue; }
+    i32 open = line.indexOf("{ call: \"");
+    i32 start = open + 9;
+    i32 close = -1;
+    for (i32 k = start; k < line.len() && close < 0; k++) {
+      if (line.slice(k, k + 1) == "\"") { close = k; }
+    }
+    if (close > start && n < out.len()) { out[n] = line.slice(start, close); n = n + 1; }
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
 }

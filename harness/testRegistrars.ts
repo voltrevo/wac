@@ -1,4 +1,10 @@
-// Every spelling that registers a Deno test, in one place.
+// Every spelling that registers a Deno test, in one place — for the TypeScript.
+//
+// **`tools/wac/map.wac` has its own copy of three of them**, because there is no mechanism for a wac
+// file and a TypeScript file to share a list of strings, and this header said "in one place" while
+// that copy sat there. What makes the claim true is `tools/wac/map_test.wac`, which reads both files
+// and compares: a spelling here and not there fails, and the delegate being counted there fails too.
+// That is the check the incident below asks for, and it did not exist until 2026-08-20.
 //
 // Two tools ask about this and they ask different questions, which is why the list carries a field
 // rather than being an array of strings:
