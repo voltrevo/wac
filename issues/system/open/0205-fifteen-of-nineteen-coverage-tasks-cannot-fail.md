@@ -476,6 +476,43 @@ A comment saying a branch is unreachable is worth reading closely: two of the th
 caller they were unreachable *through*, which is a different claim, and both were reachable from a
 test.
 
+### The same defect, one level up: the sweep counts 21 packages and 38 exist
+
+This issue was filed because a summary line read `19/19 passed` over drivers that could not fail. The
+line is honest about that now. It is **not** honest about what it is a sweep of.
+
+`tools/coverageAll.ts` derives `PACKAGES` from the `coverage:` tasks in `deno.json`, and its own header
+gives the reason — "deriving it means adding a task is the whole of adding it to the sweep", which is
+right. The consequence nobody had written down is that a package with **no task at all** is not
+reported as having no driver. It is not reported. It does not exist to the file.
+
+So `17 hold a coverage floor … 4 report and cannot fail` counts twenty-one packages while eighteen more
+sit on disk with no measurement of any kind:
+
+    abi, bls, box, ens, ethrpc, git, lightclient, mpt, platform, quic, rlp, ssz, tls, tor, tty,
+    wacc, wactest, webrtc
+
+**By source lines that is 82,762 unmeasured against 36,918 measured** — a little over a third of the
+packages' code is in the numbers this issue tracks. `wacc` is 33,575 lines of it and `tor` 15,913.
+
+This is the same shape as `packages/http`'s `proxy.wac` earlier in this issue: eighty-six branch points
+that were absent from the report rather than uncovered, so the total said 447 instead of 533. **The
+denominator is the one number that cannot warn you it is wrong**, and it has now been the answer twice.
+
+Counted rather than failed, and printed under the summary:
+
+    21/21 ran in 92s (297s of work at 4 workers) — 17 hold a coverage floor, 0 only check their own
+    exemptions have not drifted, 4 report and cannot fail
+       18 package(s) have no coverage task and are not in the numbers above: abi, bls, box, …
+
+A package acquiring a driver is work; a sweep that went red the moment this was noticed would have gone
+red for everyone, on somebody else's push, over a fact that has been true since the sweep existed.
+
+**What this does not settle** is whether those eighteen should have drivers, which is a bigger decision
+than the one this issue opened with and belongs to whoever owns them — `box` and `sh` are agent-c's,
+`wacc` is the compiler, and `wactest` is test support whose consumers are tests by construction. What
+has changed is that the number is on the screen instead of implied by its absence.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
