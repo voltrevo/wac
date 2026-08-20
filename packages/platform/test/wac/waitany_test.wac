@@ -79,12 +79,15 @@ export string test_waitany_parks_until_whichever_socket_speaks_first(Core core, 
   string dir = cli.cwd().wait() + "/.cache/waitany";
   cli.mkdir(dir, true).wait();
 
-  Port quick = freePortOr(cli);
-  Port slow = freePortOr(cli);
-  i32 quickPort = quick.port;
-  i32 slowPort = slow.port;
+  // `quickFree`/`slowFree` rather than `quick`/`slow`: the daemons below want those names, and one
+  // name standing for a `Port` up here and a `Daemon` down there is a name whose type depends on
+  // which line you are reading. `issues/lang/0174a`.
+  Port quickFree = freePortOr(cli);
+  Port slowFree = freePortOr(cli);
+  i32 quickPort = quickFree.port;
+  i32 slowPort = slowFree.port;
   t.isTrue((quickPort > 0) && (slowPort > 0) && (quickPort != slowPort),
-           "two free ports — " + quick.error + " " + slow.error);
+           "two free ports — " + quickFree.error + " " + slowFree.error);
   if (quickPort <= 0 || slowPort <= 0 || quickPort == slowPort) { return t.report(); }
 
   Daemon quick = serveOnce(cli, quickPort, "0", "quick", dir + "/quick.log");

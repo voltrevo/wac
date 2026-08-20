@@ -177,8 +177,11 @@ export Loaded read(u8[] data, i64 now) {
   fs.mounts = mounts;
   fs.nodes = nodes;
 
-  i32 mounts = r.u32();
-  for (i32 i = 0; i < mounts; i++) {
+  // Named for the count rather than reusing `mounts`: the collection two lines up is still live —
+  // `fs.mounts` is what the loop pushes into — and one name meaning both in one scope is a name whose
+  // type depends on which line you are reading. `issues/lang/0174a`.
+  i32 mountCount = r.u32();
+  for (i32 i = 0; i < mountCount; i++) {
     string at = r.string();
     if (r.bad) { return failed(r.why == "" ? "the image ends inside a mount point" : r.why); }
     i32 root = getNode(r, fs, now);

@@ -1,0 +1,41 @@
+// xorshift64*, for fuzz corpora that only have to be reproducible.
+//
+//     import { Rng64, rng, next, randomBytes } from "../../wactest/src/rng64.wac";
+//
+//     Rng64 r = rng(14);
+//     u8[] body = randomBytes(r, 300);
+//
+// **This is not `rng.wac`, and the difference is what each one owes.** The xorshift32 there is
+// answerable to a generator that used to exist on the host side, so its return type is a fact about
+// somebody else's code and getting it wrong drew a different corpus (`issues/system/0220`). This one
+// matches nothing outside this repository. Its only contract is that a seed named in a failure
+// reproduces that failure, which every arrangement of these three shifts satisfies equally.
+//
+// So the reason it is shared is the plainer one: `packages/tls` and `packages/tor` each had a copy,
+// and the two differed by a temporary variable — `i32 v = …; return v;` against `return …;`. That is
+// the state a duplicate reaches before it drifts somewhere that matters.
+//
+// The state is `i64` and the draw is 31 bits, which is why the struct is named for its width: a file
+// importing both this and `rng.wac` would otherwise be importing two different things called `Rng`.
+
+export struct Rng64 { i64 s; }
+
+/** Seeded. Zero is not a usable xorshift state, so it becomes the conventional non-zero one. */
+export Rng64 rng(i64 seed) { return Rng64(seed == 0 ? 88172645463325252 : seed); }
+
+/** One step, as a non-negative `i32` — the sign bit is masked off rather than reinterpreted. */
+export i32 next(Rng64 r) {
+  i64 x = r.s;
+  x = x ^ (x << 13);
+  x = x ^ (x >> 7);
+  x = x ^ (x << 17);
+  r.s = x;
+  return (x & 0x7FFFFFFF) as! i32;
+}
+
+/** `n` bytes, one draw each — the low eight bits, which for this generator are as good as any. */
+export u8[] randomBytes(Rng64 r, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = next(r) & 0xFF; }
+  return out;
+}

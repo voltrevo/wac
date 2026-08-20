@@ -35,6 +35,7 @@ import { Store, pemBundle } from "../../src/roots.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { Tampered, sweepTampering } from "./certtamper.wac";
+import { Rng64, rng, next, randomBytes } from "../../../wactest/src/rng64.wac";
 
 /**
  * The key material a client needs, in the sizes `tlsClientInit` takes them.
@@ -73,27 +74,11 @@ Store fixtures(Core core, Cli cli) {
 /** Certificate `i` of the bundle, as DER. */
 u8[] fixture(Store s, i32 i) { return slice(s.der, s.offsets[i * 2], s.offsets[i * 2 + 1]); }
 
-struct Rng { i64 s; }
-Rng rng(i64 seed) { return Rng(seed == 0 ? 88172645463325252 : seed); }
-i32 next(Rng r) {
-  i64 x = r.s;
-  x = x ^ (x << 13);
-  x = x ^ (x >> 7);
-  x = x ^ (x << 17);
-  r.s = x;
-  return (x & 0x7FFFFFFF) as! i32;
-}
-u8[] randomBytes(Rng r, i32 n) {
-  u8[] out = u8[n]();
-  for (i32 i = 0; i < n; i++) { out[i] = next(r) & 0xFF; }
-  return out;
-}
-
 export string test_record_framing_survives_arbitrary_bytes() {
   // `recordLength` is the very first thing to touch a TLS peer's bytes — before the
   // handshake, before any key, before any identity. It decides how much the rest will read.
   T t = T.create();
-  Rng r = rng(11);
+  Rng64 r = rng(11);
   i32 complete = 0;
   for (i32 i = 0; i < 4000; i++) {
     u8[] buf = randomBytes(r, next(r) % 200);
@@ -114,7 +99,7 @@ export string test_record_framing_survives_arbitrary_bytes() {
 
 export string test_record_framing_at_every_truncation() {
   T t = T.create();
-  Rng r = rng(12);
+  Rng64 r = rng(12);
   u8[] whole = randomBytes(r, 300);
   whole[0] = 23;
   whole[1] = 3;
@@ -136,7 +121,7 @@ export string test_the_wire_reader_stops_at_its_end() {
   // the caller's job. This pins that contract: reads inside the buffer work, and the reader
   // knows when it is spent.
   T t = T.create();
-  Rng r = rng(13);
+  Rng64 r = rng(13);
   for (i32 i = 0; i < 3000; i++) {
     u8[] b = randomBytes(r, next(r) % 120);
     Reader rd = Reader.create(b);
@@ -166,7 +151,7 @@ export string test_the_client_survives_whatever_a_server_sends(Core core, Cli cl
   // A failure code is a fine outcome and so is ignoring the bytes. Aborting is not: it hands
   // anyone who can answer a connection the ability to kill the client.
   T t = T.create();
-  Rng r = rng(14);
+  Rng64 r = rng(14);
   for (i32 i = 0; i < 300; i++) {
     //  on init too — it returns the same three-part blob as feed does, and
     // forgetting that fed the whole blob back in as state. The trap that produced was in
@@ -206,7 +191,7 @@ export string test_inner_plaintext_type_from_arbitrary_bytes() {
   // `recordType` traps on it deliberately — RFC 8446 §5.4 calls that `unexpected_message` —
   // and `recordOpen` refuses such a record before this is ever reached. I asserted it
   // returned -1 and was wrong about the design.
-  Rng r = rng(14);
+  Rng64 r = rng(14);
   for (i32 i = 0; i < 2000; i++) {
     u8[] inner = randomBytes(r, 1 + next(r) % 50);
     inner[next(r) % inner.len()] = 1 + (next(r) % 255);
@@ -279,7 +264,7 @@ export string test_a_certificate_parser_never_aborts(Core core, Cli cli) {
   // It used to abort on every truncation of a real certificate and on all five hundred of
   // the first random inputs tried. That was a remote crash needing no credentials at all.
   T t = T.create();
-  Rng r = rng(21);
+  Rng64 r = rng(21);
   Store certs = fixtures(core, cli);
   u8[] real = fixture(certs, 0);
   t.isTrue(parseCert(real).wellFormed, "the genuine certificate parses");
@@ -307,7 +292,7 @@ export string test_a_malformed_certificate_is_refused_on_its_own_terms(Core core
   // bytes that were never a certificate is the wrong answer, and a caller that only wanted
   // to read a name never reaches that check at all.
   T t = T.create();
-  Rng r = rng(22);
+  Rng64 r = rng(22);
   Store certs = fixtures(core, cli);
   u8[] real = fixture(certs, 0);
   u8[] ca = fixture(certs, 1);
