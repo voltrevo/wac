@@ -175,8 +175,7 @@ export string test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_gi
   Exec r = withEnv(cli, names, values, wac,
                    string[](builtProgram(cli, "packages/git/example/gitls.wac", "gitls",
                                          string[]("--allow-net", "--allow-env", "--allow-read",
-                                                  "--quiet"),
-                              string[]("packages/git/src", "packages/git/example")),
+                                                  "--quiet")),
                             REMOTE));
   string err = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 0, "gitls failed: " + err);

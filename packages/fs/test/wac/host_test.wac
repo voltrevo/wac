@@ -12,15 +12,18 @@
 // ## What the move changed
 //
 // `ops` is built with `wac build` and run with `Cli.exec` where `harness/appRun.ts` used to do both
-// from Deno — the same two steps without the host in between. It is built **once**, in the first
-// thing every test calls, rather than once per case: seven rebuilds of the same program would make
-// this the slowest check in the tree for no gain.
+// from Deno — the same two steps without the host in between. It is built **once and kept**, in the
+// first thing every test calls: this said "once, rather than once per case" while the code rebuilt it
+// eight times, which was 16.5s of CPU. `wactest/src/built.wac` keeps it on disk between runs, so the
+// eight tests share one build: **3.3s cold and 0.2s warm**, which also says what the sixteen `ops` runs
+// cost — almost nothing. The builds were the whole of it.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { builtProgram } from "../../../wactest/src/built.wac";
 
 const string OPS = "packages/fs/example/ops.wac";
 
@@ -46,27 +49,27 @@ string workDir(Cli cli) {
 }
 
 /**
- * Build `ops` and answer where it is, or "" — the message is on stderr either way.
+ * Where `ops` is, building it if anything it is made of is newer — or "" if that failed.
  *
- * Rebuilt on every test rather than cached, because there is nowhere to cache it: wac has no mutable
- * globals, which is the same reason `Lines` is passed around rather than accumulated. `wac build` on
- * a two-file program is fast enough that seven of them are not what this file costs.
+ * **It was rebuilt by every one of the eight tests**, and the docstring here said why: "there is
+ * nowhere to cache it: wac has no mutable globals". There is nowhere to cache it *in the process*, and
+ * the disk is a perfectly good place — `wactest/src/built.wac` keeps the artefact under
+ * `.cache/built-fs-ops` and rebuilds it when something under `trees` or the `wac` binary is newer. The
+ * file header claimed it was already built once "in the first thing every test calls", which the code
+ * two lines below contradicted; a `wac build` of `ops` is about 1.9s and eight of them were 16.5s of
+ * CPU, the fourth most expensive file in the lane. It is 0.2s warm now.
+ *
+ * `ops` reaches nine files, and `std/platform.wac` is not one of them — it is embedded in the compiler,
+ * so a change to it arrives as a new `wac` binary, whose mtime `builtProgram` checks anyway.
  */
 string buildOps(T t, Core core, Cli cli) {
   Stat bin = cli.stat(binary(cli)).wait();
   t.isTrue(bin.exists, "the binary that builds ops is where the seed task writes it");
   if (!bin.exists) { return ""; }
-  string work = workDir(cli);
-  Change made = cli.mkdir(work, true).wait();
-  t.isTrue(made.ok(), "a working directory: " + made.message);
-  if (!made.ok()) { return ""; }
-  string stem = work + "/ops";
-  Exec built = cli.exec(binary(cli),
-                        string[]("build", OPS, "-o", stem, "--allow-read", "--allow-write"),
-                        u8[0]()).wait();
-  t.isTrue(built.ran() && built.status == 0,
-           "ops builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
-  return built.ran() && built.status == 0 ? stem : "";
+  string mod = builtProgram(cli, OPS, "fs-ops",
+                            string[]("--allow-read", "--allow-write"));
+  t.isTrue(cli.stat(mod).wait().exists, "ops builds — see .cache/built-fs-ops");
+  return cli.stat(mod).wait().exists ? mod : "";
 }
 
 /** Run a script against one backing and return its transcript. */

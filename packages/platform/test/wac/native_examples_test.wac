@@ -42,6 +42,7 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Held } from "../../../wactest/src/daemon.wac";
 import { stale } from "./hostfs.wac";
+import { builtProgram, builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 
 const string BUILT = ".cache/hostexamples";
 
@@ -204,43 +205,37 @@ string lineFor(string where, string prog, string[] args) {
   return line;
 }
 
-struct Ready {
-  Case c;
-  string denoBin;
-  string manifest;
-  string denoDir;
-  string nativeDir;
-  i32 denoPort;
-  i32 nativePort;
-  string error;
-}
-
 /**
- * Start a build. **Submitted, not waited for** — the builds dominate this file's wall clock and are
- * as parallelisable as the runs, which is the whole reason `issues/system/0211` had to be fixed first.
+ * Build one example for both hosts, or reuse what is there, and put the artefacts where the run step
+ * expects them.
+ *
+ * **Twenty-eight builds a run, for fourteen programs that had not changed.** This file was 20.8s of CPU
+ * against 8.6s of wall — the highest in the lane once the ranking stopped being wall-clock — and about
+ * fourteen of those seconds were rebuilding the examples. What it asks is whether the two hosts *agree*,
+ * so the artefacts are inputs to the question rather than part of it, and `wactest/src/built.wac` keeps
+ * them in `.cache/built-<name>` until a file the example is made of, or the binary, is newer. The runs
+ * still happen every time, three cases at a time, which is where the comparison lives.
+ *
+ * **The cache name is the final name.** A native module's manifest records the module by basename, so a
+ * build kept as `ex-clocks.wasm` and copied to `clocks.wasm` would name a file that is not there —
+ * `arrival_test.wac` hit exactly that on 2026-08-19. So each is built under `<name>` and copied under
+ * `<name>`, and the copy is what keeps the per-case workspaces separate.
  */
-Pending<Exec> submitBuild(Cli cli, bool native, string entry, string out, string[] grants) {
-  if (native) {
-    string[] args = string[4 + grants.len()](fill: "");
-    args[0] = "build";
-    args[1] = entry;
-    for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
-    args[2 + grants.len()] = "-o";
-    args[3 + grants.len()] = out;
-    return cli.exec(root(cli) + "/native/v8/target/release/wac", args, u8[0]());
+string builtOnce(Cli cli, string tmp, Case c, bool haveNative) {
+  string entry = "packages/platform/example/" + c.name + ".wac";
+  string deno = builtByDeno(cli, entry, c.name + "-deno", c.grants, "deno", false);
+  if (deno == "") { return entry + " did not build for the JavaScript host\n"; }
+  if (!copyBuilt(cli, deno, tmp + "/" + c.name + "-deno", true)) {
+    return entry + ": its built script would not copy into " + tmp + "\n";
   }
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
-  string[] args = string[head.len() + grants.len() + 2](fill: "");
-  for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
-  for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
-  args[head.len() + grants.len()] = "-o";
-  args[head.len() + grants.len() + 1] = out;
-  return cli.exec("deno", args, u8[0]());
-}
-
-string buildError(string entry, Exec r) {
-  if (r.ran() && r.status == 0) { return ""; }
-  return entry + " did not build: " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+  if (!haveNative) { return ""; }
+  string mod = builtProgram(cli, entry, c.name, c.grants);
+  string manifest = mod.slice(0, mod.len() - 5) + ".json";
+  if (!copyBuilt(cli, mod, tmp + "/" + c.name + ".wasm", false)
+      || !copyBuilt(cli, manifest, tmp + "/" + c.name + ".json", false)) {
+    return entry + ": its module and manifest would not copy into " + tmp + "\n";
+  }
+  return "";
 }
 
 /**
@@ -272,24 +267,10 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
     if (upto > all.len()) { upto = all.len(); }
     i32 n = upto - base;
 
-    // ── Build, three at a time. Submitting first and collecting after is what makes it concurrent;
-    //    `issues/system/0211` is why that had to be fixed in two hosts before it was.
-    Pending<Exec>[] builds = Pending<Exec>[n * 2](fill: cli.exec("/bin/sh", string[]("-c", "true"),
-                                                                 u8[0]()));
-    for (i32 i = 0; i < n; i++) {
-      string entry = "packages/platform/example/" + all[base + i].name + ".wac";
-      builds[i * 2] = submitBuild(cli, false, entry, tmp + "/" + all[base + i].name + "-deno",
-                                  all[base + i].grants);
-      if (native != "") {
-        builds[i * 2 + 1] = submitBuild(cli, true, entry, tmp + "/" + all[base + i].name,
-                                        all[base + i].grants);
-      }
-    }
+    // ── The builds are kept rather than repeated — `builtOnce` above says why.
     string why = "";
     for (i32 i = 0; i < n; i++) {
-      string entry = "packages/platform/example/" + all[base + i].name + ".wac";
-      why = why + buildError(entry, builds[i * 2].wait());
-      if (native != "") { why = why + buildError(entry, builds[i * 2 + 1].wait()); }
+      why = why + builtOnce(cli, tmp, all[base + i], native != "");
     }
     t.eqStr(why, "", "the examples in this batch built");
     if (why != "") { continue; }

@@ -163,8 +163,7 @@ export string test_each_capture_tool_writes_the_vectors_that_are_committed(Core 
     // module is rebuilt when anything under the trees it is made from has moved; see
     // `wactest/src/built.wac`.
     string[] argv = string[1](fill: "");
-    argv[0] = builtProgram(cli, r.wac, "capture-" + r.name, r.grants,
-                           string[]("packages/tor/src", "packages/tor/tools"));
+    argv[0] = builtProgram(cli, r.wac, "capture-" + r.name, r.grants);
     u8[] fromWac = output(t, cli, r.name, wacBin, argv);
     if (fromWac.len() == 0) { continue; }
 

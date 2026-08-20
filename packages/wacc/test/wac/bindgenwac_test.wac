@@ -142,6 +142,13 @@ Program[] cases() {
 
 void compare(T t, Cli cli, string dir, string what, string entry, string[] paths, string[] sources) {
   string[] langs = string[]("ts", "js");
+
+  // **Emitted once for both languages.** The glue differs between `ts` and `js`; the module it is glue
+  // *for* does not, and this line was inside the loop below — so the whole of `packages/wacc/src/api.wac`
+  // was compiled twice per pass. That one test was 10.9s of CPU and the rest of the file 0.3s. The two
+  // generators are still asked separately per language, which is the comparison this file exists for.
+  u8[] wasm = emitFiles(paths, sources, entry);
+
   for (i32 k = 0; k < langs.len(); k++) {
     string lang = langs[k];
     // The sources are the key's other half: the oracle reads the entry from disk, so the arguments
@@ -151,7 +158,6 @@ void compare(T t, Cli cli, string dir, string what, string entry, string[] paths
     for (i32 j = 0; j < sources.len(); j++) { inputs[paths.len() + j] = sources[j]; }
     string theirs = askOracle(t, cli, string[]("files", entry, lang), what + " (" + lang + ")", inputs);
     if (theirs == "") { continue; }
-    u8[] wasm = emitFiles(paths, sources, entry);
     string mine = bindgenFiles(wasm, paths, sources, entry, lang);
 
     // **Asserted, not merely compared.** Two empty strings are equal, and a generator that wrote

@@ -649,11 +649,29 @@ fn update_command(rest: &[String]) -> i32 {
         }
     };
     start_v8();
-    let argv: Vec<Vec<u8>> = if rest.is_empty() {
+    // **The cache directory is the second argument, and it has to be `$WAC_HOME`.**
+    //
+    // `fetch.wac` takes the project as `arg(0)` and the cache root as `arg(1)`, defaulting the second
+    // to the literal `.wac` — which is right for running it as a program from a checkout and wrong
+    // for a command. The compiler reads `$WAC_HOME` (then `$HOME/.wac`), so leaving the default in
+    // place put the fetched tree somewhere nothing would ever look for it: `wac update` said *1
+    // fetched*, a second `wac update` said *nothing to fetch; already locked*, and `wac run` said
+    // *not in the cache — run `wac update`*. Three commands, all truthful, and no way out of it.
+    //
+    // `wac_home` is the same function `uninstall` uses, which is what keeps the two halves of
+    // `$WAC_HOME` agreeing about where it is.
+    let mut argv: Vec<Vec<u8>> = if rest.is_empty() {
         vec![b".".to_vec()]
     } else {
         rest.iter().map(|a| a.as_bytes().to_vec()).collect()
     };
+    if argv.len() < 2 {
+        let Some(home) = wac_home() else {
+            eprintln!("wac: neither WAC_HOME nor HOME is set, so there is nowhere to cache a fetch");
+            return 2;
+        };
+        argv.push(home.into_bytes());
+    }
     let as_child = AsChild { argv, ..Default::default() };
     run_as_with(&manifest, wasm, &text, as_child)
 }
@@ -830,8 +848,51 @@ fn test_module_key(entry: &str, sources: &[(String, Vec<u8>)], flags: &[String],
     h
 }
 
-/// How many built aggregates the shared directory keeps. A megabyte or two each.
-const KEEP_MODULES: usize = 60;
+/// This process's CPU time so far, self plus every child it has waited for, in milliseconds.
+///
+/// **Wall time ranks by whoever else was running.** `wac test` reports what each file cost so that "no
+/// slow tests" has a ranking, and the suite runs four of these at once on a machine three agents share
+/// — so the wall time of a process-heavy file is two to eight times its work, unevenly, and the
+/// ranking it produces is a ranking of contention. Measured 2026-08-19: the suite's own per-file
+/// numbers summed to **456s against a 219s wall**, and `native_hostfs_test.wac` was reported at 60.2s
+/// where a directory pass puts its run at 7.7s. Two days of "why is this test slow" went to the top of
+/// that list.
+///
+/// CPU time does not move when a neighbour runs. `cutime`/`cstime` cover children this process has
+/// reaped, which is every `Cli.exec` — they wait — so a test that spends its time in `ssh` or `deno` is
+/// still counted. Read from `/proc/self/stat` rather than through a crate: fields 14-17, after the
+/// comm field, which can itself contain spaces and is therefore skipped by its closing parenthesis.
+///
+/// **A child's CPU is charged when it is *reaped*, not while it runs**, and that is why the two halves
+/// are reported apart. A test that leaves a daemon running — `echod_test.wac` starts Deno peers — hands
+/// its CPU to whichever file happens to reap it, and the suite duly charged 49.1s to
+/// `v8host_test.wac`, the last file of that chunk, which costs 1.6s when run on its own. Split, that
+/// reads as "0.4s here and 48.7s in children" and the reader can see it is not v8host's.
+///
+/// It is also worth knowing what this does *not* fix: it says nothing about **waiting**. Four copies of
+/// one chunk put `echod_test.wac` at 2.0-5.4s of CPU against 33.6-97.5s of wall, all of it blocked on a
+/// port — no swapping, ten major faults in the whole run. That is why wall is printed beside it rather
+/// than dropped.
+fn cpu_millis() -> (u128, u128) {
+    let Ok(text) = std::fs::read_to_string("/proc/self/stat") else { return (0, 0) };
+    let Some(after) = text.rsplit_once(')') else { return (0, 0) };
+    let fields: Vec<&str> = after.1.split_whitespace().collect();
+    // `after.1` starts at field 3 (state), so utime is index 11 and cstime index 14.
+    let at = |i: usize| fields.get(i).and_then(|f| f.parse::<u64>().ok()).unwrap_or(0);
+    // `sysconf(_SC_CLK_TCK)` is 100 on every Linux this runs on, and getting it right matters less
+    // than being consistent: the number is only ever compared with another from the same machine.
+    ((at(11) + at(12)) as u128 * 10, (at(13) + at(14)) as u128 * 10)
+}
+
+/// How many built modules the shared directory keeps.
+///
+/// Sixty was chosen when only directory aggregates landed here — about fifty-one chunks in a suite
+/// pass. Single files now key into the same directory, and there are ninety-odd `*_test.wac` in the
+/// tree plus whatever `wac run` builds, so sixty evicted the thing about to be asked for. **Measured
+/// on 2026-08-19: sixty entries were 30 MB**, half a megabyte each, so two hundred is about 100 MB of
+/// a filesystem with seventeen free — and `issues/system/0136`, the day the disk filled, is the reason
+/// this is a number with a measurement beside it rather than "plenty".
+const KEEP_MODULES: usize = 200;
 
 /// A built aggregate from the cache, or `None`.
 ///
@@ -1299,10 +1360,15 @@ fn test_command(rest: &[String]) -> i32 {
     // before this loop, so these are run times with no compile in them — which is the number to act
     // on: a file that is slow because the directory's graph is large is not the file's fault, and a
     // file that is slow because it emits a thousand modules is.
-    let mut cost: Vec<(String, u128)> = Vec::new();
+    //
+    // **Ranked by CPU rather than by wall**, for the reason `cpu_millis` carries: four of these run at
+    // once and the wall time of a process-heavy file is mostly its neighbours. Both are printed, since
+    // wall is what a person waited and CPU is what the file is answerable for.
+    let mut cost: Vec<(String, u128, u128, u128)> = Vec::new();
     for (i, f) in files.iter().enumerate() {
         println!("── {f}");
         let began = std::time::Instant::now();
+        let (self_began, child_began) = cpu_millis();
         let code = match &built[group_of[i]] {
             Some(((bytes, text, manifest, _), carried)) if carried.contains(&i) => run_as_with(
                 manifest,
@@ -1325,7 +1391,13 @@ fn test_command(rest: &[String]) -> i32 {
                 build_and_call(&args, Entry::Tests)
             }
         };
-        cost.push((f.clone(), began.elapsed().as_millis()));
+        let (self_now, child_now) = cpu_millis();
+        cost.push((
+            f.clone(),
+            began.elapsed().as_millis(),
+            self_now.saturating_sub(self_began),
+            child_now.saturating_sub(child_began),
+        ));
         match code {
             0 => ok += 1,
             3 => {
@@ -1392,17 +1464,24 @@ fn test_command(rest: &[String]) -> i32 {
     // is a question about individual files. One second is the floor because below it a ranking is
     // noise, and the count under the floor is stated so this cannot read as "everything else is fast"
     // when it means "nothing else reached the floor".
-    let mut slow: Vec<&(String, u128)> = cost.iter().filter(|(_, ms)| *ms >= 1000).collect();
+    let mut slow: Vec<&(String, u128, u128, u128)> =
+        cost.iter().filter(|(_, _, mine, kids)| mine + kids >= 1000).collect();
     if files.len() > 1 && !slow.is_empty() {
-        slow.sort_by(|a, b| b.1.cmp(&a.1));
+        slow.sort_by(|a, b| (b.2 + b.3).cmp(&(a.2 + a.3)));
         let under = cost.len() - slow.len();
         println!();
         println!(
-            "   {} file(s) took a second or more to run — the other {under} did not:",
+            "   {} file(s) cost a second or more of CPU to run — the other {under} did not:",
             slow.len()
         );
-        for (f, ms) in slow.iter().take(6) {
-            println!("     {:>6}  {f}", format!("{:.1}s", *ms as f64 / 1000.0));
+        for (f, ms, mine, kids) in slow.iter().take(6) {
+            println!(
+                "     {:>6} cpu ({:>5} here, {:>5} in children) {:>6} wall  {f}",
+                format!("{:.1}s", (*mine + *kids) as f64 / 1000.0),
+                format!("{:.1}s", *mine as f64 / 1000.0),
+                format!("{:.1}s", *kids as f64 / 1000.0),
+                format!("{:.1}s", *ms as f64 / 1000.0)
+            );
         }
         if slow.len() > 6 {
             println!("     ... and {} more above the floor", slow.len() - 6);
@@ -1557,6 +1636,35 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     // numbers and nothing else; a compiler saying which file it wrote would land in the middle of a
     // pipeline. `--quiet` silences the line it prints when it succeeds and nothing else: a program
     // that does not compile still says so, on stderr, where the shell running this expects it.
+    // **One file's module is cacheable too, and was not.** The directory path above caches its
+    // aggregate, and a group of one was sent down this path with the note that "a lone file has nothing
+    // to share a build with" — true about *sharing* and wrong about *keeping*. So `wac test <one file>`
+    // compiled its whole graph every run: measured 2026-08-19, three identical runs of
+    // `packages/wacc/test/wac/bindgenwac_test.wac --filter zzz` at **5.38s, 5.33s, 5.42s**, all of it
+    // the compile, because every test that imports `packages/wacc/src/api.wac` pulls the compiler in.
+    // A file that imports it floors at 5.4-5.9s and one that does not at 1.2s.
+    //
+    // That is the shape of an agent's inner loop — the house rule is to run the file you are working on
+    // rather than the suite — and of the suite's own run-alone lane, where every file is a group of one.
+    //
+    // The key is the same one the aggregate uses, plus the entry's *name*: `test_module_key` hashes the
+    // entry by content and not by name, because an aggregate's path carries a pid, and here the name is
+    // real and reaches the manifest. `--filter` is deliberately not in it — it selects exports of an
+    // already-built module — and `--coverage` is left out of the cache entirely rather than keyed,
+    // because that path writes a table beside the module and a hit would not.
+    let key = if coverage {
+        None
+    } else {
+        let mut key_flags = flags.clone();
+        key_flags.push(format!("entry={entry}"));
+        Some(test_module_key(
+            &entry,
+            &closure_of(std::path::Path::new(&entry)),
+            &key_flags,
+            false,
+        ))
+    };
+
     let mut build = vec![
         "build".to_string(),
         entry,
@@ -1570,11 +1678,18 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     build.extend(flags);
 
     start_v8();
-    let built = run_seed(&build);
+    let from_cache = key.and_then(cached_module);
+    let built = if from_cache.is_some() { 0 } else { run_seed(&build) };
     let code = if built != 0 {
         built
     } else {
-        match std::fs::read(dir.join("prog.wasm")) {
+        match from_cache.map(Ok).unwrap_or_else(|| {
+            let read = std::fs::read(dir.join("prog.wasm"));
+            if let (Some(k), Ok(bytes)) = (key, read.as_ref()) {
+                remember_module(k, bytes);
+            }
+            read
+        }) {
             Err(e) => {
                 eprintln!("wac: the build wrote nothing to run — {e}");
                 1

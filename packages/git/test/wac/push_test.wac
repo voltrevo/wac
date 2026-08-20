@@ -123,8 +123,7 @@ Pushed pushWith(T t, Cli cli, string src, string target, string advFile, i32 adv
   string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
   Exec made = cli.exec(wac,
                        string[](builtProgram(cli, "packages/git/example/gitpush.wac", "gitpush",
-                                              string[]("--allow-read", "--allow-write", "--quiet"),
-                              string[]("packages/git/src", "packages/git/example")),
+                                              string[]("--allow-read", "--allow-write", "--quiet")),
                                 src, advFile, "refs/heads/main"),
                        u8[0]()).wait();
   string note = trimmed(string.fromBytes(made.stderr));

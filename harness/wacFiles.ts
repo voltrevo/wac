@@ -207,7 +207,12 @@ if (wantsStats()) {
 const rootCache = new Map<string, string | undefined>();
 
 async function projectRootOf(path: string): Promise<string | undefined> {
-  let dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".";
+  // **Absolute, or the climb stops where you were standing.** `.` is a fixed point of "the
+  // directory above", so a relative path could only reach as far as it was spelled: `wac run
+  // main.wac` from a subdirectory reported no manifest with one directory up. The spec is explicit
+  // that `@/` is "not the directory the compiler was started in" — `issues/lang/0168a`.
+  const from = path.startsWith("/") ? path : `${Deno.cwd()}/${path}`;
+  let dir = from.includes("/") ? from.slice(0, from.lastIndexOf("/")) : ".";
   const asked: string[] = [];
   for (;;) {
     if (rootCache.has(dir)) {
@@ -296,7 +301,7 @@ export async function wacFiles(entry: string): Promise<Map<string, string>> {
             root = await projectRootOf(fresh[i]);
             if (root !== undefined) roots.set(fresh[i], root);
           }
-          next.push(resolveSpecifier(fresh[i], spec, root));
+          next.push(resolveSpecifier(fresh[i], spec, root, Deno.cwd()));
           continue;
         }
         next.push(resolveFrom(fresh[i], spec));

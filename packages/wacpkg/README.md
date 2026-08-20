@@ -14,8 +14,9 @@ is `imports`, a table from a **mapping name** to the repository its modules come
 ```json5
 {
   imports: {
-    // A prefix mapping: everything under `std/` comes from this repository.
-    'std/':  { git: 'https://example.invalid/std', ref: 'main' },
+    // A prefix mapping: everything under `bits/` comes from this repository.
+    // Not `std/` or `core/`, which `design/lang/0009` D4 reserves for the built-in trees.
+    'bits/': { git: 'https://example.invalid/bits', ref: 'main' },
     // An exact mapping, of one subdirectory of a larger repository.
     'acme':  { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: 'lib/acme' },
   },

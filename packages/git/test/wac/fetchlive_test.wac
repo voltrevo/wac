@@ -116,8 +116,7 @@ export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for
   Exec r = withEnv(cli, names, values, wac,
                    string[](builtProgram(cli, "packages/git/example/gitfetch.wac", "gitfetch",
                                          string[]("--allow-net", "--allow-env", "--allow-read",
-                                                  "--quiet"),
-                              string[]("packages/git/src", "packages/git/example")),
+                                                  "--quiet")),
                             REMOTE, "1"));
   string err = trimmedEnd(string.fromBytes(r.stderr));
   t.eqI32(r.status, 0, "gitfetch failed: " + err);

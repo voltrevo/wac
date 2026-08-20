@@ -1,4 +1,4 @@
-# 0216 — the supported build produces a `wac` with no shell, and the CLI doc says otherwise
+# 0216a — the supported build produces a `wac` with no shell, and the CLI doc says otherwise
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)

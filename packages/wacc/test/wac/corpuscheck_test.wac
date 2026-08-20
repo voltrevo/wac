@@ -57,9 +57,8 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines } from "../../../wactest/src/strings.wac";
-import { closureOf } from "./source_probe.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
-import { dumpTypeErrors, dumpTypeErrorsFiles, diagnoseGraph } from "../../src/api.wac";
+import { dumpTypeErrors, diagnoseGraph } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
 
 /** Whether the reference compiles `path` cleanly — asked only about a file wacc reported on. */

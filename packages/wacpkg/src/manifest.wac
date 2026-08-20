@@ -5,7 +5,7 @@
 //
 //     {
 //       imports: {
-//         'std/':  { git: 'https://example.invalid/std', ref: 'main' },
+//         'bits/': { git: 'https://example.invalid/bits', ref: 'main' },
 //         'acme':  { git: 'https://example.invalid/acme', ref: 'v1', subdir: 'packages/acme' },
 //       },
 //     }
@@ -34,6 +34,48 @@ export i32 M_SUBDIR_KIND()   { return 7; }   // `subdir` is present and is not a
 export i32 M_EMPTY_NAME()    { return 8; }   // a mapping name is "" or "/"
 export i32 M_OVERLAP()       { return 9; }   // two names where a specifier could match both
 export i32 M_SUBDIR_ESCAPE() { return 10; }  // a `subdir` that leaves its own checkout
+export i32 M_RESERVED_NAME()  { return 11; }  // a mapping of `core`, `std`, or anything under them
+
+/**
+ * What a code means, as a sentence for somebody who has to act on it.
+ *
+ * Beside the codes rather than at each caller: `wacc` printed only `m.detail` — *`wac.json5` is not
+ * usable: std/* — which names the mapping and not the complaint, so the reader knows which line and
+ * not what is wrong with it. One renderer means every reader says the same thing.
+ */
+export string manifestWhy(i32 code) {
+  if (code == M_NOT_JSON5())     { return "it is not a JSON5 document"; }
+  if (code == M_NOT_OBJECT())    { return "the document is not an object"; }
+  if (code == M_IMPORTS_KIND())  { return "`imports` is not an object"; }
+  if (code == M_MAPPING_KIND())  { return "a mapping is not an object"; }
+  if (code == M_NO_GIT())        { return "a mapping has no `git` string"; }
+  if (code == M_NO_REF())        { return "a mapping has no `ref` string"; }
+  if (code == M_SUBDIR_KIND())   { return "`subdir` is not a string"; }
+  if (code == M_EMPTY_NAME())    { return "a mapping name is empty"; }
+  if (code == M_OVERLAP())       { return "two mappings could match one specifier"; }
+  if (code == M_SUBDIR_ESCAPE()) { return "a `subdir` leaves its own checkout"; }
+  if (code == M_RESERVED_NAME()) {
+    return "`core` and `std` are the toolchain's own and cannot be mapped";
+  }
+  return "it is not valid";
+}
+
+/**
+ * Whether a mapping name is one the toolchain keeps — `design/lang/0009` D4.
+ *
+ * `core` and `std` themselves, and anything beneath them. `core/` and `std/` are the prefix
+ * spellings of the same two. Matching is exact and case-sensitive, so `stdlib`, `corelib`, `mystd`
+ * and `Core` are somebody else's names and stay theirs.
+ */
+export bool isReservedName(string name) {
+  string[] roots = string[]("core", "std");
+  for (i32 i = 0; i < roots.len(); i++) {
+    string r = roots[i];
+    if (name == r || name == r + "/") { return true; }
+    if (name.len() > r.len() + 1 && name.slice(0, r.len() + 1) == r + "/") { return true; }
+  }
+  return false;
+}
 
 /** One entry of the `imports` table. */
 export struct Mapping {
@@ -86,6 +128,15 @@ export Manifest readManifest(u8[] src) {
     JsonMember m = table.at(i);
     string name = m.keyStr();
     if (name == "" || name == "/") { return failed(M_EMPTY_NAME(), name); }
+    // **`core` and `std` are the toolchain's, and D4 says so** — reserved, never remapped, never in
+    // a lockfile. Refused here because it is a fact about the manifest: the person who wrote the
+    // mapping is told once, at the line they wrote, rather than once per import that hits it.
+    //
+    // The **prefix** is what is reserved, not the set of files that happen to exist. The rule used
+    // to be "is this the name of a built-in file", which protected `std/platform.wac` because that
+    // file is there and nothing else — so `std/` was mapped and consulted for every other name.
+    // `issues/lang/0167a`. `stdlib/` and `corelib/` are ordinary names and stay ordinary.
+    if (isReservedName(name)) { return failed(M_RESERVED_NAME(), name); }
 
     JsonObject entry = JsonObject.create();
     match (m.value) {

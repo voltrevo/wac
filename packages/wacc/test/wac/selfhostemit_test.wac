@@ -16,12 +16,24 @@
 // `test/wac/selfemit_test.wac` and the corpus test are measuring all along.
 //
 //
-// **11s cold, 5.4s warm, and it is two compilers.** Measured 2026-08-19. Split, at 9.2s of test body:
+// **9.4s warm, and it is two compilers.** Re-measured 2026-08-19 with `core.monotonicNanos()` either
+// side of each phase, which is the only way to tell these apart — the earlier split in this header had
+// gone three-fold stale without anything failing:
 //
-//     reference    5731ms      deno, the reference compiling a 1.4 MB driver, three exports
-//     stage B emit  708ms
-//     stage B run  2225ms      `fold` re-derives the whole compiler twice, plus `blockedFiles`
-//     direct        529ms      the third opinion
+//     driver         16ms      assembling 1.4 MB of literals
+//     stage A        10ms      cached; 6797ms when a wacc source changes and the reference re-runs
+//     stage B emit 1943ms      compiling that driver
+//     stage B run  5201ms      one emit of wacc (~1.9s) plus `blockedFiles` over it (~3.3s)
+//     direct       1844ms      the third opinion
+//
+// **`fold` used to emit the compiler twice.** It was `wholeLen() + wholeSum() + blockedLen()`, and the
+// first two each call `whole()` — so stage B compiled wacc twice and then checked it, 7109ms. Taken
+// from one emit it is 5201ms, and the three numbers are the same: a compiler that answered differently
+// between two emits of one input is the defect this test exists to catch.
+//
+// The floor fell too, and not from anything here: `wac test` on one file used to recompile the file's
+// whole graph every run — 5.9s for anything importing `api.wac` — until a lone file's module was
+// cached like a directory's (`issues/system/0204`).
 //
 // So most of it was one process, and **stage A is a pure function of the driver and the reference** —
 // the driver carries every wacc source as a literal, so its checksum moves when any of them does.
@@ -113,10 +125,18 @@ string driverFor(string[] paths, string[] sources) {
                "export i32 wholeSum() { return sumBytes(whole()); }\n" +
                "export i32 blockedLen() {\n" + decl + filled +
                "  return blockedFiles(ps, ss, " + literalOf(ENTRY) + ").len();\n}\n\n" +
+               // **One emit, not two.** `wholeLen()` and `wholeSum()` each call `whole()`, so a `fold`
+               // written as `wholeLen() + wholeSum() + blockedLen()` compiled the entire compiler
+               // twice and then checked it a third time — 7109ms of stage B on 2026-08-19, measured
+               // with `core.monotonicNanos()` either side. The three numbers are the same taken from
+               // one emit, and a compiler that answered differently is the defect this test exists to
+               // catch, so nothing is lost by asking once. The exports stay: the reference is asked for
+               // `wholeLen` separately, as the canary that stage A emitted something substantial.
                "export i32 fold() {\n" +
+               "  u8[] w = whole();\n" +
                "  i32 s = 7;\n" +
-               "  s = s * 31 + wholeLen();\n" +
-               "  s = s * 31 + wholeSum();\n" +
+               "  s = s * 31 + w.len();\n" +
+               "  s = s * 31 + sumBytes(w);\n" +
                "  s = s * 31 + blockedLen();\n" +
                "  return s;\n" +
                "}\n").toBytes());

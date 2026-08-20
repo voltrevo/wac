@@ -155,3 +155,72 @@ Two bugs on the way in, both of the shape this repository keeps producing:
   `Invalid global state`. It presented as a 4ms directory with no failures, which is exactly what a
   run that never happened looks like from outside.
 
+## And the lone file, which was the bigger half — 2026-08-19
+
+The grouping sends a directory of one file down the per-file path with the note that "a lone file has
+nothing to share a build with". True about *sharing* and wrong about *keeping*: its module is as
+cacheable as an aggregate's, and it was recompiled on every run. Measured before the change, three
+identical runs of `wac test packages/wacc/test/wac/bindgenwac_test.wac --filter zzz` — a filter that
+matches nothing, so nothing but the compile happens — at **5.38s, 5.33s and 5.42s**.
+
+That cost falls on exactly the two things that ask for one file: an agent iterating (the house rule is
+to run the file you are working on, not the suite) and the suite's own run-alone lane, where every file
+is a group of one.
+
+**It is a floor set by what the file imports.** A test that imports `packages/wacc/src/api.wac` pulls
+in the whole compiler and floors at **5.4–5.9s**; one that does not floors at **1.2s**. Twenty-odd
+files import it.
+
+Warm figures after the change, same command twice:
+
+| file | cold | warm |
+| --- | ---: | ---: |
+| `privatename_test.wac` | 5.4s | **0.1s** |
+| `buildchecks_test.wac` | 1.2s | **0.0s** |
+| `bindgenwac_test.wac` | 15.4s | 10.0s |
+| `coverage_test.wac` | 15.8s | 9.7s |
+| `wac run packages/box/src/box.wac --help` | 10.4s | **0.0s** |
+
+The last two keep most of their time because it is work rather than compiling.
+
+`--coverage` is left out of the cache rather than keyed into it: that path writes a table beside the
+module and a hit would not. `--filter` is deliberately *not* in the key, since it selects exports of an
+already-built module — checked both ways, one test filtered in and a filter matching nothing. The
+entry's **name** is in the key, unlike the aggregate path, where the name carries a pid; here it is
+real and reaches the manifest. Grants are in the key, and the check that matters is that the same
+program with fewer grants rebuilds rather than reusing the granted manifest — it does, at full cost.
+
+Two canaries rather than a stopwatch: editing an assertion in a cached file gives `0 passed, 2 failed`
+at full compile cost, so nothing stale is served; and `KEEP_MODULES` went from 60 to 200, because
+ninety-odd test files now key into a directory sized for fifty-one chunks and sixty entries evicted the
+thing about to be asked for. Sixty entries measured 30 MB, so two hundred is about 100 MB.
+
+## `wac build` is deliberately *not* cached — 2026-08-19
+
+The obvious next step is the same trick for `wac build`, and it is the wrong one. `entries_test.wac` is
+7.4s of thirteen `wac build` processes with a 0.0s floor, `deno task seed` is `wac build` twice, and
+agents build programs by hand all day, so the prize looks large.
+
+**It would hollow out the tests that prove determinism.** `test/wac/selfhost_test.wac` builds the
+compiler *twice* and requires the two artefacts to be byte-identical; `fixpointemit_test.wac` does the
+same for one source file. A content-keyed build cache answers the second build from disk, so the
+comparison becomes "these bytes equal themselves" — a test that cannot fail, still passing, with nobody
+told. `tools/seed.sh` iterates builds to a fixed point for the same reason and would be reduced to the
+same tautology. That is the exact shape of `when a change's failure mode is a better number`: the suite
+would go green and faster.
+
+Two lesser reasons, recorded so the whole case is here rather than the headline:
+
+- it needs a second implementation of the build command line. The seed parses `build`'s flags
+  (`--allow-*`, `--coverage`, `--trace`, `--trace-slots n`, `--quiet`, `-o`), and the host would have to
+  parse enough of them to key on — a copy that drifts, and the failure mode of a *mis-keyed* build cache
+  is a stale artefact rather than an error.
+- `--coverage` and `--trace` write a table beside the module, so a hit would produce a module without
+  its table.
+
+What *is* safe is what the tests already do: `packages/wactest/src/built.wac` keeps a built program in
+`.cache/built-<name>` and rebuilds it when anything under its trees or the binary is newer. That is a
+cache with a named owner, per test, which a determinism test simply does not use — the choice is at the
+call site rather than under everybody. `arrival_users_test.wac` went 15s to 2.5s that way on the same
+day this was written.
+

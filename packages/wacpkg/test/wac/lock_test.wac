@@ -26,11 +26,11 @@ Lock lok(string s) { return readLock(s.toBytes()); }
 export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
   T t = T.create();
   Manifest m = man("{ imports: {\n"
-                 + "  'std/': { git: 'g1', ref: 'main' },\n"
+                 + "  'bits/': { git: 'g1', ref: 'main' },\n"
                  + "  'acme': { git: 'g2', ref: 'v1', subdir: 'packages/acme' },\n"
                  + "} }");
   Lock l = lok("{ imports: {\n"
-             + "  'std/': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
+             + "  'bits/': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
              + "  'acme': { git: 'g2', ref: 'v1', subdir: 'packages/acme', commit: '" + B() + "' },\n"
              + "} }");
   t.isTrue(m.ok, "the manifest reads");
@@ -40,7 +40,7 @@ export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
   Step[] steps = plan(m, l);
   t.eqI32(steps.len(), 2, "two steps");
   if (steps.len() != 2) { return t.report(); }
-  string[] names = string[]("std/", "acme");
+  string[] names = string[]("bits/", "acme");
   string[] commits = string[](A(), B());
   for (i32 i = 0; i < 2; i++) {
     t.eqStr(steps[i].name, names[i], "step " + names[i]);
@@ -55,21 +55,21 @@ export string test_a_mapping_whose_inputs_still_match_uses_the_locked_commit() {
 export string test_no_entry_is_create_and_a_changed_input_is_refresh_that_says_which() {
   T t = T.create();
   string lockText = "{ imports: {\n"
-                  + "  'std/': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
+                  + "  'bits/': { git: 'g1', ref: 'main', commit: '" + A() + "' },\n"
                   + "  'sub': { git: 'g2', ref: 'v1', subdir: 'old', commit: '" + B() + "' },\n"
                   + "} }";
   Lock l = lok(lockText);
   if (!l.ok) { t.fail("the lock did not read"); return t.report(); }
 
   string[] entries = string[](
-    "'std/': { git: 'g1', ref: 'main' }",
+    "'bits/': { git: 'g1', ref: 'main' }",
     "'fresh': { git: 'g9', ref: 'main' }",
-    "'std/': { git: 'OTHER', ref: 'main' }",
-    "'std/': { git: 'g1', ref: 'v2' }",
+    "'bits/': { git: 'OTHER', ref: 'main' }",
+    "'bits/': { git: 'g1', ref: 'v2' }",
     "'sub': { git: 'g2', ref: 'v1', subdir: 'new' }",
     // Dropping a subdir the lock recorded is a change too, in the other direction.
     "'sub': { git: 'g2', ref: 'v1' }");
-  string[] names   = string[]("std/", "fresh", "std/", "std/", "sub", "sub");
+  string[] names   = string[]("bits/", "fresh", "bits/", "bits/", "sub", "sub");
   i32[] actions    = i32[](USE(), CREATE(), REFRESH(), REFRESH(), REFRESH(), REFRESH());
   string[] words   = string[]("", "", "git", "ref", "subdir", "subdir");
 

@@ -32,7 +32,7 @@ import { Core, Cli, Exec, Stat } from "std/platform.wac";
  * and `update` from `WAC_SEED_DIR`, "each optional"; `tools/seed.sh` — which is what `deno task
  * wac:install` runs — writes only `wacc.wasm`. So a freshly seeded `wac` answers `unknown command
  * 'sh'`, while `spec/cli/wac.md` lists `sh` among this host's own commands without qualification.
- * `issues/system/0216`.
+ * `issues/system/0216a`.
  *
  * Skipped rather than red, and **named** rather than silent: `wac test` reports a skipped test by
  * name, so this says which capability was missing instead of the file quietly reporting two passes.
@@ -55,7 +55,7 @@ export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
   T t = T.create();
   if (!carriesShell(cli)) {
     core.warn("skipped: this `wac` carries no shell — `tools/seed.sh` embeds only `wacc.wasm`. " +
-              "issues/system/0216");
+              "issues/system/0216a");
     return t.report();
   }
   Exec piped = sh(cli, string[]("-c", "seq 1 20 | grep 7 | wc -l"));
@@ -86,7 +86,7 @@ export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
   T t = T.create();
   if (!carriesShell(cli)) {
     core.warn("skipped: this `wac` carries no shell — `tools/seed.sh` embeds only `wacc.wasm`. " +
-              "issues/system/0216");
+              "issues/system/0216a");
     return t.report();
   }
   string dir = scratch(cli, "shsealed");

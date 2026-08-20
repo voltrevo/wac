@@ -174,13 +174,15 @@ function importKey(
   baseFile: string,
   imp: { path: string; prefix?: string },
   roots?: ReadonlyMap<string, string>,
+  /** The directory relative keys are measured from — see `relativeTo`. `issues/lang/0168a`. */
+  base?: string,
 ): string {
   // **A built-in is its own key.** `core/option.wac` is a module inside the compiler, so joining it
   // to the importing file's directory would look for packages/std/src/core/option.wac — and the
   // failure surfaces as *'Option' is not generic*, because the declaration was never found and a
   // stand-in was. Three resolvers have to agree about this; `isBuiltinSpecifier` is the one answer.
   if (imp.prefix === undefined && isBuiltinSpecifier(imp.path)) return imp.path;
-  if (imp.prefix === undefined) return resolveSpecifier(baseFile, imp.path, roots?.get(baseFile));
+  if (imp.prefix === undefined) return resolveSpecifier(baseFile, imp.path, roots?.get(baseFile), base);
   return imp.path === "" ? imp.prefix : `${imp.prefix}.${imp.path}`;
 }
 
@@ -203,10 +205,44 @@ export function isProjectSpecifier(spec: string): boolean {
  * error: joining `@/src/a.wac` to nothing gives `src/a.wac`, a real-looking key relative to a
  * directory nobody named, so a program would compile against the wrong file rather than be refused.
  */
-export function resolveSpecifier(baseFile: string, spec: string, root?: string): string {
+/**
+ * `abs` written relative to `base`, both absolute — the twin of `relativeTo` in
+ * `packages/wacc/src/path.wac`, and it has to stay its twin.
+ *
+ * Every key in a graph is relative to the directory the command ran in, because that is what the
+ * entry was relative to. A `@/` is the one specifier whose root is *discovered*, and the root can
+ * sit above that directory, so joining and stopping gives `../src/a.wac` for a file an ordinary
+ * import calls `src/a.wac` — one file, two keys. `issues/lang/0168a`.
+ */
+export function relativeTo(base: string, abs: string): string {
+  if (base === "" || base === abs) return base === abs ? "." : abs;
+  if (abs.startsWith(`${base}/`)) return abs.slice(base.length + 1);
+  const b = base.split("/");
+  const a = abs.split("/");
+  let i = 0;
+  while (i < b.length && i < a.length && b[i] === a[i]) i++;
+  const up = new Array(b.length - i).fill("..");
+  const joined = [...up, ...a.slice(i)].join("/");
+  return joined === "" ? "." : joined;
+}
+
+export function resolveSpecifier(
+  baseFile: string,
+  spec: string,
+  root?: string,
+  base?: string,
+): string {
   if (!isProjectSpecifier(spec)) return resolvePath(baseFile, spec);
   if (root === undefined || root === "") return "";
-  return resolvePath(`${root}/x`, spec.slice(2));
+  const joined = resolvePath(`${root}/x`, spec.slice(2));
+  // Only for a file that is itself relatively keyed: one reached through a mapping, or one whose
+  // entry was given absolutely, is already in absolute key space and converting it would give that
+  // file a second key. Same two clauses as the wac side, for the same two failing cases.
+  const fromIsRelative = !baseFile.startsWith("/");
+  if (base !== undefined && base !== "" && fromIsRelative && root.startsWith("/")) {
+    return relativeTo(base, joined);
+  }
+  return joined;
 }
 
 /** Resolve a relative import path against an absolute base path. */
@@ -500,6 +536,8 @@ type NameOrigin = { file: string; name: string };
 function buildOrigins(
   programs: Map<string, Program>,
   roots?: ReadonlyMap<string, string>,
+  /** The directory relative keys are measured from — see `relativeTo`. `issues/lang/0168a`. */
+  base?: string,
 ): Map<string, Map<string, NameOrigin>> {
   const byFile = new Map<string, Map<string, NameOrigin>>();
   for (const [filePath, prog] of programs) {
@@ -527,7 +565,7 @@ function buildOrigins(
     const here = byFile.get(filePath)!;
     for (const item of prog.items) {
       if (item.tag !== "import") continue;
-      const from = importKey(filePath, item, roots);
+      const from = importKey(filePath, item, roots, base);
       for (const it of item.items) {
         if (here.has(it.alias)) continue;
         here.set(it.alias, { file: from, name: it.name });
@@ -1129,8 +1167,10 @@ export function monomorphise(
   keepEnums?: { decl: EnumDecl; filePath: string }[],
   /** The project root each file sits in, for `@/` — see `resolveSpecifier`. */
   roots?: ReadonlyMap<string, string>,
+  /** The directory relative keys are measured from — see `relativeTo`. `issues/lang/0168a`. */
+  base?: string,
 ): void {
-  const origins = buildOrigins(programs, roots);
+  const origins = buildOrigins(programs, roots, base);
 
   // Templates are keyed by *identity* — declared name plus declaring file — so an alias and its
   // target find the same one, and two same-named templates in different files stay apart.
@@ -1453,7 +1493,7 @@ export function monomorphise(
       for (const it of item.items) {
         // The item names the template as the *importing* file writes it, so resolve through the
         // declaring file to find the template regardless of alias.
-        const tpl = templates.get(`${it.name}__${fileTag(importKey(filePath, item, roots))}`);
+        const tpl = templates.get(`${it.name}__${fileTag(importKey(filePath, item, roots, base))}`);
         if (tpl === undefined) { rewritten.push(it); continue; }
         for (const mangled of usedIn.get(filePath) ?? []) {
           // Only the instantiations of *this* template, and only if it came from this import.
@@ -1977,7 +2017,7 @@ export function monomorphise(
       const injected = new Set<string>();
       for (const item of prog.items) {
         if (item.tag !== "import") continue;
-        const from = importKey(filePath, item, roots);
+        const from = importKey(filePath, item, roots, base);
         const extra: typeof item.items = [];
         for (const mangled of funcUsedIn.get(filePath) ?? []) {
           if (funcMadeIn.get(mangled) !== from) continue;
@@ -2092,6 +2132,8 @@ export function wacResolve(
    * one for, which is an ordinary state: the playground has no filesystem to search.
    */
   roots?: ReadonlyMap<string, string>,
+  /** The directory relative keys are measured from — see `relativeTo`. `issues/lang/0168a`. */
+  base?: string,
 ): ResolveResult {
   const errors: ResolveError[] = [];
 
@@ -2105,7 +2147,7 @@ export function wacResolve(
   const enumTemplateDecls: { decl: EnumDecl; filePath: string }[] = [];
   monomorphise(programs,
     (msg, file, line, col) => errors.push({ message: msg, file, line, col }),
-    genericDisplay, templateDecls, funcTemplateDecls, enumTemplateDecls, roots);
+    genericDisplay, templateDecls, funcTemplateDecls, enumTemplateDecls, roots, base);
   const funcs: FuncEntry[] = [];
   const structs: StructEntry[] = [];
   const enums: EnumEntry[] = [];
@@ -2366,7 +2408,7 @@ export function wacResolve(
     // ── Phase 4: process imports (DFS — after locals so circular deps find us) ─
     for (const item of prog.items) {
       if (item.tag !== "import") continue;
-      const importedPath = importKey(filePath, item, roots);
+      const importedPath = importKey(filePath, item, roots, base);
       // **`@/` with no project is an error here rather than a lookup that misses.** D7: *no manifest
       // within that boundary is a compile error*. `resolveSpecifier` answers "" for it, and the
       // reason this is caught rather than passed on is that the alternative resolves — joining
