@@ -47,6 +47,12 @@ const api = await waccApi() as any;
 const PHASES: [string, (p: string[], s: string[], e: string) => unknown][] = [
   ["diagnoseGraph", (p, s, e) => api.diagnoseGraph(p, s, e)],
   ["buildFiles", (p, s, e) => api.buildFiles(p, s, e)],
+  // **The same work with a project root**, which is the call a build actually makes when the entry
+  // sits in a project — `harness/waccBuild.ts` picks it whenever any path has a root. Timed rather
+  // than exempted for that reason: exempting it would stop timing the build itself for every caller
+  // with a `wac.json5`, which is every caller with a project. The roots are empty here, so the two
+  // rows are the same measurement twice and any gap between them is the `Res` walk. GitHub issue 21.
+  ["buildFilesRooted", (p, s, e) => api.buildFilesRooted(p, s, p.map(() => ""), "", e)],
 ];
 
 // bench-exempt: describeSeparator — a constant, not compiler work.

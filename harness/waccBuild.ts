@@ -29,13 +29,6 @@ type WaccApi = {
     base: string,
     entry: string,
   ) => { wasm: Uint8Array; described: string };
-  blockedFilesRooted: (
-    paths: string[],
-    sources: string[],
-    roots: string[],
-    base: string,
-    entry: string,
-  ) => string;
   /** What the checker says, which a caller wants before it asks what the emitter declined. */
   diagnoseFiles: (paths: string[], sources: string[], entry: string) => string;
   /** The same for every file in the graph, each checked as an entry — `issues/lang/0118`. */

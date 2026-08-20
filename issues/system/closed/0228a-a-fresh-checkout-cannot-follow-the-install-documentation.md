@@ -135,10 +135,16 @@ native.ts` had a fourth as a constant. `harness/programs.ts` already exports a `
 `waccBuild.ts` bound only the **root-less** API variants (`buildFiles`, `blockedFiles`), so wacc got an
 empty `Res` and could not resolve `@/`. `wac build` passes a root, which is why the binary was fine.
 
-Fixed by adding `buildFilesRooted`/`blockedFilesRooted` to `api.wac` — thin wrappers over the existing
-`In` variants, taking two string arrays rather than a `Res`, because a host caller cannot construct one
-across bindgen — and threading the roots `wacFilesWithRoots` already computes through `waccArtifacts`
-into both builders.
+Fixed by adding `buildFilesRooted` to `api.wac` — a thin wrapper over the existing `buildFilesIn`,
+taking two string arrays rather than a `Res`, because a host caller cannot construct one across
+bindgen — and threading the roots `wacFilesWithRoots` already computes through `waccArtifacts` into
+both builders.
+
+*I wrote a `blockedFilesRooted` beside it and deleted it: nothing calls `blockedFiles` on a path that
+has a project, so the pair was symmetry rather than a need.* `tools/benchCompile.test.ts` is what said
+so — it refuses both an untimed compiler call **and** a stale `bench-exempt` line, so exempting the
+unused one was not available either. A guard that fails in both directions is worth more than one that
+only notices additions.
 
 **`Res.of(roots)` was not enough, and the reason is worth keeping.** With relative graph keys and an
 absolute project root, `@/src/stats.wac` resolves to `/…/proj/src/stats.wac` while the graph holds
