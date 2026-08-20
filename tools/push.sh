@@ -41,6 +41,44 @@ freeDenoCache() {
   df -h / | tail -1
 }
 
+# **How many times this batch has passed the suite without landing.** `issues/system/0213a`: a full run
+# is now longer than the interval between other agents' pushes, so losing the race is the expected
+# outcome rather than bad luck — and every symptom of it is a *separate* invocation, each of which looks
+# like one unlucky run. Four green suites in a row landing nothing is invisible unless somebody is
+# reading the logs of all four, which is how it went unnoticed long enough to need measuring.
+#
+# Keyed on the **oldest unpushed commit**, because that is the one thing about a batch a merge does not
+# change: `git merge` adds commits and rewrites none, so the earliest of mine stays the same object even
+# as the batch grows around it. Per agent, since the count is about this agent's batch.
+#
+# This decides nothing about policy — 0213a's options are somebody else's call and its own note says so.
+# It makes the starvation say its own name.
+starveKey() {
+  local oldest
+  oldest=$(git rev-list origin/master..HEAD 2>/dev/null | tail -1)
+  [ -z "$oldest" ] && return 1
+  local who=${PWD}
+  who=$(printf '%s' "$who" | sed -n 's;.*/\(agent-[a-z0-9]*\)/.*;\1;p')
+  [ -z "$who" ] && who=unknown
+  printf '/tmp/wac-starve-%s-%s' "$who" "${oldest:0:12}"
+}
+starveCount() { local f; f=$(starveKey) || { echo 0; return; }; cat "$f" 2>/dev/null || echo 0; }
+starveBump() {
+  local f n
+  f=$(starveKey) || return 0
+  n=$(cat "$f" 2>/dev/null || echo 0)
+  echo $((n + 1)) > "$f"
+}
+starveClear() { local f; f=$(starveKey) || return 0; rm -f "$f"; }
+
+starved=$(starveCount)
+if [ "${starved:-0}" -gt 0 ]; then
+  echo "== this batch has already passed the suite ${starved} time(s) without landing =="
+  echo "   $(git rev-list --count origin/master..HEAD 2>/dev/null) commit(s) waiting. That is"
+  echo "   issues/system/0213a — the run is longer than the gap between other agents' pushes, so"
+  echo "   losing the race is expected. The suite time spent so far is real and nobody read it."
+fi
+
 for attempt in 1 2 3; do
   guardDenoCache
 
@@ -384,9 +422,13 @@ for attempt in 1 2 3; do
       echo "== pushed =="
     fi
     rm -f "$log"
+    starveClear
     exit 0
   fi
 
+  # The suite passed and the push did not land: that is one starved pass, counted before the merge
+  # changes what the batch is.
+  starveBump
   echo "== push rejected, merging and retrying =="
   before=$(git rev-parse HEAD)
   if ! git pull --no-rebase --no-edit --quiet origin master; then
@@ -414,4 +456,5 @@ for attempt in 1 2 3; do
 done
 
 echo "== still being beaten to the push after three tries; try again in a moment =="
+echo "   this batch has now passed the suite $(starveCount) time(s) without landing — issues/system/0213a"
 exit 1
