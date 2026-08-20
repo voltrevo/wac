@@ -303,3 +303,36 @@ validation catch a disagreement whatever its cause, without requiring the two wa
 they caught cases the checker did not. Making the 40 bails record a reason would be worth doing and
 would improve the *messages*; it would not remove the need for the nets, because a walk can always
 disagree in a way neither side thought to record.
+
+## The export-parity net covers `wac build` and not the in-process API
+
+Worth writing down before anyone reads the net as universal, because I nearly did. `missingExport` is
+called from **`buildLinked`** and nowhere else. The `emitFiles*` family in `api.wac` — seven exported
+entry points, and what every test and tool in this repository actually calls — goes through
+`emitLinked`, which does not ask.
+
+So a dropped export is caught when a person runs `wac build`, and is still silent when
+`packages/wacc/test/wac/checked_test.wac` emits the same file in-process.
+
+**This is not an oversight to patch quickly.** `emitLinked` returns `u8[]`. It has no channel to say
+anything, which is exactly why the net lives in `buildLinked`, whose `Built` carries an error. Giving
+the family one means changing the return type of seven entry points and every caller, and that is a
+decision rather than work:
+
+- **Return `Built` from the family.** Honest, and the net becomes universal. Costs a sweep of every
+  caller, and most of them want the bytes and nothing else.
+- **A second family — `buildFiles*` beside `emitFiles*`** — for the callers that want to know. Two
+  producers of one artefact, which `CLAUDE.md` names as one too many.
+- **Leave it.** The user-facing path is netted; the in-process one is used by code that is itself under
+  test. This is where it stands today, stated rather than assumed.
+
+Recommendation: leave it until something in-process actually loses an export. The net's value is that a
+*person* is told; a test that emits a module with a hole in it fails on the hole.
+
+### Incidental, and the reason this came up
+
+`checked_test.wac` is documented at 140s and ran past 20 minutes twice today, which I had treated as
+possibly caused by these changes and as a reason not to push. It is not: `checked_test` calls
+`emitFiles`/`emitFilesChecked`, so **neither the export-parity walk nor `wac build`'s validation is on
+its path at all.** Load was 5-9 with another agent's suite up for the whole window. Contention is the
+remaining candidate and the gate's own timing block is the instrument for it.
