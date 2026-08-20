@@ -15,7 +15,7 @@ import { lex, Lexed, tokenStride } from "./lex.wac";
 import { coreFile, coreSource, stdFile } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
-import { Res, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
+import { Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg,
   Param, Program, Stmt, StmtKind, Ty, TyKind,
@@ -2756,6 +2756,14 @@ i32 countLines(string s) {
  */
 string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] starts,
                  i32[] edges, string[] names, string[] filePaths) {
+  // **One file under two keys is refused here**, which is the one place both routes pass through:
+  // `frontOf` turns `""` into a null front and `emitLinkedWith2` turns it into a bare module, so
+  // saying it once covers `wac build`, the `emitFiles*` family and every decline report. Nominal
+  // identity *is* the key, so two keys are two types that print the same name — and what actually
+  // happened was worse than the two incompatible copies `design/lang/0009` D8 warns about: the
+  // checker stayed clean and the **engine** rejected the module, telling the user it was a compiler
+  // bug with no source line. `issues/lang/0163`.
+  if (twoKeysForOneFile(paths) != "") { return ""; }
   // **Sized for the largest program here, which is `packages/box` at 168 files and climbing.** These
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
   // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named
@@ -3280,6 +3288,69 @@ export struct Built {
  * idempotent. That the order is safe is not an argument, it is a byte comparison of every emitted
  * module — see `issues/lang/0129`.
  */
+/**
+ * Two supplied keys naming one file, or `""`.
+ *
+ * `design/lang/0009` D8 makes identity canonical after resolution, and warns that getting it wrong
+ * gives two incompatible copies of one struct. What actually happened was worse: the checker stayed
+ * clean and the **engine** rejected the module, so the user was told *"this is a compiler bug rather
+ * than a fault in your program"* with no source line. A module that fails validation is the worst
+ * available outcome — refusing here is the point. `issues/lang/0163`.
+ *
+ * **Nearly free, because a healthy map has no key to normalise.** Only a key that is not already in
+ * normal form can collide with one that is, so the first pass normalises each key once and keeps the
+ * ones that moved; in this repository that set is empty and the walk stops. The second pass is over
+ * that set alone, against every key and against each other, so two differently-written keys for one
+ * file are caught as well as one written oddly against one written plainly.
+ *
+ * Not in the checker, which is where `issues/lang/0163` asks for it: `C` does not carry the path map,
+ * and threading it is the same cost `issues/lang/0157` is still open for. This layer has the map
+ * already, and refusing here is what stops the invalid module either way.
+ */
+bool looksNormal(string p) {
+  if (p.indexOf("//") >= 0) { return false; }
+  if (p.indexOf("/./") >= 0) { return false; }
+  if (p.indexOf("/../") >= 0) { return false; }
+  if (p.len() >= 2 && p.slice(0, 2) == "./") { return false; }
+  if (p.len() >= 3 && p.slice(0, 3) == "../") { return false; }
+  if (p.len() >= 2 && p.slice(p.len() - 2, p.len()) == "/.") { return false; }
+  if (p.len() >= 3 && p.slice(p.len() - 3, p.len()) == "/..") { return false; }
+  return true;
+}
+
+string twoKeysForOneFile(string[] paths) {
+  string[] odd = string[paths.len()](fill: "");
+  string[] oddNorm = string[paths.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < paths.len(); i++) {
+    // **A substring test before `normalisePath`, because this is on the link's hot path.** Calling
+    // `normalisePath` on every key cost 3s of a 12s `packages/box` build — 20% — for a condition
+    // nothing in the tree can reach. `looksNormal` is six `indexOf`s and answers for every key here,
+    // so a healthy map pays that and stops. A key it doubts is normalised properly below.
+    if (looksNormal(paths[i])) { continue; }
+    string norm = normalisePath(paths[i]);
+    if (norm == paths[i]) { continue; }
+    odd[n] = paths[i];
+    oddNorm[n] = norm;
+    n = n + 1;
+  }
+  if (n == 0) { return ""; }
+  for (i32 k = 0; k < n; k++) {
+    for (i32 j = 0; j < paths.len(); j++) {
+      if (paths[j] == odd[k]) { continue; }
+      if (paths[j] != oddNorm[k]) { continue; }
+      return "one file is supplied under two keys: `" + odd[k] + "` and `" + paths[j] +
+             "`, which both name `" + oddNorm[k] + "`";
+    }
+    for (i32 j = k + 1; j < n; j++) {
+      if (oddNorm[j] != oddNorm[k]) { continue; }
+      return "one file is supplied under two keys: `" + odd[k] + "` and `" + odd[j] +
+             "`, which both name `" + oddNorm[k] + "`";
+    }
+  }
+  return "";
+}
+
 export Built buildLinked(string[] paths, string[] sources, Res res, string entry) {
   Front? f = frontOf(paths, sources, res, entry);
   if (f is null) {
@@ -10446,6 +10517,10 @@ string linkFailure(string[] paths, string[] sources, Res res, string entry) {
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
+  // **Asked first, because it is the one cause here that can name what is wrong.** The other two are
+  // inferred from a sentinel and say neither a path nor a position — `issues/lang/0157` is that.
+  string twoKeys = twoKeysForOneFile(paths);
+  if (twoKeys != "") { return twoKeys; }
   linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
   return starts[0] == 1 ? "more import edges than the linker was given room for"
                         : "an import of a file that was not supplied";
