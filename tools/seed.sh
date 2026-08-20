@@ -152,13 +152,45 @@ fi
 # anybody should publish.
 MAX_ROUNDS=4
 
-"$BIN" build "$ENTRY" --allow-read --allow-write --allow-env -o "$tmp/1/wacc" >/dev/null
+# **Put the previous seed back when a round's build fails, not only when the fixpoint is rejected.**
+#
+# Round 1's output is *installed* before round 2 runs — that is what makes the loop a fixpoint over
+# artefacts the binary produced. So a compiler that builds once and then cannot build its own successor
+# leaves itself installed, and `set -e` aborted here without undoing it: every later `wac build`,
+# `run` and `test` in the checkout compiles with the broken compiler, and `deno task seed` cannot
+# recover because it needs the seed to build the seed. The way out is `seed:bootstrap`, from the
+# reference, which is minutes.
+#
+# Twice on 2026-08-20, both times from a probe that made wacc refuse a program it should not: an
+# instrumented emitter that reported by failing the build, and two attempted fixes for
+# `issues/lang/0173a` that emitted a module the engine rejects. Neither is an unusual thing to be
+# doing — the fixpoint loop is exactly where a compiler change is meant to fail — so the recovery
+# belongs here rather than in the next person's afternoon.
+buildRound() {   # $1 output dir
+  if "$BIN" build "$ENTRY" --allow-read --allow-write --allow-env -o "$1/wacc" >/dev/null; then
+    return 0
+  fi
+  echo "== wacc cannot build itself with the seed just installed ==" >&2
+  echo "   The build above failed, and the compiler that ran it is the one this script installed a" >&2
+  echo "   round ago — so leaving it in place would make every later \`wac\` command in this checkout" >&2
+  echo "   compile with it, and this script could not rebuild from it either." >&2
+  if [ "$had_seed" -eq 1 ]; then
+    echo "   Putting the previous seed back. Fix the failure above and run this again." >&2
+    install_seed "$tmp/prev"
+  else
+    echo "   There was no previous seed to restore, so \`deno task seed:bootstrap\` is the way out:" >&2
+    echo "   it builds wacc with the reference, which takes the broken one out of the loop." >&2
+  fi
+  exit 1
+}
+
+buildRound "$tmp/1"
 install_seed "$tmp/1"
 
 converged=0
 for n in $(seq 2 "$MAX_ROUNDS"); do
   mkdir -p "$tmp/$n"
-  "$BIN" build "$ENTRY" --allow-read --allow-write --allow-env -o "$tmp/$n/wacc" >/dev/null
+  buildRound "$tmp/$n"
   if cmp -s "$tmp/$((n - 1))/wacc.wasm" "$tmp/$n/wacc.wasm"; then
     converged=$n
     break
