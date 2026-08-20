@@ -165,7 +165,12 @@ export string test_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
     "(a)", "\\(a\\)", "\\(ab\\)*", "a*", "*a", "^*a", "\\(*a\\)",
     "a.b", "a\\.b", "^ab", "ab$", "^ab$", "[ab]", "[|]", "[+?{}()]", "[^ab]",
     "[]a]", "[^]a]", "a\\{2,3\\}", "\\(a\\|b\\)c", "x\\|", "\\(\\)",
-    "a\\\\b", "\\.", "\\*", "^", "$", "", "ab*c", "a\\|b\\|c");
+    "a\\\\b", "\\.", "\\*", "^", "$", "", "ab*c", "a\\|b\\|c",
+    // **A leading brace, which POSIX reads as a literal and JavaScript refuses.** `issues/lang/0146`
+    // made the JavaScript entry point refuse `{2}` as nothing to repeat, and the guard that keeps this
+    // dialect out of that is a `posix` flag — so this is the case that fails if the flag is dropped.
+    // GNU is the oracle for the answer, as it is for every row here.
+    "{2}", "{2}b", "\\{2\\}");
   string[] subjects = string[](
     "", "a", "b", "ab", "abc", "a|b", "a+b", "a?b", "a{2}", "aa", "aab",
     "(a)", "*a", "a.b", "axb", "a\\b", "abab", "ac", "bc", "]a", "aaa");
@@ -365,3 +370,47 @@ string trimmed(string s) {
 }
 
 bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
+
+/**
+ * A leading brace is a literal here, in both POSIX dialects — and GNU only agrees about one of them.
+ *
+ * `issues/lang/0146` made the JavaScript entry point refuse `{2}` as nothing to repeat, and one `posix`
+ * flag in `compile.wac` keeps these two dialects out of that. This is the test that fails if the flag is
+ * dropped. It has to assert *extended*, because `basic` reaches the core through a translation that
+ * already escapes a bare `{` — so only extended passes one through, and adding the pattern to the
+ * basic-only list looked like a guard and was not: with the flag removed every test still passed.
+ *
+ * **GNU is the oracle for basic and deliberately not for extended.** `/bin/grep "{2}"` matches the three
+ * characters, which is what we do. `/bin/grep -E "{2}"` prints *"warning: {...} at start of expression"*
+ * and then matches **every** line, empty ones included — it drops the brace rather than reading it as a
+ * literal. POSIX leaves the case undefined and GNU says as much in a warning, so parity there would be
+ * parity with something its own author flags as unspecified. `issues/lang/0146` says "a leading brace is
+ * a literal in both POSIX dialects"; that is right for basic and wrong for extended, and this comment is
+ * the correction.
+ */
+export string test_a_leading_brace_is_a_literal_in_both_posix_dialects(Core core, Cli cli) {
+  T t = T.create();
+  string[] subjects = string[]("", "{2}", "a{2}b", "{2}b", "aa", "a");
+  u8[][] lines = asLines(subjects);
+
+  // Basic, against GNU, which is unambiguous here.
+  string[] patterns = string[]("{2}", "{2}b", "a{2}");
+  i32 checked = 0;
+  for (i32 p = 0; p < patterns.len(); p++) {
+    i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, false);
+    for (i32 i = 0; i < lines.len(); i++) {
+      t.eqI32(run(false, patterns[p], lines[i]), wants[i],
+              "grep \"" + patterns[p] + "\" against \"" + subjects[i] + "\"");
+      checked = checked + 1;
+    }
+  }
+  t.isTrue(checked >= 15, "only " + itoa(checked) + " basic comparisons ran");
+
+  // Extended, against what this engine means to do: accept it and match the three characters. This is
+  // the half the `posix` flag protects — without it `compileExtended` refuses the pattern outright.
+  t.isTrue(compileExtended("{2}".toBytes()).program is not null,
+           "extended refused a leading brace — the posix flag in compile.wac is gone");
+  t.eqI32(run(true, "{2}", "a{2}b".toBytes()), MATCHED, "and it matches the literal three characters");
+  t.eqI32(run(true, "{2}", "aa".toBytes()), MISSED, "and only those, unlike GNU -E which matches all");
+  return t.report();
+}
