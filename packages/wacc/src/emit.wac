@@ -173,6 +173,22 @@ i32 valType(string t) {
  * rather than refused. This is the list of what genuinely belongs in that fallthrough: the i32 family.
  * Everything else reaching it is a bug, and `writeValType` says so instead of guessing.
  */
+/** Whether the struct a parent token names is itself a template. `issues/lang/0172a`. */
+bool parentIsGeneric(Program prog, u8[] src, Lexed lexed, i32 parentTok) {
+  if (parentTok < 0) { return false; }
+  string pn = tokenTextOf(src, lexed, parentTok);
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, ptok, fields, methods, exported, isConst, typeParams): {
+        if (tokenTextOf(src, lexed, nameTok) != pn) { continue; }
+        if (typeParams.len() > 0) { return true; }
+      }
+      else: { }
+    }
+  }
+  return false;
+}
+
 /**
  * Whether a type name is an **unsubstituted type parameter** — a bare identifier naming no declared
  * type.
@@ -10541,8 +10557,20 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); }
             if (env.structCount < env.structNames.len()) {
               env.structNames[env.structCount] = inst;
-              env.structParentToks[env.structCount] = -1;
-              env.structParents[env.structCount] = "";
+              // **The template's parent, resolved here rather than later.** `Parented<i32>` inherits
+              // `Base`'s fields exactly as `Parented` does, and dropping the token made
+              // `fieldCountOf` answer 1 for a two-field struct — so a correct two-argument
+              // construction was declined as "2 of 1 fields" (`issues/lang/0172a`).
+              //
+              // The name is resolved on the spot because the pass that turns `structParentToks` into
+              // `structParents` runs *before* `collectInstances` appends these, so an instantiation
+              // registered here would never be visited by it. Carrying only the token changes nothing,
+              // which is what two earlier attempts at this ran into. Every declaration is collected by
+              // now, so the parent resolves.
+              i32 pt = parentIsGeneric(prog, src, lexed, parentTok) ? -1 : parentTok;
+              env.structParentToks[env.structCount] = pt;
+              env.structParents[env.structCount] =
+                  pt < 0 ? "" : nameKeyOf(env, src, lexed, pt);
               env.structCount = env.structCount + 1;
             }
             for (i32 f = 0; f < fields.len(); f++) {
@@ -11029,8 +11057,17 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
         // Only the entry file's exports become the module's, which is what the counter checks too.
         bool mine = entryDecls < 0 || d < entryDecls;
         if (exported && mine && env.funcIndex[at] < 0) {
+          // **And why, when the emitter recorded one.** Every `funcOk[at] = false` already writes
+          // `funcWhy[at]` — five sites, all of them — and nothing read it here, so this net named the
+          // function and threw away the reason sitting beside it. Two attempts at
+          // `issues/lang/0172a` gap 1 were spent guessing at a cause this array had.
+          //
+          // Empty is still possible and still says something: the function was dropped without any
+          // decline being recorded, which is a different bug from a decline this message could quote.
+          string why = at < env.funcWhy.len() ? env.funcWhy[at] : "";
           return "the exported function `" + tokenTextOf(src, lexed, nameTok) +
-                 "` is not in the module the emitter produced";
+                 "` is not in the module the emitter produced" +
+                 (why == "" ? ", and no reason was recorded" : " — " + why);
         }
         at = at + 1;
       }

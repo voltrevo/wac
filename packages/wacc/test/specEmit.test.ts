@@ -205,14 +205,13 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
    * primitive (`issues/lang/0171a`), so the rest are other gaps.
    */
   const KNOWN_UNEMITTABLE = new Set<string>([
-    // The generic struct with a base class — `issues/lang/0172a` gap 1. `fieldCountOf` takes the field
-    // count from the template rather than the instantiated type, so a correct two-argument construction
-    // is declined as "2 of 1 fields". Diagnosed to the line in the issue; the cheap half of the fix
-    // makes the diagnostics worse, so it is not half-done.
-    "wac-generic-struct-9tkq4wm",
-    // The four nullable-primitive tags left on 2026-08-20, when `issues/lang/0171a` was implemented:
-    // `wac-nullable-primitive-4mzq7vp`, `wac-ternary-nullable-9pqk3vm`, `wac-packed-nullable-2knq6wv`
-    // (an `i32?[]`, not a `u8?`) and one untagged. `enum-methods-6vkq2wn` left earlier the same day.
+    // **Empty, as of 2026-08-20.** Every program the reference accepts and compiles, wacc now emits
+    // whole. It held ten entries when this check was written that morning; each left because the check
+    // failed with "emit now — take them out", which is what a shrink-only list is for.
+    //
+    // Keep it empty. An entry added here is a spec behaviour a wacc-only toolchain cannot produce, so
+    // it wants an issue beside it saying which and why — not a line that quietly restores the tolerance
+    // this list replaced.
   ]);
   const tagOf = (d: string) => d.match(/^§([a-z0-9-]+):/)?.[1] ?? "";
   const declinedTags = new Set(declined.map(tagOf));

@@ -1,6 +1,8 @@
 # 0172a — three spec behaviours wacc declines: a generic struct with a base, an enum method naming a type late, and `is` against a non-ancestor
 
-- **Status:** open — 2, 3 and 3b fixed 2026-08-20; only 1 remains
+- **Status:** closed — all four fixed 2026-08-20
+- **Fixed in:** gap 3 and 3b in `66ff3eb9` and `32dddc91`, gap 2 in `ef920866`, gap 1 in this commit —
+  which also makes the export-parity net quote `funcWhy`, without which gap 1 was two blind attempts
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
@@ -245,3 +247,30 @@ answers this question and the next one.
 
 Both attempts are recorded because the appealing one-line change is genuinely wrong twice over, and its
 failure mode — a decline that stops naming its reason — is easy to mistake for progress.
+
+### Gap 1 fixed, third attempt — and the instrument is what made it possible
+
+The two failed attempts were spent guessing at a cause the compiler already had. **Every
+`funcOk[at] = false` writes `funcWhy[at]`** — five sites, all of them — and `missingExport` did not read
+it, so the export-parity net named the function and threw away the reason sitting beside it. Making it
+quote `funcWhy` turned
+
+    the exported function `f` is not in the module the emitter produced
+
+into
+
+    … — a construction of Parented<i32> with 2 of 1 fields
+
+and with that visible the third attempt took minutes. **The field count was still wrong after carrying
+the parent token**, which is the fact both earlier attempts missed: the pass that resolves
+`structParentToks` into `structParents` runs at `emit.wac:10858` and `collectInstances` appends
+instantiations at `10999`, *after* it. So an instantiation registered with a parent token is never
+visited by the resolver, and `parentOf` still answers `""`. It has to resolve its own parent on the spot,
+which it can, because every declaration is collected by then.
+
+`spec/cases/0218` reads the inherited field *and* the own field through a method, so a layout that
+dropped either fails rather than passes. Answers 42.
+
+**`specEmit`'s ledger is now empty.** It held ten entries when it was written this morning; every one
+left because the check failed with *"emit now — take them out"*. 258 of 279 programs emitted whole —
+the remaining 21 are refused by the reference itself — and **407 of 407 answers agree**.
