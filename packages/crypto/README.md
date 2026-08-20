@@ -519,6 +519,7 @@ which is how AES keys have been recovered from cache timing since 2005.
 | `p256PublicKey` | 8,190,814 | uniform |
 | `p256Sign` | 8,456,980 | uniform |
 | `kemDecapsSecret` | 1,023,945 | uniform |
+| `modExpSecret` | 17,430,337 | **leaks** — control flow diverges where one run stood at `packages/bignum/src/big.wac:68`; not examined past that |
 | `bcryptPbkdf` | 8,177,005 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
 
 **The event counts changed on 2026-08-12 and the verdicts did not.** These are wacc's
@@ -717,6 +718,36 @@ so this one was free.
 
 GCM as a whole is still not constant-time, because the block cipher under it is not. What changed
 is that one of its two halves stopped depending on its key.
+
+**RSA had no row until 2026-08-20, and it was the one routine here whose own header says at
+length that it is not constant-time.** So "we did not measure it" and "it is fine" looked
+identical for exactly the case this section exists to keep apart — the same argument that put
+`bcryptPbkdf` below in, and the same omission that let `p256Sign` and `ed25519Sign` sit
+unmeasured until they were found to be leaking.
+
+The row is `modPowSecret` rather than `rsaSignPkcs1`: it is the routine the exposure is about,
+and a 2048-bit signature would be a 300-million-event journal where 1024 bits is 17.4 million.
+The modulus and base are held and the **exponent** varies, which is the question — a private
+exponent must not change the work.
+
+It does, at event 25,728 of 17.4 million, which is inside the first few rounds. And the useful
+part is *where*: `packages/bignum/src/big.wac:68`, which is `trim`'s `while` over leading zero
+limbs. `rsa.wac`'s header predicted the class — "`bignum`'s `mul` and `divmod` take time that
+depends on their operands' magnitudes" — and the measurement names the line. That is a more
+actionable fact than "not constant-time", and it does not change the standing advice in that
+header: these functions are for keys whose compromise does not matter, and the fix is a
+constant-time `bignum`, which is a direction rather than a patch.
+
+**The row also found a bug in the tool that prints this table.** Every leak it had ever reported
+was inside `packages/crypto/src`, and the path shortening cut exactly that prefix — so it
+happened to remove the absolute path as a side effect. `modExpSecret`'s divergence is in
+`packages/bignum`, and what came out was
+`/home/claude/<agent>/workspaces/wac/packages/bignum/src/big.wac:68`: a working directory, on its
+way into a file that is public on GitHub. The repository-relative cut existed thirty lines away in
+`test/wac/constanttime_test.wac`, with a comment saying an assertion "should not also be naming
+whose checkout it is in" — in the file that does *not* publish. Both now use one
+`packages/wactest/src/tracesite.wac`, where the repository cut is unconditional and the cosmetic
+one is a separate call.
 
 **`bcryptPbkdf` is measured now, and it was the row that was not a result.** The tracer
 wrote into a buffer of 2^22 events fixed in the compiler; a single bcrypt hash is 129 full

@@ -30,6 +30,7 @@
 
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
+import { TraceSite, traceSite, withoutPrefix } from "../../wactest/src/tracesite.wac";
 
 const string CACHE = ".cache/ct-table";
 
@@ -75,6 +76,28 @@ string literal(i32[] v) {
 string block16() { i32[] b = i32[16](); for (i32 i = 0; i < 16; i++) { b[i] = i; } return literal(b); }
 
 i32[] all4() { return i32[](0, 1, 2, 3); }
+
+/**
+ * A fixed 1024-bit modulus and base for the `modPowSecret` row.
+ *
+ * Odd with the top bit set, which is all `modPowSecret` needs — it exponentiates and does not care
+ * whether the modulus is an RSA modulus or the exponent a matching private key. What is being asked
+ * is whether the *work* depends on the exponent, so a real keypair would add nothing and would put a
+ * key in a tool that prints its inputs.
+ */
+string rsaModulus() {
+  i32[] n = i32[128]();
+  n[0] = 0xC5;
+  for (i32 i = 1; i < 127; i++) { n[i] = (i * 31 + 7) & 255; }
+  n[127] = 0x8F;
+  return literal(n);
+}
+
+string rsaBase() {
+  i32[] b = i32[128]();
+  b[0] = 2;
+  return literal(b);
+}
 
 Case[] cases() {
   return Case[](
@@ -133,6 +156,21 @@ Case[] cases() {
     // ask that. `test/wac/constanttime_test.wac` asks it.
     Case("kemDecapsSecret", "packages/crypto/test/wac/mlkem_probe.wac", "kemDecapsSecret($KEY)", 64,
          i32[](0, 1)),
+    // **RSA had no row, and it is the one routine here whose own header says at length that it is not
+    // constant-time.** So "we did not measure it" and "it is fine" looked identical for exactly the
+    // case this table exists to keep apart — the same argument the `bcryptPbkdf` row below is made
+    // with, and the same one that let `p256Sign` and `ed25519Sign` sit unmeasured
+    // (`issues/system/0224`, `issues/system/0225`).
+    //
+    // The row is `modExpSecret`, the probe's bytes wrapper, because a `Case`'s name is the symbol
+    // the driver imports as well as the label. What it calls is `modPowSecret`, and that rather
+    // than `rsaSignPkcs1` because it is the routine the exposure is about and
+    // a 2048-bit signature is a 300-million-event journal. 1024 bits is 17.4M, which is the size of
+    // the two rows above it. The modulus and base are fixed and the *exponent* varies, which is the
+    // question: a private exponent must not change the work. It does — and the row names
+    // `packages/bignum`'s `trim`, which is more use than "not constant-time".
+    Case("modExpSecret", "packages/crypto/test/wac/rsa_probe.wac",
+         "modExpSecret(" + rsaBase() + ", $KEY, " + rsaModulus() + ")", 128, i32[](2, 3)),
     Case("bcryptPbkdf", "packages/crypto/src/bcryptpbkdf.wac",
          "bcryptPbkdf($KEY, " + block16() + ", 32, 1)", 16, i32[](0, 1)));
 }
@@ -249,32 +287,12 @@ TraceStat statOf(Core core, Cli cli, string stem) {
 struct Site { string kind; string at; bool ok; }
 
 Site siteOf(Cli cli, string stem, i32 site) {
-  FileResult f = cli.readFile(stem + ".trace").wait();
-  if (!f.ok) { return Site("", "", false); }
-  string[] rows = linesOf(string.fromBytes(f.bytes));
-  string want = itoa(site) + "\t";
-  for (i32 i = 0; i < rows.len(); i++) {
-    if (!startsWith(rows[i], want)) { continue; }
-    string[] parts = string[5](fill: "");
-    i32 n = 0;
-    string cur = "";
-    for (i32 k = 0; k <= rows[i].len(); k++) {
-      string c = k < rows[i].len() ? rows[i].slice(k, k + 1) : "\t";
-      if (c == "\t") { if (n < 5) { parts[n] = cur; n = n + 1; } cur = ""; }
-      else { cur = cur + c; }
-    }
-    if (n < 5) { return Site("", "", false); }
-    // The table prints a leak's home without its directory, as the README does.
-    string file = parts[4];
-    const string PREFIX = "packages/crypto/src/";
-    i32 cut = -1;
-    for (i32 k = 0; k + PREFIX.len() <= file.len() && cut < 0; k++) {
-      if (file.slice(k, k + PREFIX.len()) == PREFIX) { cut = k + PREFIX.len(); }
-    }
-    if (cut >= 0) { file = file.slice(cut, file.len()); }
-    return Site(parts[3], file + ":" + parts[1], true);
-  }
-  return Site("", "", false);
+  TraceSite t = traceSite(cli, stem, site);
+  if (!t.ok) { return Site("", "", false); }
+  // The table prints a leak's home without its directory, as the README does. The *repository* cut
+  // is `traceSite`'s and is not optional — see its header for the absolute path that reached a
+  // generated table before the two copies of this were made one.
+  return Site(t.kind, withoutPrefix(t.file, "packages/crypto/src/") + ":" + t.line, true);
 }
 
 bool listed(string[] all, i32 n, string want) {

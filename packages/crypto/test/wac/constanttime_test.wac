@@ -52,6 +52,7 @@ import { Core, Cli, Exec, Change, FileResult, Pending } from "std/platform.wac";
 import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram, writeIfDifferent } from "../../../wactest/src/built.wac";
+import { traceSite, describeSite } from "../../../wactest/src/tracesite.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 string binary(Cli cli) { return root(cli) + "/native/v8/target/release/wac"; }
@@ -209,29 +210,7 @@ string word(string line, i32 n) {
 
 /** `kind@file:line` for a site, out of the table the build wrote beside the module. */
 string siteAt(Cli cli, string stem, i32 site) {
-  FileResult f = cli.readFile(stem + ".trace").wait();
-  if (!f.ok) { return "<no table: " + f.error + ">"; }
-  string[] rows = splitLines(string.fromBytes(f.bytes));
-  string want = itoa(site) + "\t";
-  for (i32 i = 0; i < rows.len(); i++) {
-    if (!startsWith(rows[i], want)) { continue; }
-    string[] parts = string[5](fill: "");
-    i32 n = 0;
-    string cur = "";
-    for (i32 k = 0; k <= rows[i].len(); k++) {
-      string c = k < rows[i].len() ? rows[i].slice(k, k + 1) : "\t";
-      if (c == "\t") { if (n < 5) { parts[n] = cur; n = n + 1; } cur = ""; }
-      else { cur = cur + c; }
-    }
-    // **Relative to the repository**, because the table records the path the build was given and the
-    // drivers are written to an absolute one. An assertion naming a line of `aes.wac` should not also
-    // be naming whose checkout it is in.
-    string file = parts[4];
-    string here = root(cli) + "/";
-    if (startsWith(file, here)) { file = file.slice(here.len(), file.len()); }
-    return n >= 5 ? parts[3] + "@" + file + ":" + parts[1] : "<short row>";
-  }
-  return "<no such site>";
+  return describeSite(traceSite(cli, stem, site));
 }
 
 /**
