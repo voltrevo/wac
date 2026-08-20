@@ -37,7 +37,7 @@
     "coverage:fs": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/fs/test/cov_ledger.wac",
     "coverage:gzip": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/gzip/test/cov_ledger.wac",
     "coverage:http": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/http/test/cov_ledger.wac",
-    "coverage:json": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/json/test/cov_exercise.wac packages/json/ --allow-read trap_when_an_array_index_is_past_the_end trap_when_an_array_index_is_negative trap_when_an_object_index_is_past_the_end trap_when_an_object_index_is_negative",
+    "coverage:json": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/json/test/cov_ledger.wac",
     "coverage:regex": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/regex/test/cov_ledger.wac",
     "coverage:raster": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/raster/test/cov_ledger.wac",
     "coverage:server": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/server/test/cov_ledger.wac",

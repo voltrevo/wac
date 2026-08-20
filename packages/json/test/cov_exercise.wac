@@ -37,6 +37,56 @@ import { test_traps_when_an_array_index_is_past_the_end,
          test_traps_when_an_object_index_is_past_the_end,
          test_traps_when_an_object_index_is_negative, test_at_returns_the_element_when_in_range } from "./wac/bounds_test.wac";
 
+import {
+  test_the_corpus_is_present_and_complete as cf__the_corpus_is_present_and_complete,
+  test_every_valid_document_is_accepted as cf__every_valid_document_is_accepted,
+  test_every_invalid_document_is_rejected as cf__every_invalid_document_is_rejected,
+  test_accepted_documents_re_serialize_to_the_same_tree as cf__accepted_documents_re_serialize_to_the_same_tree,
+  test_implementation_defined_documents_terminate as cf__implementation_defined_documents_terminate,
+} from "./wac/conformance_test.wac";
+import {
+  test_invalid_documents_are_rejected as iv__invalid_documents_are_rejected,
+  test_valid_documents_are_accepted as iv__valid_documents_are_accepted,
+  test_mutations_agree_with_the_host as iv__mutations_agree_with_the_host,
+} from "./wac/invalid_test.wac";
+import {
+  test_every_vendored_case_agrees_with_the_reference as j5__every_vendored_case_agrees_with_the_reference,
+  test_the_comparison_can_fail as j5__the_comparison_can_fail,
+  test_an_unquoted_non_ascii_name_is_refused_by_name_not_by_accident as j5__an_unquoted_non_ascii_name_is_refused_by_name_not_by_accident,
+  test_an_unterminated_block_comment_reports_where_it_opened as j5__an_unterminated_block_comment_reports_where_it_opened,
+  test_json5_accepts_every_json_document_with_the_same_tree as j5__json5_accepts_every_json_document_with_the_same_tree,
+  test_a_comment_is_not_accepted_by_the_json_parser as j5__a_comment_is_not_accepted_by_the_json_parser,
+  test_the_json5_tree_is_walkable_and_json_refuses_the_same_document as j5__the_json5_tree_is_walkable_and_json_refuses_the_same_document,
+} from "./wac/json5_test.wac";
+import {
+  test_exact_cases_match_the_host_bit_for_bit as nu__exact_cases_match_the_host_bit_for_bit,
+  test_a_document_that_is_not_a_number_yields_nan as nu__a_document_that_is_not_a_number_yields_nan,
+  test_hard_cases_are_exact_too as nu__hard_cases_are_exact_too,
+} from "./wac/number_test.wac";
+import {
+  test_round_trip_matches_the_hosts as rt__round_trip_matches_the_hosts,
+  test_negative_zero_keeps_its_sign as rt__negative_zero_keeps_its_sign,
+  test_duplicate_object_keys_are_all_retained as rt__duplicate_object_keys_are_all_retained,
+  test_deep_nesting_inside_the_depth_limit as rt__deep_nesting_inside_the_depth_limit,
+  test_the_depth_limit_rejects_rather_than_exhausting_the_stack as rt__the_depth_limit_rejects_rather_than_exhausting_the_stack,
+} from "./wac/roundtrip_test.wac";
+import {
+  test_every_kind_arrives_with_the_right_tag as tr__every_kind_arrives_with_the_right_tag,
+  test_a_document_that_is_not_json_parses_as_null as tr__a_document_that_is_not_json_parses_as_null,
+  test_scalars_carry_their_values as tr__scalars_carry_their_values,
+  test_containers_are_walkable_in_order_and_with_duplicates as tr__containers_are_walkable_in_order_and_with_duplicates,
+  test_a_tree_handed_back_serializes_to_what_it_came_from as tr__a_tree_handed_back_serializes_to_what_it_came_from,
+  test_the_tree_walks_to_the_same_data_the_host_produces as tr__the_tree_walks_to_the_same_data_the_host_produces,
+} from "./wac/tree_test.wac";
+import {
+  test_utf8_malformed_sequences_are_rejected as u8__utf8_malformed_sequences_are_rejected,
+  test_utf8_a_sequence_cut_off_by_the_end_of_input as u8__utf8_a_sequence_cut_off_by_the_end_of_input,
+  test_utf8_a_valid_lead_with_a_bad_later_continuation as u8__utf8_a_valid_lead_with_a_bad_later_continuation,
+  test_utf8_well_formed_sequences_at_every_width as u8__utf8_well_formed_sequences_at_every_width,
+  test_utf8_multi_byte_content_survives_the_round_trip as u8__utf8_multi_byte_content_survives_the_round_trip,
+  test_utf8_random_byte_sequences_agree_with_a_strict_decoder as u8__utf8_random_byte_sequences_agree_with_a_strict_decoder,
+  test_utf8_a_hand_built_tree_cannot_produce_invalid_json as u8__utf8_a_hand_built_tree_cannot_produce_invalid_json,
+} from "./wac/utf8_test.wac";
 const string SUITE = "packages/json/test/jsontestsuite";
 const string JSON5 = "packages/json/test/vendor/json5.json";
 
@@ -261,6 +311,163 @@ export i32 main(Core core, Cli cli) {
   seen = seen + test_hand_built_values_stay_valid_json().len();
   seen = seen + test_parsed_numbers_keep_their_span().len();
   seen = seen + test_at_returns_the_element_when_in_range().len();
+
+  // ── The 34 tests the exercise was not calling ──
+  //
+  // Twenty-eight of them take `(Core, Cli)`: this package is measured against Node's `JSON` and
+  // against `npm:json5`, so most of its tests spawn a process, and before `issues/system/0221` a
+  // coverage driver could call none of them. The 23 that were wired are the ones that needed
+  // nothing.
+  //
+  // The four that expect a trap keep their own named exports below rather than joining this list.
+  i32 bad = 0;
+  if (cf__the_corpus_is_present_and_complete(core, cli).len() > 0) {
+    core.warn("error: FAILED conformance_test test_the_corpus_is_present_and_complete");
+    bad = bad + 1;
+  }
+  if (cf__every_valid_document_is_accepted(core, cli).len() > 0) {
+    core.warn("error: FAILED conformance_test test_every_valid_document_is_accepted");
+    bad = bad + 1;
+  }
+  if (cf__every_invalid_document_is_rejected(core, cli).len() > 0) {
+    core.warn("error: FAILED conformance_test test_every_invalid_document_is_rejected");
+    bad = bad + 1;
+  }
+  if (cf__accepted_documents_re_serialize_to_the_same_tree(core, cli).len() > 0) {
+    core.warn("error: FAILED conformance_test test_accepted_documents_re_serialize_to_the_same_tree");
+    bad = bad + 1;
+  }
+  if (cf__implementation_defined_documents_terminate(core, cli).len() > 0) {
+    core.warn("error: FAILED conformance_test test_implementation_defined_documents_terminate");
+    bad = bad + 1;
+  }
+  if (iv__invalid_documents_are_rejected(core, cli).len() > 0) {
+    core.warn("error: FAILED invalid_test test_invalid_documents_are_rejected");
+    bad = bad + 1;
+  }
+  if (iv__valid_documents_are_accepted(core, cli).len() > 0) {
+    core.warn("error: FAILED invalid_test test_valid_documents_are_accepted");
+    bad = bad + 1;
+  }
+  if (iv__mutations_agree_with_the_host(core, cli).len() > 0) {
+    core.warn("error: FAILED invalid_test test_mutations_agree_with_the_host");
+    bad = bad + 1;
+  }
+  if (j5__every_vendored_case_agrees_with_the_reference(core, cli).len() > 0) {
+    core.warn("error: FAILED json5_test test_every_vendored_case_agrees_with_the_reference");
+    bad = bad + 1;
+  }
+  if (j5__the_comparison_can_fail(core, cli).len() > 0) {
+    core.warn("error: FAILED json5_test test_the_comparison_can_fail");
+    bad = bad + 1;
+  }
+  if (j5__an_unquoted_non_ascii_name_is_refused_by_name_not_by_accident(core, cli).len() > 0) {
+    core.warn("error: FAILED json5_test test_an_unquoted_non_ascii_name_is_refused_by_name_not_by_accident");
+    bad = bad + 1;
+  }
+  if (j5__an_unterminated_block_comment_reports_where_it_opened(core, cli).len() > 0) {
+    core.warn("error: FAILED json5_test test_an_unterminated_block_comment_reports_where_it_opened");
+    bad = bad + 1;
+  }
+  if (j5__json5_accepts_every_json_document_with_the_same_tree(core, cli).len() > 0) {
+    core.warn("error: FAILED json5_test test_json5_accepts_every_json_document_with_the_same_tree");
+    bad = bad + 1;
+  }
+  if (j5__the_json5_tree_is_walkable_and_json_refuses_the_same_document().len() > 0) {
+    core.warn("error: FAILED json5_test test_the_json5_tree_is_walkable_and_json_refuses_the_same_document");
+    bad = bad + 1;
+  }
+  if (j5__a_comment_is_not_accepted_by_the_json_parser(core, cli).len() > 0) {
+    core.warn("error: FAILED json5_test test_a_comment_is_not_accepted_by_the_json_parser");
+    bad = bad + 1;
+  }
+  if (nu__exact_cases_match_the_host_bit_for_bit(core, cli).len() > 0) {
+    core.warn("error: FAILED number_test test_exact_cases_match_the_host_bit_for_bit");
+    bad = bad + 1;
+  }
+  if (nu__a_document_that_is_not_a_number_yields_nan().len() > 0) {
+    core.warn("error: FAILED number_test test_a_document_that_is_not_a_number_yields_nan");
+    bad = bad + 1;
+  }
+  if (nu__hard_cases_are_exact_too(core, cli).len() > 0) {
+    core.warn("error: FAILED number_test test_hard_cases_are_exact_too");
+    bad = bad + 1;
+  }
+  if (rt__round_trip_matches_the_hosts(core, cli).len() > 0) {
+    core.warn("error: FAILED roundtrip_test test_round_trip_matches_the_hosts");
+    bad = bad + 1;
+  }
+  if (rt__negative_zero_keeps_its_sign(core, cli).len() > 0) {
+    core.warn("error: FAILED roundtrip_test test_negative_zero_keeps_its_sign");
+    bad = bad + 1;
+  }
+  if (rt__duplicate_object_keys_are_all_retained(core, cli).len() > 0) {
+    core.warn("error: FAILED roundtrip_test test_duplicate_object_keys_are_all_retained");
+    bad = bad + 1;
+  }
+  if (rt__deep_nesting_inside_the_depth_limit(core, cli).len() > 0) {
+    core.warn("error: FAILED roundtrip_test test_deep_nesting_inside_the_depth_limit");
+    bad = bad + 1;
+  }
+  if (rt__the_depth_limit_rejects_rather_than_exhausting_the_stack().len() > 0) {
+    core.warn("error: FAILED roundtrip_test test_the_depth_limit_rejects_rather_than_exhausting_the_stack");
+    bad = bad + 1;
+  }
+  if (tr__every_kind_arrives_with_the_right_tag().len() > 0) {
+    core.warn("error: FAILED tree_test test_every_kind_arrives_with_the_right_tag");
+    bad = bad + 1;
+  }
+  if (tr__a_document_that_is_not_json_parses_as_null().len() > 0) {
+    core.warn("error: FAILED tree_test test_a_document_that_is_not_json_parses_as_null");
+    bad = bad + 1;
+  }
+  if (tr__scalars_carry_their_values().len() > 0) {
+    core.warn("error: FAILED tree_test test_scalars_carry_their_values");
+    bad = bad + 1;
+  }
+  if (tr__containers_are_walkable_in_order_and_with_duplicates().len() > 0) {
+    core.warn("error: FAILED tree_test test_containers_are_walkable_in_order_and_with_duplicates");
+    bad = bad + 1;
+  }
+  if (tr__a_tree_handed_back_serializes_to_what_it_came_from().len() > 0) {
+    core.warn("error: FAILED tree_test test_a_tree_handed_back_serializes_to_what_it_came_from");
+    bad = bad + 1;
+  }
+  if (tr__the_tree_walks_to_the_same_data_the_host_produces(core, cli).len() > 0) {
+    core.warn("error: FAILED tree_test test_the_tree_walks_to_the_same_data_the_host_produces");
+    bad = bad + 1;
+  }
+  if (u8__utf8_malformed_sequences_are_rejected(core, cli).len() > 0) {
+    core.warn("error: FAILED utf8_test test_utf8_malformed_sequences_are_rejected");
+    bad = bad + 1;
+  }
+  if (u8__utf8_a_sequence_cut_off_by_the_end_of_input().len() > 0) {
+    core.warn("error: FAILED utf8_test test_utf8_a_sequence_cut_off_by_the_end_of_input");
+    bad = bad + 1;
+  }
+  if (u8__utf8_a_valid_lead_with_a_bad_later_continuation(core, cli).len() > 0) {
+    core.warn("error: FAILED utf8_test test_utf8_a_valid_lead_with_a_bad_later_continuation");
+    bad = bad + 1;
+  }
+  if (u8__utf8_well_formed_sequences_at_every_width(core, cli).len() > 0) {
+    core.warn("error: FAILED utf8_test test_utf8_well_formed_sequences_at_every_width");
+    bad = bad + 1;
+  }
+  if (u8__utf8_multi_byte_content_survives_the_round_trip(core, cli).len() > 0) {
+    core.warn("error: FAILED utf8_test test_utf8_multi_byte_content_survives_the_round_trip");
+    bad = bad + 1;
+  }
+  if (u8__utf8_a_hand_built_tree_cannot_produce_invalid_json().len() > 0) {
+    core.warn("error: FAILED utf8_test test_utf8_a_hand_built_tree_cannot_produce_invalid_json");
+    bad = bad + 1;
+  }
+  if (u8__utf8_random_byte_sequences_agree_with_a_strict_decoder(core, cli).len() > 0) {
+    core.warn("error: FAILED utf8_test test_utf8_random_byte_sequences_agree_with_a_strict_decoder");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("json: " + itoaLocal(bad) + " test(s) failed under the coverage driver"); }
+  seen = seen + bad;
+
   return seen;
 }
 

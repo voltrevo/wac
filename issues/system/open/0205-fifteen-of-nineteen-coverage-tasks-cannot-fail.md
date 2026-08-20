@@ -411,6 +411,36 @@ Grants are worth **one point** here — measured, after I guessed ten. Against n
 twenty in `regex` and a hundred and four in `bignum`. The five tests that read the font hex check
 generated data against vendored data, which is a strong check and barely a branch check.
 
+### `json` eleventh: 590 of 602 → **602 of 602**, and a validator that had never refused anything
+
+**16 hold a coverage floor, 0 only check their own exemptions have not drifted, 5 report and cannot
+fail.** Empty pin and rule lists.
+
+Thirty-four of the 57 tests were not being called, twenty-eight of which take `(Core, Cli)` — this
+package is measured against Node's `JSON` and `npm:json5`, so most of its tests spawn a process, and
+the 23 that were wired are exactly the ones that needed nothing.
+
+**The package has two UTF-8 validators and only one was tested.** `parse.wac` refuses ill-formed
+input and seventeen malformed sequences exercise it. `stringify.wac`'s `sequenceLen` is the other, and
+every `: 0` in its lead-byte table was uncovered — every rejection it can make. A hand-copy of RFC
+3629's ranges, with a careful comment about why C0, ED A0 and F4 90 are excluded, whose refusals had
+never once fired.
+
+Nothing could reach it: it only sees bytes that were never parsed, and the only source of those is the
+case its doc comment names — "a tree, built by hand or edited after parsing". The new test builds one
+and hands it fourteen malformed sequences, then checks the answer **through the other validator**:
+the output goes back through `canonicalize`, which shares no code with it. Canaried by widening the
+writer to accept an overlong `C0` — the parser then refuses the document its own package produced.
+
+**And `parseJson5` had no test here.** Every JSON5 test goes through `canonicalizeJson5`, which
+re-serialises, so the tree is only compared as text; `parseJson5` returns the tree, and the tree is
+what `packages/wacpkg` walks to read `wac.json5` and `wac.lock`. That is the **third** entry point
+this issue has found tested only through a consumer in another package, after `packages/regex`'s two
+ignore-case compilers and `packages/http`'s `Outgoing` builder. Worth naming as a pattern: an export
+whose only caller is another package is one whose own tests never see it.
+
+Grants are worth **280 points** here — 602 to 322 without them, the widest of any package so far.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
