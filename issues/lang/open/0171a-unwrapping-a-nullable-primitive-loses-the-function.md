@@ -279,3 +279,37 @@ answered `i32` for `""`, `"i32?"` and any misspelling. It simply was not the pat
 **Blast radius, measured rather than assumed:** the seed is a fixed point, and `packages/crypto`,
 `packages/tor` and `std/platform` all still build. 216 of 216 cases, specEmit unchanged at 251 of 279 and
 390/390 answers — the six nullable entries still decline, now for a reason that names the parameter.
+
+## And the host boundary already refuses it, which is a decision to settle
+
+Found while planning the implementation, and it matters because it means the emitter is necessary but not
+sufficient for the spec's own example. There are **two** `isRefType`s — `emit.wac` and `bindgen.wac` —
+and the bindgen one governs the host boundary the spec paragraph is about. bindgen already knows `T?` in
+six places, including `tsType` mapping it to `T | null`. But `bindgen.wac:404`:
+
+```wac
+bool okType(G g, string t0) {
+  string t = endsWith(t0, "?") ? t0.slice(0, t0.len() - 1) : t0;
+  // **`T?` is `T` plus null**, and no boxed `i32?` at the boundary.
+  if (endsWith(t0, "?") && isScalar(t)) { return false; }
+```
+
+`isScalar` is `i32 u32 i64 u64 f32 f64 bool void`, so **no signature mentioning a nullable primitive gets
+glue** — and that includes `export i32 read(i32? x)`, which is the accessor `spec/spec/types.md:449`
+prescribes. The spec describes a host receiving an opaque reference and handing it back to a wac accessor;
+bindgen will not write glue for either end.
+
+So the documented usage pattern is unreachable through generated glue, independently of the emitter gap.
+**This is a decision rather than work**, and the options are:
+
+- **Lift `okType`'s refusal once boxes exist.** Consistent with the spec, and the paragraph then describes
+  something that works. Costs whatever glue a boxed scalar needs — which is the same glue a struct gets,
+  since that is what the spec says it is.
+- **Keep the refusal and change the spec paragraph** to say a nullable primitive does not cross the host
+  boundary at all. Cheaper, and honest about what the toolchain intends.
+
+Recommendation: the first. The paragraph is not describing an accident — it explains *why* the accessor is
+needed, which means someone thought about this boundary and decided it should work.
+
+Worth saying that the refusal is the **right kind** of wrong: it declines rather than emitting broken
+glue. It simply contradicts the prose, and one of the two has to move.
