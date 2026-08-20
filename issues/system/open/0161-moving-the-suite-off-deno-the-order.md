@@ -133,6 +133,53 @@ the failure and says how to find it, and the `double(21)` canary demonstrates th
 the tour perturbed, `selfTest()` reports "some conjunct disagrees" while the canary reports
 "got 43, want 42".
 
+### The eight, and what each would need — 2026-08-20
+
+`tour` came off this list by removing the reference rather than porting it, which is the test to apply
+to the rest: **a port that deletes the reference is safe whichever way the decision goes.** Applying it
+to all eight, by reading what each actually has available:
+
+| file | lines | the reference is | is there another oracle? |
+|---|---:|---|---|
+| `parse_errors` | 259 | the *definition* of a recovery strategy | **No, and by design.** It compares diagnostic counts and positions, and says so: "where a count looks absurd, the reference is being absurd in exactly the same way, which is the property under test". Nothing else says `fn` alone should produce thirteen diagnostics |
+| `sweep` | 147 | the verdict on generated programs | **No.** `generate()` returns `{ context, src }` — the cells carry no expected answer, so only a second checker can say which should pass |
+| `checkSweep` | 102 | the same, over `generateEmit`'s corpus | **No**, same reason |
+| `emitSweep` | 81 | the answer a generated program computes | **No.** `generateEmit()`'s cells are `{ context, src }` too. An expectation would have to be computed by a third implementation, which is worse |
+| `linkEmit` | 175 | the answer a multi-file program computes | **No**, same shape |
+| `specEmit` | 242 | the answer a spec case computes | **Possibly — and it is a decision about where "done" lives.** See below |
+| `mutateCheck` | 209 | a generator of known-bad programs | **Not applicable.** Only wacc is asked whether it notices; nothing asserts what the reference computed |
+| `corpusMutate` | 338 | the same | **Not applicable**, same reason |
+
+So the eight are really three questions, not one:
+
+1. **`parse_errors` is the purest case for the principle.** If the reference's only job is
+   bootstrapping, then matching its error-recovery quirks is exactly the arrangement that should go —
+   and there is nothing to replace it with, so the choice is delete or keep, with no third option;
+2. **`sweep`, `checkSweep`, `emitSweep` and `linkEmit` cost real coverage to delete**, because a
+   generated corpus has no answers of its own. Measured rather than assumed: both generators return
+   `{ context: string; src: string }` and nothing more;
+3. **`mutateCheck` and `corpusMutate` are not about the reference's correctness at all.** They use it
+   to *build* broken programs. If the principle is "its only job is bootstrapping", using it as a
+   mutation source is a different use of the word "job", and the issue said so from the start.
+
+### `specEmit`, and why it is its own question
+
+Its cases come from `compiler/wacSpec.test.ts` — the reference's conformance suite, 529 tests, each
+named for a `[§tag]` in `spec/spec/*.md`. `extract()` pulls the *source* out of each `run(\`…\`)` and
+then compares what the two compilers emit.
+
+But those tests carry **hand-written expected values**: `eq(inst.call("int32", []), 42, "int32()")`.
+That is an oracle nobody's compiler produced — a human wrote it down — and using it would remove the
+reference from this file the way `selfTest()` removed it from `tour`.
+
+What makes it a decision rather than a port: those expectations live *inside the reference's own test
+file*. Reading them means a wac test parsing TypeScript for `eq(inst.call(name, args), expected)`,
+which couples it to that file's shape — or moving the conformance expectations somewhere both
+compilers can read, which is a change to where the definition of "done" lives. The spec markdown
+carries the tags but not the values; it says things like "`gcd(48, 18)` returns `6`" in prose.
+
+That is worth deciding on purpose and is not a translation.
+
 ### The mistake this issue kept making, in one place
 
 Six files were recorded here as blocked, each with its own reason, and **five of the reasons were the

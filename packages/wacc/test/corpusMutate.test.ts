@@ -163,11 +163,42 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
       count: number;
     };
 
+/**
+ * Which mutation a file gets — keyed on its **name**, not its position.
+ *
+ * It was `MUTATIONS[i % MUTATIONS.length]` over the corpus index, and that made the recall figure
+ * below a property of where files happen to sit in a list. Adding one `.wac` file *anywhere* shifted
+ * every later file's mutation by one, so the whole assignment re-rolled and the number moved: on
+ * 2026-08-20 a new test file in `packages/wacc/test/wac/` took it from 165/169 (97.6%) to 165/171
+ * (96.5%) against a 97% floor, with three new misses in `webrtc`, `zstd` and `zstd` again and one
+ * gone from `zstd` — **not one of them in the file that was added.**
+ *
+ * That is the shape `tools/push.sh` calls the line not to cross: a check that fails for something the
+ * person pushing did not do. Keyed on the name, adding a file changes that file's mutation and
+ * nothing else's, so the figure moves by at most one either way.
+ *
+ * FNV-1a because it is four lines and needs no import; any stable string hash would do. What matters
+ * is that it is a function of the name rather than of the corpus.
+ *
+ * **`mutateCheck.test.ts` and `missed.ts` keep `i % MUTATIONS.length` and should.** They iterate
+ * `generateEmit()`'s cells, whose order is fixed by the generator's own source — nothing outside can
+ * insert into it, and if the generator changes then the assignment *should* change. The instability
+ * was specific to a corpus that grows from elsewhere in the repository.
+ */
+function mutationFor(name: string): number {
+  let h = 0x811c9dc5;
+  for (let k = 0; k < name.length; k++) {
+    h ^= name.charCodeAt(k);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h % MUTATIONS.length;
+}
+
   /** Every mutant this run will judge, before any of them is compiled. */
   const mutants: { at: number; name: string; mutated: string }[] = [];
   for (let i = 0; i < entries.length; i++) {
     const [name, src] = entries[i];
-    const [, mutate] = MUTATIONS[i % MUTATIONS.length];
+    const [, mutate] = MUTATIONS[mutationFor(name)];
     const mutated = mutate(src);
     if (mutated !== null) mutants.push({ at: i, name, mutated });
   }
@@ -295,7 +326,7 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
       // so working one meant reproducing the sweep by hand to find out which mutant it was. The
       // 1-of-1 `struct '…' has no method '…'` was `sh.jobs.len()` broken to `sh.jobs.nope()` in
       // `packages/sh/src/exec.wac`, and naming it is what turned it into a fix.
-      misses.push(`${name} — ${MUTATIONS[i % MUTATIONS.length][0]} — ${diags[0].message}`);
+      misses.push(`${name} — ${MUTATIONS[mutationFor(name)][0]} — ${diags[0].message}`);
     }
     cat.set(key, e);
 
