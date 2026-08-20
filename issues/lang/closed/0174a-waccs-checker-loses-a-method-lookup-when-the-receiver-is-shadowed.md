@@ -1,7 +1,8 @@
 # 0174a — wacc's checker loses a method lookup when the receiver name is shadowed
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Closed by:** agent-a, 2026-08-20
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
 - **Kind:** bug
@@ -162,3 +163,51 @@ measuring the checker *before* the edit and reporting clean. Two reductions were
 reproducing" on that basis. Only `wac test` on a file that imports `../../src/api.wac` compiles the
 edited source. Anything measuring a `packages/wacc/src` change needs that route, or `deno task seed`
 first.
+
+## Fixed — agent-a, 2026-08-20
+
+The plan above asked for a declaration *position* per name and a comparison against the position of
+each use, "around thirty callers" of `typeOfName`, and floated merging the two passes as the cheaper
+first move. Neither was needed. **Declare in both walks:**
+
+- `declareConst`, on a same-scope clash, now **keeps the first type** instead of blanking it. That
+  makes the collecting walk correct for every use *before* the redeclaration, which is the half the
+  poisoning was protecting and the half the naive retype broke.
+- `checkStmt`'s `Var` arm calls `setType` when it reaches the declaration. That makes it correct for
+  every use *after*. `setType` already existed for exactly this — "retype an existing name, without
+  the poisoning `declareConst` does" — and was written for narrowing.
+
+Position-blindness is not solved so much as sidestepped: the checking walk *is* the position, and it
+already visits the statements in order. Nothing needed a token index and no caller of `typeOfName`
+changed.
+
+`packages/wacc/test/wac/shadowtype_test.wac` — six tests, three of which fail without the fix. Two are
+the controls that decide it is the right shape rather than merely a passing one:
+
+    // before the redeclaration: must stay accepted
+    i32[] items = i32[0](); h.items = items; i32 items = 3; return items;
+    // after it: the new type is the live one
+    export i32 f(i32 a) { S a = S(1); return a; }        // refused
+
+### The const flags were the trap, and two spec cases found them
+
+The first version also called `setConstFlags(name, isConst, false)` beside `setType`, which reads as
+the obvious companion and is wrong: a local that aliases a const receiver is const **by alias**,
+`markAliasOnly` records that separately, and resetting the flags unconditionally laundered it away.
+`spec/cases/0006` and `spec/cases/0119` — both about exactly that laundering — went from refused to
+accepted, which is the whole reason they exist.
+
+So the fix sets the type and nothing else. A redeclared name keeps the first declaration's constness,
+which is a residual inaccuracy in a program nothing writes (`const i32 a = 1; i32 a = 2; a = 3;` would
+be refused where the reference allows it) and is recorded in the code rather than left to be found.
+
+Rung 3 of `corpuscheck_test.wac` is clean, `spec/cases` is 223 of 223, and the spec answers are
+419/419.
+
+### Not fixed, and not part of this
+
+Whether a same-scope redeclaration should be *legal* at all. Both compilers accept
+`export i32 f(i32 a) { i32 a = 2; return a; }`, `spec/spec/naming.md` illustrates shadowing only with
+a block, and `issues/lang/0014` closed the parameter-against-parameter case as an error — which is an
+argument that this one is too. That is a language decision and this issue was about a missing
+diagnostic, which is now present either way.

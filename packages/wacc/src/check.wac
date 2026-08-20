@@ -1283,8 +1283,19 @@ export struct C {
     // `i32 r = q` against a `string` reached the emitter and produced invalid wasm. Shadowing is
     // legal (`§wac-shadow-8u8qh2j`), so a match in an enclosing scope is a new binding, not a
     // collision. `issues/lang/0122`.
+    // **A same-scope clash keeps the first type, and the checking walk retypes at the declaration.**
+    // This blanked it to `primNone` instead, and unknown is silent everywhere here — so
+    // `i32 a = a.m(); return a.m()`, a method call on an `i32`, got no diagnostic at all and the
+    // program was refused by the emitter as a missing export. `issues/lang/0174a`.
+    //
+    // Retyping *here* is the wrong repair and was measured to be: this walk runs over the whole body
+    // before `checkStmt` sees any of it, so the second declaration's type would be in the table while
+    // line 5 is checked and a declaration on line 6 got reported against a use above it. Keeping the
+    // first type makes this pass position-correct for everything before the redeclaration, and
+    // `checkStmt`'s `Var` arm calls `setType` when it reaches the declaration, which is what makes it
+    // correct after.
     for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name && this.sameScope(i)) { this.types[i] = typeNone(); return; }
+      if (this.names[i] == name && this.sameScope(i)) { return; }
     }
     if (this.nameCount >= this.names.len()) { return; }
     this.names[this.nameCount] = name;
@@ -7052,6 +7063,11 @@ void checkStmt(C c, Stmt s, Ty want) {
       checkPackedNullable(c, wantVar, type);
       checkPackedHere(c, wantVar, type.line, type.col);
       if (wantVar == typeNone()) { return; }
+      // **The declaration takes effect here, not in the collecting walk.** For all but a redeclared
+      // name this is what the table already says; for a redeclared one it is the difference between
+      // a rule that can see the shadow and one that cannot. Set after `wantVar` is known and before
+      // the initialiser is walked, because the initialiser was checked against the *old* binding
+      // above — `i32 a = a.m()` reads the parameter, and only the uses after it read the local.
       i32 litVar = litFamily(c, init);
       if (litVar != litNone()) {
         reportLiteral(c, wantVar, init, errInitTypeMismatch(), init.line, init.col);
@@ -7061,6 +7077,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         // reach sweep lost `Ternary-cond`. `issues/lang/0145`.
         c.expected = wantVar;
         checkExpr(c, init);
+        c.setType(tokenText(c, nameTok), wantVar);
         return;
       }
       string gotVar = typeOfExpr(c, init);
@@ -7071,6 +7088,13 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       c.expected = wantVar;
       checkExpr(c, init);
+      // **The type and not the const flags.** Setting those too laundered `const`-ness away: a local
+      // that aliases a const receiver is const *by alias*, `markAliasOnly` records that, and an
+      // unconditional `setConstFlags(name, isConst, false)` undid it — `spec/cases/0006` and
+      // `spec/cases/0119` both went from refused to accepted. A redeclared name therefore keeps the
+      // first declaration's constness, which is a residual inaccuracy in a case nothing writes:
+      // `const i32 a = 1; i32 a = 2; a = 3;` would be refused where the reference allows it.
+      c.setType(tokenText(c, nameTok), wantVar);
     }
     case Return(value): {
       // Before the types: whether there should be a value here at all. Both directions are errors and
