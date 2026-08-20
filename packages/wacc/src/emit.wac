@@ -11119,7 +11119,15 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
         if (typeParams.len() > 0) { continue; }
         // Only the entry file's exports become the module's, which is what the counter checks too.
         bool mine = entryDecls < 0 || d < entryDecls;
-        if (exported && mine && env.funcIndex[at] < 0) {
+        // **Not only the exports, and that widening is free.** The general fault here is *the checker
+        // was clean and the function is not in the module*; an export is merely the case a person
+        // notices. Whether widening it costs anything was decidable and is now measured: over seven
+        // entry files — the compiler itself, `api.wac`, `sh`, `image`, `compile`, `consensus`, `map` —
+        // **1797 non-exported functions, of which 0 were `!funcOk` and 0 had no index.** So a template
+        // takes no slot (this walk's `continue` already assumed it), and a private function in the
+        // entry always reaches the module. The net fires on nothing today and catches the same class
+        // one declaration wider. `issues/lang/0170a`.
+        if (mine && env.funcIndex[at] < 0) {
           // **And why, when the emitter recorded one.** Every `funcOk[at] = false` already writes
           // `funcWhy[at]` — five sites, all of them — and nothing read it here, so this net named the
           // function and threw away the reason sitting beside it. Two attempts at
@@ -11128,7 +11136,8 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
           // Empty is still possible and still says something: the function was dropped without any
           // decline being recorded, which is a different bug from a decline this message could quote.
           string why = at < env.funcWhy.len() ? env.funcWhy[at] : "";
-          return "the exported function `" + tokenTextOf(src, lexed, nameTok) +
+          return (exported ? "the exported function `" : "the function `") +
+                 tokenTextOf(src, lexed, nameTok) +
                  "` is not in the module the emitter produced" +
                  (why == "" ? ", and no reason was recorded" : " — " + why);
         }
@@ -11160,13 +11169,14 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
         // can be approved and still be absent, and that case was silent: `wac build` wrote a module
         // without it and exited 0. Asking both is the difference between reporting a decline and
         // reporting *the export you asked for is not in here*. `issues/lang/0170a`.
-        if (exported && (!env.funcOk[at] || env.funcIndex[at] < 0)) {
+        if (!env.funcOk[at] || env.funcIndex[at] < 0) {
           string was = env.blocked;
           env.blocked = "";
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
           string why = env.blocked;
           env.blocked = was;
-          return why == "" ? "an export it declined: " + tokenTextOf(src, lexed, nameTok)
+          return why == "" ? (exported ? "an export it declined: " : "a function it declined: ") +
+                             tokenTextOf(src, lexed, nameTok)
                            : why;
         }
         at = at + 1;
