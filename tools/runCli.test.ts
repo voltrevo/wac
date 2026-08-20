@@ -121,7 +121,7 @@ Deno.test("wac run: a main naming something this host cannot build still says so
   // losing the rule entirely.
   // Under `.cache` rather than at the root: a directory in the tree for a few milliseconds is one
   // every walker over this repository's own files can trip on, and one of them did — see the note in
-  // `tools/testCli.test.ts`.
+  // `tools/wac/testcli_test.wac`.
   await Deno.mkdir(".cache", { recursive: true });
   const dir = await Deno.makeTempDir({ dir: ".cache", prefix: "wac-runcli-page-" });
   try {

@@ -1,6 +1,6 @@
 // `wac covdump` — the counters of an instrumented run, with a world around it.
 //
-// `[§wac-cli-covdump-world-6knq4vt]`
+// `[§wac-cli-covdump-world-6knq4vt]` `[§wac-cli-covdump-9pf3wq2]`
 //
 // The two things this command could not do until 2026-08-20, both of which stopped coverage drivers
 // from moving off Deno (`issues/system/0221`): it instantiated with an **empty imports object**, so a
@@ -146,6 +146,41 @@ export string test_covdump_calls_each_named_export_and_catches_its_trap(Core cor
            "a mistyped export should be named: " + string.fromBytes(bogus.stderr));
   t.isTrue(contains(string.fromBytes(bogus.stdout), "counter(s)"),
            "and the counters still printed: " + string.fromBytes(bogus.stdout));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * The two usage cases, which came from the Deno test of the CLI — `issues/system/0161`.
+ *
+ * **A module built without coverage and one whose counters all read zero are different facts**, so an
+ * absent `__cov_init` is an error rather than an empty report. And no arguments is a *usage* error,
+ * exit 2, which is what separates "you typed it wrong" from "the thing you asked about is broken".
+ */
+export string test_covdump_says_when_a_module_carries_no_counters(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "covdump-plain");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change wrote = cli.writeFile(dir + "/m.wac",
+    "export i32 main() { return 0; }\n".toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the source — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+
+  // Built *without* `--coverage`, which is the whole point.
+  Exec built = cli.exec(binaryPath(cli),
+    string[]("build", dir + "/m.wac", "-o", dir + "/m", "--quiet"), u8[0]()).wait();
+  t.eqI32(built.status, 0, "build: " + string.fromBytes(built.stderr));
+  if (built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec r = dump(cli, string[]("covdump", dir + "/m.wasm"));
+  t.eqI32(r.status, 1, "a module built without coverage is an error");
+  t.isTrue(contains(string.fromBytes(r.stderr), "carries no counters"),
+           "and says so: " + string.fromBytes(r.stderr));
+
+  Exec bare = dump(cli, string[]("covdump"));
+  t.eqI32(bare.status, 2, "no arguments is usage, not failure: " + string.fromBytes(bare.stderr));
 
   cli.remove(dir, true).wait();
   return t.report();

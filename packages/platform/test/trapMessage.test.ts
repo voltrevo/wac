@@ -49,7 +49,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 Deno.test("a built app reports the message the program gave", async () => {
   // Under `.cache` — in the tree, because the program imports `packages/platform` relatively, but not
   // at the root where every walker over this repository's files sees it appear and vanish. See the note
-  // in `tools/testCli.test.ts` for the failure that cost.
+  // in `tools/wac/roottemp_test.wac` for the failure that cost.
   await Deno.mkdir(".cache", { recursive: true });
   const dir = await Deno.makeTempDir({ dir: ".cache", prefix: "wac-trapmsg-app-" });
   try {
