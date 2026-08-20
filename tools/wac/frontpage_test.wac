@@ -180,7 +180,7 @@ export string test_the_websites_shell_transcript_is_what_the_shell_prints(Core c
   for (i32 i = 0; i + 1 < rows.len(); i = i + 2) {
     string command = rows[i];
     string expected = rows[i + 1];
-    Exec r = cli.exec(binary(cli), string[](stem, "-c", command), u8[0]()).wait();
+    Exec r = cli.exec(binary(cli), string[](stem + ".wasm", "-c", command), u8[0]()).wait();
     t.isTrue(r.ran(), command + ": the shell would not start — " + r.error);
     if (!r.ran()) { continue; }
     t.eqStr(trimTrailingNewlines(string.fromBytes(r.stdout)), expected,

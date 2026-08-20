@@ -11,6 +11,21 @@
 // imports, no host and no capabilities — which is what makes checking a whole 800 KB module cheap.
 
 import { buildNative } from "../native.ts";
+import { manifestIn } from "./driver.ts";
+
+/**
+ * The manifest a built module carries, as this file's tests want it.
+ *
+ * **Read out of the module, not from a `.json` beside it.** The sidecar was deleted on 2026-08-20 —
+ * it existed because the wasmtime host predated the self-describing section and took a manifest path
+ * as its argument, which was history rather than a reason. `driver.ts` already had the reader.
+ */
+// deno-lint-ignore no-explicit-any
+const manifestOf = (wasm: Uint8Array): any => {
+  const m = manifestIn(wasm);
+  if (m === null) throw new Error("the built module carries no `wac.manifest` section");
+  return m;
+};
 import {
   arrSuffix,
   bindName,
@@ -99,7 +114,7 @@ Deno.test("`bindName` collapses runs and trims, as the compiler does", () => {
 Deno.test("every array helper this marshaller would name is one the compiler emitted", async () => {
   const stem = await boxsh();
   {
-    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as {
+    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as {
       callbacks: { params?: string[]; ret: string }[];
     };
     const bytes = await Deno.readFile(`${stem}.wasm`);
@@ -254,7 +269,7 @@ Deno.test("and back again: what goes in comes out, for every shape that converts
 Deno.test("the bridge imports exactly what the module imports, and nothing else", async () => {
   const stem = await boxsh();
   {
-    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as { callbacks: Callback[] };
+    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as { callbacks: Callback[] };
     const bytes = await Deno.readFile(`${stem}.wasm`);
     const mod = new WebAssembly.Module(bytes as unknown as BufferSource);
     const b = stubInstance(bytes);
@@ -278,7 +293,7 @@ Deno.test("the bridge imports exactly what the module imports, and nothing else"
 Deno.test("a callback converts its arguments, and its answer, by type", async () => {
   const stem = await boxsh();
   {
-    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as { callbacks: Callback[] };
+    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as { callbacks: Callback[] };
     const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
     const { imports, register } = callbackBridge(b, manifest.callbacks);
 
@@ -313,7 +328,7 @@ Deno.test("a callback converts its arguments, and its answer, by type", async ()
 Deno.test("slots are deduplicated, and the module's limit is the limit", async () => {
   const stem = await boxsh();
   {
-    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as { callbacks: Callback[] };
+    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as { callbacks: Callback[] };
     const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
     const { register } = callbackBridge(b, manifest.callbacks);
 
@@ -350,7 +365,7 @@ Deno.test("slots are deduplicated, and the module's limit is the limit", async (
 Deno.test("a struct is built and read through the manifest, not through generated classes", async () => {
   const stem = await boxsh();
   {
-    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as {
+    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as {
       structs: Struct[];
       callbacks: Callback[];
     };
@@ -432,7 +447,7 @@ Deno.test("a struct is built and read through the manifest, not through generate
 Deno.test("a capability world is built from names, not from argument order", async () => {
   const stem = await boxsh();
   {
-    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as {
+    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as {
       structs: Struct[];
       callbacks: Callback[];
     };
@@ -473,7 +488,7 @@ Deno.test("a capability world is built from names, not from argument order", asy
 Deno.test("two worlds for one instance share a slot table", async () => {
   const stem = await boxsh();
   {
-    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as {
+    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as {
       structs: Struct[];
       callbacks: Callback[];
     };
@@ -506,7 +521,7 @@ Deno.test("a real program runs: built, worlds made, `main` called, answer conver
     // must get right is still required: 45 signatures, two worlds, and an export read from a string.
     const stem = `${dir}/probe`;
     await buildNative("packages/platform/test/wac/driver_probe.wac", stem, {});
-    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as {
+    const manifest = manifestOf(await Deno.readFile(`${stem}.wasm`)) as {
       structs: Struct[];
       callbacks: Callback[];
       exports: { name: string; params?: string[]; ret: string }[];

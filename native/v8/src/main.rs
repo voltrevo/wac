@@ -442,54 +442,7 @@ thread_local! {
 
 /// The manifest a module carries in its own `wac.manifest` custom section, if it has one.
 ///
-/// **A module that describes itself is one artefact rather than two**, which is what lets `spawn`
-/// take wasm: a program handed bytes can run them without being handed a second file it has no way
-/// to find. A custom section is the format's own extension point — id 0, a name, and bytes nobody
-/// else reads — so a module carrying this runs anywhere a module without it runs.
-fn manifest_in(wasm: &[u8]) -> Option<String> {
-    if wasm.len() < 8 || &wasm[0..4] != b"\0asm" {
-        return None;
-    }
-    let mut at = 8;
-    while at < wasm.len() {
-        let id = wasm[at];
-        at += 1;
-        let (size, used) = uleb(wasm, at)?;
-        at += used;
-        let end = at.checked_add(size)?;
-        if end > wasm.len() {
-            return None;
-        }
-        if id == 0 {
-            let (n, used) = uleb(wasm, at)?;
-            let name_at = at + used;
-            let name_end = name_at.checked_add(n)?;
-            if name_end <= end && &wasm[name_at..name_end] == b"wac.manifest" {
-                return String::from_utf8(wasm[name_end..end].to_vec()).ok();
-            }
-        }
-        at = end;
-    }
-    None
-}
-
-fn uleb(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
-    let mut value: usize = 0;
-    let mut shift = 0;
-    let mut used = 0;
-    loop {
-        let b = *bytes.get(at + used)?;
-        value |= ((b & 0x7f) as usize) << shift;
-        used += 1;
-        if b & 0x80 == 0 {
-            return Some((value, used));
-        }
-        shift += 7;
-        if shift > 63 {
-            return None;
-        }
-    }
-}
+use wacmanifest::manifest_in;
 
 /// The program built into this binary, when one was: a module carrying its own manifest.
 ///
@@ -1886,39 +1839,17 @@ fn main() {
     if SEED.is_some() && stem == "tracestat" {
         std::process::exit(tracestat_command(&args[2..]));
     }
-    if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
+    // **A stem is no longer a program.** `wac <stem>` used to run `<stem>.wasm` against a
+    // `<stem>.json` beside it, which was the pair form: two files, and a manifest that could be
+    // separated from the module it describes. `wac build` writes one artefact now — the manifest is a
+    // section inside the module — so anything that is not a command and not a `.wasm` is the
+    // compiler's. `issues/system/0161`.
+    if SEED.is_some() {
         start_v8();
         std::process::exit(run_seed(&args[1..]));
     }
-    let manifest_text = match std::fs::read_to_string(format!("{stem}.json")) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("wac: cannot read {stem}.json — {e}");
-            std::process::exit(1);
-        }
-    };
-    let manifest: Manifest = match serde_json::from_str(&manifest_text) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("wac: {stem}.json is not a manifest — {e}");
-            std::process::exit(1);
-        }
-    };
-    // The manifest names the module beside it, so a renamed pair says so instead of running the
-    // wrong program.
-    let dir = std::path::Path::new(stem).parent().unwrap_or(std::path::Path::new("."));
-    let wasm_path = dir.join(&manifest.wasm);
-    let wasm = match std::fs::read(&wasm_path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("wac: cannot read {} — {e}", wasm_path.display());
-            std::process::exit(1);
-        }
-    };
-
-    start_v8();
-    let code = run(&manifest, &wasm, &manifest_text);
-    std::process::exit(code);
+    eprintln!("wac: {stem} is not a command, and this build has no compiler in it");
+    std::process::exit(2);
 }
 
 /// What to call once the module is instantiated and its world is built.

@@ -156,7 +156,7 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
 
   string nativeOut = dir + "/native.ppm";
   Exec nran = cli.exec(cwd + "/native/target/release/wacland",
-                       string[](stem + ".json", nativeOut), u8[0]()).wait();
+                       string[](stem + ".wasm", nativeOut), u8[0]()).wait();
   t.isTrue(nran.ran(), "the native host ran — " + nran.error);
   t.eqI32(nran.status, 0, "the native half failed: " + string.fromBytes(nran.stderr));
   if (!nran.ran() || nran.status != 0) { return t.report(); }

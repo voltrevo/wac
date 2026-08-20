@@ -20,10 +20,11 @@
 // separate file, and it is gone.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { startsWith, endsWith, joined } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { jsonFile, objectOf, strOf, arrayOf } from "../../../wactest/src/jsonfile.wac";
+import { customSection } from "./section.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
@@ -75,7 +76,16 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
            "wac build wrote it — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
   if (!r.ran() || r.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
 
-  JsonObject m = jsonFile(cli, dir + "/wc.json");
+  // **Out of the module**, where the manifest lives as a `wac.manifest` section. It was a `.json`
+  // beside it until 2026-08-20 — read `tools/seed.sh` and `native/manifest` for why that went.
+  FileResult built = cli.readFile(dir + "/wc.wasm").wait();
+  t.isTrue(built.ok, "the build wrote no module — " + built.error);
+  if (!built.ok) { cli.remove(dir, true).wait(); return t.report(); }
+  string text = customSection(built.bytes, "wac.manifest");
+  t.isTrue(text.len() > 0, "the module carries no `wac.manifest` section");
+  if (text.len() == 0) { cli.remove(dir, true).wait(); return t.report(); }
+  cli.writeFile(dir + "/manifest.json", text.toBytes()).wait();
+  JsonObject m = jsonFile(cli, dir + "/manifest.json");
   JsonArray callbacks = arrayOf(m, "callbacks");
   JsonArray structs = arrayOf(m, "structs");
   // Asserted, not assumed: an empty manifest satisfies every "no field names a missing dispatcher"

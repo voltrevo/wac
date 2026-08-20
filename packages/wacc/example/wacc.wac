@@ -829,13 +829,10 @@ export i32 main(Core core, Cli cli) {
       core.warn("wacc: cannot write " + stem + ".wasm — " + wroteWasm.message);
       return 1;
     }
-    // **Inside the module and beside it.** The section is what lets one artefact be handed over;
-    // the pair is what the wasmtime host still reads. Writing both decides nothing at once.
-    Change wroteJson = fs.writeFile(stem + ".json", manifest.toBytes());
-    if (!wroteJson.ok()) {
-      core.warn("wacc: cannot write " + stem + ".json — " + wroteJson.message);
-      return 1;
-    }
+    // **Inside the module, and only there.** A `.json` went beside it until 2026-08-20, because the
+    // wasmtime host predated the section and took a manifest path as its argument. Both hosts read the
+    // section now (`native/manifest`), so the pair was a second copy of one thing with nothing left
+    // reading it — and a manifest that can be separated from its module is one that can be swapped.
     // `index\tline\tcol\tkind\tfile` per counter, in counter order — what turns a count into a
     // position. Beside the module because whoever runs it is who needs it.
     if (covered) {

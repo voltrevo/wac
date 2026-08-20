@@ -558,14 +558,18 @@ fn main() -> Result<(), wasmtime::Error> {
         if SEED.is_some() {
             std::process::exit(run_seed(&[])? );
         }
-        eprintln!("usage: wacland <program.json> [args...]");
-        eprintln!("  the manifest written by `deno task app:native`, beside its .wasm");
+        eprintln!("usage: wacland <program.wasm> [args...]");
+        eprintln!("  a module carrying its own manifest — `wac build <entry.wac> -o <stem>`");
         std::process::exit(2);
     }
-    // **A manifest, or arguments for the built-in compiler.** Deciding by what the first argument
-    // *is* rather than by a flag: `wac compile x.wac` and `wacland prog.json` are both what someone
-    // would type, and a program bundle is always a readable `.json`.
-    if !(argv[1].ends_with(".json") && Path::new(&argv[1]).exists()) {
+    // **A program, or arguments for the built-in compiler.** Deciding by what the first argument
+    // *is* rather than by a flag: `wac compile x.wac` and `wacland prog.wasm` are both what someone
+    // would type, and a program is always a readable `.wasm`.
+    //
+    // It took a `.json` beside the module until 2026-08-20, which was history rather than a reason —
+    // this host predates the self-describing section and nobody came back to it. One artefact means
+    // the manifest cannot be separated from the module it describes.
+    if !(argv[1].ends_with(".wasm") && Path::new(&argv[1]).exists()) {
         if SEED.is_some() {
             std::process::exit(run_seed(&argv[1..])?);
         }
@@ -573,9 +577,14 @@ fn main() -> Result<(), wasmtime::Error> {
         eprintln!("  build with seed/wacc.json and seed/wacc.wasm present to get one");
         std::process::exit(2);
     }
-    let manifest_path = Path::new(&argv[1]);
-    let text = std::fs::read_to_string(manifest_path)
+    let wasm = std::fs::read(&argv[1])
         .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", argv[1])))?;
+    let Some(text) = wacmanifest::manifest_in(&wasm) else {
+        return Err(wasmtime::Error::msg(format!(
+            "{}: no `wac.manifest` section — built by something that does not write one?",
+            argv[1]
+        )));
+    };
     let m: Arc<Manifest> = serde_json::from_str::<Manifest>(&text).map(Arc::new)
         .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", argv[1])))?;
     if m.version != SUPPORTED_VERSION {
@@ -584,9 +593,6 @@ fn main() -> Result<(), wasmtime::Error> {
             argv[1], m.version, SUPPORTED_VERSION
         )));
     }
-    let wasm_path = manifest_path.parent().unwrap_or(Path::new(".")).join(&m.wasm);
-    let wasm = std::fs::read(&wasm_path)
-        .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", wasm_path.display())))?;
     let program_args: Vec<Vec<u8>> = argv[2..].iter().map(|a| a.as_bytes().to_vec()).collect();
 
     let code = run(m, &wasm, program_args)?;

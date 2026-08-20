@@ -21,7 +21,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 
 | first argument | what happens |
 |---|---|
-| `prog.wasm`, or a stem with `prog.json` beside it | run that program: the module carries its own manifest, or the pair does |
+| `prog.wasm` | run that program — the module carries its own manifest |
 | `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
 | `uninstall` | remove what an install put under `$WAC_HOME`, and the line it added to each shell profile |
 | `update` | resolve and fetch what `wac.lock` does not cover, and write the lock |
@@ -34,7 +34,7 @@ command 'prog.wasm'*, which is a message about the wrong thing.
 ```sh
 wac check   main.wac                 # diagnostics, and nothing written
 wac compile main.wac [out.wasm]      # a module
-wac build   main.wac -o stem         # a module carrying a manifest, and stem.json beside it
+wac build   main.wac -o stem         # one module, carrying its own manifest
 wac build   main.wac --trace -o stem # ...instrumented for a trace, and stem.trace beside it
 wac bindgen main.wac [--js]          # the glue a host calls it through
 wac run     main.wac [args…]         # compile into a temporary file and run it

@@ -73,12 +73,13 @@ if [ -f "$SEED/wacc.wasm" ]; then
   had_seed=1
   mkdir -p "$tmp/prev"
   cp "$SEED/wacc.wasm" "$tmp/prev/wacc.wasm"
-  cp "$SEED/wacc.json" "$tmp/prev/wacc.json"
 fi
 
-install_seed() {   # $1 is a directory holding wacc.wasm and wacc.json
+# **One file.** A `wacc.json` went beside it until 2026-08-20 and `build.rs` never read it — `embed`
+# takes `{dir}/{stem}.wasm` and nothing else — so the seed carried a copy of a manifest that is
+# already a section inside the module next to it.
+install_seed() {   # $1 is a directory holding wacc.wasm
   cp "$1/wacc.wasm" "$SEED/wacc.wasm"
-  cp "$1/wacc.json" "$SEED/wacc.json"
   (cd native/v8 && cargo build --release >/dev/null 2>&1)
 }
 

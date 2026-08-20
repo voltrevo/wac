@@ -684,7 +684,12 @@ dependencies = [
  "serde",
  "serde_json",
  "v8",
+ "wacmanifest",
 ]
+
+[[package]]
+name = "wacmanifest"
+version = "0.1.0"
 
 [[package]]
 name = "which"
