@@ -132,3 +132,25 @@ history, so it is not stale — it is unverifiable from HEAD.
 
 That gives the sweep a direction it did not have: converge on the **cast** form, and the three bare-`%`
 tests are the ones whose numbers should be expected to move.
+
+### First conversion done, with its numbers — `datetime`
+
+The guidance above is to convert one file, run that package, and check the numbers before the sweep. Done
+for `datetime`, which needed **both** of its files: they were internally consistent as plain, so converting
+only the test would have created the split this issue is about.
+
+- `test/wac/datetime_test.wac` — `next()` returns `as@ u32`, and `spreadMillis`'s `% 4000000` is unsigned.
+  That restores the range its own comment documents: with an unsigned draw the spread is 1963.7–1976.3,
+  which is what *"about 1963 to 1976"* says; signed, it was roughly 1951–1976.
+- `test/cov_exercise.wac` — same, and **the fold came out**. `upto` was
+  `i32 v = this.next() % n; return v < 0 ? v + n : v;` — a compensation for the signed return that did not
+  restore the host's sequence either, since `(-k) % n + n` is not `(unsigned x) % n`. With the draw
+  unsigned there is nothing to fold, and `upto` is the one-liner the cast-variant files already use.
+
+**Numbers after:** the wac lane is 12 of 12, and `deno task coverage:datetime` is **123 of 123, 100.0%** —
+unchanged. So a corpus that moved by about half its draws did not move the coverage, which is worth knowing
+before the sweep: these are differentials against a host oracle, so *which* inputs they draw changes and
+what they assert does not.
+
+Two packages remain with a bare `%` on the plain variant — `regex` and `unicode`, both with driver and test
+in the plain group, so both want converting as a pair the same way.
