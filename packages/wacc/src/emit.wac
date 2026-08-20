@@ -3066,6 +3066,14 @@ export Built buildLinked(string[] paths, string[] sources, Res res, string entry
                  blockedAgain(paths, sources, res, entry, f!.env) + describeSep() + sigs +
                  describeSep() + types);
   }
+  // **Every guard above answers a particular question; this one answers the operator's.** A table
+  // overflowed, a name was ambiguous, the settling declined something — each of those was added for
+  // one hole, and each leaves `blocked` empty for a function that vanished any other way. So the last
+  // thing asked is whether the module contains what the source said to export. `issues/lang/0170a`.
+  string gone = missingExport(f!.env, f!.src, f!.lexed, f!.prog, f!.entryDecls);
+  if (gone != "") {
+    return Built(bareModule(), gone + describeSep() + sigs + describeSep() + types);
+  }
   return Built(wasm, "" + describeSep() + sigs + describeSep() + types);
 }
 
@@ -10675,13 +10683,65 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
  * shortage. Only exports are asked about, because a private function that is declined and never
  * called costs the module nothing.
  */
+/**
+ * An export the source declared that the emitted module does not have — or `""`.
+ *
+ * **Asked after emitting, of the `Env` that emitted.** That is the whole point: `declinedExport`
+ * below runs against a *fresh* front (`blockedOf` is a dry run), and a fresh front does not
+ * reproduce every drop — for the cases in `issues/lang/0170a` it reports the function as perfectly
+ * fine while the module it was asked about does not contain it. `funcIndex` in the spent `Env` is
+ * the list the export section was built from, so it is the one that knows.
+ *
+ * **And it does not care why.** Every other guard here answers a particular question — did the
+ * settling decline something, did a table overflow, is a name ambiguous — and each was added for one
+ * hole. This one asks the question the operator's rule asks: *you told me to export this name and it
+ * is not in here.* Whatever the reason, including reasons nobody has found yet.
+ *
+ * Indexing follows the export counter in `emitModule`: a slot per top-level function and one per
+ * method of a struct or an enum. Getting that wrong is how `declinedExport` came to read someone
+ * else's verdict for a day.
+ */
+string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecls) {
+  i32 at = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        // Only the entry file's exports become the module's, which is what the counter checks too.
+        bool mine = entryDecls < 0 || d < entryDecls;
+        if (exported && mine && env.funcIndex[at] < 0) {
+          return "the exported function `" + tokenTextOf(src, lexed, nameTok) +
+                 "` is not in the module the emitter produced";
+        }
+        at = at + 1;
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
+      }
+      else: { }
+    }
+  }
+  return "";
+}
+
 string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
   i32 at = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        if (exported && !env.funcOk[at]) {
+        // **Two questions, because they have different answers.** `funcOk` is the settling's
+        // verdict — "did anything unsupported stop this" — and `funcIndex` is whether the function
+        // actually reached the module, which is what the export section is built from. A function
+        // can be approved and still be absent, and that case was silent: `wac build` wrote a module
+        // without it and exited 0. Asking both is the difference between reporting a decline and
+        // reporting *the export you asked for is not in here*. `issues/lang/0170a`.
+        if (exported && (!env.funcOk[at] || env.funcIndex[at] < 0)) {
           string was = env.blocked;
           env.blocked = "";
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
@@ -10693,6 +10753,19 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
         at = at + 1;
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
+      }
+      // **An enum's methods take slots exactly as a struct's do, and this walk had no arm for them.**
+      // `addFunc` gives every method a slot in the per-function arrays, so an index that counts one
+      // kind and not the other drifts by the number of enum methods before it — and `core` is enums
+      // with methods, in every linked program there is. So `funcOk[at]` was somebody else's verdict,
+      // usually `true`, and an export the settling had declined was reported as fine: `wac build`
+      // wrote a module without the function and exited 0. `issues/lang/0170a`.
+      //
+      // `settleEmittable` below and the export counter in `emitModule` both have all three arms and
+      // are the convention; this was the one walk of the four that did not.
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
       }
