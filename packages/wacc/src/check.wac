@@ -6225,6 +6225,20 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     // And the argument *types*, which used to stop at the count. The reference reports both;
     // `issues/lang/0123` is what the gap cost.
     if (heldArity >= 0 && !c.isGeneric(recv)) { checkFuncrefArgs(c, held, args); }
+    // **A field that is not a funcref cannot be called at all**, and this returned as if it could.
+    //
+    // The arm above exists because a field *may* hold a funcref — `sh.externalNames()` and the whole
+    // of `Cli` — so a name that is a field is not a missing method. But `funcrefArity` answers < 0 for
+    // an `i32` field, and both guards above are `heldArity >= 0`, so `p.foo()` on `struct P { i32
+    // foo; }` fell out of the bottom with nothing said. The emitter then dropped the function
+    // containing it and `wac build` exited 0. `issues/lang/0165`.
+    //
+    // A generic's fields are not modelled, so an empty answer there means "not known" rather than
+    // "not callable" — the same exemption the arms above take.
+    if (heldArity < 0 && !c.isGeneric(recv) && held != "" && held != typeNone()) {
+      c.reportWith(errNotCallable(), callee.line, callee.col,
+                   recv + "." + name + " is a field of type " + held + ", not a method");
+    }
     return;
   }
 

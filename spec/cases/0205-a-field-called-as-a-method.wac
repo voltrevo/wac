@@ -1,0 +1,5 @@
+// expect: refused
+// why: a field is not a method, and calling one silently dropped the whole function
+// from: issues/lang/0165
+struct P { i32 foo; }
+export i32 main() { P p = P(7); return p.foo(); }

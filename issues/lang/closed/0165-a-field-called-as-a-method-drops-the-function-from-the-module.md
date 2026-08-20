@@ -1,7 +1,7 @@
 # 0165 — a field called as a method compiles clean and drops the whole function from the module
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — the checker refuses it, and names the field and its type
+- **Fixed in:** the commit this line arrived in
 - **Reported by:** agent-b
 - **Date:** 2026-08-20
 - **Kind:** bug
@@ -82,3 +82,30 @@ invariant this breaks and a cheap thing to check for the whole corpus.
 
 Found while porting `packages/fmt/cov.ts` to wac (`issues/system/0161`), where the symptom was a
 coverage report claiming the counter table and the counter dump described different modules.
+
+## Fixed
+
+```
+$ wac check a08.wac
+error: this is not something that can be called
+  --> a08.wac:1:48
+ 1 | struct P { i32 v; } export i32 f(P p) { return p.v(); }
+   |                                                ^ P.v is a field of type i32, not a method
+```
+
+**Where it was getting through.** The checker has an arm for a field *called* as a method, because a
+field may legitimately hold a funcref — `sh.externalNames()`, and the whole of `Cli`. Both of its
+guards are `heldArity >= 0`, and `funcrefArity` answers < 0 for an `i32` field, so a call on a
+non-funcref field fell out of the bottom of that arm with nothing said. The emitter then declined the
+function containing it, and until `wac build` learned to check its own exports that was silent too.
+
+A generic's fields are not modelled, so an empty type there still means "not known" rather than "not
+callable" — the same exemption the arms above take.
+
+`spec/cases/0205-a-field-called-as-a-method.wac` is the case, in the corpus both compilers read:
+**207 of 207 met by wacc**, and the reference's harness passes. The reference reports *struct 'P' has
+no method 'v'*; wacc now names the field and its type, which is the more useful of the two.
+
+Checked for false refusals across twelve packages — `sh`, `fs`, `http`, `json`, `tor`, `box`,
+`crypto`, `quic`, `server`, `tty`, `git`, `wacc` — all clean, which matters because `Cli` is nothing
+but funcref fields and `box` links 172 files.
