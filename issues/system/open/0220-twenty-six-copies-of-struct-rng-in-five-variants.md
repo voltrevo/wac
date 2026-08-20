@@ -200,3 +200,36 @@ unexecuted branch points in `utf8.wac` either way — measured by stashing the c
 
 So both conversions so far moved the corpus by about half its draws and moved no coverage. `regex` is the
 remaining bare-`%` pair.
+
+### The four drivers, and where the sweep now stands
+
+The remaining four — `bignum`, `http`, `regex`, `url` coverage drivers — took the same one-liner, and
+**only in `upto`**: `((this.next() as@ u32) % (n as@ u32)) as@ i32`, leaving `next()` returning `i32`.
+That is the shape `regex_test.wac` already uses, and it is the smaller change: casting at the point of use
+fixes the corpus without changing the interface, so no other call site moves. `datetime` and `unicode`
+went the other way — `next()` returns `u32` — because their `next()` is used directly as well, and each
+of those cost two compiler errors to sweep.
+
+Both idioms are correct and the tree now has both, which the shared module this issue asks for would
+settle. Worth saying plainly rather than leaving as an inconsistency somebody finds later.
+
+**Numbers.** All four coverage tasks exit 0, so no floor moved, and two measured against a stashed
+baseline are identical either way:
+
+| package | branch points | covered | baseline |
+|---|---:|---:|---|
+| `bignum` | 230 | 226 | 226 — same |
+| `url` | 727 | 712 | 712 — same |
+| `http` | 447 | 404 | floor held |
+| `regex` | 649 | 573 | floor held |
+
+With `datetime` (123/123) and `unicode` (105/108) that is **six packages converted and none whose coverage
+moved**. A corpus that changed by about half its draws changed no coverage anywhere — because these are
+differentials against a host oracle, so which inputs they draw moves and what they assert does not.
+
+**What is left.** Every file with a *live* signedness difference is now correct. The plain files that
+remain — `codec/test/wac/codec_test.wac`, `fmt/test/cov_exercise.wac`, `url/test/wac/fuzz_test.wac` — take
+no bare `%`, so their variant makes no difference to what they draw; and the thirteen cast copies were
+already right. So what is left of this issue is the **deduplication** it was filed for: one
+`packages/wactest/src/rng.wac` and twenty-odd imports. The correctness half is done, and that was the
+half that could silently be wrong.

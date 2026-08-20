@@ -64,10 +64,11 @@ struct Rng {
     return this.x;
   }
 
-  i32 upto(this, i32 n) {
-    i32 v = this.next() % n;
-    return v < 0 ? v + n : v;
-  }
+  // **Cast, not folded.** `v < 0 ? v + n : v` corrects a signed remainder into range and does not
+  // reproduce the host's sequence — `(-k) % n + n` is not `(unsigned x) % n`, and the host's `cov.ts`
+  // ended `x >>>= 0; return x`. `packages/regex/test/wac/regex_test.wac`'s own docstring says it best:
+  // "a signed remainder corrected into range afterwards picks different atoms". `issues/system/0220`.
+  i32 upto(this, i32 n) { return ((this.next() as@ u32) % (n as@ u32)) as@ i32; }
 }
 
 /**
