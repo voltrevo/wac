@@ -28,12 +28,12 @@ export const TOTALS = {
   pages: 11,
   /**
    * The whole repository: the packages (2607), and the compiler, harness and tooling
-   * around them (1374).
+   * around them (1375).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3981,
+  testsAll: 3982,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
