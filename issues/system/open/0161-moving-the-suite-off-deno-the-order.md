@@ -11,18 +11,38 @@ The goal is no Deno or TypeScript after bootstrapping, except where a JS interac
 This is the measured shape of that, and the order the steps have to happen in — recorded because I
 got the order wrong twice from reasoning about it.
 
-## Where this stands — 2026-08-19
+## Where this stands — 2026-08-20
 
-**18,317 lines of `.test.ts` under `packages/`, and every one of them is accounted for.** Not
-"looked at": each has a determination in this issue, and the four I had left as header-reading were
-opened on 2026-08-19 because one of those guesses turned out wrong.
+**17,325 lines of `.test.ts` under `packages/`**, and every one accounted for — not "looked at": each
+has a determination here.
 
 | where | lines | what it is |
 |---|---|---|
-| `box`, `sh` | 7,235 | another agent's packages |
-| `platform` | 6,610 | **swept — nothing convertible left.** The subject is TypeScript in every one |
-| `wacc` | 2,694 | **nine wait on a decision that is the operator's**, four stay |
-| `webrtc`, `tor`, `raster`, `stream` | 1,778 | a real browser, a C tor this machine has not got, a real canvas, a `TransformStream` |
+| `box`, `sh` | 5,697 + 1,574 | another agent's packages |
+| `platform` | 6,411 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20 |
+| `wacc` | 2,229 | **nine wait on a decision that is the operator's**, three stay |
+| `webrtc`, `raster`, `stream` | 899 + 218 + 297 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
+
+`tor` came off that last row on 2026-08-20. Its entry read "a C tor this machine has not got", and
+there is one at `$HOME/tor-build/…/src/app/tor` dated 3 August — the claim was about this machine and
+nobody looked at this machine. `test/wac/ctor_live_test.wac` now stands three relays, an authority and a
+real C tor with `packages/wactest/src/daemon.wac`, and both its assertions were canaried.
+
+## And the 22,927 lines outside `packages/`, which the headline number never counted
+
+Worth stating, because "no Deno after bootstrapping" is about the repository rather than about one
+directory:
+
+| where | lines | what it is |
+|---|---|---|
+| `compiler` | 17,995 in 17 | **the reference compiler is TypeScript**, and these test it. `packages/wacc` is the wac port measured against it, so translating these would delete the differential — the same argument as `jsxBoundary`, at the scale of the whole directory. `CONTRIBUTING.md` owns the discipline |
+| `tools` | 3,329 in 21 | mostly TypeScript tools testing themselves — `mutate`, `deadexports`, `docSignatures`, `install`, `lane`, `suiteGate`. The wac-side ones are already `tools/wac/*_test.wac`, nineteen files |
+| `harness` | 1,603 in 14 | the harness is the TypeScript that runs the suite; these test it |
+
+None of that is the same kind of remainder as `packages/`. It is the JavaScript half of a repository
+whose point is a language that compiles to wasm and a host that runs it in both worlds — `CLAUDE.md`'s
+"the browser is not scaffolding" cuts the same way. What would retire it is `harness/` and `tools/`
+being rewritten in wac, which is a different project from this issue.
 
 `crypto` reached zero on 2026-08-19, which is the first package to do so that needed a new command
 rather than a new test.
