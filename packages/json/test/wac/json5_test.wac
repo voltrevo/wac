@@ -31,7 +31,8 @@ import { endsWith, joined } from "../../../wactest/src/strings.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Canonical, canonicalize, canonicalizeJson5 } from "../../src/json.wac";
+import { Canonical, canonicalize, canonicalizeJson5, parse, parseJson5 } from "../../src/json.wac";
+import { JsonValue } from "../../src/value.wac";
 import { ERR_COMMENT, ERR_UNSUPPORTED } from "../../src/parse.wac";
 
 const string ORACLE = "packages/json/test/oracle.ts";
@@ -251,5 +252,68 @@ export string test_a_comment_is_not_accepted_by_the_json_parser(Core core, Cli c
     t.eqStr(string.fromBytes(asJson5.text), "{}",
             "a document that is only a comment inside an object is an empty object");
   }
+  return t.report();
+}
+
+/**
+ * `parseJson5` itself — the entry point that returns a *tree*, which nothing in this package called.
+ *
+ * Every other test here goes through `canonicalizeJson5`, which parses and then re-serialises, so the
+ * tree is compared as text. That is the right check for the vendored corpus and it never touches the
+ * function `packages/wacpkg` actually calls: `wac.json5` and `wac.lock` are read with `parseJson5` and
+ * walked as a tree. `issues/system/0205` listed `json.wac:39` as an uncovered *entry* — a function
+ * nobody called, tested only through a consumer in another package.
+ *
+ * The tree is walked rather than re-serialised, because that is what its caller does and because a
+ * value that arrives with the wrong tag is invisible to a text comparison that happens to agree.
+ */
+export string test_the_json5_tree_is_walkable_and_json_refuses_the_same_document() {
+  T t = T.create();
+  string src = "{\n" +
+               "  // a comment, which JSON has no room for\n" +
+               "  unquoted: 'single quoted',\n" +
+               "  nested: { n: 1.5, hex: 0xFF, },\n" +
+               "  list: [1, 2, 3,],\n" +
+               "}\n";
+
+  JsonValue? doc = parseJson5(src.toBytes());
+  t.isTrue(doc is not null, "JSON5 with comments and unquoted keys did not parse");
+  if (doc is null) { return t.report(); }
+
+  match (doc!) {
+    case Object(o): {
+      JsonValue? v = o.getStr("unquoted");
+      t.isTrue(v is not null, "the unquoted key is not in the tree");
+      if (v is not null) {
+        match (v!) {
+          case Str(b): { t.eqStr(string.fromBytes(b), "single quoted", "the single-quoted value"); }
+          else: { t.isTrue(false, "the unquoted key's value is not a string"); }
+        }
+      }
+      JsonValue? l = o.getStr("list");
+      t.isTrue(l is not null, "the trailing-comma array is not in the tree");
+      if (l is not null) {
+        match (l!) {
+          case Array(a): { t.eqI32(a.len(), 3, "a trailing comma added an element"); }
+          else: { t.isTrue(false, "the list is not an array"); }
+        }
+      }
+    }
+    else: { t.isTrue(false, "the document is not an object"); }
+  }
+
+  // **And the strict parser refuses it**, which is the whole reason this is a second entry point:
+  // "a parser that quietly accepted a comment would let one into a file the other end reads with
+  // `parse`". A `parseJson5` that had been wired to the strict parser by mistake would pass every
+  // assertion above and fail this one.
+  t.isTrue(parse(src.toBytes()) is null, "the strict parser accepted a JSON5 document");
+
+  // Every JSON document is a JSON5 one, which is the other half of the claim in the doc comment.
+  string plain = "{\"a\":[1,2,{\"b\":null}],\"c\":true}";
+  t.isTrue(parseJson5(plain.toBytes()) is not null, "JSON5 refused a plain JSON document");
+  t.isTrue(parse(plain.toBytes()) is not null, "and the strict parser accepts it too");
+
+  // Not JSON5 either, so the null above means "refused" rather than "always null".
+  t.isTrue(parseJson5("{oops".toBytes()) is null, "JSON5 accepted an unterminated object");
   return t.report();
 }

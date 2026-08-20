@@ -1,0 +1,83 @@
+// json's coverage, and the second UTF-8 validator nobody had refused anything with.
+//
+//   deno task coverage:json
+//   deno task coverage:json --verbose
+//
+// **602 of 602**, from 590 of 602, and both lists below are empty: every branch point is expected to
+// be covered and the first one that is not fails by name. `issues/system/0205`.
+//
+// ## Thirty-four of the 57 tests were not being called
+//
+// Twenty-eight of those take `(Core, Cli)` — this package is measured against Node's `JSON` and
+// against `npm:json5`, so most of its tests spawn a process, and before `issues/system/0221` a
+// coverage driver could call none of them. The 23 that were wired are exactly the ones that needed
+// nothing.
+//
+// ## This package has two UTF-8 validators and only one was tested
+//
+// `parse.wac` refuses ill-formed input; seventeen malformed sequences in `test/wac/utf8_test.wac`
+// exercise it and an oracle confirms the corpus really is malformed. `stringify.wac`'s `sequenceLen`
+// is the other one — it decides how many bytes of a string to copy whole while escaping the ASCII —
+// and **every `: 0` in its lead-byte table was uncovered**, which is to say every rejection it can
+// make. A hand-copy of RFC 3629's ranges, with a careful comment about why C0, ED A0 and F4 90 are
+// excluded, whose refusals had never once fired.
+//
+// Nothing could reach it: `sequenceLen` only sees bytes that were never parsed, and the only way to
+// produce those is the case `stringify`'s doc comment names — "a tree, built by hand or edited after
+// parsing". So the new test builds one and hands it fourteen malformed sequences.
+//
+// **What makes it a differential rather than a restatement** is where the answer is checked: the
+// output goes back through `canonicalize`, which is the *other* validator, written from the same RFC
+// by hand and sharing no code with this one. If the writer let an ill-formed sequence through, the
+// parser refuses the document its own package had just produced. Canaried by widening the writer's
+// lead-byte range to accept an overlong `C0`: the parser then rejects the output, naming the case.
+//
+// ## And `parseJson5` had no test in this package
+//
+// `json.wac:39` was an uncovered *entry* — a function nobody called. Every JSON5 test here goes
+// through `canonicalizeJson5`, which parses and re-serialises, so the tree is only ever compared as
+// text; `parseJson5` returns the tree, and the tree is what `packages/wacpkg` walks to read `wac.json5`
+// and `wac.lock`. Tested through a consumer in another package, which is the third time
+// `issues/system/0205` has turned that up — `packages/regex`'s two ignore-case entries and
+// `packages/http`'s `Outgoing` builder were the others.
+//
+// ## The canaries
+//
+// Dropping the grants takes this to **322 of 602** — the twenty-eight tests that ask Node are more
+// than half of what is measured here. Dropping the four trap cases costs two points: the bounds checks
+// in `value.wac` trap, and a trap in `main` would end the run, so each has its own export.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/json/test/cov_exercise.wac";
+const string PREFIX = "packages/json/";
+
+/** The four bounds checks that expect a trap, each its own export so the trap is caught per case. */
+string[] cases() {
+  return string[]("trap_when_an_array_index_is_past_the_end",
+                  "trap_when_an_array_index_is_negative",
+                  "trap_when_an_object_index_is_past_the_end",
+                  "trap_when_an_object_index_is_negative");
+}
+
+/** What the tests need: a process to ask Node and `npm:json5`, and the corpora on disk. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
+                 Pin[0](fill: Pin("", 0, "", true, "")),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

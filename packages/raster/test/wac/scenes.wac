@@ -10,7 +10,7 @@
 // a comparison: `[0, 0, 199, 149]` is one assertion and four fields are four.
 
 import { Surface, cellHeight, cellWidth, stride } from "../../src/surface.wac";
-import { glyphCount, glyphIndex, glyphRow, glyphWidth } from "../../src/font16.wac";
+import { glyphCount, glyphIndex, glyphRow, glyphWide, glyphWidth } from "../../src/font16.wac";
 import { Desk } from "../../src/desk.wac";
 import { EMPTY, Grid, WIDE_TAIL } from "../../src/grid.wac";
 import { PART_BAR, PART_BODY, PART_CLOSE, PART_NONE, Rect, partAt, raiseTo, topmost } from "../../src/hit.wac";
@@ -371,3 +371,92 @@ export i32[] gridSelectionInk(i32 cols, i32 rows, i32[] cps, i32 c0, i32 r0, i32
   }
   return out;
 }
+
+// ── The degenerate contracts ──
+//
+// Everything below drives a documented "does nothing", "clamps" or "answers rather than traps" path.
+// They are here rather than inline in the test for the reason the file header gives: a scene answers
+// numbers and the test does the comparing. `issues/system/0205` named every one of them.
+
+/** `[cols, rows, scrollbackMax]` as a `Grid` actually built them, given what was asked for. */
+export i32[] gridClamped(i32 cols, i32 rows, i32 maxBack) {
+  Grid g = Grid.create(cols, rows, maxBack);
+  // `scrollbackMax` is not a field a caller can read, so it is measured: write enough lines to
+  // overflow the grid and count how many are kept above the viewport.
+  i32[] nl = i32[]('x', 10, 'y', 10, 'z', 10, 'w', 10);
+  g.write(nl);
+  return i32[](g.cols, g.rows, g.scrollbackRows);
+}
+
+/** Whether `selected` says yes at `(col, row)` when the drag ran backwards — head before anchor. */
+export i32 gridSelectedBackwards(i32 cols, i32 rows, i32 c0, i32 r0, i32 c1, i32 r1,
+                                 i32 col, i32 row) {
+  Grid g = Grid.create(cols, rows, 0);
+  g.selectFrom(c0, r0);
+  g.selectTo(c1, r1);
+  return g.selected(col, row) ? 1 : 0;
+}
+
+/** The length of the selected text with no selection begun, and after clearing one. */
+export i32[] gridSelectionAbsent(i32 cols, i32 rows, i32[] cps) {
+  Grid g = Grid.create(cols, rows, 0);
+  g.write(cps);
+  i32 never = g.selectedText(0).len();
+  i32 extendedWithoutBeginning = 0;
+  g.selectTo(1, 0);                     // documented to do nothing when none was begun
+  extendedWithoutBeginning = g.selectedText(0).len();
+  g.selectFrom(0, 0);
+  g.selectTo(2, 0);
+  i32 withOne = g.selectedText(0).len();
+  g.clearSelection();
+  i32 afterClearing = g.selectedText(0).len();
+  return i32[](never, extendedWithoutBeginning, withOne, afterClearing);
+}
+
+/** The selected text with an `up` offset outside the scrollback it has, both directions. */
+export i32[] gridSelectedAt(i32 cols, i32 rows, i32 maxBack, i32[] cps, i32 up) {
+  Grid g = Grid.create(cols, rows, maxBack);
+  g.write(cps);
+  g.selectFrom(0, 0);
+  g.selectTo(cols - 1, rows - 1);
+  return g.selectedText(up);
+}
+
+/** The column the cursor sits in after writing `cps`, which a full row leaves past the last one. */
+export i32 gridCursorColumn(i32 cols, i32 rows, i32[] cps) {
+  Grid g = Grid.create(cols, rows, 0);
+  g.write(cps);
+  return g.curCol;
+}
+
+/** The ink of a row drawn with an `up` offset outside the scrollback, which clamps rather than trapping. */
+export i32[] gridDrawnAt(i32 cols, i32 rows, i32 maxBack, i32[] cps, i32 up) {
+  return gridDrawnInk(cols, rows, maxBack, cps, up);
+}
+
+/** How many windows a desk has after closing index `i`, which is out of range for a no-op. */
+export i32 deskClosedOutOfRange(i32 i) {
+  Desk d = twoWindows();
+  d.close(i);
+  return d.wins.len();
+}
+
+/** Typing into a desk with no windows at all: it must answer rather than reach for a topmost one. */
+export i32 deskTypedWithNoWindows(i32[] cps) {
+  Desk d = Desk.create();
+  d.toFocused(cps);
+  return d.wins.len();
+}
+
+/** Whether a degenerate rectangle reports damage — `[x0,y0,x1,y1]`, -1 -1 -1 -1 when clean. */
+export i32[] damageOfDegenerate(i32 x0, i32 y0, i32 x1, i32 y1) {
+  Surface s = Surface.create(32, 32);
+  s.damage(x0, y0, x1, y1);
+  return s.damaged() ? i32[](s.dx0, s.dy0, s.dx1, s.dy1) : i32[](-1, -1, -1, -1);
+}
+
+/** `glyphWide` and `glyphWidth` at an index, including ones the font does not have. */
+export i32[] glyphAt(i32 idx) {
+  return i32[](glyphWide(idx) ? 1 : 0, glyphWidth(idx));
+}
+

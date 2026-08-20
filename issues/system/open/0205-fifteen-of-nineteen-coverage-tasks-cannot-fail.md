@@ -375,6 +375,107 @@ Eighteen points remain: one pin, and two rules covering `connectThrough`, which 
 and is tested by `tunnel_test.wac` — three cases that dial the container's real proxy. They are out of
 the driver deliberately: a coverage number that needs the network is a floor over the weather.
 
+### `raster` tenth: 230 of 298 → **299 of 299**, and a crash behind the last three points
+
+**15 hold a coverage floor, 0 only check their own exemptions have not drifted, 6 report and cannot
+fail.** Empty pin and rule lists.
+
+None of this package's 26 tests were being called: the exercise drove `test/wac/scenes.wac` and
+nothing else. Wiring them took `grid.wac` from 69 of 128 to 114 — the scenes drive a `Grid` the way a
+desktop does and the tests drive it the way a terminal does.
+
+`hosts_test.wac` is left out deliberately, and for a **different reason** from the exclusions in
+`http` and `server`: it draws the same desktop on two hosts and compares pixels, so the drawing
+happens in child processes. The driver would pay six seconds and measure only the spawn. Worth not
+conflating with "needs a port" or "needs the network".
+
+The twenty-two that remained were the documented degenerate contracts — `close` an index that is not
+there, `selectTo` before `selectFrom`, `toFocused` with no windows, a rectangle with no area,
+`Grid.create` handed a zero. Each had a sentence in its doc comment and nothing running it. The best
+of them is the **backwards selection**: `Grid`'s own field comment says `selHead` may precede
+`selAnchor` — "a drag upwards is an ordinary drag" — and nothing had ever dragged upwards, so both
+halves of the two min/max ternaries implementing it had never run.
+
+**And the last three points were hiding a crash.** `grid.wac:228` clamps the cursor when it lands past
+the last column, and reaching it needs a glyph wider than the whole grid — `put` wraps *before*
+writing, so only a double-width glyph in a one-column grid can still overshoot. Writing that case
+trapped: *array element access out of bounds*, because the continuation cell went one past the end of
+the row, which on the last row is one past the end of the array. `Grid.create` clamps `cols` up to 1
+rather than refusing and `Desk.open` takes its count from a caller, so a one-column window plus any
+double-width character brought the program down.
+
+That is what an uncovered defensive clamp was worth: not a line to pin, but the one input nobody had
+built, and it crashed.
+
+Grants are worth **one point** here — measured, after I guessed ten. Against nineteen in `http`,
+twenty in `regex` and a hundred and four in `bignum`. The five tests that read the font hex check
+generated data against vendored data, which is a strong check and barely a branch check.
+
+### `json` eleventh: 590 of 602 → **602 of 602**, and a validator that had never refused anything
+
+**16 hold a coverage floor, 0 only check their own exemptions have not drifted, 5 report and cannot
+fail.** Empty pin and rule lists.
+
+Thirty-four of the 57 tests were not being called, twenty-eight of which take `(Core, Cli)` — this
+package is measured against Node's `JSON` and `npm:json5`, so most of its tests spawn a process, and
+the 23 that were wired are exactly the ones that needed nothing.
+
+**The package has two UTF-8 validators and only one was tested.** `parse.wac` refuses ill-formed
+input and seventeen malformed sequences exercise it. `stringify.wac`'s `sequenceLen` is the other, and
+every `: 0` in its lead-byte table was uncovered — every rejection it can make. A hand-copy of RFC
+3629's ranges, with a careful comment about why C0, ED A0 and F4 90 are excluded, whose refusals had
+never once fired.
+
+Nothing could reach it: it only sees bytes that were never parsed, and the only source of those is the
+case its doc comment names — "a tree, built by hand or edited after parsing". The new test builds one
+and hands it fourteen malformed sequences, then checks the answer **through the other validator**:
+the output goes back through `canonicalize`, which shares no code with it. Canaried by widening the
+writer to accept an overlong `C0` — the parser then refuses the document its own package produced.
+
+**And `parseJson5` had no test here.** Every JSON5 test goes through `canonicalizeJson5`, which
+re-serialises, so the tree is only compared as text; `parseJson5` returns the tree, and the tree is
+what `packages/wacpkg` walks to read `wac.json5` and `wac.lock`. That is the **third** entry point
+this issue has found tested only through a consumer in another package, after `packages/regex`'s two
+ignore-case compilers and `packages/http`'s `Outgoing` builder. Worth naming as a pattern: an export
+whose only caller is another package is one whose own tests never see it.
+
+Grants are worth **280 points** here — 602 to 322 without them, the widest of any package so far.
+
+### `wacpkg` twelfth: 401 of 426 → **426 of 426**, and it was the reading, not the wiring
+
+**17 hold a coverage floor, 0 only check their own exemptions have not drifted, 4 report and cannot
+fail.** Empty pin and rule lists; every one of its six source files is at 100%.
+
+Unlike the ten before it, `cov_exercise.wac` already called all 45 tests. So the gaps were facts about
+the code rather than about the driver — and all twenty-five sat in three places.
+
+**`manifestWhy` was twenty-three of them**, an uncovered *entry* with its eleven rows. It turns a
+refusal code into a sentence and exists because `wacc` used to print `m.detail` alone. Its only caller
+is `packages/wacc/example/wacc.wac`.
+
+That is the **fourth** export this issue has found tested only through a consumer in another package,
+after `regex`'s two ignore-case compilers, `http`'s `Outgoing` builder and `json`'s `parseJson5`. The
+tell is uniform: it shows up as an uncovered **entry**, not an uncovered branch, and the verbose
+report says `entry` in the last column. Worth grepping for across the rest.
+
+The test is not "each code renders". A code added without a row falls through to the fallback and the
+compiler prints a plausible sentence — the wrong one, silently. So each code must render to something
+other than the fallback and different from every other, and the *count* of codes that render at all is
+asserted against the list. Canaried both ways: dropping a row fails naming code 7 and reporting
+"renders 10, names 11"; giving two codes one sentence fails naming 5 and 6.
+
+**The other two branches say in their own comments that nothing reaches them.** `lock.wac:188` carries
+"Unreachable through `plan`, and not dead… `applyPlan` takes `steps` as an argument and cannot know
+they came from `plan`" — which is a claim about that *caller*, not the function, and `applyPlan` is
+exported, so the caller that reaches it is a test. `lock.wac:362` is the byte-by-byte name comparison
+whose *continue* had never run: every set of names ever sorted here differs in the first byte, so a
+comparator that returned on the first byte whatever it held would order every fixture correctly and
+put `alpine` before `alpha`.
+
+A comment saying a branch is unreachable is worth reading closely: two of the three here named the
+caller they were unreachable *through*, which is a different claim, and both were reachable from a
+test.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,

@@ -25,7 +25,10 @@ import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFil
          hitAt, partOf, partNone, partBody, partBar, partClose, raiseThenHit, gridRow, gridCursor,
          gridScrolled, gridEmpty, gridWideTail, gridInk, caretInk, deskPress, deskDrag,
          deskCloseDuringDrag, deskTyped, deskDrawn, gridDrawnInk, gridSelected,
-         gridSelectionInk } from "./scenes.wac";
+         gridSelectionInk ,
+         gridClamped, gridSelectedBackwards, gridSelectionAbsent, gridSelectedAt,
+         gridCursorColumn, gridDrawnAt, deskClosedOutOfRange, deskTypedWithNoWindows,
+         damageOfDegenerate, glyphAt} from "./scenes.wac";
 
 const string HEX = "packages/raster/tools/unscii-16.hex";
 
@@ -755,4 +758,112 @@ export string test_grid_a_selected_cell_is_drawn_inverted_and_only_where_the_sel
   t.eqI32Array(gridSelectionInk(6, 3, text, 1, 0, 3, 0, 1), i32[](0, 0, 0, 0, 0, 0),
                "a selection on row 0 reached row 1");
   return t.report();
+}
+
+/**
+ * The documented degenerate contracts — every "does nothing", "clamps" and "answers rather than
+ * traps" this package promises, and none of which anything had run.
+ *
+ * `issues/system/0205` listed twenty-two uncovered points and they were almost all one kind of thing:
+ * the guard at the top of a method, written because a window manager reaches these states in the
+ * ordinary course of being used. A window is closed while a drag is in flight; a selection is
+ * extended before one is begun; the last window goes away and a keystroke arrives anyway. Each has a
+ * sentence in its doc comment saying what happens, and a sentence with nothing running it is a
+ * comment rather than a contract.
+ *
+ * **The backwards selection is the one worth having.** `Grid`'s own field comment says `selHead` may
+ * be *before* `selAnchor` — "a drag upwards is an ordinary drag" — and normalising at the point of use
+ * is a deliberate decision recorded there. Nothing dragged upwards, so both halves of the two
+ * min/max ternaries that implement it had never run, and a `selected` that got them backwards would
+ * report an empty selection for every upward drag while passing every downward one.
+ */
+export string test_the_documented_degenerate_contracts_all_hold() {
+  T t = T.create();
+
+  // `Grid.create` clamps a nonsense size rather than allocating one.
+  i32[] tiny = gridClamped(0, 0, -5);
+  t.eqI32(tiny[0], 1, "zero columns clamps to one");
+  t.eqI32(tiny[1], 1, "zero rows clamps to one");
+  t.eqI32(tiny[2], 0, "a negative scrollback keeps nothing");
+  i32[] neg = gridClamped(-3, -4, -1);
+  t.eqI32(neg[0], 1, "a negative column count clamps to one");
+  t.eqI32(neg[1], 1, "a negative row count clamps to one");
+
+  // A drag upwards: anchor after head, which the struct comment calls ordinary.
+  t.eqI32(gridSelectedBackwards(4, 3, 3, 2, 1, 0, 2, 1), 1,
+          "a cell inside a backwards selection is selected");
+  t.eqI32(gridSelectedBackwards(4, 3, 3, 2, 1, 0, 0, 0), 0,
+          "and one before its start is not");
+  t.eqI32(gridSelectedBackwards(4, 3, 1, 0, 3, 2, 2, 1), 1,
+          "the same range dragged forwards means the same thing");
+
+  // No selection, a selection extended before one was begun, and one that was cleared.
+  i32[] absent = gridSelectionAbsent(4, 2, i32[]('a', 'b', 'c'));
+  t.eqI32(absent[0], 0, "no selection selects no text");
+  t.eqI32(absent[1], 0, "extending one that was never begun does nothing");
+  t.isTrue(absent[2] > 0, "a real selection does select something");
+  t.eqI32(absent[3], 0, "and clearing it takes it away again");
+
+  // An `up` offset outside the scrollback clamps at both ends rather than reading out of bounds.
+  i32[] cps = i32[]('a', 'b', 10, 'c', 'd', 10, 'e', 'f');
+  t.eqI32(gridSelectedAt(2, 2, 4, cps, -1).len(), gridSelectedAt(2, 2, 4, cps, 0).len(),
+          "a negative offset reads as the live viewport");
+  t.eqI32(gridSelectedAt(2, 2, 4, cps, 9999).len(), gridSelectedAt(2, 2, 4, cps, 4).len(),
+          "an offset past the history reads as the top of it");
+  t.eqI32(gridDrawnAt(2, 2, 4, cps, -1).len(), gridDrawnAt(2, 2, 4, cps, 0).len(),
+          "and drawing clamps the same way");
+
+  // A row written exactly full leaves the cursor past the last column, clamped to the width.
+  t.eqI32(gridCursorColumn(3, 2, i32[]('a', 'b', 'c')), 3, "a full row parks the cursor at the edge");
+  t.eqI32(gridCursorColumn(3, 2, i32[]('a')), 1, "and a partial one leaves it where it is");
+
+  // **A double-width glyph in a one-column grid**, which is the only way past the edge: `put` wraps
+  // before writing when the glyph does not fit, but after wrapping `curCol` is 0 and the glyph is
+  // still two cells wide — so the clamp on the line below the wrap is what stops the cursor leaving
+  // the grid. `Grid.create` clamps to one column rather than refusing, so this is a state a caller
+  // can reach, and the tail cell has nowhere to go.
+  t.eqI32(gridCursorColumn(1, 2, i32[](0x231A)), 1,
+          "a wide glyph in a one-column grid leaves the cursor at the edge, not past it");
+
+  // A selection that runs over a wide glyph and over a gap: the continuation cell is not a character
+  // and must not appear in the text, and a blank *between* two characters is a space rather than a
+  // dropped cell — only trailing blanks are dropped.
+  i32[] over = gridSelected(6, 1, cps("a⌚b"), 0, 0, 5, 0);
+  t.eqI32Array(over, cps("a⌚b"), "a selection over a wide glyph drops its continuation");
+  Grid_gap_check(t);
+
+  // Closing a window that is not there, and typing with nothing to type into.
+  t.eqI32(deskClosedOutOfRange(-1), 2, "closing index -1 closes nothing");
+  t.eqI32(deskClosedOutOfRange(7), 2, "closing an index past the end closes nothing");
+  t.eqI32(deskClosedOutOfRange(0), 1, "and a real index does close one");
+  t.eqI32(deskTypedWithNoWindows(i32[]('h', 'i')), 0, "typing with no windows open answers");
+
+  // A rectangle with no area reports no damage — a collapsed window draws every frame.
+  i32[] flat = damageOfDegenerate(4, 4, 4, 8);
+  t.eqI32(flat[0], -1, "a zero-width rectangle damaged something");
+  i32[] thin = damageOfDegenerate(4, 4, 8, 4);
+  t.eqI32(thin[0], -1, "a zero-height rectangle damaged something");
+  i32[] backwards = damageOfDegenerate(8, 8, 4, 4);
+  t.eqI32(backwards[0], -1, "a rectangle with its corners swapped damaged something");
+  i32[] real = damageOfDegenerate(4, 4, 8, 8);
+  t.eqI32(real[0], 4, "and a real one still damages what it covers");
+
+  // `glyphWide` had no caller in the package at all; `glyphWidth` had no out-of-range one.
+  i32[] none = glyphAt(-1);
+  t.eqI32(none[0], 0, "a negative glyph index is not wide");
+  t.eqI32(none[1], 0, "and has no width");
+  i32[] past = glyphAt(999999);
+  t.eqI32(past[0], 0, "an index past the table is not wide");
+  t.eqI32(past[1], 0, "and has no width either");
+  i32[] narrow = glyphAt(0);
+  t.eqI32(narrow[1], narrow[0] == 1 ? 16 : 8, "a real glyph's width agrees with its wide flag");
+  return t.report();
+}
+
+/** The interior-blank half of the selection check, kept out of the assertion above for width. */
+void Grid_gap_check(T t) {
+  // `a`, a blank, `b` — the blank is inside the selection, so it comes back as a space; the two
+  // blanks after `b` are trailing and do not.
+  i32[] got = gridSelected(5, 1, i32[]('a', 0, 'b'), 0, 0, 4, 0);
+  t.eqI32Array(got, i32[]('a', 32, 'b'), "an interior blank is a space and trailing ones are dropped");
 }

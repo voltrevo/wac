@@ -1,0 +1,66 @@
+// wacpkg's coverage, and three branches whose own comments explained why nothing ran them.
+//
+//   deno task coverage:wacpkg
+//   deno task coverage:wacpkg --verbose
+//
+// **426 of 426**, from 401 of 426, and both lists below are empty: every branch point is expected to
+// be covered and the first one that is not fails by name. `issues/system/0205`.
+//
+// ## Every test was already wired, so this one was about reading
+//
+// Unlike the ten packages before it, `cov_exercise.wac` already called all 45 tests. So the gaps were
+// facts about the code rather than about the driver, and all twenty-five were in three places.
+//
+// **`manifestWhy` was twenty-three of them** — an uncovered *entry*, and its eleven rows with it. It
+// turns a refusal code into a sentence, and it exists because `wacc` used to print `m.detail` alone:
+// *`wac.json5` is not usable: std/\** names the mapping and not the complaint. Its only caller is
+// `packages/wacc/example/wacc.wac`, so nothing in this package had ever called it.
+//
+// That is the **fourth** export `issues/system/0205` has found tested only through a consumer in
+// another package, after `packages/regex`'s two ignore-case compilers, `packages/http`'s `Outgoing`
+// builder and `packages/json`'s `parseJson5`. The shape is worth recognising: it shows up as an
+// uncovered *entry* rather than an uncovered branch, and the report says `entry` in the last column.
+//
+// The test is not "each code renders". A code added without a row falls through to
+// `return "it is not valid"` and the compiler prints a sentence — the wrong one, silently. So each
+// code must render to something *other than the fallback* and *different from every other*, and the
+// count of codes that render at all is asserted against the list. Adding `M_WHATEVER()` without a row
+// fails here rather than in somebody's terminal.
+//
+// ## The other two say in their own comments that nothing reaches them
+//
+// `lock.wac:188` carries: "**Unreachable through `plan`, and not dead.** `plan` only answers `USE`
+// when it found an entry … `applyPlan` takes `steps` as an argument and cannot know they came from
+// `plan`." Which is a claim about *that caller*, not about the function — and `applyPlan` is exported,
+// so the caller that reaches it is a test. It is one now, and what it pins is the sentence after:
+// "Refusing is the answer; a trap in a lockfile writer is not."
+//
+// `lock.wac:362` is the byte-by-byte name comparison, whose *continue* had never run: every set of
+// names this package has ever sorted differs in the first byte. A comparator that returned on the
+// first byte whatever it held would order every existing fixture correctly and put `alpine` before
+// `alpha`. There are four names sharing prefixes in `lock_test.wac` now.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/wacpkg/test/cov_exercise.wac";
+const string PREFIX = "packages/wacpkg/";
+
+/** What the exercise needs: the fixtures it reads from disk. Nothing here spawns or opens a socket. */
+string[] grants() { return string[]("--allow-read"); }
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
+                 Pin[0](fill: Pin("", 0, "", true, "")),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

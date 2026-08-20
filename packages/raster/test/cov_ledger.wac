@@ -1,0 +1,87 @@
+// raster's coverage, and the crash the last three points were hiding.
+//
+//   deno task coverage:raster
+//   deno task coverage:raster --verbose
+//
+// **299 of 299**, from 230 of 298, and both lists below are empty: every branch point is expected to
+// be covered and the first one that is not fails by name. `issues/system/0205`.
+//
+// ## None of the package's 26 tests were being called
+//
+// `cov_exercise.wac` drove `test/wac/scenes.wac` and nothing else, so the number said what the scenes
+// reached. Five of the tests take `(Core, Cli)` — they read the vendored font hex beside the generated
+// table — and until `issues/system/0221` a driver could not call one at all. Wiring them took
+// `grid.wac` from 69 of 128 to 114: the scenes drive a `Grid` the way a desktop does, and the tests
+// drive it the way a terminal does.
+//
+// **`hosts_test.wac`'s one test is left out deliberately.** It draws the same desktop on two hosts and
+// compares the pixels, which means the drawing happens in *child processes*: the driver would pay its
+// six seconds and measure only the spawn. A test whose subject runs somewhere else contributes nothing
+// to a coverage figure taken here — which is a different reason from `packages/http`'s and worth not
+// conflating with it.
+//
+// ## The twenty-two that were left were the degenerate contracts
+//
+// Almost every remaining point was a guard at the top of a method, each with a sentence in its doc
+// comment saying what happens and nothing running it: `close` an index that is not there, `selectTo`
+// before `selectFrom`, `toFocused` with no windows, a rectangle with no area, `Grid.create` handed a
+// zero or a negative. A window manager reaches these in the ordinary course of being used.
+//
+// The one worth naming is the **backwards selection**. `Grid`'s field comment says `selHead` may be
+// before `selAnchor` — "a drag upwards is an ordinary drag" — and normalising at the point of use is
+// recorded there as a decision. Nothing had ever dragged upwards, so both halves of the two min/max
+// ternaries implementing it had never run.
+//
+// ## And one real crash
+//
+// `grid.wac:228` clamps the cursor when it lands past the last column, and reaching it needs a glyph
+// wider than the whole grid: `put` wraps *before* writing, so after a wrap `curCol` is 0 and only a
+// double-width glyph in a **one-column** grid can still overshoot. Writing that test trapped —
+// *array element access out of bounds* — because the continuation cell went one past the end of the
+// row, which on the last row is one past the end of the array.
+//
+// `Grid.create` clamps `cols` up to 1 rather than refusing, and `Desk.open` takes its column count
+// from a caller, so a one-column window plus any double-width character brought the program down. The
+// tail is guarded now and the code point keeps its single cell — the renderer already clips at the
+// right edge, and losing input silently is the worse of the two wrong answers.
+//
+// **That is what an uncovered defensive clamp was worth here**: not a line to pin, but the one input
+// nobody had built, and it crashed.
+//
+// ## The canaries
+//
+// Dropping the grants takes this to **298 of 299** — one point, which is worth writing down because I
+// guessed ten before running it. The five tests that read the font hex check the *generated table
+// against the vendored source*, which is a strong check and almost entirely a check of data rather
+// than of branches; the scenes already reach the code they run through. Grants are not worth the same
+// everywhere, and the number is the only way to know: nineteen in `packages/http`, twenty in
+// `packages/regex`, a hundred and four in `packages/bignum`, one here.
+//
+// Removing the test calls from the exercise puts it back to 230 of 298, which is where this started.
+// Neither list below may hold anything, so a new uncovered branch fails by name rather than shrinking
+// a percentage.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/raster/test/cov_exercise.wac";
+const string PREFIX = "packages/raster/";
+
+/** What the tests need: the vendored font hex, read from disk. */
+string[] grants() { return string[]("--allow-read"); }
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
+                 Pin[0](fill: Pin("", 0, "", true, "")),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}
