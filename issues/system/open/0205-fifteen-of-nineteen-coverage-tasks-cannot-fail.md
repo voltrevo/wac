@@ -227,6 +227,36 @@ because the URL parse normalises the path before routing sees it. I did not esta
 do not know" collects false confidence**, which is the failure this issue is about wearing a different
 hat.
 
+### `url` improved and **not** given a floor, which is the other honest answer
+
+Still 11/0/10. `packages/url` is at 716 of 727 with its own 27 tests now in the measurement, and it is
+not getting a ledger yet. Two reasons, and the second is a finding.
+
+**Its driver was already as good as its tests.** Rewiring the exercise to call all 27 — eighteen of
+which take `(Core, Cli)` and so were unreachable before `issues/system/0221` — changed the number by
+*zero*. Canaried: a deliberate `t.fail` in one of them prints `error: FAILED url_test …`, so they do
+run and they cover nothing the probes did not. That is the first package of seven where the driver was
+not the problem, and it is worth knowing that the streak ends somewhere.
+
+**Its corpus is a *randomly sampled* cross product.** `cov_exercise.wac` builds scheme × separator ×
+userinfo × host × port × path × query × fragment and draws **4000 of them** with a fixed-seed `Rng`. So
+adding one entry to any of those lists re-rolls every draw — which is `issues/system/0212`'s defect
+exactly, one directory over: a coverage figure that moves when an unrelated input is added.
+
+Demonstrated while trying to close the gaps. Thirteen hosts added to the sampled list took it from 712
+to 717; the *same* inputs written as complete URLs in the hand-written list took it to 716. The extra
+point in the first version came from the re-roll, not from the inputs. So the inputs went in the
+deterministic list, and a floor over the sampled number would be a floor over a lottery.
+
+**What was closed, deterministically:** the `A`–`F` arm of `hexVal` — only lowercase hex had ever been
+parsed — a non-hex digit inside a `0x` part, an embedded IPv4 piece with a leading zero, and a trailing
+single colon in IPv6.
+
+**What resists:** eleven points, including `parseOpaqueHost`'s bracket check, which `foo://[::AB]/`
+does not reach. Eleven pins where several would have to say "I could not reach it" is worse than no
+floor — that is a list of low-confidence prose, which is the failure this issue is about. The
+sampled-corpus problem wants fixing first, and then the eleven want reading one at a time.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
