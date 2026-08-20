@@ -421,35 +421,28 @@ export string test_ml_kem_decapsulation_does_not_reveal_whether_the_ciphertext_w
   return t.report();
 }
 
+export string test_ghash_does_not_vary_with_the_authentication_key(Core core, Cli cli) {
+  // **A known leak until 2026-08-20, and the one whose consequence is forgery.** `gfMul` was
+  // shift-and-add with the add taken only when the bit was set, and reduced only when a one fell off
+  // the bottom — two branches per iteration, over the accumulator and over H itself. `ghash(h, data)`
+  // passes H as the multiplicand, so both leaked the GCM authentication key, and an attacker who
+  // knows H can authenticate a message they wrote rather than merely read one.
+  //
+  // Both are masks now, and it got *cheaper*: 740 events to 484, which is exactly the 256 branch
+  // points the two `if`s contributed over 128 iterations.
+  //
+  // This does not make AES-GCM constant-time. `aesEncrypt` below still indexes its S-box with
+  // key-derived bytes and always will without a bitsliced implementation — what changed is that one
+  // of the two halves of GCM no longer branches on its key.
+  T t = T.create();
+  noSecretDependence(t, cli, "ghash", "packages/crypto/src/ghash.wac", "ghash",
+                     "ghash($KEY, " + literal(block16()) + ")", i32[](0, 1, 2, 3), 16, 0);
+  return t.report();
+}
+
 // ── Known leaks ───────────────────────────────────────────────────────────────
 // Asserted as leaks so that fixing one fails here and forces the README to change with it. A README
 // that describes yesterday's side channels is worse than none.
-
-export string test_ghash_branches_on_the_bits_of_h_known_leak(Core core, Cli cli) {
-  T t = T.create();
-  string dir = scratchDir(cli, "ghash");
-  const string SRC = "packages/crypto/src/ghash.wac";
-  string call = "ghash($KEY, " + literal(block16()) + ")";
-  string[] ab = pair(t, cli, dir, "ghash",
-                     driver(t, cli, dir, "ghash", SRC, call, keyOf(0, 16)),
-                     driver(t, cli, dir, "ghash", SRC, call, keyOf(1, 16)));
-  string a = ab[0];
-  string b = ab[1];
-  if (a == "" || b == "") { return t.report(); }
-
-  string said = compared(t, cli, a, b, false);
-  t.isTrue(startsWith(said, "differs "),
-           "ghash no longer leaks — update the README and delete this test: " + said);
-  // A *branch* leak, not an index one: the two runs part rather than standing at one point with
-  // different values. `--all` says which, because that is the distinction it is built to draw.
-  if (startsWith(said, "differs ")) {
-    string all = compared(t, cli, a, b, true);
-    t.isTrue(startsWith(all, "split "),
-             "expected a branch leak, got: " + all + " — " +
-             siteAt(cli, a, numberOf(word(said, 2))));
-  }
-  return t.report();
-}
 
 export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Core core, Cli cli) {
   T t = T.create();
@@ -484,7 +477,12 @@ export string test_aes_indexes_its_s_box_with_key_dependent_values_known_leak(Co
     if (!startsWith(rows[i], "site ")) { continue; }
     found = found + siteAt(cli, a, numberOf(word(rows[i], 2))) + " ";
   }
-  i32[] lines = i32[](113, 114, 115, 116, 149);
+  // **All five, and now that is the whole of it.** Until 2026-08-20 `xtime`'s conditional reduction
+  // split the two runs at `aes.wac:66`, so everything after was unexamined — `--all` stops at a split
+  // because past one the journals are not aligned. `xtime` masks now, there is no split, and the
+  // trace reports exactly these five sites and no others: the leak is the S-box and nothing else,
+  // which is a stronger claim than the one the split allowed.
+  i32[] lines = i32[](129, 130, 131, 132, 165);
   for (i32 i = 0; i < lines.len(); i++) {
     string want = "index@packages/crypto/src/aes.wac:" + itoa(lines[i]);
     t.isTrue(contains(found, want),

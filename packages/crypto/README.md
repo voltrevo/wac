@@ -513,9 +513,9 @@ which is how AES keys have been recovered from cache timing since 2005.
 | `poly1305` | 140 | uniform |
 | `x25519Base` | 1,812,173 | uniform |
 | `ed25519Sign` | 7,399,082 | uniform |
-| `ghash` | 740 | **leaks** — control flow diverges where one run stood at `ghash.wac:36`; not examined past that |
-| `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
-| `aesEncrypt` | 11,779 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges where one run stood at `aes.wac:66`; not examined past that |
+| `ghash` | 484 | uniform |
+| `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:129`, `aes.wac:130`, `aes.wac:131`, `aes.wac:132` |
+| `aesEncrypt` | 9,475 | **leaks** — secret-dependent index at `aes.wac:129`, `aes.wac:130`, `aes.wac:131`, `aes.wac:132`, `aes.wac:165` |
 | `p256PublicKey` | 8,190,814 | uniform |
 | `p256Sign` | 8,456,980 | uniform |
 | `kemDecapsSecret` | 1,023,945 | uniform |
@@ -691,16 +691,32 @@ an arithmetic instruction took, so a uniform row here is a claim about control f
 access and not about arithmetic timing. Real ML-KEM implementations use Barrett reduction for
 exactly this reason. Named because a clean row should not be read as more than it is.
 
-**AES leaks in five places, not one.** Four are the key schedule's `SubWord` lookups
-(`aes.wac:113`–`116`) and the fifth is `SubBytes` itself (`aes.wac:149`), each indexing
-the S-box with a key-derived byte — index 0 for an all-zero key against 255 for an
-all-ones one. Then control flow diverges at `xtime`'s conditional reduction
-(`aes.wac:66`), which was not previously documented, and **nothing past that point has
-been examined**: once two runs take different paths their event streams describe
-different executions, so comparing them further produces noise rather than findings.
+**AES leaks in exactly five places, and that is now the whole of it.** Four are the key
+schedule's `SubWord` lookups (`aes.wac:129`–`132`) and the fifth is `SubBytes` itself
+(`aes.wac:165`), each indexing the S-box with a key-derived byte — index 0 for an all-zero key
+against 255 for an all-ones one. That is the 2005-era cache-timing attack, it is what a
+table-driven AES *is*, and the only answer is a bitsliced S-box.
 
-`ghash` diverges in control flow before any index does, so the same caveat applies to
-everything after its multiply loop.
+**Until 2026-08-20 there was a sixth thing and it was hiding the answer.** `xtime`'s conditional
+reduction was a *branch*, at `aes.wac:66`, and `--all` stops at a split because past one the two
+journals are not aligned and every later difference is an artefact of the misalignment. So the
+row said "nothing past that point has been examined" and nobody could say whether the five index
+sites were all of it. `xtime` masks now — `s ^ (0x1B * ((a & 0x80) >> 7))` — and the whole trace
+is examined: **the same five sites and no others.** A weaker leak was concealing the strength of
+the claim about the stronger one.
+
+It is also 2,304 events cheaper, which is the branch points that went.
+
+**`ghash` was the other half of AES-GCM and no longer leaks at all.** `gfMul` was shift-and-add
+with the add taken only when the bit was set and the reduction applied only when a one fell off
+the bottom — two branches per iteration, one over the accumulator and one over H itself, and
+`ghash(h, data)` passes H as the multiplicand. **A leaked GHASH key is forgery**, not disclosure:
+an attacker who knows H can authenticate a message they wrote. Both are masks now, and it went
+740 events to 484 — exactly the 256 branch points the two `if`s contributed over 128 iterations,
+so this one was free.
+
+GCM as a whole is still not constant-time, because the block cipher under it is not. What changed
+is that one of its two halves stopped depending on its key.
 
 **`bcryptPbkdf` is measured now, and it was the row that was not a result.** The tracer
 wrote into a buffer of 2^22 events fixed in the compiler; a single bcrypt hash is 129 full
