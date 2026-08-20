@@ -61,8 +61,10 @@ the fix went the right way — Montgomery multiplication over 32-bit limbs is **
 variable-time byte version**, so `p256Sign` is 2.4ms against `ed25519Sign`'s 2.3ms. The ordering this
 issue is named after is no longer inverted in either direction; the two are the same speed.
 
-So what remains of this issue is **RSA at 117ms**, and as of 2026-08-20 something has looked at it —
-from the side-channel end rather than the performance end, but they turn out to name the same place.
+RSA is answered too, below — it is the arithmetic, all of it, and there is nothing hiding. What is
+left of this issue is not a question but two changes nobody has made: CRT and a Montgomery multiply.
+
+The side-channel end named the same place first:
 `modPowSecret` with two 1024-bit exponents parts at `packages/bignum/src/big.wac:68`, which is
 `trim`'s `while` over leading zero limbs, at event 25,728 of 17.4 million.
 
@@ -71,6 +73,57 @@ every `mul` and `divmod` result is trimmed, and `modPowSecret` does four of thos
 1024 bits, so about four thousand big-integer operations per signature, each with a normalisation pass
 whose length depends on the operand. Nobody has profiled it, so that is a lead rather than an answer.
 There is no CRT either, which `rsa.wac`'s header notes would be roughly four times faster.
+
+## Answered for RSA too, 2026-08-20 — and it is the arithmetic, all of it
+
+The last row this issue could not explain. Measured by decomposition, every number from the real
+functions rather than a model of them:
+
+| | per call |
+|---|---:|
+| `rsaSignPkcs1`, 2048-bit | 133.3ms |
+| `modPowSecret` alone, same modulus | 127.6ms |
+| its loop body, 1024 iterations | 62.0ms |
+| `mul`, 2048 × 2048 bits | 4–5µs |
+| `divmod`, 4096 by 2048 bits | 7–10µs |
+
+**Signing is the exponentiation and nothing else.** 127.6 of 133.3ms, so the padding, the SHA-256 and
+the `Big` conversions are together about four per cent.
+
+**And the exponentiation is its multiplies and divisions, with nothing hiding.** `rawSign` passes
+`bitLen(modulus)`, so a 2048-bit key runs **2048 rounds**, and each round is two `mul`s and two
+`divmod`s — about 4,100 big-integer operations per signature. The loop body at 1024 iterations is
+62ms, so 2048 is 124ms against the 127.6ms measured for the whole function. There is no missing cost
+to find.
+
+`modPowSecret` multiplies on *every* bit rather than only the set ones, which is the constant-time
+trade its own header describes: `modPow` would do 2048 squarings and about 1024 multiplications, so
+roughly three quarters of this.
+
+### Two mistakes on the way, both worth keeping
+
+**The first version measured 5µs for a multiply and threw the result away**, which lets the call be
+eliminated. Consuming the result — summing `.n` — moved `divmod` from 5µs to 10µs, and the sum came
+back at exactly 4000×128 + 4000×64, which is how the loops were shown to have run at all.
+
+**The second version timed 200 iterations with a millisecond clock.** 200 × 5µs is one millisecond
+total, so every figure had ±100% error and the arithmetic "failed to account for" 83% of the time.
+Four thousand iterations, and a corrected round count, closed the gap to nothing. The 83% was mine:
+I had assumed 1024 rounds where `bitLen` asks for 2048.
+
+### Where the time would come from
+
+- **CRT** — two 1024-bit exponentiations instead of one 2048-bit. Each round's operands are half as
+  wide, so each is about a quarter of the work and there are two of them: roughly **4×**. `rsa.wac`'s
+  header already names this as the obvious optimisation and says why it has not been done;
+- **a Montgomery multiply instead of `divmod`** — the division is 7–10µs against the multiply's 4–5µs,
+  so replacing it with a reduction of the multiply's own cost is roughly **2×**.
+  `packages/crypto/src/scalarn.wac` is that, written for the NIST group orders on 2026-08-20, and the
+  shape ports.
+
+Together that is the difference between 133ms and something near 15ms, which would put RSA signing
+below the P-256 signature it currently costs fifty times. Neither is done, and this issue is where
+the measurement lives until one of them is.
 
 The original measurement follows.
 
