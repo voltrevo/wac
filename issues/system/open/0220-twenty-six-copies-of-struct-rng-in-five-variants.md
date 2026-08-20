@@ -60,14 +60,26 @@ brace-matching version then missed 13 files because their signature is `u32 next
 `i32 next(this)`. The population being mixed method/free-function is why the first two answers looked
 plausible and were wrong.)*
 
-**Nine of the twelve plain copies use a bare `%` on `next()`** — the ones this issue says are not
-insulated:
+**Which plain copies use a bare `%`.** I first wrote nine here; that count matched inside *comments* —
+`regex_test.wac` was flagged on a docstring reading "`next() % n` there is a modulo of a…". With comments
+stripped, and after the two conversions below, the plain files with a real bare `%` in code are **four,
+and every one is a coverage driver**:
 
-    bignum/test/cov_exercise.wac        regex/test/cov_exercise.wac
-    datetime/test/cov_exercise.wac      regex/test/wac/regex_test.wac
-    datetime/test/wac/datetime_test.wac unicode/test/cov_exercise.wac
-    http/test/cov_exercise.wac          unicode/test/wac/unicode_test.wac
-                                        url/test/cov_exercise.wac
+    bignum/test/cov_exercise.wac    regex/test/cov_exercise.wac
+    http/test/cov_exercise.wac      url/test/cov_exercise.wac
+
+and the plain files with no bare `%` are `codec/test/wac/codec_test.wac`, `fmt/test/cov_exercise.wac`,
+`url/test/wac/fuzz_test.wac`, and `regex/test/wac/regex_test.wac` — which is **already correct**: it casts
+at the point of use, `((this.next() as@ u32) % (n as@ u32)) as@ i32`, and its docstring is the clearest
+statement of this issue's whole point anywhere in the tree:
+
+> `x >>> 0` in the host-side generator was not decoration: `next() % n` there is a modulo of a 32-bit
+> unsigned, and a signed remainder corrected into range afterwards picks different atoms. The corpus would
+> still be a corpus, and it would not be the same one — so a seed named in a failure would no longer
+> reproduce it.
+
+So the remaining four are drivers whose `upto` is the `v < 0 ? v + n : v` fold that docstring describes:
+corrected into range, and not the host's sequence.
 
 ### The drift this issue is about is in three packages, and it is systematic
 
