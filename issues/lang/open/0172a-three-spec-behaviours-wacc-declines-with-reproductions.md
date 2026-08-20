@@ -221,3 +221,27 @@ function has always built. Verified both before and after.
 predicted from the structure and then reproduced. `spec/cases/0214` covers it now, with the match arm
 feeding the local so the inferred argument cannot be a constant. The enumeration is worth keeping as a
 one-off script: after this fix, `Func`+`StructDecl`-without-`EnumDecl` is **0 of 32**.
+
+### Gap 1, second attempt — and what the next one needs
+
+Retried the parent-token change with the day's new guards in place, hoping one of them would name the
+remaining cause. None did: the failure is still
+
+    wacc: cannot emit g1_generic_base.wac — the exported function `f` is not in the module
+
+which is the export-parity net, and it fires **only** when `blocked()` returned `""`. So with the parent
+carried, the fresh front `blockedOf` walks says the program is fine and the front that actually emitted
+dropped the function anyway. That is exactly the two-fronts disagreement `missingExport` was written for
+(`issues/lang/0170a`), and it means the cause is not in `canEmit` at all.
+
+Reverted again, for the same reason as the first time: half of this makes the diagnostics worse.
+
+**What the next attempt needs, so nobody repeats these two.** Not more reading of the construction path —
+that path is clean, and `emitExprAt` / `struct.new` / `fieldTypeAt` all handle an inherited field
+correctly once the count is right. What is needed is the **emitting** `Env`'s own account: which slot's
+`funcOk` went false and which call to `declineFor` or which bare `return` did it. That is instrumentation
+of the 25 unrecorded bails counted in `0170a`, and it should be done first and separately, because it
+answers this question and the next one.
+
+Both attempts are recorded because the appealing one-line change is genuinely wrong twice over, and its
+failure mode — a decline that stops naming its reason — is easy to mistake for progress.
