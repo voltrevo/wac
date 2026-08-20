@@ -1,7 +1,7 @@
 # 0161 — an aliased import of an already-imported type is a *different* type in wacc
 
 - **Status:** open — the variant half is fixed (2026-08-20); the two-imports half is not
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a, 2026-08-20 — step 1 below (making `renamed` a relation)
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
 - **Kind:** bug
