@@ -1,0 +1,199 @@
+// The shared generator draws what the copies it replaced drew.
+//
+//     wac test --allow-read packages/wactest/test/wac/rng_test.wac
+//
+// `packages/wactest/src/rng.wac` arrived with twenty-five call sites and no test. Its header makes
+// three checkable claims and this is them: that it is the *unsigned* family, that the two families
+// really do differ, and that the mask is load-bearing. `issues/system/0220`.
+//
+// **`Local` and `Folded` are verbatim copies of the two bodies that were deleted.** That is the point
+// of them, not an oversight: a differential whose halves run the same code can only report agreement,
+// so the thing being replaced has to be kept once, here, as the oracle for having replaced it. Do not
+// "tidy" either into a call to the shared one.
+//
+// The arithmetic canary is the test that is not a copy of anything. Both differentials would pass just
+// as happily if the shared generator and its verbatim twin were changed together — that one is the
+// reason the change would be caught.
+
+import { T } from "../../src/assert.wac";
+import { Rng } from "../../src/rng.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** The body of the twenty-five copies that landed on this side, character for character. */
+struct Local {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  i32 upto(this, i32 n) { return n <= 0 ? 0 : ((this.next() % (n as@ u32)) as@ i32); }
+}
+
+/**
+ * The other family: a signed remainder folded back into range.
+ *
+ * Kept so the header's claim that the two *differ* is a measurement rather than an assertion. The
+ * state evolution is identical — only the return type and the remainder differ.
+ */
+struct Folded {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  i32 upto(this, i32 n) {
+    i32 v = this.next() % n;
+    return v < 0 ? v + n : v;
+  }
+}
+
+/** Widths a caller actually asks for: a round one, two powers of two, and a wide one. */
+const i32[] WIDTHS = i32[](1000, 2, 256, 0x40, 6000);
+
+/** `json/test/wac/utf8_test.wac`'s draw, as a free function — a struct's methods do not extend. */
+i32 pick(Rng r) {
+  i32 v = r.upto(100);
+  if (v < 30) { return 0x80 + r.upto(0x40); }
+  return r.upto(0x80);
+}
+
+export string test_the_shared_rng_draws_what_the_copies_drew() {
+  T t = T.create();
+  i32[] seeds = i32[](12345, 0x0BADC0DE, 0x1F2E3D4C, 1, 0x5150CAFE, 0x2545F491);
+  for (i32 s = 0; s < seeds.len(); s++) {
+    Rng a = Rng(seeds[s]);
+    Local b = Local(seeds[s]);
+    for (i32 i = 0; i < 200; i++) {
+      i32 n = WIDTHS[i % WIDTHS.len()];
+      t.eqI32(a.upto(n), b.upto(n), "seed " + itoa(s) + " draw " + itoa(i) + " of " + itoa(n));
+    }
+  }
+  Rng ra = Rng(99);
+  Local rb = Local(99);
+  for (i32 i = 0; i < 100; i++) {
+    t.eqI32(ra.next() as@ i32, rb.next() as@ i32, "raw draw " + itoa(i));
+  }
+  return t.report();
+}
+
+/**
+ * The two families disagree, so which one this is was a decision rather than a coin toss.
+ *
+ * The header names a specific state — `0xC6E5747A` at `n = 10` — as a case where the two land on
+ * different values. That is the state *after* a step rather than a seed, so it is checked here as the
+ * arithmetic on the value itself, which is the substance of the claim. The rate over many states is
+ * checked too, because one example would still pass if the two agreed everywhere else.
+ */
+export string test_the_signed_family_would_have_drawn_a_different_corpus() {
+  T t = T.create();
+  i32 state = 0xC6E5747A;
+  i32 unsignedWay = ((state as@ u32) % (10 as@ u32)) as@ i32;
+  i32 signedRem = state % 10;
+  i32 foldedWay = signedRem < 0 ? signedRem + 10 : signedRem;
+  t.isTrue(unsignedWay != foldedWay,
+           "the header's state 0xC6E5747A lands on " + itoa(unsignedWay) + " both ways at n = 10, " +
+           "so the two families no longer differ where it says they do");
+
+  i32 differ = 0;
+  i32 total = 0;
+  Rng a = Rng(7);
+  Folded b = Folded(7);
+  for (i32 i = 0; i < 20000; i++) {
+    i32 n = WIDTHS[i % WIDTHS.len()];
+    if (a.upto(n) != b.upto(n)) { differ = differ + 1; }
+    total = total + 1;
+  }
+  // Pinned to what it measures, not to a rounded claim: a drift here means one of the two bodies
+  // moved, which is exactly what this file exists to notice.
+  t.eqI32(differ, 3984, "the two families differ on " + itoa(differ) + " of " + itoa(total) +
+                        " draws, not 3984");
+  return t.report();
+}
+
+/**
+ * The canary, and the only test here that is not a copy of anything.
+ *
+ * Signed and unsigned remainders on the *same* draws differ in 21 of 40. If the shared `upto` ever
+ * stops being unsigned, the differential above still passes when `Local` is changed with it; this
+ * does not, because it is the arithmetic rather than either implementation.
+ */
+export string test_a_signed_remainder_is_a_different_remainder() {
+  T t = T.create();
+  Rng a = Rng(12345);
+  i32 differ = 0;
+  for (i32 i = 0; i < 40; i++) {
+    u32 raw = a.next();
+    if (((raw as@ i32) % 10) != ((raw % 10) as@ i32)) { differ = differ + 1; }
+  }
+  t.eqI32(differ, 21, "the two remainders differ in " + itoa(differ) + " of 40, not 21");
+  return t.report();
+}
+
+/**
+ * The mask is the algorithm. Dropping it is a different generator, not a tidy-up.
+ *
+ * `Unmasked` is `Local` with `& 0x7FFF` removed, which leaves wac's arithmetic `>>` sign-extending —
+ * so this asserts the header's third claim by building the mistake it warns about.
+ */
+struct Unmasked {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ (this.x >> 17);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+}
+
+export string test_dropping_the_mask_changes_the_generator() {
+  T t = T.create();
+  Rng a = Rng(0x0BADC0DE);
+  Unmasked b = Unmasked(0x0BADC0DE);
+  i32 differ = 0;
+  for (i32 i = 0; i < 200; i++) {
+    if ((a.next() as@ i32) != (b.next() as@ i32)) { differ = differ + 1; }
+  }
+  t.isTrue(differ > 150, "removing the sign-extension mask changed only " + itoa(differ) +
+                         " of 200 draws — the mask may no longer be doing what the header says");
+  return t.report();
+}
+
+/**
+ * `upto(0)` answers `0`, which is the guard the shared one inherited from four of the copies.
+ *
+ * Asserted rather than left implicit because it is the one place the shared body is *not* the majority
+ * of what it replaced — six copies had no guard and would trap here. See `issues/system/0220` for the
+ * measurement that says the guard never fired in any of the four files it came from.
+ */
+export string test_a_draw_from_an_empty_range_answers_zero() {
+  T t = T.create();
+  Rng r = Rng(12345);
+  t.eqI32(r.upto(0), 0, "upto(0)");
+  t.eqI32(r.upto(-5), 0, "upto(-5)");
+  // And the guard costs nothing afterwards: the state is untouched, so the next real draw is the one
+  // it would have been.
+  Rng a = Rng(4321);
+  Rng b = Rng(4321);
+  a.upto(0);
+  t.eqI32(a.upto(100), b.upto(100), "a refused draw advanced the state");
+  return t.report();
+}
+
+export string test_a_free_function_can_extend_the_shared_rng() {
+  T t = T.create();
+  Rng r = Rng(12345);
+  for (i32 i = 0; i < 50; i++) {
+    i32 p = pick(r);
+    t.isTrue(p >= 0 && p < 0x100, "pick drew " + itoa(p) + ", outside its own range");
+  }
+  return t.report();
+}

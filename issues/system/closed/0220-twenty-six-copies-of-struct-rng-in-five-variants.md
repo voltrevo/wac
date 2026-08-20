@@ -381,3 +381,59 @@ no bare `%`, so their variant makes no difference to what they draw; and the thi
 already right. So what is left of this issue is the **deduplication** it was filed for: one
 `packages/wactest/src/rng.wac` and twenty-odd imports. The correctness half is done, and that was the
 half that could silently be wrong.
+## Two agents did the sweep at once — agent-a, 2026-08-20
+
+I did this deduplication independently and in parallel, and agent-b's landed first. The designs agreed
+on everything that mattered, including the choice of the unsigned family, which is reassuring rather
+than wasteful — but three things came out of the other attempt that are not in the tree yet, and they
+are what this note is for.
+
+### The shared module had no test, and now has one
+
+`packages/wactest/test/wac/rng_test.wac`. It keeps **verbatim copies of both deleted bodies** — the
+unsigned `Local` and the signed `Folded` — and walks each against the shared one, because a
+differential whose halves run the same code can only report agreement, so the thing being replaced has
+to be kept once as the oracle for having replaced it.
+
+It also turns this issue's own claims into assertions rather than prose:
+
+- the two families disagree — **3984 of 20000** draws over five widths, seeded 7;
+- signed and unsigned remainders on the same draws differ in **21 of 40**, which is the canary: both
+  differentials would still pass if the shared body and its verbatim twin were changed together;
+- dropping `& 0x7FFF` changes more than 150 of 200 draws, so the header's "the mask is the algorithm"
+  is measured;
+- `upto(0)` answers 0 and does not advance the state.
+
+Canaried: `<< 5` to `<< 6` in the shared generator fails three of the six tests.
+
+*(One correction to a figure while doing it. The header cites a state of `0xC6E5747A` at `n = 10`
+giving 0 one way and 4 the other. Seeding an `Rng` with that value gives 7 both ways — the number is
+the state **after** a step, not a seed, so the test checks the arithmetic on the value itself rather
+than the example as written. Worth knowing before anyone else tries to reproduce it.)*
+
+### The `n <= 0` guard is dead in all four files it came from
+
+The shared `upto` inherited the guard as "the superset". It was never reached. Removing it from all
+four files that had it — `zstd/encode_test`, `zstd/fseenc_test`, `zstd/fse_test`, `http/fuzz_test` —
+left every lane unchanged at 10, 3, 10 and 2 tests, and *unguarded* `upto(0)` traps on `% 0`, so a
+still-passing lane is a lane that never called it. That includes `upto(left)` in `fse_test` where
+`left` counts down and `upto(bytes.len())` in `http`, the two that look most like they need one.
+
+Removing a guard is a strange canary and a real one. **Not** removed here, because twenty-one further
+call sites now share that function and the measurement only covers four — so what is owed is the same
+removal run against all twenty-five lanes. Recorded because the argument in the docstring ("answering
+0 is what the majority of the guarded copies chose") is about provenance, and this is about whether it
+fires: a silent 0 from a drawing on an empty range is a caller's bug going unreported.
+
+### The xorshift64* pair is done too
+
+`tls` and `tor` each carried a copy of an xorshift64\* with `i64` state, as free functions rather than
+methods, differing from each other only by a temporary variable — `i32 v = …; return v;` against
+`return …;`. That is the state a duplicate reaches before it drifts somewhere that matters. Now
+`packages/wactest/src/rng64.wac`, exporting `Rng64`, `rng`, `next` and `randomBytes`; lanes 8 and 11,
+unchanged. Named for its width so a file importing both modules is not importing two things called
+`Rng`.
+
+So what still declares a `struct Rng` is six copies of two LCGs, in four shapes — `bytes(n)`,
+`block()`, `upto(n)`, `next()`. The top of this issue rules them fine and that still holds for the
+reason it gave: nothing claims they match anything, so there is no wrong answer available.
