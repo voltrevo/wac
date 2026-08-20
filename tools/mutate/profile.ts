@@ -307,6 +307,34 @@ type NativeShare = { all: string[]; tests: Record<string, string[]>; ms: number 
  * `map: basics` filters to nothing, exits 0, and scores the mutant as survived.
  */
 /**
+ * The grants the suite's own wac lane passes, which a profiling run has to match exactly.
+ *
+ * **It did not, and the cost was silent.** `wacShare` passed four of these and not `--allow-net`,
+ * which `tools/runTests.ts` added to the lane on 2026-08-18. A wac test that binds a socket then
+ * *fails* under the profiler rather than being skipped — `cli.listen` answers a negative handle and
+ * the test says "no free port" — so `skipped` stays empty, the profile is taken as authoritative, and
+ * the lines those tests would have reached are attributed to nobody. Measured: **29 test files across
+ * `platform`, `quic`, `http`, `server`, `webrtc`, `tor` and `ethrpc`** have at least one such test,
+ * and `patience_test.wac` alone loses 10 of its 50 attributed points.
+ *
+ * Which is what the comment beside the Deno arguments below already warns about — *"this run is what
+ * decides which tests reach which lines, so a net test that fails to start contributes no coverage"* —
+ * written next to the path that had the grant, while the path that did not went unnoticed.
+ *
+ * One list, because two lists is how the first one aged. `nativeShare` passed **no** grants at all;
+ * its population is zero today, since no `.test.ts` under `packages/` registers wac tests any more, so
+ * that was invisible rather than harmless. `tools/mutate/grants.test.ts` fails if this and the lane's
+ * copy stop agreeing. `issues/system/0176`.
+ */
+export const WAC_LANE_GRANTS = [
+  "--allow-read",
+  "--allow-write",
+  "--allow-run",
+  "--allow-env",
+  "--allow-net",
+];
+
+/**
  * A profile for one `*_test.wac` entry, run directly by the binary.
  *
  * **`nativeShare` without the wrapper.** That one exists because a `.test.ts` *registers* wac tests and
@@ -329,7 +357,7 @@ export async function wacShare(
     await new Deno.Command(binary, {
       // The grants the suite's own wac lane passes: a test skipped for want of one contributes no
       // coverage, and code only that test reaches then looks unreached.
-      args: ["test", "--coverage", "--allow-read", "--allow-write", "--allow-run", "--allow-env", entry],
+      args: ["test", "--coverage", ...WAC_LANE_GRANTS, entry],
       cwd: work,
       env: { WAC_PROFILE: dir },
       stdout: "piped",
@@ -376,7 +404,7 @@ export async function nativeShare(
     for (const { entry, prefix } of reg.found) {
       const began = performance.now();
       await new Deno.Command(binary, {
-        args: ["test", "--coverage", entry],
+        args: ["test", "--coverage", ...WAC_LANE_GRANTS, entry],
         cwd: work,
         env: { WAC_PROFILE: dir },
         stdout: "piped",
