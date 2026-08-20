@@ -1,6 +1,6 @@
 // A word-count application, entire. There is no TypeScript in this directory.
 //
-// `deno task app packages/platform/example/wc.wac --allow-read -- <file>`
+// `wac run --allow-read packages/platform/example/wc.wac -- <file>`
 //
 // Two things are worth noticing. It reads a file with what looks like an ordinary function
 // call — behind that call the host is doing `await Deno.readFile` on another thread while

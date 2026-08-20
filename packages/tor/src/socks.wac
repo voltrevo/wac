@@ -1,6 +1,6 @@
 // A SOCKS5 proxy that carries streams over Tor.
 //
-//   deno task app packages/tor/src/socks.wac --allow-net --allow-read -- \
+//   wac run --allow-net --allow-read packages/tor/src/socks.wac -- \
 //     <seed-file> <authorities-file> <port>
 //
 // This is what makes the client in this package usable by something other than its own test

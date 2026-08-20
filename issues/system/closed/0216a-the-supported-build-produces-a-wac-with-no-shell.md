@@ -1,7 +1,6 @@
 # 0216a — the supported build produces a `wac` with no shell, and the CLI doc says otherwise
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
 - **Reported by:** agent-b
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -63,3 +62,27 @@ everyone following the supported route.
 
 That also means the two payloads should be settled together. `design/lang/0009` D10 names `update` as
 an explicit operation, so "does `wac update` exist after a seed" is the same question as the shell.
+
+## Closed 2026-08-20 — the seed carries all three
+
+`tools/seed.sh` builds `packages/box/example/boxsh.wac` into `$SEED/sh.wasm` and
+`packages/wacpkg/example/fetch.wac` into `$SEED/update.wasm` after the fixpoint converges, then runs
+one more `cargo build` so the loop's binaries — which ran before those files existed — are not what
+gets kept. Optional to `build.rs` is not optional here: a payload that does not compile fails the
+command and says which one, because a `wac` missing two of its five documented subcommands is what
+this issue is.
+
+**Built after the fixpoint, not inside it.** They are ordinary programs and say nothing about whether
+wacc reproduces itself; putting them in the loop would pay for two extra compiles a round.
+
+**Cost, measured:** `boxsh.wac` is 12.4s and `fetch.wac` 3.9s, plus a `cargo build`. `deno task seed`
+goes from about 13s to **34s**. That is the price of the command being the same command everywhere,
+and CLAUDE.md now quotes the new number.
+
+The skip in `tools/wac/sh_test.wac` is gone with the reason for it — if `sh` disappears again that
+file should go red, which is exactly what the skip was preventing. `wac update` reaches the fetcher
+and answers `wacfetch: wac.json5 could not be read, so . is not a project` instead of the compiler's
+usage line, and `mappedspec_test.wac`'s `test_update_caches_where_the_compiler_looks` passes.
+
+Its sibling `test_a_mapped_subdir_cannot_import_outside_itself` was failing at the same time and is
+**not** this: see `issues/system/0219`, a module cache keyed on a closure it could not fully see.

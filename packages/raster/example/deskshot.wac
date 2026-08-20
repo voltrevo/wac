@@ -1,6 +1,6 @@
 // The desktop, drawn and written out as a PPM — the same program on every host.
 //
-//   deno task app deskshot.wac --allow-write -- out.ppm       # Deno
+//   wac run --allow-write deskshot.wac -- out.ppm       # Deno
 //   wacland deskshot.json out.ppm                             # no JavaScript in the artefact
 //
 // `design/system/0004` opens with the constraint that shapes it: *"it is both, not a sequence"* — the

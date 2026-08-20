@@ -1,6 +1,6 @@
 // Host a v3 onion service.
 //
-//   deno task app packages/tor/src/hsserviced.wac --allow-net --allow-read -- \
+//   wac run --allow-net --allow-read packages/tor/src/hsserviced.wac -- \
 //     <seed-file> <authorities-file> <identity-seed-file> [--testnet]
 //
 // The other half of `hsconnect.wac`. That program is a client: it fetches a descriptor, introduces

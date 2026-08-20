@@ -76,8 +76,14 @@ removes exactly those things and never a manifest, a lockfile, a source file or 
 compiler — followed by `cargo build`. It is a fixed point: the compiler the binary produces, used to
 build the compiler again, is byte-identical — and since 2026-08-17 the command **checks** that
 rather than asserting it, and puts the previous seed back rather than keep one that is not
-(`tools/seed.sh`, `design/lang/0009` D2). It costs a second `cargo build`, about 13s in total. `deno task` is only the task runner here; nothing in
+(`tools/seed.sh`, `design/lang/0009` D2). `deno task` is only the task runner here; nothing in
 that command needs a JavaScript host.
+
+**It builds all three payloads, and costs about 34s.** The binary carries a compiler, a shell and a
+fetcher — `wac build`/`run`/`test`, `wac sh`, `wac update` — and until 2026-08-20 this script wrote
+only the first, so the supported route produced a `wac` answering `unknown command 'sh'` and a red
+suite for anyone who ran `wac update` (`issues/system/0216a`). Of the 34s, the fixpoint is about 13s
+and the other two payloads are 12.4s and 3.9s plus a `cargo build`.
 
 **And it is the one to reach for when an unrelated file stops compiling.** A `wacc` change from
 another agent can be one the *current* seed cannot compile, and the symptom is not "your seed is

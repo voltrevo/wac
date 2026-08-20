@@ -1,6 +1,6 @@
 // A Tor client, entire.
 //
-//   deno task app packages/tor/src/app.wac --allow-net --allow-read -- \
+//   wac run --allow-net --allow-read packages/tor/src/app.wac -- \
 //     <seed-file> <authorities-file> <path>
 //
 // No TypeScript. The socket comes from the platform world, and everything above it —

@@ -1,6 +1,6 @@
 // A desktop, in a tab — design/0001 step 8, and the last of its eight steps to be started.
 //
-//   deno task app packages/box/example/desk.wac
+//   wac run packages/box/example/desk.wac
 //
 // The design's own sentence: "`Page` has render, events and pixels; a window manager in wac over the
 // same system, with the terminal as one window. Deliberately last: windows want something to show."

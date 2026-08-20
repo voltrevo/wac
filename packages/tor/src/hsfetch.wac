@@ -1,6 +1,6 @@
 // Fetch a v3 onion service's descriptor from the network, and say what is in it.
 //
-//   deno task app packages/tor/src/hsfetch.wac --allow-net --allow-read -- \
+//   wac run --allow-net --allow-read packages/tor/src/hsfetch.wac -- \
 //     <seed-file> <authorities-file> <onion-address> [--testnet]
 //
 // The whole client half of the onion protocol, end to end and over real circuits: bootstrap, work

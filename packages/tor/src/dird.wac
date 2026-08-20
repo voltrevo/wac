@@ -1,6 +1,6 @@
 // A directory authority's HTTP port: serve the consensus, the certificate and the descriptor.
 //
-//   deno task app packages/tor/src/dird.wac --allow-net --allow-read -- \
+//   wac run --allow-net --allow-read packages/tor/src/dird.wac -- \
 //       <consensus-file> <certificate-file> <descriptor-file> [port]
 //
 // The documents are read from disk rather than generated here, because generating them means an
