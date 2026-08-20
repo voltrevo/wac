@@ -1532,6 +1532,37 @@ reason `ctcompare` had to be a command was the *size* of a trace, and that reaso
 Not started here: it is a distinct project, it is not a test, and the ledgers are the kind of thing
 that should move deliberately rather than in a sweep.
 
+### Fourteen of the twenty have moved — 2026-08-20
+
+`codec`, `unicode`, `server`, `datetime`, `regex`, `raster`, `http`, `fmt`, `url`, `bytes`, `wacpkg`,
+`json`, `stream`, `bignum`. `tools/wac/covreport.wac` is the shared reporting half; each package keeps
+only its exercises, as a wac program whose `main` runs the shapes. Every figure is preserved or better:
+
+    fmt    380 → 383      its second entry point existed to cover three functions and covered none
+    url    709 → 712      the encode sets and the host serializer, called directly instead of via a test
+    json   589 → 590      `parse` itself, which the TypeScript never called because it used JSON.parse
+    bytes   54 →  73      nineteen branches in slice.wac, dark because the probe list was hand-written
+
+`covdump` had to grow up first, which was `issues/system/0221`: it instantiated with no imports, so an
+exercise could hold no capabilities, and it called only `main`, so an exercise could hold at most one
+trapping case. It runs the ordinary program path now and calls named exports with a trap caught each.
+
+Two shapes worth knowing for the rest:
+
+  - **A second entry point is usually a bridge artefact.** `fmt` and `url` had one because a `string`, a
+    `Host` or an encode-set constant does not cross into JavaScript, so the TypeScript could only reach
+    those functions by running a wac test that happened to call them. In wac they are just calls.
+  - **JavaScript as a subroutine, not a driver.** `packages/bignum` cannot write its own operands — they
+    are wider than `i64` — so `test/operands.ts` is an arbitrary-precision service and the wac exercise
+    is its caller: wac decides which limb boundaries matter, `BigInt` computes them. The alternative was
+    a 20.4 KB vendored corpus, and `packages/mpt/test/oracle.ts` already argues against that shape.
+
+**The six that remain are ratchets, not exercises** — `issues/system/0222`. Five carry a ledger of
+reasoned exemptions with a staleness check, the check is written four different ways, `ssh` has none at
+all, and `fs` alone is 372 lines of pins against 210 of machinery. That is a decision about what
+"accounted for" means across four packages, so it is filed rather than guessed at. `sh` is another
+agent's.
+
 Filed on the way: `issues/lang/0162b`. `ct.wac` declared a `struct Stat` for `tracestat`'s three
 numbers, and a program that declares a struct `platform.wac` also declares compiles cleanly and will
 not start — the linker qualifies the platform one, `Cli.stat`'s funcref signature carries the

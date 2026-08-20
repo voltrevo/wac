@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0222](open/0222-the-last-five-coverage-drivers-are-ratchets-and-there-are-four-of-them.md) | the six `cov.ts` drivers left are ratchets, and the ratchet is implemented four times with `ssh` having none at all — `fs` alone is 372 lines of pins against 210 of machinery, so the machinery wants porting once rather than five times | task | not implemented |
 | [0220](open/0220-twenty-six-copies-of-struct-rng-in-five-variants.md) | twenty-six `.wac` files declare their own `struct Rng` in five variants; eighteen are one xorshift32 split by whether the result is cast, which changes what `next() % n` samples, and several claim to match a host-side generator that nothing checks | task | wrong answer |
 | [0218](open/0218-a-test-kills-the-shell-that-started-its-server-not-the-server.md) | `node_net_test.wac` kills the subshell it got `$!` from, not the `node` it started — 81 servers were live across three workspaces holding 5.1 GB and 81 ports, the oldest 11h47m; `wactest/src/daemon.wac` has the same shape | bug | wrong answer |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
@@ -71,7 +72,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-229 issues, 170 closed.
+230 issues, 170 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
