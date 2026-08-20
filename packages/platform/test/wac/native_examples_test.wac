@@ -137,6 +137,11 @@ Case[] cases() {
     // matters: Web Crypto refuses more than 65,536 bytes in one call, so Deno and the browser threw on
     // anything larger while Node, which chunked, did not (0122). Four sizes, one past the cap.
     caseOf("entropy", none(), "", none()),
+    // **The half-close**, both ends in one program so there is no peer to arrange and no port to
+    // pass in. `closeSend` was added on 2026-08-20 and this is its two-host comparison —
+    // `conformance_test.wac` requires one for every opcode, which is how it came to exist on the
+    // same day rather than being a gap somebody would notice later. `issues/system/0215`.
+    caseOf("halfclose", none(), "", string[]("--allow-net")),
     // **What `send` answers when the far end has stopped listening**, which is a bool the three
     // JavaScript hosts were not answering at all: `kid.in.push(...)` with the result discarded and the
     // promise unawaited, so a send after `closeFeed` claimed success and dropped the bytes (0121) and
@@ -230,10 +235,8 @@ string builtOnce(Cli cli, string tmp, Case c, bool haveNative) {
   }
   if (!haveNative) { return ""; }
   string mod = builtProgram(cli, entry, c.name, c.grants);
-  string manifest = mod.slice(0, mod.len() - 5) + ".json";
-  if (!copyBuilt(cli, mod, tmp + "/" + c.name + ".wasm", false)
-      || !copyBuilt(cli, manifest, tmp + "/" + c.name + ".json", false)) {
-    return entry + ": its module and manifest would not copy into " + tmp + "\n";
+  if (!copyBuilt(cli, mod, tmp + "/" + c.name + ".wasm", false)) {
+    return entry + ": its module would not copy into " + tmp + "\n";
   }
   return "";
 }
@@ -298,7 +301,7 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
       if (c.port) { denoArgs[c.args.len()] = itoa(hd.port); }
 
       string[] nativeArgs = string[1 + c.args.len() + (c.port ? 1 : 0)](fill: "");
-      nativeArgs[0] = tmp + "/" + c.name + ".json";
+      nativeArgs[0] = tmp + "/" + c.name + ".wasm";
       for (i32 k = 0; k < c.args.len(); k++) { nativeArgs[1 + k] = c.args[k]; }
       if (c.port) { nativeArgs[1 + c.args.len()] = itoa(hn.port); }
 

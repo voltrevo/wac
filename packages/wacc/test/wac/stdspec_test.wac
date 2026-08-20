@@ -26,12 +26,21 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Change, Cli, Core, Exec } from "std/platform.wac";
 
-/** `wac <cmd> <args…>` — the binary, which carries wacc. */
-Exec wacc(Cli cli, string cmd, string[] args) {
-  string[] all = string[args.len() + 1](fill: "");
-  all[0] = cmd;
-  for (i32 i = 0; i < args.len(); i++) { all[i + 1] = args[i]; }
-  return cli.exec(binaryPath(cli), all, u8[0]()).wait();
+/**
+ * `wac <cmd> <args…>` **with the working directory inside the fixture**, which is the whole point.
+ *
+ * `cli.exec` inherits this process's directory, and the suite runs at the repository root — where
+ * `std/platform.wac` and `core/` are real files at exactly the paths the built-in specifiers name.
+ * So a compiler that had never served `std` from inside itself, and simply read the path off disk,
+ * passed every case here. It did: the gatherer in `example/wacc.wac` was missing `stdFile` for a day
+ * and nothing went red until somebody ran `wac` in a directory of their own.
+ *
+ * Running through `sh -c 'cd … && …'` is what makes these cases able to fail.
+ */
+Exec wacc(Cli cli, string dir, string cmd, string[] args) {
+  string line = "cd " + dir + " && exec " + binaryPath(cli) + " " + cmd;
+  for (i32 i = 0; i < args.len(); i++) { line = line + " '" + args[i] + "'"; }
+  return cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
 }
 
 /** `deno run -A harness/<tool>.ts <args…>`, from the repository root. */
@@ -63,7 +72,7 @@ export string test_a_std_specifier_resolves_out_of_the_compiler(Core core, Cli c
                "import { Cli, Core } from \"std/platform.wac\";\n" +
                "export i32 main(Core core, Cli cli) { return 7; }\n"), "wrote main");
 
-  Exec w = wacc(cli, "run", string[](dir + "/main.wac"));
+  Exec w = wacc(cli, dir, "run", string[]("main.wac"));
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7, "wacc answered " + itoa(w.status) + ", want 7 — " +
@@ -90,7 +99,7 @@ export string test_a_projects_own_std_directory_does_not_shadow_the_builtin(Core
   t.isTrue(put(cli, dir + "/std/platform.wac",
                "export i32 decoy() { return 999; }\n"), "wrote the decoy");
 
-  Exec w = wacc(cli, "run", string[](dir + "/main.wac"));
+  Exec w = wacc(cli, dir, "run", string[]("main.wac"));
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     t.eqI32(w.status, 7, "a std/ directory beside the entry won: wacc answered " + itoa(w.status) +
@@ -112,7 +121,7 @@ export string test_a_bare_std_names_the_file_to_write_instead(Core core, Cli cli
                "import { Core } from \"std\";\n" +
                "export i32 main(Core core) { return 1; }\n"), "wrote main");
 
-  Exec w = wacc(cli, "run", string[](dir + "/main.wac"));
+  Exec w = wacc(cli, dir, "run", string[]("main.wac"));
   t.isTrue(w.ran(), "wac did not run — " + w.error);
   if (w.ran()) {
     string said = string.fromBytes(w.stderr);

@@ -73,7 +73,6 @@ void cleanUp(Cli cli, string path) {
   // it was not pointed at — the platform's own words for why it is an argument rather than a default.
   cli.remove(path, false).wait();
   cli.remove(probeDir(cli) + "/p.wasm", false).wait();
-  cli.remove(probeDir(cli) + "/p.json", false).wait();
 }
 
 export string test_grants_3qm7wv2_build_takes_a_grant_before_the_entry(Core core, Cli cli) {
@@ -88,17 +87,31 @@ export string test_grants_3qm7wv2_build_takes_a_grant_before_the_entry(Core core
   t.isTrue(!holds(r.out, "cannot read --allow-read"), "the flag was read as the entry: " + r.out);
   // And the grant reaches the artefact, which is the half a position-only fix would miss: the scans for
   // grants started at argument 2 because argument 1 was the entry by position.
-  FileResult m = cli.readFile(stem + ".json").wait();
-  t.isTrue(m.ok, "no manifest beside the module");
+  FileResult m = cli.readFile(stem + ".wasm").wait();
+  t.isTrue(m.ok, "the build wrote no module");
   if (m.ok) {
-    string text = string.fromBytes(m.bytes);
-    // Read as text rather than parsed: this file's subject is the command line, and pulling in a JSON
-    // parser to confirm one boolean would make the test about something else.
-    t.isTrue(holds(text, "\"read\":true") || holds(text, "\"read\": true"),
-             "the manifest does not carry the read grant: " + text);
+    // **Scanned in the module's own bytes**, where the manifest lives as a `wac.manifest` section —
+    // it was a `.json` beside the module until 2026-08-20. Searched rather than parsed, for the reason
+    // it always was: this file's subject is the command line, and pulling in a section walker and a
+    // JSON parser to confirm one boolean would make the test about something else. Scanned as bytes
+    // rather than decoded, because a module is not UTF-8.
+    t.isTrue(bytesHold(m.bytes, "\"read\":true") || bytesHold(m.bytes, "\"read\": true"),
+             "the manifest in the module does not carry the read grant");
   }
   cleanUp(cli, path);
   return t.report();
+}
+
+/** Whether `needle`'s bytes appear anywhere in `b`. */
+bool bytesHold(u8[] b, string needle) {
+  u8[] n = needle.toBytes();
+  if (n.len() == 0 || n.len() > b.len()) { return false; }
+  for (i32 i = 0; i + n.len() <= b.len(); i++) {
+    bool same = true;
+    for (i32 k = 0; k < n.len() && same; k++) { if (b[i + k] != n[k]) { same = false; } }
+    if (same) { return true; }
+  }
+  return false;
 }
 
 export string test_grants_3qm7wv2_run_refuses_a_grant_after_the_entry(Core core, Cli cli) {

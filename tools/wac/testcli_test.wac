@@ -1,0 +1,225 @@
+// `wac test`'s argument handling and `wac validate`'s batching — the CLI, asked from wac.
+//
+// `[§wac-cli-grants-3qm7wv2]` `[§wac-cli-validate-2hq7nx4]`
+//
+// ## `wac test`: a flag after the path is a flag
+//
+// It was a *target*. Flags were read only up to the first argument that is not one, so
+// `wac test packages/fs/ --allow-write` counted `--allow-write` as a file — one that does not exist,
+// so one that "did not run" — and printed
+//
+//     2 files: 1 ok, 1 that did not run
+//        --allow-write   did not run
+//
+// Two things wrong with that and neither says "you put the flag in the wrong place": the summary has a
+// phantom entry that reads as a failing test, and the grant is silently absent from the run that did
+// happen. Every other tool here takes flags in any position, so the order was not a rule anyone was
+// going to learn from being bitten by it.
+//
+// ## `wac validate`: a good module after a bad one is the case it exists for
+//
+// A rejected module leaves an exception on the isolate, and the next `WasmModuleObject::compile` walks
+// into V8's own check that a null result and a pending exception agree — `Check failed:
+// maybe_compiled.is_null() == i_isolate->has_exception()` — which aborts the process with SIGABRT
+// rather than returning. The first version of the command had no `TryCatch` and died exactly there, on
+// the second module. It is a list rather than one path because the whole point is one isolate for many:
+// `packages/wacc/test/wac/corpusemit_test.wac` asks about 543 of them.
+//
+// ## Host-side until 2026-08-20 — `issues/system/0161`
+//
+// This was a Deno test of the same surface, and nothing in it needed a JavaScript host: every test
+// spawns the `wac` binary and reads what it said, which is what `cliCommands_test.wac` beside it has
+// always done. `covdump`'s two cases went to `covdump_test.wac`, which already owns that command.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+
+/** The binary under test, with whatever arguments, and its output as one string. */
+Exec wac(Cli cli, string[] args) {
+  return cli.exec(binaryPath(cli), args, u8[0]()).wait();
+}
+
+string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
+
+/** One passing test file and nothing else, so a summary is about the arguments. */
+string oneTestDir(Cli cli, T t, string name) {
+  string dir = scratch(cli, name);
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change w = cli.writeFile(dir + "/x_test.wac",
+    "export string test_passes() { return \"\"; }\n".toBytes()).wait();
+  t.isTrue(w.ok(), "could not write the test file — " + w.message);
+  return dir;
+}
+
+/** The line beginning `<n> files:`, which is the line anybody reads. */
+string summaryOf(string out) {
+  i32 from = 0;
+  for (i32 i = 0; i <= out.len(); i++) {
+    if (i == out.len() || out.slice(i, i + 1) == "\n") {
+      string line = out.slice(from, i);
+      if (contains(line, " files: ") || contains(line, " file: ")) { return line; }
+      from = i + 1;
+    }
+  }
+  return "";
+}
+
+/** The last non-empty line, which is where every batched command puts its count. */
+string lastLine(string out) {
+  string last = "";
+  i32 from = 0;
+  for (i32 i = 0; i <= out.len(); i++) {
+    if (i == out.len() || out.slice(i, i + 1) == "\n") {
+      string line = out.slice(from, i);
+      if (line.len() > 0) { last = line; }
+      from = i + 1;
+    }
+  }
+  return last;
+}
+
+i32 countLinesStarting(string out, string prefix) {
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= out.len(); i++) {
+    if (i == out.len() || out.slice(i, i + 1) == "\n") {
+      string line = out.slice(from, i);
+      if (line.len() >= prefix.len() && line.slice(0, prefix.len()) == prefix) { n = n + 1; }
+      from = i + 1;
+    }
+  }
+  return n;
+}
+
+export string test_a_grant_after_the_path_is_a_flag_not_a_phantom_test_file(Core core, Cli cli) {
+  T t = T.create();
+  string dir = oneTestDir(cli, t, "testcli-grant");
+
+  Exec before = wac(cli, string[]("test", "--allow-read", dir));
+  t.eqI32(before.status, 0, said(before));
+
+  // The same run with the flag moved. It has to agree with the line above, exit status included.
+  Exec after = wac(cli, string[]("test", dir, "--allow-read"));
+  t.eqI32(after.status, 0, said(after));
+  t.isTrue(!contains(said(after), "did not run"),
+           "a moved flag should not become a file: " + said(after));
+  t.isTrue(!contains(said(after), "--allow-read"),
+           "and should not be named as one: " + said(after));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_filter_after_the_path_keeps_its_value(Core core, Cli cli) {
+  T t = T.create();
+  string dir = oneTestDir(cli, t, "testcli-filter");
+
+  // `--filter` carries a value, so a naive fix moves the flag and leaves `passes` looking like a
+  // second directory — which discovery then reports as a file that did not run.
+  Exec r = wac(cli, string[]("test", dir, "--filter", "passes"));
+  t.eqI32(r.status, 0, said(r));
+  t.isTrue(!contains(said(r), "did not run"), "the filter's value is not a target: " + said(r));
+
+  // And a filter matching nothing still fails, which is the whole point of that rule: a typo in a
+  // filter must not be a green run over no tests.
+  Exec none = wac(cli, string[]("test", dir, "--filter", "nosuchtest"));
+  t.isTrue(none.status != 0, "a filter matching nothing should fail: " + said(none));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A test skipped for want of a grant is **counted in the summary**, which is the line anybody reads.
+ *
+ * `wac test packages/gzip/test/wac/` with no grants printed `15 files: 13 ok, 2 needing a host oracle`
+ * and exited 0 — while seventeen tests across three files were skipped by name, each said once in a
+ * per-file line that scrolls past. Two of us then measured that directory hours apart, one with grants
+ * and one without, and disagreed by 15× on a single file: the counts differed by three tests and
+ * neither of us read that as the answer. `issues/system/0183`.
+ *
+ * **Two files, because one takes the single-file shortcut**: `wac test` prints no summary for a lone
+ * file, and the per-file notice is then adjacent to the result rather than lost above it.
+ */
+export string test_the_summary_says_how_many_tests_were_skipped_for_a_grant(Core core, Cli cli) {
+  T t = T.create();
+  // Inside the repository, because the entry imports `packages/platform` by a relative path — and
+  // under `.cache`, because at the root it is walked by everything that reads this repository's own
+  // files and disappears again a few milliseconds later. `scratch` puts it there.
+  string dir = scratch(cli, "testcli-grantskip");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change a = cli.writeFile(dir + "/y_test.wac",
+    ("import { Cli, Core } from \"std/platform.wac\";\n" +
+     "export string test_needs_nothing() { return \"\"; }\n" +
+     "export string test_wants_a_capability(Core core, Cli cli) { return \"\"; }\n").toBytes()).wait();
+  Change b = cli.writeFile(dir + "/z_test.wac",
+    "export string test_also_passes() { return \"\"; }\n".toBytes()).wait();
+  t.isTrue(a.ok() && b.ok(), "could not write the two test files");
+  if (!a.ok() || !b.ok()) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec r = wac(cli, string[]("test", dir));
+  // Not a failure: granting nothing is the default and skipping is the honest answer.
+  t.eqI32(r.status, 0, said(r));
+  string summary = summaryOf(said(r));
+  t.isTrue(contains(summary, "grant"),
+           "the summary should mention the skipped test: \"" + summary + "\"\n" + said(r));
+  // And say how many, since one skipped test and seventeen are different situations.
+  t.isTrue(contains(summary, "1"), "and count them: \"" + summary + "\"");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_validate_takes_a_batch_and_names_only_what_it_rejected(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "testcli-validate");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change src = cli.writeFile(dir + "/m.wac", "export i32 main() { return 0; }\n".toBytes()).wait();
+  t.isTrue(src.ok(), "could not write the source — " + src.message);
+  Exec built = wac(cli, string[]("build", dir + "/m.wac", "-o", dir + "/m", "--quiet"));
+  t.eqI32(built.status, 0, "could not build the module to validate: " + said(built));
+  if (built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+  string good = dir + "/m.wasm";
+
+  // The same bytes with one flipped inside the header, which is what the engine rejects.
+  FileResult bytes = cli.readFile(good).wait();
+  t.isTrue(bytes.ok, "could not read the module back — " + bytes.error);
+  if (!bytes.ok) { cli.remove(dir, true).wait(); return t.report(); }
+  u8[] broken = u8[bytes.bytes.len()]();
+  for (i32 i = 0; i < broken.len(); i++) { broken[i] = bytes.bytes[i]; }
+  broken[4] = broken[4] ^ 0xFF;
+  string bad = dir + "/bad.wasm";
+  cli.writeFile(bad, broken).wait();
+
+  // **A good module after a bad one**, which is the case the `TryCatch` exists for.
+  Exec mixed = wac(cli, string[]("validate", good, bad, good));
+  t.eqI32(mixed.status, 1, "a rejected module fails the batch: " + said(mixed));
+  t.eqI32(countLinesStarting(string.fromBytes(mixed.stdout), "rejected"), 1,
+          "exactly the bad one is named:\n" + said(mixed));
+  t.eqStr(lastLine(string.fromBytes(mixed.stdout)), "3 module(s): 1 rejected",
+          "and the count is what it was asked for");
+
+  // Every module accepted: only the count.
+  Exec allGood = wac(cli, string[]("validate", good, good));
+  t.eqI32(allGood.status, 0, "all accepted: " + said(allGood));
+  t.eqStr(lastLine(string.fromBytes(allGood.stdout)), "2 module(s): 0 rejected", "only the count");
+
+  // A file it cannot read is a rejection rather than a crash, so one missing path does not hide the
+  // verdict on the others.
+  Exec missing = wac(cli, string[]("validate", "/nope/does-not-exist.wasm"));
+  t.eqI32(missing.status, 1, "unreadable counts against it: " + said(missing));
+  t.eqStr(lastLine(string.fromBytes(missing.stdout)), "1 module(s): 1 rejected", "and is counted");
+
+  // No arguments is a usage error, not a failure.
+  Exec none = wac(cli, string[]("validate"));
+  t.eqI32(none.status, 2, "usage, not failure: " + said(none));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

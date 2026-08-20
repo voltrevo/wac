@@ -5,11 +5,11 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0222](open/0222-the-last-five-coverage-drivers-are-ratchets-and-there-are-four-of-them.md) | the six `cov.ts` drivers left are ratchets, and the ratchet is implemented four times with `ssh` having none at all — `fs` alone is 372 lines of pins against 210 of machinery, so the machinery wants porting once rather than five times | task | not implemented |
+| [0220](open/0220-twenty-six-copies-of-struct-rng-in-five-variants.md) | twenty-six `.wac` files declare their own `struct Rng` in five variants; eighteen are one xorshift32 split by whether the result is cast, which changes what `next() % n` samples, and several claim to match a host-side generator that nothing checks | task | wrong answer |
 | [0218](open/0218-a-test-kills-the-shell-that-started-its-server-not-the-server.md) | `node_net_test.wac` kills the subshell it got `$!` from, not the `node` it started — 81 servers were live across three workspaces holding 5.1 GB and 81 ports, the oldest 11h47m; `wactest/src/daemon.wac` has the same shape | bug | wrong answer |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
-| [0215](open/0215-a-socket-can-only-be-closed-outright-so-a-wac-client-cannot-say-it-is-done-speaking.md) | a wac program can `closeSocket` but cannot half-close, so a client that must signal EOF and then read the reply has no call for it; `closeFeed` is the same thing for a child's stdin and its doc comment makes the argument, with the same `wc` example | missing feature | not implemented |
-| [0214](open/0214-an-opt-in-test-has-been-red-and-four-of-its-seven-cases-are-wrong.md) | `nativeBinary.test.ts` fails 3 of 7 — 4 once the first three are fixed — and nothing noticed — it is opt-in and nobody opts in; two are defects in the test, one is the 18-byte pipeline difference `seed.sh` already documents | bug | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
 | [0213a](open/0213a-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
 | [0212](open/0212-the-mutation-recall-floor-is-decided-by-filenames-not-by-the-checker.md) | rung 3 pairs each corpus file with `MUTATIONS[i % 7]` over an alphabetical list, so adding one file re-pairs every later one — two gate runs failed under the 97% floor for that reason | bug | wrong answer |
@@ -72,7 +72,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-225 issues, 165 closed.
+230 issues, 170 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

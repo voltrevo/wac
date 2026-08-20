@@ -1,0 +1,75 @@
+// Saying "that is all" without saying "goodbye": a socket's outbound direction ended on its own.
+//
+//   wac run --allow-net packages/platform/example/halfclose.wac
+//   server saw "hello" then End
+//   client read back "world"
+//   both directions independent
+//
+// `closeSocket` stops a socket both ways, so a client that used it to signal end-of-input could never
+// receive the answer — which is the exchange every request/response protocol over a raw socket needs,
+// where the server reads to the end and only then replies. `cli.closeSend` ends one direction and
+// leaves the other alone. `issues/system/0215`.
+//
+// **Both ends are in this one program**, which is what makes it comparable across hosts: no peer to
+// arrange, no port to pass in, and the only thing a run could differ on — the ephemeral port — is
+// never printed. It binds `0`, accepts its own connection, and asks the two questions that together
+// say the direction was ended rather than the socket:
+//
+//   1. the *server* side reaches `End`, so the FIN arrived and `wc`-shaped programs would answer;
+//   2. the *client* side still reads, so the reply has a way back.
+//
+// Either one alone is passed by a wrong implementation. A `closeSend` that did nothing fails the
+// first and a `closeSend` that closed both directions fails the second, which is why this prints two
+// lines rather than a verdict.
+//
+// The accept is submitted *before* the connect and waited on after, because a host is free to
+// complete them in either order and a program that waits on `accept` first would deadlock against a
+// host that has not dialled yet.
+
+import { Core, Cli, Socket, Pending } from "std/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  Socket srv = cli.listen("127.0.0.1", 0).wait();
+  if (srv.error != "") { core.warn("listen: " + srv.error); return 1; }
+  Pending<Socket> accepting = cli.accept(srv.handle);
+
+  Socket c = cli.connect("127.0.0.1", srv.port).wait();
+  if (c.error != "") { core.warn("connect: " + c.error); return 1; }
+  Socket a = accepting.wait();
+  if (a.error != "") { core.warn("accept: " + a.error); return 1; }
+
+  cli.send(c.handle, "hello".toBytes()).wait();
+  cli.closeSend(c.handle);
+
+  // The server side sees the bytes and then the end of them, while the client is still connected.
+  string got = "";
+  bool reading = true;
+  while (reading) {
+    match (cli.recv(a.handle).wait()) {
+      case Data(b): { got = got + string.fromBytes(b); }
+      case End: { reading = false; }
+      case Failed(e): { core.warn("server recv: " + e); return 1; }
+    }
+  }
+  core.log("server saw \"" + got + "\" then End");
+
+  // And the answer travels the direction that was left open.
+  cli.send(a.handle, "world".toBytes()).wait();
+  cli.closeSocket(a.handle);
+  string back = "";
+  reading = true;
+  while (reading) {
+    match (cli.recv(c.handle).wait()) {
+      case Data(b): { back = back + string.fromBytes(b); }
+      case End: { reading = false; }
+      case Failed(e): { core.warn("client recv: " + e); return 1; }
+    }
+  }
+  core.log("client read back \"" + back + "\"");
+
+  cli.closeSocket(c.handle);
+  cli.closeSocket(srv.handle);
+  if (got != "hello" || back != "world") { return 2; }
+  core.log("both directions independent");
+  return 0;
+}

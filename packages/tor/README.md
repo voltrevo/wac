@@ -92,7 +92,7 @@ which the proxy costs **19.5 KiB** over the fetch-and-exit program. Measured 202
 ```sh
 deno task app:build packages/tor/src/app.wac   --allow-net --allow-read --allow-write -o tor
 deno task app:build packages/tor/src/socks.wac --allow-net --allow-read --allow-write -o torsocks
-deno task app:native packages/tor/src/app.wac  --allow-net --allow-read --allow-write -o torn
+wac build packages/tor/src/app.wac  --allow-net --allow-read --allow-write -o torn
 ```
 
 Dated, because it is a snapshot and the last one sat here saying 386.7 KiB until this file was read
@@ -331,7 +331,7 @@ test loose enough never to flake is loose enough to miss a real bias.
 Point any HTTPS client at the SOCKS port:
 
 ```sh
-deno task app packages/tor/src/socks.wac --allow-net --allow-read -- seed.txt auth.txt 9050
+wac run --allow-net --allow-read packages/tor/src/socks.wac seed.txt auth.txt 9050
 curl --socks5-hostname 127.0.0.1:9050 https://example.com/
 ```
 

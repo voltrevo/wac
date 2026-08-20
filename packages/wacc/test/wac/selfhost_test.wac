@@ -100,7 +100,7 @@ u8[] read(Cli cli, string path) {
  * manifest is embedded in the module: building to `a` and `b` would differ in exactly those bytes and
  * prove nothing. What this file used to conclude from that is that they had to be built **in turn** to
  * one path, with the first copied aside — and the name is not the path. Two builds of `wacc` into two
- * directories are byte-identical, `.wasm` and `.json` both, so they can be started together: 13.0s of
+ * directories are byte-identical, so they can be started together: 13.0s of
  * this test became 7.0s, and the fixed point is still two fresh builds in one run rather than a cached
  * artefact compared against a new one.
  *
@@ -131,19 +131,18 @@ export string test_the_compiler_builds_itself_to_a_fixed_point(Core core, Cli cl
   if (first != "" || second != "") { return t.report(); }
 
   u8[] wasmOne = read(cli, work + "/one/wacc.wasm");
-  u8[] jsonOne = read(cli, work + "/one/wacc.json");
   // A floor, so a build that wrote nothing cannot pass by matching another empty file.
   t.isTrue(wasmOne.len() > 100000,
            "the module is a compiler, not a stub — " + itoa(wasmOne.len()) + " bytes");
-  t.isTrue(jsonOne.len() > 1000, "and it has a manifest");
 
   u8[] wasmTwo = read(cli, work + "/two/wacc.wasm");
-  u8[] jsonTwo = read(cli, work + "/two/wacc.json");
   t.eqI32(wasmTwo.len(), wasmOne.len(), "the two modules are the same size");
+  // **One comparison, not two.** This compared the manifests separately when `wac build` wrote one
+  // beside the module; the manifest is a section *inside* the module now, so comparing the modules
+  // compares it too, and a second check over the same bytes would only look like more evidence.
   t.isTrue(equal(wasmOne, wasmTwo),
            "either the compiler is not a fixed point — building it twice gave different bytes — or the "
            + "output path reached the artefact, which the two directories would then be recording");
-  t.isTrue(equal(jsonOne, jsonTwo), "and the same manifest, for the same two reasons");
 
   Change gone = cli.remove(work, true).wait();
   if (!gone.ok()) { core.warn("selfhost: could not remove " + work + " — " + gone.message); }

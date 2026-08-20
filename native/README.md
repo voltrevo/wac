@@ -23,7 +23,7 @@ tests the claim at all.
 design/0001 step 2a, tracked as [0087](../issues/system/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md).
 
 ```
-deno task app:native packages/platform/example/wacland.wac -o /tmp/wacland
+wac build packages/platform/example/wacland.wac -o /tmp/wacland
 cargo build --release
 ./target/release/wacland /tmp/wacland.json one two
 ```
@@ -33,7 +33,7 @@ cargo build --release
 With `seed/wacc.json` and `seed/wacc.wasm` present at build time, this binary *is* a wac toolchain:
 
 ```
-deno task app:native packages/wacc/example/wacc.wac --allow-read --allow-write -o native/seed/wacc
+wac build packages/wacc/example/wacc.wac --allow-read --allow-write -o native/seed/wacc
 cargo build --release
 ./target/release/wacland compile packages/wacc/src/api.wac out.wasm     # 3.2s, no JavaScript
 ./target/release/wacland check main.wac

@@ -1,0 +1,69 @@
+// Reading a custom section out of a module.
+//
+// Two tests in this directory want one — `producer_test.wac` reads `producers` to see which compiler
+// stamped a module, and `native_manifest_test.wac` reads `wac.manifest` now that the manifest is a
+// section rather than a `.json` beside the module. The walk is the same either way: sections are
+// `<id:u8><size:leb><body>`, id 0 is custom, and a custom section's body opens with its own name.
+//
+// **One copy, because it was about to be two.** `native/manifest` is the same read in Rust for the
+// two hosts, for the same reason.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+/** LEB128 unsigned, advancing `pos[0]`. */
+export i32 leb(u8[] b, i32[] pos) {
+  i32 r = 0;
+  i32 shift = 0;
+  i32 x = 0x80;
+  while ((x & 0x80) != 0 && pos[0] < b.len()) {
+    x = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    r = r | ((x & 0x7F) << shift);
+    shift = shift + 7;
+  }
+  return r;
+}
+
+/** A length-prefixed name, advancing `pos[0]`. */
+export string name(u8[] b, i32[] pos) {
+  i32 n = leb(b, pos);
+  if (n < 0 || pos[0] + n > b.len()) { return ""; }
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[pos[0] + i]; }
+  pos[0] = pos[0] + n;
+  return string.fromBytes(out);
+}
+
+/**
+ * The body of the custom section called `want`, or "" when the module has none.
+ *
+ * There may be several custom sections, so each one's own name is read before anything else is
+ * believed about its body — and the *last* one of a name wins, which is what a walk that does not
+ * stop early gives and is what both hosts do.
+ */
+export string customSection(u8[] b, string want) {
+  if (b.len() < 8) { return ""; }
+  string found = "";
+  i32[] pos = i32[1]();
+  pos[0] = 8;
+  while (pos[0] + 1 < b.len()) {
+    i32 id = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 size = leb(b, pos);
+    i32 end = pos[0] + size;
+    if (end > b.len()) { return found; }
+    if (id == 0) {
+      i32 nameEnd = pos[0];
+      i32[] at = i32[1]();
+      at[0] = pos[0];
+      string got = name(b, at);
+      if (got == want) {
+        u8[] body = u8[end - at[0]]();
+        for (i32 i = 0; i < body.len(); i++) { body[i] = b[at[0] + i]; }
+        found = string.fromBytes(body);
+      }
+    }
+    pos[0] = end;
+  }
+  return found;
+}

@@ -810,8 +810,13 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "wacmanifest",
  "wasmtime",
 ]
+
+[[package]]
+name = "wacmanifest"
+version = "0.1.0"
 
 [[package]]
 name = "wasm-encoder"

@@ -24,11 +24,20 @@
 # written to the same basename in different directories; comparing across different names always
 # fails and says nothing.
 #
-# **The Deno path and the binary path are different pipelines.** `packages/platform/native.ts` and
-# `wac build` do not emit byte-identical artefacts from identical sources — 18 bytes apart when I
-# measured it — so comparing one against the other measures the two toolchains rather than the
-# compiler's fixpoint. Both stages here come from the binary; `--bootstrap` only supplies the *first*
-# seed and is then out of the comparison.
+# **The Deno path and the binary path agree — re-measured 2026-08-19.** This said they did not: that
+# `packages/platform/native.ts` and `wac build` were "18 bytes apart when I measured it". They are
+# byte-identical now, on `example/wc.wac` (233,661 bytes) and on `example/wacc.wac` (960,311), for both
+# the module and the manifest beside it.
+#
+# The paragraph above is why the old number is not evidence of a pipeline difference: **the grants are
+# in the module too**, exactly as the name is. Building `wc.wac` with two grants and with four, one
+# compiler, gives files two bytes apart. So a comparison has to hold the name *and* the grants equal,
+# and the 18 was either that or a state since fixed: the two derivations have drifted before, once
+# over a trailing comma on the `net` line, and the test that caught it is retired now that only one
+# of them produces anything.
+#
+# Both stages here still come from the binary; `--bootstrap` only supplies the *first* seed and is then
+# out of the comparison. That is about the fixpoint, not about the other pipeline.
 #
 # ## Why the old seed is put back on a mismatch
 #
@@ -42,6 +51,8 @@ cd "$(dirname "$0")/.."
 
 BIN=./native/v8/target/release/wac
 ENTRY=packages/wacc/example/wacc.wac
+SH_ENTRY=packages/box/example/boxsh.wac
+UPDATE_ENTRY=packages/wacpkg/example/fetch.wac
 SEED=native/v8/seed
 
 bootstrap=0
@@ -64,13 +75,46 @@ if [ -f "$SEED/wacc.wasm" ]; then
   had_seed=1
   mkdir -p "$tmp/prev"
   cp "$SEED/wacc.wasm" "$tmp/prev/wacc.wasm"
-  cp "$SEED/wacc.json" "$tmp/prev/wacc.json"
 fi
 
-install_seed() {   # $1 is a directory holding wacc.wasm and wacc.json
+# **One file per payload.** A `wacc.json` went beside the module until 2026-08-20 and `build.rs` never
+# read it — `embed` takes `{dir}/{stem}.wasm` and nothing else — so the seed carried a copy of a
+# manifest that is already a section inside the module next to it.
+#
+# Only `wacc.wasm` here, because this runs inside the fixpoint loop; `sh.wasm` and `update.wasm` are
+# written once after it converges and are left alone by these builds.
+install_seed() {   # $1 is a directory holding wacc.wasm
   cp "$1/wacc.wasm" "$SEED/wacc.wasm"
-  cp "$1/wacc.json" "$SEED/wacc.json"
   (cd native/v8 && cargo build --release >/dev/null 2>&1)
+}
+
+# **The other two payloads, and they are not optional here.**
+#
+# `native/v8/build.rs` embeds three, "each optional": the compiler answers `check`/`compile`/`build`,
+# the shell answers `sh`, the fetcher answers `update`. Optional to the *build* is not optional to the
+# command — `spec/cli/wac.md` lists all three without qualification — and this script wrote only the
+# first until 2026-08-20. So the binary from the supported route (`deno task wac:install`) answered
+# `unknown command 'sh'`, and `wac update` fell past the host into the compiler's usage line, which is
+# what `packages/wacpkg`'s own mapped-import test then failed on. `issues/system/0216a`.
+#
+# Built *after* the fixpoint rather than inside it: these are ordinary programs, not the compiler, so
+# they say nothing about whether wacc reproduces itself, and putting them in the loop would pay for
+# two extra compiles a round. One `cargo build` follows them, because the loop's builds ran before
+# these files existed.
+#
+# **The shell is built with everything.** `wac sh` narrows to what its own command line asks for and
+# can never exceed what the payload carries, so the payload is the ceiling rather than the default —
+# `tools/wac/sh_test.wac` is the pair of tests that says so. The fetcher gets the four its own header
+# names; it clones over the network into `$WAC_HOME`.
+payload() {   # $1 entry, $2 stem
+  if ! "$BIN" build "$1" --allow-read --allow-write --allow-env --allow-net \
+       -o "$tmp/p/$2" --quiet; then
+    echo "seed: $1 did not build, so this \`wac\` would have no \`$2\` command." >&2
+    echo "   The compiler is installed and is a fixed point, so \`wac build\`, \`run\`, \`test\` and" >&2
+    echo "   \`check\` all work; what is missing is \`wac $2\`. Fix that entry and run this again." >&2
+    return 1
+  fi
+  cp "$tmp/p/$2.wasm" "$SEED/$2.wasm"
 }
 
 # **The first seed, when there is no binary to make one.** Deno's output is not compared with
@@ -124,7 +168,12 @@ done
 
 if [ "$converged" -ne 0 ]; then
   rounds=$((converged - 1))
+  mkdir -p "$tmp/p"
+  payload "$SH_ENTRY" sh
+  payload "$UPDATE_ENTRY" update
+  (cd native/v8 && cargo build --release >/dev/null 2>&1)
   echo "seed: $(stat -c %s "$SEED/wacc.wasm") bytes, and it is a fixed point after $rounds round(s)"
+  echo "      sh $(stat -c %s "$SEED/sh.wasm") bytes, update $(stat -c %s "$SEED/update.wasm") bytes"
   exit 0
 fi
 

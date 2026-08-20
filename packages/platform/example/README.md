@@ -15,7 +15,7 @@ You need [Deno](https://deno.com) 2 and this repository. Nothing else.
 ```sh
 git clone https://github.com/voltrevo/wac-mono
 cd wac-mono
-deno task app packages/platform/example/wc.wac --allow-read -- README.md   # build and run
+wac run --allow-read packages/platform/example/wc.wac README.md           # compile and run
 deno task app:build packages/platform/example/wc.wac --allow-read -o wc    # keep the artifact
 ```
 

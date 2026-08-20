@@ -31,11 +31,11 @@ import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, 
 import { Built } from "../src/emit.wac";
 import { withManifestSection } from "../src/manifest.wac";
 import { renderDiagnostics } from "../src/render.wac";
-import { importSpecs, normalisePath, resolveFrom, resolveFromIn } from "../src/files.wac";
+import { importSpecs, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../src/files.wac";
 import { Res } from "../src/path.wac";
-import { coreFile, coreSource, isBuiltinSpec } from "../src/coretext.wac";
+import { coreFile, coreSource, isBuiltinSpec, stdFile } from "../src/coretext.wac";
 import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/src/root.wac";
-import { Manifest, Match, Located, readManifest, matchSpecifier, locate,
+import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
 import { Lock, LockEntry, readLock } from "../../wacpkg/src/lock.wac";
 import { cachePath } from "../../wacpkg/src/cache.wac";
@@ -87,6 +87,17 @@ struct Sources {
    * uses none — the search costs nothing it is not asked for. `design/lang/0009` D7.
    */
   string[] roots;
+  /**
+   * Where each file may import from, parallel to `paths`, "" for anything local.
+   *
+   * A file that arrived through a mapping with a `subdir` may reach that subdirectory and nothing
+   * else in its checkout, and anything it imports inherits the same bound. Separate from `roots`
+   * because they answer different questions: `roots[i]` is what `@/` *means* for the file, and
+   * `confine[i]` is what the answer is allowed to be. `issues/lang/0169a`.
+   */
+  string[] confine;
+  /** The directory the walk measured every relative key from — see `Res.base`. */
+  string base;
   /** One entry per mapped import: who wrote it, what they wrote, and the key it resolved to. */
   string[] mapFrom;
   string[] mapSpec;
@@ -121,6 +132,24 @@ string noProject(string spec, string from) {
  *
  * `core` does have a root, so `from "core"` stays correct and this says nothing about it.
  */
+/**
+ * Is `path` inside `dir` — used to keep a mapped dependency inside the subdirectory it was mapped at.
+ *
+ * Equal counts: the directory itself is inside itself. The `+ "/"` is what stops `a/bc` reading as
+ * inside `a/b`, which a plain prefix test gets wrong and is the only interesting case here.
+ */
+bool withinDir(string dir, string path) {
+  if (dir == "") { return true; }
+  if (path == dir) { return true; }
+  return path.len() > dir.len() && path.slice(0, dir.len() + 1) == dir + "/";
+}
+
+/** What `Sources.why` says for an import that leaves the subdirectory its mapping was given. */
+string leavesMapping(string spec, string from, string dir) {
+  return spec + " leaves the mapped subdirectory: " + from + " may import from " + dir +
+         " and this resolves outside it";
+}
+
 string noStdRoot() {
   return "\"std\" has no root module: import from one of its files, such as \"std/platform.wac\"";
 }
@@ -173,13 +202,24 @@ struct Mapped {
   /** The file, under `$WAC_HOME/cache/git/<repo>/<commit>/`. */
   string path;
   /**
-   * The checkout root the file sits in — D7's provider boundary.
+   * The fetched dependency's root — D7's provider boundary for a mapped file.
    *
    * A `@/` *inside* a dependency means that dependency's own root, not the project that imported it,
    * and the search has to stop at the checkout or it climbs into the cache's own layout and then
    * into the importing project. This is what it stops at.
    */
   string checkout;
+  /**
+   * The directory this dependency's code may not import out of — `issues/lang/0169a`.
+   *
+   * The checkout plus the mapping's `subdir`, or just the checkout when there is none. **Not the
+   * same question as `checkout` above**, which bounds the *search* for a `@/` root: a dependency's
+   * `@/` means its own repository's root, because that is what its author wrote against, so the
+   * search has to reach the repository root even when only a subdirectory was mapped. This bounds
+   * the *answer*. You took one directory; the rest of that repository is not yours and its code
+   * must not be able to reach the parts you did not take.
+   */
+  string confine;
   /** Why not, when `ok` is false. Written for somebody who has to act on it. */
   string error;
 }
@@ -200,18 +240,19 @@ struct Mapped {
  */
 Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
   FileResult mf = fs.readFile(root == "." ? MANIFEST_NAME() : root + "/" + MANIFEST_NAME());
-  if (!mf.ok) { return Mapped(false, false, "", "", ""); }
+  if (!mf.ok) { return Mapped(false, false, "", "", "", ""); }
   Manifest m = readManifest(mf.bytes);
   if (!m.ok) {
-    return Mapped(true, false, "", "",
-                  root + "/" + MANIFEST_NAME() + " is not usable: " + m.detail);
+    return Mapped(true, false, "", "", "",
+                  root + "/" + MANIFEST_NAME() + ": " + manifestWhy(m.code) +
+                  (m.detail == "" ? "" : " — " + m.detail));
   }
   Match hit = matchSpecifier(m, spec);
-  if (!hit.found) { return Mapped(false, false, "", "", ""); }
+  if (!hit.found) { return Mapped(false, false, "", "", "", ""); }
 
   Located at = locate(m, hit);
   if (!at.ok) {
-    return Mapped(true, false, "", "",
+    return Mapped(true, false, "", "", "",
                   spec + " climbs out of the subtree its mapping was given");
   }
   string name = m.imports[hit.index].name;
@@ -219,25 +260,25 @@ Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
 
   FileResult lf = fs.readFile(root == "." ? "wac.lock" : root + "/wac.lock");
   if (!lf.ok) {
-    return Mapped(true, false, "", "",
+    return Mapped(true, false, "", "", "",
                   spec + " needs a locked commit for `" + name + "` — run `wac update`");
   }
   Lock lock = readLock(lf.bytes);
   if (!lock.ok) {
-    return Mapped(true, false, "", "", root + "/wac.lock is not usable: " + lock.detail);
+    return Mapped(true, false, "", "", "", root + "/wac.lock is not usable: " + lock.detail);
   }
   string commit = "";
   for (i32 i = 0; i < lock.entries.len(); i++) {
     if (lock.entries[i].name == name) { commit = lock.entries[i].commit; }
   }
   if (commit == "") {
-    return Mapped(true, false, "", "",
+    return Mapped(true, false, "", "", "",
                   "`" + name + "` has no entry in " + root + "/wac.lock — run `wac update`");
   }
 
   string home = wacHomeOf(cli);
   if (home == "") {
-    return Mapped(true, false, "", "",
+    return Mapped(true, false, "", "", "",
                   "neither WAC_HOME nor HOME is set, so there is no cache to read `" + name +
                   "` from");
   }
@@ -247,10 +288,11 @@ Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
     // **Says where it looked.** "not in the cache" without the path leaves the reader guessing
     // between a wrong commit, a wrong subdir and a cache that was never filled — three different
     // things to do about it.
-    return Mapped(true, false, "", "",
+    return Mapped(true, false, "", "", "",
                   spec + " is not in the cache — run `wac update`. Looked for " + file);
   }
-  return Mapped(true, true, file, checkout, "");
+  string sub = m.imports[hit.index].subdir;
+  return Mapped(true, true, file, checkout, sub == "" ? checkout : checkout + "/" + sub, "");
 }
 
 /**
@@ -265,6 +307,23 @@ Mapped mapSpecifier(Fs fs, Cli cli, string root, string spec) {
  * The boundary is the filesystem root for an absolute path and `.` for a relative one — the
  * "local-filesystem boundary" of D7, which is the only provider there is until mappings land.
  */
+/**
+ * `projectRootOf` for a path that may be relative, searching from `base` — `issues/lang/0168a`.
+ *
+ * The spec is explicit that `@/` is the project containing the importing file and **"not the
+ * directory the compiler was started in"**, and the lexical walk made it exactly that: it could
+ * climb only as far as the path as typed spelled out, so `wac run main.wac` from a subdirectory
+ * stopped at the working directory with the manifest one level above it.
+ *
+ * Absolute here, and brought back to a relative answer at the join rather than here, because the
+ * *root* is not what has to be in the graph's key space — the resolved import is. `relativeTo` in
+ * `path.wac` carries that argument.
+ */
+string projectRootAbs(Fs fs, string base, string path) {
+  string abs = path.len() > 0 && path.slice(0, 1) == "/" ? path : normalisePath(base + "/" + path);
+  return projectRootOf(fs, abs);
+}
+
 string projectRootOf(Fs fs, string path) {
   string boundary = path.len() > 0 && path.slice(0, 1) == "/" ? "/" : ".";
   string[] dirs = candidateRoots(path, boundary);
@@ -289,6 +348,15 @@ Sources gather(Fs fs, Cli cli, string entry) {
   string[] mapFrom = string[maxFiles()](fill: "");
   string[] mapSpec = string[maxFiles()](fill: "");
   string[] mapTo = string[maxFiles()](fill: "");
+  // **Where each file may import from, parallel to `paths` and "" for anything local.** A file that
+  // arrived through a mapping with a `subdir` may not reach the rest of its checkout, and a file it
+  // imports inherits the same bound — `issues/lang/0169a`.
+  string[] confine = string[maxFiles()](fill: "");
+  // **Where the upward search for a `@/` root starts from, and where its answer comes back to.**
+  // `candidateRoots` walks the components of the path it is given, so a relative entry could climb
+  // only as far as it was spelled — `wac run main.wac` from a subdirectory reported *no wac.json5
+  // above main.wac* with the manifest one level up. `issues/lang/0168a`.
+  string base = normalisePath(cli.cwd().wait());
   i32 mapN = 0;
   i32 n = 0;
   // **The entry in the same spelling its imports will be in.** `resolveFrom` collapses `.` and
@@ -307,10 +375,17 @@ Sources gather(Fs fs, Cli cli, string entry) {
     // the tree was moved inside the compiler to have (`design/lang/0009` D3/D4), so it is worth
     // saying plainly: the CLI has no path to read these from, and the playground has no filesystem.
     string builtin = path == "core" ? coreSource() : coreFile(path);
+    // **And `std`, which is the same tree and was not on this line.** It was added to `emit.wac`'s
+    // `sourceOf` when D4 landed and not to this walk, so `std/platform.wac` fell through to
+    // `readFile` and resolved off the repository's own `std/` directory — the *identical* fault the
+    // paragraph above records for `core/option.wac`, repeated within a day, in the function whose
+    // comment describes it. Every test still passed, because they all run with the repository root
+    // as the working directory. From anywhere else: `wacc: cannot read std/platform.wac`.
+    if (builtin == "") { builtin = stdFile(path); }
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {
       FileResult r = fs.readFile(path);
-      if (!r.ok) { return Sources(paths, texts, roots, mapFrom, mapSpec, mapTo, mapN, n, path, ""); }
+      if (!r.ok) { return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, path, ""); }
       bytes = r.bytes;
     }
     texts[at] = string.fromBytes(bytes);
@@ -320,7 +395,7 @@ Sources gather(Fs fs, Cli cli, string entry) {
       // when one of this file's specifiers asks for it — so a program with no project reference
       // never stats anything, and a manifest above the tree cannot change what its imports mean.
       if ((isProjectSpecifier(specs[i]) || isMappingCandidate(specs[i])) && roots[at] == "") {
-        roots[at] = projectRootOf(fs, path);
+        roots[at] = projectRootAbs(fs, base, path);
       }
       // **A mapping is tried before the path arithmetic**, because a specifier like `dep/lib.wac`
       // is a legitimate relative path *and* a legitimate mapping name — and joining it to the
@@ -331,7 +406,7 @@ Sources gather(Fs fs, Cli cli, string entry) {
       if (isMappingCandidate(specs[i]) && roots[at] != "") {
         Mapped got = mapSpecifier(fs, cli, roots[at], specs[i]);
         if (got.named) {
-          if (!got.ok) { return Sources(paths, texts, roots, mapFrom, mapSpec, mapTo, mapN, n, "", got.error); }
+          if (!got.ok) { return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", got.error); }
           // The answer the linker and the checker cannot work out for themselves.
           if (mapN < mapFrom.len()) {
             mapFrom[mapN] = path;
@@ -345,17 +420,18 @@ Sources gather(Fs fs, Cli cli, string entry) {
             paths[n] = got.path;
             // A dependency's own `@/` means *its* root, and the search must stop at the checkout
             // rather than climbing into the cache's layout and on into the importing project — D7's
-            // provider boundary, which for a mapped file is where it was checked out.
+            // provider boundary, which for a mapped file is the dependency's own checkout.
             roots[n] = projectRootIn(fs, got.path, got.checkout);
+            confine[n] = got.confine;
             n = n + 1;
           }
           continue;
         }
       }
       if (specs[i] == "std") {
-        return Sources(paths, texts, roots, mapFrom, mapSpec, mapTo, mapN, n, "", noStdRoot());
+        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", noStdRoot());
       }
-      string next = resolveFromIn(path, specs[i], roots[at]);
+      string next = resolveFromAt(path, specs[i], roots[at], base);
       // **A `@/` with no project stops the walk, and saying so is the whole point.** D7 makes it a
       // compile error. Skipping the import instead is the outcome that looks like success: the
       // program compiles with the import silently absent, which is how the first version of this
@@ -363,17 +439,27 @@ Sources gather(Fs fs, Cli cli, string entry) {
       // The other wrong answer is resolving it anyway — `@/src/a.wac` against nothing is
       // `src/a.wac`, a real-looking path relative to a directory nobody named.
       if (next == "") {
-        return Sources(paths, texts, roots, mapFrom, mapSpec, mapTo, mapN, n, "", noProject(specs[i], path));
+        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", noProject(specs[i], path));
+      }
+      // **A mapped subdirectory bounds its code, whatever form the specifier took.** Checked here
+      // rather than in the `@/` branch because `@/outside/x.wac` and `../outside/x.wac` are the same
+      // escape: when this was found both reached, so a fix aimed at one would have looked finished.
+      // This is the single point every resolved specifier passes through.
+      if (!withinDir(confine[at], next)) {
+        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "",
+                       leavesMapping(specs[i], path, confine[at]));
       }
       bool seen = false;
       for (i32 k = 0; k < n; k++) { if (paths[k] == next) { seen = true; } }
       if (seen || n >= maxFiles()) { continue; }
       paths[n] = next;
+      // Inherited: a file a confined file reaches is as confined as the file that reached it.
+      confine[n] = confine[at];
       n = n + 1;
     }
     at = at + 1;
   }
-  return Sources(paths, texts, roots, mapFrom, mapSpec, mapTo, mapN, n, "", "");
+  return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", "");
 }
 
 /** The arrays the API wants: exactly `n` long, since it walks their whole length. */
@@ -587,7 +673,7 @@ export i32 main(Core core, Cli cli) {
   string[] texts = exactly(src.texts, src.n);
   Res res = Res(exactly(src.roots, src.n),
                 exactly(src.mapFrom, src.mapN), exactly(src.mapSpec, src.mapN),
-                exactly(src.mapTo, src.mapN));
+                exactly(src.mapTo, src.mapN), src.base);
 
   // Diagnostics first for either command: compiling a program the checker refuses would write a
   // module built from a tree nobody approved.
@@ -743,13 +829,10 @@ export i32 main(Core core, Cli cli) {
       core.warn("wacc: cannot write " + stem + ".wasm — " + wroteWasm.message);
       return 1;
     }
-    // **Inside the module and beside it.** The section is what lets one artefact be handed over;
-    // the pair is what the wasmtime host still reads. Writing both decides nothing at once.
-    Change wroteJson = fs.writeFile(stem + ".json", manifest.toBytes());
-    if (!wroteJson.ok()) {
-      core.warn("wacc: cannot write " + stem + ".json — " + wroteJson.message);
-      return 1;
-    }
+    // **Inside the module, and only there.** A `.json` went beside it until 2026-08-20, because the
+    // wasmtime host predated the section and took a manifest path as its argument. Both hosts read the
+    // section now (`native/manifest`), so the pair was a second copy of one thing with nothing left
+    // reading it — and a manifest that can be separated from its module is one that can be swapped.
     // `index\tline\tcol\tkind\tfile` per counter, in counter order — what turns a count into a
     // position. Beside the module because whoever runs it is who needs it.
     if (covered) {

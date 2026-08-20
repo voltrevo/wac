@@ -1,6 +1,6 @@
 // Connect to a v3 onion service and fetch a page from it.
 //
-//   deno task app packages/tor/src/hsconnect.wac --allow-net --allow-read -- \
+//   wac run --allow-net --allow-read packages/tor/src/hsconnect.wac -- \
 //     <seed-file> <authorities-file> <onion-address> <port> [--testnet]
 //
 // The whole onion client. `hsfetch.wac` gets as far as the descriptor; this goes the rest of the

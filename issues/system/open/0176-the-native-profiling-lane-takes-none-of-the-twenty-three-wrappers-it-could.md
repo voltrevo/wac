@@ -122,7 +122,7 @@ from the host", and fifteen more commits in that shape — so a test that wanted
 one through `Cli.exec` and needs nothing passed in. `skipped` should therefore be empty everywhere.
 
 **And the lane has no subjects left.** Two `.test.ts` files under `packages/` still register wac tests:
-`packages/wacc/test/nativeBinary.test.ts` and packages/wactest/test/assert.test.ts (unbackticked
+the `nativeBinary` test and packages/wactest/test/assert.test.ts (unbackticked
 because it no longer exists — see the update below). Both declare host
 tests of their own (7 and 3), which `nativeShare` declines on its **first** rule —
 `countTestsDeclaredHere(src) > 0` — before any question about profiles. So *23 pure wrappers, 0 taken*
@@ -142,7 +142,7 @@ and mutation scoring's unit of execution is a `deno test` run.
 ### Zero registrars under `packages/`, and the refusal test lost its subject — 2026-08-18
 
 The count above is now zero, and it was already wrong when written: `grep -rl "wacTestRun(" packages/`
-returned one file, not two — `packages/wacc/test/nativeBinary.test.ts` had stopped registering. The
+returned one file, not two — the `nativeBinary` test had stopped registering. The
 remaining one went with `issues/system/0161`, so nothing under `packages/` registers wac tests at
 all. The 57 live registrations are in `harness/wac/hostless.test.ts`, which `tools/mutate/profile.ts`
 reads statically and which this lane has never walked.

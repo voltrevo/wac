@@ -1,0 +1,1286 @@
+// Branch coverage for zstd: the shapes, run natively.
+//
+//   deno task coverage:zstd
+//
+// This was zstd's `cov.ts` until 2026-08-20 — `issues/system/0161`, `issues/system/0222`. The ledger
+// is `cov_ledger.wac` beside this file and the reporting is `tools/wac/covledger.wac`, shared.
+//
+// The interesting axis is the frame header, because its descriptor byte changes the size of everything
+// after it: three content-size widths, four dictionary-id widths, single-segment or not, checksum or
+// not. Those combinations are hand-built rather than produced, because one encoder only ever emits the
+// handful it prefers — and a decoder is judged on what it accepts, not on what one encoder happens to
+// write.
+//
+// ## Nine instrumented modules became one
+//
+// The TypeScript called `instrument()` nine times — `frame`, `fse`, `huffman`, `xxh64`, the xxh64
+// probe, `fseenc`, `encode`, `huffenc`, `stream` — and merged nine counter arrays per
+// `(file, line, col, kind)`, because bindgen builds one module per entry. A wac exercise imports them
+// all and there is one array, which is already the union.
+//
+// ## A trap has to be an export, and a sweep has to be a sweep
+//
+// `wac covdump` calls `main` and then each export named by the ledger, catching one trap per call. A
+// hand-built malformation is therefore its own export, named for the rule its bytes break.
+//
+// **That is not enough for this package.** The most valuable thing here is damaging a *real* frame at
+// every byte in turn: every refusal in the block, sequence and Huffman code is reachable only from
+// data that was nearly right, and the TypeScript recorded that sampling was tried and reaches about
+// half — "the checks are close enough together that stepping over bytes steps over whole branches".
+// Six frames at three masks each is more than a hundred thousand calls, so a name apiece is not a
+// file anybody reads. `covdump` takes `name:<n>` and calls `name(0)`…`name(n-1)` with each trap caught
+// (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`); the sweeps below are those exports and the
+// ledger holds their widths.
+//
+// ## The oracle, and why every export asks the same question
+//
+// Frames the encoder here cannot produce come from `test/oracle.ts` — node's zlib, which is the
+// reference rather than a second reading of the specification. `askCached` keys on a checksum of the
+// whole batch, so the *first* call spawns and the rest read `.cache/oracle`. That is why `damage` and
+// `evict` below call the same two batch builders `main` does rather than asking for the one frame they
+// want: a different question is a different key and a different spawn, once per export.
+
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { T } from "../../wactest/src/assert.wac";
+import { Lines, Answers, askCached, hex, word } from "../../wactest/src/oracle.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { decoded } from "../../codec/src/hex.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { Block, LitHeader, firstCompressedBlock, literalsHeader, weightBytes } from "./wac/frames.wac";
+
+import { decompress } from "../src/frame.wac";
+import { unzstdStream } from "../src/stream.wac";
+import { compress } from "../src/encode.wac";
+import { xxh64 } from "../src/xxh64.wac";
+import { FseTable, readTable as fseReadTable, buildFromCounts, decompress as fseDecompress }
+  from "../src/fse.wac";
+import { HuffTable, readTable as huffReadTable, decodeLiterals } from "../src/huffman.wac";
+import { BitOut, CTable, Step, normalize, optimalLog, buildCTable, encodeStep, initialState,
+         writeDescription } from "../src/fseenc.wac";
+import { Read } from "core";
+
+// **The xxh64 probe, imported for its coverage as well as its answers.** `Xxh64`'s held-bytes path is
+// the whole of its bookkeeping and only a chunk size that is not a multiple of 32 reaches it, and a
+// struct cannot be built from outside the module — so the probe the tests use is the only way in. It
+// lives under `test/wac/`, so its own branches are not counted in the package's number.
+import { streamed as hashStreamed, whole as hashWhole, ragged as hashRagged }
+  from "./wac/xxh64_probe.wac";
+
+const string ORACLE = "packages/zstd/test/oracle.ts";
+
+/** The reference, under Node — Deno's `node:zlib` shim ignores zstd's `dictionary` option. */
+Answers askZ(Cli cli, Lines lines, string what) {
+  T t = T.create();
+  return askCached(t, cli, "node", string[]("--experimental-strip-types", ORACLE), lines, what,
+                   "zstdcov", string[]("packages/zstd/test"));
+}
+
+// ── Building bytes ────────────────────────────────────────────────────────────
+
+u8[] joinBytes(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+u8[] head(u8[] b, i32 n) {
+  i32 to = n < 0 ? 0 : (n < b.len() ? n : b.len());
+  u8[] out = u8[to]();
+  for (i32 i = 0; i < to; i++) { out[i] = b[i]; }
+  return out;
+}
+
+/** `b` with the byte at `at` exclusive-ored by `mask`. Out of range leaves it alone. */
+u8[] damaged(u8[] b, i32 at, i32 mask) {
+  u8[] out = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
+  if (at >= 0 && at < out.len()) { out[at] = out[at] ^ mask; }
+  return out;
+}
+
+u8[] filledWith(i32 n, i32 byte) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = byte; }
+  return out;
+}
+
+u8[] repeated(string s, i32 times) {
+  u8[] one = s.toBytes();
+  u8[] out = u8[one.len() * times]();
+  for (i32 i = 0; i < times; i++) {
+    for (i32 k = 0; k < one.len(); k++) { out[i * one.len() + k] = one[k]; }
+  }
+  return out;
+}
+
+/** A three-byte block header: `size` and `type`, and whether it is the frame's last. */
+u8[] blockHeader(i32 kind, i32 size, bool last) {
+  i32 h = (size << 3) | (kind << 1) | (last ? 1 : 0);
+  return u8[](h & 255, (h >> 8) & 255, (h >> 16) & 255);
+}
+
+u8[] rawBlock(u8[] bytes, bool last) { return joinBytes(blockHeader(0, bytes.len(), last), bytes); }
+u8[] rleBlock(i32 value, i32 count, bool last) {
+  return joinBytes(blockHeader(1, count, last), u8[](value));
+}
+
+/**
+ * A frame carrying one block, with the header fields **spelled out rather than inferred**.
+ *
+ * Every argument is a field of the frame header descriptor, because that byte decides the width of
+ * everything after it and the point of the exercise is the combinations no encoder chooses.
+ */
+u8[] frameOf(bool singleSegment, i32 fcsFlag, i64 contentSize, bool checksum, i32 didFlag,
+             i32 dictId, i32 windowDescriptor, u8[] block) {
+  u8[] out = u8[](0x28, 0xB5, 0x2F, 0xFD);
+  i32 fhd = (fcsFlag << 6) | ((singleSegment ? 1 : 0) << 5) | ((checksum ? 1 : 0) << 2) | didFlag;
+  out = joinBytes(out, u8[](fhd));
+  if (!singleSegment) { out = joinBytes(out, u8[](windowDescriptor)); }
+  i32[] didSize = i32[](0, 1, 2, 4);
+  for (i32 i = 0; i < didSize[didFlag]; i++) {
+    out = joinBytes(out, u8[]((dictId >> (8 * i)) & 255));
+  }
+  i32[] fcsSize = i32[](1, 2, 4, 8);
+  i32 width = fcsFlag == 0 ? (singleSegment ? 1 : 0) : fcsSize[fcsFlag];
+  for (i32 i = 0; i < width; i++) {
+    out = joinBytes(out, u8[](((contentSize >> ((8 * i) as i64)) & (255 as i64)) as~ i32));
+  }
+  out = joinBytes(out, block);
+  if (checksum) { out = joinBytes(out, u8[](0, 0, 0, 0)); }
+  return out;
+}
+
+/** The common case: single-segment, one content-size byte, no dictionary, no checksum. */
+u8[] plainFrame(i64 contentSize, u8[] block) {
+  return frameOf(true, 0, contentSize, false, 0, 0, 0, block);
+}
+
+/** One compressed block in a frame, short enough to stop inside its own headers. */
+u8[] oneBlock(u8[] body) {
+  return joinBytes(joinBytes(u8[](0x28, 0xB5, 0x2F, 0xFD, 0x20, 8),
+                             blockHeader(2, body.len(), true)), body);
+}
+
+/** A skippable frame: one of the sixteen magics, a length, and whatever follows. */
+u8[] skippable(i32 magic, i32 size, u8[] extra) {
+  return joinBytes(u8[](magic & 255, (magic >> 8) & 255, (magic >> 16) & 255, (magic >> 24) & 255,
+                        size & 255, (size >> 8) & 255, (size >> 16) & 255, (size >> 24) & 255),
+                   extra);
+}
+
+// ── Streaming plumbing ────────────────────────────────────────────────────────
+
+/** A queue of chunks, handed over one `Read` at a time; `fails` says the disk gave out instead. */
+struct Source {
+  u8[][] chunks;
+  i32 at;
+  bool fails;
+
+  Read read(this) {
+    if (this.at < this.chunks.len()) {
+      u8[] c = this.chunks[this.at];
+      this.at = this.at + 1;
+      return Read.Data(c);
+    }
+    return this.fails ? Read.Failed("the disk gave out") : Read.End();
+  }
+}
+
+/**
+ * A sink that accepts `allow` chunks and then refuses.
+ *
+ * `write` answering false is a contract rather than an error, and the two places that can notice are
+ * mid-eviction and at the tail. `allow` of a large number is a sink that never refuses.
+ */
+struct Sink {
+  i32 allow;
+  i32 calls;
+
+  bool write(this, u8[] b) {
+    this.calls = this.calls + 1;
+    this.allow = this.allow - 1;
+    return this.allow >= 0;
+  }
+}
+
+u8[][] cutInto(u8[] data, i32 chunk) {
+  i32 c = chunk < 1 ? 1 : chunk;
+  i32 n = (data.len() + c - 1) / c;
+  u8[][] out = u8[][n](fill: u8[0]());
+  for (i32 i = 0; i < n; i++) {
+    i32 from = i * c;
+    i32 to = from + c < data.len() ? from + c : data.len();
+    u8[] piece = u8[to - from]();
+    for (i32 k = 0; k < piece.len(); k++) { piece[k] = data[from + k]; }
+    out[i] = piece;
+  }
+  return out;
+}
+
+i64 streamed(u8[] src, i32 chunk, i32 allow, bool fails) {
+  Source s = Source(cutInto(src, chunk), 0, fails);
+  Sink k = Sink(allow, 0);
+  return unzstdStream(s.read, k.write);
+}
+
+/** A never-refusing sink: more chunks than any frame here hands over. */
+i64 stream1(u8[] src, i32 chunk) { return streamed(src, chunk, 1 << 24, false); }
+
+// ── The frames the damage sweeps chew on ──────────────────────────────────────
+//
+// **Built by our own encoder, inside each case.** A sweep export is handed its index and nothing else
+// — no capability, and wac has no module-level mutable state — so a case cannot read what `main` set
+// up and cannot ask the oracle. It has to recompute, which is why these inputs are small: a case is
+// one `compress` of a couple of kilobytes rather than of the ninety the whole-frame exercises use.
+//
+// The cost is that the *reference's* codings — treeless literals, repeat-mode tables — are not what
+// gets damaged here. `blockBody` below is where those are reached, hand-built, which is the only way
+// in any case: damaging a real frame makes the block loop refuse it before a literals header is ever
+// read, so the way to truncate a literals header is to declare a block shorter than one.
+
+/** The masks each byte is damaged by. Three, because one bit, one high bit and every bit differ. */
+i32[] masks() { return i32[](0x01, 0x40, 0xFF); }
+
+/**
+ * The inputs whose frames get damaged, chosen for different codings and kept small.
+ *
+ * Long matches, a two-byte alphabet, a single repeated byte, something too short to compress, mixed
+ * content, and noise that cannot be Huffman-coded — which is a *raw* literals section inside a
+ * compressed block.
+ */
+u8[][] damageInputs() {
+  return u8[][](
+    repeated("the quick brown fox jumps over the lazy dog. ", 40),
+    repeated("ab", 800),
+    filledWith(2000, 0),
+    "hello hello hello world".toBytes(),
+    joinBytes(repeated("mixed content, some of it repeated. ", 50), u8[](255, 254, 253)),
+    joinBytes(noise2(600, 31), repeated("a marker phrase that definitely matches. ", 20)));
+}
+
+/** `noise` again, declared before `main` so the damage inputs can use it. */
+u8[] noise2(i32 n, i32 seed) {
+  u8[] out = u8[n]();
+  i32 x = seed == 0 ? 1 : seed;
+  for (i32 i = 0; i < n; i++) {
+    x = x ^ (x << 13);
+    x = x ^ ((x >> 17) & 0x7FFF);
+    x = x ^ (x << 5);
+    out[i] = x & 255;
+  }
+  return out;
+}
+
+// ── main: the oracle batch, the frame cache, and everything that returns ──────
+
+/**
+ * `n` records of `{"id":<i>,"name":"item<i>"}`, which is what a real file of them looks like.
+ *
+ * Built rather than read because it has to be *this* shape: a narrow alphabet with a lot of structure,
+ * so the encoder builds a Huffman tree the next block can reuse and an FSE table it can repeat.
+ */
+u8[] records(i32 n) {
+  Buf b = Buf.create();
+  for (i32 i = 0; i < n; i++) {
+    string rec = "{\"id\":" + itoa(i) + ",\"name\":\"item" + itoa(i) + "\"},";
+    u8[] r = rec.toBytes();
+    for (i32 k = 0; k < r.len(); k++) { b.push(r[k]); }
+  }
+  return b.take();
+}
+
+/** `n` log lines: a long constant prefix, an increasing id, and a short varying tail. */
+u8[] logLines(i32 n) {
+  Buf b = Buf.create();
+  for (i32 i = 0; i < n; i++) {
+    string line = "2026-08-02T10:00:00Z INFO id=" + itoa(i) + " path=/api status=200 ms=" +
+                  itoa(i % 97) + "\n";
+    u8[] r = line.toBytes();
+    for (i32 k = 0; k < r.len(); k++) { b.push(r[k]); }
+  }
+  return b.take();
+}
+
+/** A corpus chosen for the codings it makes the encoder reach, not for realism. */
+u8[][] corpus() {
+  return u8[][](
+    u8[0](),
+    "x".toBytes(),
+    "hello hello hello hello world".toBytes(),
+    repeated("ab", 20000),
+    repeated("the quick brown fox jumps over the lazy dog, and again. ", 6000),
+    filledWith(50000, 0),
+    noise2(9000, 999));
+}
+
+/**
+ * The one oracle batch, asked once and cached.
+ *
+ * Every export that needs a reference frame calls this rather than asking for its own, because
+ * `askCached` keys on the whole payload: a narrower question is a different key and another spawn.
+ */
+Answers reference(Cli cli) {
+  Lines lines = Lines.create();
+  // Frames to damage, chosen for different codings — treeless literals, repeat-mode tables, RLE,
+  // long matches, and one with a checksum so the trailer is part of what gets damaged.
+  lines.add("compress 9 0 " + hex(repeated("the quick brown fox jumps over the lazy dog. ", 2000)));
+  lines.add("compress 1 0 " + hex(repeated("ab", 3000)));
+  lines.add("compress 3 0 " + hex(filledWith(9000, 0)));
+  lines.add("compress 1 0 " + hex("hello hello hello world".toBytes()));
+  lines.add("compress 3 1 " +
+            hex(joinBytes(repeated("mixed content, some of it repeated. ", 50), u8[](255, 254, 253))));
+  lines.add("compress 19 0 " + hex(repeated("a marker phrase, and some filler that varies a bit. ", 900)));
+  // **Large and varied, which is the only place a *second* compressed block appears.** Treeless
+  // literals reuse the previous block's Huffman tree and a Repeat-mode sequence table reuses its
+  // predecessor, so both need a frame with more than one compressed block — which needs an input
+  // bigger than a block. Records rather than noise: noise codes as raw literals and never builds a
+  // tree worth reusing.
+  lines.add("compress 9 0 " + hex(records(20000)));
+  // **Two more, for the *repeat offset* codes.** A sequence may reuse one of the last three distances
+  // rather than spell one out, and codes 3 and 4 are the rarest: they need data whose matches keep
+  // returning to distances it used two and three matches ago. Records at the highest level do it —
+  // the encoder searches harder and reuses more — and log lines do it differently, with a long
+  // constant prefix and a short varying tail, so the two are not one shape twice.
+  lines.add("compress 19 0 " + hex(records(8000)));
+  lines.add("compress 9 0 " + hex(logLines(6000)));
+  // **A window smaller than the content**, which is the whole reason `stream.wac` is measured apart
+  // from `frame.wac`: every frame our own encoder emits declares a window that covers what it holds,
+  // so the eviction path had never run.
+  lines.add("compresswin 10 " + hex(filledWith(200000, 0x41)));
+  lines.add("compresswin 11 " + hex(filledWith(200000, 0x41)));
+  // 200 KB of one byte is where the reference chooses an RLE block, which ours never does.
+  lines.add("compress - 0 " + hex(filledWith(200000, 0x41)));
+  // **The FSE description writer, which is not the reference and is not pretending to be.**
+  // `test/writer.ts` reads the same section of RFC 8878 as the decoder and deliberately not the
+  // decoder itself — a shared misreading would still agree — so it is a much better fuzzer than
+  // random bytes rather than an oracle. It answers here because it is JavaScript and a wac program
+  // reaches JavaScript by running one. These are the shapes real encoder output does not reach: runs
+  // of unused symbols long enough to need the repeat field more than once, tables built almost
+  // entirely of "less than one" symbols, and both ends of the accuracy log.
+  for (i32 i = 0; i < descSpecs().len(); i++) { lines.add(descSpecs()[i]); }
+  return askZ(cli, lines, "the reference encoder");
+}
+
+/** Where the reference batch's `compress` answers stop and its `writedesc` answers start. */
+const i32 DESC0 = 12;
+
+/**
+ * The FSE descriptions asked for, as protocol lines.
+ *
+ * A function rather than a constant because `const` is deep-const in wac and this is a list the batch
+ * builder walks twice — once to ask and once to count.
+ */
+string[] descSpecs() {
+  return string[](
+    "writedesc 5 16,8,4,2,1,1",
+    "writedesc 5 27,-1,-1,-1,-1,-1",
+    "writedesc 6 32,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,32",
+    "writedesc 6 16,0,0,0,16,0,0,0,32",
+    "writedesc 6 60,1,1,1,1",
+    "writedesc 6 30,-1,16,-1,16",
+    "writedesc 9 200,100,100,56,24,16,8,4,2,1,1",
+    "writedesc 6 8,8,8,8,8,8,8,8");
+}
+
+/** The accuracy log each description above was written at, in the same order. */
+i32[] descLogs() { return i32[](5, 5, 6, 6, 6, 6, 9, 6); }
+
+/** How many symbols each carries, which is what `readTable`'s `maxSymbol` is asked to allow. */
+i32[] descMaxSymbols() { return i32[](5, 5, 20, 8, 4, 4, 10, 7); }
+
+/** Description `i` from the reference batch, or no bytes. */
+u8[] descNo(Answers a, i32 i) {
+  i32 at = DESC0 + i;
+  if (!a.ok || i < 0 || i >= descSpecs().len() || at >= a.lines.len()) { return u8[0](); }
+  return word(a.lines[at], 0) == "desc" ? decoded(word(a.lines[at], 1)) : u8[0]();
+}
+
+/** Answer `i` of the reference batch as bytes; no bytes when it failed or said something else. */
+u8[] refFrame(Answers a, i32 i) {
+  if (!a.ok || i < 0 || i >= a.lines.len()) { return u8[0](); }
+  return word(a.lines[i], 0) == "frame" ? decoded(word(a.lines[i], 1)) : u8[0]();
+}
+
+export i32 main(Core core, Cli cli) {
+  Answers a = reference(cli);
+  if (!a.ok) {
+    core.warn("error: the reference encoder did not answer — is node 22.15+ on PATH?");
+    return 1;
+  }
+  // ## The whole-buffer decoder over the reference's frames
+  //
+  // Driven here rather than in a sweep because these are *valid*: the reference's codings are ones our
+  // encoder does not emit, and a decoder that only ever met its own encoder's output is not measured.
+  for (i32 i = 0; i < 6; i++) { decompress(refFrame(a, i)); }
+  // **The many-block frame**, whose second and later blocks are the treeless and repeat-mode ones.
+  // Both buffered and streamed, because the two decoders keep the carried-over tree in different
+  // places, and at a chunk size that makes the reader refill inside a block.
+  u8[] many = refFrame(a, 6);
+  decompress(many);
+  stream1(many, 7);
+  stream1(many, 4096);
+  stream1(many, many.len() < 1 ? 1 : many.len());
+  for (i32 i = 7; i < 9; i++) {
+    u8[] f = refFrame(a, i);
+    decompress(f);
+    stream1(f, 7);
+    stream1(f, 4096);
+  }
+  u8[] win10 = refFrame(a, 9);
+  u8[] win11 = refFrame(a, 10);
+  u8[] rleRef = refFrame(a, 11);
+  decompress(win10);
+  decompress(win11);
+  decompress(rleRef);
+
+  // ## Our own encoder, over the shapes it branches on
+  //
+  // Nothing to match, everything matching, lengths that land on a block boundary or the last few
+  // bytes, and incompressible input where every block falls back to raw.
+  u8[][] c = corpus();
+  for (i32 i = 0; i < c.len(); i++) { decompress(compress(c[i])); }
+  u8[][] more = u8[][](
+    "ab".toBytes(), "abc".toBytes(), "abcdefghijklmnop".toBytes(), "abcabc".toBytes(),
+    "xyzabcabc".toBytes(),
+    repeated("the quick brown fox jumps over the lazy dog. ", 300),
+    filledWith(50000, 0x61),
+    noise2(200000, 7),
+    repeated("Lorem ipsum dolor sit amet. ", 9000),
+    noise2(131072, 3), noise2(131073, 5),
+    joinBytes(repeated("aaaa", 20000), noise2(60000, 11)),
+    noise2(20, 1), noise2(3000, 2), noise2(9000, 4));
+  for (i32 i = 0; i < more.len(); i++) { decompress(compress(more[i])); }
+  // Every literal-length and match-length code width: short runs between long ones.
+  decompress(compress(repeated(
+    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzabcdefghijklmnopqrstuvwxyz", 60)));
+  // A byte that cycles, so matches are found at every distance.
+  u8[] cycle = u8[100000]();
+  for (i32 i = 0; i < cycle.len(); i++) { cycle[i] = i & 255; }
+  decompress(compress(cycle));
+
+  // ## The streaming decoder over frames that decode
+  i32[] chunks = i32[](1, 3, 64, 4096);
+  for (i32 i = 0; i < c.len(); i++) {
+    u8[] f = compress(c[i]);
+    for (i32 k = 0; k < chunks.len(); k++) { stream1(f, chunks[k]); }
+    stream1(f, f.len() < 1 ? 1 : f.len());
+  }
+  // **The eviction path**: a window smaller than the content, at several chunk sizes.
+  i32[] evictChunks = i32[](1, 64, 4096);
+  for (i32 k = 0; k < evictChunks.len(); k++) {
+    stream1(win10, evictChunks[k]);
+    stream1(win11, evictChunks[k]);
+    stream1(rleRef, evictChunks[k]);
+  }
+  stream1(win10, win10.len());
+  stream1(rleRef, rleRef.len());
+  // A frame declaring neither a content size nor a window, where retaining everything is the only
+  // safe reading — the `windowSize > 0` ternary's other side.
+  stream1(frameOf(true, 0, 0 as i64, false, 0, 0, 0, rawBlock(u8[0](), true)), 3);
+
+  // ## xxh64, whole and in pieces
+  //
+  // The held-bytes path is the whole of `Xxh64`'s bookkeeping and only a chunk size that is not a
+  // multiple of 32 reaches it. Lengths 0..140 cover every tail: the eight-byte loop, the four-byte
+  // step and the byte-at-a-time remainder.
+  u8[] d200 = u8[200]();
+  for (i32 i = 0; i < d200.len(); i++) { d200[i] = (i * 37 + 11) & 255; }
+  for (i32 n = 0; n <= 140; n++) { xxh64(d200, 0, n); }
+  i32[] cuts = i32[](1, 7, 31, 32, 33, 64, 200, 0);
+  for (i32 i = 0; i < cuts.len(); i++) { hashStreamed(d200, cuts[i]); }
+  hashWhole(d200);
+  hashRagged(d200);
+  hashStreamed(u8[0](), 1);
+
+  // ## `optimalLog`, which refuses nothing
+  i32[] totals = i32[](1, 2, 10, 1000, 100000);
+  i32[] maxSyms = i32[](1, 5, 100, 255);
+  for (i32 i = 0; i < totals.len(); i++) {
+    for (i32 k = 0; k < maxSyms.len(); k++) { optimalLog(totals[i], maxSyms[k], 9); }
+  }
+
+  // ## Everything below here can refuse, so it is last
+  //
+  // **`main` is one call and a trap ends it.** Anything that might be refused belongs in a sweep, where
+  // the trap costs one case — except what needs a `Cli`, since a sweep is handed its index and nothing
+  // else. Those cases are therefore last, in a deliberate order, and the two paragraphs below say what
+  // each would cost if it fired.
+  //
+  // This is not a hypothetical. The refusing-sink calls sat in the middle at one point and took eight
+  // of `xxh64`'s branches with them; the drop from 46 covered to 40 is what said so, since a trapped
+  // `main` still prints its counters and reports the rest as simply unreached.
+
+  // ## A far end that stops listening **mid-eviction**
+  //
+  // The other refusal point, and the one that needs a window smaller than the content — so it needs the
+  // reference's frame and therefore a `Cli`. `refused` covers the tail, where our own encoder's output
+  // is enough. A refusal here ends `main`, so only the description block below is at risk.
+  streamed(win10, 1 << 20, 0, false);
+  streamed(win10, 1 << 20, 3, false);
+  streamed(win11, 1 << 20, 1, false);
+
+  // ## The FSE table reader, over descriptions the *other* writer built — and this goes last
+  //
+  // `test/writer.ts` reads the same section of RFC 8878 as the decoder and deliberately not the
+  // decoder itself, so it reaches shapes our own normaliser never produces. It is JavaScript, so its
+  // answers arrive in the reference batch — which means these cases need a `Cli` and cannot be a sweep,
+  // and a sweep is what isolates a trap.
+  //
+  // **So they are last in `main`.** A description the reader refuses ends `main`, and everything after
+  // it in this function is lost — which is not a hypothetical: putting this block in the middle cost
+  // six of `xxh64`'s branches and the drop is what said so. `fseDesc` below covers the same ground with
+  // our own writer, where a trap is one case; this is here for the shapes only the other writer reaches.
+  for (i32 i = 0; i < descSpecs().len(); i++) {
+    u8[] desc = descNo(a, i);
+    if (desc.len() == 0) { continue; }
+    fseReadTable(desc, 0, descMaxSymbols()[i], descLogs()[i]);
+    fseDecompress(joinBytes(desc, u8[](0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0x01)),
+                  descMaxSymbols()[i], descLogs()[i], 64);
+  }
+
+  return 0;
+}
+
+// ── The refusals ──────────────────────────────────────────────────────────────
+//
+// Every export below is called by `cov_ledger.wac`, each trap caught. Those with a `:<n>` in the
+// ledger are **sweeps**: one export, `n` cases, and a case past the end returns rather than trapping,
+// so the width may be an upper bound rather than an exact count.
+
+/**
+ * **Damaging a real frame at every byte, under three masks.**
+ *
+ * `i` runs over `(frame, byte, mask)` across every frame in the cache. This is the most valuable
+ * exercise here and the reason `covdump` has a sweep at all: every refusal in the block, sequence and
+ * Huffman code is reachable only from data that was nearly right — a random byte string trips the
+ * magic and gets no further — and sampling was measured as reaching about half, because the checks are
+ * close enough together that stepping over bytes steps over whole branches.
+ */
+export void damage(i32 i) {
+  u8[][] ins = damageInputs();
+  i32 seen = 0;
+  for (i32 k = 0; k < ins.len(); k++) {
+    u8[] f = compress(ins[k]);
+    i32 here = f.len() * 3;
+    if (i < seen + here) {
+      i32 off = i - seen;
+      decompress(damaged(f, off / 3, masks()[off % 3]));
+      return;
+    }
+    seen = seen + here;
+  }
+}
+
+/** Every truncation of every frame, which is a different set of refusals from damage. */
+export void cut(i32 i) {
+  u8[][] ins = damageInputs();
+  i32 seen = 0;
+  for (i32 k = 0; k < ins.len(); k++) {
+    u8[] f = compress(ins[k]);
+    i32 here = f.len() + 1;
+    if (i < seen + here) { decompress(head(f, i - seen)); return; }
+    seen = seen + here;
+  }
+}
+
+/** The same two, down the streaming decoder, which reads its header forward rather than by index. */
+export void damageStreamed(i32 i) {
+  u8[][] ins = damageInputs();
+  i32 seen = 0;
+  for (i32 k = 0; k < ins.len(); k++) {
+    u8[] f = compress(ins[k]);
+    i32 here = f.len() * 3;
+    if (i < seen + here) {
+      i32 off = i - seen;
+      stream1(damaged(f, off / 3, masks()[off % 3]), 7);
+      return;
+    }
+    seen = seen + here;
+  }
+}
+
+export void cutStreamed(i32 i) {
+  u8[][] ins = damageInputs();
+  i32 seen = 0;
+  for (i32 k = 0; k < ins.len(); k++) {
+    u8[] f = compress(ins[k]);
+    i32 here = f.len() + 1;
+    if (i < seen + here) { stream1(head(f, i - seen), 7); return; }
+    seen = seen + here;
+  }
+}
+
+/**
+ * Frame headers, hand-built: every field width, and every rejection.
+ *
+ * A sweep rather than a name apiece because these are one builder's arguments varied — the descriptor
+ * byte decides the width of everything after it, so the interesting cases are a cross product rather
+ * than a list of distinct malformations.
+ */
+export void header(i32 i) {
+  u8[] three = rawBlock(u8[](1, 2, 3), true);
+  i32[] wds = i32[](0, 0x07, 0x40, 0xA0, 0xF8);
+  if (i == 0) { decompress(plainFrame(3 as i64, three)); return; }
+  // The two-byte form's 256 offset, the four-byte form and the eight-byte one.
+  if (i == 1) { decompress(frameOf(true, 1, (3 - 256) as i64, false, 0, 0, 0, three)); return; }
+  if (i == 2) { decompress(frameOf(true, 2, 3 as i64, false, 0, 0, 0, three)); return; }
+  if (i == 3) { decompress(frameOf(true, 3, 3 as i64, false, 0, 0, 0, three)); return; }
+  // Not single-segment, so a window descriptor is read: the smallest, a mantissa, and one past what
+  // an i32 window can address.
+  if (i >= 4 && i < 9) {
+    decompress(frameOf(false, 2, 3 as i64, false, 0, 0, wds[i - 4], three));
+    return;
+  }
+  // Every dictionary-id width. A dictionary we do not have is a refusal, not a decode.
+  if (i >= 9 && i < 13) {
+    decompress(frameOf(true, 2, 3 as i64, false, i - 9, 0x11223344, 0, three));
+    return;
+  }
+  if (i == 13) { decompress(frameOf(true, 2, 3 as i64, true, 0, 0, 0, three)); return; }
+  // Both plain block types, several blocks in a frame, and an empty one.
+  if (i == 14) { decompress(frameOf(true, 2, 0 as i64, false, 0, 0, 0, rawBlock(u8[0](), true))); return; }
+  if (i == 15) {
+    decompress(frameOf(true, 2, 6 as i64, false, 0, 0, 0,
+      joinBytes(rawBlock(u8[](1, 2, 3), false), rawBlock(u8[](4, 5, 6), true))));
+    return;
+  }
+  if (i == 16) {
+    decompress(frameOf(true, 2, 300 as i64, false, 0, 0, 0, rleBlock(0x61, 300, true)));
+    return;
+  }
+  if (i == 17) {
+    decompress(frameOf(true, 2, 300 as i64, false, 0, 0, 0,
+      joinBytes(rleBlock(0x61, 100, false), rawBlock(u8[](9, 9), true))));
+    return;
+  }
+  // A reserved bit in the descriptor.
+  if (i == 18) {
+    decompress(joinBytes(u8[](0x28, 0xB5, 0x2F, 0xFD, 0x28, 3), three));
+    return;
+  }
+  // A reserved block type, and a compressed block where the body is not one.
+  if (i == 19) {
+    decompress(plainFrame(3 as i64, joinBytes(blockHeader(3, 3, true), u8[](1, 2, 3))));
+    return;
+  }
+  if (i == 20) {
+    decompress(plainFrame(3 as i64, joinBytes(blockHeader(2, 3, true), u8[](1, 2, 3))));
+    return;
+  }
+  // Blocks over the maximum, a block claiming more than the input holds, a content size that is not
+  // true, and a header cut short.
+  if (i == 21) { decompress(frameOf(true, 2, 3 as i64, false, 0, 0, 0, blockHeader(0, 200000, true))); return; }
+  if (i == 22) { decompress(frameOf(true, 2, 3 as i64, false, 0, 0, 0, blockHeader(1, 200000, true))); return; }
+  if (i == 23) {
+    decompress(plainFrame(3 as i64, joinBytes(blockHeader(0, 99, true), u8[](1, 2, 3))));
+    return;
+  }
+  if (i == 24) { decompress(plainFrame(9 as i64, three)); return; }
+  if (i == 25) { decompress(u8[](0x28, 0xB5, 0x2F, 0xFD)); return; }
+  if (i == 26) { decompress(u8[](0x28, 0xB5)); return; }
+  if (i == 27) { decompress(u8[](0x28, 0xB5, 0x2F, 0xFE, 0, 0, 0, 0)); return; }
+  if (i == 28) { decompress(u8[0]()); return; }
+  // **An eight-byte content size with the top bit set**, which reads back as a negative i64. A
+  // single-segment frame takes its window from that field, so it has to be refused rather than used
+  // as a length.
+  if (i == 29) {
+    decompress(joinBytes(u8[](0x28, 0xB5, 0x2F, 0xFD, (3 << 6) | (1 << 5),
+                              0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF), three));
+    return;
+  }
+  // Skippable frames: the first magic, the last, one with content, and one claiming too much —
+  // including a size with the top bit set, which is negative read as an i32 and must not become a
+  // backwards seek.
+  if (i == 30) { decompress(skippable(0x184D2A50, 4, u8[](1, 2, 3, 4))); return; }
+  if (i == 31) { decompress(skippable(0x184D2A5F, 0, u8[0]())); return; }
+  if (i == 32) { decompress(skippable(0x184D2A55, 99, u8[0]())); return; }
+  if (i == 33) { decompress(skippable(0x184D2A51, 0x80000000, u8[0]())); return; }
+  // A dictionary the reference will use and this decoder must refuse.
+  if (i == 34) { decompress(frameOf(true, 0, 3 as i64, false, 1, 7, 0, three)); return; }
+  if (i == 35) { decompress(frameOf(true, 1, 99 as i64, false, 0, 0, 0, three)); return; }
+  if (i == 36) { decompress(frameOf(true, 1, 3 as i64, true, 0, 0, 0, three)); return; }
+  if (i == 37) { decompress(plainFrame(4 as i64, head(blockHeader(0, 4, true), 1))); return; }
+  if (i == 38) { decompress(u8[](0x28, 0xB5, 0x2F, 0xFD, 0x24)); return; }
+  if (i == 39) { decompress(u8[](1, 2, 3, 4)); return; }
+  // **`fcsFlag == 0` and *not* single-segment**, which is the one combination where the frame declares
+  // no content size at all — the flag means "one byte" rather than "absent" only for a single segment.
+  // Every other case here pins the size, so the unknown-size arm had never run.
+  if (i >= 40 && i < 45) {
+    i32[] wds = i32[](0, 0x07, 0x40, 0xA0, 0xF8);
+    decompress(frameOf(false, 0, 0 as i64, false, 0, 0, wds[i - 40], three));
+    return;
+  }
+  // And the same with each dictionary-id width, so the header-size arithmetic is asked about every
+  // combination rather than about one.
+  if (i >= 45 && i < 49) {
+    decompress(frameOf(false, 0, 0 as i64, false, i - 45, 0x11223344, 0x40, three));
+    return;
+  }
+  if (i >= 49 && i < 53) {
+    decompress(frameOf(true, 3, 3 as i64, false, i - 49, 0x11223344, 0, three));
+    return;
+  }
+}
+
+/**
+ * **xxh64 asked for a range outside its input.**
+ *
+ * Nothing inside a frame can ask for one — the decoder hashes what it produced — so these are only
+ * reachable from a caller, which is exactly why they are worth driving: the bound is the whole of what
+ * stops a corrupt length becoming an out-of-bounds read.
+ */
+export void hashBound(i32 i) {
+  u8[] d = u8[200]();
+  for (i32 k = 0; k < d.len(); k++) { d[k] = (k * 37 + 11) & 255; }
+  i32[] starts = i32[](0, 1, 0 - 1, 0, 200, 0, 201);
+  i32[] lens = i32[](201, 200, 1, 0 - 1, 1, 0 - 200, 0);
+  if (i < starts.len()) { xxh64(d, starts[i], lens[i]); return; }
+}
+
+/** The same headers again, streamed, where the parser reads them forward one byte at a time. */
+export void headerStreamed(i32 i) {
+  u8[] three = rawBlock(u8[](1, 2, 3), true);
+  if (i == 0) { stream1(plainFrame(3 as i64, blockHeader(3, 0, true)), 7); return; }
+  if (i == 1) { stream1(frameOf(true, 0, 3 as i64, false, 1, 7, 0, three), 7); return; }
+  if (i == 2) { stream1(frameOf(true, 1, 99 as i64, false, 0, 0, 0, three), 7); return; }
+  if (i == 3) { stream1(frameOf(true, 1, 3 as i64, true, 0, 0, 0, three), 7); return; }
+  if (i == 4) { stream1(plainFrame(3 as i64, blockHeader(0, 200000, true)), 7); return; }
+  if (i == 5) { stream1(plainFrame(3 as i64, joinBytes(blockHeader(1, 200000, true), u8[](0x41))), 7); return; }
+  if (i == 6) { stream1(plainFrame(3 as i64, joinBytes(blockHeader(2, 500, true), u8[](1, 2, 3))), 7); return; }
+  if (i == 7) { stream1(plainFrame(4 as i64, head(blockHeader(0, 4, true), 1)), 7); return; }
+  if (i == 8) { stream1(u8[](0x28, 0xB5, 0x2F, 0xFD), 7); return; }
+  if (i == 9) { stream1(u8[](0x28, 0xB5, 0x2F, 0xFD, 0x24), 7); return; }
+  if (i == 10) { stream1(u8[](1, 2, 3, 4), 7); return; }
+  if (i == 11) { stream1(skippable(0x184D2A50, 2, u8[](1, 2)), 7); return; }
+  if (i == 12) { stream1(skippable(0x184D2A50, 0x80000000, u8[0]()), 7); return; }
+  if (i == 13) { stream1(u8[0](), 7); return; }
+  // A reader that **fails** rather than ending: not an end of input, and the refusal is the point.
+  if (i == 14) { streamed(u8[0](), 1, 1 << 24, true); return; }
+  if (i == 15) { streamed(compress("hello".toBytes()), 3, 1 << 24, true); return; }
+  if (i == 16) { streamed(head(compress("hello".toBytes()), 3), 3, 1 << 24, true); return; }
+  // **The whole descriptor cross-product, streamed.** `headerLength` exists only for a reader that
+  // cannot look ahead — `stream.wac`, pulling from a socket — so it has to ask how long the header is
+  // before it can wait for that many bytes. Driving these through `decompress` reaches `readHeader`
+  // and not `headerLength`, and the two are three lines apart and must agree: sixteen of `frame.wac`'s
+  // branches are only in the asking half.
+  if (i >= 17 && i < 17 + 4 * 4 * 2) {
+    i32 k = i - 17;
+    i32 fcsFlag = k / 8;
+    i32 didFlag = (k / 2) % 4;
+    bool single = (k % 2) == 0;
+    stream1(frameOf(single, fcsFlag, 3 as i64, false, didFlag, 0x11223344, 0x40, three), 1);
+    return;
+  }
+}
+
+/**
+ * Compressed blocks built by hand, short enough to stop inside their own headers.
+ *
+ * **Fuzzing a real frame cannot reach these.** Damaging a block header makes the block loop refuse it
+ * before the literals header is ever read, so the only way to truncate a literals header is to declare
+ * a block that is shorter than one. Every first byte selects a different kind and size format, and so
+ * a different width to run out of.
+ */
+export void blockBody(i32 i) {
+  // 0: a block with no body at all.
+  if (i == 0) { decompress(oneBlock(u8[0]())); return; }
+  i = i - 1;
+  // 1..352: every first byte from 0 to 15, at every body length from 0 to 10, padded with zeros and
+  // then with 0xFF — the two paddings differ because a size field of zeros and one of ones run out at
+  // different places.
+  if (i < 16 * 11 * 2) {
+    i32 first = i / 22;
+    i32 rest = i % 22;
+    i32 n = rest / 2;
+    i32 fill = (rest % 2) == 0 ? 0x00 : 0xFF;
+    Buf b = Buf.create();
+    b.push(first);
+    for (i32 k = 1; k < n; k++) { b.push(fill); }
+    decompress(oneBlock(b.take()));
+    return;
+  }
+  i = i - 16 * 11 * 2;
+  // A literals section whose tree description uses up the whole section, leaving no stream.
+  if (i < 6 * 8) {
+    i32 treeBytes = 1 + i / 8;
+    i32 comp = 1 + i % 8;
+    // Kind 2, size format 0: a three-byte header with 10-bit regenerated and compressed sizes.
+    Buf b = Buf.create();
+    b.push(0x02 | (0 << 2) | ((8 & 15) << 4));
+    b.push((8 >> 4) | ((comp & 63) << 6));
+    b.push(comp >> 2);
+    b.push(128 + treeBytes);
+    for (i32 k = 0; k < treeBytes; k++) { b.push(0x11); }
+    decompress(oneBlock(b.take()));
+    return;
+  }
+  i = i - 6 * 8;
+  // A raw literals section of length zero, then a sequences section that stops inside its own count,
+  // mode byte or RLE table byte.
+  u8[][] tails = u8[][](u8[](0x80), u8[](0xFF), u8[](0xFF, 0x01), u8[](0x01), u8[](0x01, 0x00),
+                        u8[](0x01, 0x24), u8[](0x01, 0x24, 0x00));
+  if (i < tails.len()) {
+    decompress(oneBlock(joinBytes(u8[](0x00), tails[i])));
+    return;
+  }
+  i = i - tails.len();
+  // **The repeat-offset slot that cannot be filled.**
+  //
+  // Every code in RLE mode, so the symbols are fixed and no state bits are read: literal length code 0
+  // (no literals), match length code 0, offset code 1 with its one extra bit set. That makes the offset
+  // value 3, and with no literals the numbering shifts to "the most recent offset, minus one" — which
+  // at the start of a frame is 1 - 1. There is nothing one byte before the beginning, so the block has
+  // to be refused. Reachable only from a stream no encoder would write, and only as the *first*
+  // sequence, so fuzzing a real frame never lands on it.
+  if (i == 0) {
+    decompress(oneBlock(u8[](0x00, 0x01, 0x54, 0x00, 0x01, 0x00, 0x03)));
+    return;
+  }
+  i = i - 1;
+  // Literals headers that are complete but claim sizes the block cannot hold, so the refusal is about
+  // the section rather than about running out of bytes.
+  u8[][] claims = u8[][](
+    u8[](0x02, 0xFF, 0xFF), u8[](0x06, 0xFF, 0xFF), u8[](0x0A, 0xFF, 0xFF, 0xFF),
+    u8[](0x0E, 0xFF, 0xFF, 0xFF, 0xFF));
+  if (i < claims.len() * 7) {
+    u8[] claim = claims[i / 7];
+    i32 extra = i % 7;
+    Buf b = Buf.create();
+    for (i32 k = 0; k < claim.len(); k++) { b.push(claim[k]); }
+    for (i32 k = 0; k < extra; k++) { b.push(0x11); }
+    decompress(oneBlock(b.take()));
+    return;
+  }
+}
+
+/**
+ * The FSE table reader and decoder, over descriptions from the writer and over nonsense.
+ *
+ * The writer is `test/writer.ts` and is deliberately not the decoder's own reading of RFC 8878 — a
+ * shared misreading would still agree — so it is a fuzzer with structure rather than an oracle. Its
+ * answers arrive in the reference batch, which is why this needs a `Cli`… which a sweep cannot have.
+ * So the descriptions are **rebuilt here as bytes** from what the writer produced, recorded as literals.
+ */
+export void fseNonsense(i32 i) {
+  u8[][] bad = u8[][](
+    u8[0](),
+    u8[](0x00),
+    u8[](0xFF),
+    u8[](0x0F, 0xFF, 0xFF, 0xFF),
+    u8[](0x20, 0x00, 0x00, 0x00, 0x00),
+    u8[](0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
+    u8[](0x01, 0x00, 0x01),
+    u8[](0x10, 0x40, 0x01));
+  i32[] logs = i32[](6, 6, 6, 6, 6, 9, 6, 9);
+  if (i < bad.len()) { fseDecompress(bad[i], 255, logs[i], 256); return; }
+  i = i - bad.len();
+  if (i < bad.len()) { fseDecompress(bad[i], 8, logs[i], 8); return; }
+  i = i - bad.len();
+  // Counts that do not tile the table, so the spread cannot return to where it started.
+  if (i == 0) { buildFromCounts(i32[](16, 8, 4), 2, 5); return; }
+  if (i == 1) { buildFromCounts(i32[](40, 40), 1, 5); return; }
+  if (i == 2) { buildFromCounts(i32[](1), 0, 5); return; }
+  // The predefined distributions, which are the only place -1 counts are guaranteed to appear.
+  if (i == 3) {
+    buildFromCounts(i32[](4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                          3, 2, 1, 1, 1, 1, 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1), 35, 6);
+    return;
+  }
+  if (i == 4) {
+    buildFromCounts(i32[](1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                          0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1), 28, 5);
+    return;
+  }
+}
+
+/**
+ * The Huffman table reader and literal decoder, over direct weights and over trees that are not trees.
+ *
+ * Direct weights rather than FSE-coded, because a real encoder only writes the direct form for small
+ * alphabets and these are the shapes it does not choose: an odd count so the trailing nibble is
+ * ignored, and both a shallow and a deep code.
+ */
+export void huffCase(i32 i) {
+  i32[][] weights = i32[][](
+    i32[](1), i32[](1, 1, 1), i32[](2, 1, 1), i32[](1, 1, 2, 3, 4), i32[](3, 0, 0, 2, 1),
+    i32[](1, 1, 1, 1, 1, 1, 1), i32[](4, 3, 2, 1, 1, 0, 0, 0, 0));
+  if (i < weights.len() * 3) {
+    i32[] w = weights[i / 3];
+    Buf b = Buf.create();
+    b.push(128 + w.len());
+    for (i32 k = 0; k < w.len(); k = k + 2) {
+      b.push((w[k] << 4) | (k + 1 < w.len() ? w[k + 1] : 0));
+    }
+    u8[] desc = b.take();
+    i32 which = i % 3;
+    // A stream of the wrong length, and an unknown stream count, are both refusals.
+    if (which == 0) {
+      HuffTable t = huffReadTable(desc, 0);
+      decodeLiterals(t, joinBytes(desc, u8[](0x81, 0x42, 0x99)), desc.len(), 3, 4, 1);
+    } else if (which == 1) {
+      decodeLiterals(huffReadTable(desc, 0), desc, 0, desc.len(), 4, 2);
+    } else {
+      decodeLiterals(huffReadTable(desc, 0), desc, 0, desc.len(), 40, 4);
+    }
+    return;
+  }
+  i = i - weights.len() * 3;
+  // Trees that are not trees. Each reaches a different refusal, and the byte counts matter: a
+  // description one byte short trips the bounds check before anything is inspected.
+  u8[][] bad = u8[][](
+    u8[0](),
+    u8[](128),                     // claims a weight, carries none
+    u8[](129, 0x00),               // every weight zero, so no code at all
+    u8[](129, 0x13),               // leaves code space that is not a power of two
+    u8[](131, 0xBB, 0xBB),         // weights that need a code longer than allowed
+    u8[](131, 0xFF, 0xFF),         // weights past the maximum outright
+    u8[](0),                       // an FSE description of zero length
+    u8[](10, 0, 0),                // an FSE description longer than the input
+    u8[](4, 0, 0, 0, 0));          // an FSE description of nonsense
+  if (i < bad.len()) { huffReadTable(bad[i], 0); return; }
+  i = i - bad.len();
+  // Stream shapes that do not add up: a literal count the stream cannot hold, a count too small to
+  // split four ways, and a jump table claiming more than the section carries.
+  //
+  // Swept rather than chosen: the stream's codes are one and two bits, so which count leaves the
+  // *last* symbol straddling the end depends on the bit pattern. That is a different refusal from
+  // overrunning in the middle, and only some counts reach it.
+  u8[] two = u8[](129, 0x11);      // two symbols, one bit each
+  u8[] stream = u8[](0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x81);
+  if (i < 80) { decodeLiterals(huffReadTable(two, 0), stream, 0, stream.len(), i + 1, 1); return; }
+  i = i - 80;
+  i32[] counts = i32[](1, 2, 3, 4, 8, 63, 64, 500);
+  if (i < counts.len() * 2) {
+    decodeLiterals(huffReadTable(two, 0), stream, 0, stream.len(), counts[i / 2],
+                   (i % 2) == 0 ? 1 : 4);
+    return;
+  }
+  i = i - counts.len() * 2;
+  if (i == 0) {
+    decodeLiterals(huffReadTable(two, 0), u8[](0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x81), 0, 7, 4, 4);
+    return;
+  }
+  if (i == 1) { decodeLiterals(huffReadTable(two, 0), stream, 0, 3, 4, 4); return; }
+  // A jump table that does add up, with a literal count too small to split four ways: three quarters
+  // rounded up already exceed it, so the fourth stream would hold a negative number.
+  if (i >= 2 && i < 5) {
+    u8[] four = u8[](1, 0, 1, 0, 1, 0, 0x81, 0x81, 0x81, 0x81);
+    decodeLiterals(huffReadTable(two, 0), four, 0, four.len(), i - 1, 4);
+    return;
+  }
+}
+
+/**
+ * The encoder over the literals sections and sequence counts it branches on.
+ *
+ * A sweep rather than part of `main` because some of these are large and the whole point is the *shape*
+ * each one drives — so a case that traps must not take the rest with it.
+ */
+export void encCase(i32 i) {
+  string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  // Narrow alphabets at several sizes, so the one-stream and four-stream layouts and each header
+  // width are all reached. A `key ` every 64 bytes, so there are matches and therefore a compressed
+  // block rather than a fall back to raw.
+  i32[] ns = i32[](40, 300, 900, 1100, 5000, 40000, 200000);
+  if (i < ns.len()) {
+    i32 n = ns[i];
+    Buf b = Buf.create();
+    i32 x = 0x1234;
+    for (i32 k = 0; k < n; k++) {
+      x = x ^ (x << 13);
+      x = x ^ ((x >> 17) & 0x7FFF);
+      x = x ^ (x << 5);
+      b.push(alphabet.toBytes()[((x >> 8) & 0x7FFFFFFF) % 64]);
+      if ((k % 64) == 63) {
+        u8[] key = "\nkey ".toBytes();
+        for (i32 q = 0; q < key.len(); q++) { b.push(key[q]); }
+      }
+    }
+    decompress(compress(b.take()));
+    return;
+  }
+  i = i - ns.len();
+  // An alphabet of exactly two symbols, and one just inside and just outside what a direct
+  // description can carry. Planted repeats, so there are sequences and therefore a compressed block.
+  i32[] widths = i32[](2, 100, 128, 129, 200);
+  if (i < widths.len()) {
+    i32 width = widths[i];
+    u8[] out = u8[30000]();
+    i32 x = 0x1234;
+    for (i32 k = 0; k < out.len(); k++) {
+      x = x ^ (x << 13);
+      x = x ^ ((x >> 17) & 0x7FFF);
+      x = x ^ (x << 5);
+      out[k] = ((x >> 8) & 0x7FFFFFFF) % width;
+    }
+    u8[] mark = "a marker phrase that repeats here    ".toBytes();
+    for (i32 k = 0; k + 40 < out.len(); k = k + 500) {
+      for (i32 q = 0; q < mark.len(); q++) { out[k + q] = mark[q]; }
+    }
+    decompress(compress(out));
+    return;
+  }
+  i = i - widths.len();
+  // **Many identical literals rather than three**: a marker that matches, separated by a single byte
+  // that never does, so every gap contributes one literal and they are all the same. That is what
+  // reaches the wider RLE literal headers.
+  i32[] reps = i32[](40, 900, 9000);
+  if (i < reps.len()) {
+    Buf b = Buf.create();
+    u8[] mark = "MARKERPHRASE".toBytes();
+    for (i32 k = 0; k < reps[i]; k++) {
+      for (i32 q = 0; q < mark.len(); q++) { b.push(mark[q]); }
+      b.push(0x78);
+    }
+    decompress(compress(b.take()));
+    return;
+  }
+  i = i - reps.len();
+  // Longer than the window, so a candidate is found beyond it and rejected.
+  if (i == 0) {
+    u8[] far = u8[1300000]();
+    u8[] mark = "a distinctive phrase that will be looked for later. ".toBytes();
+    for (i32 k = 0; k < mark.len(); k++) { far[k] = mark[k]; }
+    for (i32 k = mark.len(); k < far.len() - mark.len(); k++) { far[k] = 0x41 + (k % 23); }
+    for (i32 k = 0; k < mark.len(); k++) { far[far.len() - mark.len() + k] = mark[k]; }
+    compress(far);
+    return;
+  }
+  i = i - 1;
+  // **Sequence counts across the one-, two- and three-byte forms.** The widest needs more than 32512
+  // sequences in a single block, which means a match every four bytes or so: three bytes that repeat,
+  // then one that does not. The literal between matches has to be *unpredictable* rather than merely
+  // varying — a cycling byte makes the whole cycle repeat, the matcher finds the cycle rather than the
+  // three bytes, and a block ends up with a handful of long sequences instead of tens of thousands of
+  // short ones.
+  i32[] seqReps = i32[](40, 3000, 45000, 120000);
+  if (i < seqReps.len()) {
+    i32 n = seqReps[i];
+    u8[] rnd = noise2(n, 12345);
+    u8[] out = u8[n * 4]();
+    for (i32 k = 0; k < n; k++) {
+      out[k * 4] = 0x61;
+      out[k * 4 + 1] = 0x62;
+      out[k * 4 + 2] = 0x63;
+      out[k * 4 + 3] = rnd[k];
+    }
+    decompress(compress(out));
+    return;
+  }
+}
+
+/**
+ * The FSE **encoder**: normalise, build a table, encode a symbol stream backwards, describe it.
+ *
+ * Driven the way the tests drive it — encode and decode — because that is the only thing that
+ * exercises the table build and the backwards writing together. The shapes are chosen for the
+ * normaliser: distributions where the rounding cannot be settled against the largest symbol alone,
+ * and alphabets wider than the table.
+ */
+void encodeRoundTrip(i32[] symbols, i32 maxSymbol, i32 maxLog) {
+  i32[] counts = i32[maxSymbol + 1]();
+  for (i32 i = 0; i < symbols.len(); i++) { counts[symbols[i]] = counts[symbols[i]] + 1; }
+  i32 log = optimalLog(symbols.len(), maxSymbol, maxLog);
+  i32[] norm = normalize(counts, maxSymbol, symbols.len(), log);
+  CTable c = buildCTable(norm, maxSymbol, log);
+
+  BitOut body = BitOut.create();
+  i32 state = initialState(c, symbols[symbols.len() - 1]);
+  for (i32 i = symbols.len() - 2; i >= 0; i--) {
+    Step step = encodeStep(c, symbols[i], state);
+    body.write(step.value, step.bits);
+    state = step.state;
+  }
+  body.write(state, log);
+  body.finish();
+
+  BitOut head2 = BitOut.create();
+  writeDescription(head2, norm, maxSymbol, log);
+  head2.flush();
+}
+
+export void fseEnc(i32 i) {
+  // 200 random distributions, which is what finds the normaliser's corners rather than what a chosen
+  // list would. The seed is folded from `i` so a case is reproducible from its index alone.
+  if (i < 200) {
+    i32 x = 0x1234567 + i * 2654435761;
+    i32 maxSymbol = 1 + ((x >> 7) & 0x7FFFFFFF) % 50;
+    i32 n = 20 + ((x >> 3) & 0x7FFFFFFF) % 3000;
+    i32[] symbols = i32[n]();
+    for (i32 k = 0; k < n; k++) {
+      x = x ^ (x << 13);
+      x = x ^ ((x >> 17) & 0x7FFF);
+      x = x ^ (x << 5);
+      symbols[k] = ((x >> 8) & 0x7FFFFFFF) % (maxSymbol + 1);
+    }
+    encodeRoundTrip(symbols, maxSymbol, 9);
+    return;
+  }
+  i = i - 200;
+  // Alphabets wider than the smallest table, so the normaliser has to take slots back rather than
+  // settle everything against the largest symbol.
+  i32[] wide = i32[](40, 60, 100);
+  if (i < wide.len()) {
+    i32[] symbols = i32[wide[i] + 1]();
+    for (i32 k = 0; k <= wide[i]; k++) { symbols[k] = k; }
+    encodeRoundTrip(symbols, wide[i], 5);
+    return;
+  }
+  i = i - wide.len();
+  // Refusals: a symbol with no states, a target outside the table, an empty distribution.
+  if (i < 5) {
+    i32[] norm = normalize(i32[](10, 0, 5), 2, 15, 5);
+    CTable c = buildCTable(norm, 2, 5);
+    if (i == 0) { encodeStep(c, 1, 0); return; }
+    if (i == 1) { initialState(c, 1); return; }
+    if (i == 2) { encodeStep(c, 0, 1000); return; }
+    if (i == 3) { encodeStep(c, 99, 0); return; }
+    initialState(c, 99);
+    return;
+  }
+  i = i - 5;
+  // Descriptions for distributions carrying -1 counts, which this normaliser never produces but the
+  // format's own predefined tables are full of.
+  if (i == 0) {
+    BitOut o = BitOut.create();
+    writeDescription(o, i32[](4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
+                              2, 3, 2, 1, 1, 1, 1, 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1), 35, 6);
+    o.flush();
+    return;
+  }
+  if (i == 1) {
+    BitOut o = BitOut.create();
+    writeDescription(o, i32[](1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                              0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1), 28, 5);
+    o.flush();
+    return;
+  }
+  if (i == 2) {
+    BitOut o = BitOut.create();
+    writeDescription(o, i32[](30, 0 - 1, 16, 0 - 1, 16), 4, 6);
+    o.flush();
+    return;
+  }
+  i = i - 3;
+  // **Rounding that cannot be settled against the largest symbol but can be settled at all**: enough
+  // symbols that they all round up past the table, few enough that the ones with slots to spare can
+  // cover it. 21 equal symbols in 32 slots each round to 2, which is 42 — ten too many, and twenty
+  // symbols have a slot to give.
+  i32[] equal = i32[](21, 25, 30);
+  if (i < equal.len()) {
+    i32[] counts = i32[equal[i]]();
+    for (i32 k = 0; k < counts.len(); k++) { counts[k] = 1000; }
+    normalize(counts, equal[i] - 1, 1000 * equal[i], 5);
+    return;
+  }
+  i = i - equal.len();
+  // The same, but unequal, so the search for who can spare a slot compares candidates rather than
+  // taking the first.
+  i32[] uneven = i32[](21, 26);
+  if (i < uneven.len() * 2) {
+    i32 syms = uneven[i / 2];
+    i32[] counts = i32[syms]();
+    i32 total = 0;
+    for (i32 k = 0; k < syms; k++) { counts[k] = 1000 + k * 250; total = total + counts[k]; }
+    normalize(counts, syms - 1, total, (i % 2) == 0 ? 5 : 6);
+    return;
+  }
+  i = i - uneven.len() * 2;
+  // Alphabets far wider than the table, so the normaliser exhausts its first strategy and has to take
+  // slots back one at a time.
+  i32[] far = i32[](70, 120, 200);
+  if (i < far.len() * 2) {
+    i32 maxSymbol = far[i / 2];
+    i32[] counts = i32[maxSymbol + 1]();
+    i32 total = 0;
+    for (i32 k = 0; k <= maxSymbol; k++) { counts[k] = 1 + (k % 3); total = total + counts[k]; }
+    normalize(counts, maxSymbol, total, (i % 2) == 0 ? 5 : 6);
+    return;
+  }
+  i = i - far.len() * 2;
+  if (i == 0) { normalize(i32[4](), 3, 0, 5); return; }
+  if (i == 1) { normalize(i32[4](), 3, 10, 5); return; }
+}
+
+/**
+ * A far end that stops listening, at both the points that can notice: mid-eviction and at the tail.
+ *
+ * `write` answering false is a contract, not an error. The eviction cases need a window smaller than
+ * the content, which our encoder never emits — so they are the reference's frames, and this is the one
+ * sweep that would want the oracle. It uses `compress` of a long run instead: an encoder whose window
+ * covers its content still hands the output over in pieces, so the tail refusal is reached either way,
+ * and the mid-eviction one is `main`'s business where a `Cli` exists.
+ */
+export void refused(i32 i) {
+  i32[] allow = i32[](0, 1, 3);
+  u8[][] srcs = u8[][](compress(filledWith(300000, 0x41)), compress("short".toBytes()));
+  if (i < allow.len() * srcs.len()) {
+    streamed(srcs[i / allow.len()], 1 << 20, allow[i % allow.len()], false);
+    return;
+  }
+}
+
+/**
+ * The FSE table reader over descriptions **our own writer** built, and the refusals over them.
+ *
+ * Our writer feeding our reader agrees by construction and proves nothing — which is why the tests use
+ * an independently-written one. For *coverage* it reaches the same branches, and it can be handed
+ * arbitrary normalised counts including the `-1` "less than one" symbols the normaliser never produces,
+ * so the shapes are still the ones real output does not reach. The assertion lives in the tests; what
+ * this is for is that a trap here costs one case rather than the rest of `main`.
+ */
+u8[] descOf(i32[] counts, i32 log) {
+  BitOut o = BitOut.create();
+  writeDescription(o, counts, counts.len() - 1, log);
+  return o.flush();
+}
+
+export void fseDesc(i32 i) {
+  i32[][] specs = i32[][](
+    i32[](16, 8, 4, 2, 1, 1),
+    i32[](27, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1),
+    i32[](32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32),
+    i32[](16, 0, 0, 0, 16, 0, 0, 0, 32),
+    i32[](60, 1, 1, 1, 1),
+    i32[](30, 0 - 1, 16, 0 - 1, 16),
+    i32[](200, 100, 100, 56, 24, 16, 8, 4, 2, 1, 1),
+    i32[](8, 8, 8, 8, 8, 8, 8, 8));
+  i32[] logs = i32[](5, 5, 6, 6, 6, 6, 9, 6);
+  if (i < specs.len() * 2) {
+    i32 k = i / 2;
+    u8[] desc = descOf(specs[k], logs[k]);
+    if ((i % 2) == 0) { fseReadTable(desc, 0, specs[k].len() - 1, logs[k]); return; }
+    fseDecompress(joinBytes(desc, u8[](0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0x01)),
+                  specs[k].len() - 1, logs[k], 64);
+    return;
+  }
+  i = i - specs.len() * 2;
+  // **Refusals that need a valid description and an invalid use of it**: more symbols than the caller
+  // allows, an output bound too small to hold what the stream decodes to, and a stream whose last byte
+  // carries no marker bit.
+  u8[] five = descOf(i32[](16, 8, 4, 2, 1, 1), 5);
+  u8[] blob = joinBytes(five, u8[](0x12, 0x34, 0x56, 0x78, 0x9A));
+  if (i == 0) { fseReadTable(five, 0, 2, 5); return; }         // six symbols, three allowed
+  if (i == 1) { fseDecompress(blob, 2, 5, 64); return; }
+  if (i == 2) { fseDecompress(joinBytes(five, u8[](0x00)), 5, 5, 64); return; }
+  i = i - 3;
+  // **Every cap from one to a dozen**: the decode loop checks the bound in four places, and which one
+  // fires depends on whether it stopped on the first state or the second. Twice over, because a longer
+  // stream stops in a different place.
+  u8[] longer = joinBytes(five, u8[](0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x81));
+  if (i < 12) { fseDecompress(blob, 5, 5, i + 1); return; }
+  i = i - 12;
+  if (i < 12) { fseDecompress(longer, 5, 5, i + 1); return; }
+  i = i - 12;
+  // A run of unused symbols that overruns the caller's limit, which is the other place the symbol
+  // bound is checked — and a description with no run at all, so the bound is reached on an ordinary
+  // count instead.
+  i32[] limits = i32[](0, 1, 2, 4, 8, 15);
+  u8[] runs = descOf(i32[](32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32), 6);
+  if (i < limits.len()) { fseReadTable(runs, 0, limits[i], 6); return; }
+  i = i - limits.len();
+  i32[] dlimits = i32[](0, 1, 2, 3, 5);
+  u8[] dense = descOf(i32[](8, 8, 8, 8, 8, 8, 8, 8), 6);
+  if (i < dlimits.len()) { fseReadTable(dense, 0, dlimits[i], 6); return; }
+}

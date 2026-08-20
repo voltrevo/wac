@@ -9,40 +9,18 @@
 // The marker is the standard `producers` custom section rather than anything invented here, so
 // `wasm-objdump` and every other tool that already reads it does.
 //
-// Host-side until 2026-08-19, `issues/system/0161`. The section reader is here rather than borrowed
-// from `packages/wacc/test/wac/wasm_probe.wac`: a test in one package reaching into another package's
-// test helpers is a dependency the packages themselves do not have, and this is thirty lines.
+// Host-side until 2026-08-19, `issues/system/0161`. The section walk is `./section.wac`, shared with
+// `native_manifest_test.wac` — which wanted one too once the manifest stopped being a file beside the
+// module. Not borrowed from `packages/wacc/test/wac/wasm_probe.wac`: a test in one package reaching
+// into another package's test helpers is a dependency the packages themselves do not have.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { leb, name } from "./section.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
-
-/** LEB128 unsigned, advancing `pos[0]`. */
-i32 leb(u8[] b, i32[] pos) {
-  i32 r = 0;
-  i32 shift = 0;
-  i32 x = 0x80;
-  while ((x & 0x80) != 0 && pos[0] < b.len()) {
-    x = b[pos[0]];
-    pos[0] = pos[0] + 1;
-    r = r | ((x & 0x7F) << shift);
-    shift = shift + 7;
-  }
-  return r;
-}
-
-/** A length-prefixed name, advancing `pos[0]`. */
-string name(u8[] b, i32[] pos) {
-  i32 n = leb(b, pos);
-  if (n < 0 || pos[0] + n > b.len()) { return ""; }
-  u8[] out = u8[n]();
-  for (i32 i = 0; i < n; i++) { out[i] = b[pos[0] + i]; }
-  pos[0] = pos[0] + n;
-  return string.fromBytes(out);
-}
 
 /**
  * Every `processed-by` value in a module's `producers` section, in order.

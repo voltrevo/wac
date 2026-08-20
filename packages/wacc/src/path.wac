@@ -56,6 +56,64 @@ export bool isProjectSpec(string spec) {
  * `@/src/a.wac` joined to nothing gives `src/a.wac`, a real-looking key relative to a directory
  * nobody named, so a program would compile against the wrong file instead of being refused.
  */
+/**
+ * `abs` written as a path relative to `base`, both absolute and normalised.
+ *
+ * **Why a `@/` needs this and an ordinary import does not.** Every key in a graph is relative to the
+ * directory the command was run in, because that is what the entry was relative to. A `@/` is the one
+ * specifier whose root is *discovered* rather than spelled, and the root can sit above that
+ * directory — so joining the root to the tail and stopping gives `../src/a.wac` for a file an
+ * ordinary import calls `src/a.wac`. Same file, two keys, which is `issues/lang/0163`'s failure.
+ * Resolving to an absolute path and expressing *that* against the base lands both on one key.
+ */
+export string relativeTo(string base, string abs) {
+  if (base == "" || base == abs) { return base == abs ? "." : abs; }
+  if (abs.len() > base.len() && abs.slice(0, base.len() + 1) == base + "/") {
+    return abs.slice(base.len() + 1, abs.len());
+  }
+  // Climb: how much of `base` is a prefix of `abs`, counted in whole components so that `/a/bc`
+  // does not read as inside `/a/b`.
+  i32 keep = 0;
+  i32 i = 0;
+  while (i < base.len() && i < abs.len() && base.slice(i, i + 1) == abs.slice(i, i + 1)) {
+    if (base.slice(i, i + 1) == "/") { keep = i; }
+    i = i + 1;
+  }
+  if (i == base.len() && i < abs.len() && abs.slice(i, i + 1) == "/") { keep = i; }
+  string up = "";
+  for (i32 k = keep; k < base.len(); k++) {
+    if (base.slice(k, k + 1) == "/") { up = up + "../"; }
+  }
+  string tail = keep + 1 <= abs.len() ? abs.slice(keep + 1, abs.len()) : "";
+  string joined = up + tail;
+  return joined == "" ? "." : normalisePath(joined);
+}
+
+/** `resolveFromIn` with the directory every relative key is measured from — see `relativeTo`. */
+export string resolveFromAt(string fromPath, string spec, string root, string base) {
+  if (isBuiltinSpec(spec)) { return spec; }
+  if (isProjectSpec(spec)) {
+    if (root == "") { return ""; }
+    string joined = normalisePath(root + "/" + spec.slice(2, spec.len()));
+    // **Back into the key space this file is already in, and only if that space is relative.**
+    //
+    // An absolute root means the search climbed past `base`, so the join is absolute and the rest
+    // of a relatively-keyed graph would not recognise it. But two kinds of file are *already*
+    // absolutely keyed and must stay that way: one reached through a mapping, which lives under its
+    // checkout, and one whose entry was given as an absolute path. Converting those to `../..`
+    // against the project's own directory gives a second key for a file that already had one — and
+    // for a mapped file it also walks the answer out of the checkout it is confined to. Both were
+    // caught by existing cases, `one_file_reached_two_ways_is_one_module` and the in-subdir half of
+    // `a_mapped_subdir_cannot_import_outside_itself`, which is what these two clauses are.
+    bool fromIsRelative = fromPath.len() == 0 || fromPath.slice(0, 1) != "/";
+    if (base != "" && fromIsRelative && root.len() > 0 && root.slice(0, 1) == "/") {
+      return relativeTo(base, joined);
+    }
+    return joined;
+  }
+  return resolveFromIn(fromPath, spec, root);
+}
+
 export string resolveFromIn(string fromPath, string spec, string root) {
   // **A built-in is its own key, decided before any path arithmetic.** `core/option.wac` names a
   // module inside the compiler, so joining it to the importing file's directory looks for
@@ -132,13 +190,24 @@ export struct Res {
   string[] mapFrom;
   string[] mapSpec;
   string[] mapTo;
+  /**
+   * The directory every relative key in this graph is measured from — the working directory.
+   *
+   * "" for a caller with no filesystem, which is every caller that cannot have a `@/` above its
+   * base anyway. It exists so a discovered project root that sits *above* the base can be joined
+   * and then brought back into the graph's own key space; `relativeTo` is where that happens and
+   * says why one file would otherwise get two keys.
+   */
+  string base;
 
   /** Nothing known — what every caller without a filesystem passes. */
-  Res empty() { return Res(string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), string[0](fill: "")); }
+  Res empty() {
+    return Res(string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), "");
+  }
 
   /** Just the roots, for a caller that has those and no mappings. */
   Res of(string[] roots) {
-    return Res(roots, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""));
+    return Res(roots, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), "");
   }
 
   /** The project `path` sits in, or "" — keyed by position against the graph's `paths`. */
@@ -167,5 +236,5 @@ export struct Res {
 export string resolveVia(Res res, string[] paths, string from, string spec) {
   string mapped = res.mappedTo(from, spec);
   if (mapped != "") { return mapped; }
-  return resolveFromIn(from, spec, res.rootAt(paths, from));
+  return resolveFromAt(from, spec, res.rootAt(paths, from), res.base);
 }

@@ -195,9 +195,10 @@ and each is now written where the next person to touch that code will read it.
 the bootstrap. `harness/wac/hostless.test.ts` is the alternative-host check and is the point rather
 than a leftover. `packages/stream/test/stream.test.ts` tests the host bridge. `site/tools/syncMap.ts`
 writes a TypeScript artefact in an npm subtree. Each package's `cov.ts` is a TypeScript instrument
-and is its own tier — which is why `packages/gzip/test/fuzz/corpus.ts` and
-`packages/gzip/test/streams.ts` still exist beside their wac ports, and why those two now exist
-twice with nothing comparing them.
+and is its own tier — which is why `packages/gzip/test/fuzz/corpus.ts` still exists beside its wac
+port, and so exists twice with nothing comparing the two. Its sibling `test/streams.ts` went with
+gzip's `cov.ts` on 2026-08-20, which is what that tier moving looks like: the duplicate goes when the
+last TypeScript reader of it does.
 
 ## The surface
 
@@ -1028,7 +1029,7 @@ says `delete mode` rather than anything about content.
 `grep -rl wacTestRun packages/*/test/*.ts` now returns two files, and neither is a package handing
 its subject a callback: packages/wactest/test/assert.test.ts (unbackticked because it no longer
 exists — see the section below) tests the harness, and
-`packages/wacc/test/nativeBinary.test.ts` tests the binary. Every `*_wac.test.ts` in the repository
+the old `nativeBinary` test tested the binary. Every `*_wac.test.ts` in the repository
 is deleted. Sixteen of them went in one day — four in `crypto`, three in `tls`, nine in `tor` — and
 what they had in common is worth writing down, because the same shapes will come up in the 232
 `.test.ts` files that remain.
@@ -1522,15 +1523,46 @@ reason `ctcompare` had to be a command was the *size* of a trace, and that reaso
   - Each package's exercises become a wac program whose `main` calls the probe's exports — the same
     shape the trace drivers took. That part is mechanical.
   - **The ledgers are not.** `packages/crypto/cov.ts` is 1,100 lines and most of it is a reasoned list
-    of points that *cannot* be reached and why, one entry at a time; `packages/gzip/cov.ts` has its
-    own. That is content, not boilerplate, and it has to move with the exercises rather than be
-    regenerated.
+    of points that *cannot* be reached and why, one entry at a time; gzip's had its own, now
+    `packages/gzip/test/cov_ledger.wac`. That is content, not boilerplate, and it has to move with
+    the exercises rather than be regenerated.
   - `tools/coverageAll.ts` greps the output for `branch point(s) uncovered`, `no longer holds` and
     `is listed as unreached but was covered`, so the phrasing is a contract between twenty producers
     and one consumer.
 
 Not started here: it is a distinct project, it is not a test, and the ledgers are the kind of thing
 that should move deliberately rather than in a sweep.
+
+### Fourteen of the twenty have moved — 2026-08-20
+
+`codec`, `unicode`, `server`, `datetime`, `regex`, `raster`, `http`, `fmt`, `url`, `bytes`, `wacpkg`,
+`json`, `stream`, `bignum`. `tools/wac/covreport.wac` is the shared reporting half; each package keeps
+only its exercises, as a wac program whose `main` runs the shapes. Every figure is preserved or better:
+
+    fmt    380 → 383      its second entry point existed to cover three functions and covered none
+    url    709 → 712      the encode sets and the host serializer, called directly instead of via a test
+    json   589 → 590      `parse` itself, which the TypeScript never called because it used JSON.parse
+    bytes   54 →  73      nineteen branches in slice.wac, dark because the probe list was hand-written
+
+`covdump` had to grow up first, which was `issues/system/0221`: it instantiated with no imports, so an
+exercise could hold no capabilities, and it called only `main`, so an exercise could hold at most one
+trapping case. It runs the ordinary program path now and calls named exports with a trap caught each.
+
+Two shapes worth knowing for the rest:
+
+  - **A second entry point is usually a bridge artefact.** `fmt` and `url` had one because a `string`, a
+    `Host` or an encode-set constant does not cross into JavaScript, so the TypeScript could only reach
+    those functions by running a wac test that happened to call them. In wac they are just calls.
+  - **JavaScript as a subroutine, not a driver.** `packages/bignum` cannot write its own operands — they
+    are wider than `i64` — so `test/operands.ts` is an arbitrary-precision service and the wac exercise
+    is its caller: wac decides which limb boundaries matter, `BigInt` computes them. The alternative was
+    a 20.4 KB vendored corpus, and `packages/mpt/test/oracle.ts` already argues against that shape.
+
+**The six that remain are ratchets, not exercises** — `issues/system/0222`. Five carry a ledger of
+reasoned exemptions with a staleness check, the check is written four different ways, `ssh` has none at
+all, and `fs` alone is 372 lines of pins against 210 of machinery. That is a decision about what
+"accounted for" means across four packages, so it is filed rather than guessed at. `sh` is another
+agent's.
 
 Filed on the way: `issues/lang/0162b`. `ct.wac` declared a `struct Stat` for `tracestat`'s three
 numbers, and a program that declares a struct `platform.wac` also declares compiles cleanly and will

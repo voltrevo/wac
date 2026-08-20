@@ -17,9 +17,11 @@
 // on purpose, and it is the only place in this file where a code appears as a literal.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 import { Manifest, Mapping, Match, Located, readManifest, matchSpecifier, locate,
          unsupportedTransport, M_OK, M_NOT_JSON5, M_NOT_OBJECT, M_IMPORTS_KIND, M_MAPPING_KIND,
-         M_NO_GIT, M_NO_REF, M_SUBDIR_KIND, M_EMPTY_NAME, M_OVERLAP, M_SUBDIR_ESCAPE }
+         M_NO_GIT, M_NO_REF, M_SUBDIR_KIND, M_EMPTY_NAME, M_OVERLAP, M_SUBDIR_ESCAPE,
+         M_RESERVED_NAME }
   from "../../src/manifest.wac";
 
 Manifest of(string src) { return readManifest(src.toBytes()); }
@@ -46,6 +48,7 @@ export string test_each_code_has_the_number_it_has_always_had() {
   t.eqI32(M_EMPTY_NAME(), 8, "M_EMPTY_NAME");
   t.eqI32(M_OVERLAP(), 9, "M_OVERLAP");
   t.eqI32(M_SUBDIR_ESCAPE(), 10, "M_SUBDIR_ESCAPE");
+  t.eqI32(M_RESERVED_NAME(), 11, "M_RESERVED_NAME");
   return t.report();
 }
 
@@ -62,19 +65,21 @@ export string test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports() {
 
 export string test_a_mapping_is_read_whole_including_the_trailing_slash() {
   T t = T.create();
+  // Not `std/`, which this used before `issues/lang/0167a` reserved it — the prefix example has to
+  // be a name somebody could actually use.
   Manifest m = of("{ imports: {\n"
-                + "  'std/': { git: 'https://example.invalid/std', ref: 'main' },\n"
+                + "  'bits/': { git: 'https://example.invalid/bits', ref: 'main' },\n"
                 + "  'acme': { git: 'https://example.invalid/m', ref: 'v1', subdir: 'lib/acme' },\n"
                 + "} }");
   t.isTrue(m.ok, "it reads");
   if (!m.ok) { return t.report(); }
   t.eqI32(m.imports.len(), 2, "two mappings");
 
-  Mapping std = m.imports[0];
-  t.eqStr(std.name, "std/", "the name keeps its slash");
-  t.isTrue(std.isPrefix, "and is a prefix mapping");
-  t.eqStr(std.ref, "main", "its ref");
-  t.eqStr(std.subdir, "", "no subdir");
+  Mapping bits = m.imports[0];
+  t.eqStr(bits.name, "bits/", "the name keeps its slash");
+  t.isTrue(bits.isPrefix, "and is a prefix mapping");
+  t.eqStr(bits.ref, "main", "its ref");
+  t.eqStr(bits.subdir, "", "no subdir");
 
   Mapping acme = m.imports[1];
   t.eqStr(acme.name, "acme", "an exact name");
@@ -207,5 +212,52 @@ export string test_a_url_this_toolchain_cannot_fetch_is_refused_by_name() {
   // manifest written for a build with SSH is unsupported *here* rather than invalid.
   Manifest m = of("{ imports: { 'a': { git: 'git@github.com:voltrevo/wac.git', ref: 'main' } } }");
   t.isTrue(m.ok, "the reader has no opinion about the url");
+  return t.report();
+}
+
+/**
+ * `core`, `core/`, `std` and `std/` cannot be mapped — `design/lang/0009` D4, `issues/lang/0167a`.
+ *
+ * **Refused here rather than at the import**, because it is a fact about the manifest and this is
+ * where the manifest is checked: the person who wrote the mapping gets told once, at the line they
+ * wrote, instead of once per specifier that happens to hit it.
+ *
+ * **The prefix, not the file.** The reservation was implemented as "is this the name of a built-in
+ * file", which protects `std/platform.wac` because that file exists and nothing else — so a mapping
+ * of `std/` was accepted and consulted for every name the tree does not already hold. The sharp end
+ * is later: add `std/net.wac` to the toolchain and a project that mapped `std/` silently changes
+ * which code it compiles.
+ */
+export string test_a_mapping_of_a_reserved_name_is_refused() {
+  T t = T.create();
+  string[] bad = string[](
+    "{ imports: { 'std/': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'core/': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'std': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'core': { git: 'g', ref: 'r' } } }",
+    // Anything *under* the reserved prefix is equally not yours to map.
+    "{ imports: { 'std/net.wac': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'core/option.wac': { git: 'g', ref: 'r' } } }",
+    // And it is refused wherever it appears, not only first.
+    "{ imports: { 'ok/': { git: 'g', ref: 'r' }, 'std/': { git: 'g', ref: 'r' } } }");
+  for (i32 i = 0; i < bad.len(); i++) {
+    Manifest m = of(bad[i]);
+    t.isFalse(m.ok, "accepted a reserved mapping: " + bad[i]);
+    if (!m.ok) { t.eqI32(m.code, M_RESERVED_NAME(), "code for: " + bad[i]); }
+  }
+
+  // **The near misses, which is what stops this being a substring check.** None of these is
+  // reserved, and refusing them would take names away from people for no reason.
+  string[] good = string[](
+    "{ imports: { 'stdlib/': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'corelib/': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'mystd/': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'a/core/': { git: 'g', ref: 'r' } } }",
+    "{ imports: { 'Core/': { git: 'g', ref: 'r' } } }");
+  for (i32 i = 0; i < good.len(); i++) {
+    Manifest m = of(good[i]);
+    t.isTrue(m.ok, "refused a name that is not reserved: " + good[i] +
+                   (m.ok ? "" : " — code " + itoa(m.code)));
+  }
   return t.report();
 }

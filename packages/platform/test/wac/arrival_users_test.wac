@@ -27,6 +27,7 @@
 // `ssh(1)` refuses over that with a message about permissions rather than about the key.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { nativeBinaryPath } from "../../../wactest/src/host.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -45,22 +46,6 @@ bool haveSsh(Cli cli) {
     string[]("-c", "command -v ssh >/dev/null && command -v ssh-keygen >/dev/null"),
     u8[0]()).wait();
   return r.ran() && r.status == 0;
-}
-
-/** The native host binary — `wacland`, built when its sources are newer than it. */
-string nativeBinary(Core core, Cli cli) {
-  string path = root(cli) + "/native/target/release/wacland";
-  Exec r = cli.exec("/bin/sh",
-    string[]("-c",
-      "if [ -x '" + path + "' ] && " +
-      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer '" + path +
-      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
-      "cd native && cargo build --release --quiet"), u8[0]()).wait();
-  if (!r.ran() || r.status != 0 || !cli.stat(path).wait().isFile) {
-    core.warn("arrival_users: SKIPPING the native half — cargo did not build `native`");
-    return "";
-  }
-  return path;
 }
 
 /**
@@ -208,16 +193,16 @@ export string test_two_keys_land_in_two_homes_on_a_host_that_did_not_write_the_i
            "the stopped server left an image with no users");
   if (!onDisk.ok) { return t.report(); }
 
-  string native = nativeBinary(core, cli);
+  string native = nativeBinaryPath(core, cli, "arrival_users");
   if (native == "") { cli.remove(tmp, true).wait(); return t.report(); }
   string mod = builtProgram(cli, ENTRY, "sshd-arrival", SSHD_GRANTS());
-  string manifest = mod.slice(0, mod.len() - 5) + ".json";
-  t.isTrue(cli.stat(mod).wait().exists && cli.stat(manifest).wait().exists,
+  // One artefact: the module is what the native host is handed, manifest section and all.
+  t.isTrue(cli.stat(mod).wait().exists,
            "the native sshd built — see .cache/built-sshd-arrival");
   if (!cli.stat(mod).wait().exists) { cli.remove(tmp, true).wait(); return t.report(); }
 
   // ── …and the host with no JavaScript in it serves the same file ─────────
-  Server second = serve(core, cli, tmp, native, string[](manifest), image,
+  Server second = serve(core, cli, tmp, native, string[](mod), image,
                         tmp + "/native.log");
   t.eqStr(second.error, "", "the native sshd is up");
   if (second.port <= 0) { cli.remove(tmp, true).wait(); return t.report(); }

@@ -220,13 +220,16 @@ Everything above is a *runtime*: it is handed a program. With `seed/wacc.wasm` p
 time, `build.rs` embeds it and the same binary is a **command**. In one step:
 
 ```
-deno task app:native-binary packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
-./wac compile main.wac main.wasm
+deno task seed
+./native/v8/target/release/wac compile main.wac main.wasm
 ```
 
-and that works for *any* wac program, not only the compiler — `app:native-binary` is `app:binary` on this
-host, 64 MB against 105 MB because a V8 comes along without the rest of a runtime. Or by hand, which
-is what that command does:
+**Packaging a program is no longer packaging an engine.** `app:native-binary` built one of these per
+program — 67 MB of V8 and Rust host around a 200 KB module — and went on 2026-08-20 along with
+`app:binary`, its 105 MB `deno compile` twin. `wac app <entry.wac> -o thing` writes the module with a
+`/bin/sh` preamble that execs `wac app-run` on itself, so a distributed program is a few hundred KB
+and the engine on the machine is the one the compiler ships in. `spec/cli/wac.md`. The seed below is
+still built by hand the same way:
 
 ```
 deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \
@@ -254,7 +257,7 @@ see below.
 That is the compiler compiling **its own sources**, in one 67 MB file, with no Deno, no wasm beside
 it and no JavaScript anywhere in the path — and the module is byte-identical to the one
 `deno task app:build` produces from the same input, which is the check that matters.
-`packages/wacc/test/nativeBinary.test.ts` holds that, opt-in behind `WAC_V8_SEED=1` because each run
+`tools/seed.sh` holds that — it builds the compiler with itself and refuses a seed that is not a fixed point. An opt-in test used to assert it a second time afterwards and was deleted on 2026-08-19, because each run
 rebuilds the crate. It takes **about 1.2s** (best of three: 1.37, 1.18, 1.20), against 1.28–2.05s
 through Deno on a machine several agents are sharing. The two are the same to within that noise,
 which is the answer to expect: same engine, same module, only the embedding differs.
@@ -465,15 +468,17 @@ branch coverage: 97 of 341 points (28%)
 Per file, because "28%" over a package says nothing about where to look — and the low numbers are the
 report working: `buf.wac` is the file under test and is at 38 of 42, while `ftoa` and `bigint` are
 what `assert` calls to *format a failure* and a passing run never reaches them. Those two numbers are
-what `packages/wacc/test/nativeBinary.test.ts` asserts before comparing, since an all-zero report
-would agree with an all-zero harness. Against `harness/wacCoverage.ts` on the same file the two agree
-file by file.
+the report working rather than a gap.
 
-**The two runners agree, file by file.** `packages/wacc/test/nativeBinary.test.ts` runs every one of
-those files both ways — `wac test` and the module's `test*` exports called directly under Deno —
-and compares the pass and fail counts: 354 tests across 53 files, no disagreement. That is the same
-check `v8host_test.wac` makes for programs, applied to tests, and it is what makes running them
-natively worth anything.
+**There is no longer a check that this agrees with the Deno harness, on purpose — 2026-08-19.** There
+were two: one compared `wac test --coverage` against `harness/wacCoverage.ts` file by file, and one
+ran every wac test in the repository through both runners and compared the tallies. Both were deleted
+with the file that held them.
+
+The reason is the direction of the claim. Deno-driven testing is being removed; keeping it on as the
+oracle that certifies its own replacement is the arrangement, not evidence about it. The cost had
+also stopped being defensible — the corpus comparison compiled 445 files twice, ran seven that the
+heavy lane exists to hold back, and took over ten minutes that grew with every test anyone added.
 
 The rest divide into two honest nothings, and the message says which: a `*_probe.wac` is a driver for
 a TypeScript test and exports no tests at all, and the tor, TLS and crypto suites are **oracle**
@@ -496,7 +501,7 @@ cmp /tmp/re/wacc.wasm seed/wacc.wasm      # identical
 `$bind$` export builds `Core` and in what order its funcrefs go, so an application is a module *and*
 a manifest. That derivation was `packages/platform/native.ts` and is now also
 `packages/wacc/src/manifest.wac` — checked against the TypeScript one byte for byte on three
-programs, `packages/wacc/test/wac/manifest_test.wac`. So the bundler is in the loop only for producing the
+programs. So the bundler is in the loop only for producing the
 *first* seed, and this binary can produce every one after it.
 
 The stem matters: a manifest names the file it sits beside, so a rebuild under another name is a

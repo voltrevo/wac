@@ -1,6 +1,6 @@
 // `ssh` — the client as a program, entire. There is no TypeScript in this package's `src/`.
 //
-//   deno task app packages/ssh/src/ssh.wac --allow-read --allow-net -- user@host uname -a
+//   wac run --allow-read --allow-net packages/ssh/src/ssh.wac user@host uname -a
 //   deno task app:build packages/ssh/src/ssh.wac --allow-read --allow-net -o ssh
 //
 // Usage:

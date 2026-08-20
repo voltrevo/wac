@@ -41,7 +41,7 @@
 // package is not a caller.
 //
 // The rule this replaces was "any file that mentions `wacBind` or `entry:`", which missed the fourth
-// false-positive shape this check has had: `packages/gzip/cov.ts` gets its module from
+// false-positive shape this check has had: gzip's `cov.ts` got its module from
 // `instrument()` in `harness/wacCoverage.ts` and never writes `wacBind` itself, so `inflate` — the
 // entry point of the whole decompressor, driven through eighty calls in that file — was reported dead.
 // Propagating "mentions wacBind" through the import graph was the other candidate and is worse: every
@@ -288,7 +288,7 @@ export async function scan(base = "."): Promise<Scan> {
     // `.name` rather than `.name(`, for the same reason the wac side counts a bare name: a bound module's
     // function is often taken as a value first — `const inflate = inf.mod.inflate as (d: Uint8Array) =>
     // Uint8Array` — and then called under that local name. Requiring the paren reported `inflate` dead
-    // while `packages/gzip/cov.ts` drove eighty calls through it. Safe to widen because the search is
+    // while gzip's `cov.ts` drove eighty calls through it. Safe to widen because the search is
     // already confined to the declaring package plus `harness/` and `tools/`.
     const asMethod = new RegExp(`\\.${name}\\b`);
     const home = packageOf(declFile);

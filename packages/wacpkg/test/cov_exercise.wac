@@ -1,0 +1,366 @@
+// Branch coverage for wacpkg: the exercises, and nothing else.
+//
+//   deno task coverage:wacpkg
+//   deno task coverage:wacpkg --verbose
+//
+// Two workloads over the same code, which is the point of having one that is not the tests: the
+// package's own `test/wac/*_test.wac`, and a hand-written set below that goes at the manifest reader,
+// the lockfile writer, the mapping resolver and the cache layout directly.
+//
+// ## `refs_test.wac` is in the list now — `issues/system/0221`
+//
+// The `cov.ts` this replaces said why it could not be: *"its tests take `(Core, Cli)` because they
+// read the vendored corpus off disk, and `instrument` calls an export with no arguments."* That was a
+// property of the coverage runner, and it is gone: `covdump` builds a world from the manifest, so this
+// exercise takes `Core` and `Cli` and hands them to the five tests that ask for them. The corpus is
+// read by the tests that were written to read it, rather than by a second copy of that loop here.
+//
+// `covreport` builds this with `--coverage --allow-read` and runs its `main`, and skips any file with
+// `/test/` in its path — so neither these exercises nor the tests they call appear in the number.
+
+import { Core, Cli } from "std/platform.wac";
+import { test_each_code_has_the_number_it_has_always_had as manifest_test_each_code_has_the_number_it_has_always_had,
+         test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports,
+         test_a_mapping_is_read_whole_including_the_trailing_slash,
+         test_overlapping_names_are_refused_and_neighbouring_ones_are_not,
+         test_a_specifier_matches_at_most_one_mapping,
+         test_the_suffix_is_joined_to_the_subdir_and_checked_after,
+         test_each_malformed_shape_gets_its_own_code,
+         test_a_url_this_toolchain_cannot_fetch_is_refused_by_name,
+         test_a_mapping_of_a_reserved_name_is_refused } from "./wac/manifest_test.wac";
+import { test_the_search_runs_from_the_files_directory_up_to_the_boundary,
+         test_a_file_outside_the_boundary_gets_no_candidates_at_all,
+         test_dot_and_the_empty_string_are_one_directory,
+         test_dirof_agrees_with_the_resolver_about_where_a_file_lives,
+         test_at_slash_is_relative_to_the_project_root, test_the_manifest_name_has_one_spelling } from "./wac/root_test.wac";
+import { test_escaping_a_repository_name_is_reversible,
+         test_distinct_repositories_get_distinct_directories_case_included,
+         test_a_directory_name_is_one_path_component,
+         test_the_path_is_a_function_of_the_home_the_repository_and_the_commit,
+         test_an_absolute_home_stays_absolute_and_a_trailing_slash_does_not_double,
+         test_a_name_that_is_not_something_the_escaper_produced_is_refused } from "./wac/cache_test.wac";
+import { test_a_mapping_whose_inputs_still_match_uses_the_locked_commit,
+         test_no_entry_is_create_and_a_changed_input_is_refresh_that_says_which,
+         test_two_mappings_on_one_repository_lock_independently,
+         test_an_entry_whose_mapping_is_gone_is_an_orphan_not_a_step,
+         test_a_lockfile_is_rewritten_to_a_canonical_form,
+         test_every_character_the_writer_escapes_round_trips,
+         test_a_commit_must_be_forty_lowercase_hex_digits,
+         test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_code } from "./wac/lock_test.wac";
+import { test_a_mapping_that_did_not_need_resolving_keeps_the_commit_it_had,
+         test_a_changed_input_takes_the_new_commit_and_the_new_inputs,
+         test_an_entry_whose_mapping_is_gone_does_not_survive_the_write,
+         test_nothing_to_do_writes_the_same_bytes_it_read,
+         test_a_missing_commit_is_a_refusal_not_a_partial_lock } from "./wac/update_test.wac";
+import { test_the_manifest_and_lock_readers_answer_what_their_modules_answer,
+         test_the_lock_writers_agree_with_the_module_underneath,
+         test_the_planning_entry_points_agree_with_lock_wac,
+         test_the_resolution_entry_points_agree_with_their_modules,
+         test_the_refs_and_cache_entry_points_agree_with_their_modules } from "./wac/entry_test.wac";
+import { test_each_code_has_the_number_it_has_always_had as refs_test_each_code_has_the_number_it_has_always_had,
+         test_every_query_agrees_with_git_or_is_a_listed_refusal,
+         test_an_annotated_tag_resolves_to_the_commit_not_the_tag_object,
+         test_a_lightweight_tag_has_no_peel_and_is_not_treated_as_if_it_did,
+         test_an_object_name_resolves_to_itself_advertised_or_not,
+         test_what_is_not_there_and_what_is_not_a_corpus } from "./wac/refs_test.wac";
+import { Manifest, readManifest, matchSpecifier } from "../src/manifest.wac";
+import { MANIFEST_NAME, candidateRoots, dirOf } from "../src/root.wac";
+import { LockText, manifestOf, lockOf, rewriteLock, updatedLock, planFor, planNeedsResolving,
+         orphansFor, locateIn, mappingFor, rootsFor, atPath, isAt, manifestName, refToCommit,
+         cacheOf, cacheDir, repoDirName, repoUrlOf, transportRefusal, fullSha,
+         actionUse, actionCreate, actionRefresh } from "../src/wacpkg.wac";
+
+/** Every manifest `test/wac/manifest_test.wac` reads, valid and not. */
+string[] manifests() {
+  return string[](
+    "{}",
+    "{ }",
+    "// nothing\n{}",
+    "{ name: 'x' }",
+    "{ imports: { 'bits/': { git: 'g', ref: 'main' }, 'acme': { git: 'g', ref: 'v1', subdir: 'packages/acme' } } }",
+    "{",
+    "[]",
+    "1",
+    "{ imports: [] }",
+    "{ imports: { a: 1 } }",
+    "{ imports: { a: {} } }",
+    "{ imports: { a: { git: 1, ref: 'r' } } }",
+    "{ imports: { a: { git: 'g' } } }",
+    "{ imports: { a: { git: 'g', ref: 1 } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', subdir: 1 } } }",
+    "{ imports: { '': { git: 'g', ref: 'r' } } }",
+    "{ imports: { '/': { git: 'g', ref: 'r' } } }");
+}
+
+/** One import entry, as a manifest fragment. */
+string entryOf(string name) { return "'" + name + "': { git: 'g', ref: 'r' }"; }
+
+const string A40 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const string B40 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const string C40 = "cccccccccccccccccccccccccccccccccccccccc";
+const string D40 = "dddddddddddddddddddddddddddddddddddddddd";
+
+string lockText() {
+  return "{ imports: {\n" +
+         "  'bits/': { git: 'g1', ref: 'main', commit: '" + A40 + "' },\n" +
+         "  'sub': { git: 'g2', ref: 'v1', subdir: 'old', commit: '" + B40 + "' },\n" +
+         "} }";
+}
+
+i32 manifestExercises() {
+  i32 seen = 0;
+  string[] ms = manifests();
+  for (i32 i = 0; i < ms.len(); i++) { readManifest(ms[i].toBytes()); seen = seen + 1; }
+
+  // The overlap rule, both orders, plus the pairs it must allow.
+  string[] oa = string[]("wac/", "foo", "a", "x/", "p", "wac/", "foo", "a/", "ab/");
+  string[] ob = string[]("wac/packages/json/", "foo/", "a", "x/y", "p/q/", "wac2/", "foobar", "b/", "a/");
+  for (i32 i = 0; i < oa.len(); i++) {
+    readManifest(("{ imports: { " + entryOf(oa[i]) + ", " + entryOf(ob[i]) + " } }").toBytes());
+    readManifest(("{ imports: { " + entryOf(ob[i]) + ", " + entryOf(oa[i]) + " } }").toBytes());
+    seen = seen + 2;
+  }
+
+  // Every `subdir`, escaping and not — the escape check is a scan with three ways out.
+  string[] subs = string[]("", "a", "a/b", "packages/std", "..", "../x", "a/../..", "a/../../b",
+                           "/abs", "a/../b");
+  for (i32 i = 0; i < subs.len(); i++) {
+    readManifest(("{ imports: { 'a': { git: 'g', ref: 'r', subdir: '" + subs[i] + "' } } }").toBytes());
+    seen = seen + 1;
+  }
+
+  // Matching, including the two shapes that must *not* match.
+  Manifest table = readManifest(
+    "{ imports: { 'bits/': { git: 'g', ref: 'r' }, 'acme': { git: 'g', ref: 'r' } } }".toBytes());
+  string[] specs = string[]("std/vec.wac", "std/a/b.wac", "acme", "std", "bits/", "acme/x", "other");
+  for (i32 i = 0; i < specs.len(); i++) { matchSpecifier(table, specs[i]); seen = seen + 1; }
+  return seen;
+}
+
+/** `root.wac`'s search: nothing in `manifest.wac` calls it, so it is its own workload. */
+i32 rootExercises() {
+  i32 seen = MANIFEST_NAME().len();
+  string[] file = string[](
+    "pkg/src/a/b.wac", "pkg/a.wac", "a.wac", "a/b/c.wac", "/x/y/z.wac", "/x/y/z.wac",
+    "pkg/src/a/b.wac", "pkg/./src/../src/a/b.wac", "a/b.wac", "a/b.wac",
+    // The refusals, which are where the interesting branches are.
+    "pkg/a.wac", "/a.wac", "a.wac", "pkgx/a.wac", "../a.wac", "../../a.wac");
+  string[] boundary = string[](
+    "pkg", "pkg", ".", ".", "/x", "/", "pkg/src", "pkg/", "", "./",
+    "other", ".", "/", "pkg", ".", ".");
+  for (i32 i = 0; i < file.len(); i++) { seen = seen + candidateRoots(file[i], boundary[i]).len(); }
+  string[] paths = string[]("a/b/c.wac", "a/b.wac", "b.wac", "/b.wac", "/a/b.wac", "/");
+  for (i32 i = 0; i < paths.len(); i++) { seen = seen + dirOf(paths[i]).len(); }
+  return seen;
+}
+
+/** The lockfile, through the package's entry — which is also what pulls `lock.wac` in at all. */
+i32 lockExercises() {
+  i32 seen = 0;
+  manifestOf("{}".toBytes());
+  seen = seen + actionUse() + actionCreate() + actionRefresh();
+
+  string LOCK = lockText();
+  string[] against = string[](
+    "{ imports: { 'bits/': { git: 'g1', ref: 'main' } } }",
+    "{ imports: { 'fresh': { git: 'g9', ref: 'main' } } }",
+    "{ imports: { 'bits/': { git: 'OTHER', ref: 'main' } } }",
+    "{ imports: { 'bits/': { git: 'g1', ref: 'v2' } } }",
+    "{ imports: { 'sub': { git: 'g2', ref: 'v1', subdir: 'new' } } }",
+    "{ imports: { 'sub': { git: 'g2', ref: 'v1' } } }",
+    "{ imports: { 'kept': { git: 'g', ref: 'r' } } }",
+    "{}");
+  for (i32 i = 0; i < against.len(); i++) {
+    seen = seen + planFor(against[i].toBytes(), LOCK.toBytes()).len();
+    if (planNeedsResolving(against[i].toBytes(), LOCK.toBytes())) { seen = seen + 1; }
+    seen = seen + orphansFor(against[i].toBytes(), LOCK.toBytes()).len();
+  }
+
+  string[] texts = string[](
+    "{}", "// none yet\n{}", LOCK, "{", "[]", "{ imports: [] }", "{ imports: { a: 1 } }",
+    "{ imports: { a: { ref: 'r', commit: '" + A40 + "' } } }",
+    "{ imports: { a: { git: 'g', commit: '" + A40 + "' } } }",
+    "{ imports: { a: { git: 'g', ref: 'r' } } }",
+    "{ imports: { a: { git: 1, ref: 'r', commit: '" + A40 + "' } } }",
+    "{ imports: { a: { git: 'g', ref: 1, commit: '" + A40 + "' } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', commit: 1 } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', commit: '" + A40 + "', subdir: 1 } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }",
+    // Every character the writer escapes, so the writer's branches are reached rather than
+    // reported dead — `test/wac/lock_test.wac` round-trips the same set.
+    "{ imports: { \"a\\\"b\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
+    "{ imports: { \"a\\\\b\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
+    "{ imports: { \"a\\nb\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
+    "{ imports: { \"a\\tb\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
+    "{ imports: { \"a\\rb\": { git: 'g', ref: 'r', commit: '" + A40 + "' } } }",
+    "{ imports: { z: { git: 'g', ref: 'r', commit: '" + A40 + "' }, " +
+      "a: { git: 'g', ref: 'r', commit: '" + B40 + "' } } }");
+  for (i32 i = 0; i < texts.len(); i++) {
+    lockOf(texts[i].toBytes());
+    LockText w = rewriteLock(texts[i].toBytes());
+    // The second pass, which idempotence is about — a branch the writer only reaches then.
+    if (w.ok) { rewriteLock(w.text); seen = seen + 1; }
+  }
+  return seen;
+}
+
+/** D9's confinement and D7's `@/`, from `test/wac/root_test.wac`. */
+i32 mappingExercises() {
+  i32 seen = manifestName().len() + rootsFor("pkg/a.wac", "pkg").len();
+  string MAP = "{ imports: {\n" +
+    "  'whole/': { git: 'g', ref: 'r' },\n" +
+    "  'sub/':   { git: 'g', ref: 'r', subdir: 'packages/acme' },\n" +
+    "  'deep/':  { git: 'g', ref: 'r', subdir: 'a/b' },\n" +
+    "  'exact':  { git: 'g', ref: 'r', subdir: 'packages/one' },\n} }";
+  string[] specs = string[](
+    "whole/src/a.wac", "whole/a.wac", "sub/src/a.wac", "deep/c.wac", "exact",
+    "deep/../c.wac", "deep/../../x.wac", "sub/../other/a.wac", "whole/a/../b.wac", "sub/./a.wac",
+    "whole/../x.wac", "whole/../../x.wac", "deep/../../../x.wac", "sub/../../../etc/passwd",
+    "other/a.wac", "whole", "./a.wac", "", "exactly");
+  for (i32 i = 0; i < specs.len(); i++) {
+    locateIn(MAP.toBytes(), specs[i]);
+    seen = seen + mappingFor(MAP.toBytes(), specs[i]);
+  }
+  string[] atSpec = string[]("@/src/a.wac", "@/a.wac", "@/a.wac", "@/a.wac", "@/./x/../a.wac",
+                             "@/", "./a.wac", "a.wac", "@", "@x/a.wac");
+  string[] atRoot = string[]("proj", "proj/nested", ".", "", "proj", "proj", "proj", "proj",
+                             "proj", "proj");
+  for (i32 i = 0; i < atSpec.len(); i++) {
+    seen = seen + atPath(atSpec[i], atRoot[i]).len();
+    if (isAt(atSpec[i])) { seen = seen + 1; }
+  }
+  string[] shas = string[](A40, "0000000000000000000000000000000000000000", "", "3f2a",
+                           "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                           "gggggggggggggggggggggggggggggggggggggggg", A40 + "a");
+  for (i32 i = 0; i < shas.len(); i++) { if (fullSha(shas[i])) { seen = seen + 1; } }
+  return seen;
+}
+
+/** The write side, from `test/wac/update_test.wac`. */
+i32 updateExercises() {
+  i32 seen = 0;
+  string two = "{ imports: { 'bits/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }";
+  updatedLock(two.toBytes(),
+    ("{ imports: { 'bits/': { git: 'g1', ref: 'main', commit: '" + A40 + "' } } }").toBytes(),
+    string[](D40, C40));
+  updatedLock("{ imports: { 'a': { git: 'g', ref: 'v2', subdir: 'lib' } } }".toBytes(),
+    ("{ imports: { 'a': { git: 'g', ref: 'v1', commit: '" + A40 + "' } } }").toBytes(),
+    string[](C40));
+  updatedLock(two.toBytes(), "{}".toBytes(), string[](C40, ""));          // a missing commit
+  updatedLock(two.toBytes(), "{}".toBytes(), string[](C40));              // too few
+  updatedLock(two.toBytes(), "{}".toBytes(), string[](C40, C40, C40));    // too many
+  updatedLock("{".toBytes(), "{}".toBytes(), string[0](fill: ""));        // a manifest that will not read
+  updatedLock(two.toBytes(), "[".toBytes(), string[](C40, C40));          // a lock that will not read
+  seen = seen + 7;
+
+  // Ref resolution, with the pairs a `git ls-remote` table cannot produce, which is what the
+  // vendored corpus in `refs_test.wac` covers from the other side.
+  refToCommit(string[]("refs/heads/main"), string[0](fill: ""), "main");   // unpaired
+  refToCommit(string[]("refs/heads/main"), string[]("nope"), "main");      // not a sha
+  string[] rn = string[]("refs/heads/main", "refs/tags/v1", "refs/tags/v1^{}");
+  string[] rc = string[](A40, B40, C40);
+  string[] queries = string[]("main", "v1", "refs/heads/main", "refs/tags/v1",
+                              "0000000000000000000000000000000000000000", "refs/tags/v1^{}x",
+                              "dup", "nope");
+  for (i32 i = 0; i < queries.len(); i++) { refToCommit(rn, rc, queries[i]); seen = seen + 1; }
+  return seen;
+}
+
+/** Which transports the toolchain has, and the cache layout. */
+i32 transportAndCacheExercises() {
+  i32 seen = 0;
+  string[] urls = string[](
+    "https://github.com/voltrevo/wac", "https://github.com/voltrevo/wac.git",
+    "https://user@example.invalid:8443/a/b", "http://example.invalid/r",
+    "git@github.com:voltrevo/wac.git", "ssh://git@example.invalid/r",
+    "git://example.invalid/r", "file:///tmp/r", "example.invalid/r", "");
+  for (i32 i = 0; i < urls.len(); i++) { seen = seen + transportRefusal(urls[i]).len(); }
+
+  string SHA = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a";
+  string[] cacheUrls = string[](
+    "https://github.com/voltrevo/wac", "https://github.com/voltrevo/wac.git",
+    "http://example.invalid/x", "https://example.invalid:8443/a/b",
+    "https://user@example.invalid/a", "https://github.com/Voltrevo/Wac",
+    "https://example.invalid/a/b", "https://example.invalid/a-b",
+    "https://example.invalid/../../etc/passwd", "https://example.invalid/a/./b",
+    "https://exämple.invalid/ünï/çode", "https://example.invalid/日本語",
+    "https://example.invalid/%41/!b", "%!%!%!", "");
+  for (i32 i = 0; i < cacheUrls.len(); i++) {
+    seen = seen + repoUrlOf(repoDirName(cacheUrls[i])).len();
+    seen = seen + cacheOf("/home/x/.wac", cacheUrls[i], SHA).len();
+  }
+  string[] bad = string[]("a/b", "A", "a%", "a%zz", "a!", "a!B", "a:b", "%");
+  for (i32 i = 0; i < bad.len(); i++) { seen = seen + repoUrlOf(bad[i]).len(); }
+  string[] homes = string[]("/home/x/.wac", "/home/x/.wac/", "/home/x/.wac///", "rel/.wac");
+  for (i32 i = 0; i < homes.len(); i++) { seen = seen + cacheDir(homes[i]).len(); }
+  seen = seen + cacheOf("/home/x/.wac", "", SHA).len();
+  seen = seen + cacheOf("/home/x/.wac", "https://example.invalid/r", "").len();
+  return seen;
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 seen = 0;
+  seen = seen + manifestExercises() + rootExercises() + lockExercises();
+  seen = seen + mappingExercises() + updateExercises() + transportAndCacheExercises();
+
+  // ── The package's own tests, as the second workload ──
+  //
+  // `test/wac/*_test.wac` replaced all eight of this package's `.test.ts` files, and a workload that
+  // did not include them would report the lines only they reach as uncovered — which is how a
+  // migration turns a coverage report into a list of things to go and delete. The five that take
+  // `(Core, Cli)` read the vendored corpus off disk, and until `covdump` built a world they could not
+  // be called from here at all.
+  // manifest_test.wac
+  seen = seen + manifest_test_each_code_has_the_number_it_has_always_had().len();
+  seen = seen + test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports().len();
+  seen = seen + test_a_mapping_is_read_whole_including_the_trailing_slash().len();
+  seen = seen + test_overlapping_names_are_refused_and_neighbouring_ones_are_not().len();
+  seen = seen + test_a_specifier_matches_at_most_one_mapping().len();
+  seen = seen + test_the_suffix_is_joined_to_the_subdir_and_checked_after().len();
+  seen = seen + test_each_malformed_shape_gets_its_own_code().len();
+  seen = seen + test_a_url_this_toolchain_cannot_fetch_is_refused_by_name().len();
+  seen = seen + test_a_mapping_of_a_reserved_name_is_refused().len();
+  // root_test.wac
+  seen = seen + test_the_search_runs_from_the_files_directory_up_to_the_boundary().len();
+  seen = seen + test_a_file_outside_the_boundary_gets_no_candidates_at_all().len();
+  seen = seen + test_dot_and_the_empty_string_are_one_directory().len();
+  seen = seen + test_dirof_agrees_with_the_resolver_about_where_a_file_lives().len();
+  seen = seen + test_at_slash_is_relative_to_the_project_root().len();
+  seen = seen + test_the_manifest_name_has_one_spelling().len();
+  // cache_test.wac
+  seen = seen + test_escaping_a_repository_name_is_reversible().len();
+  seen = seen + test_distinct_repositories_get_distinct_directories_case_included().len();
+  seen = seen + test_a_directory_name_is_one_path_component().len();
+  seen = seen + test_the_path_is_a_function_of_the_home_the_repository_and_the_commit().len();
+  seen = seen + test_an_absolute_home_stays_absolute_and_a_trailing_slash_does_not_double().len();
+  seen = seen + test_a_name_that_is_not_something_the_escaper_produced_is_refused().len();
+  // lock_test.wac
+  seen = seen + test_a_mapping_whose_inputs_still_match_uses_the_locked_commit().len();
+  seen = seen + test_no_entry_is_create_and_a_changed_input_is_refresh_that_says_which().len();
+  seen = seen + test_two_mappings_on_one_repository_lock_independently().len();
+  seen = seen + test_an_entry_whose_mapping_is_gone_is_an_orphan_not_a_step().len();
+  seen = seen + test_a_lockfile_is_rewritten_to_a_canonical_form().len();
+  seen = seen + test_every_character_the_writer_escapes_round_trips().len();
+  seen = seen + test_a_commit_must_be_forty_lowercase_hex_digits().len();
+  seen = seen + test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_code().len();
+  // update_test.wac
+  seen = seen + test_a_mapping_that_did_not_need_resolving_keeps_the_commit_it_had().len();
+  seen = seen + test_a_changed_input_takes_the_new_commit_and_the_new_inputs().len();
+  seen = seen + test_an_entry_whose_mapping_is_gone_does_not_survive_the_write().len();
+  seen = seen + test_nothing_to_do_writes_the_same_bytes_it_read().len();
+  seen = seen + test_a_missing_commit_is_a_refusal_not_a_partial_lock().len();
+  // entry_test.wac
+  seen = seen + test_the_manifest_and_lock_readers_answer_what_their_modules_answer().len();
+  seen = seen + test_the_lock_writers_agree_with_the_module_underneath().len();
+  seen = seen + test_the_planning_entry_points_agree_with_lock_wac().len();
+  seen = seen + test_the_resolution_entry_points_agree_with_their_modules().len();
+  seen = seen + test_the_refs_and_cache_entry_points_agree_with_their_modules().len();
+  // refs_test.wac
+  seen = seen + refs_test_each_code_has_the_number_it_has_always_had().len();
+  seen = seen + test_every_query_agrees_with_git_or_is_a_listed_refusal(core, cli).len();
+  seen = seen + test_an_annotated_tag_resolves_to_the_commit_not_the_tag_object(core, cli).len();
+  seen = seen + test_a_lightweight_tag_has_no_peel_and_is_not_treated_as_if_it_did(core, cli).len();
+  seen = seen + test_an_object_name_resolves_to_itself_advertised_or_not(core, cli).len();
+  seen = seen + test_what_is_not_there_and_what_is_not_a_corpus(core, cli).len();
+  return seen;
+}

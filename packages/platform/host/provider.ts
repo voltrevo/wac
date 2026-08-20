@@ -541,6 +541,8 @@ export function cliOf(
     (handle: number, body: Uint8Array) => T.ok(submit(b, OP.SEND, headed(i32le(handle), body))),
     /*= closeSocket */
     (handle: number) => { hostCall(b, OP.CLOSE_SOCKET, i32le(handle)); },
+    /*= closeSend */
+    (handle: number) => { hostCall(b, OP.CLOSE_SEND, i32le(handle)); },
 
     /*= bindDatagram */
     // The port, then the address, exactly as `listen` — the same shape because it is the same question.

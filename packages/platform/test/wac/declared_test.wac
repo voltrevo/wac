@@ -13,7 +13,7 @@
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
 // `buildNative` was TypeScript that returned the manifest as a value. It is not needed: `wac build
-// <entry> -o <stem>` writes `stem.json`, which *is* the manifest a non-JavaScript host reads, and
+// <entry> -o <stem>` writes a module carrying the manifest a non-JavaScript host reads, and
 // reading it off disk is closer to what a host does than being handed the object that produced it.
 //
 // The manifest is parsed with `packages/json`. That is this repository's own parser reading its own
@@ -26,6 +26,7 @@ import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
+import { customSection } from "./section.wac";
 
 /** The struct names and callback count a built program's manifest declares. */
 struct Boundary {
@@ -44,10 +45,16 @@ Boundary manifestOf(Cli cli, string entry, string stem) {
     return Boundary(string[0](fill: ""), -1,
                     entry + " did not build: " + string.fromBytes(built.stderr));
   }
-  FileResult f = cli.readFile(out + ".json").wait();
-  if (!f.ok) { return Boundary(string[0](fill: ""), -1, "no manifest: " + f.error); }
+  FileResult f = cli.readFile(out + ".wasm").wait();
+  if (!f.ok) { return Boundary(string[0](fill: ""), -1, "the build wrote no module: " + f.error); }
 
-  JsonValue? doc = parse(f.bytes);
+  // The manifest is a `wac.manifest` section inside the module — it was a `.json` beside it until
+  // 2026-08-20.
+  string text = customSection(f.bytes, "wac.manifest");
+  if (text.len() == 0) {
+    return Boundary(string[0](fill: ""), -1, "the module carries no `wac.manifest` section");
+  }
+  JsonValue? doc = parse(text.toBytes());
   if (doc is null) { return Boundary(string[0](fill: ""), -1, "the manifest is not JSON"); }
   JsonObject top = match (doc!) { case Object(members): members, else: JsonObject.create() };
 

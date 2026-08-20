@@ -31,7 +31,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, Exec, Pending, Socket } from "std/platform.wac";
-import { builtProgram } from "../../../wactest/src/built.wac";
+import { builtProgram, builtByDeno } from "../../../wactest/src/built.wac";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
@@ -116,13 +116,18 @@ void assertHandshook(T t, Ran r, string label) {
 }
 
 export string test_a_wac_program_completes_a_quic_handshake_on_its_own_socket(Core core, Cli cli) {
-  // The Deno host, which is what `packages/platform/app.ts` runs: the program's capabilities are
-  // JavaScript's, and its socket is `Deno.listenDatagram`.
+  // The Deno host: the program's capabilities are JavaScript's, and its socket is
+  // `Deno.listenDatagram`.
+  //
+  // **Built once and run, rather than built-and-run per invocation.** This used to go through
+  // a build-and-run task, which did both in one step; that was deleted on 2026-08-20 because
+  // building and running are two things and the repository has a command for each. The v8 case below
+  // has always worked this way, so the two halves now differ only in the host.
   T t = T.create();
-  assertHandshook(t, against(t, cli, "prog-deno", "deno",
-                             string[]("run", "-A", "--unstable-net", "packages/platform/app.ts",
-                                      ENTRY, "--allow-net", "--")),
-                  "deno");
+  string built = builtByDeno(cli, ENTRY, "quic-handshake-deno", string[]("--allow-net"), "deno", false);
+  t.isTrue(built != "", "the Deno build of " + ENTRY + " failed");
+  if (built == "") { return t.report(); }
+  assertHandshook(t, against(t, cli, "prog-deno", built, string[0](fill: "")), "deno");
   return t.report();
 }
 

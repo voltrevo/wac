@@ -80,6 +80,14 @@ export const OP = {
   SEND_TO: 55,
   /** A partial canvas blit — `design/system/0004` D1. `DRAW_PIXELS` sizes; this one does not. */
   DRAW_PIXELS_IN: 56,
+  /**
+   * End a socket's outbound direction and keep reading — `issues/system/0215`.
+   *
+   * Its own opcode rather than a flag on `CLOSE_SOCKET`, because a host that did not know about the
+   * flag would close both directions and the program would hang on a reply that can never come. An
+   * unserved opcode fails and names itself.
+   */
+  CLOSE_SEND: 57,
 } as const;
 
 /**

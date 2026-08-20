@@ -1,6 +1,6 @@
 // A Tor relay: accept a connection, prove who we are, and carry circuits.
 //
-//   deno task app packages/tor/src/relayd.wac --allow-net --allow-read --allow-write -- \
+//   wac run --allow-net --allow-read --allow-write packages/tor/src/relayd.wac -- \
 //     <data-directory> [-p port] [-a address]
 //
 // `design/0002` step 3. Everything below the sockets is in `relaycert.wac`, `relaylink.wac` and

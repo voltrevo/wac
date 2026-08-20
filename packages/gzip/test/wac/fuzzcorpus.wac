@@ -8,12 +8,12 @@
 //
 // Everything is driven by an explicit seed, so a failing case is reproducible from its index alone.
 //
-// It was `packages/gzip/test/fuzz/corpus.ts`, and **that file still exists**: `packages/gzip/cov.ts`
-// and `tools/coverage.ts` are TypeScript instruments that build the same corpus to drive coverage,
-// and they are their own tier of `issues/system/0161`. So this is a second copy of the generators
-// until those move, and the two will drift silently — nothing compares them. The port was faithful
-// line by line, including the draw order, which is the only thing that makes "case 137" mean the
-// same input in both.
+// It was `packages/gzip/test/fuzz/corpus.ts`, and **that file still exists**, though one of its two
+// readers has gone: gzip's `cov.ts` used to build the same corpus to drive coverage, and
+// `packages/gzip/test/cov_exercise.wac` builds it from here instead (`issues/system/0222`).
+// `tools/coverage.ts` is the one left, so this is still a second copy of the generators and the two
+// will drift silently — nothing compares them. The port was faithful line by line, including the draw
+// order, which is the only thing that makes "case 137" mean the same input in both.
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`. `issues/system/0161`.
 

@@ -1,0 +1,269 @@
+// `wac covdump` — the counters of an instrumented run, with a world around it.
+//
+// `[§wac-cli-covdump-world-6knq4vt]` `[§wac-cli-covdump-9pf3wq2]`
+//
+// The two things this command could not do until 2026-08-20, both of which stopped coverage drivers
+// from moving off Deno (`issues/system/0221`): it instantiated with an **empty imports object**, so a
+// program declaring any capability failed to instantiate rather than being refused; and it called only
+// `main`, so an exercise holding several trapping cases lost every one after the first.
+//
+// **The manifest-*less* half is not tested here, and that is where the regression was.** A module from
+// `wac compile` or from the trace instrumentation carries no manifest, declares no capabilities, and is
+// correctly instantiated with no imports — the path this command used to take for everything. Making
+// the manifest mandatory broke `packages/wacc/test/wac/coverage_test.wac` and
+// `tools/wac/ctcompare_test.wac`, which hand it exactly those modules; they are that half's tests, and
+// they found it. Reaching a manifest-less instrumented module from a CLI test would mean going through
+// wacc's API, which is what those two files already do.
+//
+// What is asserted here is the difference between *refused* and *absent*. A grant check is easy to
+// mistake for a world — a program that cannot read prints the same "no" either way — so the test asks
+// for both answers from the same program: built with the grant it reads, built without it is told
+// `Not granted`, and neither is the instantiation failure that used to happen.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
+
+/** A program that reads a file and says whether it could. */
+const string READER =
+  "import { Core, Cli, FileResult } from \"std/platform.wac\";\n" +
+  "export i32 main(Core core, Cli cli) {\n" +
+  "  FileResult r = cli.readFile(\"README.md\").wait();\n" +
+  "  core.log(r.ok ? \"READ OK\" : \"REFUSED\");\n" +
+  "  return 77;\n" +
+  "}\n";
+
+/**
+ * Two trapping exports and a `main` that runs neither.
+ *
+ * `main` returns a value with nothing to do with a status, which is the shape every coverage exercise
+ * has — an accumulator — and is why `covdump`'s own exit code cannot be the program's.
+ */
+const string TRAPPER =
+  "i32 guard(i32 n) { if (n < 0) { trap; } return n; }\n" +
+  "export i32 main() { return guard(1) + 40; }\n" +
+  "export i32 first() { return guard(0 - 1); }\n" +
+  "export i32 second() { return guard(0 - 2); }\n";
+
+/**
+ * One export whose **argument** selects the case, and eight cases of which three trap.
+ *
+ * A named export can hold one trapping case, so a sweep of a thousand needs a thousand names. The
+ * cases that matter are not always separable either: `packages/zstd/test/cov_exercise.wac` damages a
+ * real frame at
+ * every byte in turn and says why sampling does not do — "the checks are close enough together that
+ * stepping over bytes steps over whole branches".
+ *
+ * `which` picks a different guard per case so the branches taken differ, and the trapping ones are
+ * interleaved with the returning ones — which is the arrangement a single export cannot survive,
+ * since the first trap would end it and lose every case after.
+ */
+const string SWEEPER =
+  "i32 guard(i32 n) { if (n < 0) { trap; } return n; }\n" +
+  "export i32 main() { return 0; }\n" +
+  "export i32 sweep(i32 i) {\n" +
+  "  if (i == 1) { return guard(0 - 1); }\n" +
+  "  if (i == 3) { return guard(0 - 2); }\n" +
+  "  if (i == 5) { return guard(0 - 3); }\n" +
+  "  if (i == 6) { return guard(7); }\n" +
+  "  return i;\n" +
+  "}\n";
+
+Exec build(Cli cli, string src, string stem, string grant) {
+  string[] argv = grant == ""
+    ? string[]("build", src, "--coverage", "-o", stem, "--quiet")
+    : string[]("build", src, "--coverage", grant, "-o", stem, "--quiet");
+  return cli.exec(binaryPath(cli), argv, u8[0]()).wait();
+}
+
+Exec dump(Cli cli, string[] argv) {
+  return cli.exec(binaryPath(cli), argv, u8[0]()).wait();
+}
+
+/** How many counters read non-zero, which is what "covered" means. */
+i32 nonZero(string out) {
+  i32 n = 0;
+  i32 at = 0;
+  string cur = "";
+  for (i32 i = 0; i <= out.len(); i++) {
+    string c = i < out.len() ? out.slice(i, i + 1) : "\n";
+    if (c == "\n") {
+      i32 tab = cur.indexOf("\t");
+      if (tab > 0 && cur.slice(tab + 1, cur.len()) != "0") { n = n + 1; }
+      cur = "";
+    } else {
+      cur = cur + c;
+    }
+  }
+  return n;
+}
+
+export string test_covdump_builds_a_world_so_a_grant_is_refused_rather_than_absent(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "covdump-world");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change wrote = cli.writeFile(dir + "/reader.wac", READER.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+
+  Exec granted = build(cli, dir + "/reader.wac", dir + "/yes", "--allow-read");
+  Exec sealed = build(cli, dir + "/reader.wac", dir + "/no", "");
+  t.eqI32(granted.status, 0, "granted build: " + string.fromBytes(granted.stderr));
+  t.eqI32(sealed.status, 0, "sealed build: " + string.fromBytes(sealed.stderr));
+  if (granted.status != 0 || sealed.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  // **Granted: it reads.** Instantiating with no imports could not get this far at all — the failure
+  // was `an import it wants is missing`, before the program ran.
+  Exec ran = dump(cli, string[]("covdump", dir + "/yes.wasm"));
+  t.isTrue(ran.ran(), "covdump did not run — " + ran.error);
+  string said = string.fromBytes(ran.stdout) + string.fromBytes(ran.stderr);
+  t.isTrue(contains(said, "READ OK"), "a granted read should succeed: " + said);
+  t.isTrue(contains(said, "counter(s)"), "and the counters should still be printed: " + said);
+
+  // **Ungranted: it is refused**, which is a different answer from not being able to ask.
+  Exec no = dump(cli, string[]("covdump", dir + "/no.wasm"));
+  string saidNo = string.fromBytes(no.stdout) + string.fromBytes(no.stderr);
+  t.isTrue(contains(saidNo, "REFUSED"), "an ungranted read should be refused: " + saidNo);
+  t.isTrue(!contains(saidNo, "import it wants is missing"),
+           "and refused is not the same as uninstantiable: " + saidNo);
+
+  // The exit status is about the dump. `main` returns 77 in both.
+  t.eqI32(ran.status, 0, "a printed table is a success whatever main returned");
+  t.eqI32(no.status, 0, "and so is one from a program that was refused");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_covdump_calls_each_named_export_and_catches_its_trap(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "covdump-exports");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change wrote = cli.writeFile(dir + "/trapper.wac", TRAPPER.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+  Exec made = build(cli, dir + "/trapper.wac", dir + "/t", "");
+  t.eqI32(made.status, 0, "build: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  // `main` alone never reaches `guard`'s trap, so its `then` stays at zero.
+  Exec alone = dump(cli, string[]("covdump", dir + "/t.wasm"));
+  t.isTrue(alone.ran(), "covdump did not run — " + alone.error);
+  i32 without = nonZero(string.fromBytes(alone.stdout));
+
+  // **Both trapping exports, and the second one proves the first did not end the run.** A trap ends
+  // the function it is in and leaves the instance usable; before this, one `main` could hold at most
+  // one trapping case and everything after it was lost.
+  Exec both = dump(cli, string[]("covdump", dir + "/t.wasm", "first", "second"));
+  t.isTrue(both.ran(), "covdump did not run — " + both.error);
+  i32 with = nonZero(string.fromBytes(both.stdout));
+  t.isTrue(with > without,
+           "calling the trapping exports should cover more: " + string.fromBytes(both.stdout));
+  t.eqI32(both.status, 0, "a caught trap is not a failure: " + string.fromBytes(both.stderr));
+
+  // A name that is not an export is **named**, because silence reads as a package with no coverage.
+  Exec bogus = dump(cli, string[]("covdump", dir + "/t.wasm", "first", "zzz_nope"));
+  t.isTrue(contains(string.fromBytes(bogus.stderr), "zzz_nope"),
+           "a mistyped export should be named: " + string.fromBytes(bogus.stderr));
+  t.isTrue(contains(string.fromBytes(bogus.stdout), "counter(s)"),
+           "and the counters still printed: " + string.fromBytes(bogus.stdout));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * The two usage cases, which came from the Deno test of the CLI — `issues/system/0161`.
+ *
+ * **A module built without coverage and one whose counters all read zero are different facts**, so an
+ * absent `__cov_init` is an error rather than an empty report. And no arguments is a *usage* error,
+ * exit 2, which is what separates "you typed it wrong" from "the thing you asked about is broken".
+ */
+export string test_covdump_says_when_a_module_carries_no_counters(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "covdump-plain");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change wrote = cli.writeFile(dir + "/m.wac",
+    "export i32 main() { return 0; }\n".toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the source — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+
+  // Built *without* `--coverage`, which is the whole point.
+  Exec built = cli.exec(binaryPath(cli),
+    string[]("build", dir + "/m.wac", "-o", dir + "/m", "--quiet"), u8[0]()).wait();
+  t.eqI32(built.status, 0, "build: " + string.fromBytes(built.stderr));
+  if (built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec r = dump(cli, string[]("covdump", dir + "/m.wasm"));
+  t.eqI32(r.status, 1, "a module built without coverage is an error");
+  t.isTrue(contains(string.fromBytes(r.stderr), "carries no counters"),
+           "and says so: " + string.fromBytes(r.stderr));
+
+  Exec bare = dump(cli, string[]("covdump"));
+  t.eqI32(bare.status, 2, "no arguments is usage, not failure: " + string.fromBytes(bare.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * **A sweep: one export called once per case, each trap caught.**
+ *
+ * `[§wac-cli-covdump-sweep-4tn8mr6]`
+ *
+ * `covdump <module> sweep:8` calls `sweep(0)` through `sweep(7)`. Without it a sweep has to become one
+ * export per case, which is fine for a dozen hand-built malformations and not for damaging a real
+ * frame at every byte — `packages/zstd/test/cov_exercise.wac` does that over six frames and three
+ * masks, which is
+ * more than a hundred thousand calls.
+ *
+ * The count is the caller's, not the module's, and deliberately: a module that reported its own case
+ * count would be a second place for the number to be wrong, and the ledger that names the sweep is
+ * already where a reader looks for how wide it is.
+ */
+export string test_covdump_sweeps_one_export_across_a_range_of_cases(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "covdump-sweep");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change wrote = cli.writeFile(dir + "/sweeper.wac", SWEEPER.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+  Exec made = build(cli, dir + "/sweeper.wac", dir + "/s", "");
+  t.eqI32(made.status, 0, "build: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  // `main` returns 0 and touches none of the cases.
+  i32 alone = nonZero(string.fromBytes(dump(cli, string[]("covdump", dir + "/s.wasm")).stdout));
+
+  // One call, so exactly the `i == 1` case and its trap. Everything after it is lost, which is what
+  // the range is for.
+  Exec once = dump(cli, string[]("covdump", dir + "/s.wasm", "sweep"));
+  i32 first = nonZero(string.fromBytes(once.stdout));
+  t.isTrue(first > alone, "calling sweep once covers more than main: " + string.fromBytes(once.stdout));
+
+  // **Eight cases, three of which trap, and the trapping ones are not last.** A run that stopped at
+  // the first trap would report the same number as the single call above.
+  Exec swept = dump(cli, string[]("covdump", dir + "/s.wasm", "sweep:8"));
+  t.isTrue(swept.ran(), "covdump did not run — " + swept.error);
+  t.eqI32(swept.status, 0, "a caught trap is not a failure: " + string.fromBytes(swept.stderr));
+  i32 all = nonZero(string.fromBytes(swept.stdout));
+  t.isTrue(all > first,
+           "a sweep must reach past its first trap — got " + itoa(all) + " counters against " +
+           itoa(first) + " for one call:\n" + string.fromBytes(swept.stdout) +
+           string.fromBytes(swept.stderr));
+
+  // A count that is not a number is a usage error rather than a sweep of nothing.
+  Exec bad = dump(cli, string[]("covdump", dir + "/s.wasm", "sweep:many"));
+  t.eqI32(bad.status, 2, "a count that is not one is usage: " + string.fromBytes(bad.stderr));
+  t.isTrue(contains(string.fromBytes(bad.stderr), "many"),
+           "and says what it could not read: " + string.fromBytes(bad.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

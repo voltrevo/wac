@@ -1,0 +1,111 @@
+// `wac sh` — a shell inside the binary, sealed unless it is granted.
+//
+// The two pipelines here are the front page's own transcript, which is why they are the ones checked:
+// applets and a pipe, with no Deno underneath and no filesystem at all.
+//
+// **Sealed is the absence of grants, not a mode.** Granting nothing is what the short command does, so
+// the safe thing is what a person gets by typing the obvious thing — and the refusal has to say *not
+// granted* rather than a filesystem error, because that is the distinction a caller needs in order to
+// know whether to add a flag or fix a path.
+//
+// ## Against the binary we already have — 2026-08-19, `issues/system/0161`
+//
+// This was a case in the old `nativeBinary` test, which built a *fresh* `wac` from the
+// crate and asked that one. That is the wrong subject twice over: it tested a binary nobody runs, and
+// it paid a cargo build to do it. `wac sh` is a property of the command on this machine, so the test
+// spawns `binaryPath(cli)` — the same binary `wac test` is running this file with — exactly as
+// `cliCommands_test.wac` does for `check`, `compile` and `bindgen`.
+//
+// Nothing else covered it. Every other `"sh"` in the suite is `Frame.of(string[]("sh", …))`, which is
+// `packages/sh` as a *library*; the subcommand had no test at all once that file went.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
+import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
+import { Core, Cli, Exec, Stat } from "std/platform.wac";
+
+// ## It skipped itself until 2026-08-20 — `issues/system/0216a`
+//
+// `native/v8/build.rs` embeds `wacc`, `sh` and `update` from `WAC_SEED_DIR`, "each optional", and
+// `tools/seed.sh` wrote only the first. So the binary from the supported route answered `unknown
+// command 'sh'` and this file guarded both tests on a probe for that message — skipped by name rather
+// than silent, which was the best a test could do about a command that was not there.
+//
+// The guard is gone because the reason is: `seed.sh` now builds all three, and a `wac` without a
+// shell is not a `wac` the supported route can produce. If `sh` disappears again this should go red,
+// which is what the skip was preventing.
+
+Exec sh(Cli cli, string[] argv) {
+  string[] out = string[argv.len() + 1](fill: "");
+  out[0] = "sh";
+  for (i32 i = 0; i < argv.len(); i++) { out[1 + i] = argv[i]; }
+  return cli.exec(binaryPath(cli), out, u8[0]()).wait();
+}
+
+export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
+  T t = T.create();
+  Exec piped = sh(cli, string[]("-c", "seq 1 20 | grep 7 | wc -l"));
+  t.isTrue(piped.ran(), "the shell ran — " + piped.error);
+  if (piped.ran()) {
+    t.eqStr(trimmed(string.fromBytes(piped.stdout)), "2",
+            "pipeline: " + string.fromBytes(piped.stdout) + string.fromBytes(piped.stderr));
+  }
+
+  // A second pipeline whose answer is a digest, so a shell that ran the applets in the wrong order,
+  // or dropped one, cannot produce it by accident.
+  Exec hashed = sh(cli, string[]("-c", "echo hello | sha256sum"));
+  t.isTrue(hashed.ran(), "the shell ran — " + hashed.error);
+  if (hashed.ran()) {
+    string first = "";
+    string all = trimmed(string.fromBytes(hashed.stdout));
+    for (i32 i = 0; i < all.len(); i++) {
+      if (all.slice(i, i + 1) == " ") { break; }
+      first = first + all.slice(i, i + 1);
+    }
+    t.eqStr(first, "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+            "sha256sum: " + all + string.fromBytes(hashed.stderr));
+  }
+  return t.report();
+}
+
+export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "shsealed");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string probe = dir + "/written";
+
+  // **Refused, and nothing written.** Checking only the message would pass for a shell that reported a
+  // refusal and did the write anyway, which is the failure that matters.
+  Exec denied = sh(cli, string[]("-c", "echo x > " + probe));
+  t.isTrue(denied.ran(), "the shell ran — " + denied.error);
+  if (denied.ran()) {
+    string said = string.fromBytes(denied.stdout) + string.fromBytes(denied.stderr);
+    t.isTrue(contains(said, "Not granted"), "an ungranted write should say so: " + said);
+  }
+  Stat wrote = cli.stat(probe).wait();
+  t.isTrue(!wrote.exists, "the file was written despite the refusal");
+
+  // The same shell, granted, reaches the machine. `--allow-read` only, so the write above stays
+  // refused: the two grants are independent rather than one switch with a long name.
+  Exec read = sh(cli, string[]("--allow-read", "-c", "wc -l < spec/tour.wac"));
+  t.isTrue(read.ran(), "the shell ran — " + read.error);
+  if (read.ran()) {
+    t.isTrue(atoi(trimmed(string.fromBytes(read.stdout))) > 100,
+             "a granted read should count lines: " + string.fromBytes(read.stdout) +
+             string.fromBytes(read.stderr));
+  }
+
+  // A flag that is not a grant is refused by name rather than ignored, because a typo that silently
+  // dropped a grant would leave a program failing for a reason nobody would look for.
+  Exec bogus = sh(cli, string[]("--allow-everything", "-c", "echo x"));
+  t.isTrue(bogus.ran(), "the shell ran — " + bogus.error);
+  if (bogus.ran()) {
+    t.eqI32(bogus.status, 2, "an unknown grant should exit 2: " + string.fromBytes(bogus.stderr));
+    t.isTrue(contains(string.fromBytes(bogus.stderr), "is not a grant"),
+             string.fromBytes(bogus.stderr));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

@@ -26,7 +26,7 @@ binary. `wac uninstall [--keep-cache]` removes the binary, the cache, the profil
 metadata, and never a manifest, a lockfile, a source file or a build product.
 
 `app:wacbin` becomes `app:native-binary`, which is what it always was: the generic builder, not the
-dedicated one. *(2026-08-18: done — the task, `packages/platform/nativeBinary.ts`'s usage line,
+dedicated one. *(2026-08-18: done — the task, the native-binary tool's usage line,
 `native/v8/README.md` and the test that names it. Closed issues keep the old spelling, because they
 record what somebody typed on a day.)*
 
@@ -69,10 +69,34 @@ initial project-facing field is an import map of Git mappings. A project using o
 needs no manifest; a manifest is required to define mappings or to use `@/`.
 
 **D7 — `@/` is the root of the project containing the *importing file*.** Discovered from the source
-by searching upwards for the nearest `wac.json5`, stopping at the provider boundary — the embedded
-package root, the Git checkout root, the mapped `subdir`, or the local-filesystem boundary. No
-manifest within that boundary is a compile error. A Git lookup never continues above its checkout
-into the cache's own layout, and mapping a subdirectory does not declare it the `@/` root.
+by searching upwards for the nearest `wac.json5`, stopping at the provider boundary. No manifest
+within that boundary is a compile error, and never a fall back to something relative.
+
+**There are two provider boundaries, not four** (settled 2026-08-19, replacing a list that had one
+boundary nobody had implemented and one that was the wrong idea):
+
+- **The fetched dependency's root** — where a mapped import's repository was checked out, which is
+  `$WAC_HOME/cache/git/<repo>/<commit>/`. A `@/` inside a dependency means *that dependency's* root,
+  and the search stops there or it climbs into the cache's own layout and then into the importing
+  project. This was called "the Git checkout root", which reads as though the *current* project's
+  Git root were relevant. It is not — nothing about your own repository takes part in this.
+- **The local-filesystem boundary**, for a file that is not from a dependency.
+
+*Dropped: "the embedded package root".* Nothing ever computed one, and there is nothing for it to
+mean — `core` and `std` are text inside the compiler, with no filesystem to search and no `@/` in
+them.
+
+*Dropped as a boundary: the mapped `subdir`.* A dependency's code was written as part of its own
+repository, and its `@/` means that repository's root; a subdirectory is where somebody else chose
+to mount it and is not a fact about the code. Stopping there would break a dependency that uses `@/`
+correctly.
+
+**But a mapped `subdir` does confine what its code may reach, which is a rule about the resolved
+path rather than about the search.** With `subdir: "a/b"`, a file at `a/b/c.wac` may import
+`@/a/b/d.wac` and may **not** import `@/elsewhere/bad.wac`. Mapping a subdirectory means you took
+that subdirectory: the rest of the repository is not part of what you depended on, and code inside
+it must not be able to reach out into the parts you did not take. That is the half that has to be
+enforced, and the boundary was doing a bad job of standing in for it — see `issues/lang/0169a`.
 
 **D8 — identity is canonical after resolution, not by spelling.** Resolve the specifier to a provider
 and a normalised path; use that as the module-graph key. For Git, identity is the repository, the

@@ -6,10 +6,10 @@
 // points before the start of output" check failed no test at all — and the answer is streams
 // assembled on purpose, bit by bit.
 //
-// It was `packages/gzip/test/streams.ts`, and **that file still exists**: `packages/gzip/cov.ts`
-// drives the same streams so the coverage report describes a workload the tests assert on, and it is
-// TypeScript until its own tier of `issues/system/0161` moves. So the builder exists twice and
-// nothing compares the two.
+// It was a TypeScript file beside this one — `test/streams.ts` — which survived the port because
+// gzip's `cov.ts` drove the same streams: the builder twice over, with nothing comparing the two.
+// **Both are gone as of 2026-08-20.** `packages/gzip/test/cov_exercise.wac` builds its streams from
+// this file, so the coverage report and the tests are one builder again. `issues/system/0222`.
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`. `issues/system/0161`.
 

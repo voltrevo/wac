@@ -235,3 +235,58 @@ export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * `@/` does not depend on where you were standing — `issues/lang/0168a`, `§wac-import-project-4hq7mnv`.
+ *
+ * **Asserting an answer, not agreement.** Every other case in this file compares the two compilers,
+ * which is right for a rule implemented twice — except when both implement it the same way and both
+ * are wrong. That is what happened here: the upward search walked the components of the path *as
+ * typed*, so a relative entry could climb only as far as it was spelled, and `wac run main.wac` from
+ * a subdirectory reported *no wac.json5 above main.wac* with the manifest one directory up. Both
+ * compilers said it, so a differential could only have confirmed it.
+ *
+ * So each row below names the number the program answers, and the same file is run from three
+ * directories with four spellings. The spec sentence is the invariant: where you were standing and
+ * how you spelled the entry cannot change what a program means.
+ */
+export string test_a_project_specifier_does_not_depend_on_the_working_directory(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "atspec-cwd");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "the manifest, at the root");
+  t.isTrue(put(cli, dir + "/lib.wac", "export i32 v() { return 9; }\n"), "lib at the root");
+  t.isTrue(put(cli, dir + "/src/util/deep.wac",
+               "import { v } from \"@/lib.wac\";\n" +
+               "export i32 main() { return v(); }\n"), "a file two directories down");
+
+  // (where to run from, what to call the entry) — the same file every time.
+  string[] where = string[](dir, dir + "/src", dir + "/src/util", dir + "/src/util");
+  string[] entry = string[]("src/util/deep.wac", "util/deep.wac", "deep.wac", "./deep.wac");
+  for (i32 i = 0; i < where.len(); i++) {
+    Exec w = cli.exec("/bin/sh",
+                      string[]("-c", "cd " + where[i] + " && exec " + binaryPath(cli) +
+                                     " run " + entry[i]), u8[0]()).wait();
+    t.isTrue(w.ran(), "wac did not run — " + w.error);
+    if (w.ran()) {
+      t.eqI32(w.status, 9, "wacc from " + where[i] + " with " + entry[i] + " answered " +
+                           itoa(w.status) + ", want 9 — " + string.fromBytes(w.stderr));
+    }
+    Exec r = cli.exec("/bin/sh",
+                      string[]("-c", "cd " + where[i] + " && exec deno run -A " +
+                                     cli.cwd().wait() + "/harness/referenceRun.ts " +
+                                     entry[i] + " main"), u8[0]()).wait();
+    t.isTrue(r.ran(), "the reference did not run — " + r.error);
+    if (r.ran()) {
+      t.isTrue(contains(string.fromBytes(r.stdout), "9"),
+               "the reference from " + where[i] + " with " + entry[i] + " answered " +
+               string.fromBytes(r.stdout) + string.fromBytes(r.stderr) + ", want 9");
+    }
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

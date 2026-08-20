@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-38 packages, 128,805 lines of wac, 2543 tests,
-79 command-line programs and 11 browser pages.
+38 packages, 129,270 lines of wac, 2536 tests,
+80 command-line programs and 11 browser pages.
 
 ## Packages
 
@@ -29,7 +29,7 @@ In dependency order: nothing here imports anything below it.
 | [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 6,315 | 283 | `bignum` `codec` `fmt` |
 | [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,327 | 40 | `bytes` `codec` `fmt` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point. | 1,321 | 58 | `bytes` `fmt` |
-| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,213 | 220 | `bytes` `fmt` |
+| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,292 | 219 | `bytes` `fmt` |
 | [`raster`](packages/raster/) | A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell. | 1,071 | 27 | `fmt` `unicode` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 10 | `fmt` |
 | [`bls`](packages/bls/) | BLS signature verification on BLS12-381 — the Ethereum parameters and encodings. | 4,062 | 40 | `crypto` |
@@ -38,7 +38,7 @@ In dependency order: nothing here imports anything below it.
 | [`server`](packages/server/) | An HTTP server written in wac. | 328 | 20 | `bytes` `codec` `datetime` `http` `json` `regex` `url` |
 | [`ssz`](packages/ssz/) | SSZ is how Ethereum's consensus layer lays out data. | 802 | 26 | `bytes` `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,203 | 185 | `bytes` `codec` `crypto` |
-| [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 1,624 | 28 | `bytes` `crypto` `fmt` `json` |
+| [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 1,757 | 28 | `bytes` `crypto` `fmt` `json` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 389 | 24 | `bytes` `crypto` `mpt` |
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,764 | 61 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `tls` |
 | [`lightclient`](packages/lightclient/) | A light client follows the beacon chain without downloading it. | 642 | 12 | `bls` `ssz` |
@@ -49,8 +49,8 @@ In dependency order: nothing here imports anything below it.
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,456 | 138 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `raster` `regex` `server` `sh` `tls` `unicode` `url` `zstd` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 762 | 6 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `rlp` |
 | [`ssh`](packages/ssh/) | An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them. | 4,132 | 58 | `box` `bytes` `codec` `crypto` `fmt` `fs` `sh` `tty` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 33,776 | 265 | `bytes` `codec` `crypto` `fmt` `fs` `wacpkg` |
-| [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 1,687 | 44 | `bytes` `codec` `fmt` `git` `json` `tls` `wacc` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 33,967 | 258 | `bytes` `codec` `crypto` `fmt` `fs` `wacpkg` |
+| [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 1,749 | 45 | `bytes` `codec` `fmt` `git` `json` `tls` `wacc` |
 
 ## Programs
 
@@ -75,6 +75,7 @@ reach — see `packages/platform/README.md`.
 | `packages/platform/example/entropy.wac` | What `randomBytes` promises across its whole range, asked of whichever host is running this. |
 | `packages/platform/example/feed.wac` | What `send` answers when the thing it is sending to has stopped listening. |
 | `packages/platform/example/greet.wac` | Listen, take one connection, and say who it came from. |
+| `packages/platform/example/halfclose.wac` | Saying "that is all" without saying "goodbye": a socket's outbound direction ended on its own. |
 | `packages/platform/example/hexdump.wac` | A filter: bytes in, bytes out. `hexdump < file` or `hexdump file`. |
 | `packages/platform/example/inetd.wac` | A network service whose handler is another wac program. |
 | `packages/platform/example/inside.wac` | Running a program inside another one, with a world of its own. |

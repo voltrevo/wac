@@ -1,0 +1,215 @@
+// zstd's coverage, and the argument for each point nothing reaches.
+//
+//   deno task coverage:zstd
+//   deno task coverage:zstd --verbose
+//
+// **Named rather than tolerated as a percentage below 100.** A report that sits at 97.5% for ever
+// teaches everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one
+// that was always there. So this is a two-way ratchet: anything not listed here is expected to be
+// covered and the run fails if it is not — and anything listed that *does* get covered fails too, since
+// the reason has stopped holding. `tools/wac/covledger.wac` is the machinery; `issues/system/0222`.
+//
+// ## Two kinds of entry, kept apart on purpose
+//
+//   - `proven: true` — no input reaches it. A guard that cannot fire is still worth keeping when what
+//     it guards is worse than a wrong answer, but counting it as covered would make the number
+//     meaningless;
+//   - `proven: false` — reachable, and nobody has built the input. That is a **gap**, not an exemption.
+//     Reading a list of "unreachable" branches that quietly includes merely-difficult ones is how a
+//     coverage number stops meaning anything.
+//
+// The distinction is zstd's, from its `cov.ts`, and it is now `Pin.proven` for every package.
+//
+// ## `cov.ts` until 2026-08-20 — `issues/system/0161`
+//
+// **739 of 758 points, against the TypeScript's 733**, and this ledger holds seventeen lines where that
+// one held eight. The eight were not a smaller problem: the old check was **staleness only**. It read
+// the source at each entry's line and failed if the snippet had moved, and it never asked whether a
+// listed point was still uncovered or whether an *unlisted* one had appeared. Sixteen uncovered points
+// were therefore unlisted and unmentioned, which is the thing this issue was filed about.
+//
+// **And one of the eight pointed at a line with no branch point on it.** The entry for
+// `encode.wac:367` named `} else {`, the three-byte sequence-count form. The instrumentation puts that
+// edge on the `} else if` at line 364, and there is no counter at 367 at all — so the entry described
+// nothing, its snippet matched, and the check passed. The real uncovered point, 364, was one of the
+// sixteen nobody had written down. A staleness check cannot catch that; a two-way one fails it as an
+// entry listed but covered, because a point that does not exist is never in the uncovered set.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/zstd/test/cov_exercise.wac";
+const string PREFIX = "packages/zstd/";
+
+/**
+ * The exercise's grants.
+ *
+ * It asks `test/oracle.ts` for frames our own encoder cannot produce — a window smaller than its
+ * content, an RLE block, treeless literals — so it runs a program and reads the cached answers. Not a
+ * widening of what *this* may do: these are what the exercise is compiled with.
+ */
+string[] grants() { return string[]("--allow-read", "--allow-write", "--allow-run"); }
+
+/**
+ * Every export `covdump` calls after `main`, and how many cases each holds.
+ *
+ * `name:<n>` is a **sweep**: `covdump` calls `name(0)` through `name(n-1)` with each trap caught
+ * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`). A sweep is how this package is measured at
+ * all — damaging a real frame at every byte under three masks is thousands of calls, and its own
+ * predecessor recorded that sampling reaches about half because the checks are close enough together
+ * that stepping over bytes steps over whole branches.
+ *
+ * **The widths are upper bounds.** A case past the end of its list returns rather than trapping, so a
+ * frame that gets shorter costs some empty calls rather than a wrong number — and one that gets longer
+ * is a silently narrower sweep, which is why the counts here are generous rather than exact.
+ */
+string[] cases() {
+  return string[](
+    // Real frames, damaged and truncated, buffered and streamed. The largest thing here and the
+    // reason `covdump` grew a sweep.
+    "damage:2000",
+    "cut:700",
+    "damageStreamed:2000",
+    "cutStreamed:700",
+    // The frame header's own combinations, which no encoder emits together.
+    "header:53",
+    "headerStreamed:50",
+    // Compressed blocks built by hand, short enough to stop inside their own headers.
+    "blockBody:440",
+    // FSE: descriptions that are nonsense, and valid ones used invalidly.
+    "fseNonsense:24",
+    "fseDesc:60",
+    // Huffman trees that are not trees, and stream shapes that do not add up.
+    "huffCase:130",
+    // The encoder's literals sections and sequence counts.
+    "encCase:20",
+    // The FSE encoder: normalise, build, encode backwards, describe.
+    "fseEnc:230",
+    // A sink that stops listening, and a hash asked for a range outside its input.
+    "refused:6",
+    "hashBound:7");
+}
+
+Pin[] pins() {
+  return Pin[](
+    // ── Guards no input reaches ──────────────────────────────────────────────
+    Pin("packages/zstd/src/fse.wac", 144, "if (remaining < 0) { trap; }", true,
+        "The wire form bounds each count by what is left: the field is masked to 2*threshold-1 and " +
+        "the long branch subtracts max, which together put the count in [0, remaining]. Kept because " +
+        "a negative remaining would drive nbBits below zero in the narrowing loop, and a zero-width " +
+        "read never advances — a hang rather than a wrong answer."),
+    Pin("packages/zstd/src/fse.wac", 265, "if (len <= 0) { trap; }", true,
+        "decompress refuses a description with nothing behind it before constructing a BackBits, so " +
+        "the only caller in this package cannot pass a non-positive length. The struct is exported " +
+        "for the sequences decoder, which will not have that guard for free."),
+    Pin("packages/zstd/src/encode.wac", 79, "if (len < 0) { trap; }", true,
+        "A literal-length code for a negative length. llCodeOf is called with the gap between one " +
+        "match and the next, which the matcher computes as a difference of positions it has already " +
+        "ordered — so the subtraction cannot go the other way. Kept because the loop below it walks " +
+        "LL_BASE downwards looking for a bound that holds, and for a negative length none does: it " +
+        "would fall out of the loop and trap on the line after, which is the same refusal with the " +
+        "cause removed."),
+    Pin("packages/zstd/src/encode.wac", 90, "if (len < minMatch()) { trap; }", true,
+        "The same from the match side. A match shorter than the minimum is not emitted as a match at " +
+        "all — the matcher requires minMatch bytes before it will take one — so mlCodeOf never sees " +
+        "one. Kept for the same reason: ML_BASE starts at the minimum, so a shorter length has no " +
+        "code and the walk would run off the end."),
+    Pin("packages/zstd/src/encode.wac", 341, "while ((1 << log) < need && log < maxLog) {", true,
+        "optimalLog floors the log at highBit(top) + 2, so the table is at least four times the " +
+        "highest used code — and since a code alphabet has at most top + 1 members, that is always " +
+        "more slots than distinct codes. The cap at maxLog cannot bite either: the widest alphabet " +
+        "here is match lengths at 53 codes against a 512-slot table. Kept because the property it " +
+        "guards belongs to optimalLog rather than to this function, and a code with no slot cannot " +
+        "be written at all."),
+    Pin("packages/zstd/src/huffenc.wac", 66, "if (nodes < 2) { trap; }", true,
+        "A Huffman code needs two symbols. compressLiterals checks `describable` first, which " +
+        "requires two, and build has no other caller now that it is not exported — a section with " +
+        "one distinct byte becomes RLE instead. Kept because it is the invariant the tree merge " +
+        "depends on, and violating it would loop rather than fail."),
+    Pin("packages/zstd/src/huffenc.wac", 186, "if (count < 1 || count > maxDirectSymbol()) { trap; }",
+        true,
+        "Same guard from the other end: `describable` has already bounded the highest symbol to 128, " +
+        "which is what a directly-written tree description can carry, and writeTree has no other " +
+        "caller. Kept because writing a wider one would produce a header byte that means something " +
+        "else entirely."),
+    Pin("packages/zstd/src/fseenc.wac", 58, "while (left > 24) {", true,
+        "A bit field wider than 24. `cur` carries at most 7 bits, so a field of 24 keeps the " +
+        "accumulator inside 31 and away from the sign bit, and longer fields go in instalments — " +
+        "which nothing here writes, as the comment three lines above already says. Kept because an " +
+        "offset code may carry 31 extra bits and silently dropping them would be a corruption that " +
+        "only shows up on data nobody has yet."),
+    Pin("packages/zstd/src/sequences.wac", 101, "if (c < 0 || c > maxSymbol) { trap; }", true,
+        "A symbol outside the alphabet in a table this package just built. Both callers hand over a " +
+        "table from readTable or rleTable, and each of those has already refused a symbol past its " +
+        "own bound — so this is the third check of the same fact. Kept because it is the one standing " +
+        "between a corrupt table and an out-of-bounds shift on the line below."),
+    Pin("packages/zstd/src/stream.wac", 106, "if (n < 0) { trap; }", true,
+        "A negative skip. Every caller computes n from a field it has already bounded — a header " +
+        "length, an XLEN, a section size — so none can ask to go backwards. Kept because the effect " +
+        "would be to move `pos` back into bytes already handed to the sink, and a reader that can " +
+        "rewind is a reader that can be made to loop."),
+    Pin("packages/zstd/src/xxh64.wac", 137, "if (start < 0 || len < 0 || start + len > d.len()) { trap; }",
+        true,
+        "The bounds on the *incremental* update, whose only callers are the streaming decoder — which " +
+        "hashes exactly what it has just produced — and `test/wac/xxh64_probe.wac`, which cuts a real " +
+        "array. The one-shot `xxh64` has the same guard and it *is* covered, by `hashBound`: that one " +
+        "is reachable because a caller chooses the range. Kept because the two must agree, and a " +
+        "guard that exists on one entry point and not the other is worse than both or neither."),
+
+    // ── Reachable, and nobody has built the input ────────────────────────────
+    Pin("packages/zstd/src/encode.wac", 364, "} else if (n < 32512) {", false,
+        "The three-byte sequence count needs 32512 sequences in one block, and a 128 KiB block holds " +
+        "at most 32768 — every one of them a literal and a three-byte match. The closest input " +
+        "synthesised reached 32223: the matcher takes the best of 32 candidates, so a match extends " +
+        "past three bytes often enough to lose the margin. Periodic input makes it worse, not better, " +
+        "because then the matcher finds the whole cycle as one 65 KB match. The branch mirrors " +
+        "readCount in sequences.wac, which is tested — but that is an argument, not a test. " +
+        "**This entry used to name line 367**, where the `} else {` is; the instrumentation puts the " +
+        "edge on the `} else if` and there is no counter at 367, so the old entry described nothing " +
+        "and the real gap was unlisted."),
+    Pin("packages/zstd/src/encode.wac", 400, "if (n < 32) {", false,
+        "The two wider RLE literal headers together — this is the `else` of the one-byte form. " +
+        "Reaching it needs 32 or more literals that are all the same byte, and `cov_exercise.wac` " +
+        "tries for them directly: a marker phrase that matches, separated by one byte that never " +
+        "does, so every gap contributes one identical literal. Nine thousand repetitions still left " +
+        "three. Literals are what matching failed on and a repeated byte is exactly what matching " +
+        "succeeds on, so the runs that would produce them get absorbed into matches instead."),
+    Pin("packages/zstd/src/encode.wac", 402, "} else if (n < 4096) {", false,
+        "The middle of those three widths, for the same reason as the line above. Both arms are " +
+        "uncovered, so this is one gap counted twice rather than two."),
+    Pin("packages/zstd/src/block.wac", 135, "if (h.compressedSize <= 0) { trap; }", false,
+        "A treeless literals section claiming no bytes at all. Reaching it needs a frame whose first " +
+        "block establishes a Huffman table and whose second is treeless with a compressed size of " +
+        "zero — two blocks, hand-built, with a valid Huffman-coded first one. Corrupting a real frame " +
+        "does not get there: damaging the size field of a treeless section is refused by the block " +
+        "bounds first. The *valid* treeless path beside it is covered now, by the reference's " +
+        "many-block frame."),
+    Pin("packages/zstd/src/sequences.wac", 360, "if (offset <= 0) { trap; }", false,
+        "The `else` — a repeat-offset code 4 that resolves to a usable distance. Code 4 means \"the " +
+        "most recent offset, minus one\", and it is only selected when a sequence has no literals, so " +
+        "it needs one match immediately following another at a distance the encoder had already used " +
+        "twice before. The reference's frames reach codes 1, 2 and 3; five inputs shaped for the " +
+        "fourth — records at level 19, log lines, and two purely periodic ones — did not. The trap " +
+        "beside it *is* covered, by the hand-built RLE-mode block in `blockBody`, which is the case " +
+        "where reps[0] is 1 and there is nothing one byte before the start."),
+    Pin("packages/zstd/src/stream.wac", 107, "if (!this.need(n)) { trap; }", false,
+        "A skip that runs past what the source has handed over. The truncation sweeps cut every frame " +
+        "at every byte, and none of the cuts lands inside a skip: the skips are the optional header " +
+        "fields and a stored section's bytes, and a cut inside either is refused by the block or " +
+        "header bounds a step earlier. Reaching it wants a frame declaring an optional field longer " +
+        "than the frame — buildable, and not built."));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

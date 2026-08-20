@@ -249,7 +249,7 @@ export string test_boxs_shell_answers_the_same_on_deno_and_on_the_rust_host_on_v
 
   string v8 = v8Host(core, cli);
   if (v8 == "") { return t.report(); }
-  Ran onV8 = run(cli, v8, string[](p.boxshStem), SCRIPT);
+  Ran onV8 = run(cli, v8, string[](p.boxshStem + ".wasm"), SCRIPT);
 
   t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
   t.eqStr(onV8.err, onDeno.err, "the two hosts disagree about what the shell warned");
@@ -274,7 +274,7 @@ export string test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_h
 
   string v8 = v8Host(core, cli);
   if (v8 == "") { return t.report(); }
-  Ran onV8 = run(cli, v8, string[](p.spawnshStem), SPAWNING_SCRIPT);
+  Ran onV8 = run(cli, v8, string[](p.spawnshStem + ".wasm"), SPAWNING_SCRIPT);
 
   t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
   t.eqI32(onV8.code, onDeno.code, "the two hosts disagree about the exit code");
@@ -317,8 +317,8 @@ export string test_an_image_survives_a_process_and_is_readable_by_a_spawned_chil
   if (v8 == "") { cli.remove(dir, true).wait(); return t.report(); }
   string stem = p.imagedStem;
   string v8Img = dir + "/v8.wacimg";
-  run(cli, v8, string[](stem, v8Img), "mkdir /data; seq 1 5 > /data/n\n");
-  Ran onV8 = run(cli, v8, string[](stem, v8Img), READ);
+  run(cli, v8, string[](stem + ".wasm", v8Img), "mkdir /data; seq 1 5 > /data/n\n");
+  Ran onV8 = run(cli, v8, string[](stem + ".wasm", v8Img), READ);
 
   t.eqStr(onV8.out, onDeno.out, "the two hosts disagree about what the image held");
 
@@ -328,7 +328,7 @@ export string test_an_image_survives_a_process_and_is_readable_by_a_spawned_chil
   // an image is not byte-reproducible: two runs of the *same* host differ in ten bytes, three pairs of
   // timestamps and a trailer, so byte equality would fail for a reason that has nothing to do with
   // hosts.
-  t.eqStr(trimmed(run(cli, v8, string[](stem, denoImg), READ).out), "5",
+  t.eqStr(trimmed(run(cli, v8, string[](stem + ".wasm", denoImg), READ).out), "5",
           "the V8 host could not read an image Deno wrote");
   t.eqStr(trimmed(run(cli, denoBin, string[](v8Img), READ).out), "5",
           "Deno could not read an image the V8 host wrote");

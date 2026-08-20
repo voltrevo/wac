@@ -24,7 +24,6 @@ async function ensureOutDir(out: string): Promise<void> {
 // So this writes the two files that are the whole contract:
 //
 //   `<out>.wasm`   the module, unchanged — the same bytes the JavaScript hosts run
-//   `<out>.json`   the manifest: what the callback imports are, how to register one, and the grants
 //
 // ## Why a manifest rather than a generated Rust file
 //
@@ -166,7 +165,7 @@ function uleb(n: number): Uint8Array {
 }
 
 /**
- * Compile `entry` and write `<out>.wasm` and `<out>.json`.
+ * Compile `entry` and write `<out>.wasm` — the manifest is a section inside it.
  *
  * `out` is a stem rather than a filename, because two files come out of it and naming one of them
  * would leave the other implied.
@@ -280,7 +279,6 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
   const text = JSON.stringify(manifest, null, 2) + "\n";
   await ensureOutDir(out);
   await Deno.writeFile(`${out}.wasm`, withManifestSection(c.wasm as Uint8Array, text));
-  await Deno.writeTextFile(`${out}.json`, text);
   return manifest;
 }
 
@@ -457,7 +455,6 @@ async function buildNativeWithWacc(
   // here and removes the need to decide anything at once.
   await ensureOutDir(out);
   await Deno.writeFile(`${out}.wasm`, withManifestSection(art.wasm, text));
-  await Deno.writeTextFile(`${out}.json`, text);
   return manifest;
 }
 
@@ -469,7 +466,7 @@ if (import.meta.main) {
   if (entry === undefined || out === null) {
     console.error("usage: deno task app:native <entry.wac> -o <stem> [--allow-read] [--allow-write]");
     console.error("        [--allow-env] [--allow-net] [--allow-run]");
-    console.error("  writes <stem>.wasm and <stem>.json — the artifact a non-JavaScript host runs");
+    console.error("  writes <stem>.wasm — one artefact, manifest inside, for a non-JavaScript host");
     Deno.exit(2);
   }
   // **`--allow-run` was missing here and nowhere else**, which made `Cap::Exec` in the wasmtime host

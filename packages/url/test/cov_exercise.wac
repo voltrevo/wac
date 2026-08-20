@@ -1,0 +1,203 @@
+// Branch coverage for url: the exercises, and nothing else.
+//
+//   deno task coverage:url
+//   deno task coverage:url --verbose
+//
+// The exercises are the ones the tests run — the hand-written cases and the same assembled-fragment
+// generator — because coverage measured against a different workload describes that workload.
+//
+// ## The second entry point is gone, and porting to wac is why — `issues/system/0161`
+//
+// The `cov.ts` this replaces instrumented `test/wac/url_test.wac` as a second module, and said why:
+// *"the encode sets and the host serializer are reachable from wac but not through `parse`, since
+// nothing the host can send exercises `SET_COMPONENT` or an IPv6 host built by hand."* That is a fact
+// about the bridge — a `Host` and an encode-set constant do not cross it — and not about url. This
+// file is wac, so it calls `writeHost`, `parseIpv4`, `parseIpv6`, `endsInNumber`, `encode`, `decode`
+// and `inEncodeSet` directly, with the inputs `url_test.wac` gives them.
+//
+// `covreport` builds this with `--coverage` and runs its `main`, and skips any file with `/test/` in
+// its path, so a driver's own branches never appear in the number.
+
+import { parse, parseWithBase } from "./probe.wac";
+import { Host, writeHost, parseIpv4, parseIpv6, endsInNumber } from "../src/host.wac";
+import { encode, decode, inEncodeSet, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECIAL_QUERY,
+         SET_PATH, SET_USERINFO, SET_COMPONENT } from "../src/percent.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+
+/** `xorshift32` with the TypeScript's seed; `upto` because its draws were unsigned. */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  i32 upto(this, i32 n) {
+    i32 v = this.next() % n;
+    return v < 0 ? v + n : v;
+  }
+}
+
+/** The serializer's answer, which is the half a host cannot ask for. */
+i32 hostLen(Host h) {
+  Buf b = Buf.create();
+  writeHost(b, h);
+  return b.take().len();
+}
+
+string[] hand() {
+  return string[](
+    "http://example.com/", "https://example.com:8443/a/b?c=d#e", "http://user:pw@example.com/",
+    "http://:pw@example.com/", "http://user@example.com/", "http://example.com",
+    "http://example.com?q", "http://example.com#f", "http://example.com/?#",
+    "ws://h/", "wss://h/", "ftp://h/", "HTTP://example.com/", "HtTpS://Example.COM/",
+    "http://example.com:80/", "https://example.com:443/", "ftp://example.com:21/",
+    "ws://example.com:80/", "wss://example.com:443/", "http://example.com:0/",
+    "http://example.com:65535/", "foo://example.com/", "foo:/path", "foo:path", "foo:",
+    "mailto:a@b.c", "data:text/plain,hello", "javascript:alert(1)", "a+b-c.d://h/",
+    "http://h:65536/", "http://h:99999999/", "http://h:abc/", "http://h:/", "http://h:-1/",
+    "http://h/a/b/../c", "http://h/a/b/./c", "http://h/../../..", "http://h/a/..",
+    "http://h/a/../", "http://h/.", "http://h/./", "http://h//a//b//", "http://h/a/%2e/b",
+    "http://h/a/%2E%2e/b", "http://h/a/.%2e/b", "http://h\\a\\b", "http://h/a\\b",
+    "foo://h/a\\b", "foo://h/a/../b",
+    "http://h/ \"<>`{}", "http://h/?\" <>#", "http://h/?a'b", "foo://h/?a'b", "http://h/#\" <>`",
+    "http://h/%41%42", "http://h/%zz", "http://h/%", "http://h/%a", "http://user na:me@h/",
+    "http://h/a?b#c d", "http://h/" + string.fromCodepoint(1) + string.fromCodepoint(0x1f),
+    "http://h/café", "http://h/?café", "http://h/#café", "http://h/日本", "http://h/😀",
+    "http://127.0.0.1/", "http://127.1/", "http://127.0.1/", "http://2130706433/",
+    "http://0x7f.1/", "http://0x7f000001/", "http://0177.0.0.1/", "http://0300.0250.0.1/",
+    "http://1.2.3.4./", "http://0/", "http://0x/", "http://256.1.1.1/", "http://1.2.3.4.5/",
+    "http://999999999999/", "http://0x100000000/", "http://1.2.3.09/", "http://1.2.3.0x/",
+    "http://[::1]/", "http://[::]/", "http://[1:2:3:4:5:6:7:8]/", "http://[1::8]/",
+    "http://[::ffff:127.0.0.1]/", "http://[0:0:0:0:0:0:0:1]/", "http://[2001:db8::1]:8080/",
+    "http://[1:2:3:4:5:6:7:8:9]/", "http://[1::2::3]/", "http://[::1", "http://[]/",
+    "http://[:]/", "http://[1:2:3:4:5:6:7]/", "http://[::ffff:999.1.1.1]/",
+    "http://EXAMPLE.COM/", "http://h%65llo/", "http:///", "http://:80/", "http://a b/",
+    "http://a#b/", "http://a<b/", "http://a|b/", "http://a%2fb/", "foo://a b/", "foo://a%20b/",
+    "http://.../", "http://a..b/", "http://café.com/", "http://xn--caf-dma.com/",
+    "file:///a/b", "file://localhost/a", "file://LOCALHOST/a", "file://host/a", "file:///",
+    "file://", "file:", "file:/a", "file:a", "file:///c:/x", "file:///c|/x", "file://c:/x",
+    "file:///C:/", "file:///c:", "file:////a", "file:///a/../b", "file://\\\\a",
+    "  http://h/  ", "\thttp://h/", "ht\ntp://h/", "http://h/a\tb", "http://h/a\rb",
+    string.fromCodepoint(0) + "http://h/", "", "   ", "http", "://h/", "http:", "1http://h/",
+    "http://", "http://:@/", "//h/", "/a/b", "a/b",
+    // The edges the main groups miss, kept in step with the test of the same name.
+    "foo:/.//x", "foo:/..//x", "web+demo:/.//not-a-host/",
+    "http://1.2.3.4.5.6/", "http://1.2.3.256/", "http://1.2.65536/", "http://1.16777216/",
+    "http://[::ffff:1.2.3]/", "http://[::ffff:1.2.3.4.5]/", "http://[::ffff:.1.2.3]/",
+    "http://[::ffff:1.2.3.]/", "http://[1:2:3:4:5:6:1.2.3.4]/", "http://[1:2:3:4:5:6:7:1.2.3.4]/",
+    "foo://h?q", "foo://h#f", "foo://h");
+}
+
+export i32 main() {
+  i32 seen = 0;
+
+  string[] hs = hand();
+  for (i32 i = 0; i < hs.len(); i++) { seen = seen + parse(hs[i].toBytes()).len(); }
+
+  // File bases, where a Windows drive letter is reached through resolution rather than written.
+  string[] fb = string[]("file:///c:/a/b", "file:///c:", "file://h/c:/x");
+  string[] fr = string[]("..", "/x", "x", "../..", "d:/y", "/d:/y");
+  for (i32 i = 0; i < fb.len(); i++) {
+    for (i32 j = 0; j < fr.len(); j++) {
+      seen = seen + parseWithBase(fr[j].toBytes(), fb[i].toBytes()).len();
+    }
+  }
+
+  // Relative resolution against each base shape, which is most of the state machine.
+  string[] bases = string[](
+    "http://example.com/a/b/c?q#f", "http://example.com/", "https://user:pw@host:8080/p/q",
+    "file:///a/b/c", "foo://host/p", "foo:opaque", "foo:opaque?q");
+  string[] refs = string[](
+    "", "d", "/d", "//other.com/d", "../d", "../../d", "../../../d", "./d", "?q2", "#f2",
+    "?", "#", "http://absolute.example/x", "//h", "\\d", "a:b", ".", "..", "#a#b");
+  for (i32 i = 0; i < bases.len(); i++) {
+    for (i32 j = 0; j < refs.len(); j++) {
+      seen = seen + parseWithBase(refs[j].toBytes(), bases[i].toBytes()).len();
+    }
+  }
+
+  // The same generator the fuzzer uses, so the report covers what the fuzzer actually reaches. Kept
+  // in step with `test/fuzz.test.ts` by hand, which is the standing hazard of a second workload: if
+  // the two drift, this measures something the tests do not run.
+  string[] schemes = string[]("http", "https", "file", "ftp", "ws", "wss", "foo", "a+b", "A", "");
+  string[] seps = string[](":", "://", ":/", ":///", "://///", ":\\\\", "", ":/\\");
+  string[] userinfo = string[]("", "u@", "u:p@", ":@", "@", "u:@", "%40@", "a b@", "u:p@x@");
+  string[] hosts = string[](
+    "h", "example.com", "EXAMPLE.com", "", "127.0.0.1", "0x7f.1", "2130706433", "[::1]", "[::",
+    "1.2.3.4.5", "0x", "a b", "a%20b", "a|b", "localhost", "..", "a..b", "-", "%2e");
+  string[] ports = string[]("", ":80", ":443", ":0", ":65535", ":65536", ":", ":abc", ":-1", ":8080");
+  string[] paths = string[](
+    "", "/", "//", "/a", "/a/b", "/a/../b", "/..", "/.", "/a/./b", "\\a", "/a\\b", "/%2e%2e/",
+    "/ ", "/\"", "/<>", "/`", "/{}", "/%", "/%zz", "/%41", "/c:/x", "/c|/x", "/é", "/日");
+  string[] queries = string[]("", "?", "?a", "?a=b", "?a'b", "?a b", "?#", "?%", "?é");
+  string[] frags = string[]("", "#", "#f", "#a b", "#\"", "#é", "#a#b");
+  // `undefined` is the first entry: no base at all, and the generator picks it as often as the rest.
+  string[] gbases = string[](
+    "", "http://example.com/a/b?q#f", "file:///a/b", "foo://host/p", "foo:opaque",
+    "https://u:p@h:8080/x/y");
+
+  Rng r = Rng(0x1234abcd);
+  for (i32 i = 0; i < 4000; i++) {
+    string input = "";
+    if (r.upto(4) == 0) {
+      input = paths[r.upto(paths.len())] + queries[r.upto(queries.len())] +
+              frags[r.upto(frags.len())];
+    } else {
+      input = schemes[r.upto(schemes.len())] + seps[r.upto(seps.len())] +
+              userinfo[r.upto(userinfo.len())] + hosts[r.upto(hosts.len())] +
+              ports[r.upto(ports.len())] + paths[r.upto(paths.len())] +
+              queries[r.upto(queries.len())] + frags[r.upto(frags.len())];
+    }
+    string base = gbases[r.upto(gbases.len())];
+    seen = seen + (base == "" ? parse(input.toBytes()).len()
+                              : parseWithBase(input.toBytes(), base.toBytes()).len());
+  }
+
+  // ── The half a host cannot reach ──
+  //
+  // The encode sets by number, the serializer, and the two address parsers, with the inputs
+  // `url_test.wac` gives them. Every one of these takes or returns something that does not cross the
+  // bridge — an encode-set constant, a `Host`, a `Buf`.
+  i32[] sets = i32[](SET_C0(), SET_FRAGMENT(), SET_QUERY(), SET_SPECIAL_QUERY(), SET_PATH(),
+                     SET_USERINFO(), SET_COMPONENT());
+  for (i32 c = 0; c < 128; c++) {
+    for (i32 s = 0; s < sets.len(); s++) { if (inEncodeSet(c, sets[s])) { seen = seen + 1; } }
+  }
+  string[] enc = string[]("%41", "a&b+c,d$e", "a'b", "", "a b", "é", "日", "/a/b", "a%zz");
+  for (i32 i = 0; i < enc.len(); i++) {
+    for (i32 s = 0; s < sets.len(); s++) {
+      seen = seen + encode(enc[i].toBytes(), sets[s]).len();
+    }
+    seen = seen + decode(enc[i].toBytes()).len();
+  }
+  string[] dec = string[]("%41%42", "%zz", "%", "%4", "a%2Fb", "%2f", "%00", "abc");
+  for (i32 i = 0; i < dec.len(); i++) { seen = seen + decode(dec[i].toBytes()).len(); }
+
+  // The serializer's choice of where `::` goes, which only the serializer makes.
+  string[] sixes = string[](
+    "0:0:0:0:0:0:0:1", "0:0:0:0:0:0:0:0", "1:0:0:2:0:0:0:3", "1:0:0:2:0:0:3:4",
+    "1:2:3:4:5:6:7:8", "1:0:3:4:5:6:7:8", "::ffff:127.0.0.1", "1::8", "1:2:3:4:5:6:1.2.3.4",
+    "1:2:3:4:5:6:7:8:9", "1::2::3", "", ":", "z::1");
+  for (i32 i = 0; i < sixes.len(); i++) {
+    Host? h = parseIpv6(sixes[i].toBytes());
+    if (!(h is null)) { seen = seen + hostLen(h!); }
+  }
+  string[] fours = string[](
+    "127.1", "0x7f.1", "2130706433", "0.0.0.0", "255.255.255.255", "1.2.3.4", "256.1.1.1",
+    "1.2.3.4.5", "0177.0.0.1", "0x", "", "1.2.3.09");
+  for (i32 i = 0; i < fours.len(); i++) {
+    Host? h = parseIpv4(fours[i].toBytes());
+    if (!(h is null)) { seen = seen + hostLen(h!); }
+  }
+  string[] numish = string[](
+    "1.2.3.4", "a.1", "1.2.3.4.", "a.0x1f", "a.0177", "example.com", "1.2.3.4a", "");
+  for (i32 i = 0; i < numish.len(); i++) {
+    if (endsInNumber(numish[i].toBytes())) { seen = seen + 1; }
+  }
+
+  return seen;
+}

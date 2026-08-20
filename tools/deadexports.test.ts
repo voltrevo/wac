@@ -125,7 +125,7 @@ Deno.test("shape 4: a method call on a bound module counts", async () => {
 });
 
 Deno.test("shape 5: a bound module's function taken as a value, with no paren", async () => {
-  // The one that survived the fix for shape 4. `packages/gzip/cov.ts` writes
+  // The one that survived the fix for shape 4. gzip's `cov.ts` wrote
   // `const inflate = inf.mod.inflate as (d: Uint8Array) => Uint8Array` and then calls the local, so
   // `.inflate(` never appears in the file at all.
   assertEquals(

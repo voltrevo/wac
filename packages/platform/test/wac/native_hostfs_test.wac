@@ -125,9 +125,10 @@ string buildOne(Cli cli, bool native, string out, string[] grants) {
 Shells shells(Cli cli) {
   string dir = built(cli);
   cli.mkdir(dir, true).wait();
-  Shells s = Shells(true, "", dir + "/wacsh-deno", dir + "/wacsh.json",
-                    dir + "/wonly-deno", dir + "/wonly.json",
-                    dir + "/nogrant-deno", dir + "/nogrant.json");
+  // The native half is the module itself — one artefact, manifest in its `wac.manifest` section.
+  Shells s = Shells(true, "", dir + "/wacsh-deno", dir + "/wacsh.wasm",
+                    dir + "/wonly-deno", dir + "/wonly.wasm",
+                    dir + "/nogrant-deno", dir + "/nogrant.wasm");
   string[] rw = string[]("--allow-read", "--allow-write", "--allow-env");
   string[] w = string[]("--allow-write");
   string[] none = string[0](fill: "");

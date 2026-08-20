@@ -21,8 +21,8 @@ The command is decided by what the first argument *is* rather than by a flag, be
 
 | first argument | what happens |
 |---|---|
-| `prog.wasm`, or a stem with `prog.json` beside it | run that program: the module carries its own manifest, or the pair does |
-| `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
+| `prog.wasm` | run that program — the module carries its own manifest |
+| `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat`, `app`, `app-run` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
 | `uninstall` | remove what an install put under `$WAC_HOME`, and the line it added to each shell profile |
 | `update` | resolve and fetch what `wac.lock` does not cover, and write the lock |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` |
@@ -34,16 +34,18 @@ command 'prog.wasm'*, which is a message about the wrong thing.
 ```sh
 wac check   main.wac                 # diagnostics, and nothing written
 wac compile main.wac [out.wasm]      # a module
-wac build   main.wac -o stem         # a module carrying a manifest, and stem.json beside it
+wac build   main.wac -o stem         # one module, carrying its own manifest
 wac build   main.wac --trace -o stem # ...instrumented for a trace, and stem.trace beside it
 wac bindgen main.wac [--js]          # the glue a host calls it through
 wac run     main.wac [args…]         # compile into a temporary file and run it
 wac test    [path…] [--ignore p,…]   # every `test*` export under each path
 wac sh      [-c script]              # the shell, sealed unless granted
 wac validate mod.wasm […]            # whether the engine accepts each module, without running it
-wac covdump mod.wasm                 # run `main` under the counters and print each one
+wac covdump mod.wasm [export…]       # run it under the counters and print each one
 wac ctcompare [--all] a.wasm b.wasm  # two traced runs, and where their journals differ
 wac tracestat mod.wasm               # one traced run's size, and what it wanted
+wac app     main.wac -o thing        # an executable that runs itself, calling out to `wac`
+wac app-run thing [args…]            # ...what `./thing` execs; not normally typed
 wac uninstall [--keep-cache]         # remove an installed `wac`, and nothing else
 wac update  [project]                # fetch what the lock does not cover, and lock it
 ```
@@ -67,9 +69,37 @@ often. `--coverage` on `test` answers a different question — how many points w
 percentage per file — and cannot say how often any one of them ran. Nothing in wac can ask directly:
 `__cov_get` is injected by the instrumentation, so no source names it.
 
-The module is instantiated with no imports and `main` is called if it is exported. A module with no
-`__cov_init` is an error rather than an empty report, because a module built without coverage and one
-whose counters all read zero are different facts.
+A module with no `__cov_init` is an error rather than an empty report, because a module built without
+coverage and one whose counters all read zero are different facts.
+
+`[§wac-cli-covdump-world-6knq4vt]` **It runs the module the way `wac prog.wasm` does** — the world built
+from its manifest, with the grants the manifest declares — so an exercise may read a corpus if it was
+built with `--allow-read`. This used to instantiate with no imports at all, which is not the same as
+granting nothing: a `main(Core, Cli)` was not refused, it *failed to instantiate*, because the imports
+were absent rather than denied. `issues/system/0221`.
+
+**Named exports are called after `main`, each with its trap caught**, and `main` alone when none are
+named. A trap ends the function it is in, so several trapping cases in one `main` lose every one after
+the first; a coverage driver with twelve bounds probes needs twelve calls, which is what the host is
+for. The counters survive a trap — that is what lets a trapping branch be counted as covered at all.
+
+`[§wac-cli-covdump-sweep-4tn8mr6]` **`name:<n>` is a sweep**: it calls `name(0)` through `name(n-1)`,
+each trap caught, instead of calling `name()` once. One name holds one trapping case, so a sweep of a
+thousand would otherwise need a thousand names — and the cases are not always separable: a driver that
+damages a real frame at every byte in turn, over several frames and masks, is more than a hundred
+thousand calls, and sampling it was measured as reaching about half, because the checks are close
+enough together that stepping over bytes steps over whole branches.
+
+The count is the **caller's**, not the module's. A module reporting its own case count would be a
+second place for the number to be wrong, and the caller already has to know how wide the sweep is to
+have written it. `n` above zero, and anything else is a usage error rather than a sweep of nothing —
+so `sweep:many` says what it could not read instead of reporting a module that exports no `sweep:many`.
+The argument is passed only for a sweep, because handing a one-parameter export no value is not the
+same as calling a no-parameter one with an extra.
+
+The exit status is about the **dump**, not about the program: a run that printed a table succeeded at
+what it was asked, whatever the exercise returned, and an exercise's `main` typically returns an
+accumulator rather than a status.
 
 ### check, compile, bindgen
 
@@ -211,6 +241,37 @@ whose commit is not in the cache is a compile error naming this command, rather 
 quietly goes online.
 
 Moving a pin deliberately is what `update` is for; `wac.lock` is what makes everything else offline.
+
+### Handing somebody a program
+
+`[§wac-cli-app-4mt8qzv]` `wac app main.wac -o thing` writes **one executable file**: a short `/bin/sh`
+preamble with the wasm module glued to the end of it. `./thing` execs `wac app-run "$0"`, which finds
+the module inside the file it was pointed at and runs it. So it is `chmod +x`, it survives an `scp`,
+and it is a few hundred KB — because the engine is not in it.
+
+**It depends on `wac` being on the machine, and that is the trade.** A self-sufficient executable was
+built here until 2026-08-20 and cost 67 MB of V8 and Rust host per program; a hundred of them is a
+hundred engines to keep in step with the compiler that produced the modules beside them. A machine
+that runs one of these runs `wac`. The preamble checks and says so — `needs the wac command on PATH`
+and exit 127 — rather than leaving the shell to say `wac: not found`, which names our command and
+explains nothing.
+
+`[§wac-cli-app-grants-8xr2knw]` **The grants are inside the module, not in the preamble.** They are
+baked in by the same `wac build` that every other artefact goes through, so the shell lines at the top
+of the file are byte-identical between a sealed build and a granted one, and editing them cannot widen
+what the program may do. `tools/wac/app_test.wac` asserts exactly that — two builds of one source,
+compared byte for byte up to the module — because the alternative design, a `--allow-read` on the
+`exec` line, would put the capability in the one part of the artefact a text editor can reach.
+
+`[§wac-cli-app-skew-3vq9mkt]` **A mismatched version is refused, naming both.** The manifest shape
+belongs to the binary that reads it and wac is unstable by choice, so `app-run` compares the version
+in the preamble with its own and stops. Running it anyway would trap somewhere inside a module built
+against a different contract, which is a worse message than the one it could have given.
+
+The module is found by scanning for the first `\0asm`: shell text cannot contain a NUL, so there is
+no length header to keep in step and no second file. `app-run` is its own command rather than
+`wac thing` because `./thing` has to hand *itself* to `wac`, and a bare stem would collide with the
+subcommands the day somebody names a program `test`.
 
 ### Taking it away
 

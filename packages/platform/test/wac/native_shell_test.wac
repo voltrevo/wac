@@ -34,6 +34,7 @@
 // behind an mtime check.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { nativeBinaryPath } from "../../../wactest/src/host.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -47,19 +48,6 @@ const i32 SAMPLE = 25;
 const string BUILT = ".cache/hostshell";
 
 string root(Cli cli) { return cli.cwd().wait(); }
-
-/** The native host binary — `wacland`, built when its sources are newer than it. */
-string nativeBinary(Cli cli) {
-  string path = root(cli) + "/native/target/release/wacland";
-  Exec r = cli.exec("/bin/sh",
-    string[]("-c",
-      "if [ -x '" + path + "' ] && " +
-      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer '" + path +
-      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
-      "cd native && cargo build --release --quiet"), u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { return ""; }
-  return cli.stat(path).wait().isFile ? path : "";
-}
 
 string buildOne(Cli cli, bool native, string entry, string out, string[] grants) {
   if (native) {
@@ -108,9 +96,12 @@ Built builds(Cli cli) {
   string dir = root(cli) + "/" + BUILT;
   cli.mkdir(dir, true).wait();
   Built b = Built(true, "",
-                  dir + "/sealed-deno", dir + "/sealed.json",
-                  dir + "/granted-deno", dir + "/granted.json",
-                  dir + "/open-deno", dir + "/open.json");
+                  // The native half is the module itself: `wac build` writes one artefact and both
+                  // hosts read the manifest out of its `wac.manifest` section. It was a `.json`
+                  // beside the module until 2026-08-20.
+                  dir + "/sealed-deno", dir + "/sealed.wasm",
+                  dir + "/granted-deno", dir + "/granted.wasm",
+                  dir + "/open-deno", dir + "/open.wasm");
   string[] none = string[0](fill: "");
   string[] rwe = string[]("--allow-read", "--allow-write", "--allow-env");
   string why = "";
@@ -188,7 +179,7 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
   Ran alive = shell(core, cli, tmp, b.sealedDeno, string[0](fill: ""), ALIVE);
   t.eqStr(alive.out, "deep\n3\n2\n", alive.err);
 
-  string native = nativeBinary(cli);
+  string native = nativeBinaryPath(core, cli, "native_shell");
   if (native == "") {
     core.warn("native_shell: skipped the native half — cargo did not build `native`");
     cli.remove(tmp, true).wait();
@@ -225,7 +216,7 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
 export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_with_an_oracle(
     Core core, Cli cli) {
   T t = T.create();
-  string native = nativeBinary(cli);
+  string native = nativeBinaryPath(core, cli, "native_shell");
   if (native == "") {
     core.warn("native_shell: skipped — cargo did not build `native`, so nothing was compared");
     return t.report();
@@ -303,7 +294,7 @@ string firstLine(string text) {
 export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_on(
     Core core, Cli cli) {
   T t = T.create();
-  string native = nativeBinary(cli);
+  string native = nativeBinaryPath(core, cli, "native_shell");
   if (native == "") {
     core.warn("native_shell: skipped — cargo did not build `native`, so nothing was compared");
     return t.report();

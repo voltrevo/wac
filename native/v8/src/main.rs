@@ -172,6 +172,7 @@ enum Cap {
     Recv,
     Send,
     CloseSocket,
+    CloseSend,
     BindDatagram,
     ReceiveFrom,
     SendTo,
@@ -246,6 +247,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "recv") => Cap::Recv,
         ("Cli", "send") => Cap::Send,
         ("Cli", "closeSocket") => Cap::CloseSocket,
+        ("Cli", "closeSend") => Cap::CloseSend,
         ("Cli", "bindDatagram") => Cap::BindDatagram,
         ("Cli", "receiveFrom") => Cap::ReceiveFrom,
         ("Cli", "sendTo") => Cap::SendTo,
@@ -442,54 +444,7 @@ thread_local! {
 
 /// The manifest a module carries in its own `wac.manifest` custom section, if it has one.
 ///
-/// **A module that describes itself is one artefact rather than two**, which is what lets `spawn`
-/// take wasm: a program handed bytes can run them without being handed a second file it has no way
-/// to find. A custom section is the format's own extension point — id 0, a name, and bytes nobody
-/// else reads — so a module carrying this runs anywhere a module without it runs.
-fn manifest_in(wasm: &[u8]) -> Option<String> {
-    if wasm.len() < 8 || &wasm[0..4] != b"\0asm" {
-        return None;
-    }
-    let mut at = 8;
-    while at < wasm.len() {
-        let id = wasm[at];
-        at += 1;
-        let (size, used) = uleb(wasm, at)?;
-        at += used;
-        let end = at.checked_add(size)?;
-        if end > wasm.len() {
-            return None;
-        }
-        if id == 0 {
-            let (n, used) = uleb(wasm, at)?;
-            let name_at = at + used;
-            let name_end = name_at.checked_add(n)?;
-            if name_end <= end && &wasm[name_at..name_end] == b"wac.manifest" {
-                return String::from_utf8(wasm[name_end..end].to_vec()).ok();
-            }
-        }
-        at = end;
-    }
-    None
-}
-
-fn uleb(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
-    let mut value: usize = 0;
-    let mut shift = 0;
-    let mut used = 0;
-    loop {
-        let b = *bytes.get(at + used)?;
-        value |= ((b & 0x7f) as usize) << shift;
-        used += 1;
-        if b & 0x80 == 0 {
-            return Some((value, used));
-        }
-        shift += 7;
-        if shift > 63 {
-            return None;
-        }
-    }
-}
+use wacmanifest::manifest_in;
 
 /// The program built into this binary, when one was: a module carrying its own manifest.
 ///
@@ -649,11 +604,29 @@ fn update_command(rest: &[String]) -> i32 {
         }
     };
     start_v8();
-    let argv: Vec<Vec<u8>> = if rest.is_empty() {
+    // **The cache directory is the second argument, and it has to be `$WAC_HOME`.**
+    //
+    // `fetch.wac` takes the project as `arg(0)` and the cache root as `arg(1)`, defaulting the second
+    // to the literal `.wac` — which is right for running it as a program from a checkout and wrong
+    // for a command. The compiler reads `$WAC_HOME` (then `$HOME/.wac`), so leaving the default in
+    // place put the fetched tree somewhere nothing would ever look for it: `wac update` said *1
+    // fetched*, a second `wac update` said *nothing to fetch; already locked*, and `wac run` said
+    // *not in the cache — run `wac update`*. Three commands, all truthful, and no way out of it.
+    //
+    // `wac_home` is the same function `uninstall` uses, which is what keeps the two halves of
+    // `$WAC_HOME` agreeing about where it is.
+    let mut argv: Vec<Vec<u8>> = if rest.is_empty() {
         vec![b".".to_vec()]
     } else {
         rest.iter().map(|a| a.as_bytes().to_vec()).collect()
     };
+    if argv.len() < 2 {
+        let Some(home) = wac_home() else {
+            eprintln!("wac: neither WAC_HOME nor HOME is set, so there is nowhere to cache a fetch");
+            return 2;
+        };
+        argv.push(home.into_bytes());
+    }
     let as_child = AsChild { argv, ..Default::default() };
     run_as_with(&manifest, wasm, &text, as_child)
 }
@@ -743,18 +716,44 @@ fn test_exports_of(path: &str) -> Vec<(String, String)> {
 /// Sharing one module across files is safe because wac has no module-level variables: a trap unwinds
 /// the call and leaves nothing behind, which is the same reason `test_traps_*` has always been able to
 /// run beside its neighbours.
-/// Every `.wac` file the aggregate reaches, with its bytes — the input a compile of it actually has.
+/// Every `.wac` file the aggregate reaches, with its bytes — the input a compile of it actually has —
+/// and **whether that is all of them**.
 ///
 /// A plain scan for `from "…"`, resolved against the importing file's directory, followed
 /// transitively. That is exactly what the compiler does with a *file* import; a builtin — `from core`
 /// — has no path and lives in the seed, which the key below covers separately. There are no
-/// conditional imports in wac, so a scan and a compile see the same set.
-fn closure_of(entry: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+/// conditional imports in wac, so a scan and a compile see the same set of *file* imports.
+///
+/// ## The second return value, and why a silent drop was a correctness bug
+///
+/// Not every specifier is a path relative to the importing file. `dep/lib.wac` under a `wac.json5`
+/// mapping lives in `$WAC_HOME/cache/git/…`, and `@/x.wac` is relative to the dependency's own root.
+/// This scan joins both to the importing file's directory, gets a path that does not exist, and until
+/// 2026-08-20 simply `continue`d — so those files were **absent from the cache key while the key went
+/// on being used**, which is the one thing a content-addressed cache may not do.
+///
+/// What that cost: `packages/wacc/test/wac/mappedspec_test.wac` builds a mapped dependency that tries
+/// to import outside its `subdir`, and asserts the compiler refuses. Its own last case then compiles a
+/// legitimate entry of *identical bytes* and caches the module that entry produces. Every later run
+/// took the escape case straight out of the cache — no compile, so no refusal, and the program ran.
+/// The test was green on a clean `/tmp` and red on every run after, which is how it passed review and
+/// then failed for somebody else the same evening. `issues/system/0219`.
+///
+/// So an import that names a `.wac` this cannot read makes the closure **incomplete**, and an
+/// incomplete closure is not cacheable at all — the callers pass `None` as the key rather than a key
+/// that stands for less than it claims. `std/…` is the exception and not a hole: it is the embedded
+/// tree, there is no file to read and none is expected, and `test_module_key` already hashes the seed
+/// that carries it.
+fn closure_of(entry: &std::path::Path) -> (Vec<(String, Vec<u8>)>, bool) {
     let mut out: Vec<(String, Vec<u8>)> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
+    let mut whole = true;
     let mut queue = vec![entry.to_path_buf()];
     while let Some(at) = queue.pop() {
-        let Ok(text) = std::fs::read(&at) else { continue };
+        let Ok(text) = std::fs::read(&at) else {
+            whole = false;
+            continue;
+        };
         let name = at.display().to_string();
         if !seen.insert(name.clone()) {
             continue;
@@ -770,6 +769,12 @@ fn closure_of(entry: &std::path::Path) -> Vec<(String, Vec<u8>)> {
             let spec = &after[..close];
             rest = &after[close + 1..];
             if !spec.ends_with(".wac") {
+                continue;
+            }
+            // The embedded tree. Joining it to the importing directory would name a file that has
+            // never existed, and treating that as a hole would make every program in the repository
+            // uncacheable — almost all of them import `std/platform.wac`.
+            if spec.starts_with("std/") {
                 continue;
             }
             // Normalised here rather than by `canonicalize`, which would follow symlinks and answer a
@@ -791,7 +796,7 @@ fn closure_of(entry: &std::path::Path) -> Vec<(String, Vec<u8>)> {
         out.push((name, text));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
+    (out, whole)
 }
 
 /// The name a built aggregate is cached under: everything a compile of it reads, and what compiled it.
@@ -1066,7 +1071,7 @@ fn test_command(rest: &[String]) -> i32 {
     // that does not exist, so one that "did not run" — and printed a phantom entry in the summary that
     // reads as a failing test, with the grant silently absent from the run that did happen. Neither
     // half says "the flag is in the wrong place", and every other tool here takes them in any position.
-    // `tools/testCli.test.ts`.
+    // `tools/wac/testcli_test.wac`.
     let mut targets: Vec<String> = Vec::new();
     let mut j = i;
     while j < rest.len() {
@@ -1262,9 +1267,12 @@ fn test_command(rest: &[String]) -> i32 {
             // cost — `packages/url/test/wac` was 674ms of compile in an 887ms run. The key is the
             // aggregate's text, the content of every `.wac` it reaches, the grants, and the seed that
             // would compile it, so a hit is the same bytes a fresh build would have produced.
-            let sources = closure_of(std::path::Path::new(&agg));
-            let key = test_module_key(&agg, &sources, &grants, false);
-            let m = match cached_module(key) {
+            let (sources, whole) = closure_of(std::path::Path::new(&agg));
+            // `None` when the scan could not read something an import named: see `closure_of`. A
+            // directory of tests that reaches a mapped dependency compiles every run, which is the
+            // cost of the cache being honest about what it covers.
+            let key = whole.then(|| test_module_key(&agg, &sources, &grants, false));
+            let m = match key.and_then(cached_module) {
                 // **V8 is started here as well, because the fresh path starts it inside
                 // `build_module`.** Without this a hit panicked with "Invalid global state" the moment
                 // it tried to *run* what it had not compiled — and it looked like a 4ms directory with
@@ -1280,8 +1288,8 @@ fn test_command(rest: &[String]) -> i32 {
                 }
                 None => {
                     let fresh = build_module(&grants, &agg, false).ok();
-                    if let Some((wasm, _, _, _)) = fresh.as_ref() {
-                        remember_module(key, wasm);
+                    if let (Some(k), Some((wasm, _, _, _))) = (key, fresh.as_ref()) {
+                        remember_module(k, wasm);
                     }
                     fresh
                 }
@@ -1501,6 +1509,202 @@ static UNGRANTED_TESTS: std::sync::atomic::AtomicUsize = std::sync::atomic::Atom
 /// for opposite reasons: the parser asks "is this mine to take?" and `run` asks "did the caller mean
 /// this as an argument?" — and a grant that is only in one of the lists is a grant that goes quiet
 /// somewhere.
+/// The marker line every `wac app` executable carries, and the version that built it.
+const APP_MARK: &str = "# wac-app ";
+
+/// `wac app [--allow-…] <entry.wac> -o <dest>` — build a program that runs by being run.
+///
+/// The output is a shell preamble with a wasm module glued to the end of it. `./thing` execs
+/// `wac app-run "$0"`, which finds the module inside the file it was pointed at and runs it. So the
+/// artefact is one file, it is `chmod +x`, it survives an `scp`, and it is **710 KB rather than
+/// 67 MB** — because the engine is not in it. What is in it is the program.
+///
+/// ## Why it calls out rather than carrying a runtime
+///
+/// The alternative was a self-sufficient executable, which is what `app:binary` and `app:native-binary`
+/// built: a whole V8 and a Rust host per program, 105 MB and 67 MB. Dropped on 2026-08-20 — a machine
+/// that runs one of these runs `wac`, and a hundred copies of an engine is a hundred copies to keep in
+/// step with the compiler that built the modules beside them.
+///
+/// **The grants are in the manifest, not in the preamble.** They are baked into the module by
+/// `wac build`, exactly as for any other artefact, so editing the shell lines at the top of the file
+/// cannot widen what the program may do — the manifest is inside the module, after the `\0asm`, and
+/// changing it means rebuilding. A preamble that passed `--allow-read` on the command line would put
+/// the capability in the one part of the file a text editor can reach.
+///
+/// **A version line, and `app-run` refuses a mismatch.** wac is unstable by choice: the manifest
+/// shape is this binary's, and a module built by another version may name callbacks and structs this
+/// one does not read the same way. Refusing with both numbers is a message somebody can act on;
+/// running it and trapping somewhere inside is not.
+fn app_command(rest: &[String]) -> i32 {
+    let mut grants: Vec<String> = Vec::new();
+    let mut dest = String::new();
+    let mut entry = String::new();
+    let mut i = 0;
+    while i < rest.len() {
+        let a = &rest[i];
+        if a == "-o" {
+            i += 1;
+            match rest.get(i) {
+                Some(d) => dest = d.clone(),
+                None => {
+                    eprintln!("wac: -o wants a path to write");
+                    return 2;
+                }
+            }
+        } else if is_grant(a) {
+            grants.push(a.clone());
+        } else if entry.is_empty() && !a.starts_with('-') {
+            entry = a.clone();
+        } else {
+            eprintln!("wac: {a} is not a grant, -o, or the entry");
+            return 2;
+        }
+        i += 1;
+    }
+    if entry.is_empty() || dest.is_empty() {
+        eprintln!(
+            "usage: wac app [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+             [--allow-run] <entry.wac> -o <dest>"
+        );
+        eprintln!("       ./<dest> runs it, and needs the `wac` command on the machine that does");
+        return 2;
+    }
+
+    let dir = std::env::temp_dir().join(format!("wac-app-{}", std::process::id()));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("wac: no temporary directory to build in — {e}");
+        return 1;
+    }
+    let stem = dir.join("app");
+    let mut build = vec![
+        "build".to_string(),
+        entry.clone(),
+        "-o".to_string(),
+        stem.display().to_string(),
+        "--quiet".to_string(),
+    ];
+    build.extend(grants.iter().cloned());
+    start_v8();
+    let built = run_seed(&build);
+    if built != 0 {
+        return built;
+    }
+    let wasm = match std::fs::read(stem.with_extension("wasm")) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("wac: the build wrote nothing to package — {e}");
+            let _ = std::fs::remove_dir_all(&dir);
+            return 1;
+        }
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // No backtick and no `$` that the shell would expand: this text is read by `/bin/sh` on somebody
+    // else's machine, and the only thing it may do is check for `wac` and exec it. `command -v` is
+    // POSIX, unlike `which`.
+    let preamble = format!(
+        "#!/bin/sh\n\
+         {APP_MARK}{}\n\
+         # A wac program. The wasm module begins at the first NUL byte below.\n\
+         command -v wac >/dev/null 2>&1 || {{\n\
+         \x20 echo \"$0: needs the wac command on PATH — deno task wac:install\" >&2\n\
+         \x20 exit 127\n\
+         }}\n\
+         exec wac app-run \"$0\" \"$@\"\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    let mut out = preamble.into_bytes();
+    out.extend_from_slice(&wasm);
+    if let Err(e) = std::fs::write(&dest, &out) {
+        eprintln!("wac: cannot write {dest} — {e}");
+        return 1;
+    }
+    // Executable for whoever can already read it, which is what a program handed to somebody has to
+    // be — owner-only would make `scp` to a shared machine produce a file nobody there can run.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let made = std::fs::metadata(&dest).and_then(|md| {
+            let mut perm = md.permissions();
+            perm.set_mode(perm.mode() | 0o111);
+            std::fs::set_permissions(&dest, perm)
+        });
+        if let Err(e) = made {
+            eprintln!("wac: cannot make {dest} executable — {e}");
+            return 1;
+        }
+    }
+    eprintln!(
+        "{dest}  {} KB  [{}]",
+        out.len() / 1024,
+        if grants.is_empty() { "no capabilities".to_string() } else { grants.join(" ") }
+    );
+    0
+}
+
+/// `wac app-run <file> [args…]` — run the module glued to the end of a `wac app` executable.
+///
+/// Its own subcommand because the preamble needs something to call: `./thing` has to hand *itself*
+/// to `wac`, and `wac thing` would collide with the compiler's own argument shapes the day somebody
+/// names a program `test`.
+///
+/// **The module is found by scanning for the first `\0asm`.** The preamble is shell text, and shell
+/// text cannot contain a NUL — so the first one in the file is the module's magic and there is
+/// nothing to escape, no length header to keep in step, and no second file. A `\0asm` that is not at
+/// a section boundary would still be the module's, because the bytes before it are the ones this
+/// command wrote.
+fn app_run_command(rest: &[String]) -> i32 {
+    let Some(path) = rest.first() else {
+        eprintln!("usage: wac app-run <file> [args…]");
+        eprintln!("       normally run for you by the first two lines of a `wac app` executable");
+        return 2;
+    };
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("wac: cannot read {path} — {e}");
+            return 1;
+        }
+    };
+    let Some(at) = bytes.windows(4).position(|w| w == b"\0asm") else {
+        eprintln!("wac: {path} carries no wasm module — is it a `wac app` executable?");
+        return 1;
+    };
+    // The marker is looked for only in the text before the module, so a byte sequence inside the
+    // module cannot pass for a version line.
+    let head = String::from_utf8_lossy(&bytes[..at]).into_owned();
+    let Some(built_by) = head
+        .lines()
+        .find_map(|l| l.strip_prefix(APP_MARK))
+        .map(|v| v.trim().to_string())
+    else {
+        eprintln!("wac: {path} has a module in it but no `{APP_MARK}` line — not built by `wac app`");
+        return 1;
+    };
+    let mine = env!("CARGO_PKG_VERSION");
+    if built_by != mine {
+        eprintln!("wac: {path} was built by wac {built_by} and this is wac {mine}");
+        eprintln!("     wac is unstable by choice, so a manifest from another version is not read");
+        eprintln!("     the same way. Rebuild it: wac app <entry.wac> -o {path}");
+        return 1;
+    }
+    let wasm = &bytes[at..];
+    let Some(text) = manifest_in(wasm) else {
+        eprintln!("wac: the module inside {path} carries no wac.manifest section");
+        return 1;
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wac: the manifest inside {path} is not one — {e}");
+            return 1;
+        }
+    };
+    start_v8();
+    let argv = rest[1..].iter().map(|a| a.as_bytes().to_vec()).collect();
+    run_as_with(&manifest, wasm, &text, AsChild { argv, ..Default::default() })
+}
+
 fn is_grant(a: &str) -> bool {
     matches!(
         a,
@@ -1639,12 +1843,12 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     } else {
         let mut key_flags = flags.clone();
         key_flags.push(format!("entry={entry}"));
-        Some(test_module_key(
-            &entry,
-            &closure_of(std::path::Path::new(&entry)),
-            &key_flags,
-            false,
-        ))
+        let (sources, whole) = closure_of(std::path::Path::new(&entry));
+        // Not cached at all when the scan hit an import it could not read — a mapped `dep/…` or an
+        // `@/…` inside one. `issues/system/0219`: keying on a closure with holes in it served a
+        // stale module for an entry whose *dependency* had changed, and the entry's own bytes are
+        // a relative path away from colliding across two unrelated projects.
+        whole.then(|| test_module_key(&entry, &sources, &key_flags, false))
     };
 
     let mut build = vec![
@@ -1760,6 +1964,8 @@ fn main() {
             eprintln!("                                      cover, and write the lock — the only");
             eprintln!("                                      command that reaches the network");
         }
+        eprintln!("       wac app <entry.wac> -o <dest>  an executable that runs itself — one file,");
+        eprintln!("                                      needing a `wac` on the machine that runs it");
         eprintln!("       wac uninstall [--keep-cache]");
         eprintln!("                                      remove what `deno task wac:install` put under");
         eprintln!("                                      $WAC_HOME, the profile line, and nothing else");
@@ -1816,6 +2022,16 @@ fn main() {
     if SEED.is_some() && stem == "run" {
         std::process::exit(run_command(&args[2..]));
     }
+    // `app` builds; `app-run` runs what it built. Both are the host's: the compiler writes a module
+    // and knows nothing about making it executable, and `app-run` is what the preamble calls.
+    if SEED.is_some() && stem == "app" {
+        std::process::exit(app_command(&args[2..]));
+    }
+    // No `SEED.is_some()`: running an application needs no compiler, and a build carrying only a
+    // shell is a perfectly good thing to hand somebody's `./thing` to.
+    if stem == "app-run" {
+        std::process::exit(app_run_command(&args[2..]));
+    }
     // `sh` is the host's too, and needs no compiler at all — the shell is already a module. It is
     // tested before the seed check for that reason: a build with a shell and no compiler is a
     // perfectly good `wac sh`, and refusing it because there is nothing to compile would be a
@@ -1868,39 +2084,17 @@ fn main() {
     if SEED.is_some() && stem == "tracestat" {
         std::process::exit(tracestat_command(&args[2..]));
     }
-    if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
+    // **A stem is no longer a program.** `wac <stem>` used to run `<stem>.wasm` against a
+    // `<stem>.json` beside it, which was the pair form: two files, and a manifest that could be
+    // separated from the module it describes. `wac build` writes one artefact now — the manifest is a
+    // section inside the module — so anything that is not a command and not a `.wasm` is the
+    // compiler's. `issues/system/0161`.
+    if SEED.is_some() {
         start_v8();
         std::process::exit(run_seed(&args[1..]));
     }
-    let manifest_text = match std::fs::read_to_string(format!("{stem}.json")) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("wac: cannot read {stem}.json — {e}");
-            std::process::exit(1);
-        }
-    };
-    let manifest: Manifest = match serde_json::from_str(&manifest_text) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("wac: {stem}.json is not a manifest — {e}");
-            std::process::exit(1);
-        }
-    };
-    // The manifest names the module beside it, so a renamed pair says so instead of running the
-    // wrong program.
-    let dir = std::path::Path::new(stem).parent().unwrap_or(std::path::Path::new("."));
-    let wasm_path = dir.join(&manifest.wasm);
-    let wasm = match std::fs::read(&wasm_path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("wac: cannot read {} — {e}", wasm_path.display());
-            std::process::exit(1);
-        }
-    };
-
-    start_v8();
-    let code = run(&manifest, &wasm, &manifest_text);
-    std::process::exit(code);
+    eprintln!("wac: {stem} is not a command, and this build has no compiler in it");
+    std::process::exit(2);
 }
 
 /// What to call once the module is instantiated and its world is built.
@@ -1932,6 +2126,32 @@ struct AsChild {
     file_suffix: Option<String>,
     /// Name every test as it passes, with what it took. `test --verbose`.
     loud: bool,
+    /// **Print each counter after the run — `wac covdump`, with a world.**
+    ///
+    /// `covdump` used to instantiate with an empty imports object and call `main` with no arguments,
+    /// which meant a coverage exercise could declare no capabilities at all: a `main(Core, Cli)` was
+    /// not refused, it *failed to instantiate*, because the imports were absent rather than denied.
+    /// So no exercise could read a corpus off disk, and `packages/json` alone needs a directory
+    /// listing. `issues/system/0221`.
+    ///
+    /// Here instead, so the run is the ordinary program path — the world built from the manifest,
+    /// grants as the manifest declares them — and the counters are read where they still exist.
+    dump_counters: bool,
+    /// The exports to call, in order, **each with its trap caught**. Empty means `main`.
+    ///
+    /// A trap ends the function it is in, so an exercise holding several trapping cases in one `main`
+    /// loses every one after the first — measured: the branch before the trap reads 1 and the one
+    /// after reads 0. `packages/bytes`'s driver has seven such cases and `packages/bignum`'s four,
+    /// and the TypeScript called each from the host in its own `try`. This is that, in the host,
+    /// where the counters are.
+    ///
+    /// **The `i32` is a sweep**: `Some(n)` calls `name(i)` for `i` in `0..n` and `None` calls `name()`
+    /// once with no argument. A named export holds one trapping case, so a sweep of a thousand would
+    /// otherwise need a thousand names — and the cases are not always separable: zstd's coverage driver
+    /// damages a real frame at every byte in turn, over several frames and masks, which is more than a
+    /// hundred thousand calls. Sampling was measured and reaches about half, because "the checks are
+    /// close enough together that stepping over bytes steps over whole branches".
+    cov_exports: Vec<(String, Option<i32>)>,
     /// Where this program's output goes, instead of the terminal.
     out: Option<Arc<Stream>>,
     err: Option<Arc<Stream>>,
@@ -1983,7 +2203,7 @@ fn validate_command(paths: &[String]) -> i32 {
                 // null result and a pending exception agree — `Check failed: maybe_compiled.is_null()
                 // == i_isolate->has_exception()` — which aborts the process with SIGABRT rather than
                 // returning. Nothing else in this file needs one because nothing else compiles twice.
-                // `tools/testCli.test.ts` puts a good module *after* a bad one for exactly this.
+                // `tools/wac/testcli_test.wac` puts a good module *after* a bad one for exactly this.
                 let tc = std::pin::pin!(v8::TryCatch::new(scope));
                 let mut tc = tc.init();
                 if v8::WasmModuleObject::compile(&tc, &bytes).is_none() {
@@ -2178,29 +2398,201 @@ fn counters_of(path: &str) -> Result<Vec<i32>, String> {
     Ok(out)
 }
 
-/// `wac covdump <module.wasm>` — run `main` under the counters and print each one.
+thread_local! {
+    /// Whether a counter table has been printed this process — read by `covdump_command`.
+    ///
+    /// **`covdump`'s exit status is about the dump, not about the program.** Running through the
+    /// ordinary program path means `run_as_with` hands back what `main` returned, and a coverage
+    /// exercise returns an accumulator: `packages/codec`'s came back as 205, which `covreport` read as
+    /// a failed `covdump` and reported with an empty message. The old bare-instantiate `covdump`
+    /// always exited 0 and every caller was written against that.
+    static COUNTERS_PRINTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `<index>\t<count>` per counter, then how many — `wac covdump`'s output, unchanged.
 ///
 /// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
 /// `i`th row describes counter `i`, and a test asserting "the loop ran three times" needs the pair.
 /// The aggregated report `--coverage` prints answers a different question — how much was reached —
 /// and cannot say how often.
+///
+/// Written from inside a live run, because the counters are in the instance and the instance is gone
+/// once `run_as_with` has returned. `issues/system/0221`.
+fn print_counters(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) {
+    let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
+        eprintln!("wac: the module has __cov_init and no __cov_len");
+        return;
+    };
+    let len = len_fn
+        .call(scope, exports.into(), &[])
+        .and_then(|v| v.to_int32(scope))
+        .map(|v| v.value())
+        .unwrap_or(0);
+    let Some(get_fn) = get_export(scope, exports, "__cov_get") else {
+        eprintln!("wac: the module has __cov_len and no __cov_get");
+        return;
+    };
+    for i in 0..len {
+        let idx = v8::Integer::new(scope, i);
+        let n = get_fn
+            .call(scope, exports.into(), &[idx.into()])
+            .and_then(|v| v.to_int32(scope))
+            .map(|v| v.value())
+            .unwrap_or(0);
+        println!("{i}\t{n}");
+    }
+    println!("{len} counter(s)");
+    COUNTERS_PRINTED.with(|p| p.set(true));
+}
+
+/// Call each named export in turn, **each trap caught** — after `main`, not instead of it.
+///
+/// A trap ends the function it is in and nothing else: the instance stays usable, which is what lets
+/// a trapping branch be counted as covered at all. So seven bounds cases are seven calls rather than
+/// seven runs, which is what the TypeScript did from the host and what a single `main` cannot express.
+///
+/// `call` answering `None` *is* the trap and is not an error here. A name that is not an export is,
+/// and is reported after the counters so a mistyped name cannot look like a package with no coverage.
+fn call_for_counters(
+    scope: &mut v8::PinScope,
+    exports: v8::Local<v8::Object>,
+    m: &Manifest,
+    names: &[(String, Option<i32>)],
+) {
+    let mut missing: Vec<&str> = Vec::new();
+    for (name, cases) in names {
+        match get_export(scope, exports, name) {
+            Some(f) => {
+                // **A `TryCatch` per call, and it is not optional** — the same reason
+                // `validate_command` has one per module, one paragraph over: a throw leaves an
+                // exception on the isolate, and the next operation meets V8's own check that a null
+                // result and a pending exception agree. That comment says "nothing else in this file
+                // needs one because nothing else compiles twice"; this calls twelve functions that
+                // are *meant* to trap, which is the same thing for calls.
+                //
+                // Without it `packages/bytes` measured 69 covered on one run and 73 on the next from
+                // an unchanged tree, which is what a swallowed call looks like from the outside.
+                //
+                // **A sweep is the same thing per case, and the `TryCatch` is per *call*.** One for
+                // the whole loop would leave the first trap pending through every case after it,
+                // which is the arrangement the paragraph above says aborts the process.
+                //
+                // The argument is passed only for a sweep. A wac export taking no parameter is a wasm
+                // function of arity zero, and handing it an extra value is harmless; handing a
+                // one-parameter function *no* value is not, so "call it once" and "call it with 0"
+                // stay distinct rather than being the same case spelled two ways.
+                match cases {
+                    None => {
+                        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                        let mut tc = tc.init();
+                        f.call(&tc, exports.into(), &[]);
+                        tc.reset();
+                    }
+                    Some(n) => {
+                        for i in 0..*n {
+                            let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                            let mut tc = tc.init();
+                            let arg = v8::Integer::new(&tc, i);
+                            f.call(&tc, exports.into(), &[arg.into()]);
+                            tc.reset();
+                        }
+                    }
+                }
+            }
+            None => missing.push(name),
+        }
+    }
+    if !missing.is_empty() {
+        // Named and not silent: a mistyped export would otherwise read as a package whose trapping
+        // branches are simply uncovered, which is the same number a real gap gives.
+        eprintln!("wac: {} exports no {}", m.entry, missing.join(", "));
+    }
+}
+
+/// `wac covdump <module.wasm> [export…]` — run an instrumented module and print each counter.
+///
+/// **Through the ordinary program path**, which is the whole of `issues/system/0221`. This used to
+/// instantiate with an empty imports object and call `main` with no arguments, so a coverage exercise
+/// could declare no capabilities: `main(Core, Cli)` was not refused, it *failed to instantiate*,
+/// because the imports were absent rather than denied. No exercise could read a corpus off disk, and
+/// `packages/json`'s needs a directory listing. Now the world is built from the manifest and the
+/// grants are the ones baked into it, exactly as for `wac prog.wasm`.
+///
+/// With export names, each is called with its trap caught — see `call_for_counters`. Without, `main`
+/// runs, and a trap in it still prints what was reached.
 fn covdump_command(rest: &[String]) -> i32 {
     let Some(path) = rest.first() else {
-        eprintln!("usage: wac covdump <module.wasm>");
+        eprintln!("usage: wac covdump <module.wasm> [export|export:<cases>…]");
+        eprintln!("       no export names runs `main`; several are called in order, traps caught");
+        eprintln!("       `name:<n>` calls name(0)…name(n-1), each trap caught, for a sweep");
         return 2;
     };
-    let counters = match counters_of(path) {
-        Ok(c) => c,
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
         Err(e) => {
-            eprintln!("wac: {e}");
+            eprintln!("wac: cannot read {path} — {e}");
             return 1;
         }
     };
-    for (i, n) in counters.iter().enumerate() {
-        println!("{i}\t{n}");
+    // **No manifest is not an error here.** `wac compile` and the trace instrumentation write a plain
+    // module, and `tools/wac/ctcompare_test.wac` and `coverage_test.wac` hand those straight to this
+    // command. A module with no manifest declares no capabilities, so instantiating it with no imports
+    // is not a limitation for it — it is the correct world. That is the path this command used to take
+    // for *everything*, which is what `issues/system/0221` was about.
+    let Some(text) = manifest_in(&bytes) else {
+        if rest.len() > 1 {
+            eprintln!("wac: {path} carries no wac.manifest section, so it has no world to call \
+                       {} in — build it with `wac build`", rest[1..].join(", "));
+            return 2;
+        }
+        match counters_of(path) {
+            Ok(counters) => {
+                for (i, n) in counters.iter().enumerate() {
+                    println!("{i}\t{n}");
+                }
+                println!("{} counter(s)", counters.len());
+                return 0;
+            }
+            Err(e) => {
+                eprintln!("wac: {e}");
+                return 1;
+            }
+        }
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wac: the manifest inside {path} is not one — {e}");
+            return 1;
+        }
+    };
+    // **Parsed here, so a bad count is a usage error rather than a missing export.** Left to
+    // `call_for_counters`, `sweep:many` would come back as "exports no sweep:many" — a message about
+    // the module, naming a fault in the command line.
+    let mut cov_exports: Vec<(String, Option<i32>)> = Vec::new();
+    for a in &rest[1..] {
+        match a.split_once(':') {
+            None => cov_exports.push((a.clone(), None)),
+            Some((name, count)) => match count.parse::<i32>() {
+                Ok(n) if n > 0 => cov_exports.push((name.to_string(), Some(n))),
+                _ => {
+                    eprintln!("wac: {a} — `{count}` is not a case count; a sweep is \
+                               `name:<n>` for some n above zero");
+                    return 2;
+                }
+            },
+        }
     }
-    println!("{} counter(s)", counters.len());
-    0
+    start_v8();
+    let code = run_as_with(&manifest, &bytes, &text, AsChild {
+        dump_counters: true,
+        cov_exports,
+        ..Default::default()
+    });
+    // The program's own status is not this command's answer — see `COUNTERS_PRINTED`. A run that
+    // printed a table succeeded at the thing it was asked to do, whatever the exercise returned;
+    // one that printed none failed, and `run_as_with` has already said why.
+    if COUNTERS_PRINTED.with(|p| p.get()) { 0 } else if code == 0 { 1 } else { code }
 }
 
 /// `wac tracestat <module.wasm>` — one traced run's size, without shipping the journal out.
@@ -2386,6 +2778,8 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // that decision is made below where the manifest is known — see `call_named`.
     let argv = as_child.argv.clone();
     let loud = as_child.loud;
+    let dump_counters = as_child.dump_counters;
+    let cov_exports = as_child.cov_exports.clone();
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -2620,6 +3014,19 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         return run_tests(scope, exports, m, cov.as_deref(), only.as_deref(),
                          file_suffix.as_deref(), loud, core, cli);
     }
+    // **The counters are allocated by a call, not by instantiation.** Skip this and every
+    // instrumented function traps on its first branch, with a message about the program rather than
+    // about the omission.
+    if dump_counters {
+        match get_export(scope, exports, "__cov_init") {
+            Some(f) => { f.call(scope, exports.into(), &[]); }
+            None => {
+                eprintln!("wac: {} carries no counters — was it built with coverage or tracing?",
+                          m.entry);
+                return 1;
+            }
+        }
+    }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
         // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
@@ -2681,10 +3088,20 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             } else {
                 eprintln!("wac: {} trapped: {said}", m.entry);
             }
+            // **The counters still stand after a trap**, and they are the answer `covdump` was asked
+            // for: an exercise whose last case is meant to trap has done its work by the time it does.
+            if dump_counters {
+                call_for_counters(scope, exports, m, &cov_exports);
+                print_counters(scope, exports);
+            }
             return 1;
         }
     };
     let code = r.to_int32(scope).map(|i| i.value()).unwrap_or(0);
+    if dump_counters {
+        call_for_counters(scope, exports, m, &cov_exports);
+        print_counters(scope, exports);
+    }
 
     // **Work scheduled and never run is an error.** `main` returning is the program saying it is
     // done, and a continuation still waiting says it was not — the answer would simply never arrive,
@@ -3882,6 +4299,10 @@ fn dispatch(
                 only: None,
                 file_suffix: None,
                 loud: false,
+                // A spawned child is never a coverage run: `covdump` is the parent's command, and a
+                // child printing its parent's counters would interleave two tables.
+                dump_counters: false,
+                cov_exports: Vec::new(),
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -4024,6 +4445,10 @@ fn dispatch(
                 only: None,
                 file_suffix: None,
                 loud: false,
+                // A spawned child is never a coverage run: `covdump` is the parent's command, and a
+                // child printing its parent's counters would interleave two tables.
+                dump_counters: false,
+                cov_exports: Vec::new(),
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -4550,6 +4975,27 @@ fn dispatch(
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<bool> to answer send with"),
             }
+        }
+        // **End the outbound direction and keep reading** — `issues/system/0215`.
+        //
+        // Only a connected stream has two directions to separate, so a listener, a datagram socket
+        // and a child's queue are left alone rather than half-closed by analogy. The handle stays in
+        // the table: `recv` on it is the whole point, and the socket is closed by `closeSocket` as
+        // before.
+        //
+        // An error from `shutdown` is dropped for the same reason `closeSocket` drops one — a peer
+        // that has already gone is not a failure of this call, and a program that tidies up on every
+        // path should not have to know which paths already did it.
+        Cap::CloseSend => {
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            HOST.with(|h| {
+                if let Some(st) = h.borrow().as_ref() {
+                    if let Some(Sock::Stream(s)) = st.sockets.lock().unwrap().get(&handle) {
+                        let _ = s.shutdown(std::net::Shutdown::Write);
+                    }
+                }
+            });
+            rv.set_undefined();
         }
         Cap::CloseSocket => {
             let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);

@@ -20,7 +20,7 @@ import { withEnv } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { escapeRepo } from "../../../wacpkg/src/cache.wac";
-import { Change, Cli, Core, Exec } from "std/platform.wac";
+import { Change, Cli, Core, Exec, FileResult } from "std/platform.wac";
 
 const string REPO = "https://example.invalid/dep.git";
 const string COMMIT = "0123456789abcdef0123456789abcdef01234567";
@@ -62,6 +62,11 @@ bool lockAt(Cli cli, string dir, string commit) {
 /** The dependency's own checkout, where `cachePath` says it goes. */
 bool checkout(Cli cli, string home, string commit, string body) {
   return put(cli, home + "/cache/git/" + escapeRepo(REPO) + "/" + commit + "/src/lib.wac", body);
+}
+
+/** Any file in the dependency's checkout, by its repository-relative path. */
+bool checkoutFile(Cli cli, string home, string commit, string rel, string body) {
+  return put(cli, home + "/cache/git/" + escapeRepo(REPO) + "/" + commit + "/" + rel, body);
 }
 
 export string test_a_mapped_specifier_resolves_from_the_lock_and_the_cache(Core core, Cli cli) {
@@ -238,5 +243,113 @@ export string test_update_is_the_only_command_that_reaches_the_network(Core core
   }
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
+  return t.report();
+}
+
+/**
+ * `wac update` caches where the *compiler* looks, and says so when it cannot tell where that is.
+ *
+ * **The defect this guards.** `fetch.wac` takes the cache root as `arg(1)` and defaults it to the
+ * literal `.wac`, which is right for running it as a program from a checkout. As a command it left
+ * the fetched tree in `./.wac` while the compiler read `$WAC_HOME` — so `wac update` said *1
+ * fetched*, a second `wac update` said *nothing to fetch; already locked*, and `wac run` said *not in
+ * the cache — run `wac update`*. Three truthful messages and no way out.
+ *
+ * **What this case actually covers, which is less than that.** It drives the branch that resolves
+ * `$WAC_HOME` and asserts the refusal when there is none to resolve. The end-to-end property — that
+ * a fetched tree lands where a later `wac run` finds it — needs the network, so it is checked by
+ * hand rather than here: `wac update` then `wac run` against `github.com/voltrevo/wac` answers 3.
+ * Saying which half is guarded matters, because a green case here is not that demonstration.
+ */
+export string test_update_caches_where_the_compiler_looks(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "updatehome");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+  project(cli, t, dir);
+
+  // Neither variable set, so there is no cache root to derive. Empty rather than absent is the
+  // spelling `withEnv` can express, and `wac_home` treats them the same for exactly this reason.
+  Exec r = withEnv(cli, string[]("WAC_HOME", "HOME"), string[]("", ""),
+                   "/bin/sh",
+                   string[]("-c", "cd " + dir + " && exec " + binaryPath(cli) + " update"));
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+    t.isTrue(r.status != 0, "update with no WAC_HOME and no HOME was accepted: " + said);
+    t.isTrue(contains(said, "nowhere to cache"),
+             "update did not say it had nowhere to cache — " + said);
+  }
+
+  // And it must not have quietly made one beside the project, which is the old behaviour.
+  FileResult stray = cli.readFile(dir + "/.wac/cache").wait();
+  t.isFalse(stray.ok, "update created a cache inside the project rather than under $WAC_HOME");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A mapped `subdir` confines what its code may import — `issues/lang/0169a`, D7 as settled.
+ *
+ * You mapped `src`. The rest of that repository is not part of what you took, and code inside `src`
+ * must not be able to reach it. **The subdir is not the `@/` search boundary** — a dependency's `@/`
+ * means its own repository's root, because that is what its author wrote against — so this cannot be
+ * done by stopping the walk. It is a rule about the resolved path.
+ *
+ * **One case per specifier form, and that is the point rather than thoroughness for its own sake.**
+ * When this was found, `@/outside/bad.wac` and `../outside/bad.wac` both reached, so a fix aimed at
+ * `@/` alone would have gone green over an open hole. They are checked together here so that a fix
+ * has to be where every form meets the filesystem.
+ */
+export string test_a_mapped_subdir_cannot_import_outside_itself(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "confine");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+  string home = dir + "/home";
+  project(cli, t, dir);
+  t.isTrue(lockAt(cli, dir, COMMIT), "the lock");
+
+  // A manifest at the *repository* root, so `@/` inside the dependency means that root and the
+  // escape is expressible at all. Without it these cases would pass for the wrong reason.
+  t.isTrue(checkoutFile(cli, home, COMMIT, "wac.json5", "{}\n"), "the dependency's manifest");
+  t.isTrue(checkoutFile(cli, home, COMMIT, "outside/bad.wac",
+                        "export i32 bad() { return 66; }\n"), "the file outside the subdir");
+  t.isTrue(checkoutFile(cli, home, COMMIT, "src/inside.wac",
+                        "export i32 good() { return 2; }\n"), "a file inside it");
+
+  string[] escapes = string[]("@/outside/bad.wac", "../outside/bad.wac");
+  for (i32 i = 0; i < escapes.len(); i++) {
+    t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
+                          "import { bad } from \"" + escapes[i] + "\";\n" +
+                          "export i32 two() { return bad(); }\n"), "lib importing " + escapes[i]);
+    Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+    t.isTrue(r.ran(), "wac did not run — " + r.error);
+    if (r.ran()) {
+      string said = string.fromBytes(r.stderr) + string.fromBytes(r.stdout);
+      // 71 is `bad() + 5`. Seeing it means the dependency reached out of the subdir it was mapped at.
+      t.isTrue(r.status != 71, escapes[i] + " reached outside the mapped subdir");
+      t.isTrue(r.status != 0, escapes[i] + " was accepted — " + said);
+      t.isTrue(contains(said, "outside"),
+               "the refusal did not say the import leaves the mapping — " + said);
+    }
+  }
+
+  // **And the half that must keep working.** Confining is only correct if it does not also break an
+  // ordinary import within the mapped directory.
+  t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
+                        "import { good } from \"@/src/inside.wac\";\n" +
+                        "export i32 two() { return good(); }\n"), "lib importing inside the subdir");
+  Exec ok = wacc(cli, home, dir, "run", "src/main.wac");
+  t.isTrue(ok.ran(), "wac did not run — " + ok.error);
+  if (ok.ran()) {
+    t.eqI32(ok.status, 7, "an import inside the mapped subdir was refused: " +
+                          string.fromBytes(ok.stderr));
+  }
+  cli.remove(dir, true).wait();
   return t.report();
 }

@@ -1,0 +1,106 @@
+// **A program that asks for nothing runs with nothing** — on both host binaries.
+//
+// `[§wac-cli-nocaps-5hq2xn9]`
+//
+//     export i32 main() { return 3; }
+//
+// `wac run` answered *no struct Core in the manifest* — a sentence about the host's own bookkeeping,
+// about a program that is right. A `main` taking no capabilities declares none, so the manifest has no
+// `Core` to find, and the world was built before anyone asked whether the program wanted one.
+//
+// The wasmtime host had the same two defects: it built `Core` and `Cli` unconditionally and always
+// passed both, so a `main` declaring nothing was refused for a missing `Core`, and a `main(Core core)`
+// alone would have failed on arity. Both hosts read the manifest's `main` params now, which is why both
+// are asked here.
+//
+// And the other side of the same change: silence about a missing `Core` must not become silence about a
+// `main` that *wanted* one. `Page` is browser-only, so no host binary builds it, and the answer has to
+// name the capability rather than report a missing manifest struct or trap inside.
+//
+// ## Host-side until 2026-08-20 — `issues/system/0161`
+//
+// Three of `tools/runCli.test.ts`'s four tests, which spawned the two binaries and read what they said.
+// The fourth stays there: it builds a **Deno application** with `buildApp` and runs that, so its
+// subject is `packages/platform/build.ts` and the JavaScript world it makes.
+//
+// The wasmtime program is built with `wac build` rather than `packages/platform/native.ts`, which the
+// TypeScript used. The two produce byte-identical output — measured on `wc.wac` and `wacc.wac`,
+// `issues/system/0214` — so this is the supported builder rather than a second one.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, nativeBinaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
+
+const string NOCAPS = "export i32 main() { return 3; }\n";
+
+Exec wac(Cli cli, string[] args) {
+  return cli.exec(binaryPath(cli), args, u8[0]()).wait();
+}
+
+string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.stderr); }
+
+/**
+ * A scratch directory holding one program.
+ *
+ * **Inside the repository**, because an import specifier is relative — `spec/spec/imports.md`: "Import
+ * paths are relative, using `./` or `../` prefixes" — so a program in `/tmp` cannot reach
+ * `packages/platform` at all. Written from `/tmp` first, the `Page` test below passed on a *compile*
+ * failure instead of on the host's answer, which is a pass that would survive the host losing the rule
+ * entirely. `scratch` also keeps it under `.cache`, out of the way of every walker over this
+ * repository's own files.
+ */
+string programIn(Cli cli, T t, string name, string src) {
+  string dir = scratch(cli, name);
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change w = cli.writeFile(dir + "/p.wac", src.toBytes()).wait();
+  t.isTrue(w.ok(), "could not write the program — " + w.message);
+  return dir;
+}
+
+export string test_wac_run_takes_a_main_with_no_capabilities_and_returns_its_answer(Core core, Cli cli) {
+  T t = T.create();
+  string dir = programIn(cli, t, "runcli-nocaps", NOCAPS);
+
+  Exec r = wac(cli, string[]("run", dir + "/p.wac"));
+  t.isTrue(!contains(said(r), "manifest"),
+           "a program that declares nothing is not a bookkeeping problem: " + said(r));
+  t.eqI32(r.status, 3, "and its answer is the exit status: " + said(r));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_wasmtime_host_takes_one_too(Core core, Cli cli) {
+  T t = T.create();
+  string wacland = nativeBinaryPath(core, cli, "runcli");
+  if (wacland == "") { return t.report(); }
+
+  string dir = programIn(cli, t, "runcli-native", NOCAPS);
+  Exec built = wac(cli, string[]("build", dir + "/p.wac", "-o", dir + "/p", "--quiet"));
+  t.eqI32(built.status, 0, "could not build the module — " + said(built));
+  if (built.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec r = cli.exec(wacland, string[](dir + "/p.wasm"), u8[0]()).wait();
+  t.isTrue(!contains(said(r), "manifest"), "the same on the second host: " + said(r));
+  t.eqI32(r.status, 3, "and the same answer: " + said(r));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_main_naming_a_capability_this_host_cannot_build_still_says_so(Core core, Cli cli) {
+  T t = T.create();
+  string dir = programIn(cli, t, "runcli-page",
+    "import { Page } from \"std/platform.wac\";\n" +
+    "export i32 main(Page page) { return 0; }\n");
+
+  Exec r = wac(cli, string[]("run", dir + "/p.wac"));
+  t.isTrue(r.status != 0, "a capability no host binary builds is not a success: " + said(r));
+  // Names the capability, rather than reporting a missing manifest struct or trapping inside.
+  t.isTrue(contains(said(r), "Page"), "and says which one: " + said(r));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

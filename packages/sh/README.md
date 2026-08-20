@@ -6,7 +6,7 @@ shell does differently from bash is a bug in this shell, and that is what makes 
 reading — [The oracle is bash](#the-oracle-is-bash) says why nothing weaker would do.
 
 ```sh
-deno task app packages/sh/src/sh.wac --allow-read --allow-env -- -c 'seq 1 10 | grep 1 | wc -l'
+wac run --allow-read --allow-env packages/sh/src/sh.wac -c 'seq 1 10 | grep 1 | wc -l'
 deno task app:build packages/sh/src/sh.wac --allow-read --allow-write --allow-env -o wacsh
 ./wacsh script.sh
 ```

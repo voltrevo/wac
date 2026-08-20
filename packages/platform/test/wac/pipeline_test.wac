@@ -8,19 +8,27 @@
 // The children are platform's own `wc.wac` rather than `box`, so platform's tests do not depend on a
 // package that depends on platform.
 //
-// ## The socket half of this file is still in TypeScript, and not because it is a harness
+// ## The socket half arrived with the capability it was waiting for — 2026-08-20
 //
-// `pipeline.test.ts` keeps its second test — `inetd` accepting a connection and handing it to a `wc`
-// child. That one needs the *client* to say it is done speaking and then read the reply, and a wac
-// program cannot: `closeSocket` ends the socket in both directions, so the answer can never come
-// back, and `wc` writes nothing before EOF. `issues/system/0215` is the missing half-close;
-// `Deno.Conn.closeWrite` is standing in for a capability rather than being the subject.
+// `pipeline.test.ts` kept its second test — `inetd` accepting a connection and handing it to a `wc`
+// child — because the *client* has to say it is done speaking and then read the reply, and a wac
+// program could not: `closeSocket` ends the socket in both directions, so the answer could never come
+// back, and `wc` writes nothing before EOF. `Deno.Conn.closeWrite` was standing in for a capability
+// rather than being the subject, which is what `issues/system/0215` was.
+//
+// `cli.closeSend` is that capability, so the case is below and the TypeScript file is gone. It is
+// worth knowing that the assertion here would pass *without* the half-close in one specific way: if
+// `wc` answered before EOF. It does not — that is why the reply is `1 3 14` and not empty — so a
+// `closeSend` that silently did nothing fails this, and a `closeSend` that closed both directions
+// fails it too, with an empty read instead of a wrong one.
 //
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec, Socket } from "std/platform.wac";
 import { trimmed } from "../../../wactest/src/strings.wac";
+import { Daemon, start, stop, freePort, waitForLogWithin, logOf } from "../../../wactest/src/daemon.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
@@ -62,6 +70,84 @@ export string test_stdin_through_two_children_and_out_again(Core core, Cli cli) 
   // bytes went *through* the first child rather than around it.
   t.eqStr(trimmed(string.fromBytes(r.stdout)), "1 3 7",
           "stderr was: " + string.fromBytes(r.stderr));
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A child serving a socket it cannot see, with the client half in wac.
+ *
+ * `inetd` listens, accepts, and hands the connection to a `wc` worker that knows nothing about
+ * sockets — the claim being that a socket and a child's streams are the same thing to `recv`, `send`
+ * and `waitAny`. What makes it a *test of the half-close* is that `wc` counts to the end of its input
+ * before saying anything, so the reply exists only if the client managed to signal end-of-input
+ * without also tearing down the direction the reply comes back on.
+ */
+export string test_a_child_serves_a_socket_it_cannot_see(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "inetd");
+  string inetd = dir + "/inetd";
+  string child = dir + "/wc.worker.js";
+
+  Exec bi = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/inetd.wac",
+             "--allow-read", "--allow-net", "-o", inetd), u8[0]()).wait();
+  t.isTrue(bi.ran() && bi.status == 0, "inetd.wac built — " + string.fromBytes(bi.stderr));
+  Exec bc = cli.exec("deno",
+    string[]("run", "-A", "packages/platform/build.ts", "packages/platform/example/wc.wac",
+             "--worker", "-o", child), u8[0]()).wait();
+  t.isTrue(bc.ran() && bc.status == 0, "wc.wac built as a worker — " + string.fromBytes(bc.stderr));
+  if (!bi.ran() || bi.status != 0 || !bc.ran() || bc.status != 0) {
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+
+  i32 port = freePort(cli);
+  t.isTrue(port > 0, "no free port to give inetd");
+  if (port <= 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Daemon d = start(cli, inetd + " " + itoa(port) + " " + child, dir + "/inetd.log");
+  t.isTrue(d.ok(), "inetd did not start — " + d.error);
+  if (!d.ok()) { cli.remove(dir, true).wait(); return t.report(); }
+
+  // **Its log line, not a connection to its port.** `waitForPortWithin` probes by connecting, and
+  // `inetd` accepts: the probe becomes a client, gets handed to a `wc` that sees immediate EOF, and
+  // the real connection arrives into the middle of that. It cost one debugging round — the symptom
+  // was `Connection reset by peer` on a socket that works perfectly by hand. The TypeScript this
+  // replaces said the same thing about the same server: *"polling the port instead would connect
+  // before `accept` and be indistinguishable from a hang."*
+  bool up = waitForLogWithin(core, cli, d, "listening", 20000);
+  t.isTrue(up, "inetd never listened — " + logOf(cli, d));
+  if (!up) { stop(cli, d); cli.remove(dir, true).wait(); return t.report(); }
+
+  Socket s = cli.connect("127.0.0.1", port).wait();
+  t.isTrue(s.error == "", "could not connect — " + s.error);
+  if (s.error != "") { stop(cli, d); cli.remove(dir, true).wait(); return t.report(); }
+
+  cli.send(s.handle, "one two three\n".toBytes()).wait();
+  // **The half-close, and the whole reason this case could not be written before.** `wc` answers
+  // only once its input ends; `closeSocket` here would end the direction the answer comes back on.
+  cli.closeSend(s.handle);
+
+  // Read to the peer's own close, since the reply may arrive in more than one piece. `End` is the
+  // peer closing its side, which is the half-close in the other direction and how this loop stops.
+  string reply = "";
+  string why = "";
+  bool reading = true;
+  while (reading) {
+    match (cli.recv(s.handle).wait()) {
+      case Data(got): { reply = reply + string.fromBytes(got); }
+      case End: { reading = false; }
+      case Failed(e): { reading = false; why = e; }
+    }
+  }
+  cli.closeSocket(s.handle);
+  t.eqStr(why, "", "the read failed");
+
+  // `wc` of "one two three\n" is "1 3 14" — one line, three words, fourteen bytes.
+  t.eqStr(trimmed(reply), "1 3 14", "reply was \"" + reply + "\"; inetd said " + logOf(cli, d));
+
+  stop(cli, d);
   cli.remove(dir, true).wait();
   return t.report();
 }
