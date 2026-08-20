@@ -213,3 +213,48 @@ found i32*.
 **Why the initialiser check does not fire is not yet known.** `typeOfE` answers `i32`, the slot is
 `i64`, and the rule that catches `i32 n = s;` exists — so something on the packed path bypasses it.
 That is the next thing to find, and it should be found before any rule is tightened.
+
+## 2026-08-20, later: all four are refused by the checker
+
+The table at the top now reads the same for both compilers:
+
+    a02  return s[0] - 1;    error: this operator does not take an operand of that kind
+    a03  i32 n = s[0];       error: initialiser does not match the declared type
+    a04  return b ? s : 1;   error: the two branches of a ternary have unrelated types
+    a08  return p.v();       error: this is not something that can be called
+                                    (P.v is a field of type i32, not a method)
+
+**Every one was a rule that already existed and could not see its input.** Not one needed a new
+check:
+
+- `typeOfExpr`'s `Index` arm answered unknown for anything not an *array*, so `s[0]` had no type —
+  a02, a03. `issues/lang/0159`.
+- The field-called-as-a-method arm returned early for a field whose type is not a funcref, because
+  both its guards were `heldArity >= 0` — a08. `issues/lang/0165`.
+- The ternary-branches rule was skipped whenever *either* branch was a literal, on the grounds that a
+  literal takes the other's type. True when it can; `1` cannot be a `string` — a04. The typing walk
+  immediately above already asked `literalFits` for the same pair, so the two disagreed with each
+  other.
+
+That is the shape of this issue, and it is worth stating plainly because it is not what the title
+suggests: **wacc's rules were mostly there.** What was missing was the type information they needed,
+and each gap silenced several rules at once. Adding rules would have been the wrong instinct.
+
+### Nets, kept
+
+The two that came out of the failed first attempt stay, because they answer a different question —
+*whatever the reason, is the artefact what you asked for*:
+
+- an export the source declared and the module lacks fails the build, naming the function;
+- `wac build` validates the module it wrote.
+
+Both caught cases the checker did not, and `0154`'s symptom is now caught by the second.
+
+### Corpus
+
+`spec/cases/0205`–`0208`, in the corpus both compilers read: **210 of 210 met by wacc**, and the
+reference's harness passes. Checked for false refusals across 23 packages after each rule.
+
+**Still open here:** `""` remains an ordinary value meaning "I don't know" — 53 `typeOfE` call sites,
+15 of which guard it. Nothing above changes that, and it is the mechanism by which the next gap will
+be silent too.
