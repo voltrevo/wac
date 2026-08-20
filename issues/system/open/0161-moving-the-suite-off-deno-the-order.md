@@ -1841,6 +1841,23 @@ Two things came out of it that were not the port:
       field read once per pushed byte in gzip's inner loops, and `reserve()` checks for one byte to
       keep `push` to a single comparison. The structure stands; its stated reason did not.
 
+    A second pass over the same grep, probing each claim rather than reading it — **three of six were
+    false, one was accurate, and two were narrower than they looked**, which is the useful spread:
+
+    | claim | probe | verdict |
+    |---|---|---|
+    | `hostfs.wac`: no escape for a NUL in a string literal | `"a\0b".toBytes()` | **false** — three bytes, zero in the middle, and `spec/spec/strings.md` lists `\0` in a tagged example `[§wac-str-esc-h9qm3v7]` |
+    | `gzip/tables.wac`: no top-level constants | `const i32[] T = i32[](…)` at file scope | **false**, and hoisted — measured above |
+    | `bytes/buf.wac`: no generics | `Vec<i32>`, `Vec<u8[]>` | **false** — `core/vec.wac` is `Vec<T>` |
+    | `json/stringify.wac`: no `\b` or `\f` character escape | `"a\bb"` | **accurate** — *unknown escape*, and the spec's list is `\n \t \0 \\ \"` |
+    | `quic/packet.wac`: no unsigned shift by a variable amount "to spare here" | `u32 >> u32` compiles | **narrower than it reads** — the sentence is about the i64 context it sits in, and stands |
+    | `platform/stream.wac`: no nullable struct fields "worth using" | `i32[]?` field compiles | **a judgement, not a capability** — left alone |
+
+    Two lessons rather than one. The first is that probing is cheap: six claims, five one-file builds
+    and a benchmark. The second is that **an expired constraint does not condemn the code that followed
+    from it** — all three false claims sit above structures that are right for other reasons, and in
+    two cases the better reason was already written two lines below the wrong one.
+
     The general form is worth stating because this is now the third time today a recorded constraint
     turned out to have expired — `packages/url`'s seed sensitivity and `packages/fmt`'s were the
     others. **A comment explaining why something cannot be done is evidence about the day it was
