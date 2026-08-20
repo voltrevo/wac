@@ -8,6 +8,38 @@
 - **Note:** filed as "a wide, load-sensitive tail" and corrected twice as the failures were read. Two of
   the five were real defects. Read the table before quoting the rate.
 
+## A sixth failure, read rather than counted — 2026-08-20 (agent-b)
+
+`packages/box/test/sealing.test.ts` turned a gate red on *a program nobody spawned still gets the host*,
+and passed on its own immediately afterwards — the shape this issue warns about quoting as a rate. The
+log named the cause exactly:
+
+    assertEquals failed — /usr/bin/timeout: failed to run command
+      ‘/tmp/wac-sealing-…/box’: Text file busy
+      got: ""  want: "on the host\n"
+
+**It is ETXTBSY — wac-mono 0074 — and the retry written for it could not fire.** `harness/spawnRetry.ts`
+wraps `Deno.Command` and retries when `spawn`, `output` or `outputSync` *throws* "Text file busy".
+`harness/bounded.ts` does not spawn the target: it spawns `timeout` and passes the target as an
+argument. Deno's spawn succeeds, `timeout`'s `execve` fails, the message arrives on stderr with exit
+126, and nothing throws. `isBusy` is never asked.
+
+The import was present — `tools/spawnretry.test.ts` checks that every build-and-spawn file has it, and
+this one does. **A guard that keys on an exception is a guard on the exec staying inside the process**,
+and the bound moved it one process out. The diagnostic would also have looked in the wrong place: the
+wrapper records the path it spawned, which is `"timeout"`.
+
+Fixed, and made checkable rather than waited for: `harness/boundedBusy.test.ts` holds a binary open for
+writing on purpose, so the window is arranged instead of raced. Four cases — held throughout (the answer
+must say `busy`, not `out: ""`), released mid-retry (must get through), a program that prints those words
+itself (must *not* be called busy — the status is checked as well as the text), and an undisturbed run.
+The ETXTBSY policy is one module now, `harness/etxtbsy.ts`, because it is recognised two ways and two
+copies of the message and the budget is how they drift.
+
+**So this one was neither a defect in the code under test nor a race in it**, which makes three
+categories in this issue rather than two: real defects, load-sensitive bounds, and a guard that was
+looking in the wrong place. All 47 tests across the thirteen files that stand on `bounded` pass.
+
 ## The measurement
 
 Twenty-eight `tools/push.sh` runs on 2026-08-18, one machine, one agent, nothing else pushing:

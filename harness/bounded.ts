@@ -29,6 +29,8 @@
  * One minute rather than ten seconds, for the reason in the header. Nothing here takes a minute when
  * the machine is idle; what takes a minute is a machine at three times its core count.
  */
+import { ATTEMPTS, ranBusy, WAIT_MS } from "./etxtbsy.ts";
+
 export const DEFAULT_SECONDS = 60;
 
 /** What a bounded run answers: the program's own result, or the fact that it never gave one. */
@@ -42,6 +44,14 @@ export type Bounded = {
   seconds: number;
   /** This run is a second attempt: the first hit a shorter bound and was asked again. */
   retried?: boolean;
+  /**
+   * The target could not be executed because something held it open for writing — ETXTBSY.
+   *
+   * A separate fact from every other field, for the reason `hung` is: there is no answer here. The
+   * program did not print nothing, it never ran, and a caller comparing `out` against an expectation
+   * is comparing against a condition rather than a result.
+   */
+  busy?: boolean;
 };
 
 /**
@@ -60,22 +70,43 @@ export function bounded(
   args: string[],
   opts: { cwd?: string; env?: Record<string, string>; stdin?: "null" | "inherit" } = {},
 ): Bounded {
-  const r = new Deno.Command("timeout", {
-    args: [String(seconds), cmd, ...args],
-    cwd: opts.cwd,
-    stdin: opts.stdin ?? "null",
-    stdout: "piped",
-    stderr: "piped",
-    ...(opts.env === undefined ? {} : { env: opts.env, clearEnv: true }),
-  }).outputSync();
   const d = new TextDecoder();
-  return {
-    code: r.code,
-    out: d.decode(r.stdout),
-    err: d.decode(r.stderr),
-    hung: r.code === 124,
-    seconds,
-  };
+  // **Retried on ETXTBSY, which `harness/spawnRetry.ts` cannot see from here.** That wrapper catches a
+  // *thrown* "Text file busy" from Deno's own spawn; this does not spawn the target, it spawns
+  // `timeout` and hands the target over as an argument. So Deno's spawn succeeds and it is `timeout`
+  // whose `execve` fails, on stderr, with a status nobody chose. Nothing throws and the retry never
+  // turns over — which turned a gate red in `packages/box/test/sealing.test.ts` reading as a program
+  // that printed nothing. `harness/boundedBusy.test.ts` holds the binary open on purpose so both
+  // halves of this are checked rather than waited for.
+  for (let attempt = 1;; attempt++) {
+    const r = new Deno.Command("timeout", {
+      args: [String(seconds), cmd, ...args],
+      cwd: opts.cwd,
+      stdin: opts.stdin ?? "null",
+      stdout: "piped",
+      stderr: "piped",
+      ...(opts.env === undefined ? {} : { env: opts.env, clearEnv: true }),
+    }).outputSync();
+    const err = d.decode(r.stderr);
+    const busy = ranBusy(r.code, err);
+    if (busy && attempt < ATTEMPTS) {
+      pauseSync(WAIT_MS);
+      continue;
+    }
+    return {
+      code: r.code,
+      out: d.decode(r.stdout),
+      err,
+      hung: r.code === 124,
+      seconds,
+      ...(busy ? { busy: true } : {}),
+    };
+  }
+}
+
+/** Sleep without awaiting, because the synchronous callers cannot. Same device as `spawnRetry`. */
+function pauseSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /**
@@ -174,22 +205,33 @@ export async function boundedAsync(
   args: string[],
   opts: { cwd?: string; env?: Record<string, string>; stdin?: "null" | "inherit" } = {},
 ): Promise<Bounded> {
-  const r = await new Deno.Command("timeout", {
-    args: [String(seconds), cmd, ...args],
-    cwd: opts.cwd,
-    stdin: opts.stdin ?? "null",
-    stdout: "piped",
-    stderr: "piped",
-    ...(opts.env === undefined ? {} : { env: opts.env, clearEnv: true }),
-  }).output();
   const d = new TextDecoder();
-  return {
-    code: r.code,
-    out: d.decode(r.stdout),
-    err: d.decode(r.stderr),
-    hung: r.code === 124,
-    seconds,
-  };
+  // The same ETXTBSY retry as the synchronous twin, and awaiting rather than blocking — see there for
+  // why the wrapper in `spawnRetry.ts` cannot reach this.
+  for (let attempt = 1;; attempt++) {
+    const r = await new Deno.Command("timeout", {
+      args: [String(seconds), cmd, ...args],
+      cwd: opts.cwd,
+      stdin: opts.stdin ?? "null",
+      stdout: "piped",
+      stderr: "piped",
+      ...(opts.env === undefined ? {} : { env: opts.env, clearEnv: true }),
+    }).output();
+    const err = d.decode(r.stderr);
+    const busy = ranBusy(r.code, err);
+    if (busy && attempt < ATTEMPTS) {
+      await new Promise((res) => setTimeout(res, WAIT_MS));
+      continue;
+    }
+    return {
+      code: r.code,
+      out: d.decode(r.stdout),
+      err,
+      hung: r.code === 124,
+      seconds,
+      ...(busy ? { busy: true } : {}),
+    };
+  }
 }
 
 /**
