@@ -58,6 +58,22 @@ export struct Pin {
   string file;
   i32 line;
   string snippet;
+  /**
+   * **Whether no input can reach it, or whether we merely failed to build one.**
+   *
+   * Two different claims, and `packages/zstd/cov.ts` is where the distinction was written down:
+   *
+   *   - `true` — no input reaches it. A guard that cannot fire is still worth keeping when what it
+   *     guards is worse than a wrong answer, but counting it as covered would make the number
+   *     meaningless;
+   *   - `false` — reachable, and nobody has constructed the input. That is a *gap*, not an exemption,
+   *     and saying so is the whole point of the distinction. Reading a list of "unreachable" branches
+   *     that quietly includes merely-difficult ones is how a coverage number stops meaning anything.
+   *
+   * Both are held to the same two-way contract: if a `proven: false` entry becomes covered, somebody
+   * built the input and the entry has to go — which is the one failure here that is good news.
+   */
+  bool proven;
   string why;
 }
 
@@ -197,6 +213,10 @@ export struct Measured {
  * exercise that reads a corpus says so and one that does not cannot. `exports` are called after `main`
  * with a trap caught around each, which is how a package's trapping branches are reached at all
  * (`issues/system/0221`).
+ *
+ * **An export named `name:<n>` is a sweep**: `covdump` calls `name(0)` through `name(n-1)`, each trap
+ * caught. One name holds one trapping case, so a driver that damages a real frame at every byte needs
+ * this rather than a name per byte — `spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`.
  */
 export Measured measure(Core core, Cli cli, string entry, string[] grants, string[] exports) {
   Measured none = Measured(Point[1](fill: Point(0, "", 0, 0, "")), 0, i32[1]());
@@ -483,11 +503,19 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
       core.log("");
       core.log(where + " is listed as unreached but was covered. The reason given was:");
       core.log("  " + u.why);
-      core.log("  That reason no longer holds — drop the entry.");
+      // **A failure either way, and only one of them is bad news.** A proven entry that is covered was
+      // wrong about the code; an unproven one that is covered means somebody built the input nobody
+      // had, which is the outcome the entry was recording the absence of. Both have to go, so both
+      // fail — a ledger that quietly dropped the second kind would stop being a record of what is
+      // still missing.
+      core.log(u.proven
+        ? "  That reason no longer holds — drop the entry."
+        : "  The gap has been closed — drop the entry, and say so.");
       failed = true;
     } else {
       core.log("");
-      core.log("excluded as unreachable: " + where + "  " + u.snippet);
+      core.log((u.proven ? "excluded as unreachable: " : "reachable, NOT COVERED: ") + where +
+               "  " + u.snippet);
       core.log("  " + u.why);
     }
   }

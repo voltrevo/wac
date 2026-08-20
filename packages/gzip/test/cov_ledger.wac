@@ -37,24 +37,28 @@ const string PREFIX = "packages/gzip/src/";
  * Each is a guard that is dead *given this package's callers* and correct on its own terms. That
  * distinction is the whole content of the list: a guard kept because the code around it might change
  * is not the same as a guard nobody needs.
+ *
+ * All three are `proven` — no input reaches them. gzip has no entry of the other kind, which is the
+ * one worth watching for: `proven: false` says "reachable, and nobody built the input", and a list
+ * that blurred the two would let a gap sit among the exemptions.
  */
 Pin[] pins() {
   return Pin[](
-    Pin("packages/gzip/src/inflate.wac", 136, "while (left > 0 && this.bitCount >= 8) {",
+    Pin("packages/gzip/src/inflate.wac", 136, "while (left > 0 && this.bitCount >= 8) {", true,
         "copyBytes is only ever called straight after alignByte and two readBits(16). alignByte " +
         "leaves a multiple of 8 bits, fill only ever adds whole bytes, and skip removes exactly 16 " +
         "— so the bit buffer is empty by the time this runs, and this loop drains nothing. Kept " +
         "because it is what makes copyBytes correct on its own terms rather than by the habits of " +
         "its one caller: a second caller that aligned differently would otherwise read the payload " +
         "from the wrong offset, silently."),
-    Pin("packages/gzip/src/inflate.wac", 583, "if (di >= 30) { trap; }",
+    Pin("packages/gzip/src/inflate.wac", 583, "if (di >= 30) { trap; }", true,
         "Both distance decoders are built with at most 30 symbols — the fixed one with exactly 30, " +
         "the dynamic one with hdist, already bounded at 30 — so decode cannot return 30. A stream " +
         "using distance code 30 or 31 traps inside decode for want of a matching code, which " +
         "`trap_a_distance_code_the_fixed_table_does_not_define` in cov_exercise.wac shows. Kept as " +
         "defence: it stops being dead if the fixed distance table is widened to the 32 patterns 5 " +
         "bits allow."),
-    Pin("packages/gzip/src/gzip.wac", 276, "if (w.out.len > 0) { write(w.out.take()); }",
+    Pin("packages/gzip/src/gzip.wac", 276, "if (w.out.len > 0) { write(w.out.take()); }", true,
         "The `else` — a completed block that left the writer with no whole byte to hand on. A block " +
         "cannot be that small: deflate's header is three bits and the smallest thing that can " +
         "follow is a fixed-Huffman end-of-block symbol at seven, so ten bits at minimum, and the " +

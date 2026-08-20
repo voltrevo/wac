@@ -55,7 +55,7 @@ Point[] twoPoints(string dir) {
 i32[] oneEach() { return i32[](7, 0); }
 
 /** No pins at all, for the cases that are about what happens without a ledger. */
-Pin[] noPins() { return Pin[0](fill: Pin("", 0, "", "")); }
+Pin[] noPins() { return Pin[0](fill: Pin("", 0, "", true, "")); }
 
 export string test_an_uncovered_point_with_no_entry_is_named(Core core, Cli cli) {
   T t = T.create();
@@ -79,7 +79,7 @@ export string test_a_pinned_uncovered_point_is_accounted_for(Core core, Cli cli)
   string dir = subject(cli, t, "covledger-pinned");
   string f = dir + "/subject.wac";
 
-  Pin[] pins = Pin[](Pin(f, 2, UNCOVERED_SNIPPET, "a marker, never called."));
+  Pin[] pins = Pin[](Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called."));
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins);
   t.isTrue(!failed, "a pinned uncovered point with a matching snippet is the good case");
 
@@ -96,8 +96,8 @@ export string test_a_pin_on_a_covered_point_fails(Core core, Cli cli) {
   // is not stale in the drifted sense — its *reason* has stopped being true, and that is a failure
   // because an exemption nobody re-derives is how a ledger comes to describe a program that changed.
   Pin[] pins = Pin[](
-    Pin(f, 2, UNCOVERED_SNIPPET, "a marker, never called."),
-    Pin(f, 1, COVERED_SNIPPET, "claims this is unreachable, and it is not."));
+    Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called."),
+    Pin(f, 1, COVERED_SNIPPET, true, "claims this is unreachable, and it is not."));
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins);
   t.isTrue(failed, "a pin on a covered point must fail: the reason has stopped holding");
 
@@ -112,7 +112,7 @@ export string test_a_pin_whose_line_moved_fails(Core core, Cli cli) {
 
   // The snippet is real and the line is not the one holding it — which is what adding a comment above
   // a pinned line does, silently, and the reason a pin is keyed on text as well as a number.
-  Pin[] pins = Pin[](Pin(f, 1, UNCOVERED_SNIPPET, "pinned one line early."));
+  Pin[] pins = Pin[](Pin(f, 1, UNCOVERED_SNIPPET, true, "pinned one line early."));
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins);
   t.isTrue(failed, "a pin whose line no longer holds its snippet must fail");
 
@@ -129,7 +129,7 @@ export string test_an_unreadable_pin_is_an_error_not_a_pass(Core core, Cli cli) 
   // against, and the only safe answer is to say so. Reading the snippet check as "no match, therefore
   // drifted" would be a diagnosis it cannot make; reading it as "no file, therefore fine" is how a
   // renamed source silently drops every exemption in it.
-  Pin[] pins = Pin[](Pin(dir + "/no-such.wac", 1, UNCOVERED_SNIPPET, "names a file that is not there."));
+  Pin[] pins = Pin[](Pin(dir + "/no-such.wac", 1, UNCOVERED_SNIPPET, true, "names a file that is not there."));
   bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins);
   t.isTrue(failed, "a pin on a file that cannot be read must fail");
 
@@ -156,6 +156,45 @@ export string test_the_prefix_and_the_test_rule_decide_what_counts(Core core, Cl
   string[] out = string[4](fill: "");
   t.eqI32(uncoveredLines(inTest, 2, i32[](0, 0), "tools/wac/", out), 0,
           "neither a `_test.wac` name nor a `/test/` path is counted");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * **The two kinds of entry, and the failure that is good news.**
+ *
+ * `proven: true` says no input reaches it; `proven: false` says it is reachable and nobody built the
+ * input. Both are accounted for while the point stays uncovered, and both fail once it is covered —
+ * but for opposite reasons, and the wording is the only place that shows: a proven entry was wrong
+ * about the code, an unproven one has had its gap closed by somebody and is now a record of nothing.
+ *
+ * A ledger that let the second kind pass silently would stop being a list of what is still missing,
+ * which is the whole reason `packages/zstd/cov.ts` kept the flag rather than calling both unreachable.
+ */
+export string test_an_unproven_pin_is_accounted_for_while_the_gap_is_open(Core core, Cli cli) {
+  T t = T.create();
+  string dir = subject(cli, t, "covledger-unproven");
+  string f = dir + "/subject.wac";
+
+  Pin[] pins = Pin[](Pin(f, 2, UNCOVERED_SNIPPET, false, "reachable; nobody has built the input."));
+  bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins);
+  t.isTrue(!failed, "an open gap that is written down is not a failure");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_an_unproven_pin_on_a_covered_point_fails(Core core, Cli cli) {
+  T t = T.create();
+  string dir = subject(cli, t, "covledger-closed");
+  string f = dir + "/subject.wac";
+
+  Pin[] pins = Pin[](
+    Pin(f, 2, UNCOVERED_SNIPPET, true, "a marker, never called."),
+    Pin(f, 1, COVERED_SNIPPET, false, "reachable; nobody has built the input."));
+  bool failed = ratchet(core, cli, twoPoints(dir), 2, oneEach(), dir + "/", pins);
+  t.isTrue(failed, "a gap that has been closed must fail so the entry goes");
 
   cli.remove(dir, true).wait();
   return t.report();
