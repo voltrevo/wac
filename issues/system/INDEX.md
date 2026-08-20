@@ -20,7 +20,6 @@ record of what has been fixed and why.
 | [0203](open/0203-the-gate-fails-one-run-in-six-and-never-on-the-same-test.md) | the gate failed 5 of 28 runs in one day on five different files — two were real breakage arriving through the merge, two were fixed-wait races, one is unexplained | bug | no error |
 | [0202](open/0202-two-simultaneously-due-timers-have-no-tie-break-so-continuations-run-in-either-order.md) | two simultaneously due timers have no tie-break, so a scheduler dispatches their continuations in either order | missing feature | wrong answer |
 | [0201](open/0201-a-shell-builtin-shadows-a-box-applet-and-answers-differently.md) | a shell builtin shadows a box applet and refuses in fewer words than the applet does | bug | wrong answer |
-| [0200](open/0200-coverage-crypto-is-red-mlkem-and-keccak-lost-their-driver.md) | `coverage:crypto` is red: 127 points uncovered, 48 of them in `mlkem.wac` | bug | wrong answer |
 | [0199](open/0199-the-native-host-ignores-a-pushed-childs-cwd-so-the-two-hosts-disagree.md) | the native host ignores a pushed child's `cwd`, so the same program answers differently on the two hosts | bug | wrong answer |
 | [0198](open/0198-allow-run-also-grants-allow-env-because-exec-inherits-the-whole-environment.md) | `--allow-run` also grants `--allow-env`: `Cli.exec` inherits the host's whole environment, 37 variables including the proxy | bug | no error |
 | [0197](open/0197-a-built-app-costs-107ms-to-start-and-the-same-program-costs-15ms.md) | a built app costs 107 ms to start and the same program through the `wac` binary costs 15 ms | performance | no error |
@@ -71,7 +70,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-230 issues, 171 closed.
+230 issues, 172 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
