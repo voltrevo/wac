@@ -1,0 +1,121 @@
+// A peer that says nothing, and a peer that speaks late — `packages/platform/example/patience.wac`.
+//
+// The capability is `core.sleepMillis`, or rather the deadline `waitAny` takes: a peer that completes
+// the handshake and then says nothing used to stop the application permanently, with no error, no log
+// line and no way to notice. wac-mono issue 0018.
+//
+// What is worth testing is not that a timer fires. It is the two failure modes around it, both of
+// which are silent permanent parks:
+//
+//   * a silent peer, which is what the issue was filed about;
+//   * a ticket `waitAny` did not pick and nobody cancelled, which holds a ring slot for good — so the
+//     round count here is deliberately **above** the number of slots in the ring. A run that leaked a
+//     ticket per round stops partway rather than finishing, and the count of `nothing yet` lines is
+//     what says which happened.
+//
+// ## The peer is wac now — `issues/system/0161`
+//
+// This was two of the five tests in `test/timeout.test.ts`, where the peer was a `Deno.listen` that
+// accepted and held the connection. Nothing about that needed a JavaScript host: a listener that
+// accepts and does not answer is `cli.listen` and `cli.accept`, and one that answers late is the same
+// plus `core.sleepMillis`. What made it possible to write here is `issues/system/0211` — `Cli.exec`
+// used to run the child to completion inside the capability call, so a test could not hold a peer open
+// *while* a child talked to it.
+//
+// The other three tests stay in `timeout.test.ts`: they submit into the bridge's slot table directly
+// and count what is holding it, which is a fact about `host/layout.ts` rather than about the deadline.
+//
+// **Deliberately not a `Deno.serve` or anything with its own timeouts** — the whole point is a
+// connection that stays open and idle, which is the case no library gives you by accident.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { contains, trimmed } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli, Exec, Socket, Pending } from "std/platform.wac";
+
+const string PATIENCE = "packages/platform/example/patience.wac";
+
+/** How many times `needle` occurs in `s`. */
+i32 count(string s, string needle) {
+  i32 n = 0;
+  for (i32 i = 0; i + needle.len() <= s.len(); i++) {
+    if (s.slice(i, i + needle.len()) == needle) { n = n + 1; }
+  }
+  return n;
+}
+
+/** `patience <host> <port> <millis>`, compiled and run in one step. */
+Pending<Exec> patience(Cli cli, i32 port, i32 millis) {
+  return cli.exec(binaryPath(cli),
+    string[]("run", "--allow-net", PATIENCE, "--", "127.0.0.1", itoa(port), itoa(millis)),
+    u8[0]());
+}
+
+export string test_a_peer_that_says_nothing_no_longer_wedges_the_application(Core core, Cli cli) {
+  T t = T.create();
+  Socket l = cli.listen("127.0.0.1", 0).wait();
+  t.isTrue(l.error == "", "could not listen — " + l.error);
+  if (l.error != "") { return t.report(); }
+
+  // **The child starts before the accept is waited on.** Both tickets are in flight together, which
+  // is the whole shape `issues/system/0211` made possible: waiting the accept first would park this
+  // test until a peer that has not been started yet connects.
+  i64 began = core.monotonicNanos().wait();
+  Pending<Exec> running = patience(cli, l.port, 100);
+  Pending<Socket> accepting = cli.accept(l.handle);
+
+  Socket peer = accepting.wait();
+  t.isTrue(peer.error == "", "the child never connected — " + peer.error);
+
+  // And now nothing is sent. Six rounds of 100ms, and the program gives up.
+  Exec r = running.wait();
+  i64 tookMs = (core.monotonicNanos().wait() - began) / (1000000 as i64);
+
+  string out = string.fromBytes(r.stdout);
+  string err = string.fromBytes(r.stderr);
+  t.isTrue(r.ran(), "the child did not run — " + r.error);
+  t.eqI32(r.status, 1, "a peer that never speaks should give up: " + out + err);
+  t.isTrue(contains(out, "giving up after 600ms"), "it should say how long it waited: " + out);
+
+  // **Bounded is the whole claim** — before the deadline this ran until killed. Generous, because it
+  // is a process launch on a box three agents share: the failure this distinguishes is "never", not
+  // "slow".
+  t.isTrue(tookMs < 15000, "took " + itoa(tookMs as~ i32) + "ms, which is not bounded");
+
+  // Every round ran. Five `nothing yet` lines and then the verdict: a leaked slot would make the
+  // count short rather than the run obviously broken, which is the failure that is hard to see.
+  t.eqI32(count(out, "nothing yet"), 5, "one line per round short of the verdict: " + out);
+
+  if (peer.error == "") { cli.closeSocket(peer.handle); }
+  cli.closeSocket(l.handle);
+  return t.report();
+}
+
+export string test_a_peer_that_speaks_late_is_still_heard(Core core, Cli cli) {
+  T t = T.create();
+  Socket l = cli.listen("127.0.0.1", 0).wait();
+  t.isTrue(l.error == "", "could not listen — " + l.error);
+  if (l.error != "") { return t.report(); }
+
+  // 100ms of patience per round against a peer that takes 250ms: the read wins on a later round,
+  // which is the case that proves re-waiting one ticket works.
+  Pending<Exec> running = patience(cli, l.port, 100);
+  Pending<Socket> accepting = cli.accept(l.handle);
+  Socket peer = accepting.wait();
+  t.isTrue(peer.error == "", "the child never connected — " + peer.error);
+  if (peer.error != "") { cli.closeSocket(l.handle); return t.report(); }
+
+  core.sleepMillis(250).wait();
+  cli.send(peer.handle, "finally\n".toBytes()).wait();
+
+  Exec r = running.wait();
+  string out = string.fromBytes(r.stdout);
+  t.eqI32(r.status, 0, "a peer that speaks late should be heard: " + out +
+                       string.fromBytes(r.stderr));
+  t.isTrue(contains(out, "peer sent 8 bytes"), "it should report what arrived: " + out);
+
+  cli.closeSocket(peer.handle);
+  cli.closeSocket(l.handle);
+  return t.report();
+}
