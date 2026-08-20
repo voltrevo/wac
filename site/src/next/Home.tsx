@@ -30,14 +30,18 @@ import { ASSETS, c, font, space } from "./tokens";
  * The bootstrap, as the suite reports it — `packages/wacc/test/wac/selfhostemit_test.wac`.
  *
  * Stage A is wacc built by the TypeScript compiler, B is wacc built by A, and C is what B produces
- * when asked to compile wacc. B and C being the same bytes is the whole claim, and the byte count
- * is that test's own output rather than a number typed here.
+ * when asked to compile wacc. B and C being the same bytes is the whole claim.
+ *
+ * **The two figures are typed here and go stale**, which they had: they said 11 sources and 266,818
+ * bytes into 2026-08-20, when the compiler was 16 sources and the artefact 960,310. `deno task seed`
+ * prints the byte count on every rebuild — it is a fixed point, checked rather than asserted — and
+ * `packages/wacc/src` is the source count. Read on 2026-08-20.
  */
 const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    11 sources, 266,818 bytes, identical`;
+B == C    16 sources, 960,310 bytes, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -232,15 +236,22 @@ export default function Home() {
         </P>
         <Code label="wacc compiling itself" lang="text" code={BOOTSTRAP} />
         <P>
+          Those two figures are read from the suite and typed here, so they are a snapshot; the same
+          chain <A href="#/run/bootstrap">runs in this browser</A> on the Run page, where the byte
+          count is whatever your machine just produced rather than whatever was true when this
+          sentence was written.
+        </P>
+        <P>
           It is measured against the specification rather than against the other compiler. It
-          refuses <Lead>303 of 304</Lead> of the programs the spec calls illegal, and never invents
-          a diagnostic — silent on all <Lead>368</Lead> it calls legal. The second is the number
+          refuses <Lead>316 of 317</Lead> of the programs the spec calls illegal, and never invents
+          a diagnostic — silent on all <Lead>371</Lead> it calls legal. The second is the number
           that matters: a checker reporting less than the spec can be finished, while one that
           reports what the spec does not cannot be trusted at all.
         </P>
         <Caveat title="not finished">
-          Three files in the repository it cannot compile whole, all three blocked on the same
-          missing import rather than on anything in the language. And the way back is closing:{" "}
+          Twenty-seven of the repository&rsquo;s 729 wac files it cannot compile whole — and it says
+          which feature stopped it rather than emitting something that fails later: nothing in that
+          sweep produced an invalid module. And the way back is closing:{" "}
           {m({ children: "box" })} no longer builds with the seed at all, because the shell&rsquo;s
           compression library uses instructions only wacc has.
         </Caveat>
