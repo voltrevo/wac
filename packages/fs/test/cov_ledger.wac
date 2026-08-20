@@ -45,7 +45,7 @@
 // own exemptions. The shared ratchet says it the one way.
 //
 // **And two of its 33 pins were the same entry twice, about a branch that is covered.** Both named
-// `image.wac:336` — `if (r.bad) { return -1; }` — with the reason "one of the two `r.bad` checks inside
+// `image.wac:339` — `if (r.bad) { return -1; }` — with the reason "one of the two `r.bad` checks inside
 // the directory-entry loop … reachable, and not constructed". All five `r.bad` checks in that file are
 // covered. So the ledger carried the same paragraph twice about a gap that was not one, and a staleness
 // check could not tell the difference: line 336 still holds that text, so the snippet matched both
@@ -182,7 +182,7 @@ Pin[] pins() {
         "â the shell resolves before it calls â so there is always at least the leading " +
         "one. Kept because it is a general helper and returning the whole string is the right " +
         "answer if that ever stops being true."),
-    Pin("packages/fs/src/image.wac", 199, "Booted of(bool ok, Fs fs, string error) { return Booted(ok, fs, error); }", false,
+    Pin("packages/fs/src/image.wac", 202, "Booted of(bool ok, Fs fs, string error) { return Booted(ok, fs, error); }", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
         "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
@@ -190,7 +190,7 @@ Pin[] pins() {
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
-    Pin("packages/fs/src/image.wac", 217, "export Booted boot(Core core, Cli cli, string path, Vec<string> argv, Vec<string> " +
+    Pin("packages/fs/src/image.wac", 220, "export Booted boot(Core core, Cli cli, string path, Vec<string> argv, Vec<string> " +
         "programs) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
@@ -199,7 +199,7 @@ Pin[] pins() {
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
-    Pin("packages/fs/src/image.wac", 220, "if (existing.ok) {", false,
+    Pin("packages/fs/src/image.wac", 223, "if (existing.ok) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
         "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
@@ -207,7 +207,7 @@ Pin[] pins() {
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
-    Pin("packages/fs/src/image.wac", 222, "if (!got.ok) { return Booted.of(false, fs, got.error); }", false,
+    Pin("packages/fs/src/image.wac", 225, "if (!got.ok) { return Booted.of(false, fs, got.error); }", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
         "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
@@ -215,7 +215,7 @@ Pin[] pins() {
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
-    Pin("packages/fs/src/image.wac", 224, "} else if (existing.fault != FAULT_NOT_FOUND()) {", false,
+    Pin("packages/fs/src/image.wac", 227, "} else if (existing.fault != FAULT_NOT_FOUND()) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
         "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
@@ -223,7 +223,7 @@ Pin[] pins() {
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
-    Pin("packages/fs/src/image.wac", 239, "export bool save(Core core, Cli cli, string who, string path, Fs fs) {", false,
+    Pin("packages/fs/src/image.wac", 242, "export bool save(Core core, Cli cli, string who, string path, Fs fs) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
         "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
@@ -231,7 +231,7 @@ Pin[] pins() {
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
-    Pin("packages/fs/src/image.wac", 241, "for (i32 i = 0; i < w.skipped.len(); i++) {", false,
+    Pin("packages/fs/src/image.wac", 244, "for (i32 i = 0; i < w.skipped.len(); i++) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
         "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
@@ -239,7 +239,7 @@ Pin[] pins() {
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
-    Pin("packages/fs/src/image.wac", 254, "if (cli.writeFile(beside, w.bytes).wait().fault != 0) {", false,
+    Pin("packages/fs/src/image.wac", 257, "if (cli.writeFile(beside, w.bytes).wait().fault != 0) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
         "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +
@@ -247,7 +247,7 @@ Pin[] pins() {
         "real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` " +
         "and could be copied here; thirty fake capability functions is a copy, and the copy " +
         "would be a worse oracle than the real files those two tests already use."),
-    Pin("packages/fs/src/image.wac", 258, "if (cli.rename(beside, path).wait().fault != 0) {", false,
+    Pin("packages/fs/src/image.wac", 261, "if (cli.rename(beside, path).wait().fault != 0) {", false,
         "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both " +
         "are driven end to end by `packages/box/test/wac/imaged_test.wac` and " +
         "`packages/ssh/test/wac/wacsshdimage_test.wac` â a missing image, a damaged one, a " +

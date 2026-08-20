@@ -846,10 +846,21 @@ process.exit(0);
       // here, which is what made this look like a one-in-six coin flip for a while
       // (`issues/system/0152`, now closed). Asking the peer how many it answered is the measurement
       // that does not depend on when we stop listening.
-      const selected = result.pairs.find((p) => p.startsWith("in-progress reqRecv=") &&
-        !p.includes("reqRecv=0 "));
+      // **The pair that received our requests, whatever state it is in.** This used to require
+      // `in-progress`, which is the state Chromium happened to report when the assertion was
+      // written — and it is an *intermediate* state, so keying on it made the test fail when the
+      // handshake got faster. It did, on 2026-08-20: masking the branches out of `ghash` and
+      // `xtime` took GHASH from 740 traced events to 484 and AES from 11,779 to 9,475, the pair
+      // reached `succeeded` before these statistics were sampled, and this reported "no candidate
+      // pair received any request from us" while printing `reqRecv=2` in the same sentence.
+      //
+      // Reverting only those two files made it pass again, which is how the cause was pinned. The
+      // state was never the point: what the assertions below need is the pair Chromium answered
+      // consent checks on, and `succeeded` is the better end for it to have reached.
+      const selected = result.pairs.find((p) => /\breqRecv=([1-9]\d*)/.test(p));
       assertEquals(selected !== undefined, true,
-        `no candidate pair received any request from us. Pairs: ${JSON.stringify(result.pairs)}`);
+        `no candidate pair received any request from us, in any state. Pairs: ` +
+          JSON.stringify(result.pairs));
       const recv = Number(/reqRecv=(\d+)/.exec(selected!)![1]);
       const sent = Number(/respSent=(\d+)/.exec(selected!)![1]);
       assertEquals(sent, recv,

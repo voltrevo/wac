@@ -1,0 +1,113 @@
+// A signature mentioning an unsubstituted type parameter is not registered as a type.
+//
+//     wac test --allow-read packages/wacc/test/wac/genericsig_test.wac
+//
+// Declaring a generic *method* registered a signature-table entry for it, and that entry mentions the
+// method's own parameter — `Box<U> map<U>(const this, fn[U(T)] f)` puts `fn[U(T)]` in the type
+// section, where `U` is not a type. It never mattered because `valType` answered `127` for anything it
+// did not recognise, so `U` was written as an `i32` and nothing references the entry.
+//
+// It surfaced when `writeValType` stopped guessing (`issues/lang/0170a`): the first thing that refusal
+// caught was this, so declaring an *uncalled* generic method stopped building — which the spec allows
+// and `lambda_test.wac` pins. The tolerance that unblocked it wrote the arbitrary byte instead. This is
+// the actual fix: the entry is never made, so nothing has to decide what to write for it.
+// `issues/lang/0173a`.
+//
+// **It is not one entry, and it is not invisible.** Measured on the program below: declaring the
+// uncalled generic method costs **9 extra functions, 3 extra exports, 22 extra type entries and 467
+// bytes**, and two of the exports are `$bind$sm_Box___main$U_of` and `$bind$m_Box___main$U_map` — so
+// `Box<U>` is *instantiated as a struct*, with `U` as its type argument, and its methods are emitted
+// and given bindgen glue. `lambda_test.wac` says "nothing is emitted for a method nobody calls",
+// which is what this file measures and finds untrue.
+//
+// The counts are asserted at what they are today, and the target for every one of them is **zero
+// difference**. This is a ledger: when `issues/lang/0173a` is fixed these numbers all become the same
+// and this test fails, which is the moment to rewrite it as the equality it should be. Two ways of
+// fixing it were tried and both made the compiler emit an invalid module — see the issue.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { emitFilesChecked } from "../../src/api.wac";
+import { leb, declaredFunctions, allExportNames } from "./wasm_probe.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string BOX =
+  "struct Box<T> {\n" +
+  "  T v;\n" +
+  "  Box<T> of(T v) { return Box(v); }\n" +
+  "  Box<U> map<U>(const this, fn[U(T)] f) { return Box.of(f(this.v)); }\n" +
+  "}\n" +
+  "export i32 f() { Box<i32> a = Box.of(21); return a.v * 2; }\n";
+
+/** Where a section's body starts, or -1 — the last of an id wins. */
+i32 sectionStart(u8[] b, i32 want) {
+  i32[] pos = i32[1]();
+  pos[0] = 8;
+  i32 at = -1;
+  while (pos[0] < b.len()) {
+    i32 id = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 size = leb(b, pos);
+    if (id == want) { at = pos[0]; }
+    pos[0] = pos[0] + size;
+  }
+  return at;
+}
+
+/** How many entries the type section declares, or -1. */
+i32 typeCount(u8[] b) {
+  if (b.len() <= 8) { return -1; }
+  i32 at = sectionStart(b, 1);
+  if (at < 0) { return -1; }
+  i32[] pos = i32[1]();
+  pos[0] = at;
+  leb(b, pos);              // one rec group
+  pos[0] = pos[0] + 1;      // 0x4E, the group itself
+  return leb(b, pos);
+}
+
+u8[] boxModule() {
+  return emitFilesChecked(string[]("/main.wac"), string[](BOX), "/main.wac");
+}
+
+/**
+ * What declaring an uncalled generic method costs, as a difference rather than an absolute.
+ *
+ * A difference because the absolutes move with unrelated work and the difference is the defect: the
+ * two programs are the same except for a method nobody calls, so every one of these should be 0.
+ */
+export string test_what_an_uncalled_generic_method_costs() {
+  T t = T.create();
+  u8[] with = boxModule();
+  u8[] without = emitFilesChecked(
+    string[]("/main.wac"),
+    string[]("struct Box<T> {\n  T v;\n  Box<T> of(T v) { return Box(v); }\n}\n" +
+             "export i32 f() { Box<i32> a = Box.of(21); return a.v * 2; }\n"), "/main.wac");
+  t.isTrue(with.len() > 8 && without.len() > 8, "one of the two programs does not emit");
+
+  i32 types = typeCount(with) - typeCount(without);
+  i32 funcs = declaredFunctions(with) - declaredFunctions(without);
+  i32 exports = allExportNames(with).len() - allExportNames(without).len();
+  // Every one of these is a bug and every one should be 0. `issues/lang/0173a`.
+  t.eqI32(types, 22, "type entries: " + itoa(types) + " extra, was 22");
+  t.eqI32(funcs, 9, "functions: " + itoa(funcs) + " extra, was 9");
+  t.eqI32(exports, 3, "exports: " + itoa(exports) + " extra, was 3");
+  return t.report();
+}
+
+/**
+ * And the two that show what is really happening: `Box<U>` is instantiated, with the method's own
+ * type parameter as its argument, and the instance's methods are exported.
+ */
+export string test_the_instance_named_after_a_type_parameter_is_exported() {
+  T t = T.create();
+  string[] names = allExportNames(boxModule());
+  bool sawU = false;
+  string all = "";
+  for (i32 i = 0; i < names.len(); i++) {
+    all = all + " " + names[i];
+    if (names[i].indexOf("$U_") >= 0) { sawU = true; }
+  }
+  // When this stops being true, `Box<U>` is no longer built and `issues/lang/0173a` is fixed.
+  t.isTrue(sawU, "no export names a `U` instance any more — 0173a may be fixed:" + all);
+  return t.report();
+}

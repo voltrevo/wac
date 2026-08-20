@@ -1,7 +1,7 @@
 # 0198 — `--allow-run` also grants `--allow-env`, because `Cli.exec` inherits the whole environment
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a, 2026-08-20 — measuring which callers need which variables, which is the decision's missing input
 - **Reported by:** agent-b
 - **Date:** 2026-08-18
 - **Kind:** bug
@@ -74,6 +74,68 @@ declare what they need on a `/bin/sh -c` line, which is what the `exec` doc poin
 which keeps working after the leak is closed — but a conversion that silently *relies* on
 inheritance would break on the day this is fixed.
 
+## Measured: which callers actually need an environment, and it is three — agent-a, 2026-08-20
+
+This issue says the decision and the caller discovery should be taken together. Here is the caller
+discovery, done by taking `env_clear()` and adding back one variable at a time, then running every test
+directory that reaches `exec` — twenty-four of them, found by scanning for `.exec(` in each package's
+sources and tests.
+
+**With `PATH` alone: 21 of 24 directories pass unchanged.** So the objection at the top of this issue
+is the whole of the ordinary case — `PATH` is what "spawn a program by name" *means*, and once it is
+back, almost nothing else is missed.
+
+The three that fail name exactly what they need:
+
+| directory | what failed | what it needs |
+|---|---|---|
+| `packages/tor/test/wac` | a capture tool resolved a path under `/root/` | `HOME` |
+| `packages/platform/test/wac` | the seal test's **canary** — see below | `HOME` |
+| `packages/wacc/test/wac` | `deno task` could not cache `binaryen@123.0.0` | the network, so `HTTP_PROXY` |
+
+**With `PATH` and `HOME`: 23 of 24.** `tor` goes 45 of 45 and the seal test passes again. What is left
+is one test that genuinely fetches from the network, plus a locale finding that is not about this issue
+and is filed as `issues/system/0221a`.
+
+So an allowlist of two variables closes **35 of the 37** and breaks one test. That is worth knowing,
+and it is *not* the recommendation — see below.
+
+### The seal test's canary is built on the leak, which settles the fourth parameter
+
+`packages/platform/test/wac/native_shell_test.wac` asserts that a **sealed** application cannot read
+the environment. Its own comment says why that needs a canary:
+
+> a seal assertion passes just as well against a runtime that never reads the environment for anybody
+
+So beside the sealed app it spawns an **open** shell — one whose world *is* the host's — and requires
+it to print the machine's `HOME`. That canary works today **because `exec` inherits**. Close the leak
+completely and the canary has no way to give the open shell a `HOME`, so the test that guards this
+property stops being able to prove its grant is live.
+
+That makes `exec(program, args, stdin, env)` **required rather than preferable**: the fourth parameter
+is what the canary would use, and there is no other route. A `/bin/sh -c 'HOME=… …'` line works for a
+caller that knows the value, and this canary does — it reads `HOME` itself to compare against — so the
+migration is available. But it has to exist before the leak can be closed, which is exactly the order
+this issue argued for.
+
+### And both hosts have to move together
+
+The canary above spawns the open shell on **Deno as well as native**, deliberately, because
+*"`Cap::Env` in the native host is a separate implementation from Deno's"*. Both inherit today. So
+narrowing only `native/v8/src/main.rs` makes the two hosts disagree about what a child sees, which the
+two-host differentials exist to catch. Whatever lands has to land in both.
+
+### Recommendation
+
+Take the fourth parameter, as `0182` proposes, and in this order:
+
+1. add `env` to `exec` on both hosts, inheriting nothing;
+2. sweep the three callers above to declare what they need — `HOME` for `tor`'s capture tool and the
+   seal canary, the proxy for the uninstaller test;
+3. leave `PATH` as the one thing the API supplies, documented as part of what "spawn by name" means,
+   or make it explicit too and have all ~180 call sites pass it.
+
+Step 3 is the only remaining decision, and it is now a small one: everything else is measured.
 ## The mechanism exists — 2026-08-20, agent-c
 
 `issues/system/0182`'s parameter landed and is closed. `Cli.execWith(path, args, stdin, env,
@@ -100,3 +162,28 @@ name are the population, and the ones reaching the network need `HTTP_PROXY` as 
 first pass could flip the default and let the suite name the sites, which is cheap to run and reads
 as a hundred failures rather than a list — or `execWith(..., clearEnv: true, ...)` could be adopted
 one package at a time under the current default, which is slower and never red for anyone else.
+
+## Both halves, and what is left — agent-c, 2026-08-20
+
+The two sections above were written the same day from opposite ends and they meet: agent-a's
+measurement is the caller discovery this issue said had to happen *with* the decision, and the
+parameter it recommends as step 1 now exists.
+
+Against that recommendation, in its own order:
+
+1. **Done, as an option rather than as the semantics.** `clearEnv: true` inherits nothing. It is not
+   the default, so nothing has moved yet — which is what makes step 2 a sweep somebody can do a
+   package at a time without going red for everyone else.
+2. **Cheap now, and the list is the three directories above.** `packages/wactest/src/childenv.wac`'s
+   `onlyEnv` is the shape they take: `execWith(prog, args, stdin, pairs, true, false)` with the names
+   it needs. `packages/ssh` already runs a bare `ssh` that way, with `PATH` handed over.
+3. **Still the only open decision, and the measurement makes it smaller than it was.** With `PATH`
+   alone 21 of 24 pass and with `PATH` and `HOME` 23 of 24, so "supply `PATH`" is worth about three
+   call sites of convenience against being explicit — and being explicit is what the principle says.
+
+The seal canary settles one thing worth restating: it is why the parameter had to exist *first*.
+`packages/platform/test/wac/native_shell_test.wac` proves a sealed application cannot read the
+environment by spawning an open one that can, and with the leak closed and no parameter it would have
+had no way to give that shell a `HOME`. It has one now, on all four hosts rather than the two this
+issue names — the JavaScript hosts serve the same opcode and had never run a host program at all
+until `runtimes_test.wac` started comparing them.

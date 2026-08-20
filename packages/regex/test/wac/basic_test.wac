@@ -32,13 +32,34 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
 import { search, slotCount } from "../../src/regex.wac";
-import { compileBasic, toExtended } from "../../src/basic.wac";
-import { Rewritten, compileExtended } from "../../src/posix.wac";
+import { compileBasic, compileBasicIgnoreCase, toExtended } from "../../src/basic.wac";
+import { Rewritten, compileExtended, compileExtendedIgnoreCase } from "../../src/posix.wac";
 
 /** 1 matched, 0 did not, -1 the pattern was refused, -2 the step budget ran out. */
 const i32 MATCHED = 1;
 const i32 MISSED = 0;
 const i32 REJECTED = -1;
+
+/**
+ * As `run`, case-folded — the two entry points in this package that no test in it ever called.
+ *
+ * `compileBasicIgnoreCase` and `compileExtendedIgnoreCase` were found by a coverage report, not by a
+ * failure: `issues/system/0205` listed `basic.wac:58` and `posix.wac:46` as uncovered *function
+ * entries*, which is not a branch nobody took but a function nobody called. Both have exactly one
+ * consumer — `packages/box`'s grep, the two arms of its `-i` — so each was exercised only through the
+ * cases that applet's own tests happen to reach, which is the arrangement this file's header was
+ * written to end for the case-sensitive half.
+ */
+i32 runFolded(bool extended, string pattern, u8[] input) {
+  Program? prog = extended ? compileExtendedIgnoreCase(pattern.toBytes()).program
+                           : compileBasicIgnoreCase(pattern.toBytes()).program;
+  if (prog is null) { return REJECTED; }
+  Program p = prog!;
+  i32[] caps = i32[slotCount(p)](fill: -1);
+  i32 found = search(p, input, 0, caps, 1000000);
+  if (found == BUDGET()) { return -2; }
+  return found == NO_MATCH() ? MISSED : MATCHED;
+}
 
 i32 run(bool extended, string pattern, u8[] input) {
   Program? prog = extended ? compileExtended(pattern.toBytes()).program
@@ -81,7 +102,8 @@ string verdict(i32 v) {
  * mapping is line number to index — so that is refused rather than trusted. None of the callers
  * below has one; the check is here so a later one cannot quietly acquire it.
  */
-i32[] gnuMatchesAll(Core core, Cli cli, string pattern, u8[][] lines, bool extended) {
+i32[] gnuMatchesAll(Core core, Cli cli, string pattern, u8[][] lines, bool extended,
+                    bool ignoreCase) {
   i32 total = 0;
   for (i32 i = 0; i < lines.len(); i++) {
     for (i32 k = 0; k < lines[i].len(); k++) {
@@ -101,8 +123,14 @@ i32[] gnuMatchesAll(Core core, Cli cli, string pattern, u8[][] lines, bool exten
     at = at + 1;
   }
 
-  string[] args = extended ? string[]("-i", "LC_ALL=C", "/bin/grep", "-E", "-n", "-e", pattern)
-                           : string[]("-i", "LC_ALL=C", "/bin/grep", "-n", "-e", pattern);
+  // **The leading `-i` is `env`'s, not `grep`'s** — it clears the environment, which is what the header
+  // above is about. `grep`'s own `-i` is a separate argument after the binary, and conflating the two
+  // would make every row here a case-folded comparison without changing a visible character.
+  string[] args = extended
+    ? (ignoreCase ? string[]("-i", "LC_ALL=C", "/bin/grep", "-E", "-i", "-n", "-e", pattern)
+                  : string[]("-i", "LC_ALL=C", "/bin/grep", "-E", "-n", "-e", pattern))
+    : (ignoreCase ? string[]("-i", "LC_ALL=C", "/bin/grep", "-i", "-n", "-e", pattern)
+                  : string[]("-i", "LC_ALL=C", "/bin/grep", "-n", "-e", pattern));
   Exec r = cli.exec("/usr/bin/env", args, stdin).wait();
   if (!r.ran()) {
     core.warn("regex: grep would not start — " + r.error);
@@ -165,14 +193,24 @@ export string test_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
     "(a)", "\\(a\\)", "\\(ab\\)*", "a*", "*a", "^*a", "\\(*a\\)",
     "a.b", "a\\.b", "^ab", "ab$", "^ab$", "[ab]", "[|]", "[+?{}()]", "[^ab]",
     "[]a]", "[^]a]", "a\\{2,3\\}", "\\(a\\|b\\)c", "x\\|", "\\(\\)",
-    "a\\\\b", "\\.", "\\*", "^", "$", "", "ab*c", "a\\|b\\|c");
+    "a\\\\b", "\\.", "\\*", "^", "$", "", "ab*c", "a\\|b\\|c",
+    // **A leading brace, which POSIX reads as a literal and JavaScript refuses.** `issues/lang/0146`
+    // made the JavaScript entry point refuse `{2}` as nothing to repeat, and the guard that keeps this
+    // dialect out of that is a `posix` flag — so this is the case that fails if the flag is dropped.
+    // GNU is the oracle for the answer, as it is for every row here.
+    "{2}", "{2}b", "\\{2\\}",
+    // **An interval with no closing `\\}`, and a `*` on a `*`.** GNU calls the first *Unmatched \\{* and
+    // reads the second as a repeat of a repeat, matching every line. Neither shape is in the generated
+    // corpus — the generator only emits intervals it closes — so `basic.wac`'s two arms for them were
+    // measured by nothing until `issues/system/0205` listed them.
+    "a\\{2", "a\\{2,", "\\(a\\)\\{2", "a**");
   string[] subjects = string[](
     "", "a", "b", "ab", "abc", "a|b", "a+b", "a?b", "a{2}", "aa", "aab",
     "(a)", "*a", "a.b", "axb", "a\\b", "abab", "ac", "bc", "]a", "aaa");
   u8[][] lines = asLines(subjects);
   i32 checked = 0;
   for (i32 p = 0; p < patterns.len(); p++) {
-    i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, false);
+    i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, false, false);
     for (i32 i = 0; i < subjects.len(); i++) {
       i32 got = run(false, patterns[p], lines[i]);
       t.eqStr(verdict(got), verdict(wants[i]),
@@ -186,7 +224,19 @@ export string test_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
   return t.report();
 }
 
-/** xorshift-free LCG, matching the host-side generator so the patterns are the same ones. */
+/**
+ * xorshift-free LCG, seeded, so the patterns is reproducible.
+ *
+ * **The host-side generator is deleted; what it drew is not.** This said "matching the host-side
+ * generator", and the driver it named went with `issues/system/0161` — but the expectations recorded
+ * against that driver are still here, so its draw is still the one that has to be reproduced. The
+ * sentence was not wrong, it was just no longer checkable by looking, which is worse.
+ *
+ * Those drivers returned an **unsigned** value (`x >>>= 0; return x`), so `next() % n` was an
+ * unsigned remainder. A copy that returns the signed `i32` instead samples a different patterns — 37% of
+ * draws differ — and `packages/datetime/test/wac/datetime_test.wac` was found that way rather than
+ * reasoned about. `issues/system/0220` has the census and which side each copy is on.
+ */
 struct Rng {
   i32 s;
 
@@ -215,7 +265,7 @@ export string test_generated_basic_patterns_mean_what_gnu_grep_says(Core core, C
   for (i32 trial = 0; trial < 400; trial++) {
     string p = atoms[rng.upto(atoms.len())] + tails[rng.upto(tails.len())] +
                (rng.upto(2) == 0 ? atoms[rng.upto(atoms.len())] : "");
-    i32[] wants = gnuMatchesAll(core, cli, p, lines, false);
+    i32[] wants = gnuMatchesAll(core, cli, p, lines, false, false);
     for (i32 i = 0; i < subjects.len(); i++) {
       i32 got = run(false, p, lines[i]);
       t.eqStr(verdict(got), verdict(wants[i]),
@@ -244,7 +294,16 @@ export string test_bracket_expressions_byte_by_byte(Core core, Cli cli) {
     "[[:alpha:]]", "[[:alnum:]]", "[[:digit:]]", "[[:upper:]]", "[[:lower:]]", "[[:space:]]",
     "[[:blank:]]", "[[:cntrl:]]", "[[:print:]]", "[[:graph:]]", "[[:punct:]]", "[[:xdigit:]]",
     "[^[:digit:]]", "[[:alpha:][:digit:]]", "[[:digit:]abc]", "[a-c[:space:]]",
-    "[]a]", "[^]a]", "[]]", "[a-]", "[-a]", "[.a.]", "[=a=]", "[[:foo:]]", "[[:alpha:]", "[a");
+    "[]a]", "[^]a]", "[]]", "[a-]", "[-a]", "[.a.]", "[=a=]", "[[:foo:]]", "[[:alpha:]", "[a",
+    // **A collating element and an equivalence class, spelled the way POSIX spells them.** The two
+    // rows above — `[.a.]` and `[=a=]` — read like these and are not: they are brackets holding a
+    // literal dot or equals and an `a`. The constructs need the inner bracket, and until this line
+    // nothing in the repository used one, so `posix.wac`'s handling of them was written, commented and
+    // measured by nothing. `issues/system/0205` found it as four uncovered points at `posix.wac:128`
+    // to `:138`, and GNU is the oracle for all six: `[[.a.]]` matches `a`, `[[.ch.]]` is
+    // *Invalid collation character* because there is no locale here in which `ch` is one element, and
+    // `[[.a]` is an unmatched bracket rather than a literal.
+    "[[.a.]]", "[[=a=]]", "[[.ch.]]", "[[.a.]x]", "[[.a]", "[[=a=]b]");
   // One byte per subject, every byte a line can hold. NUL cannot reach `grep` through a line here,
   // and LF is the line terminator itself.
   u8[][] lines = u8[][254](fill: u8[0]());
@@ -262,7 +321,7 @@ export string test_bracket_expressions_byte_by_byte(Core core, Cli cli) {
   for (i32 p = 0; p < patterns.len(); p++) {
     for (i32 d = 0; d < 2; d++) {
       bool extended = d == 1;
-      i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, extended);
+      i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, extended, false);
       for (i32 i = 0; i < n; i++) {
         i32 got = run(extended, patterns[p], lines[i]);
         t.eqStr(verdict(got), verdict(wants[i]),
@@ -295,7 +354,7 @@ export string test_gnus_backslash_anchors_are_anchors(Core core, Cli cli) {
   for (i32 p = 0; p < patterns.len(); p++) {
     for (i32 d = 0; d < 2; d++) {
       bool extended = d == 1;
-      i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, extended);
+      i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, extended, false);
       for (i32 i = 0; i < subjects.len(); i++) {
         i32 got = run(extended, patterns[p], lines[i]);
         t.eqStr(verdict(got), verdict(wants[i]),
@@ -321,7 +380,10 @@ export string test_gnus_backslash_anchors_are_anchors(Core core, Cli cli) {
 export string test_a_refusal_says_whose_problem_it_is(Core core, Cli cli) {
   T t = T.create();
   string[] patterns = string[]("[z-a]", "[[:foo:]]", "[[:alpha:]", "[a", "a\\", "\\(a", "a\\)",
-                               "\\(ab\\)\\1");
+                               "\\(ab\\)\\1",
+                               // An interval with no closing `\}`, which this engine used to translate
+                               // to `a{2` and then match nothing — GNU refuses it, so now so do we.
+                               "a\\{2", "\\(a\\)\\{2,");
   string[] wants = string[](
     "Invalid range end",
     "Invalid character class name",
@@ -331,7 +393,9 @@ export string test_a_refusal_says_whose_problem_it_is(Core core, Cli cli) {
     "Unmatched ( or \\(",
     "Unmatched ) or \\)",
     // The other kind: GNU compiles this and this engine cannot run it.
-    "backreferences are not implemented");
+    "backreferences are not implemented",
+    "Unmatched \\{",
+    "Unmatched \\{");
   for (i32 i = 0; i < patterns.len(); i++) {
     string got = compileBasic(patterns[i].toBytes()).why;
     t.eqStr(got, wants[i], "the reason for \"" + patterns[i] + "\"");
@@ -365,3 +429,120 @@ string trimmed(string s) {
 }
 
 bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
+
+/**
+ * A leading brace is a literal here, in both POSIX dialects — and GNU only agrees about one of them.
+ *
+ * `issues/lang/0146` made the JavaScript entry point refuse `{2}` as nothing to repeat, and one `posix`
+ * flag in `compile.wac` keeps these two dialects out of that. This is the test that fails if the flag is
+ * dropped. It has to assert *extended*, because `basic` reaches the core through a translation that
+ * already escapes a bare `{` — so only extended passes one through, and adding the pattern to the
+ * basic-only list looked like a guard and was not: with the flag removed every test still passed.
+ *
+ * **GNU is the oracle for basic and deliberately not for extended.** `/bin/grep "{2}"` matches the three
+ * characters, which is what we do. `/bin/grep -E "{2}"` prints *"warning: {...} at start of expression"*
+ * and then matches **every** line, empty ones included — it drops the brace rather than reading it as a
+ * literal. POSIX leaves the case undefined and GNU says as much in a warning, so parity there would be
+ * parity with something its own author flags as unspecified. `issues/lang/0146` says "a leading brace is
+ * a literal in both POSIX dialects"; that is right for basic and wrong for extended, and this comment is
+ * the correction.
+ */
+export string test_a_leading_brace_is_a_literal_in_both_posix_dialects(Core core, Cli cli) {
+  T t = T.create();
+  string[] subjects = string[]("", "{2}", "a{2}b", "{2}b", "aa", "a");
+  u8[][] lines = asLines(subjects);
+
+  // Basic, against GNU, which is unambiguous here.
+  string[] patterns = string[]("{2}", "{2}b", "a{2}");
+  i32 checked = 0;
+  for (i32 p = 0; p < patterns.len(); p++) {
+    i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, false, false);
+    for (i32 i = 0; i < lines.len(); i++) {
+      t.eqI32(run(false, patterns[p], lines[i]), wants[i],
+              "grep \"" + patterns[p] + "\" against \"" + subjects[i] + "\"");
+      checked = checked + 1;
+    }
+  }
+  t.isTrue(checked >= 15, "only " + itoa(checked) + " basic comparisons ran");
+
+  // Extended, against what this engine means to do: accept it and match the three characters. This is
+  // the half the `posix` flag protects — without it `compileExtended` refuses the pattern outright.
+  t.isTrue(compileExtended("{2}".toBytes()).program is not null,
+           "extended refused a leading brace — the posix flag in compile.wac is gone");
+  t.eqI32(run(true, "{2}", "a{2}b".toBytes()), MATCHED, "and it matches the literal three characters");
+  t.eqI32(run(true, "{2}", "aa".toBytes()), MISSED, "and only those, unlike GNU -E which matches all");
+  return t.report();
+}
+
+/**
+ * The basic dialect with the `i` flag, against `grep -i`, which is the same oracle one flag over.
+ *
+ * **What this is for.** `compileBasicIgnoreCase` had no test in this package at all, and case folding
+ * is not a property of the translation this file otherwise checks: `toExtended` produces the same
+ * bytes either way, and the folding happens afterwards in `compile.wac`. So a pattern whose *basic*
+ * spelling is interesting and whose *case* is interesting at once is a case neither half was asking
+ * about.
+ *
+ * Where an implementation can differ, and so where the patterns concentrate:
+ *
+ *   - **a bracket expression**, where folding has to apply to the members rather than to the
+ *     expression — `[a-c]` must match `B`, and `[^a]` must *not* match `A`, which is the one that
+ *     goes wrong if a negated class is folded after being complemented rather than before;
+ *   - **a range that spans the case boundary** — `[A-z]`, which includes six punctuation characters
+ *     between `Z` and `a` and is a byte range rather than a letter range;
+ *   - **the backslash-escaped operators** this dialect spells differently, so folding and the
+ *     translation meet: `\\(a\\|B\\)c`, `A\\{2\\}`;
+ *   - **an anchored pattern**, since folding must not disturb where a match may start.
+ *
+ * `grep -i` under `LC_ALL=C` folds ASCII only, which is what this engine claims in the README, so the
+ * oracle and the subject agree about the *scope* of the question as well as its answer.
+ */
+export string test_the_i_flag_in_both_posix_dialects_agrees_with_grep(Core core, Cli cli) {
+  T t = T.create();
+  string[] patterns = string[](
+    "a", "A", "abc", "ABC", "aBc",
+    "[a-c]", "[A-C]", "[^a]", "[^A]", "[abc]", "[ABC]", "[A-z]", "[a-zA-Z]",
+    "^ab", "AB$", "^Ab$", "a.C", "A*b", "[[:alpha:]]", "[[:upper:]]", "[[:lower:]]",
+    // Patterns neither dialect will translate, which is the `r.pattern is null` arm of each entry
+    // point — the line after the one this test was written for. `grep` exits 2 and so the whole batch
+    // comes back `rejected`, which is the same agreement the case-sensitive tests rely on.
+    "[a", "[[:foo:]]", "[z-a]");
+  // The six characters spelled differently between the dialects, so folding and the translation meet.
+  // Written per dialect because `\(a\|B\)c` is a group in basic and five literals in extended.
+  string[] basicOnly = string[]("\\(a\\|B\\)c", "A\\{2\\}", "a\\{2,3\\}", "\\(AB\\)*", "\\<Ab\\>");
+  string[] extendedOnly = string[]("(a|B)c", "A{2}", "a{2,3}", "(AB)*", "A+b", "A?b");
+  string[] subjects = string[](
+    "", "a", "A", "b", "B", "c", "C", "ab", "AB", "Ab", "aB", "abc", "ABC", "AbC", "aBc",
+    "aa", "AA", "aA", "aaa", "AAA", "abab", "ABAB", "ac", "AC", "xAy", "z", "Z",
+    "[", "]", "^", "_", "`", "1", " ");
+  u8[][] lines = asLines(subjects);
+
+  i32 checked = 0;
+  i32 folded = 0;
+  for (i32 d = 0; d < 2; d++) {
+    bool extended = d == 1;
+    string[] extra = extended ? extendedOnly : basicOnly;
+    for (i32 p = 0; p < patterns.len() + extra.len(); p++) {
+      string pattern = p < patterns.len() ? patterns[p] : extra[p - patterns.len()];
+      i32[] wants = gnuMatchesAll(core, cli, pattern, lines, extended, true);
+      i32[] unfolded = gnuMatchesAll(core, cli, pattern, lines, extended, false);
+      for (i32 i = 0; i < subjects.len(); i++) {
+        t.eqStr(verdict(runFolded(extended, pattern, lines[i])), verdict(wants[i]),
+                (extended ? "extended -i \"" : "basic -i \"") + pattern + "\" against \"" +
+                subjects[i] + "\" — translated to \"" + asExtended(pattern) + "\"");
+        checked = checked + 1;
+        if (wants[i] != unfolded[i]) { folded = folded + 1; }
+      }
+    }
+  }
+  t.isTrue(checked > 1700, "only " + itoa(checked) + " folded pairs were compared");
+
+  // **The flag has to have done something.** Every assertion above would also pass if the two
+  // ignore-case entry points ignored their flag and this were the case-sensitive tests run again —
+  // grep would answer the same and so would we, wrongly agreeing. So the folded answers are counted
+  // against the *unfolded* grep, and the number of pairs where case folding changes the verdict is
+  // asserted rather than assumed. Pointing `runFolded` at `compileBasic` gives 128 failures.
+  t.isTrue(folded > 200, "case folding changed only " + itoa(folded) +
+           " of " + itoa(checked) + " verdicts, so this test cannot tell the flag was honoured");
+  return t.report();
+}

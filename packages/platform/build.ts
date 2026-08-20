@@ -16,7 +16,7 @@
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
 import { waccArtifacts } from "../../harness/waccBuild.ts";
-import { wacFiles } from "../../harness/wacFiles.ts";
+import { wacFiles, wacFilesWithRoots } from "../../harness/wacFiles.ts";
 // Imported for its side effect as much as for `COV_DUMP_DIR`'s twin: under `WAC_PROFILE` it wraps
 // `Deno.test` so that what a *built* program executes is attributed to whichever test ran it. Every
 // subprocess-based test file reaches this module — that is how it builds the binary it runs — and none
@@ -414,7 +414,10 @@ export async function buildApp(
     throw new Error("a coverage build cannot be optimised: wasm-opt may renumber the branches its counters index");
   }
   const optimize = opts.optimize ?? false;
-  const files = await wacFiles(entry);
+  // **With the project roots**, for the reason `native.ts` gives beside its own: without them wacc
+  // gets an empty `Res` and a `@/` specifier answers "an import of a file that was not supplied".
+  // Both builders walk the files themselves, so both had to be told. GitHub issue 21.
+  const { files, roots } = await wacFilesWithRoots(entry);
   // A page and a worker bundle are not runnable by themselves, so neither gets the execute bit.
   const executable = !workerOnly && target !== "browser";
 
@@ -423,14 +426,14 @@ export async function buildApp(
     const artifact = await cached("app", key, "", async (tmp) => {
       await Deno.writeTextFile(
         tmp,
-        await produceApp(entry, files, grants, target, workerOnly, coverage, optimize, key),
+        await produceApp(entry, files, roots, grants, target, workerOnly, coverage, optimize, key),
       );
     });
     await place(await Deno.readTextFile(artifact), out, executable);
     return;
   }
   await place(
-    await produceApp(entry, files, grants, target, workerOnly, coverage, optimize),
+    await produceApp(entry, files, roots, grants, target, workerOnly, coverage, optimize),
     out,
     executable,
   );
@@ -495,8 +498,21 @@ async function place(text: string, out: string, executable: boolean): Promise<vo
  * `binaryen` package is 108 and cannot read our modules at all — `[parse exception: Bad type form -50]`,
  * the wasm-GC type encoding it predates.
  */
+/** Pinned — see `optimized`. Ubuntu's 108 cannot read our modules at all. */
+const BINARYEN_VERSION = "131.0.0";
+
 async function optimized(wasm: Uint8Array): Promise<Uint8Array> {
-  const { default: binaryen } = await import("npm:binaryen@131.0.0");
+  // **Assembled rather than written as a literal, so it is not fetched until `--optimize` asks for
+  // it.** Deno adds a *statically analysable* dynamic import to the module graph and loads it up
+  // front, so `await import("npm:binaryen@131.0.0")` downloaded 131 on every build of every target,
+  // optimising or not — measured with a fresh `DENO_DIR` and `--no-lock`, so the lockfile was not the
+  // cause. An outsider on a slow connection paid for a wasm optimiser to build a program that did not
+  // ask to be optimised. GitHub issue 21, `issues/system/0228a`.
+  //
+  // The version stays in one place and is still greppable; what is gone is Deno's ability to see it
+  // before the branch that needs it runs.
+  const spec = ["npm:binaryen", BINARYEN_VERSION].join("@");
+  const { default: binaryen } = await import(spec);
   binaryen.setOptimizeLevel(3);
   binaryen.setShrinkLevel(0);
   const module = binaryen.readBinary(wasm);
@@ -547,6 +563,8 @@ async function optimized(wasm: Uint8Array): Promise<Uint8Array> {
 async function produceApp(
   entry: string,
   files: Map<string, string>,
+  /** The project root each path sits in, so `@/` resolves — GitHub issue 21. */
+  roots: Map<string, string>,
   grants: Grants,
   target: Target,
   workerOnly: boolean,
@@ -573,7 +591,11 @@ async function produceApp(
   let covLines: string[];
   let exportNames: string[];
   if (Deno.env.get("WAC_APP_FROM") !== "reference") {
-    const a = await waccArtifacts(files, entry, { coverage, optimize: optimize ? optimized : undefined });
+    const a = await waccArtifacts(files, entry, {
+      coverage,
+      optimize: optimize ? optimized : undefined,
+      roots,
+    });
     ({ wasm, glue, covLines } = a);
     exportNames = a.exports;
   } else {

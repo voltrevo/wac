@@ -134,6 +134,12 @@ Box<Point> b = ...;
 *template* is usable — `import { Box as B }` then `B<i32>`. And two different structs that happen to
 share a name, which `§wac-samename-struct-4jhq7wn` permits, give two instantiations rather than one.
 
+The fence above cannot be compiled — the rule needs three files and the elisions stand for a value of
+each type — so it is exercised by `packages/wacc/test/wac/aliasimport_test.wac` instead, which builds
+and runs the version with the bodies filled in. It was worth writing: wacc refused this rule until
+2026-08-20 and nothing noticed, because an unrunnable fence is a rule no differential reaches.
+`issues/lang/0161`.
+
 That last one was a type confusion rather than a diagnostic before it was fixed: both spellings
 mangled alike, one struct served both, and it surfaced as an error only because the two layouts
 happened to differ. See issue 0042.

@@ -1,0 +1,18 @@
+// expect: answers f = 2
+// why: a local shadows a parameter of a *different type*, in the same scope with no intervening block.
+//      `spec/spec/naming.md` states the rule for a nested block; this is the same rule with no block,
+//      and the answer says which binding `a.m()` reached. A compiler that keeps resolving the name to
+//      the parameter answers 1.
+//      Found while replacing thirty-three copies of `struct Rng` with one shared struct
+//      (`issues/system/0220`): a mechanical `this.` -> `r.` rewrite landed on a body that already had
+//      a local called `r`. wacc's **checker** said nothing about the resulting `i32.upto` — the
+//      emitter declined and the export-parity net reported it as a missing export, while the reference
+//      reports a typecheck error with a line and a column. That divergence is `issues/lang/0174a`;
+//      this case is about the resolution itself, which both compilers get right.
+
+struct A { i32 v; i32 m(this) { return 1; } }
+struct B { i32 v; i32 m(this) { return 2; } }
+
+i32 g(A a) { B a = B(0); return a.m(); }
+
+export i32 f() { return g(A(0)); }

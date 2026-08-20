@@ -1,0 +1,79 @@
+// bytes' coverage, and the one point that needs two gigabytes to reach.
+//
+//   deno task coverage:bytes
+//   deno task coverage:bytes --verbose
+//
+// **79 of 80.** Two-way ratchet over `tools/wac/covledger.wac`: anything not listed must be covered,
+// and anything listed that *is* covered fails too. `issues/system/0205`.
+//
+// ## What the driver was not reaching, and it was not a capability
+//
+// This read 73 of 80, and six of the seven uncovered points were one function: `slice.wac`'s `equal`,
+// whose **entry** was uncovered. Not a branch nobody took — a function nobody called, in a file
+// `packages/ssz`, `packages/ens` and `packages/tls` all import from. It had no test at all; one is in
+// `test/wac/bounds_test.wac` now, pinning among other things the "empty equals empty" its doc comment
+// argues for.
+//
+// **None of this package's 39 tests takes a capability**, so `cov_exercise.wac` could have called them
+// from the day it was written. `issues/system/0221` removed the blocker for packages whose tests need
+// one; this was never in that set. It was simply never wired — as sixteen of nineteen exercises still
+// were when this was written.
+//
+// ## The mistake that made the first attempt look like a no-op
+//
+// Wiring all 39 into `main` changed the number **not at all** — 73 of 80 before and after, with no
+// failure printed. Twelve of `bounds_test.wac`'s seventeen tests *expect a trap*, and a trap in `main`
+// ends the run: the third call killed the process after the probes had already covered their 73. The
+// evidence was a report identical to the one before the change, which reads as "the wiring did
+// nothing" and meant "the wiring stopped the run".
+//
+// So they are split. The 27 that return are called from `main`; the twelve that trap go through
+// `trapCase` and `cases()` below, which `covdump` calls one at a time with the trap caught. Every
+// package left in `issues/system/0205` will need the same split, and the tell is `test_traps_` in the
+// name.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/bytes/test/cov_exercise.wac";
+const string PREFIX = "packages/bytes/";
+
+/**
+ * The trap sweep: twelve bounds checks, each expecting to trap.
+ *
+ * `covdump` calls `trapCase(0)`…`trapCase(11)` with a TryCatch per call
+ * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`), so a case past the end returns rather than
+ * trapping and the width is an upper bound rather than an assertion.
+ */
+string[] cases() { return string[]("trapCase:12"); }
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/bytes/src/buf.wac", 83, "if (cap > 2147483647) { cap = 2147483647; }", false,
+        "**Reachable, and nobody is going to build the input.** `Buf` doubles its capacity until it " +
+        "covers what is needed, and this clamps the doubling at `i32.MAX` so the `as! i32` below it " +
+        "cannot trap on a checked conversion. Getting here needs a buffer already past a gigabyte " +
+        "asking to grow again — a real two-gigabyte allocation, in a test, on every run of " +
+        "`coverage:all`.\n" +
+        "         `proven: false` rather than `true`, and the distinction is the point: this is not a " +
+        "line no input reaches, it is a line whose input costs more than the measurement is worth. " +
+        "Marking it unreachable would be a claim about the code that is false — the clamp is exactly " +
+        "what stops a 3-gigabyte request from becoming a negative length, and it is the only thing " +
+        "standing between `cap * 2` overflowing and `u8[cap as! i32]()` being handed it."));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No grants: not one of this package's tests or probes reads a file or spawns anything.
+  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

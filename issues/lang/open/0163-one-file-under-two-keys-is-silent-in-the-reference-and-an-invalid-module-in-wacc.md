@@ -1,7 +1,7 @@
 # 0163 — one file under two keys: silent in the reference, an invalid module in wacc
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a, 2026-08-20 — part 1 (refuse it, rather than emit a module the engine rejects)
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -80,3 +80,49 @@ Two separable things:
 Found by canarying, not by review. The `@/` test needed to show it could fail, so I perturbed the
 resolver to give `@/` a different key — and the interesting part was not that the test failed but
 *how*: `check` stayed clean and the engine did the complaining.
+
+## Part 1 done: it is refused, with both keys named — agent-a, 2026-08-20
+
+`linkFiles` answers `""` when two supplied keys name one file, and `linkFailure` says which:
+
+    one file is supplied under two keys: `./src/point.wac` and `src/point.wac`,
+    which both name `src/point.wac`
+
+So the invalid module is gone, and with it the *"this is a compiler bug rather than a fault in your
+program"* with no source line. That was the worst available outcome and it is what part 1 asked for.
+
+**It needed no perturbed resolver to test.** The shape is reachable through the files-based API by
+handing it two keys, which is what `packages/wacc/test/wac/twokeys_test.wac` does — five tests,
+including the `./src/point.wac` against `src/point.wac` pair this issue was found with, and two
+controls: two *different* files with identical contents stay legal (an empty file, a shim), and an
+ordinary one-key program still builds. Reverting the guard fails two of the five.
+
+### Where it had to go, after two wrong answers
+
+`buildLinked` first — which is `wac build` only, so `blockedFiles` and the whole `emitFiles*` family
+walked straight past it. That is the split `issues/lang/0170a` records: those go through `emitLinked`.
+Then `frontOf`, which `emitLinkedWith2` does not call either. The one thing both routes pass through
+is **`linkFiles`**, and `""` from it is already how a link says no — `frontOf` turns it into a null
+front and `emitLinkedWith2` into a bare module. Said once there, it covers every consumer.
+
+### The first version cost 20% of a build
+
+`normalisePath` on every supplied key put `packages/box` at **15.7s against a 12.3s baseline** — three
+seconds on a twelve-second build, for a condition nothing in the tree can reach. A key can only collide
+with a normalised sibling if it is *not itself* normalised, so `looksNormal` — six `indexOf`s, no
+allocation — answers for every key in a healthy map and the walk stops. **11.9s**, inside the noise of
+the baseline. Measured rather than assumed, because a guard on the hot path is exactly where a cheap
+correctness win turns into a slow compiler.
+
+## What is left: part 2, and the divergence is now deliberate
+
+Part 2 stands as written — D8's job. What has changed is that "one of each" is no longer *invalid
+module against works*: wacc **refuses with a reason** and the reference tolerates the duplicate and
+runs. That is still a disagreement, and it is now a stated position rather than an accident.
+
+Recommendation, for whoever settles D8: **refusing is right.** Two keys for one file means resolution
+has already gone wrong, and identity riding on the key is the whole of D8 — so tolerating it asks the
+compiler to guess which of two identities the programmer meant, in a program where nothing distinguishes
+them. The reference's tolerance is not evidence for the other side; it reads the file twice and gets
+away with it because it has no nominal identity to keep straight. `[§wac-samename-struct-4jhq7wn]`
+already says identity is the file a definition was written in, and one file is one definition.

@@ -1,0 +1,164 @@
+// An aliased import names the same declaration, and its variants come with it.
+//
+//     wac test --allow-read packages/wacc/test/wac/aliasimport_test.wac
+//
+// `import { E as E2 }` registered the *enum* under `E2` — `declareEnum(c.renamed(…))` — and its
+// variants under `E`, because `declareVariant` seventeen lines below was the one call in that walk not
+// wrapped in `c.renamed`. So `E2` worked perfectly as a parameter type and `E2.A` was *"no variant of
+// that name"*, which is a confusing pair of facts to be handed. `issues/lang/0161`.
+//
+// **The third test is the one that matters.** A fix that stopped checking variant names at all would
+// satisfy the first two, so a genuinely absent variant has to stay refused — the same shape as the
+// control in every other case added today.
+//
+// Multi-file, so it cannot live in `spec/cases`: a single-file runner has no `lib.wac` to supply, and
+// an import naming a file nobody gave is not refused by this checker anyway (`issues/lang/0157`).
+
+import { T } from "../../../wactest/src/assert.wac";
+import { dumpTypeErrorsFiles, emitFilesChecked } from "../../src/api.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli } from "std/platform.wac";
+
+string LIB() { return "export enum E { A, B }\n"; }
+
+/** How many type errors this pair of files produces. */
+i32 errs(string main) {
+  return dumpTypeErrorsFiles(string[]("/main.wac", "/lib.wac"),
+                             string[](main, LIB()), "/main.wac").len();
+}
+
+export string test_a_variant_is_reachable_through_an_aliased_enum(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = errs("import { E as E2 } from \"/lib.wac\";\n" +
+               "export i32 f() { E2 e = E2.A; return 1; }\n");
+  t.eqI32(n, 0, "an aliased enum's variant is not reachable — " + itoa(n) + " diagnostic(s)");
+  return t.report();
+}
+
+export string test_the_unaliased_form_is_unaffected(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = errs("import { E } from \"/lib.wac\";\n" +
+               "export i32 f() { E e = E.A; return 1; }\n");
+  t.eqI32(n, 0, "the plain import stopped working — " + itoa(n) + " diagnostic(s)");
+  return t.report();
+}
+
+export string test_a_variant_that_does_not_exist_is_still_refused(Core core, Cli cli) {
+  T t = T.create();
+  // The canary. Reaching a real variant through an alias must not be bought by no longer checking.
+  i32 n = errs("import { E as E2 } from \"/lib.wac\";\n" +
+               "export i32 f() { E2 e = E2.Nope; return 1; }\n");
+  t.isTrue(n > 0, "`E2.Nope` is accepted — the variant check was lost, not fixed");
+  return t.report();
+}
+
+// ── One declaration, two local spellings — `issues/lang/0161` ───────────────────────────────────
+
+/**
+ * `E` and `E2` name one declaration, so a value of one is a value of the other.
+ *
+ * `C.renamed` maps the declaring file's name to the importing file's, one answer per name, and
+ * `declareModule` registers each declaration under that one answer. `import { E, E as E2 }` records
+ * only `E → E2`, so the enum is declared as `E2` and *nothing* is declared as `E`. An undeclared name
+ * is `typeNone()`, which is silent — so the plain spelling does not become a second type, it stops
+ * being a type, and every rule about it goes quiet.
+ *
+ * **The spec requires this to work.** `spec/spec/generics.md`
+ * `[§wac-generic-instantiation-identity-6pnq4wj]` says `Box<P>` and `Box<Point>` are one struct, for
+ * `import { Point, Point as P }` — so two spellings collapsing onto one declaration is a stated rule
+ * rather than a convenience. The reference implements it; wacc does not.
+ */
+export string test_two_spellings_of_one_enum_are_one_type(Core core, Cli cli) {
+  T t = T.create();
+  string both = "import { E, E as E2 } from \"/lib.wac\";\n";
+  i32 toAlias = errs(both + "i32 take(E2 e) { return 1; }\n" +
+                            "export i32 f() { E e = E.A; return take(e); }\n");
+  t.eqI32(toAlias, 0, "an `E` handed to a parameter written `E2`: " + itoa(toAlias) +
+                      " diagnostic ints");
+  i32 toPlain = errs(both + "i32 take(E e) { return 1; }\n" +
+                            "export i32 f() { E2 e = E2.A; return take(e); }\n");
+  t.eqI32(toPlain, 0, "an `E2` handed to a parameter written `E`: " + itoa(toPlain) +
+                      " diagnostic ints");
+  return t.report();
+}
+
+/**
+ * And both spellings stay *checked*, which is the half that was costing real coverage.
+ *
+ * A fix that made `E` resolve to `E2` by treating an unknown name as the other one would satisfy the
+ * test above and lose this: a variant that exists under neither spelling has to stay refused. The
+ * function case is here too because that is where it was live — `packages/ssh/test/wac/probe.wac`
+ * imported `disconnect` plainly and as `srvDisconnect` and used both, so two call sites in a green
+ * package had no arity check at all.
+ */
+export string test_neither_spelling_is_exempt_from_checking(Core core, Cli cli) {
+  T t = T.create();
+  string both = "import { E, E as E2 } from \"/lib.wac\";\n";
+  t.isTrue(errs(both + "export i32 f() { E e = E.Nope; return 1; }\n") > 0,
+           "`E.Nope` is accepted — the plain spelling is not a type");
+  t.isTrue(errs(both + "export i32 f() { E2 e = E2.Nope; return 1; }\n") > 0,
+           "`E2.Nope` is accepted");
+
+  string[] wrongArity = string[]("import { add, add as plus } from \"/lib.wac\";\n" +
+                         "export i32 f() { return add(1); }\n",
+                         "export i32 add(i32 a, i32 b) { return a + b; }\n");
+  i32 plainArity = dumpTypeErrorsFiles(string[]("/main.wac", "/lib.wac"), wrongArity, "/main.wac").len();
+  t.isTrue(plainArity > 0, "a wrong arity through the plain spelling is accepted — " +
+                           itoa(plainArity) + " diagnostic ints");
+
+  string[] ok = string[]("import { add, add as plus } from \"/lib.wac\";\n" +
+                         "export i32 f() { return add(1, 2) + plus(3, 4); }\n",
+                         "export i32 add(i32 a, i32 b) { return a + b; }\n");
+  i32 fine = dumpTypeErrorsFiles(string[]("/main.wac", "/lib.wac"), ok, "/main.wac").len();
+  t.eqI32(fine, 0, "correct calls through both spellings are refused — " + itoa(fine) +
+                   " diagnostic ints");
+  return t.report();
+}
+
+/** The controls: the shapes that are *not* this have to keep working. */
+export string test_the_shapes_that_are_not_this_are_still_accepted(Core core, Cli cli) {
+  T t = T.create();
+  t.eqI32(errs("import { E } from \"/lib.wac\";\nexport i32 f() { E e = E.A; return 1; }\n"), 0,
+          "a plain import");
+  t.eqI32(errs("import { E as E2 } from \"/lib.wac\";\nexport i32 f() { E2 e = E2.A; return 1; }\n"),
+          0, "a single alias");
+  // One name from two *different* modules is `issues/lang/0128`, not this, and must stay two types.
+  i32 twoModules = dumpTypeErrorsFiles(
+    string[]("/main.wac", "/a.wac", "/b.wac"),
+    string[]("import { E } from \"/a.wac\";\nimport { E as E2 } from \"/b.wac\";\n" +
+             "i32 take(E2 e) { return 1; }\n" +
+             "export i32 f() { E e = E.A; return take(e); }\n",
+             "export enum E { A, B }\n", "export enum E { A, B }\n"), "/main.wac").len();
+  t.isTrue(twoModules > 0,
+           "two modules' same-named enums collapsed into one — that would undo issues/lang/0128");
+  return t.report();
+}
+
+/**
+ * The emitter does not decline what the checker now accepts.
+ *
+ * **This one passes on the unfixed compiler too, and that is worth stating rather than hiding**: the
+ * bug was the checker's alone — the emitter always built one declaration, and the refusal came from
+ * the type comparison. So this cannot fail for the reason the tests above fail.
+ *
+ * It is here for the failure mode the *fix* could introduce. Canonicalising a type name in the
+ * checker and not in the emitter would leave the checker accepting a call the emitter cannot write,
+ * which arrives as a missing export rather than as a diagnostic. `emitFilesChecked` returns a module
+ * only when every export survived the export-parity net, so an empty answer here is exactly that
+ * disagreement.
+ */
+export string test_the_emitter_builds_one_declaration_for_both_spellings(Core core, Cli cli) {
+  T t = T.create();
+  u8[] mod = emitFilesChecked(
+    string[]("/main.wac", "/lib.wac"),
+    string[]("import { E } from \"/lib.wac\";\n" +
+             "import { E as E2 } from \"/lib.wac\";\n" +
+             "i32 take(E2 e) { return match (e) { case A: 1, else: 0 }; }\n" +
+             "export i32 run() { E e = E.A; return take(e); }\n", LIB()),
+    "/main.wac");
+  t.isTrue(mod.len() > 8, "no module: the emitter still refuses `issues/lang/0161`'s reproduction");
+  // A wasm module, so what came back is a module rather than an empty answer read as success.
+  t.isTrue(mod.len() > 4 && mod[0] == 0 && mod[1] == 0x61 && mod[2] == 0x73 && mod[3] == 0x6D,
+           "what came back is not a wasm module");
+  return t.report();
+}

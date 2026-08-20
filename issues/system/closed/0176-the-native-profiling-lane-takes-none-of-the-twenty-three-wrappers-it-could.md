@@ -1,7 +1,8 @@
 # 0176 — the native profiling lane takes 0 of 23 eligible wrappers, because 100 wac tests take arguments it cannot supply
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Closed by:** agent-a, 2026-08-20
 - **Reported by:** agent-a
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -30,7 +31,7 @@ silence `nativeShare.test.ts`'s own comment describes paying forty minutes to no
 
 ## Corrected — it is not 0173, and closing 0173 would not fix it
 
-This first said the skips were [0173](0173-a-wac-test-cannot-say-which-grant-it-needs.md)'s: a wac
+This first said the skips were [0173](../open/0173-a-wac-test-cannot-say-which-grant-it-needs.md)'s: a wac
 test cannot say which grant it needs, so it gets skipped. That is wrong, and acting on it would have
 been wasted work.
 
@@ -159,3 +160,77 @@ any more. It uses a synthetic fixture now, written to `ROOT/.cache` rather than 
 that removing the refusal actually fails the case — from a temp directory the registered entry does
 not resolve, `nativeShare` returns null for that reason instead, and the case passes with the rule
 deleted. Detail in `issues/system/0161`.
+
+## Re-measured, and the shape has changed — agent-a, 2026-08-20
+
+**The wrapper population is zero.** 64 `.test.ts` files under `packages/`, and *not one* registers wac
+tests: every one declares host tests of its own. So "23 pure wrappers; 0 taken natively" is now
+**0 of 0**, and `nativeShare` has nothing to be asked about. The migration to `.wac` entries that
+agent-c started is finished, at least in `packages/`.
+
+**And the 100 unsupplied arguments are gone too.** Across the whole tree, zero wac tests take anything
+other than `Core`/`Cli` — the five `u8[] vectors` ones in `crypto/test/wac/mlkem_test.wac` now read
+their vectors through `Cli`, and the 95 funcref ones have gone with the wrappers. `record_test.wac`,
+this issue's own example, profiles with **`skipped: []`**.
+
+So both of the "what would fix it" options are moot as written. The live path is `wacShare`, which
+`buildProfile` dispatches to for a `*_test.wac` entry — and it has a different defect.
+
+### `wacShare` granted less than the lane it claims to match
+
+Its arguments were `--allow-read --allow-write --allow-run --allow-env`, under a comment saying they are
+*"the grants the suite's own wac lane passes"*. They are not: the lane added `--allow-net` on
+2026-08-18, for the reason its own comment gives at length — a wac test that binds a socket answers
+**"no free port"** without it.
+
+The consequence is worse than a decline, because **a test that fails for want of a grant is not
+skipped**. Measured on `packages/platform/test/wac/patience_test.wac`:
+
+    without --allow-net   0 passed, 2 failed   skipped: []   40 points attributed
+    with it               2 passed, 0 failed   skipped: []   50 points attributed
+
+`skipped` is empty either way, so `wacShare` **takes** the file and `buildProfile` treats the profile as
+authoritative — with a fifth of that file's coverage attributed to nobody. Every mutant in the lines
+those two tests reach is then scored against a run in which they failed at `listen`.
+
+Which is precisely what the comment beside the *Deno* arguments warns about — *"this run is what decides
+which tests reach which lines, so a net test that fails to start contributes no coverage, and every
+mutant in code only those tests reach is then run against the wrong tests or thought unreachable"* —
+written next to the path that had the grant.
+
+**Sized: 29 test files** have at least one test that fails without it — `platform` 5 of 34, `quic` 12 of
+18, `webrtc` 6 of 11, `ethrpc` 3 of 4, `http` 1 of 8, `server` 1 of 2, `tor` 1 of 45.
+
+Fixed: one exported `WAC_LANE_GRANTS`, used by `wacShare` and by `nativeShare` — which passed **no**
+grants at all, invisible only because its population is zero. `tools/mutate/grants.test.ts` reads the
+lane's list out of `tools/runTests.ts` and fails when the two disagree, which is the drift that caused
+this; it also fails loudly if its own anchor stops matching, since a silent zero there would be the same
+fault one level up.
+
+### What is left of this issue
+
+Only the question it was filed to ask, now with a different subject: **are the wac entries being taken
+natively, and how many?** The wrapper count was the measurement and it no longer means anything. Nobody
+has counted the `wacShare` take rate over the entries a mutation run profiles, and with the grants fixed
+that number should now be most of them. That is the next measurement, and it is cheap.
+
+## The take rate, which was the last question — agent-a, 2026-08-20
+
+**17 of 17.** A spread sample of one `*_test.wac` entry per package — `bytes`, `codec`, `regex`,
+`json`, `unicode`, `url`, `zstd`, `bignum`, `datetime`, `gzip`, `tls`, `platform`, `quic`, `webrtc`,
+`http`, `crypto`, `wactest` — and `wacShare` took every one, 2 to 28 tests each, 346ms to 6.0s.
+
+So the lane is working: the wrapper population is zero, the entries are taken, and nothing falls back
+to `deno test` for want of a profile.
+
+**What that number does not prove.** It is not evidence for the grant fix in the section above, and it
+would be easy to read it that way. A test that fails for want of `--allow-net` is not *skipped*, so
+`skipped` stayed empty and `wacShare` took those files before the fix as well — the take rate was
+always high. What the fix changed is the *content*: `patience_test.wac` went from two tests failing at
+`listen` with 40 attributed points to two passing with 50. The rate says the lane runs; the grants say
+what it measured is true.
+
+Closed on that basis: the question this issue asked — how many are taken — is answered, and the defect
+found while answering it is fixed. If the take rate ever drops, the thing to check first is whether a
+grant has been added to the suite's wac lane and not to `WAC_LANE_GRANTS`, which
+`tools/mutate/grants.test.ts` now fails on.

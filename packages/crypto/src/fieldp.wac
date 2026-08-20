@@ -96,15 +96,36 @@ bool lessThan(i64[] a, i64[] b) {
   return false;
 }
 
-/** a - b, assuming a >= b. Returns the borrow, which must be zero for a valid result. */
+/**
+ * a - b, wrapping. Returns the borrow out — 1 when a < b, 0 otherwise.
+ *
+ * The borrow is `(d >> 63) & 1` rather than `d < 0 ? 1 : 0`, which is the same value and not a
+ * branch: an arithmetic shift of 63 is 0 or -1 by the sign bit. `d` is a difference of limbs and
+ * so a function of the operands, which for a scalar multiplication means of the secret.
+ *
+ * A wrapped result is not a mistake here. Every caller either knows a >= b or uses the borrow to
+ * choose between this and the operand, so the wrapped limbs are computed and then discarded —
+ * computed, because the choosing must not be a branch either.
+ */
 i64 subInto(i64[] out, i64[] a, i64[] b) {
   i64 borrow = 0;
   for (i32 i = 0; i < a.len(); i++) {
     i64 d = a[i] - b[i] - borrow;
-    borrow = d < 0 ? 1 : 0;
+    borrow = (d >> (63 as i64)) & 1;
     out[i] = d & 4294967295;
   }
   return borrow;
+}
+
+/**
+ * `h = pick ? t : h`, limb by limb and with no branch. `pick` must be 0 or 1.
+ *
+ * Both arrays are read in full whichever is kept — the same property `fpSelect` documents, and the
+ * reason a conditional subtraction here does the subtraction either way.
+ */
+void selectInto(i64[] h, i64[] t, i64 pick) {
+  i64 mask = 0 - pick;
+  for (i32 i = 0; i < h.len(); i++) { h[i] = h[i] ^ (mask & (h[i] ^ t[i])); }
 }
 
 /** a + b, returning the carry out of the top limb. */
@@ -118,27 +139,30 @@ i64 addInto(i64[] out, i64[] a, i64[] b) {
   return carry;
 }
 
-/** Conditionally subtract p, so a value in [0, 2p) lands in [0, p). */
+/**
+ * Subtract p when that leaves a non-negative result, so a value in [0, 2p) lands in [0, p).
+ *
+ * **The subtraction happens either way** and the borrow decides which answer is kept. There is no
+ * `lessThan` here any more, and not for tidiness: the comparison was a loop that returned early on
+ * the first differing limb, so both *whether* it branched and *how many* limbs it read were
+ * functions of the value being reduced. `subInto` already answers the same question — the borrow out
+ * is 1 exactly when h < p — for the cost of the subtraction it was going to do next.
+ */
 void reduceOnce(i64[] h) {
-  i64[] p = pLimbs(h.len());
-  if (!lessThan(h, p)) {
-    i64[] t = i64[h.len()]();
-    subInto(t, h, p);
-    for (i32 i = 0; i < h.len(); i++) { h[i] = t[i]; }
-  }
+  i64[] t = i64[h.len()]();
+  i64 borrow = subInto(t, h, pLimbs(h.len()));
+  selectInto(h, t, 1 - borrow);
 }
 
 export i64[] fpAdd(i64[] a, i64[] b) {
   i64[] h = i64[a.len()]();
   i64 carry = addInto(h, a, b);
   // A carry out means the sum is at least 2^(32n), which is more than p — subtract once
-  // for the carry, then once more below for a possible remainder above p.
-  if (carry != 0) {
-    i64[] p = pLimbs(h.len());
-    i64[] t = i64[h.len()]();
-    subInto(t, h, p);
-    for (i32 i = 0; i < h.len(); i++) { h[i] = t[i]; }
-  }
+  // for the carry, then once more below for a possible remainder above p. `addInto`'s carry is
+  // 0 or 1, since each limb is below 2^32.
+  i64[] t = i64[h.len()]();
+  subInto(t, h, pLimbs(h.len()));
+  selectInto(h, t, carry);
   reduceOnce(h);
   return h;
 }
@@ -146,12 +170,9 @@ export i64[] fpAdd(i64[] a, i64[] b) {
 export i64[] fpSub(i64[] a, i64[] b) {
   i64[] h = i64[a.len()]();
   i64 borrow = subInto(h, a, b);
-  if (borrow != 0) {
-    i64[] p = pLimbs(h.len());
-    i64[] t = i64[h.len()]();
-    addInto(t, h, p);
-    for (i32 i = 0; i < h.len(); i++) { h[i] = t[i]; }
-  }
+  i64[] t = i64[h.len()]();
+  addInto(t, h, pLimbs(h.len()));
+  selectInto(h, t, borrow);
   return h;
 }
 
@@ -229,20 +250,16 @@ i64 normalise(i64[] h) {
   return carry;
 }
 
-/** The fold vector as an actual positive number, and p minus it. Both fit in n limbs. */
-i64[] foldLimbs(i32 n) {
-  i64[] f = foldVector(n);
-  i64[] h = i64[n]();
-  for (i32 i = 0; i < n; i++) { h[i] = f[i]; }
-  normalise(h);
-  return h;
-}
-
-i64[] complementLimbs(i32 n) {
-  i64[] out = i64[n]();
-  subInto(out, pLimbs(n), foldLimbs(n));
-  return out;
-}
+/**
+ * How many times the leftover carry is folded back in. Fixed, and deliberately not tight.
+ *
+ * `reduceWide` used to fold `while (k != 0)`, which is one or two passes for almost every input and
+ * a number nobody can predict for the rest — a loop trip count that is a function of the operands,
+ * and therefore of the secret scalar when the operand is a ladder accumulator. Three is the bound
+ * argued at `reduceWide`; the fourth pass is margin, and a pass with `k` already zero adds zero and
+ * costs `2n` additions.
+ */
+const i32 FOLD_ROUNDS = 4;
 
 /**
  * Reduce a 2n-word product modulo p. `c` is consumed.
@@ -251,13 +268,25 @@ i64[] complementLimbs(i32 n) {
  * shifted up by j-n limbs, and every target index is at most j-1, so a single pass from
  * the top clears the whole upper half without anything landing above where it started.
  *
- * Then the leftover. Carry propagation leaves n limbs in range plus a signed multiple k
- * of 2^(32n), which is congruent to k*fold. Folding a positive k is direct. A negative k
- * is the case that has to be handled rather than ignored: subtracting could borrow, and
- * borrowing produces another negative k, and the loop never ends. Since k*fold and
- * k*fold + |k|*p are congruent, a negative k is folded as |k| * (p - fold) instead —
- * strictly positive, because 0 < fold < p for both primes — so every addition is an
- * addition and the carry out is never negative twice.
+ * Then the leftover. Carry propagation leaves n limbs in range plus a signed multiple k of
+ * 2^(32n), which is congruent to k*fold — and **`foldVector` *is* fold, as signed limbs**, so
+ * `h[i] += fv[i] * k` is that fold for either sign of k with nothing to decide. This used to
+ * convert k to a magnitude and pick between fold and p-fold, because it was adding into an array it
+ * wanted to keep non-negative; `h` holds signed limbs between normalisations, so it does not.
+ * `foldLimbs` and `complementLimbs` went with the choice.
+ *
+ * ## Why three passes are enough, and four are run
+ *
+ * Stage 1 leaves `|h[i]|` under 2^40: a word starts under 2^32 and receives the folds of the at most
+ * n words above it, each itself bounded the same way, which doubles per position over the top half.
+ * `normalise` carries low to high, so its output carry is about `max|h[i]| / 2^32` — the recurrence
+ * `c <= (H + c) / 2^32` — giving `|k| < 2^11` at the first fold.
+ *
+ * Pass 1 changes each limb by at most `|k|`, so `|h[i]| < 2^32 + 2^11` and `|k|` drops to 1. Passes
+ * 2 and 3 finish it: with `|k| = 1` the value is `h ± fold` with `fold < 2^(32n - 1)` for both
+ * primes, so it leaves the range at most once more, and the pass after that cannot. `FOLD_ROUNDS`
+ * is 4 rather than 3 because the 2^40 above is a bound rather than a measurement, and the `trap`
+ * below is there because both of those sentences are arguments.
  */
 i64[] reduceWide(i64[] c) {
   i32 n = c.len() / 2;
@@ -265,12 +294,15 @@ i64[] reduceWide(i64[] c) {
 
   for (i32 j = c.len() - 1; j >= n; j--) {
     i64 v = c[j];
-    if (v != 0) {
-      c[j] = 0;
-      i32 base = j - n;
-      for (i32 k = 0; k < n; k++) {
-        if (fv[k] != 0) { c[base + k] += fv[k] * v; }
-      }
+    c[j] = 0;
+    i32 base = j - n;
+    // `fv[k]` is a function of `n` alone, so this branch takes the same direction for every
+    // operand — it is skipping the four positions of eight (P-256) or eight of twelve (P-384)
+    // where the fold vector is zero, and dropping it would double this loop for no secrecy.
+    // The `v != 0` test that used to wrap the whole body was the opposite: `v` is a word of the
+    // product, and in a scalar multiplication that is a function of the secret scalar.
+    for (i32 k = 0; k < n; k++) {
+      if (fv[k] != 0) { c[base + k] += fv[k] * v; }
     }
   }
 
@@ -278,16 +310,26 @@ i64[] reduceWide(i64[] c) {
   for (i32 i = 0; i < n; i++) { h[i] = c[i]; }
 
   i64 k = normalise(h);
-  while (k != 0) {
-    i64[] src = k > 0 ? foldLimbs(n) : complementLimbs(n);
-    i64 m = k > 0 ? k : -k;
-    for (i32 i = 0; i < n; i++) { h[i] += src[i] * m; }
+  for (i32 round = 0; round < FOLD_ROUNDS; round++) {
+    for (i32 i = 0; i < n; i++) { h[i] += fv[i] * k; }
     k = normalise(h);
   }
+  // Not a branch on the operands: `FOLD_ROUNDS` is not tight, so this direction is the same for
+  // every input a correct implementation is given. It is here because the bound above is an
+  // argument rather than a proof, and a silent wrong answer from a field multiply is the worst
+  // outcome on the list.
+  //
+  // **It is reachable, which was checked rather than assumed.** `FOLD_ROUNDS` at 1 traps
+  // `nistcurve_test.wac` immediately; at 2 the whole of it passes. So this corpus needs two passes,
+  // the argument above allows three, and four is what runs. There is no test asserting the trap
+  // fires, because `FOLD_ROUNDS` is a constant and a test cannot vary it — the canary is an
+  // experiment on the source, and this paragraph is its record.
+  if (k != 0) { trap; }
 
-  // h is now below 2^(32n) and congruent. p is within a factor of two of 2^(32n), so this
-  // subtracts at most once, but the loop costs nothing and does not depend on that.
-  while (!lessThan(h, pLimbs(n))) { reduceOnce(h); }
+  // h is now below 2^(32n) and congruent. Both primes are above 2^(32n - 1), so h is below 2p and
+  // one conditional subtraction is the whole of it — which is what `reduceOnce` is. This was a
+  // `while (!lessThan(...))` loop, whose *number of iterations* was a function of h.
+  reduceOnce(h);
   return h;
 }
 

@@ -63,3 +63,45 @@ export string test_output_either_side_of_a_redirect_is_still_captured(Core core,
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * A frame's `cwd()` is absolute, whatever the frame was given.
+ *
+ * `Cli.cwd()` is absolute for a real `Cli`, and `childCli` used to hand the frame's string back verbatim
+ * — so a *relative* frame cwd made `cwd()` relative and no consumer expected that. `packages/sh` is the
+ * one that noticed: its own `cwd` is documented "always absolute", it is seeded from `cli.cwd()`, and
+ * every path it touches is resolved against it, so a child writing `f` was told there was no such file
+ * in a directory that existed and was writable. `issues/system/0194`.
+ *
+ * The tests above all pass an absolute `workDir`, which is why they never saw it — the fault was in the
+ * one input none of them used.
+ */
+export string test_a_frames_cwd_is_absolute_however_it_was_given(Core core, Cli cli) {
+  T t = T.create();
+  string here = cli.cwd().wait();
+
+  Frame rel = Frame.of(string[]("child"), u8[0](), ".cache/wac-relcwd", false);
+  t.eqStr(childCli(rel, cli).cwd().wait(), here + "/.cache/wac-relcwd",
+          "a relative frame cwd is joined onto the parent's");
+
+  Frame abs = Frame.of(string[]("child"), u8[0](), here + "/.cache/wac-abscwd", false);
+  t.eqStr(childCli(abs, cli).cwd().wait(), here + "/.cache/wac-abscwd",
+          "an absolute frame cwd is untouched");
+
+  // No frame cwd is not a cwd of `""` — it means "the parent's", which is a third answer and the one
+  // that would be lost by absolutising unconditionally.
+  Frame none = Frame.of(string[]("child"), u8[0](), "", false);
+  t.eqStr(childCli(none, cli).cwd().wait(), here, "no frame cwd is the parent's own");
+
+  // And the write that started the issue: a child writing a bare name into a relative frame cwd.
+  string dir = ".cache/wac-relcwd";
+  cli.remove(dir, true).wait();
+  t.isTrue(cli.mkdir(dir, true).wait().ok(), "cannot make " + dir);
+  Cli child = childCli(rel, cli);
+  writeThroughRedirect(child, child.cwd().wait() + "/f", "hi\n");
+  t.eqStr(string.fromBytes(cli.readFile(dir + "/f").wait().bytes), "hi\n",
+          "a child wrote into a relative frame cwd");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+

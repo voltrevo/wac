@@ -27,14 +27,6 @@ export struct Outgoing {
   }
 }
 
-void writeDecimal(Buf out, i32 v) {
-  if (v == 0) { out.push('0'); return; }
-  u8[] tmp = u8[12]();
-  i32 n = 0;
-  i32 x = v;
-  while (x > 0) { tmp[n] = 48 + (x % 10); x = x / 10; n++; }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
-}
 
 /**
  * Serialize. `keepAlive` false adds `Connection: close`, which is also how a client asks for a
@@ -67,7 +59,7 @@ export u8[] write(Outgoing req, bool keepAlive) {
   // `Content-Length: 0` is legal but some servers treat it as a body, so it is not sent.
   if (req.body.len() > 0) {
     out.pushAll("Content-Length: ".toBytes());
-    writeDecimal(out, req.body.len());
+    out.pushDecimal(req.body.len());
     out.push(13);
     out.push(10);
   }

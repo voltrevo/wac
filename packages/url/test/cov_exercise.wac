@@ -23,23 +23,43 @@ import { Host, writeHost, parseIpv4, parseIpv6, endsInNumber } from "../src/host
 import { encode, decode, inEncodeSet, SET_C0, SET_FRAGMENT, SET_QUERY, SET_SPECIAL_QUERY,
          SET_PATH, SET_USERINFO, SET_COMPONENT } from "../src/percent.wac";
 import { Buf } from "../../bytes/src/buf.wac";
+import { Rng } from "../../wactest/src/rng.wac";
+import { Core, Cli } from "std/platform.wac";
+import {
+  test_fuzz_assembled_urls_agree_with_node as fuzz__fuzz_assembled_urls_agree_with_node,
+  test_fuzz_a_second_seed_in_case_the_first_is_lucky as fuzz__fuzz_a_second_seed_in_case_the_first_is_lucky,
+  test_fuzz_bare_references_against_every_base as fuzz__fuzz_bare_references_against_every_base,
+} from "./wac/fuzz_test.wac";
+import {
+  test_absolute_urls_with_every_component as parse__absolute_urls_with_every_component,
+  test_scheme_handling as parse__scheme_handling,
+  test_ports_that_are_not_ports as parse__ports_that_are_not_ports,
+  test_path_normalisation as parse__path_normalisation,
+  test_percent_encoding_by_component as parse__percent_encoding_by_component,
+  test_hosts_ipv4_in_all_its_spellings as parse__hosts_ipv4_in_all_its_spellings,
+  test_hosts_ipv6 as parse__hosts_ipv6,
+  test_hosts_names_empty_and_forbidden_bytes as parse__hosts_names_empty_and_forbidden_bytes,
+  test_file_urls as parse__file_urls,
+  test_relative_resolution_against_a_base as parse__relative_resolution_against_a_base,
+  test_edges_the_main_groups_miss as parse__edges_the_main_groups_miss,
+  test_whitespace_and_control_bytes_are_stripped as parse__whitespace_and_control_bytes_are_stripped,
+  test_inputs_that_must_be_rejected as parse__inputs_that_must_be_rejected,
+  test_a_non_ascii_domain_is_rejected_rather_than_mapped as parse__a_non_ascii_domain_is_rejected_rather_than_mapped,
+  test_a_reference_resolves_against_an_opaque_path_only_with_a_hash as parse__a_reference_resolves_against_an_opaque_path_only_with_a_hash,
+  test_runtime_divergences_judged_against_the_standard as parse__runtime_divergences_judged_against_the_standard,
+} from "./wac/parse_test.wac";
+import {
+  test_encode_sets_nest as url__encode_sets_nest,
+  test_fragment_and_query_are_incomparable as url__fragment_and_query_are_incomparable,
+  test_the_component_set_escapes_percent as url__the_component_set_escapes_percent,
+  test_special_query_adds_the_apostrophe as url__special_query_adds_the_apostrophe,
+  test_percent_decode_leaves_malformed_escapes as url__percent_decode_leaves_malformed_escapes,
+  test_ipv6_serializes_compressed as url__ipv6_serializes_compressed,
+  test_ipv4_canonicalises as url__ipv4_canonicalises,
+  test_ends_in_number_selects_ipv4 as url__ends_in_number_selects_ipv4,
+  test_an_opaque_host_still_reads_brackets_as_an_address as url__an_opaque_host_still_reads_brackets_as_an_address,
+} from "./wac/url_test.wac";
 
-/** `xorshift32` with the TypeScript's seed; `upto` because its draws were unsigned. */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-
-  i32 upto(this, i32 n) {
-    i32 v = this.next() % n;
-    return v < 0 ? v + n : v;
-  }
-}
 
 /** The serializer's answer, which is the half a host cannot ask for. */
 i32 hostLen(Host h) {
@@ -59,6 +79,17 @@ string[] hand() {
     "http://example.com:65535/", "foo://example.com/", "foo:/path", "foo:path", "foo:",
     "mailto:a@b.c", "data:text/plain,hello", "javascript:alert(1)", "a+b-c.d://h/",
     "http://h:65536/", "http://h:99999999/", "http://h:abc/", "http://h:/", "http://h:-1/",
+    // **Uncovered branches in `host.wac`, one URL each, and here rather than in the sampled lists
+    // below on purpose.** Those lists feed a *random* cross product — 4000 draws from a fixed seed —
+    // so adding an entry to one of them re-rolls every draw and moves the coverage number for reasons
+    // that have nothing to do with the new entry. That is `issues/system/0212`'s shape, one directory
+    // over, and a floor over a re-rollable sample is not worth much. These are deterministic.
+    "http://0xFF.0.0.1/", "http://0XAB/",              // the A-F arm of `hexVal`: only lowercase before
+    "http://0xZZ/", "http://0x1g/",                    // a non-hex digit inside a radix-16 part
+    "http://[::AB]/", "http://[::ABCD]/",              // uppercase inside an IPv6 piece
+    "http://[::1.02.3.4]/",                            // an embedded IPv4 piece with a leading zero
+    "http://[::1:]/", "http://[:]/",                   // a trailing single colon
+    "foo://[::AB]/", "foo://[::1]/", "foo://[bad/",     // brackets on a host that is not special
     "http://h/a/b/../c", "http://h/a/b/./c", "http://h/../../..", "http://h/a/..",
     "http://h/a/../", "http://h/.", "http://h/./", "http://h//a//b//", "http://h/a/%2e/b",
     "http://h/a/%2E%2e/b", "http://h/a/.%2e/b", "http://h\\a\\b", "http://h/a\\b",
@@ -92,7 +123,7 @@ string[] hand() {
     "foo://h?q", "foo://h#f", "foo://h");
 }
 
-export i32 main() {
+export i32 main(Core core, Cli cli) {
   i32 seen = 0;
 
   string[] hs = hand();
@@ -198,6 +229,127 @@ export i32 main() {
   for (i32 i = 0; i < numish.len(); i++) {
     if (endsInNumber(numish[i].toBytes())) { seen = seen + 1; }
   }
+
+
+  // **The package's own 27 tests.** Fifteen of `parse_test.wac`'s sixteen and all three of
+  // `fuzz_test.wac`'s take `(Core, Cli)` — they compare against a host oracle — so until
+  // `issues/system/0221` a coverage driver could not call them and this file was probes only.
+  // None of the 27 expects a trap, so all of them can be called from here; `packages/bytes` is
+  // where that is not true and the twelve trapping ones needed a `trapCase` sweep instead.
+  i32 bad = 0;
+  if (fuzz__fuzz_assembled_urls_agree_with_node(core, cli).len() > 0) {
+    core.warn("error: FAILED fuzz_test test_fuzz_assembled_urls_agree_with_node");
+    bad = bad + 1;
+  }
+  if (fuzz__fuzz_a_second_seed_in_case_the_first_is_lucky(core, cli).len() > 0) {
+    core.warn("error: FAILED fuzz_test test_fuzz_a_second_seed_in_case_the_first_is_lucky");
+    bad = bad + 1;
+  }
+  if (fuzz__fuzz_bare_references_against_every_base(core, cli).len() > 0) {
+    core.warn("error: FAILED fuzz_test test_fuzz_bare_references_against_every_base");
+    bad = bad + 1;
+  }
+  if (parse__absolute_urls_with_every_component(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_absolute_urls_with_every_component");
+    bad = bad + 1;
+  }
+  if (parse__scheme_handling(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_scheme_handling");
+    bad = bad + 1;
+  }
+  if (parse__ports_that_are_not_ports(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_ports_that_are_not_ports");
+    bad = bad + 1;
+  }
+  if (parse__path_normalisation(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_path_normalisation");
+    bad = bad + 1;
+  }
+  if (parse__percent_encoding_by_component(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_percent_encoding_by_component");
+    bad = bad + 1;
+  }
+  if (parse__hosts_ipv4_in_all_its_spellings(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_hosts_ipv4_in_all_its_spellings");
+    bad = bad + 1;
+  }
+  if (parse__hosts_ipv6(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_hosts_ipv6");
+    bad = bad + 1;
+  }
+  if (parse__hosts_names_empty_and_forbidden_bytes(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_hosts_names_empty_and_forbidden_bytes");
+    bad = bad + 1;
+  }
+  if (parse__file_urls(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_file_urls");
+    bad = bad + 1;
+  }
+  if (parse__relative_resolution_against_a_base(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_relative_resolution_against_a_base");
+    bad = bad + 1;
+  }
+  if (parse__edges_the_main_groups_miss(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_edges_the_main_groups_miss");
+    bad = bad + 1;
+  }
+  if (parse__whitespace_and_control_bytes_are_stripped(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_whitespace_and_control_bytes_are_stripped");
+    bad = bad + 1;
+  }
+  if (parse__inputs_that_must_be_rejected(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_inputs_that_must_be_rejected");
+    bad = bad + 1;
+  }
+  if (parse__a_non_ascii_domain_is_rejected_rather_than_mapped(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_a_non_ascii_domain_is_rejected_rather_than_mapped");
+    bad = bad + 1;
+  }
+  if (parse__a_reference_resolves_against_an_opaque_path_only_with_a_hash().len() > 0) {
+    core.warn("error: FAILED parse_test test_a_reference_resolves_against_an_opaque_path_only_with_a_hash");
+    bad = bad + 1;
+  }
+  if (parse__runtime_divergences_judged_against_the_standard(core, cli).len() > 0) {
+    core.warn("error: FAILED parse_test test_runtime_divergences_judged_against_the_standard");
+    bad = bad + 1;
+  }
+  if (url__encode_sets_nest().len() > 0) {
+    core.warn("error: FAILED url_test test_encode_sets_nest");
+    bad = bad + 1;
+  }
+  if (url__fragment_and_query_are_incomparable().len() > 0) {
+    core.warn("error: FAILED url_test test_fragment_and_query_are_incomparable");
+    bad = bad + 1;
+  }
+  if (url__the_component_set_escapes_percent().len() > 0) {
+    core.warn("error: FAILED url_test test_the_component_set_escapes_percent");
+    bad = bad + 1;
+  }
+  if (url__special_query_adds_the_apostrophe().len() > 0) {
+    core.warn("error: FAILED url_test test_special_query_adds_the_apostrophe");
+    bad = bad + 1;
+  }
+  if (url__percent_decode_leaves_malformed_escapes().len() > 0) {
+    core.warn("error: FAILED url_test test_percent_decode_leaves_malformed_escapes");
+    bad = bad + 1;
+  }
+  if (url__ipv6_serializes_compressed().len() > 0) {
+    core.warn("error: FAILED url_test test_ipv6_serializes_compressed");
+    bad = bad + 1;
+  }
+  if (url__ipv4_canonicalises().len() > 0) {
+    core.warn("error: FAILED url_test test_ipv4_canonicalises");
+    bad = bad + 1;
+  }
+  if (url__an_opaque_host_still_reads_brackets_as_an_address().len() > 0) {
+    core.warn("error: FAILED url_test test_an_opaque_host_still_reads_brackets_as_an_address");
+    bad = bad + 1;
+  }
+  if (url__ends_in_number_selects_ipv4().len() > 0) {
+    core.warn("error: FAILED url_test test_ends_in_number_selects_ipv4");
+    bad = bad + 1;
+  }
+  seen = seen + bad;
 
   return seen;
 }

@@ -181,3 +181,42 @@ bool contains(string haystack, string needle) {
   }
   return false;
 }
+
+/**
+ * A *complete* reply whose status line is not one — the half of `NotHttp` that arrives after the
+ * blank line rather than before it.
+ *
+ * `readReply` says `NotHttp` in two places for two different reasons. The one above fires while the
+ * reply is still arriving, on the grounds that a blank line may never come; this one fires when the
+ * blank line *has* come and `statusOf` could still make nothing of the first line. A proxy that
+ * answers `\r\n\r\n` and nothing else, or answers with a status that is not three digits, reaches only
+ * the second — and `issues/system/0205` listed all four of its arms as uncovered, because the corpus
+ * above has no reply that is both complete and malformed.
+ *
+ * The distinction is worth keeping: the first is a guess made early to avoid a hang, the second is a
+ * verdict on a finished message, and only the second can be sure.
+ */
+export string test_a_complete_reply_that_is_not_a_status_line_is_not_a_proxy_answering() {
+  T t = T.create();
+
+  // Not HTTP at all, and finished — `looksHttp` refuses it on the first five bytes.
+  t.eqStr(tagOf(readReply("HELLO\r\n\r\n".toBytes())), "NotHttp", "a complete non-HTTP reply");
+  t.eqStr(lineOf(readReply("HELLO\r\n\r\n".toBytes())), "HELLO", "its first line comes back");
+
+  // HTTP-shaped and with no space after the version, so there is nowhere for a status to be. The
+  // version-then-CRLF case is the one a half-written proxy produces.
+  t.eqStr(tagOf(readReply("HTTP/1.1\r\n\r\n".toBytes())), "NotHttp", "a version and no status");
+
+  // A space, and then something that is not three digits.
+  t.eqStr(tagOf(readReply("HTTP/1.1 2X0 what\r\n\r\n".toBytes())), "NotHttp",
+          "a status with a letter in it");
+  t.eqStr(tagOf(readReply("HTTP/1.1 20\r\n\r\n".toBytes())), "NotHttp", "a status of two digits");
+
+  // And the shapes either side of it still mean what they meant, so the assertions above are about
+  // the status line rather than about anything having become stricter.
+  t.eqStr(tagOf(readReply("HTTP/1.1 200 Connection established\r\n\r\n".toBytes())), "Established",
+          "a 200 is still a tunnel");
+  t.eqStr(tagOf(readReply("HTTP/1.1 403 Forbidden\r\n\r\n".toBytes())), "Refused",
+          "a 403 is still a refusal");
+  return t.report();
+}

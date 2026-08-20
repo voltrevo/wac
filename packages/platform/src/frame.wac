@@ -340,7 +340,20 @@ export Cli childCli(Frame f, const Cli parent) {
     parent.spawnSelf,
     parent.closeFeed,
     parent.exitCode,
-    () => f.cwd == "" ? parent.cwd() : ready(f.cwd),
+    // **Absolute, like the parent's.** `Cli.cwd()` is absolute for a real `Cli`, and this handed the
+    // frame's string back verbatim — so a *relative* frame cwd made `cwd()` relative, which no consumer
+    // expects. `packages/sh` states the invariant and relies on it: its own `cwd` is documented "always
+    // absolute", it is seeded from `cli.cwd()`, and every path it touches goes through `resolve` against
+    // it. Given a relative one, a child writing `f` was told there was no such file in a directory that
+    // existed. `issues/system/0194`.
+    //
+    // Joined against the parent's, which is the only thing a relative frame cwd can mean — the frame
+    // says "where its relative paths resolve from" and the frame itself sits in the parent's directory.
+    // `joinPath` already returns an absolute path unchanged, so an absolute frame cwd costs nothing.
+    // `.wait()` rather than a chained `then`, because `Pending<T>.then` takes a consumer and not a
+    // mapper — and because this is the pattern already used for the same question: `packages/sh`'s
+    // constructor is `cli.cwd().wait()`. A real `cwd()` answers from the host without a turn.
+    () => f.cwd == "" ? parent.cwd() : ready(joinPath(parent.cwd().wait(), f.cwd)),
     parent.pushChild,
     parent.popChild,
     // Passed through unchanged, deliberately. A frame is a view of *stdio and the working

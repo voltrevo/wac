@@ -23,29 +23,8 @@
 import { toDays, fromDaysYear, fromDaysMonth, fromDaysDay, dayOfWeek, leap, monthLength,
          validDate, yearDay, accepts, parseMillis, parseOffset, parseOffsetKnown,
          formatMillis } from "./probe.wac";
+import { Rng } from "../../wactest/src/rng.wac";
 
-/**
- * xorshift32 with the seed the TypeScript used, so the random spread is the same corpus.
- *
- * `upto` rather than a bare `%`: the JavaScript did `x >>>= 0` before taking a remainder, so its
- * draws were never negative, and a signed `%` here would sample a different half of the space.
- * There are two dozen copies of this struct in the tree — `issues/system/0220`.
- */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-
-  i32 upto(this, i32 n) {
-    i32 v = this.next() % n;
-    return v < 0 ? v + n : v;
-  }
-}
 
 /** Every well-formed and malformed timestamp the tests parse. */
 string[] stamps() {

@@ -145,10 +145,17 @@ export Rewritten toExtended(u8[] pattern) {
             out.push(pattern[i]);
             i++;
           }
-          if (i + 1 < pattern.len()) {
-            out.push('}');
-            i = i + 2;
+          if (i + 1 >= pattern.len()) {
+            // **An interval GNU refuses.** `a\{2` ran off the end without a `\}`, and dropping the
+            // brace here left `a{2` — which this engine compiles, reading `{2` as three literals, so
+            // the pattern matched nothing instead of being rejected. One of grep's two answers became
+            // neither, which is the same failure the `\+`-with-nothing-to-repeat case above is about,
+            // in the opposite direction. GNU's own words, checked against its stderr by
+            // `test_a_refusal_says_whose_problem_it_is`.
+            return Rewritten(null, "Unmatched \\{");
           }
+          out.push('}');
+          i = i + 2;
           quantifiable = true;
           lastWasQuantifier = true;
           continue;

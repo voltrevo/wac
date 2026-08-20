@@ -10,7 +10,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Manifest, readManifest } from "../../src/manifest.wac";
 import { Lock, LockEntry, Step, USE, CREATE, REFRESH, plan, needsResolving, orphansOf,
-         readLock, isFullSha, writeLock } from "../../src/lock.wac";
+         readLock, isFullSha, writeLock, applyPlan } from "../../src/lock.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { parse } from "../../../json/src/json.wac";
@@ -253,4 +253,79 @@ export string test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_co
 bool strictJson(u8[] src) {
   JsonValue? v = parse(src);
   return !(v is null);
+}
+
+const string SHA_A = "1111111111111111111111111111111111111111";
+const string SHA_B = "2222222222222222222222222222222222222222";
+
+/**
+ * `applyPlan` handed steps that did not come from `plan`, which is the case its own comment defends.
+ *
+ * The comment at `lock.wac:183` says it plainly: "**Unreachable through `plan`, and not dead.** `plan`
+ * only answers `USE` when it found an entry, so this arm never runs and the coverage report says so.
+ * It is here because `applyPlan` takes `steps` as an argument and cannot know they came from `plan`."
+ *
+ * A comment that says a branch is unreachable through one caller is a claim about *that caller*, not
+ * about the function — and `applyPlan` is exported, so the caller that would reach it is a test. This
+ * is that test. What it pins is the promise in the last line: "Refusing is the answer; a trap in a
+ * lockfile writer is not."
+ */
+export string test_apply_plan_refuses_steps_that_did_not_come_from_plan() {
+  T t = T.create();
+  Manifest m = readManifest(("{ imports: { \"a/\": { git: \"https://e.test/a\", ref: \"main\" } } }")
+                            .toBytes());
+  t.isTrue(m.ok, "the fixture manifest did not parse");
+
+  // A lock that has never heard of `a/`, and a step claiming `USE` for it anyway.
+  Lock empty = Lock.empty();
+  Step[] steps = Step[](Step("a/", USE(), SHA_A, ""));
+  string[] resolved = string[]("");
+  LockEntry[] out = applyPlan(m, empty, steps, resolved);
+  t.eqI32(out.len(), 0, "a USE for a mapping the lock has never seen was applied rather than refused");
+
+  // The same step against a lock that *does* have the entry is applied, so the refusal above is
+  // about the missing entry rather than about `applyPlan` refusing everything.
+  Lock has = Lock(true, 0, "", LockEntry[](LockEntry("a/", "https://e.test/a", "main", "", SHA_B)));
+  LockEntry[] ok = applyPlan(m, has, steps, resolved);
+  t.eqI32(ok.len(), 1, "a USE for a mapping the lock has was refused");
+  if (ok.len() == 1) {
+    // The entry that was already there, not `resolved[i]` — a lock that did not need to change
+    // does not change.
+    t.eqStr(ok[0].commit, SHA_B, "USE took the resolved commit instead of the recorded one");
+  }
+
+  // A step count that does not match the manifest is refused too, which is the guard above it.
+  t.eqI32(applyPlan(m, has, Step[0](fill: Step("", USE(), "", "")), string[0](fill: "")).len(), 0,
+          "a step array of the wrong length was applied");
+  return t.report();
+}
+
+/**
+ * Entries are sorted by name, and two names that share a prefix are what the comparison is for.
+ *
+ * `before` compares byte by byte and every corpus this package has ever sorted differed in the
+ * *first* byte, so the loop's continue — the branch that says "these two bytes are the same, look at
+ * the next" — had never run. A comparator that returned on the first byte whatever it held would
+ * order every existing fixture correctly and put `alpine` before `alpha`.
+ */
+export string test_entries_sort_by_name_when_the_names_share_a_prefix() {
+  T t = T.create();
+  LockEntry[] entries = LockEntry[](
+    LockEntry("alpine/", "https://e.test/alpine", "main", "", SHA_A),
+    LockEntry("alpha/", "https://e.test/alpha", "main", "", SHA_B),
+    LockEntry("alp/", "https://e.test/alp", "main", "", SHA_A),
+    LockEntry("beta/", "https://e.test/beta", "main", "", SHA_B));
+  string text = string.fromBytes(writeLock(entries));
+
+  // Written in order, so the shortest shared prefix comes first and `alpha` before `alpine`.
+  i32 alp = text.indexOf("\"alp/\"");
+  i32 alpha = text.indexOf("\"alpha/\"");
+  i32 alpine = text.indexOf("\"alpine/\"");
+  i32 beta = text.indexOf("\"beta/\"");
+  t.isTrue(alp >= 0 && alpha >= 0 && alpine >= 0 && beta >= 0,
+           "a name went missing from the lockfile — " + text);
+  t.isTrue(alp < alpha, "`alp/` sorts before `alpha/`, being a prefix of it");
+  t.isTrue(alpha < alpine, "`alpha/` sorts before `alpine/` — they differ at the fourth byte");
+  t.isTrue(alpine < beta, "`alpine/` sorts before `beta/`");
+  return t.report();
 }

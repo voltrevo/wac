@@ -24,27 +24,50 @@ import { fmtF64, fmtF32, parseF64, parseF32, itoaOf } from "./probe.wac";
 import { ftoa, ftoa32, writeF32 } from "../src/ftoa.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { itoa } from "../src/itoa.wac";
+import { Rng } from "../../wactest/src/rng.wac";
 
+import { Core, Cli } from "std/platform.wac";
+import {
+  test_itoa_writes_the_sign_and_the_extremes as it__itoa_writes_the_sign_and_the_extremes,
+  test_atoi_reads_the_sign_and_stops_at_the_first_non_digit as it__atoi_reads_the_sign_and_stops_at_the_first_non_digit,
+} from "./wac/itoa_test.wac";
+import {
+  test_atof_the_cases_that_break_naive_conversions as af__atof_the_cases_that_break_naive_conversions,
+  test_atof_exact_halfway_cases_round_to_even as af__atof_exact_halfway_cases_round_to_even,
+  test_atof_round_trips_every_shortest_representation as af__atof_round_trips_every_shortest_representation,
+  test_atof_random_decimals_across_the_exponent_range as af__atof_random_decimals_across_the_exponent_range,
+  test_atof_the_estimate_is_inside_the_bisection_window as af__atof_the_estimate_is_inside_the_bisection_window,
+  test_atof_the_spellings_a_generator_does_not_produce as af__atof_the_spellings_a_generator_does_not_produce,
+} from "./wac/atof_test.wac";
+import {
+  test_fixedbig_shift_left_across_every_limb_boundary as bi__fixedbig_shift_left_across_every_limb_boundary,
+  test_fixedbig_mul_small_carries as bi__fixedbig_mul_small_carries,
+  test_fixedbig_random_add_subtract_and_compare as bi__fixedbig_random_add_subtract_and_compare,
+  test_fixedbig_subtraction_that_borrows_across_zero_limbs as bi__fixedbig_subtraction_that_borrows_across_zero_limbs,
+  test_fixedbig_zero_and_equality_edge_cases as bi__fixedbig_zero_and_equality_edge_cases,
+  test_fixedbig_add_in_place_agrees_with_the_three_operand_sum as bi__fixedbig_add_in_place_agrees_with_the_three_operand_sum,
+} from "./wac/bigint_test.wac";
+import {
+  test_f32_specials_and_zeros as f32__f32_specials_and_zeros,
+  test_f32_output_round_trips_and_is_shortest as f32__f32_output_round_trips_and_is_shortest,
+  test_f32_the_string_and_bytes_spellings_agree as f32__f32_the_string_and_bytes_spellings_agree,
+  test_f32_the_boundary_values as f32__f32_the_boundary_values,
+  test_f32_parsing_is_correctly_rounded as f32__f32_parsing_is_correctly_rounded,
+  test_f32_parse_and_format_are_inverse as f32__f32_parse_and_format_are_inverse,
+} from "./wac/f32_test.wac";
+import {
+  test_ftoa_specials_and_zeros as ft__ftoa_specials_and_zeros,
+  test_ftoa_hand_picked_hard_cases as ft__ftoa_hand_picked_hard_cases,
+  test_ftoa_random_bit_patterns as ft__ftoa_random_bit_patterns,
+  test_ftoa_random_decimals_and_integers as ft__ftoa_random_decimals_and_integers,
+  test_ftoa_every_output_round_trips as ft__ftoa_every_output_round_trips,
+} from "./wac/ftoa_test.wac";
 /** Finite, read off the exponent field, so no infinity literal is needed to ask. */
 bool finite(f64 x) {
   u64 b = f64.toBits(x);
   return ((b >> 52) & 0x7FF) != 0x7FF;
 }
 
-/**
- * xorshift32 with the TypeScript's seed. Two draws make one f64, high word first, which is what
- * `DataView.setUint32(0, …)` then `setUint32(4, …)` laid down.
- */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-}
 
 /** The two words as one u64, big-endian, the way the DataView wrote them. */
 f64 doubleOf(i32 hi, i32 lo) {
@@ -53,18 +76,20 @@ f64 doubleOf(i32 hi, i32 lo) {
   return f64.fromBits((h << 32) | l);
 }
 
-export i32 main() {
+export i32 main(Core core, Cli cli) {
   i32 seen = 0;
 
   // Random bit patterns, which is the only way to reach subnormals and huge exponents.
   Rng r = Rng(0x2545f491);
   for (i32 i = 0; i < 60000; i++) {
-    f64 x = doubleOf(r.next(), r.next());
+    // `next()` answers `u32` now, and `doubleOf` wants the two halves as `i32`. `as@` reinterprets
+    // rather than converts, so these are the same thirty-two bits the local copy handed over.
+    f64 x = doubleOf(r.next() as@ i32, r.next() as@ i32);
     seen = seen + fmtF64(x).len();
     // Round-tripped through *our* shortest form rather than the host's `String(x)`, which is the
     // same text whenever this package is right and is the only text available here.
     if (finite(x)) { seen = seen + (parseF64(fmtF64(x)) == x ? 1 : 0); }
-    seen = seen + fmtF32(f32.fromBits(r.next() as~ u32)).len();
+    seen = seen + fmtF32(f32.fromBits(r.next())).len();
   }
 
   // The values that pick out particular branches rather than a random sample.
@@ -122,6 +147,115 @@ export i32 main() {
   // itoa, including the value whose negation overflows.
   i32[] ns = i32[](0, 1, -1, 9, 10, 99, 100, 2147483647, -2147483647 - 1, -12345);
   for (i32 i = 0; i < ns.len(); i++) { seen = seen + itoaOf(ns[i]).len(); }
+
+  // ── The package's own 21 tests, none of which were being called ──
+  //
+  // Fifteen take `(Core, Cli)` — every claim this package makes is against the host's own `Number`
+  // formatting and parsing, so its tests spawn a process — and before `issues/system/0221` a coverage
+  // driver could call none of them. `src/itoa.wac` was at 10 of 29 as a result: the exercise formats
+  // floats, and the integer writer it reaches is the one `ftoa` happens to call.
+  i32 bad = 0;
+  if (it__itoa_writes_the_sign_and_the_extremes().len() > 0) {
+    core.warn("error: FAILED itoa_test test_itoa_writes_the_sign_and_the_extremes");
+    bad = bad + 1;
+  }
+  if (it__atoi_reads_the_sign_and_stops_at_the_first_non_digit().len() > 0) {
+    core.warn("error: FAILED itoa_test test_atoi_reads_the_sign_and_stops_at_the_first_non_digit");
+    bad = bad + 1;
+  }
+  if (bi__fixedbig_add_in_place_agrees_with_the_three_operand_sum().len() > 0) {
+    core.warn("error: FAILED bigint_test test_fixedbig_add_in_place_agrees_with_the_three_operand_sum");
+    bad = bad + 1;
+  }
+  if (af__atof_the_cases_that_break_naive_conversions(core, cli).len() > 0) {
+    core.warn("error: FAILED atof_test test_atof_the_cases_that_break_naive_conversions");
+    bad = bad + 1;
+  }
+  if (af__atof_exact_halfway_cases_round_to_even(core, cli).len() > 0) {
+    core.warn("error: FAILED atof_test test_atof_exact_halfway_cases_round_to_even");
+    bad = bad + 1;
+  }
+  if (af__atof_round_trips_every_shortest_representation(core, cli).len() > 0) {
+    core.warn("error: FAILED atof_test test_atof_round_trips_every_shortest_representation");
+    bad = bad + 1;
+  }
+  if (af__atof_random_decimals_across_the_exponent_range(core, cli).len() > 0) {
+    core.warn("error: FAILED atof_test test_atof_random_decimals_across_the_exponent_range");
+    bad = bad + 1;
+  }
+  if (af__atof_the_spellings_a_generator_does_not_produce(core, cli).len() > 0) {
+    core.warn("error: FAILED atof_test test_atof_the_spellings_a_generator_does_not_produce");
+    bad = bad + 1;
+  }
+  if (af__atof_the_estimate_is_inside_the_bisection_window().len() > 0) {
+    core.warn("error: FAILED atof_test test_atof_the_estimate_is_inside_the_bisection_window");
+    bad = bad + 1;
+  }
+  if (bi__fixedbig_shift_left_across_every_limb_boundary(core, cli).len() > 0) {
+    core.warn("error: FAILED bigint_test test_fixedbig_shift_left_across_every_limb_boundary");
+    bad = bad + 1;
+  }
+  if (bi__fixedbig_mul_small_carries(core, cli).len() > 0) {
+    core.warn("error: FAILED bigint_test test_fixedbig_mul_small_carries");
+    bad = bad + 1;
+  }
+  if (bi__fixedbig_random_add_subtract_and_compare(core, cli).len() > 0) {
+    core.warn("error: FAILED bigint_test test_fixedbig_random_add_subtract_and_compare");
+    bad = bad + 1;
+  }
+  if (bi__fixedbig_subtraction_that_borrows_across_zero_limbs(core, cli).len() > 0) {
+    core.warn("error: FAILED bigint_test test_fixedbig_subtraction_that_borrows_across_zero_limbs");
+    bad = bad + 1;
+  }
+  if (bi__fixedbig_zero_and_equality_edge_cases(core, cli).len() > 0) {
+    core.warn("error: FAILED bigint_test test_fixedbig_zero_and_equality_edge_cases");
+    bad = bad + 1;
+  }
+  if (f32__f32_specials_and_zeros().len() > 0) {
+    core.warn("error: FAILED f32_test test_f32_specials_and_zeros");
+    bad = bad + 1;
+  }
+  if (f32__f32_output_round_trips_and_is_shortest(core, cli).len() > 0) {
+    core.warn("error: FAILED f32_test test_f32_output_round_trips_and_is_shortest");
+    bad = bad + 1;
+  }
+  if (f32__f32_the_string_and_bytes_spellings_agree().len() > 0) {
+    core.warn("error: FAILED f32_test test_f32_the_string_and_bytes_spellings_agree");
+    bad = bad + 1;
+  }
+  if (f32__f32_the_boundary_values().len() > 0) {
+    core.warn("error: FAILED f32_test test_f32_the_boundary_values");
+    bad = bad + 1;
+  }
+  if (f32__f32_parsing_is_correctly_rounded(core, cli).len() > 0) {
+    core.warn("error: FAILED f32_test test_f32_parsing_is_correctly_rounded");
+    bad = bad + 1;
+  }
+  if (f32__f32_parse_and_format_are_inverse().len() > 0) {
+    core.warn("error: FAILED f32_test test_f32_parse_and_format_are_inverse");
+    bad = bad + 1;
+  }
+  if (ft__ftoa_specials_and_zeros().len() > 0) {
+    core.warn("error: FAILED ftoa_test test_ftoa_specials_and_zeros");
+    bad = bad + 1;
+  }
+  if (ft__ftoa_hand_picked_hard_cases(core, cli).len() > 0) {
+    core.warn("error: FAILED ftoa_test test_ftoa_hand_picked_hard_cases");
+    bad = bad + 1;
+  }
+  if (ft__ftoa_random_bit_patterns(core, cli).len() > 0) {
+    core.warn("error: FAILED ftoa_test test_ftoa_random_bit_patterns");
+    bad = bad + 1;
+  }
+  if (ft__ftoa_random_decimals_and_integers(core, cli).len() > 0) {
+    core.warn("error: FAILED ftoa_test test_ftoa_random_decimals_and_integers");
+    bad = bad + 1;
+  }
+  if (ft__ftoa_every_output_round_trips(core, cli).len() > 0) {
+    core.warn("error: FAILED ftoa_test test_ftoa_every_output_round_trips");
+    bad = bad + 1;
+  }
+  seen = seen + bad;
 
   return seen;
 }

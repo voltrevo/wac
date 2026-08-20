@@ -263,7 +263,21 @@ export string test_edges_the_main_groups_miss(Core core, Cli cli) {
     // Non-special path start, where the first byte is neither a slash nor a terminator.
     "foo://h?q", "foo://h#f", "foo://h",
     // Windows drive letters reached through a base rather than written out.
-    "..", "/x", "x"), "", "coverage edges");
+    "..", "/x", "x",
+    // **A bracketed host under a non-special scheme**, which is `parseOpaqueHost`'s one structural
+    // rule: brackets still mean IPv6 there, so the closing one is required and what is inside is
+    // parsed as an address rather than kept as bytes. Nothing had a bracket after a non-special
+    // scheme — `issues/system/0205` listed all three arms.
+    "foo://[::1]/", "foo://[::1]", "foo://[::1", "foo://[]/", "foo://[::1]x", "foo://[1:2:3::4]/",
+    // An authority that is empty, for a special scheme and a non-special one.
+    "http://", "https://", "foo://", "http:///", "foo:///",
+    // A drive letter that ends the input, with both spellings of its separator — the arm that
+    // answers before looking at a third byte.
+    "file:///c:", "file:///c|", "file:///C:", "file:///c:/", "file:///c:?q", "file:///c:#f",
+    // A file URL whose host is an address rather than a name, which is what makes the `localhost`
+    // comparison look at a host it cannot compare as bytes.
+    "file://1.2.3.4/x", "file://[::1]/x", "file://localhost/x", "file://LOCALHOST/x"),
+    "", "coverage edges");
   string[] bases = string[]("file:///c:/a/b", "file:///c:", "file://h/c:/x");
   string[] refs = string[]("..", "/x", "x", "../..", "d:/y", "/d:/y");
   for (i32 i = 0; i < bases.len(); i++) {

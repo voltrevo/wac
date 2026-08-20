@@ -1,0 +1,54 @@
+// stream's coverage, and an empty argument — nothing here is unreachable.
+//
+//   deno task coverage:stream
+//   deno task coverage:stream --verbose
+//
+// **32 of 32**, and both lists below are empty: every branch point is expected to be covered and the
+// first one that is not fails by name. `issues/system/0205`.
+//
+// ## All four gaps were one variant the driver never produced
+//
+// This read 28 of 32, and the four uncovered points were two pairs of the same thing —
+// `case Failed(why)` in both `passthrough` and `upperCase`, and the `broke ? -2 : total` each returns
+// because of it.
+//
+// `Read` has three variants and `cov_exercise.wac`'s `Feeder` only ever answered two. So **the failure
+// path of both transforms was measured by nothing**, and what those four points defend is exactly what
+// `transform.wac`'s own comment says: "a broken input is its own answer, not a smaller total". A caller
+// that could not tell -2 from a short count would treat a failed read as a successful short one.
+//
+// Closed rather than pinned: `Feeder` grew a `feedFailing`, and the exercise fails on the first read
+// and on two later ones — later matters, because by then bytes have been written and `upperCase` is
+// holding a partial scalar.
+//
+// ## This package is the one that cannot be rewired
+//
+// `issues/system/0205`'s other floors were mostly a matter of the exercise calling the package's own
+// tests, which sixteen of nineteen exercises were not doing. **`packages/stream` has no wac tests at
+// all** — its subject is `host/bridge.ts`, a WHATWG `TransformStream`, which `issues/system/0161`
+// records as staying TypeScript for that reason. So the exercise is the whole of what can be measured
+// here, which makes reading its gaps the only way to find one, and made this one findable: nothing else
+// was ever going to notice that `Read.Failed` had no coverage.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/stream/test/cov_exercise.wac";
+const string PREFIX = "packages/stream/";
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No grants and no trap cases: the exercise supplies its own reader and writer and nothing traps.
+  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
+                 Pin[0](fill: Pin("", 0, "", true, "")),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

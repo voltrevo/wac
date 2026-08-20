@@ -28,6 +28,8 @@ import { ResponseOutcome, responseOracle, responseOutcomeOf } from "./responseor
 import { Incoming, ParsedResponse, parseResponse, ERR_STATUS } from "../../src/incoming.wac";
 import { Outgoing, write as writeRequest } from "../../src/outgoing.wac";
 import { Headers } from "../../src/headers.wac";
+import { Response, write as writeResponse, statusHasBody } from "../../src/response.wac";
+import { Exec } from "std/platform.wac";
 
 i32 MAX_BODY() { return 1048576; }
 
@@ -383,5 +385,98 @@ export string test_a_2xx_to_connect_has_no_body_whatever_it_claims() {
     MAX_BODY());
   t.eqStr(wacOutcome(refused), "ok", "403 to CONNECT");
   t.eqStr(bodyOf(refused), "no", "403 to CONNECT: the body");
+  return t.report();
+}
+
+/** The reason phrase out of a written response's status line — `HTTP/1.1 <code> <phrase>\r\n`. */
+string phraseOf(i32 status) {
+  u8[] wire = writeResponse(Response.create(status), "GET".toBytes(), true);
+  string line = string.fromBytes(wire);
+  i32 crlf = line.indexOf("\r\n");
+  if (crlf < 0) { return "(no status line)"; }
+  string first = line.slice(0, crlf);
+  i32 sp1 = first.indexOf(" ");
+  if (sp1 < 0) { return "(no space)"; }
+  string rest = first.slice(sp1 + 1, first.len());
+  i32 sp2 = rest.indexOf(" ");
+  return sp2 < 0 ? "(no phrase)" : rest.slice(sp2 + 1, rest.len());
+}
+
+/**
+ * Every reason phrase this server can write, against Node's `http.STATUS_CODES`.
+ *
+ * **What this is for.** `reason` is a seventeen-row table of string literals, which is the shape that
+ * goes wrong by copy-paste and cannot go wrong in any way a parser would notice — a client reads the
+ * status *code*, so a response saying `405 Not Found` is wire-legal, passes every framing test in this
+ * file, and is wrong. Nothing had ever read one: `issues/system/0205` listed thirteen of the seventeen
+ * rows as uncovered, because a coverage driver only reaches the phrases the server's routes happen to
+ * emit.
+ *
+ * **The one deliberate difference is 413.** RFC 9110 §15.5.14 renamed it from *Payload Too Large* to
+ * **Content Too Large**, and Node still carries the older name. So this row is asserted against the RFC
+ * and against Node's *disagreement* — if Node ever updates, this test fails and the exception should be
+ * deleted rather than the row changed. An exception that cannot tell "still behind" from "now agrees"
+ * would quietly outlive its reason.
+ */
+export string test_every_reason_phrase_is_the_one_node_writes(Core core, Cli cli) {
+  T t = T.create();
+  i32[] codes = i32[](200, 201, 204, 301, 304, 400, 403, 404, 405, 408, 411, 413, 414, 415,
+                      500, 501, 505);
+
+  // One `node` for the whole table: it prints `<code> <phrase>` a line at a time.
+  string script = "const h=require('http');for(const c of process.argv.slice(1))" +
+                  "console.log(c+' '+(h.STATUS_CODES[c]||'(none)'));";
+  string[] args = string[codes.len() + 2](fill: "");
+  args[0] = "-e";
+  args[1] = script;
+  for (i32 i = 0; i < codes.len(); i++) { args[i + 2] = itoa(codes[i]); }
+  Exec r = cli.exec("node", args, u8[0]()).wait();
+  t.isTrue(r.ran(), "node ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "node exited cleanly — " + string.fromBytes(r.stderr));
+
+  string said = string.fromBytes(r.stdout);
+  i32 checked = 0;
+  i32 differed = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= said.len(); i++) {
+    if (i < said.len() && said.slice(i, i + 1) != "\n") { continue; }
+    string line = said.slice(from, i);
+    from = i + 1;
+    i32 sp = line.indexOf(" ");
+    if (sp <= 0) { continue; }
+    i32 code = 0;
+    for (i32 k = 0; k < sp; k++) {
+      u8[] d = line.slice(k, k + 1).toBytes();
+      if (d[0] >= '0' && d[0] <= '9') { code = code * 10 + (d[0] - '0'); }
+    }
+    string theirs = line.slice(sp + 1, line.len());
+    string ours = phraseOf(code);
+    if (code == 413) {
+      t.eqStr(ours, "Content Too Large", "413 follows RFC 9110's rename");
+      t.eqStr(theirs, "Payload Too Large",
+              "node has caught up with RFC 9110 — delete this exception and the row above it");
+      differed = differed + 1;
+    } else {
+      t.eqStr(ours, theirs, "the reason phrase for " + itoa(code));
+    }
+    checked = checked + 1;
+  }
+  t.eqI32(checked, codes.len(), "every code came back from node");
+  t.eqI32(differed, 1, "exactly one row is a deliberate difference");
+
+  // A status the table does not name falls through to `Unknown`, which is a phrase rather than an
+  // empty one — a status line with two spaces in a row is not a status line.
+  t.eqStr(phraseOf(299), "Unknown", "an unnamed status still gets a phrase");
+  t.eqStr(phraseOf(599), "Unknown", "and so does a server-error one");
+
+  // `statusHasBody` is exported and no caller outside its own file names it. These are the three
+  // families RFC 9110 §6.4.1 says carry no content whatever the headers claim.
+  t.isFalse(statusHasBody(204), "204 carries no content");
+  t.isFalse(statusHasBody(304), "304 carries no content");
+  t.isFalse(statusHasBody(100), "1xx carries no content");
+  t.isFalse(statusHasBody(199), "and the top of the 1xx range too");
+  t.isTrue(statusHasBody(200), "200 does");
+  t.isTrue(statusHasBody(404), "and so does an error with a body");
   return t.report();
 }

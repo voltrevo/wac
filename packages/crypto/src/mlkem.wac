@@ -51,9 +51,29 @@ export i32 ekSize() { return 384 * 3 + 32; }        // 1184
 export i32 dkSize() { return 768 * 3 + 96; }        // 2400
 export i32 ctSize() { return 32 * (10 * 3 + 4); }   // 1088
 
+/**
+ * `a` reduced into [0, q), **without a branch on `a`**.
+ *
+ * `r >> 31` is 0 or -1 by the sign, so the mask adds q exactly when `r` is negative. It was
+ * `r < 0 ? r + q() : r` until 2026-08-20, and a ternary is a branch — `spec/spec` counts
+ * `ternary-then` and `ternary-else` as branch points, which is why `fieldp.wac` grew `zeroBit`.
+ *
+ * **This is on the secret path and it was measured, not assumed.** Fourteen call sites, all inside
+ * the NTT and the polynomial arithmetic, so it runs tens of thousands of times per operation — and
+ * during `mlkemDecaps` the coefficients are the decrypted message and the key's noise. Flipping one
+ * bit of a ciphertext parted the two traces here, at event 1,067,742, well before the implicit
+ * rejection at the end of `mlkemDecaps` that the whole construction rests on. `issues/system/0226`.
+ *
+ * **`a % q()` remains, and it is a remainder by a constant on secret data.** Whether that costs
+ * data-dependent time is a property of how the engine compiles `i32.rem_s`, and `wac build --trace`
+ * cannot see it either way: it records branches taken and array indices, not how long an arithmetic
+ * instruction took. Real ML-KEM implementations use Barrett reduction for exactly this reason. That is
+ * a separate change with no oracle behind it yet, and it is named here so a clean row in the README's
+ * table is not read as more than it is.
+ */
 i32 mod(i32 a) {
   i32 r = a % q();
-  return r < 0 ? r + q() : r;
+  return r + (q() & (r >> 31));
 }
 
 /**
@@ -535,7 +555,14 @@ export u8[] mlkemDecaps(u8[] dk, u8[] ct) {
   i32 diff = 0;
   for (i32 i = 0; i < ctSize(); i++) { diff = diff | (ctPrime[i] ^ ct[i]); }
 
+  // **The select is a mask, not a ternary.** Its direction is exactly one bit — was this ciphertext
+  // valid — which is the bit the Fujisaki-Okamoto transform exists to hide, as the comment on this
+  // function says. Both candidates are computed above whatever the answer, which was already right;
+  // what was left was a branch on the answer itself. `mask` is 0 when `diff` is zero and 0xFF
+  // otherwise, from `diff | -diff` having its sign bit set exactly when `diff` is non-zero.
+  // `issues/system/0226`.
+  i32 mask = ((diff | (0 - diff)) >> 31) & 255;
   u8[] out = u8[32]();
-  for (i32 i = 0; i < 32; i++) { out[i] = diff == 0 ? kPrime[i] : kBar[i]; }
+  for (i32 i = 0; i < 32; i++) { out[i] = (kPrime[i] ^ (mask & (kPrime[i] ^ kBar[i]))) & 255; }
   return out;
 }

@@ -1,6 +1,7 @@
 # 0199 — the native host ignores a pushed child's `cwd`, so the two hosts disagree about the same program
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-18
@@ -69,3 +70,42 @@ it can. Adding a second pair of runs to `frame_test.wac` is a few minutes on the
 The original note said the conversion stayed TypeScript until this was fixed. That conflated the two:
 it was written while the wac version was being run under `wac run`, and the conclusion "porting it
 would mean shipping a red test" was true of that version and not of the port.
+
+## Fixed — 2026-08-20
+
+`Cap::PushChild` already stored the `cwd` on the frame, and `Cap::Cwd` already answered from it — so the
+program was **told where it was** and then had its paths resolved somewhere else, which is the worse of
+the two possible halves to have. The path-taking capabilities used their argument verbatim:
+`std::fs::File::open(&path)`.
+
+`framed_path` joins it, with semantics copied from `packages/platform/host/child.ts`'s `joinPath`
+including what that deliberately does *not* do — `.` and `..` are left for the host below, because
+reimplementing them would be a second opinion about what a path means. Applied at the eleven
+capabilities the Deno host frames, which the native host groups into seven arms: `readFile`, `readDir`,
+`writeFile`, `stat`/`linkStat`, `openInput`, `openOutput`, and the `rename`/`remove`/`mkdir`/
+`setExecutable` block. **Not `exec`** — `frame.wac` says why: remapping the program path would make a
+redirected shell unable to name `/bin/sh`.
+
+`example/inside.wac` and `example/insideValue.wac` now print identical output on the binary, which is the
+property this was breaking.
+
+## What I got wrong first, because it matters for whoever does the next one
+
+The Deno host's `P` is `joinPath(opts.cwd ?? "", kids.path(path))` — it folds in the **world's own cwd**
+as well as the frame's. Mirroring that broke
+`packages/platform/test/wac/v8host_test.wac`'s image differential: a spawned `imaged` child stopped being
+able to read the image its parent served, and the lane went from 34 files to 33. Isolated by removing one
+half at a time.
+
+So this fix is **frame-only**, and the two hosts still differ about a *spawned* child's `cwd`. That is a
+separate question from this issue's and it has a test that says so — worth its own report by whoever wants
+it, rather than being folded in here where it broke something real.
+
+## The stronger test the issue asked for
+
+`frame_test.wac` gained `test_the_two_frames_agree_on_the_binary_as_well` — the same differential with
+both halves run by the binary, which is what was missing and what made this invisible: while both halves
+were served by the same host, a host bug could not show. Canaried by disabling the join, which fails it
+with *"the child did not read the file the parent left it — the frame's cwd was ignored"*.
+
+Verified: `packages/platform/test/wac/` 34 of 34, `packages/box` and `packages/sh` 19 of 19 together.

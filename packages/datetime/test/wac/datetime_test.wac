@@ -30,6 +30,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Core, Cli } from "std/platform.wac";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
@@ -155,21 +156,10 @@ export string test_invalid_dates_are_rejected() {
   return t.report();
 }
 
-/** xorshift32, matching the host-side generator so the corpus is the same one. */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-}
 
 /** The random spread the host-side version used: about 1963 to 1976, in hundred-second steps. */
 i64 spreadMillis(Rng rng) {
-  i64 draw = (rng.next() % 4000000) as i64;
+  i64 draw = ((rng.next() % (4000000 as@ u32)) as@ i32) as i64;
   return draw * 100000 - 200000000000;
 }
 

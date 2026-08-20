@@ -30,7 +30,8 @@ import { test_growth_from_empty, test_bytes_are_stored_unsigned, test_push_trunc
          test_bulk_append_from_zero_capacity, test_bytes_is_a_copy, test_to_str,
          test_take_empties_the_buffer_when_it_copies, test_drop_front_shifts_what_is_left,
          test_drop_front_at_the_edges, test_push_repeat_copies_from_earlier_in_the_buffer,
-         test_push_repeat_overlaps_to_make_a_run, test_push_repeat_grows_the_buffer } from "./wac/buf_test.wac";
+         test_push_repeat_overlaps_to_make_a_run, test_push_repeat_grows_the_buffer,
+         test_push_decimal_writes_the_number_including_its_sign } from "./wac/buf_test.wac";
 import { test_traps_getting_past_the_end, test_traps_getting_a_negative_index,
          test_traps_getting_at_capacity_not_length, test_traps_pushing_repeat_before_the_start,
          test_traps_pushing_repeat_past_the_end, test_traps_pushing_a_negative_repeat_count,
@@ -40,8 +41,53 @@ import { test_traps_getting_past_the_end, test_traps_getting_a_negative_index,
          test_slice_returns_the_bytes_when_the_range_is_inside,
          test_clamped_answers_every_range_slice_refuses, test_get_returns_the_byte_when_in_range,
          test_repeating_from_the_last_written_byte_is_allowed } from "./wac/bounds_test.wac";
+import { Core, Cli } from "std/platform.wac";
+import {
+  test_traps_getting_past_the_end as bounds__traps_getting_past_the_end,
+  test_traps_getting_a_negative_index as bounds__traps_getting_a_negative_index,
+  test_traps_getting_at_capacity_not_length as bounds__traps_getting_at_capacity_not_length,
+  test_traps_pushing_repeat_before_the_start as bounds__traps_pushing_repeat_before_the_start,
+  test_traps_pushing_repeat_past_the_end as bounds__traps_pushing_repeat_past_the_end,
+  test_traps_pushing_a_negative_repeat_count as bounds__traps_pushing_a_negative_repeat_count,
+  test_traps_slicing_past_the_end as bounds__traps_slicing_past_the_end,
+  test_traps_slicing_from_a_negative as bounds__traps_slicing_from_a_negative,
+  test_traps_slicing_backwards as bounds__traps_slicing_backwards,
+  test_slice_returns_the_bytes_when_the_range_is_inside as bounds__slice_returns_the_bytes_when_the_range_is_inside,
+  test_clamped_answers_every_range_slice_refuses as bounds__clamped_answers_every_range_slice_refuses,
+  test_get_returns_the_byte_when_in_range as bounds__get_returns_the_byte_when_in_range,
+  test_traps_repeating_from_beyond_what_is_written as bounds__traps_repeating_from_beyond_what_is_written,
+  test_repeating_from_the_last_written_byte_is_allowed as bounds__repeating_from_the_last_written_byte_is_allowed,
+  test_traps_repeating_a_negative_count as bounds__traps_repeating_a_negative_count,
+  test_traps_repeating_from_a_negative_index as bounds__traps_repeating_from_a_negative_index,
+  test_equal_compares_length_before_content as bounds__equal_compares_length_before_content,
+} from "./wac/bounds_test.wac";
+import {
+  test_growth_from_empty as buf__growth_from_empty,
+  test_bytes_are_stored_unsigned as buf__bytes_are_stored_unsigned,
+  test_push_truncates_to_a_byte as buf__push_truncates_to_a_byte,
+  test_with_capacity as buf__with_capacity,
+  test_push_bytes_range as buf__push_bytes_range,
+  test_push_bytes_grows_once_and_correctly as buf__push_bytes_grows_once_and_correctly,
+  test_push_all as buf__push_all,
+  test_little_endian_writes as buf__little_endian_writes,
+  test_push_codepoint_widths as buf__push_codepoint_widths,
+  test_push_codepoint_rejects_non_scalars as buf__push_codepoint_rejects_non_scalars,
+  test_take_avoids_the_copy_when_exactly_full as buf__take_avoids_the_copy_when_exactly_full,
+  test_grows_from_zero_capacity as buf__grows_from_zero_capacity,
+  test_bulk_append_onto_a_partly_filled_buffer as buf__bulk_append_onto_a_partly_filled_buffer,
+  test_bulk_append_from_zero_capacity as buf__bulk_append_from_zero_capacity,
+  test_bytes_is_a_copy as buf__bytes_is_a_copy,
+  test_to_str as buf__to_str,
+  test_take_empties_the_buffer_when_it_copies as buf__take_empties_the_buffer_when_it_copies,
+  test_drop_front_shifts_what_is_left as buf__drop_front_shifts_what_is_left,
+  test_drop_front_at_the_edges as buf__drop_front_at_the_edges,
+  test_push_repeat_copies_from_earlier_in_the_buffer as buf__push_repeat_copies_from_earlier_in_the_buffer,
+  test_push_repeat_overlaps_to_make_a_run as buf__push_repeat_overlaps_to_make_a_run,
+  test_push_repeat_grows_the_buffer as buf__push_repeat_grows_the_buffer,
+  test_push_decimal_writes_the_number_including_its_sign as buf__push_decimal_writes_the_number_including_its_sign,
+} from "./wac/buf_test.wac";
 
-export i32 main() {
+export i32 main(Core core, Cli cli) {
   i32 seen = 0;
   seen = seen + test_growth_from_empty().len();
   seen = seen + test_bytes_are_stored_unsigned().len();
@@ -65,10 +111,138 @@ export i32 main() {
   seen = seen + test_push_repeat_copies_from_earlier_in_the_buffer().len();
   seen = seen + test_push_repeat_overlaps_to_make_a_run().len();
   seen = seen + test_push_repeat_grows_the_buffer().len();
+  seen = seen + test_push_decimal_writes_the_number_including_its_sign().len();
   seen = seen + test_slice_returns_the_bytes_when_the_range_is_inside().len();
   seen = seen + test_clamped_answers_every_range_slice_refuses().len();
   seen = seen + test_get_returns_the_byte_when_in_range().len();
   seen = seen + test_repeating_from_the_last_written_byte_is_allowed().len();
+
+  // **The package's own tests — the 27 that return, called here.**
+  //
+  // None of this package's tests takes a capability, so this file could have called them from
+  // the day it was written; `issues/system/0221` removed the blocker for packages whose tests
+  // need one, and this was never in that set. It was simply never wired.
+  //
+  // **The other twelve expect a trap and must not be called from here.** A trap in `main` ends
+  // the run, so the first attempt at this wiring called `traps_getting_past_the_end()` third and
+  // killed the process — leaving the probes' coverage intact, no failure printed, and a number
+  // identical to the one before the change. They go through `trapCase` below, which `covdump`
+  // calls one at a time with the trap caught.
+  i32 bad = 0;
+  if (bounds__slice_returns_the_bytes_when_the_range_is_inside().len() > 0) {
+    core.warn("error: FAILED bounds_test test_slice_returns_the_bytes_when_the_range_is_inside");
+    bad = bad + 1;
+  }
+  if (bounds__clamped_answers_every_range_slice_refuses().len() > 0) {
+    core.warn("error: FAILED bounds_test test_clamped_answers_every_range_slice_refuses");
+    bad = bad + 1;
+  }
+  if (bounds__get_returns_the_byte_when_in_range().len() > 0) {
+    core.warn("error: FAILED bounds_test test_get_returns_the_byte_when_in_range");
+    bad = bad + 1;
+  }
+  if (bounds__repeating_from_the_last_written_byte_is_allowed().len() > 0) {
+    core.warn("error: FAILED bounds_test test_repeating_from_the_last_written_byte_is_allowed");
+    bad = bad + 1;
+  }
+  if (bounds__equal_compares_length_before_content().len() > 0) {
+    core.warn("error: FAILED bounds_test test_equal_compares_length_before_content");
+    bad = bad + 1;
+  }
+  if (buf__growth_from_empty().len() > 0) {
+    core.warn("error: FAILED buf_test test_growth_from_empty");
+    bad = bad + 1;
+  }
+  if (buf__bytes_are_stored_unsigned().len() > 0) {
+    core.warn("error: FAILED buf_test test_bytes_are_stored_unsigned");
+    bad = bad + 1;
+  }
+  if (buf__push_truncates_to_a_byte().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_truncates_to_a_byte");
+    bad = bad + 1;
+  }
+  if (buf__with_capacity().len() > 0) {
+    core.warn("error: FAILED buf_test test_with_capacity");
+    bad = bad + 1;
+  }
+  if (buf__push_bytes_range().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_bytes_range");
+    bad = bad + 1;
+  }
+  if (buf__push_bytes_grows_once_and_correctly().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_bytes_grows_once_and_correctly");
+    bad = bad + 1;
+  }
+  if (buf__push_all().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_all");
+    bad = bad + 1;
+  }
+  if (buf__little_endian_writes().len() > 0) {
+    core.warn("error: FAILED buf_test test_little_endian_writes");
+    bad = bad + 1;
+  }
+  if (buf__push_codepoint_widths().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_codepoint_widths");
+    bad = bad + 1;
+  }
+  if (buf__push_codepoint_rejects_non_scalars().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_codepoint_rejects_non_scalars");
+    bad = bad + 1;
+  }
+  if (buf__take_avoids_the_copy_when_exactly_full().len() > 0) {
+    core.warn("error: FAILED buf_test test_take_avoids_the_copy_when_exactly_full");
+    bad = bad + 1;
+  }
+  if (buf__grows_from_zero_capacity().len() > 0) {
+    core.warn("error: FAILED buf_test test_grows_from_zero_capacity");
+    bad = bad + 1;
+  }
+  if (buf__bulk_append_onto_a_partly_filled_buffer().len() > 0) {
+    core.warn("error: FAILED buf_test test_bulk_append_onto_a_partly_filled_buffer");
+    bad = bad + 1;
+  }
+  if (buf__bulk_append_from_zero_capacity().len() > 0) {
+    core.warn("error: FAILED buf_test test_bulk_append_from_zero_capacity");
+    bad = bad + 1;
+  }
+  if (buf__bytes_is_a_copy().len() > 0) {
+    core.warn("error: FAILED buf_test test_bytes_is_a_copy");
+    bad = bad + 1;
+  }
+  if (buf__to_str().len() > 0) {
+    core.warn("error: FAILED buf_test test_to_str");
+    bad = bad + 1;
+  }
+  if (buf__take_empties_the_buffer_when_it_copies().len() > 0) {
+    core.warn("error: FAILED buf_test test_take_empties_the_buffer_when_it_copies");
+    bad = bad + 1;
+  }
+  if (buf__drop_front_shifts_what_is_left().len() > 0) {
+    core.warn("error: FAILED buf_test test_drop_front_shifts_what_is_left");
+    bad = bad + 1;
+  }
+  if (buf__drop_front_at_the_edges().len() > 0) {
+    core.warn("error: FAILED buf_test test_drop_front_at_the_edges");
+    bad = bad + 1;
+  }
+  if (buf__push_repeat_copies_from_earlier_in_the_buffer().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_repeat_copies_from_earlier_in_the_buffer");
+    bad = bad + 1;
+  }
+  if (buf__push_repeat_overlaps_to_make_a_run().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_repeat_overlaps_to_make_a_run");
+    bad = bad + 1;
+  }
+  if (buf__push_decimal_writes_the_number_including_its_sign().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_decimal_writes_the_number_including_its_sign");
+    bad = bad + 1;
+  }
+  if (buf__push_repeat_grows_the_buffer().len() > 0) {
+    core.warn("error: FAILED buf_test test_push_repeat_grows_the_buffer");
+    bad = bad + 1;
+  }
+  seen = seen + bad;
+
   return seen;
 }
 
@@ -107,3 +281,26 @@ export i32 trap_repeating_a_negative_count() { test_traps_repeating_a_negative_c
 
 /** `test_traps_repeating_from_a_negative_index`, as an export so `covdump` can call it and catch the trap. */
 export i32 trap_repeating_from_a_negative_index() { test_traps_repeating_from_a_negative_index(); return 0; }
+
+/**
+ * The tests that expect a trap, one per index, for `covdump` to call with each trap caught.
+ *
+ * `cov_ledger.wac`'s `cases()` names this as `trapCase:12`
+ * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`). Twelve of `bounds_test.wac`'s seventeen —
+ * every bounds check is a guard against a caller error, which is exactly the code nothing exercises by
+ * accident.
+ */
+export void trapCase(i32 i) {
+  if (i == 0) { bounds__traps_getting_past_the_end(); return; }
+  if (i == 1) { bounds__traps_getting_a_negative_index(); return; }
+  if (i == 2) { bounds__traps_getting_at_capacity_not_length(); return; }
+  if (i == 3) { bounds__traps_pushing_repeat_before_the_start(); return; }
+  if (i == 4) { bounds__traps_pushing_repeat_past_the_end(); return; }
+  if (i == 5) { bounds__traps_pushing_a_negative_repeat_count(); return; }
+  if (i == 6) { bounds__traps_slicing_past_the_end(); return; }
+  if (i == 7) { bounds__traps_slicing_from_a_negative(); return; }
+  if (i == 8) { bounds__traps_slicing_backwards(); return; }
+  if (i == 9) { bounds__traps_repeating_from_beyond_what_is_written(); return; }
+  if (i == 10) { bounds__traps_repeating_a_negative_count(); return; }
+  if (i == 11) { bounds__traps_repeating_from_a_negative_index(); return; }
+}

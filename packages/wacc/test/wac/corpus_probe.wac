@@ -47,8 +47,43 @@ Corpus refused(string why) {
   return Corpus(false, why, string[0](fill: ""), string[0](fill: ""));
 }
 
-/** The directories under each package that hold wac worth reading. */
-string[] subdirs() { return string[]("src", "test/wac", "bench"); }
+/**
+ * Every `.wac` file under `dir`, recursively, appended to `found` from `n` — the new count, or -2 if
+ * the cap was reached.
+ *
+ * **It used to be three fixed directories one level deep** — `src`, `test/wac`, `bench` — which
+ * covered 741 of the 943 `.wac` files under `packages/` and, worse, left 64 *import edges* pointing
+ * at files the corpus does not supply: `packages/box/src/applets/*` under a nested directory,
+ * `packages/bignum/test/probe.wac` beside `test/wac` rather than in it. Those imports contributed no
+ * declarations, every name from them was unknown, and unknown is silent — so rung 3 was checking
+ * files half-blind and saying they were clean.
+ *
+ * Found by `issues/lang/0157`: once the checker refuses an import naming a file nobody supplied, the
+ * gap reports itself. That is the general shape — an extractor bounds the invariant it feeds, and the
+ * bound is invisible from inside.
+ */
+i32 walk(Cli cli, string dir, string[] found, i32 n) {
+  string[]? listing = cli.readDir(dir).wait();
+  // An absent directory is the normal case here — most packages have no `bench/`.
+  if (listing is null) { return n; }
+  string[] names = listing!;
+  sortNames(names);
+  for (i32 i = 0; i < names.len(); i++) {
+    if (n < 0) { return n; }
+    string full = dir + "/" + names[i];
+    if (endsWith(names[i], ".wac")) {
+      if (n >= CAP) { return -2; }
+      found[n] = full;
+      n = n + 1;
+      continue;
+    }
+    // No extension is the only cheap signal for a directory here, and a `.` in the last segment is
+    // the only cheap signal against: `readDir` on a plain file answers null, which `walk` treats as
+    // an absent directory, so a misjudgement costs a wasted call rather than a wrong corpus.
+    if (names[i].indexOf(".") < 0) { n = walk(cli, full, found, n); }
+  }
+  return n;
+}
 
 /**
  * Every `.wac` path in `packages/`, plus `spec/tour.wac`, sorted.
@@ -66,24 +101,16 @@ string[] paths(Cli cli, i32[] countOut) {
   string[] packages = top!;
   sortNames(packages);
 
-  string[] subs = subdirs();
   for (i32 p = 0; p < packages.len(); p++) {
-    for (i32 s = 0; s < subs.len(); s++) {
-      string dir = "packages/" + packages[p] + "/" + subs[s];
-      string[]? listing = cli.readDir(dir).wait();
-      // Most packages have no `bench/`. An absent directory is the normal case here, unlike an
-      // absent file, so it is not reported.
-      if (listing is null) { continue; }
-      string[] names = listing!;
-      sortNames(names);
-      for (i32 i = 0; i < names.len(); i++) {
-        if (!endsWith(names[i], ".wac")) { continue; }
-        if (n >= CAP) { countOut[0] = -2; return found; }
-        found[n] = dir + "/" + names[i];
-        n = n + 1;
-      }
-    }
+    n = walk(cli, "packages/" + packages[p], found, n);
+    if (n < 0) { countOut[0] = -2; return found; }
   }
+  // **`tools/` too, because `packages/` imports it.** Nine import edges from `packages/box`,
+  // `packages/sh` and others name `tools/wac/covledger.wac` and `tools/wac/shfuzz.wac`, and a corpus
+  // that walks only `packages/` supplies neither — so those files were checked without them and
+  // reported clean. `issues/lang/0157`.
+  n = walk(cli, "tools", found, n);
+  if (n < 0) { countOut[0] = -2; return found; }
   countOut[0] = n;
   return found;
 }

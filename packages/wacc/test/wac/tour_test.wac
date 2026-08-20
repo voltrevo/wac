@@ -1,0 +1,79 @@
+// What wacc *computes* for the language tour, against the tour's own executable answers.
+//
+//   wac test --allow-read packages/wacc/test/wac/tour_test.wac
+//
+// `spec/tour.wac` is the whole of wac in one annotated file, and every function in it is written
+// beside the answer it should give. A module that validates and emits and returns the wrong number
+// passes checking and passes emitting, so something has to call it and look — and one did:
+// `%` on a float emitted no instruction at all, so `a % b` answered `b` and `rem(-7.0, 2.0)` was `2`
+// where the tour says `-1.0`. `issues/lang/0135`.
+//
+// ## Why this needs no reference compiler, where `tour.test.ts` did — `issues/system/0161`
+//
+// That file compiled the tour with the reference, instantiated both modules, and compared 60-odd
+// calls. It is one of nine in `packages/wacc` that use the reference as an oracle, which
+// `issues/system/0161` records as waiting on a decision that is the operator's: the reference's only
+// job is bootstrapping, so porting a differential against it may entrench something about to go.
+//
+// **This port is safe whichever way that goes, because it removes the reference rather than carrying
+// it across.** The oracle here is `selfTest()`, which the tour exports and which the TypeScript
+// already asserted — a conjunction over every function in the file, "far more than the calls listed
+// above, which are only the ones needed to localise a failure", in its own words. So the coverage is
+// a superset and the dependency is gone.
+//
+// **What is lost is localisation, and that is the whole cost.** `selfTest()` says *something*
+// disagrees, not which conjunct. The TypeScript's call list existed to answer that, and it could only
+// answer it by having a second compiler to ask. When this fails, the way to localise is to read the
+// tour and call the suspect function directly — which is what the section below does for the four
+// answers that are checked by name.
+//
+// ## The four checked by name, and why those four
+//
+// Three of them are `string` returns, and they were *never* in the differential: the reference's
+// module is instantiated raw, so a `string` comes back as a wasm reference and `String()` on it is
+// `[object Object]`. The TypeScript checked them against the tour's written answers for exactly that
+// reason, and this keeps doing so. `double(21)` is the fourth and is the canary: if `selfTest()` were
+// somehow true of a module whose exports were all missing, this would still have to be 42.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { selfTest, double, strOps, strIndex, staticDispatch } from "../../../../spec/tour.wac";
+
+/**
+ * Every claim the tour makes about itself, under wacc.
+ *
+ * A conjunction, so a failure names nothing — see the header for why that is the trade and how to
+ * localise one. It reaches arrays, structs, enums, nullability, funcrefs and generics, which is most
+ * of the language and most of what a call-by-call list cannot reach across two modules anyway: a
+ * `Node` built by one compiler's module is not a value the other's can be handed.
+ */
+export string test_the_tours_own_self_test_holds_under_wacc(Core core, Cli cli) {
+  T t = T.create();
+  t.isTrue(selfTest(),
+           "spec/tour.wac's selfTest() is false under wacc — some conjunct in the tour disagrees " +
+           "with the answer written beside it. Read the tour and call the suspect function directly; " +
+           "`issues/lang/0135` is what this caught the first time, and it was `%` on a float " +
+           "emitting no instruction at all.");
+  return t.report();
+}
+
+/**
+ * The four answers checked by name, against what the tour writes beside them.
+ *
+ * Prose that could drift from the code, which is the honest weakness — and it is the only thing that
+ * reaches `string` returns at all, since a raw wasm instance hands those back as references. If one
+ * ever disagrees, read the tour before believing this file.
+ */
+export string test_the_answers_the_tour_writes_beside_its_strings(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(strOps(), "world", "spec/tour.wac's strOps() says \"world\" beside it");
+  t.eqStr(strIndex(), "😀", "spec/tour.wac's strIndex() says \"😀\" beside it");
+  t.eqStr(staticDispatch(), "shape", "spec/tour.wac's staticDispatch() says \"shape\" beside it");
+
+  // **The canary**, and it is not decoration. `selfTest()` is one boolean: a module whose exports
+  // were all wrong in the same direction, or a conjunction that had quietly become `true` by
+  // construction, would pass the test above and nothing else here would notice. This is a third
+  // source — the tour's own written value for the simplest thing in it.
+  t.eqI32(double(21), 42, "spec/tour.wac says double(21) is 42 — this file is not measuring the tour");
+  return t.report();
+}

@@ -34,6 +34,7 @@
 
 import { lex, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
+import { isBuiltinSpec } from "./coretext.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
@@ -130,6 +131,20 @@ export i32 errFloatRange() { return 50; }
 export i32 errNoVariant() { return 51; }
 /** An import specifier that is a bare word other than `core` — `spec/spec/imports.md`. */
 export i32 errUnknownModule() { return 52; }
+/**
+ * A quoted import specifier naming a file the caller did not supply.
+ *
+ * Distinct from `errUnknownModule`, which is a *bare* word — a specifier that names no tree. This
+ * one names a path and there is nothing at it. It was caught a phase later, by the linker, through a
+ * sentinel with no position and no file name, so every checker entry point reported the program was
+ * fine. `issues/lang/0157`.
+ *
+ * The list of unresolved specifiers is handed to `C` rather than computed here, because resolving a
+ * specifier needs the caller's path map and `isBuiltinSpec` — but the *diagnostic* belongs to the
+ * checking phase, at the import's own token, which is what `spec/spec/errors.md` requires of a
+ * phase field.
+ */
+export i32 errMissingImportFile() { return 77; }
 /** A generic that instantiates itself with a larger argument, so it never terminates. */
 export i32 errInfiniteGeneric() { return 53; }
 /** An enum method whose name is one of the enum's own variants: `E.A` would mean both. */
@@ -1121,6 +1136,33 @@ export struct C {
    */
   i32 switchDepth;
 
+  /**
+   * Local spellings that are other names for **one** imported declaration, and what they collapse
+   * onto.
+   *
+   * `import { Point, Point as P }` gives one declaration two names in this file, and
+   * `spec/spec/generics.md` `[§wac-generic-instantiation-identity-6pnq4wj]` says they are one type:
+   * *"`Box<P>` and `Box<Point>` are one struct"*. `renameFrom`/`renameTo` cannot express that — it
+   * maps a declaring name to a **single** local one, so `declareModule` registered the declaration
+   * under one spelling and left the other undeclared, which is silent rather than wrong.
+   *
+   * Different from `renameFrom` in two ways that matter: this maps a *local* name to another *local*
+   * name, and it survives past the import walk, because the entry file's own body is where the second
+   * spelling gets written. `issues/lang/0161`.
+   */
+  string[] aliasFrom;
+  string[] aliasTo;
+  i32 aliasCount;
+
+  /**
+   * Quoted import specifiers in the file being checked that resolve to no supplied file.
+   *
+   * Populated by the caller, which is the only layer holding the path map — see
+   * `errMissingImportFile` for why the diagnostic is still the checker's.
+   */
+  string[] unresolvedSpecs;
+  i32 unresolvedCount;
+
 
 
   /**
@@ -1158,7 +1200,9 @@ export struct C {
              string[decls](), 0,
              i32[decls * 3](), 0,
              Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
-             bool[decls](), i32[locals](fill: 0 - 1), 0);
+             bool[decls](), i32[locals](fill: 0 - 1), 0,
+             string[decls](), string[decls](), 0,
+             string[decls](), 0);
   }
 
   /**
@@ -1215,6 +1259,41 @@ export struct C {
     return n;
   }
 
+  /**
+   * The one spelling this file's other names for a declaration collapse onto.
+   *
+   * Identity for every name that is not a second spelling, which is nearly all of them — the loop
+   * runs over an empty table in any file that does not import one name twice.
+   */
+  string canon(const this, string n) {
+    for (i32 i = 0; i < this.aliasCount; i++) {
+      if (this.aliasFrom[i] == n) { return this.aliasTo[i]; }
+    }
+    return n;
+  }
+
+  /** Record a quoted specifier this file imports that no supplied file answers. */
+  void addUnresolved(this, string spec) {
+    if (this.unresolvedCount >= this.unresolvedSpecs.len()) { return; }
+    this.unresolvedSpecs[this.unresolvedCount] = spec;
+    this.unresolvedCount = this.unresolvedCount + 1;
+  }
+
+  bool isUnresolved(const this, string spec) {
+    for (i32 i = 0; i < this.unresolvedCount; i++) {
+      if (this.unresolvedSpecs[i] == spec) { return true; }
+    }
+    return false;
+  }
+
+  /** Record that this file's `from` is another name for its own `to`. */
+  void addLocalAlias(this, string from, string to) {
+    if (this.aliasCount >= this.aliasFrom.len()) { return; }
+    this.aliasFrom[this.aliasCount] = from;
+    this.aliasTo[this.aliasCount] = to;
+    this.aliasCount = this.aliasCount + 1;
+  }
+
   /** Record that the file being declared calls `from` what this file calls `to`. */
   void addRename(this, string from, string to) {
     if (this.renameCount >= this.renameFrom.len()) { return; }
@@ -1243,8 +1322,19 @@ export struct C {
     // `i32 r = q` against a `string` reached the emitter and produced invalid wasm. Shadowing is
     // legal (`§wac-shadow-8u8qh2j`), so a match in an enclosing scope is a new binding, not a
     // collision. `issues/lang/0122`.
+    // **A same-scope clash keeps the first type, and the checking walk retypes at the declaration.**
+    // This blanked it to `primNone` instead, and unknown is silent everywhere here — so
+    // `i32 a = a.m(); return a.m()`, a method call on an `i32`, got no diagnostic at all and the
+    // program was refused by the emitter as a missing export. `issues/lang/0174a`.
+    //
+    // Retyping *here* is the wrong repair and was measured to be: this walk runs over the whole body
+    // before `checkStmt` sees any of it, so the second declaration's type would be in the table while
+    // line 5 is checked and a declaration on line 6 got reported against a use above it. Keeping the
+    // first type makes this pass position-correct for everything before the redeclaration, and
+    // `checkStmt`'s `Var` arm calls `setType` when it reaches the declaration, which is what makes it
+    // correct after.
     for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name && this.sameScope(i)) { this.types[i] = typeNone(); return; }
+      if (this.names[i] == name && this.sameScope(i)) { return; }
     }
     if (this.nameCount >= this.names.len()) { return; }
     this.names[this.nameCount] = name;
@@ -1656,7 +1746,7 @@ export struct C {
     // An instantiation is a struct: `Box<i32>` is as much a reference type as `Box` is, and every
     // rule that asks this question means the reference-type one. `isGeneric` stays exact, so the two
     // together say what is wanted — a bare `Box` is the unmodelled template, `Box<i32>` is a type.
-    string at = templateOf(name);
+    string at = templateOf(this.canon(name));
     for (i32 i = 0; i < this.structCount; i++) {
       if (this.structNames[i] == at) { return true; }
     }
@@ -1665,8 +1755,9 @@ export struct C {
 
   /** Which entry holds this function, or -1. */
   i32 funcAt(this, string name) {
+    string want = this.canon(name);
     for (i32 i = 0; i < this.funcCount; i++) {
-      if (this.funcNames[i] == name) { return i; }
+      if (this.funcNames[i] == want) { return i; }
     }
     return -1;
   }
@@ -1806,8 +1897,9 @@ export struct C {
    * `Opened.Ok` happens to hold.
    */
   i32 variantArityIn(const this, string owner, string name) {
+    string want = this.canon(owner);
     for (i32 i = 0; i < this.variantCount; i++) {
-      if (this.variantOwners[i] == owner && this.variantNames[i] == name) {
+      if (this.variantOwners[i] == want && this.variantNames[i] == name) {
         return this.variantArities[i];
       }
     }
@@ -1830,8 +1922,9 @@ export struct C {
 
   /** An enum has no default value, which is the only thing this pass records about one. */
   bool isEnum(const this, string name) {
+    string want = this.canon(name);
     for (i32 i = 0; i < this.enumCount; i++) {
-      if (this.enumNames[i] == name) { return true; }
+      if (this.enumNames[i] == want) { return true; }
     }
     return false;
   }
@@ -2004,7 +2097,7 @@ export string typeOfTy(C c, Ty t) {
       // Invariance then costs nothing: two instantiations differ exactly when their names do.
       // Under the importing file's name for it, when this is an imported file being declared: a
       // signature that says `Dup` in `b.wac` says `DupB` to the file that imported it that way.
-      string base = c.renamed(tokenText(c, tok));
+      string base = c.canon(c.renamed(tokenText(c, tok)));
       // **A type parameter of the function being checked is an unknown type**, not a name. `T` in
       // `T oops<T>(T a)` stands for whatever a call site binds, so every question about it has an
       // answer this checker cannot compute — and answering with the letter itself made `return a;` a
@@ -4348,7 +4441,7 @@ i32 calleeName(C c, Expr callee) {
 string staticOwnerName(C c, Expr obj) {
   match (obj.kind) {
     case Ident(tok): {
-      string n = c.renamed(tokenText(c, tok));
+      string n = c.canon(c.renamed(tokenText(c, tok)));
       return c.isStruct(n) || c.isEnum(n) ? n : "";
     }
     else: { return ""; }
@@ -4462,7 +4555,7 @@ string writtenTy(C c, Ty t) {
   match (t.kind) {
     case Prim(tok): { return tokenText(c, tok); }
     case Named(tok, typeArgs): {
-      string base = c.renamed(tokenText(c, tok));
+      string base = c.canon(c.renamed(tokenText(c, tok)));
       if (typeArgs.len() == 0) { return base; }
       string out = base + "<";
       for (i32 i = 0; i < typeArgs.len(); i++) {
@@ -5368,6 +5461,16 @@ bool isCastRef(C c, string t) {
 bool shareAncestor(C c, string a, string b) {
   string ac = withoutNull(a) == "" ? a : withoutNull(a);
   string bc = withoutNull(b) == "" ? b : withoutNull(b);
+  // **`anyref` is the top of the reference hierarchy**, so it shares an ancestor with every reference
+  // and a cast to or from it is the documented way down: `spec/spec/casts.md` gives
+  // `i31ref x = val as! i31ref;` in as many words. Walking the struct parent chain never reaches
+  // `anyref` — nothing declares it as a parent — so this answered "no common ancestor" and warned that
+  // a cast which succeeds always traps (`issues/lang/0152`). The reference does not warn.
+  //
+  // The condition is the one `assignable` already uses for an `anyref` slot, deliberately: `i31ref` or
+  // a reference. A **primitive** shares nothing with `anyref`, so `anyref as! i32` keeps its complaint.
+  if (ac == "anyref") { return bc == "i31ref" || isReferenceType(c, bc); }
+  if (bc == "anyref") { return ac == "i31ref" || isReferenceType(c, ac); }
   // **Two variants of one enum are siblings**, in exactly the sense two structs with one parent are:
   // `y ? E.A(3) : E.B(4)` is an `E`, and each branch has its own variant's type. The parent chain
   // cannot say so — a variant is registered as a struct with no parent — so the enum that owns them
@@ -6999,6 +7102,11 @@ void checkStmt(C c, Stmt s, Ty want) {
       checkPackedNullable(c, wantVar, type);
       checkPackedHere(c, wantVar, type.line, type.col);
       if (wantVar == typeNone()) { return; }
+      // **The declaration takes effect here, not in the collecting walk.** For all but a redeclared
+      // name this is what the table already says; for a redeclared one it is the difference between
+      // a rule that can see the shadow and one that cannot. Set after `wantVar` is known and before
+      // the initialiser is walked, because the initialiser was checked against the *old* binding
+      // above — `i32 a = a.m()` reads the parameter, and only the uses after it read the local.
       i32 litVar = litFamily(c, init);
       if (litVar != litNone()) {
         reportLiteral(c, wantVar, init, errInitTypeMismatch(), init.line, init.col);
@@ -7008,6 +7116,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         // reach sweep lost `Ternary-cond`. `issues/lang/0145`.
         c.expected = wantVar;
         checkExpr(c, init);
+        c.setType(tokenText(c, nameTok), wantVar);
         return;
       }
       string gotVar = typeOfExpr(c, init);
@@ -7018,6 +7127,13 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       c.expected = wantVar;
       checkExpr(c, init);
+      // **The type and not the const flags.** Setting those too laundered `const`-ness away: a local
+      // that aliases a const receiver is const *by alias*, `markAliasOnly` records that, and an
+      // unconditional `setConstFlags(name, isConst, false)` undid it — `spec/cases/0006` and
+      // `spec/cases/0119` both went from refused to accepted. A redeclared name therefore keeps the
+      // first declaration's constness, which is a residual inaccuracy in a case nothing writes:
+      // `const i32 a = 1; i32 a = 2; a = 3;` would be refused where the reference allows it.
+      c.setType(tokenText(c, nameTok), wantVar);
     }
     case Return(value): {
       // Before the types: whether there should be a value here at all. Both directions are errors and
@@ -7694,6 +7810,22 @@ void checkDuplicates(C c, Program prog) {
 
 export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   C c = C.create(src, toks, tokenCount, tokenCount);
+  // **One file was supplied, so every quoted specifier that is not a built-in tree names a file
+  // nobody gave.** Read off the parse rather than by scanning the text, which also keeps `files.wac`
+  // out of this file's imports — it imports `emit.wac`, and `emit.wac` imports this. The
+  // files-based entry point does the same job with a real path map, in `api.wac`.
+  // `issues/lang/0157`.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Import(pathTok, prefixTok, items): {
+        if (pathTok < 0) { continue; }
+        string q = tokenText(c, pathTok);
+        string bare = q.len() >= 2 ? q.slice(1, q.len() - 1) : "";
+        if (bare != "" && !isBuiltinSpec(bare)) { c.addUnresolved(bare); }
+      }
+      else: { }
+    }
+  }
   checkModule(c, prog);
   return errorsOf(c);
 }
@@ -7801,7 +7933,11 @@ export void declareModule(C c, Program prog, string[] only) {
           // and `spec/tour.wac` itself. What it loses is the bare *type*: `spec/cases/0042`.
           bool bare = typeParams.len() == 0;
           if (bare) { c.declareStruct(vname, "", string[0]()); }
-          c.declareVariant(tokenText(c, nameTok), vname, variants[vi].fields.len());
+          // **Under the name this file calls the enum**, which is `c.renamed` — the same wrapper
+          // `declareEnum` seventeen lines above already uses. Without it an aliased import registered
+          // the *enum* as `E2` and its variants as belonging to `E`, so `E2.A` was "no variant of that
+          // name" while `E2` worked perfectly as a parameter type (`issues/lang/0161`).
+          c.declareVariant(c.renamed(tokenText(c, nameTok)), vname, variants[vi].fields.len());
           c.markVariantBare(vname, bare);
           for (i32 fi = 0; fi < variants[vi].fields.len(); fi++) {
             c.declareFieldConst(vname, tokenText(c, variants[vi].fields[fi].nameTok),
@@ -8291,6 +8427,12 @@ export void checkModule(C c, Program prog) {
         // this source round-trips through it on every suite run.
         string spec = pathTok < 0 ? "" : tokenText(c, pathTok);
         string bare = spec.len() >= 2 ? spec.slice(1, spec.len() - 1) : "";
+        // **Nothing at that path.** The caller resolved it — see `errMissingImportFile` — and this is
+        // the import's own token, so the message can name the file the way
+        // `§wac-diag-parse-bad-type-n7qm3xf` names a type nobody declared.
+        if (bare != "" && c.isUnresolved(bare)) {
+          c.reportTok(errMissingImportFile(), pathTok, bare);
+        }
         if (bare == "core") {
           for (i32 i = 0; i < items.len(); i++) {
             string named = tokenText(c, items[i].nameTok);

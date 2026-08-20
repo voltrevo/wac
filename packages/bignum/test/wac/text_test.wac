@@ -19,30 +19,26 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { roundTrip, acceptsDecimal, acceptsHex, toHex, fromHex, fromI64, fromU64, opBitLen,
          opIsZero } from "../probe.wac";
 
+/**
+ * The low bit of a draw.
+ *
+ * A free function rather than a method: `Rng` is `packages/wactest/src/rng.wac`'s now, and a wac
+ * struct's methods cannot be extended from another file. `issues/system/0220`.
+ */
+i32 bit(Rng rng) { return (rng.next() & 1) as@ i32; }
+
 const string ORACLE = "packages/bignum/test/oracle.ts";
 
 string text(u8[] b) { return string.fromBytes(b); }
 u8[] b(string s) { return s.toBytes(); }
 
-/** A deterministic generator, so a failure is reproducible from the seed alone. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  i32 bit(this) { return (this.next() & 1) as@ i32; }
-}
 
 /**
  * A random magnitude of exactly `bits` bits, as hex text — so the top bit is always set.
@@ -55,7 +51,7 @@ string randomHex(Rng rng, i32 bits) {
   // Build the bits most-significant first, then pack four at a time.
   i32[] b = i32[bits]();
   b[0] = 1;
-  for (i32 i = 1; i < bits; i++) { b[i] = rng.bit(); }
+  for (i32 i = 1; i < bits; i++) { b[i] = bit(rng); }
   string digits = "0123456789abcdef";
   string out = "";
   i32 pad = (4 - (bits % 4)) % 4;
@@ -172,7 +168,7 @@ export string test_decimal_random_values_round_trip_across_sizes(Core core, Cli 
   for (i32 bits = 1; bits <= 600; bits++) {
     for (i32 trial = 0; trial < 3; trial++) {
       string mag = decimalOf(lines, randomHex(rng, bits));
-      string v = rng.bit() == 1 ? "-" + mag : mag;
+      string v = bit(rng) == 1 ? "-" + mag : mag;
       lines.add("text roundtrip " + v + " " + text(roundTrip(b(v))));
     }
   }

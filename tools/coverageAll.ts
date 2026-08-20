@@ -71,6 +71,36 @@ const PACKAGES = Object.keys(TASKS)
  * is what is read: `deno run -A <driver>.ts` and
  * `… covreport.wac -- core/test/cov_exercise.wac …` both give it up to a regex.
  */
+/**
+ * The packages this sweep does **not** know about, which is a different thing from "no driver".
+ *
+ * `PACKAGES` is derived from the `coverage:` tasks, and the comment above says why: deriving it means
+ * adding a task is the whole of adding it to the sweep. True, and it has one consequence nobody had
+ * written down — a package with **no task at all** is not reported as having no driver. It is not
+ * reported. It does not exist to this file.
+ *
+ * So the summary line said "17 hold a coverage floor" over 21 packages while 18 more sat on disk with
+ * no measurement of any kind, and the number read like a near-complete answer. `issues/system/0205`
+ * is about floors; this is about the set they are floors over, and it is the same shape as
+ * `packages/http`'s `proxy.wac`, which was absent from that package's report rather than uncovered.
+ * The denominator is the one number that cannot warn you it is wrong, so it is printed.
+ *
+ * **Counted, not failed.** A package acquiring a driver is work, and a sweep that went red the moment
+ * this was noticed would have gone red for everyone, on somebody else's push, over a fact that has
+ * been true all along. It is a line of output and a name list.
+ */
+const unmeasured = (): string[] => {
+  const known = new Set(PACKAGES);
+  const out: string[] = [];
+  for (const e of Deno.readDirSync("packages")) {
+    if (!e.isDirectory || known.has(e.name)) continue;
+    try {
+      if (Deno.statSync(`packages/${e.name}/src`).isDirectory) out.push(e.name);
+    } catch { /* no src/ — a package of fixtures or docs, not code this could measure */ }
+  }
+  return out.sort();
+};
+
 const driverOf = (pkg: string): string | null =>
   (TASKS[`coverage:${pkg}`] ?? "").match(/\S+\.(?:ts|wac)(?=\s|$)/g)
     ?.find((f) => !f.endsWith("covreport.wac")) ?? null;
@@ -169,6 +199,15 @@ console.log(
     `${count("entries")} only check their own exemptions have not drifted, ${count("reports")} report ` +
     `and cannot fail` + (count("no driver") > 0 ? `, ${count("no driver")} have no driver at all` : ""),
 );
+
+// And what it is a sweep *of*, which the line above cannot say because it counts only what it ran.
+const unswept = unmeasured();
+if (unswept.length > 0) {
+  console.log(
+    `   ${unswept.length} package(s) have no coverage task and are not in the numbers above: ` +
+      unswept.join(", "),
+  );
+}
 
 for (const r of failed) {
   // The reason, not just the fact: a bare "FAIL" is the same silence this file exists to end. Each of

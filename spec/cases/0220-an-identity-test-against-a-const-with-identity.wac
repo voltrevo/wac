@@ -1,0 +1,19 @@
+// expect: answers f = 41
+// why: a capitalised name on the right of `is` may be a *const* as well as a local — the parser cannot
+//      tell a value from a type and only the scopes can. A const with identity lives in a global, so
+//      the test is `ref.eq` against it. `B` holds the same elements as `A` and is a different array, so
+//      a compiler answering true to any const identity test returns 51 and fails this case; one that
+//      compares contents fails it too.
+//      **The reference refuses this program** — `undefined type 'A'` — which is
+//      `issues/lang/0151`, filed and ruled not worth fixing: the spec calls it legal, wacc is the
+//      primary compiler, and the reference only has to build wacc. So this corpus, which measures
+//      wacc, is the right home and the disagreement is expected rather than a surprise.
+// from: issues/lang/0172a, issues/lang/0151
+const u64[] A = u64[](1, 2, 3);
+const u64[] B = u64[](1, 2, 3);
+u64[] g() { return A; }
+export i32 f() {
+  i32 r = (g() is A) ? 1 : 0;
+  r = r + ((g() is B) ? 10 : 0);
+  return r + ((g() is not B) ? 40 : 0);
+}

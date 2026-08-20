@@ -176,3 +176,45 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/**
+ * A program declaring a name `platform.wac` also declares still runs.
+ *
+ * The case the check above did not have. It builds `example/wc.wac`, which clashes with nothing — and a
+ * clash was the one thing that broke the property: two files declaring `Stat` made the linker qualify
+ * `platform.wac`'s, so `Cli.stat`'s signature carried `Stat__std_platform` while the *callback* carried
+ * the raw linker key `Stat@1`. Two spellings of one type, `callback_index` matches by string, and the
+ * host reported `main wants a Cli and the manifest describes none` — about a manifest that described one.
+ * `issues/lang/0162b`.
+ *
+ * Asserted end to end rather than over the manifest, because the manifest agreeing with itself is what
+ * the test above is for; this one asks the question a user asks. `Stat` is the name it cost twenty
+ * minutes in `packages/crypto/tools/ct.wac`, and `platform.wac` declares eight more ordinary words —
+ * `Change`, `Exec`, `Child`, `Socket`, `Read`, `Captured`, `FileResult`, `Datagram`.
+ */
+export string test_a_program_declaring_a_name_platform_also_declares_still_runs(Core core, Cli cli) {
+  T t = T.create();
+  string dir = root(cli) + "/.cache/nameclash";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  string src = "import { Core, Cli } from \"std/platform.wac\";\n" +
+               "struct Stat { i32 n; }\n" +
+               "export i32 main(Core core, Cli cli) {\n" +
+               "  Stat s = Stat(1);\n" +
+               "  core.log(\"n=\" + (s.n == 1 ? \"1\" : \"?\"));\n" +
+               "  return 0;\n}\n";
+  t.isTrue(cli.writeFile(dir + "/clash.wac", src.toBytes()).wait().ok(), "wrote the fixture");
+
+  Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
+    string[]("run", "--allow-read", dir + "/clash.wac"), u8[0]()).wait();
+  string said = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    t.eqI32(r.status, 0, "a struct named like one in platform.wac stopped the program: " + said);
+    t.isTrue(said.indexOf("n=1") >= 0, "the program did not print n=1 — " + said);
+  }
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

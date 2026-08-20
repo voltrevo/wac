@@ -19,10 +19,25 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { shiftTest, mulTest, sumTest, subTest, cmpTest } from "../bigops.wac";
+import { shiftTest, mulTest, sumTest, subTest, cmpTest, addTest } from "../bigops.wac";
+
+/**
+ * Two draws as one 64-bit value, high half first.
+ *
+ * A free function rather than a method: `Rng` comes from `packages/wactest/src/rng.wac` now and a wac
+ * struct's methods cannot be extended from another file. The draw order is the high half then the low,
+ * which is what the copy this replaces did — reversing it would give the same distribution and a
+ * different corpus. `issues/system/0220`.
+ */
+u64 next64(Rng r) {
+  u64 hi = r.next() as u64;
+  u64 lo = r.next() as u64;
+  return (hi << 32) | lo;
+}
 
 const string ORACLE = "packages/fmt/test/oracle.ts";
 
@@ -37,26 +52,6 @@ string u64Hex(u64 v) {
     x = x / 16;
   }
   return out;
-}
-
-/** xorshift32, matching the host-side generator so the corpus is the same one. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  u64 next64(this) {
-    u64 hi = this.next() as u64;
-    u64 lo = this.next() as u64;
-    return (hi << 32) | lo;
-  }
-
-  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
 }
 
 /**
@@ -107,8 +102,8 @@ export string test_fixedbig_random_add_subtract_and_compare(Core core, Cli cli) 
   Rng rng = Rng(0x5BD1E995);
   Lines lines = Lines.create();
   for (i32 i = 0; i < 4000; i++) {
-    u64 a = rng.next64();
-    u64 b = rng.next64();
+    u64 a = next64(rng);
+    u64 b = next64(rng);
     i32 ashift = rng.upto(600);
     i32 bshift = rng.upto(600);
     lines.add("sum " + u64Hex(a) + " " + itoa(ashift) + " " + u64Hex(b) + " " + itoa(bshift) +
@@ -168,5 +163,43 @@ export string test_fixedbig_zero_and_equality_edge_cases(Core core, Cli cli) {
   // And `5 - 5` normalises to zero rather than to a one-limb zero, which the limb dump shows
   // directly and the oracle cannot: `00000000` and `` are the same number.
   t.eqI32(subTest(5, 0, 5, 0).len(), 0, "5 - 5 normalises to no limbs at all");
+  return t.report();
+}
+
+/**
+ * `add` agrees with `setSum`, in both orders — two implementations of one sum in one file.
+ *
+ * `bigint.wac` has `add` (in place) and `setSum` (into a third), and their loops are near copies: the
+ * same carry, the same `i < n` guards, the same limb count taken as a max. A change made to one and
+ * not the other is invisible to every existing test, because `setSum` is what the random sweep above
+ * drives and `add` is reached only through `mulU64` with a multiplier above 2^32 — where the operand
+ * is always the longer of the two, so half of `add`'s arms never run.
+ *
+ * The interesting direction is `this` longer than `o`, which is the one its caller cannot produce.
+ */
+export string test_fixedbig_add_in_place_agrees_with_the_three_operand_sum() {
+  T t = T.create();
+  // Shifts chosen so each pair has a longer and a shorter side, and one pair of equal length.
+  i32[] lshift = i32[](0, 300, 64, 500, 0, 128);
+  i32[] rshift = i32[](300, 0, 64, 32, 0, 96);
+  u64 x = 0xFFFFFFFFFFFFFFFF;
+  u64 y = 0x0123456789ABCDEF;
+  i32 longer = 0;
+  for (i32 i = 0; i < lshift.len(); i++) {
+    t.eqBytes(addTest(x, lshift[i], y, rshift[i]), sumTest(x, lshift[i], y, rshift[i]),
+              "add and setSum disagree with shifts " + itoa(lshift[i]) + " and " + itoa(rshift[i]));
+    // And the other way round, which is addition being commutative and also the arm swap.
+    t.eqBytes(addTest(y, rshift[i], x, lshift[i]), sumTest(x, lshift[i], y, rshift[i]),
+              "add is not commutative at shifts " + itoa(lshift[i]) + " and " + itoa(rshift[i]));
+    if (lshift[i] > rshift[i]) { longer = longer + 1; }
+  }
+  // Said out loud: without a case where the receiver is the longer operand this test would pass while
+  // measuring only the shape `mulU64` already produces.
+  t.isTrue(longer >= 2, "only " + itoa(longer) + " cases put the longer value on the left");
+
+  // A carry that runs off the end of the shorter operand and keeps going through the longer one.
+  t.eqBytes(addTest(0xFFFFFFFFFFFFFFFF, 128, 1, 0), sumTest(0xFFFFFFFFFFFFFFFF, 128, 1, 0),
+            "a carry into the high limbs disagrees");
+  t.eqBytes(addTest(0, 0, 0, 0), sumTest(0, 0, 0, 0), "zero plus zero");
   return t.report();
 }

@@ -22,6 +22,59 @@
 import { parse as parseRequest } from "./probe.wac";
 import { parse as parseResponse, buildRequest } from "./client_probe.wac";
 import { handle as serve } from "../../server/test/probe.wac";
+import { Rng } from "../../wactest/src/rng.wac";
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import {
+  test_a_body_past_the_limit_is_refused_on_every_route_into_one as lm__limits,
+  test_a_message_with_more_headers_than_the_table_holds as lm__headers,
+  test_the_request_builder_produces_what_a_caller_asked_for as lm__builder,
+  test_the_shapes_a_node_generated_corpus_does_not_contain as lm__shapes,
+} from "./wac/limits_test.wac";
+import {
+  test_fuzz_neither_parser_accepts_what_the_other_refuses as fz__fuzz_neither_parser_accepts_what_the_other_refuses,
+  test_fuzz_a_second_seed as fz__fuzz_a_second_seed,
+} from "./wac/fuzz_test.wac";
+import {
+  test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case as or__oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case,
+  test_the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one as or__the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one,
+} from "./wac/oracle_test.wac";
+import {
+  test_a_proxy_variable_parses_the_way_http_proxy_is_actually_written as px__a_proxy_variable_parses_the_way_http_proxy_is_actually_written,
+  test_the_request_is_a_connect_to_an_authority_and_asks_for_no_close as px__the_request_is_a_connect_to_an_authority_and_asks_for_no_close,
+  test_a_reply_is_complete_at_the_blank_line_and_not_before as px__a_reply_is_complete_at_the_blank_line_and_not_before,
+  test_bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_reply as px__bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_reply,
+  test_the_proxys_own_words_come_back_for_a_refusal as px__the_proxys_own_words_come_back_for_a_refusal,
+  test_headers_before_the_blank_line_do_not_move_where_the_tunnel_starts as px__headers_before_the_blank_line_do_not_move_where_the_tunnel_starts,
+  test_http_1_0_is_a_proxy_answering_not_a_proxy_failing as px__http_1_0_is_a_proxy_answering_not_a_proxy_failing,
+  test_something_that_is_not_a_proxy_is_said_so_before_waiting_for_a_blank_line as px__something_that_is_not_a_proxy_is_said_so_before_waiting_for_a_blank_line,
+  test_a_complete_reply_that_is_not_a_status_line_is_not_a_proxy_answering as px__complete_reply,
+} from "./wac/proxy_test.wac";
+import {
+  test_well_formed_requests as rq__well_formed_requests,
+  test_chunked_bodies as rq__chunked_bodies,
+  test_incomplete_messages_are_not_rejections as rq__incomplete_messages_are_not_rejections,
+  test_incomplete_chunked_messages_are_not_rejections as rq__incomplete_chunked_messages_are_not_rejections,
+  test_framing_ambiguity_is_refused_the_smuggling_shapes as rq__framing_ambiguity_is_refused_the_smuggling_shapes,
+  test_malformed_request_lines_and_headers as rq__malformed_request_lines_and_headers,
+  test_malformed_chunked_bodies as rq__malformed_chunked_bodies,
+  test_what_the_parser_consumed_is_where_the_next_message_starts as rq__what_the_parser_consumed_is_where_the_next_message_starts,
+  test_each_rejection_reports_its_own_reason_not_just_no as rq__each_rejection_reports_its_own_reason_not_just_no,
+  test_a_framing_length_too_large_for_an_i32_is_refused_not_wrapped as rq__a_framing_length_too_large_for_an_i32_is_refused_not_wrapped,
+} from "./wac/request_test.wac";
+import {
+  test_well_formed_responses as rs__well_formed_responses,
+  test_chunked_responses as rs__chunked_responses,
+  test_bodies_that_are_not_there_whatever_the_headers_say as rs__bodies_that_are_not_there_whatever_the_headers_say,
+  test_a_body_delimited_by_the_connection_closing as rs__a_body_delimited_by_the_connection_closing,
+  test_ambiguous_framing_is_refused as rs__ambiguous_framing_is_refused,
+  test_malformed_status_lines as rs__malformed_status_lines,
+  test_incomplete_responses_are_not_rejections as rs__incomplete_responses_are_not_rejections,
+  test_the_request_writer_produces_what_our_own_parser_reads_back as rs__the_request_writer_produces_what_our_own_parser_reads_back,
+  test_a_malformed_status_line_says_so_specifically as rs__a_malformed_status_line_says_so_specifically,
+  test_a_2xx_to_connect_has_no_body_whatever_it_claims as rs__a_2xx_to_connect_has_no_body_whatever_it_claims,
+  test_every_reason_phrase_is_the_one_node_writes as rs__every_reason_phrase_is_the_one_node_writes,
+} from "./wac/response_test.wac";
 
 const i32 MAX_BODY = 1048576;
 /** 2020-06-15T00:00:00Z, the clock `packages/server`'s probe is pinned to. */
@@ -60,25 +113,6 @@ u8[] wire(string s) {
 /** One control byte, as a string, so a message can name it without a raw byte in the source. */
 string ctl(i32 c) { return string.fromCodepoint(c); }
 
-/**
- * xorshift32 with the TypeScript's seed, and `upto` because its draws were unsigned.
- * `issues/system/0220` is the two dozen copies of this.
- */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-
-  i32 upto(this, i32 n) {
-    i32 v = this.next() % n;
-    return v < 0 ? v + n : v;
-  }
-}
 
 string[] cases() {
   string SOH = ctl(1);
@@ -201,7 +235,7 @@ string[] responseMethods() {
     "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET");
 }
 
-export i32 main() {
+export i32 main(Core core, Cli cli) {
   i32 seen = 0;
 
   string[] cs = cases();
@@ -309,6 +343,178 @@ export i32 main() {
     "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 99999999\r\n\r\n",
     "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}");
   for (i32 i = 0; i < served.len(); i++) { seen = seen + serve(wire(served[i]), NOW).len(); }
+
+  // ── The package's own tests, 32 of the 40 ──
+  //
+  // Nineteen take `(Core, Cli)` — they compare against Node's parser through a spawned process — so
+  // before `issues/system/0221` a coverage driver could not call one. What this recovers most of is
+  // `src/client.wac` and `src/proxy.wac`, which the probes above do not import **at all**: neither
+  // file was in the module graph, so neither appeared in the report even as an uncovered line, and
+  // the denominator was short rather than the numerator.
+  //
+  // **The eight left out, and why.** `interop_test.wac`'s five bind a real port, which is
+  // `issues/system/0216`'s shape — a coverage driver racing the suite for a port — and
+  // `packages/server`'s ledger leaves its `live_test.wac` out for the same reason.
+  // `tunnel_test.wac`'s three dial the container's actual proxy, so they need `--allow-net` and an
+  // outbound connection that has nothing to do with measuring this package's branches. Both sets run
+  // in the suite; neither belongs in a driver.
+  //
+  // None of the 32 expects a trap, so there is no `trapCase` sweep.
+  i32 bad = 0;
+  if (lm__limits().len() > 0) {
+    core.warn("error: FAILED limits_test test_a_body_past_the_limit_is_refused_on_every_route_into_one");
+    bad = bad + 1;
+  }
+  if (lm__headers().len() > 0) {
+    core.warn("error: FAILED limits_test test_a_message_with_more_headers_than_the_table_holds");
+    bad = bad + 1;
+  }
+  if (lm__shapes().len() > 0) {
+    core.warn("error: FAILED limits_test test_the_shapes_a_node_generated_corpus_does_not_contain");
+    bad = bad + 1;
+  }
+  if (lm__builder().len() > 0) {
+    core.warn("error: FAILED limits_test test_the_request_builder_produces_what_a_caller_asked_for");
+    bad = bad + 1;
+  }
+  if (fz__fuzz_neither_parser_accepts_what_the_other_refuses(core, cli).len() > 0) {
+    core.warn("error: FAILED fuzz_test test_fuzz_neither_parser_accepts_what_the_other_refuses");
+    bad = bad + 1;
+  }
+  if (fz__fuzz_a_second_seed(core, cli).len() > 0) {
+    core.warn("error: FAILED fuzz_test test_fuzz_a_second_seed");
+    bad = bad + 1;
+  }
+  if (or__oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case(core, cli).len() > 0) {
+    core.warn("error: FAILED oracle_test test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case");
+    bad = bad + 1;
+  }
+  if (or__the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one(core, cli).len() > 0) {
+    core.warn("error: FAILED oracle_test test_the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one");
+    bad = bad + 1;
+  }
+  if (px__a_proxy_variable_parses_the_way_http_proxy_is_actually_written().len() > 0) {
+    core.warn("error: FAILED proxy_test test_a_proxy_variable_parses_the_way_http_proxy_is_actually_written");
+    bad = bad + 1;
+  }
+  if (px__the_request_is_a_connect_to_an_authority_and_asks_for_no_close().len() > 0) {
+    core.warn("error: FAILED proxy_test test_the_request_is_a_connect_to_an_authority_and_asks_for_no_close");
+    bad = bad + 1;
+  }
+  if (px__a_reply_is_complete_at_the_blank_line_and_not_before().len() > 0) {
+    core.warn("error: FAILED proxy_test test_a_reply_is_complete_at_the_blank_line_and_not_before");
+    bad = bad + 1;
+  }
+  if (px__bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_reply().len() > 0) {
+    core.warn("error: FAILED proxy_test test_bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_reply");
+    bad = bad + 1;
+  }
+  if (px__the_proxys_own_words_come_back_for_a_refusal().len() > 0) {
+    core.warn("error: FAILED proxy_test test_the_proxys_own_words_come_back_for_a_refusal");
+    bad = bad + 1;
+  }
+  if (px__headers_before_the_blank_line_do_not_move_where_the_tunnel_starts().len() > 0) {
+    core.warn("error: FAILED proxy_test test_headers_before_the_blank_line_do_not_move_where_the_tunnel_starts");
+    bad = bad + 1;
+  }
+  if (px__http_1_0_is_a_proxy_answering_not_a_proxy_failing().len() > 0) {
+    core.warn("error: FAILED proxy_test test_http_1_0_is_a_proxy_answering_not_a_proxy_failing");
+    bad = bad + 1;
+  }
+  if (px__complete_reply().len() > 0) {
+    core.warn("error: FAILED proxy_test test_a_complete_reply_that_is_not_a_status_line_is_not_a_proxy_answering");
+    bad = bad + 1;
+  }
+  if (px__something_that_is_not_a_proxy_is_said_so_before_waiting_for_a_blank_line().len() > 0) {
+    core.warn("error: FAILED proxy_test test_something_that_is_not_a_proxy_is_said_so_before_waiting_for_a_blank_line");
+    bad = bad + 1;
+  }
+  if (rq__well_formed_requests(core, cli).len() > 0) {
+    core.warn("error: FAILED request_test test_well_formed_requests");
+    bad = bad + 1;
+  }
+  if (rq__chunked_bodies(core, cli).len() > 0) {
+    core.warn("error: FAILED request_test test_chunked_bodies");
+    bad = bad + 1;
+  }
+  if (rq__incomplete_messages_are_not_rejections(core, cli).len() > 0) {
+    core.warn("error: FAILED request_test test_incomplete_messages_are_not_rejections");
+    bad = bad + 1;
+  }
+  if (rq__incomplete_chunked_messages_are_not_rejections(core, cli).len() > 0) {
+    core.warn("error: FAILED request_test test_incomplete_chunked_messages_are_not_rejections");
+    bad = bad + 1;
+  }
+  if (rq__framing_ambiguity_is_refused_the_smuggling_shapes(core, cli).len() > 0) {
+    core.warn("error: FAILED request_test test_framing_ambiguity_is_refused_the_smuggling_shapes");
+    bad = bad + 1;
+  }
+  if (rq__malformed_request_lines_and_headers(core, cli).len() > 0) {
+    core.warn("error: FAILED request_test test_malformed_request_lines_and_headers");
+    bad = bad + 1;
+  }
+  if (rq__malformed_chunked_bodies(core, cli).len() > 0) {
+    core.warn("error: FAILED request_test test_malformed_chunked_bodies");
+    bad = bad + 1;
+  }
+  if (rq__what_the_parser_consumed_is_where_the_next_message_starts().len() > 0) {
+    core.warn("error: FAILED request_test test_what_the_parser_consumed_is_where_the_next_message_starts");
+    bad = bad + 1;
+  }
+  if (rq__each_rejection_reports_its_own_reason_not_just_no().len() > 0) {
+    core.warn("error: FAILED request_test test_each_rejection_reports_its_own_reason_not_just_no");
+    bad = bad + 1;
+  }
+  if (rq__a_framing_length_too_large_for_an_i32_is_refused_not_wrapped().len() > 0) {
+    core.warn("error: FAILED request_test test_a_framing_length_too_large_for_an_i32_is_refused_not_wrapped");
+    bad = bad + 1;
+  }
+  if (rs__well_formed_responses(core, cli).len() > 0) {
+    core.warn("error: FAILED response_test test_well_formed_responses");
+    bad = bad + 1;
+  }
+  if (rs__chunked_responses(core, cli).len() > 0) {
+    core.warn("error: FAILED response_test test_chunked_responses");
+    bad = bad + 1;
+  }
+  if (rs__bodies_that_are_not_there_whatever_the_headers_say(core, cli).len() > 0) {
+    core.warn("error: FAILED response_test test_bodies_that_are_not_there_whatever_the_headers_say");
+    bad = bad + 1;
+  }
+  if (rs__a_body_delimited_by_the_connection_closing(core, cli).len() > 0) {
+    core.warn("error: FAILED response_test test_a_body_delimited_by_the_connection_closing");
+    bad = bad + 1;
+  }
+  if (rs__ambiguous_framing_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED response_test test_ambiguous_framing_is_refused");
+    bad = bad + 1;
+  }
+  if (rs__malformed_status_lines(core, cli).len() > 0) {
+    core.warn("error: FAILED response_test test_malformed_status_lines");
+    bad = bad + 1;
+  }
+  if (rs__incomplete_responses_are_not_rejections().len() > 0) {
+    core.warn("error: FAILED response_test test_incomplete_responses_are_not_rejections");
+    bad = bad + 1;
+  }
+  if (rs__the_request_writer_produces_what_our_own_parser_reads_back(core, cli).len() > 0) {
+    core.warn("error: FAILED response_test test_the_request_writer_produces_what_our_own_parser_reads_back");
+    bad = bad + 1;
+  }
+  if (rs__a_malformed_status_line_says_so_specifically().len() > 0) {
+    core.warn("error: FAILED response_test test_a_malformed_status_line_says_so_specifically");
+    bad = bad + 1;
+  }
+  if (rs__every_reason_phrase_is_the_one_node_writes(core, cli).len() > 0) {
+    core.warn("error: FAILED response_test test_every_reason_phrase_is_the_one_node_writes");
+    bad = bad + 1;
+  }
+  if (rs__a_2xx_to_connect_has_no_body_whatever_it_claims().len() > 0) {
+    core.warn("error: FAILED response_test test_a_2xx_to_connect_has_no_body_whatever_it_claims");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("http: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  seen = seen + bad;
 
   return seen;
 }

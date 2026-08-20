@@ -41,6 +41,51 @@ freeDenoCache() {
   df -h / | tail -1
 }
 
+# **How many times this batch has passed the suite without landing.** `issues/system/0213a`: a full run
+# is now longer than the interval between other agents' pushes, so losing the race is the expected
+# outcome rather than bad luck — and every symptom of it is a *separate* invocation, each of which looks
+# like one unlucky run. Four green suites in a row landing nothing is invisible unless somebody is
+# reading the logs of all four, which is how it went unnoticed long enough to need measuring.
+#
+# Keyed on the **oldest unpushed commit**, because that is the one thing about a batch a merge does not
+# change: `git merge` adds commits and rewrites none, so the earliest of mine stays the same object even
+# as the batch grows around it. Per agent, since the count is about this agent's batch.
+#
+# This decides nothing about policy — 0213a's options are somebody else's call and its own note says so.
+# It makes the starvation say its own name.
+# **Computed once, before anything moves it.** The key is derived from `origin/master..HEAD`, and a
+# successful push updates the local `origin/master` ref — so recomputing it afterwards asks about an empty
+# range and answers nothing. The first version did exactly that and left the file behind on a run that
+# landed, so the next run would have opened with a stale banner about a batch that was already in.
+STARVE_FILE=""
+starveInit() {
+  local oldest who
+  oldest=$(git rev-list origin/master..HEAD 2>/dev/null | tail -1)
+  [ -z "$oldest" ] && return 0
+  who=$(printf '%s' "$PWD" | sed -n 's;.*/\(agent-[a-z0-9]*\)/.*;\1;p')
+  [ -z "$who" ] && who=unknown
+  STARVE_FILE="/tmp/wac-starve-${who}-${oldest:0:12}"
+}
+starveCount() {
+  [ -z "$STARVE_FILE" ] && { echo 0; return; }
+  cat "$STARVE_FILE" 2>/dev/null || echo 0
+}
+starveBump() {
+  [ -z "$STARVE_FILE" ] && return 0
+  echo $(($(starveCount) + 1)) > "$STARVE_FILE"
+}
+starveClear() { [ -n "$STARVE_FILE" ] && rm -f "$STARVE_FILE"; return 0; }
+
+starveInit
+
+starved=$(starveCount)
+if [ "${starved:-0}" -gt 0 ]; then
+  echo "== this batch has already passed the suite ${starved} time(s) without landing =="
+  echo "   $(git rev-list --count origin/master..HEAD 2>/dev/null) commit(s) waiting. That is"
+  echo "   issues/system/0213a — the run is longer than the gap between other agents' pushes, so"
+  echo "   losing the race is expected. The suite time spent so far is real and nobody read it."
+fi
+
 for attempt in 1 2 3; do
   guardDenoCache
 
@@ -384,27 +429,42 @@ for attempt in 1 2 3; do
       echo "== pushed =="
     fi
     rm -f "$log"
+    starveClear
     exit 0
   fi
 
+  # The suite passed and the push did not land: that is one starved pass, counted before the merge
+  # changes what the batch is.
+  starveBump
   echo "== push rejected, merging and retrying =="
   before=$(git rev-parse HEAD)
   if ! git pull --no-rebase --no-edit --quiet origin master; then
     echo "== merge needs hands: resolve, then run this again =="
     exit 1
   fi
-  # **Reseed when the merge brought somebody else's compiler.** `native/v8/seed/wacc.wasm` is
-  # gitignored and one per agent, so merging a change to `packages/wacc/src` ages it — and the next
-  # attempt then runs the suite against a compiler older than the tree. That is `issues/system/0160`,
-  # and it costs a full suite run each time: three of the four failures on the attempt that prompted
-  # this were the seed, and only `tools/seedFresh.test.ts` named it. The others complained about
-  # committed test vectors.
+  # **Reseed when the merge aged the seed, and ask the test that owns that question.**
   #
-  # Here rather than in the caller's hands because the gate is what did the pulling. CLAUDE.md tells
-  # an agent to reseed after a merge; a script that merges on your behalf should not also expect you
-  # to notice that it did.
-  if ! git diff --quiet "$before" HEAD -- packages/wacc/src; then
-    echo "   the merge touched packages/wacc/src — rebuilding the seed"
+  # `native/v8/seed/wacc.wasm` and `native/v8/target/release/wac` are gitignored and one per agent, so
+  # a merge that brings somebody else's change to anything they are built from ages them — and the next
+  # attempt runs the suite against a compiler older than the tree. That is `issues/system/0160`, and it
+  # costs a full suite run each time.
+  #
+  # Here rather than in the caller's hands because the gate is what did the pulling. CLAUDE.md tells an
+  # agent to reseed after a merge; a script that merges on your behalf should not also expect you to
+  # notice that it did.
+  #
+  # **This used to test `git diff … -- packages/wacc/src` and `-- native`, and that was too narrow.**
+  # The seed is built from the whole import closure of `packages/wacc/example/wacc.wac`, which reaches
+  # `packages/bytes`, `packages/platform`, `packages/fs` and more — so a merge touching
+  # `packages/bytes/src/buf.wac` aged the seed, this condition said no, and the retry failed on
+  # `seedFresh` after 364 seconds. Naming the directories means keeping a copy of that closure here and
+  # being wrong the first time somebody adds an import.
+  #
+  # `tools/seedFresh.test.ts` already owns the question — it compares both artefacts against everything
+  # they are built from — and answering it costs about 200ms. So the condition is that test, and it
+  # cannot drift from the definition because it *is* the definition.
+  if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
+    echo "   the merge aged the seed or the host — rebuilding"
     if ! deno task seed >/dev/null 2>&1; then
       echo "== the seed would not rebuild after the merge: not retrying =="
       echo "   Run \`deno task seed\` by hand to see why; every later failure would be downstream of it."
@@ -414,4 +474,5 @@ for attempt in 1 2 3; do
 done
 
 echo "== still being beaten to the push after three tries; try again in a moment =="
+echo "   this batch has now passed the suite $(starveCount) time(s) without landing — issues/system/0213a"
 exit 1

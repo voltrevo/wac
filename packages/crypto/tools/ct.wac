@@ -30,6 +30,7 @@
 
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
+import { TraceSite, traceSite, withoutPrefix } from "../../wactest/src/tracesite.wac";
 
 const string CACHE = ".cache/ct-table";
 
@@ -76,6 +77,28 @@ string block16() { i32[] b = i32[16](); for (i32 i = 0; i < 16; i++) { b[i] = i;
 
 i32[] all4() { return i32[](0, 1, 2, 3); }
 
+/**
+ * A fixed 1024-bit modulus and base for the `modPowSecret` row.
+ *
+ * Odd with the top bit set, which is all `modPowSecret` needs — it exponentiates and does not care
+ * whether the modulus is an RSA modulus or the exponent a matching private key. What is being asked
+ * is whether the *work* depends on the exponent, so a real keypair would add nothing and would put a
+ * key in a tool that prints its inputs.
+ */
+string rsaModulus() {
+  i32[] n = i32[128]();
+  n[0] = 0xC5;
+  for (i32 i = 1; i < 127; i++) { n[i] = (i * 31 + 7) & 255; }
+  n[127] = 0x8F;
+  return literal(n);
+}
+
+string rsaBase() {
+  i32[] b = i32[128]();
+  b[0] = 2;
+  return literal(b);
+}
+
 Case[] cases() {
   return Case[](
     Case("sha256", "packages/crypto/src/sha256.wac", "sha256($KEY)", 16, all4()),
@@ -85,6 +108,13 @@ Case[] cases() {
          "poly1305($KEY, " + block16() + ")", 32, all4()),
     // Two scalars only: 1.8M events per run, and the point is made without four of them.
     Case("x25519Base", "packages/crypto/src/x25519.wac", "x25519Base($KEY)", 32, i32[](0, 1)),
+    // **The signing row `x25519Base` was standing in for and could not stand in for.** A ladder
+    // being uniform is a result about a ladder; signing is a different scalar, a different reduction
+    // and a different secret, and `ed25519Sign` parted at `ed25519.wac:334` — `scReduce`'s compare —
+    // for as long as this table had a key-exchange row and no signing one. `issues/system/0225`, and
+    // the same omission as `p256Sign`'s in `issues/system/0224`.
+    Case("ed25519Sign", "packages/crypto/src/ed25519.wac",
+         "ed25519Sign($KEY, " + block16() + ")", 32, i32[](0, 1)),
     Case("ghash", "packages/crypto/src/ghash.wac", "ghash($KEY, " + block16() + ")", 16, all4()),
     Case("aesExpandKey", "packages/crypto/src/aes.wac", "aesExpandKey($KEY)", 16, all4()),
     Case("aesEncrypt", "packages/crypto/src/aes.wac",
@@ -94,12 +124,53 @@ Case[] cases() {
     // failure this file exists to prevent. Not the all-zero key: `curvePublicKey` traps on a scalar of
     // zero or one past the group order, so the secrets have to be valid keys as well as different.
     Case("p256PublicKey", "packages/crypto/src/p256.wac", "p256PublicKey($KEY)", 32, i32[](2, 3)),
+    // **Signing was the routine most worth measuring and the one not measured**, which is how a
+    // second leak of exactly the fixed shape sat in `scMul` while `p256PublicKey` went green. A
+    // public key exposes the private key to a side channel; a signature exposes the *nonce*, and a
+    // partial nonce leak recovers the key from signatures an attacker already has. The row that
+    // matters most was missing because the row that was easiest to add went in first.
+    //
+    // The private key is the secret varied here; the digest and `k` are held. Four times the events
+    // of a public key and by far the most expensive row, because `scInvert` is Fermat over
+    // byte-at-a-time `scMul`.
+    Case("p256Sign", "packages/crypto/src/p256.wac",
+         "p256Sign($KEY, u8[32](fill: 0), u8[32](fill: 9))", 32, i32[](2, 3)),
     // One round and two passwords: a single bcrypt hash is already 129 key expansions, so the event
     // count dwarfs everything above and a third password would say nothing more.
     //
     // Included even though the answer is known in advance — bcrypt indexes its S-boxes with state
     // derived from the password, by design — because "we did not measure it" and "it is fine" look
     // identical in a table that omits the row.
+    // **ML-KEM had no row at all**, which is how `mod`'s ternary on a coefficient sat on the
+    // decapsulation path unmeasured. `issues/system/0226`.
+    //
+    // This is the secret-dependence half, and **getting the differential's scope right took three
+    // attempts** — the probe's header has all three. Twice it reported a divergence at
+    // `mlkem.wac:201` that is not a side channel: the rejection-sampling loop's trip count depends
+    // on ρ, and ρ is published inside the encapsulation key, so any two *keys* are two different
+    // public keys. A decapsulation key determines its own, so what varies here is the secret vector
+    // inside one fixed keypair.
+    //
+    // The half that matters more is whether an *invalid* ciphertext behaves differently from a valid
+    // one — a `Case` here is one `$KEY` and a fixed public input, so it varies the secret and cannot
+    // ask that. `test/wac/constanttime_test.wac` asks it.
+    Case("kemDecapsSecret", "packages/crypto/test/wac/mlkem_probe.wac", "kemDecapsSecret($KEY)", 64,
+         i32[](0, 1)),
+    // **RSA had no row, and it is the one routine here whose own header says at length that it is not
+    // constant-time.** So "we did not measure it" and "it is fine" looked identical for exactly the
+    // case this table exists to keep apart — the same argument the `bcryptPbkdf` row below is made
+    // with, and the same one that let `p256Sign` and `ed25519Sign` sit unmeasured
+    // (`issues/system/0224`, `issues/system/0225`).
+    //
+    // The row is `modExpSecret`, the probe's bytes wrapper, because a `Case`'s name is the symbol
+    // the driver imports as well as the label. What it calls is `modPowSecret`, and that rather
+    // than `rsaSignPkcs1` because it is the routine the exposure is about and
+    // a 2048-bit signature is a 300-million-event journal. 1024 bits is 17.4M, which is the size of
+    // the two rows above it. The modulus and base are fixed and the *exponent* varies, which is the
+    // question: a private exponent must not change the work. It does — and the row names
+    // `packages/bignum`'s `trim`, which is more use than "not constant-time".
+    Case("modExpSecret", "packages/crypto/test/wac/rsa_probe.wac",
+         "modExpSecret(" + rsaBase() + ", $KEY, " + rsaModulus() + ")", 128, i32[](2, 3)),
     Case("bcryptPbkdf", "packages/crypto/src/bcryptpbkdf.wac",
          "bcryptPbkdf($KEY, " + block16() + ", 32, 1)", 16, i32[](0, 1)));
 }
@@ -216,32 +287,12 @@ TraceStat statOf(Core core, Cli cli, string stem) {
 struct Site { string kind; string at; bool ok; }
 
 Site siteOf(Cli cli, string stem, i32 site) {
-  FileResult f = cli.readFile(stem + ".trace").wait();
-  if (!f.ok) { return Site("", "", false); }
-  string[] rows = linesOf(string.fromBytes(f.bytes));
-  string want = itoa(site) + "\t";
-  for (i32 i = 0; i < rows.len(); i++) {
-    if (!startsWith(rows[i], want)) { continue; }
-    string[] parts = string[5](fill: "");
-    i32 n = 0;
-    string cur = "";
-    for (i32 k = 0; k <= rows[i].len(); k++) {
-      string c = k < rows[i].len() ? rows[i].slice(k, k + 1) : "\t";
-      if (c == "\t") { if (n < 5) { parts[n] = cur; n = n + 1; } cur = ""; }
-      else { cur = cur + c; }
-    }
-    if (n < 5) { return Site("", "", false); }
-    // The table prints a leak's home without its directory, as the README does.
-    string file = parts[4];
-    const string PREFIX = "packages/crypto/src/";
-    i32 cut = -1;
-    for (i32 k = 0; k + PREFIX.len() <= file.len() && cut < 0; k++) {
-      if (file.slice(k, k + PREFIX.len()) == PREFIX) { cut = k + PREFIX.len(); }
-    }
-    if (cut >= 0) { file = file.slice(cut, file.len()); }
-    return Site(parts[3], file + ":" + parts[1], true);
-  }
-  return Site("", "", false);
+  TraceSite t = traceSite(cli, stem, site);
+  if (!t.ok) { return Site("", "", false); }
+  // The table prints a leak's home without its directory, as the README does. The *repository* cut
+  // is `traceSite`'s and is not optional — see its header for the absolute path that reached a
+  // generated table before the two copies of this were made one.
+  return Site(t.kind, withoutPrefix(t.file, "packages/crypto/src/") + ":" + t.line, true);
 }
 
 bool listed(string[] all, i32 n, string want) {

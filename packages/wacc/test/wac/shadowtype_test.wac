@@ -1,0 +1,92 @@
+// A redeclared name keeps a type, so a rule can still be wrong about it.
+//
+//     wac test --allow-read packages/wacc/test/wac/shadowtype_test.wac
+//
+// `declareConst` poisoned a same-scope redeclaration to `typeNone()`, and unknown is silent
+// everywhere in this checker — so `i32 a = a.m(); return a.m();`, a method call on an `i32`, got no
+// diagnostic at all. The program was still refused, by the *emitter*, and what a reader saw was the
+// export-parity net reporting a missing export rather than the line the mistake is on.
+// `issues/lang/0174a`.
+//
+// **Retyping instead of poisoning is wrong on its own**, and that was measured before this: the name
+// table is position-blind, because `declareStmt` walks the whole body declaring every local before
+// `checkStmt` walks it checking, so a declaration on line 6 was reported against a use on line 5. The
+// fix is to declare in *both* walks — the pre-pass keeps the first type, and the checking walk retypes
+// at each declaration as it reaches it, which is what `setType` is for.
+//
+// The last two tests are the controls, and the second of them is the one the poisoning existed to
+// protect: a use *before* the redeclaration must still see the earlier type.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { dumpTypeErrors } from "../../src/api.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** How many diagnostic ints this program produces — three per diagnostic. */
+i32 errs(string src) { return dumpTypeErrors(src.toBytes()).len(); }
+
+const string S = "struct S { i32 v; i32 m(this) { return this.v; } }\n";
+
+export string test_a_method_call_on_a_shadowing_local_is_a_type_error() {
+  T t = T.create();
+  i32 n = errs(S + "export i32 f(S a) { i32 a = a.m(); return a.m(); }\n");
+  t.isTrue(n > 0, "`a.m()` on the shadowing i32 got " + itoa(n) + " diagnostic ints, and the " +
+                  "reference reports `type 'i32' has no method 'm'`");
+  return t.report();
+}
+
+export string test_the_same_call_without_a_shadow_was_always_an_error() {
+  T t = T.create();
+  // The proof the rule exists: identical apart from the name, and this one was always caught.
+  i32 n = errs(S + "export i32 f(S a) { i32 b = a.m(); return b.m(); }\n");
+  t.isTrue(n > 0, "the unshadowed form stopped being caught — " + itoa(n) + " diagnostic ints");
+  return t.report();
+}
+
+export string test_a_field_read_through_a_shadowing_local_is_a_type_error() {
+  T t = T.create();
+  i32 n = errs(S + "export i32 f(S a) { i32 a = a.v; return a.v; }\n");
+  t.isTrue(n > 0, "`a.v` on the shadowing i32 got " + itoa(n) + " diagnostic ints");
+  return t.report();
+}
+
+export string test_a_legal_shadow_is_still_accepted() {
+  T t = T.create();
+  i32 n = errs("export i32 f(i32 a) { i32 a = 2; return a; }\n");
+  t.eqI32(n, 0, "a legal same-scope shadow is refused — " + itoa(n) + " diagnostic ints");
+  i32 m = errs("export i32 f() { i32 x = 1; { string x = \"a\"; } return x; }\n");
+  t.eqI32(m, 0, "a legal block shadow is refused — " + itoa(m) + " diagnostic ints");
+  i32 k = errs("export i32 f() { for (i32 i = 0; i < 2; i++) { } for (i32 i = 0; i < 2; i++) { } " +
+               "return 1; }\n");
+  t.eqI32(k, 0, "two sibling loop counters are refused — " + itoa(k) + " diagnostic ints");
+  return t.report();
+}
+
+/**
+ * A use *before* the redeclaration sees the earlier type, which is what makes the naive fix wrong.
+ *
+ * Retyping the whole function on a redeclaration reported line 5 here because of line 6 —
+ * `expected i32[], found i32` on a perfectly good assignment. This is that program.
+ */
+export string test_a_use_before_the_redeclaration_sees_the_earlier_type() {
+  T t = T.create();
+  i32 n = errs("struct H { i32[] items; }\n" +
+               "export i32 f() {\n" +
+               "  H h = H(i32[0]());\n" +
+               "  i32[] items = i32[0]();\n" +
+               "  h.items = items;\n" +
+               "  i32 items = 3;\n" +
+               "  return items;\n" +
+               "}\n");
+  t.eqI32(n, 0, "a use before the redeclaration is reported — " + itoa(n) + " diagnostic ints");
+  return t.report();
+}
+
+/** And the mirror: after the redeclaration the *new* type is the live one. */
+export string test_a_use_after_the_redeclaration_sees_the_new_type() {
+  T t = T.create();
+  i32 n = errs(S + "export i32 f(i32 a) { S a = S(1); return a; }\n");
+  t.isTrue(n > 0, "returning the shadowing `S` as an `i32` got " + itoa(n) + " diagnostic ints");
+  i32 m = errs(S + "export i32 f(i32 a) { S a = S(1); return a.m(); }\n");
+  t.eqI32(m, 0, "reading the shadowing `S`'s method is refused — " + itoa(m) + " diagnostic ints");
+  return t.report();
+}

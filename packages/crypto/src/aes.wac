@@ -60,11 +60,27 @@ const u8[] INV_SBOX = u8[](
 /** Round constants: successive powers of 2 in GF(2^8). */
 const u8[] RCON = u8[](0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d);
 
-/** Multiply by 2 in GF(2^8): a shift, and the reduction polynomial when it overflows. */
+/**
+ * Multiply by 2 in GF(2^8): a shift, and the reduction polynomial masked by the bit that fell off.
+ *
+ * It was `if ((a & 0x80) != 0) { return s ^ 0x1B; }` until 2026-08-20, and that branch was the one
+ * control-flow divergence in AES — `packages/crypto/tools/ct.wac` reported it at `aes.wac:66` and
+ * **stopped there**, because once two runs take different paths their event streams describe
+ * different executions and everything after is noise rather than a finding.
+ *
+ * `0 - (a >> 7) & 1` is not written here because `a` is an `i32` that may carry more than eight
+ * bits at the call sites; `(a & 0x80) >> 7` is 0 or 1 for any of them, and multiplying gives the
+ * mask.
+ *
+ * **This does not make AES constant-time and is not claimed to.** Four S-box lookups in the key
+ * schedule and one in every round index a table with a key-derived byte, which is the 2005-era
+ * cache-timing attack and needs a bitsliced S-box rather than a mask. What it does is remove the
+ * one *branch*, which is the cheaper channel to exploit and the one that was hiding the rest of the
+ * trace from the instrument.
+ */
 i32 xtime(i32 a) {
   i32 s = (a << 1) & 0xFF;
-  if ((a & 0x80) != 0) { return s ^ 0x1B; }
-  return s;
+  return s ^ (0x1B * ((a & 0x80) >> 7));
 }
 
 /** Multiply in GF(2^8), by the schoolbook method over the bits of `b`. */

@@ -1,0 +1,97 @@
+// An import naming a file nobody supplied is refused by the checker, at the import.
+//
+//     wac test --allow-read packages/wacc/test/wac/missingimport_test.wac
+//
+// It was caught one phase later, by the linker, through a sentinel: `blockedFiles` answered *"an
+// import of a file that was not supplied"* with **no position and no file name**, inferred from
+// `emit.wac`'s `linkFailure` reading `starts[0] == 1`. Every checker entry point — including the
+// files-based one, which has the whole map — reported nothing, so a caller that asked the checker was
+// told the program was fine. The reference refuses it: `file not found in programs map: 'b.wac'`.
+// `issues/lang/0157`.
+//
+// The controls are the point. A rule that refuses an unresolvable import must not touch the two trees
+// that resolve without a file on disk — `core` and `std` ship inside the compiler — nor a relative
+// import the caller did supply. `isBuiltinSpec` is the existing predicate for the first, which is why
+// this rule needed no new notion of what a built-in is.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { dumpTypeErrors, dumpTypeErrorsFiles } from "../../src/api.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** The code of the first diagnostic, or -1 — a row is `code, line, col`. */
+i32 firstCode(i32[] out) { return out.len() >= 3 ? out[0] : -1; }
+
+i32 nOf(i32[] out) { return out.len() / 3; }
+
+export string test_an_import_of_a_file_nobody_supplied_is_refused_when_checked_alone() {
+  T t = T.create();
+  string main = "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n";
+  i32[] single = dumpTypeErrors(main.toBytes());
+  t.isTrue(nOf(single) > 0, "single-source: " + itoa(nOf(single)) + " diagnostics");
+  // **The files-based entry point is still silent, and that half of `issues/lang/0157` is open.**
+  // Asserted as it stands rather than left unmentioned: resolving a specifier there cannot be
+  // `resolveFrom` against the path map, because a *mapped* or *project* specifier resolves through a
+  // `Res` that `checkFilesWith` does not carry — `packages/wacc/test/wac/mappedspec_test.wac` and
+  // `projectspec_test.wac` fail on four cases each when it is, including a plain `./a.wac` inside a
+  // mapped subdirectory. That is the "the checker cannot see what it needs" the issue named, measured
+  // rather than estimated.
+  i32[] files = dumpTypeErrorsFiles(string[]("/main.wac"), string[](main), "/main.wac");
+  t.eqI32(nOf(files), 0, "the files-based entry point now reports this — take this assertion out and " +
+                         "close the other half of issues/lang/0157");
+  return t.report();
+}
+
+export string test_a_supplied_relative_import_is_accepted() {
+  T t = T.create();
+  i32[] out = dumpTypeErrorsFiles(
+    string[]("/main.wac", "/b.wac"),
+    string[]("import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n",
+             "export i32 foo() { return 1; }\n"), "/main.wac");
+  t.eqI32(nOf(out), 0, "a supplied relative import is refused — " + itoa(nOf(out)) + " diagnostics");
+  return t.report();
+}
+
+/** `core` and `std` resolve without a file on disk, and neither may be caught by this rule. */
+export string test_the_builtin_trees_are_not_missing_files() {
+  T t = T.create();
+  i32[] core = dumpTypeErrors(
+    ("import { Vec } from \"core/vec.wac\";\nexport i32 f() { return 1; }\n").toBytes());
+  t.eqI32(nOf(core), 0, "a core import is refused — " + itoa(nOf(core)) + " diagnostics");
+  i32[] std = dumpTypeErrors(
+    ("import { Core, Cli } from \"std/platform.wac\";\nexport i32 f() { return 1; }\n").toBytes());
+  t.eqI32(nOf(std), 0, "a std import is refused — " + itoa(nOf(std)) + " diagnostics");
+  return t.report();
+}
+
+/** And a file this repository actually has, through the files entry point, stays clean. */
+export string test_a_real_two_file_program_is_unaffected() {
+  T t = T.create();
+  i32[] out = dumpTypeErrorsFiles(
+    string[]("/main.wac", "/lib.wac"),
+    string[]("import { E, add } from \"/lib.wac\";\n" +
+             "import { Core, Cli } from \"std/platform.wac\";\n" +
+             "export i32 f() { E e = E.A; return add(1, 2); }\n",
+             "export enum E { A, B }\nexport i32 add(i32 a, i32 b) { return a + b; }\n"),
+    "/main.wac");
+  t.eqI32(nOf(out), 0, "a two-file program with a std import is refused — " + itoa(nOf(out)) +
+                       " diagnostics");
+  return t.report();
+}
+
+/**
+ * A *mistyped* built-in path is refused too, which it was not before.
+ *
+ * There is no io.wac in the core tree — it is `hash`, `map`, `option`, `result`, `vec` — and this was
+ * silent, because the rule that answers for the built-in trees is membership rather than a prefix.
+ * Found by writing this file's control wrongly, which is the cheapest way to find a rule's edge.
+ */
+export string test_a_mistyped_builtin_path_is_refused() {
+  T t = T.create();
+  i32[] out = dumpTypeErrors(
+    ("import { Read } from \"core/io.wac\";\nexport i32 f() { return 1; }\n").toBytes());
+  t.isTrue(nOf(out) > 0, "a core path with no file behind it is accepted");
+  i32[] std = dumpTypeErrors(
+    ("import { Core } from \"std/nope.wac\";\nexport i32 f() { return 1; }\n").toBytes());
+  t.isTrue(nOf(std) > 0, "a std path with no file behind it is accepted");
+  return t.report();
+}

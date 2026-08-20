@@ -1,0 +1,76 @@
+// ML-KEM at the side-channel boundary.
+//
+// Two exports, for the two questions a KEM has to answer and that the side-channel table can only
+// ask one of.
+//
+// `packages/crypto/tools/ct.wac`'s `Case` is one `$KEY` slot and a fixed public input: it varies the
+// **secret** and holds everything else. That is the right shape for a cipher, a hash and a scalar
+// multiplication. It is the wrong shape for a KEM, where the property that matters most is "does an
+// *invalid* ciphertext behave differently from a valid one" — which varies the **public** input and
+// holds the secret. `issues/system/0226`.
+//
+// So the validity question is asked by `test/wac/constanttime_test.wac`, whose `pair()` helper takes
+// two whole programs and does not care what differs between them, and the key question is a table
+// row. Both need the call to be one expression, which is what these wrappers are for.
+
+import { mlkemKeyGen, mlkemEncaps, mlkemDecaps, ekSize, dkSize, ctSize } from "../../src/mlkem.wac";
+
+/** The fixed message encapsulated below. Public, and not what either comparison varies. */
+u8[] message() { return u8[32](fill: 3); }
+
+/**
+ * One fixed keypair with `mix` exclusive-ored into **only the secret vector**, decapsulating a fixed
+ * ciphertext.
+ *
+ * The secret-dependence question, and it took three attempts to ask it properly.
+ *
+ *   1. keygen, encapsulate, decapsulate the result — reported a divergence at `mlkem.wac:201`, the
+ *      rejection-sampling loop in `sampleNTT`. Not a side channel: that loop's trip count depends on
+ *      ρ, and **ρ is published inside the encapsulation key**, so two seeds are two different public
+ *      keys and an attacker reads ρ rather than timing it;
+ *   2. keygen, then decapsulate a *fixed* ciphertext — same divergence, same reason.
+ *      `mlkemDecaps` re-encrypts, which re-samples the matrix from the ρ carried inside `dk`. **A
+ *      decapsulation key determines its own public key**, so no two-key differential can hold the
+ *      public data still;
+ *   3. this. `dk`'s first 1152 bytes are the secret vector; `ek`, its hash and z follow. Perturbing
+ *      only that range keeps every public value identical between the two runs, which is the
+ *      comparison the question actually names.
+ *
+ * The resulting key is not one `mlkemKeyGen` would produce, and that is fine — it is a valid *input*,
+ * since `byteDecode` at width 12 reduces every coefficient mod q. Both runs implicitly reject, which
+ * is also fine: what is being asked is whether the work depends on the secret, not what it answers.
+ */
+export u8[] kemDecapsSecret(u8[] mix) {
+  u8[] kp = mlkemKeyGen(u8[64](fill: 7));
+  u8[] dk = u8[dkSize()]();
+  for (i32 i = 0; i < dkSize(); i++) { dk[i] = kp[ekSize() + i]; }
+  for (i32 i = 0; i < 1152; i++) { dk[i] = dk[i] ^ mix[i % mix.len()]; }
+  u8[] ct = u8[ctSize()]();
+  for (i32 i = 0; i < ctSize(); i++) { ct[i] = (i * 37) & 255; }
+  return mlkemDecaps(dk, ct);
+}
+
+/**
+ * The same, with `flip[0]` exclusive-ored into the ciphertext's first byte before decapsulating.
+ *
+ * **The validity differential.** `flip` of zero decapsulates a genuine ciphertext; anything else
+ * decapsulates one that cannot re-encrypt to itself, so the implicit-rejection branch is taken. The
+ * key and the message are identical in both, so the only thing that differs is whether the
+ * ciphertext is valid — which is the one bit the Fujisaki-Okamoto transform exists to hide, and the
+ * bit that a chosen-ciphertext attacker submits ciphertexts in order to learn.
+ *
+ * It parted at `mlkem.wac:56` until 2026-08-20 — `mod`'s ternary on a coefficient, inside
+ * `pkeDecrypt`, a million events before the rejection itself.
+ */
+export u8[] kemDecapsFlip(u8[] flip) {
+  u8[] kp = mlkemKeyGen(u8[64](fill: 7));
+  u8[] ek = u8[ekSize()]();
+  for (i32 i = 0; i < ekSize(); i++) { ek[i] = kp[i]; }
+  u8[] dk = u8[dkSize()]();
+  for (i32 i = 0; i < dkSize(); i++) { dk[i] = kp[ekSize() + i]; }
+  u8[] ce = mlkemEncaps(ek, message());
+  u8[] ct = u8[ctSize()]();
+  for (i32 i = 0; i < ctSize(); i++) { ct[i] = ce[32 + i]; }
+  ct[0] = ct[0] ^ flip[0];
+  return mlkemDecaps(dk, ct);
+}

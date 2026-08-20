@@ -20,7 +20,7 @@ has a determination here.
 |---|---|---|
 | `box`, `sh` | 5,697 + 1,574 | another agent's packages |
 | `platform` | 6,411 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20 |
-| `wacc` | 2,229 | **nine wait on a decision that is the operator's**, three stay |
+| `wacc` | 2,091 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
 | `webrtc`, `raster`, `stream` | 899 + 218 + 297 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
 
 `tor` came off that last row on 2026-08-20. Its entry read "a C tor this machine has not got", and
@@ -89,14 +89,96 @@ being rewritten in wac, which is a different project from this issue.
 `crypto` reached zero on 2026-08-19, which is the first package to do so that needed a new command
 rather than a new test.
 
-**The nine in `wacc` are the whole of what is blocked and not by a missing feature**: `tour`,
-`sweep`, `linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `mutateCheck`, `corpusMutate`,
-`parse_errors` all use the reference compiler as an oracle. On 2026-08-19 the operator deleted the
+**The eight in `wacc` are the whole of what is blocked and not by a missing feature**: `sweep`,
+`linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `mutateCheck`, `corpusMutate`, `parse_errors` all
+use the reference compiler as an oracle. `tour` did too and no longer does — see the section below. On 2026-08-19 the operator deleted the
 whole-repository lex and parse differentials and every `// only: wacc` marker, on the grounds that
 **the reference's only job is bootstrapping**. That principle reaches `parse_errors` — which compares
 diagnostics by position — more clearly than it reaches `corpusMutate` and `mutateCheck`, which use it
 to *generate* known-bad programs and only ask whether wacc notices. Porting them would entrench an
 arrangement that may be about to go, and deleting them is not mine to decide.
+
+### The nine, classified — and `tour` was not blocked at all
+
+The role the reference plays is not the same in all nine, and until 2026-08-20 only three of them had
+been read for it. All nine, from what each does with `wacCompile`'s result:
+
+| | the reference is | files |
+|---|---|---|
+| **an oracle of correctness** | it produces the expected answer | `tour`, `sweep`, `linkEmit`, `specEmit`, `emitSweep`, `checkSweep`, `parse_errors` |
+| **a generator of input** | it builds known-bad programs and only wacc is asked | `mutateCheck`, `corpusMutate` |
+
+That is the split this issue guessed at, now evidenced per file: `tour` takes `want` from the
+reference's compiled function, `specEmit` instantiates `theirs` beside `ours`, and the two mutation
+files never assert anything about what the reference computed.
+
+**And then the question that was not asked: is there a better oracle already available?** For `tour`
+there is, in the subject itself. `spec/tour.wac` exports `selfTest()` — a conjunction over every
+function in the file, which the TypeScript *already asserted* and described as covering "far more than
+the calls listed above, which are only the ones needed to localise a failure". So the differential was
+the localiser, not the coverage.
+
+`packages/wacc/test/wac/tour_test.wac` is that port: compile the tour with wacc, assert `selfTest()`,
+and check the three `string` returns and `double(21)` against the answers the tour writes beside them.
+138 lines of TypeScript gone, no reference, and a superset of what was checked.
+
+**A port that removes the reference is safe whichever way the decision goes**, because it cannot
+entrench what it deletes. That is the test to apply to the other seven before calling them blocked —
+and it is the same question this issue already records one level down: not "can wac do this", but "is
+there a program that does this". One level up it reads: not "is the reference the oracle", but "is
+there a better one".
+
+What is lost is localisation. `selfTest()` says a conjunct disagrees, not which. The port says so at
+the failure and says how to find it, and the `double(21)` canary demonstrates the difference — with
+the tour perturbed, `selfTest()` reports "some conjunct disagrees" while the canary reports
+"got 43, want 42".
+
+### The eight, and what each would need — 2026-08-20
+
+`tour` came off this list by removing the reference rather than porting it, which is the test to apply
+to the rest: **a port that deletes the reference is safe whichever way the decision goes.** Applying it
+to all eight, by reading what each actually has available:
+
+| file | lines | the reference is | is there another oracle? |
+|---|---:|---|---|
+| `parse_errors` | 259 | the *definition* of a recovery strategy | **No, and by design.** It compares diagnostic counts and positions, and says so: "where a count looks absurd, the reference is being absurd in exactly the same way, which is the property under test". Nothing else says `fn` alone should produce thirteen diagnostics |
+| `sweep` | 147 | the verdict on generated programs | **No.** `generate()` returns `{ context, src }` — the cells carry no expected answer, so only a second checker can say which should pass |
+| `checkSweep` | 102 | the same, over `generateEmit`'s corpus | **No**, same reason |
+| `emitSweep` | 81 | the answer a generated program computes | **No.** `generateEmit()`'s cells are `{ context, src }` too. An expectation would have to be computed by a third implementation, which is worse |
+| `linkEmit` | 175 | the answer a multi-file program computes | **No**, same shape |
+| `specEmit` | 242 | the answer a spec case computes | **Possibly — and it is a decision about where "done" lives.** See below |
+| `mutateCheck` | 209 | a generator of known-bad programs | **Not applicable.** Only wacc is asked whether it notices; nothing asserts what the reference computed |
+| `corpusMutate` | 338 | the same | **Not applicable**, same reason |
+
+So the eight are really three questions, not one:
+
+1. **`parse_errors` is the purest case for the principle.** If the reference's only job is
+   bootstrapping, then matching its error-recovery quirks is exactly the arrangement that should go —
+   and there is nothing to replace it with, so the choice is delete or keep, with no third option;
+2. **`sweep`, `checkSweep`, `emitSweep` and `linkEmit` cost real coverage to delete**, because a
+   generated corpus has no answers of its own. Measured rather than assumed: both generators return
+   `{ context: string; src: string }` and nothing more;
+3. **`mutateCheck` and `corpusMutate` are not about the reference's correctness at all.** They use it
+   to *build* broken programs. If the principle is "its only job is bootstrapping", using it as a
+   mutation source is a different use of the word "job", and the issue said so from the start.
+
+### `specEmit`, and why it is its own question
+
+Its cases come from `compiler/wacSpec.test.ts` — the reference's conformance suite, 529 tests, each
+named for a `[§tag]` in `spec/spec/*.md`. `extract()` pulls the *source* out of each `run(\`…\`)` and
+then compares what the two compilers emit.
+
+But those tests carry **hand-written expected values**: `eq(inst.call("int32", []), 42, "int32()")`.
+That is an oracle nobody's compiler produced — a human wrote it down — and using it would remove the
+reference from this file the way `selfTest()` removed it from `tour`.
+
+What makes it a decision rather than a port: those expectations live *inside the reference's own test
+file*. Reading them means a wac test parsing TypeScript for `eq(inst.call(name, args), expected)`,
+which couples it to that file's shape — or moving the conformance expectations somewhere both
+compilers can read, which is a change to where the definition of "done" lives. The spec markdown
+carries the tags but not the values; it says things like "`gcd(48, 18)` returns `6`" in prose.
+
+That is worth deciding on purpose and is not a translation.
 
 ### The mistake this issue kept making, in one place
 

@@ -16,11 +16,27 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Canonical, canonicalize } from "../../src/json.wac";
+import { Canonical, canonicalize, stringify } from "../../src/json.wac";
+import { JsonValue } from "../../src/value.wac";
 import { ERR_NONE, ERR_UTF8, ERR_EOF } from "../../src/parse.wac";
+
+/**
+ * One byte from a distribution that lands in each interesting UTF-8 range often enough.
+ *
+ * A free function rather than a method: `Rng` is `packages/wactest/src/rng.wac`'s now, and a wac
+ * struct's methods cannot be extended from another file. `issues/system/0220`.
+ */
+i32 pick(Rng rng) {
+  i32 r = rng.upto(100);
+  if (r < 30) { return 0x80 + rng.upto(0x40); }   // continuation range
+  if (r < 60) { return 0xC0 + rng.upto(0x40); }   // lead range, valid and not
+  if (r < 80) { return rng.upto(0x80); }          // ASCII
+  return rng.upto(0x100);                          // anything
+}
 
 const string ORACLE = "packages/json/test/oracle.ts";
 
@@ -162,33 +178,6 @@ export string test_utf8_multi_byte_content_survives_the_round_trip(Core core, Cl
   return t.report();
 }
 
-/** xorshift32, matching the host-side generator so the corpus is the same one. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
-
-  /**
-   * A byte weighted towards the lead and continuation ranges.
-   *
-   * So most sequences are nearly-valid rather than obviously junk — that is where an off-by-one in a
-   * range bound lives.
-   */
-  i32 pick(this) {
-    i32 r = this.upto(100);
-    if (r < 30) { return 0x80 + this.upto(0x40); }   // continuation range
-    if (r < 60) { return 0xC0 + this.upto(0x40); }   // lead range, valid and not
-    if (r < 80) { return this.upto(0x80); }          // ASCII
-    return this.upto(0x100);                          // anything
-  }
-}
 
 export string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Core core, Cli cli) {
   T t = T.create();
@@ -200,7 +189,7 @@ export string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Core c
     u8[] body = u8[len]();
     bool usable = true;
     for (i32 j = 0; j < len; j++) {
-      body[j] = rng.pick();
+      body[j] = pick(rng);
       // A quote or a backslash would end the string or start an escape, and a control byte has its
       // own error; none of those are this test's subject.
       if (body[j] == 0x22 || body[j] == 0x5C || body[j] < 0x20) { usable = false; }
@@ -213,5 +202,86 @@ export string test_utf8_random_byte_sequences_agree_with_a_strict_decoder(Core c
   t.isTrue(checked > 1000, "only " + itoa(checked) + " sequences were usable");
   core.log("  " + itoa(checked) + " random sequences compared with the host decoder");
   checkDeno(t, cli, ORACLE, lines, itoa(checked) + " random sequences");
+  return t.report();
+}
+
+/**
+ * The *other* UTF-8 validator — the one on the way out — checked by the one on the way in.
+ *
+ * This package has two. `parse.wac`'s refuses ill-formed input, and every case above exercises it.
+ * `stringify.wac`'s `sequenceLen` decides how many bytes of a string to copy whole while escaping the
+ * ASCII, and it is reached only when a tree carries bytes that were never parsed — which is exactly
+ * what `stringify`'s doc comment says it is for: "a tree, built by hand or edited after parsing".
+ *
+ * So the corpus above could not reach it, and `issues/system/0205` listed ten of its arms as
+ * uncovered: every `: 0` in the lead-byte table, which is to say **every rejection the validator can
+ * make**. A copy of RFC 3629's ranges whose refusals had never once fired.
+ *
+ * What it must do is documented in the loop: one U+FFFD per ill-formed *byte*, so a caller cannot
+ * hand this a tree and get JSON that is not valid UTF-8. That is checked here two ways, and the
+ * second is the one that makes it a differential rather than a restatement: **the output goes back
+ * through `canonicalize`**, which is the other validator, written from the same RFC by hand and
+ * sharing no code with this one. If `sequenceLen` let an ill-formed sequence through, the parser
+ * would refuse the document its own package had just produced.
+ */
+export string test_utf8_a_hand_built_tree_cannot_produce_invalid_json() {
+  T t = T.create();
+  string[] labels = string[](
+    "lone continuation", "truncated two-byte lead", "overlong NUL", "overlong three-byte",
+    "E0 with an overlong continuation", "E1 with a bad continuation", "ED as a high surrogate",
+    "EE with a bad continuation", "F0 with an overlong continuation", "F1 with a bad continuation",
+    "F3 truncated", "F4 past U+10FFFF", "F5 lead", "FF");
+  u8[][] bad = u8[][14](fill: u8[0]());
+  bad[0]  = u8[](0x81);
+  bad[1]  = u8[](0xC3);
+  bad[2]  = u8[](0xC0, 0x80);
+  bad[3]  = u8[](0xE0, 0x80, 0x80);
+  bad[4]  = u8[](0xE0, 0x9F, 0x80);
+  bad[5]  = u8[](0xE1, 0x28, 0x80);
+  bad[6]  = u8[](0xED, 0xA0, 0x80);
+  bad[7]  = u8[](0xEE, 0x28, 0x80);
+  bad[8]  = u8[](0xF0, 0x8F, 0x80, 0x80);
+  bad[9]  = u8[](0xF1, 0x28, 0x80, 0x80);
+  bad[10] = u8[](0xF3, 0x80, 0x80);
+  bad[11] = u8[](0xF4, 0x90, 0x80, 0x80);
+  bad[12] = u8[](0xF5, 0x80, 0x80, 0x80);
+  bad[13] = u8[](0xFF);
+
+  for (i32 i = 0; i < bad.len(); i++) {
+    // `a` either side, so a replacement that swallowed a neighbour would show.
+    u8[] payload = u8[bad[i].len() + 2]();
+    payload[0] = 'a';
+    for (i32 k = 0; k < bad[i].len(); k++) { payload[k + 1] = bad[i][k]; }
+    payload[payload.len() - 1] = 'z';
+
+    u8[] out = stringify(JsonValue.Str(payload));
+    string text = string.fromBytes(out);
+    t.isTrue(text.len() >= 4, labels[i] + ": produced nothing");
+    t.eqStr(text.slice(0, 2), "\"a", labels[i] + ": the leading byte was disturbed");
+    t.eqStr(text.slice(text.len() - 2, text.len()), "z\"",
+            labels[i] + ": the trailing byte was disturbed");
+
+    // The other validator's verdict on what the writer produced.
+    Canonical back = canonicalize(out);
+    t.eqI32(back.code, ERR_NONE(),
+            labels[i] + ": the parser refused what the writer produced — " + text);
+  }
+
+  // Well-formed sequences at every width pass through untouched, which is what makes the
+  // assertions above about the *rejections* rather than about the writer mangling everything.
+  u8[][] good = u8[][5](fill: u8[0]());
+  good[0] = u8[]('a');
+  good[1] = u8[](0xC3, 0xA9);                    // é
+  good[2] = u8[](0xE6, 0x97, 0xA5);              // 日
+  good[3] = u8[](0xF0, 0x9F, 0x98, 0x80);        // 😀
+  // A lead in F1..F3, which is its own row in the table and the only one the emoji above misses:
+  // U+40000, in a plane nothing here uses and which is exactly why nothing had encoded one.
+  good[4] = u8[](0xF1, 0x80, 0x80, 0x80);
+  for (i32 i = 0; i < good.len(); i++) {
+    u8[] out = stringify(JsonValue.Str(good[i]));
+    t.eqI32(out.len(), good[i].len() + 2, "a well-formed sequence of width " +
+            itoa(good[i].len()) + " was rewritten");
+    t.eqI32(canonicalize(out).code, ERR_NONE(), "and the parser accepts it");
+  }
   return t.report();
 }

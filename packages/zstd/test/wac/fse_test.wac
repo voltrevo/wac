@@ -27,6 +27,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -274,20 +275,6 @@ export string test_a_description_written_from_counts_reads_back_as_those_counts(
     t.eqI32(read.bytesUsed, desc.len(), names[i] + ": bytes the reader consumed");
   }
   return t.report();
-}
-
-/** xorshift32, matching the host-side generator so the corpus is reproducible. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  i32 upto(this, i32 n) { return n <= 0 ? 0 : ((this.next() % (n as@ u32)) as@ i32); }
 }
 
 export string test_fuzz_any_distribution_the_format_can_express_survives_the_round_trip(

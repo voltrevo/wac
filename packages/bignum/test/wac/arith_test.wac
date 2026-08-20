@@ -22,38 +22,33 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr, opMulSmall,
          opDivSmall, opRemSmall, opCmp, opCmpAbs, fromHex } from "../probe.wac";
 
+/**
+ * The low bit of a draw.
+ *
+ * A free function rather than a method: `Rng` is `packages/wactest/src/rng.wac`'s now, and a wac
+ * struct's methods cannot be extended from another file. `issues/system/0220`.
+ */
+i32 bit(Rng rng) { return (rng.next() & 1) as@ i32; }
+
 const string ORACLE = "packages/bignum/test/oracle.ts";
 
 string text(u8[] x) { return string.fromBytes(x); }
 u8[] b(string s) { return s.toBytes(); }
 
-/** A deterministic generator, so a failure is reproducible from the seed alone. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  i32 bit(this) { return (this.next() & 1) as@ i32; }
-  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
-}
 
 /** A random magnitude of exactly `bits` bits, as hex text — so the top bit is always set. */
 string randomHex(Rng rng, i32 bits) {
   if (bits == 0) { return "0"; }
   i32[] bs = i32[bits]();
   bs[0] = 1;
-  for (i32 i = 1; i < bits; i++) { bs[i] = rng.bit(); }
+  for (i32 i = 1; i < bits; i++) { bs[i] = bit(rng); }
   string digits = "0123456789abcdef";
   string out = "";
   i32 pad = (4 - (bits % 4)) % 4;
@@ -210,7 +205,7 @@ export string test_arith_random_operands_across_a_wide_size_range(Core core, Cli
     i32 yb = 1 + rng.upto(400);
     string x = decimalOf(lines, randomHex(rng, xb));
     string y = decimalOf(lines, randomHex(rng, yb));
-    bothWays(lines, rng.bit() == 1 ? negated(x) : x, rng.bit() == 1 ? negated(y) : y);
+    bothWays(lines, bit(rng) == 1 ? negated(x) : x, bit(rng) == 1 ? negated(y) : y);
   }
   checkDeno(t, cli, ORACLE, lines, "random operands");
   return t.report();
@@ -319,8 +314,8 @@ export string test_arith_division_identity_holds(Core core, Cli cli) {
   for (i32 trial = 0; trial < 600; trial++) {
     string a = decimalOf(lines, randomHex(rng, 1 + rng.upto(300)));
     string d = decimalOf(lines, randomHex(rng, 1 + rng.upto(300)));
-    if (rng.bit() == 1) { a = negated(a); }
-    if (rng.bit() == 1) { d = negated(d); }
+    if (bit(rng) == 1) { a = negated(a); }
+    if (bit(rng) == 1) { d = negated(d); }
     string q = text(opDiv(b(a), b(d)));
     string r = text(opRem(b(a), b(d)));
     string back = text(opAdd(b(text(opMul(b(q), b(d)))), b(r)));
@@ -481,7 +476,7 @@ export string test_shifts_a_negative_count_reverses_direction(Core core, Cli cli
   i32[] counts = i32[](1, 5, 32, 33, 70);
   for (i32 trial = 0; trial < 60; trial++) {
     string mag = decimalOf(lines, randomHex(rng, 1 + rng.upto(200)));
-    string v = rng.bit() == 1 ? negated(mag) : mag;
+    string v = bit(rng) == 1 ? negated(mag) : mag;
     for (i32 k = 0; k < counts.len(); k++) {
       // A negative count is the same shift the other way, which the oracle states as `shl` by a
       // negative — `BigInt` reverses direction for exactly the same reason.
@@ -530,7 +525,7 @@ export string test_mul_small_and_div_small_match_the_general_operations(Core cor
   i32[] smalls = i32[](1, 2, 3, 10, 255, 65535, 65536, 1000000000, 0x7FFFFFFF, -1, -2);
   for (i32 trial = 0; trial < 120; trial++) {
     string mag = decimalOf(lines, randomHex(rng, 1 + rng.upto(250)));
-    string v = rng.bit() == 1 ? negated(mag) : mag;
+    string v = bit(rng) == 1 ? negated(mag) : mag;
     for (i32 i = 0; i < smalls.len(); i++) {
       // The unsigned value the probe will see, as decimal — 2^32 + m for a negative m.
       string mu = smalls[i] >= 0 ? itoa(smalls[i])

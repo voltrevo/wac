@@ -220,7 +220,20 @@ export struct Grid {
     // is not the other half of anything.
     if (this.curCol + width > this.cols) { this.newline(); }
     this.cells[this.curRow * this.cols + this.curCol] = cp;
-    if (width == 2) { this.cells[this.curRow * this.cols + this.curCol + 1] = WIDE_TAIL(); }
+    // **A glyph wider than the whole grid has nowhere to put its continuation.** Wrapping does not
+    // help — after a newline `curCol` is 0 and the glyph is still two cells wide — so in a grid one
+    // column across this wrote the tail one past the end of the row, which for the last row is one
+    // past the end of the array and traps. `Grid.create` clamps `cols` up to 1 rather than refusing,
+    // and `Desk.open` takes its column count from a caller, so a one-column window plus any
+    // double-width character brought the program down.
+    //
+    // The code point is kept in its single cell rather than dropped: the character was written, the
+    // renderer already clips at the right edge, and silently losing input is the worse of the two
+    // wrong answers. The cursor still advances by the full width, which is what makes the clamp
+    // below reachable and is why it is there.
+    if (width == 2 && this.curCol + 1 < this.cols) {
+      this.cells[this.curRow * this.cols + this.curCol + 1] = WIDE_TAIL();
+    }
     this.curCol = this.curCol + width;
     // The cursor may now sit past the last column. It is left there rather than wrapped eagerly:
     // a terminal that wraps on write shows the caret at the start of a line nothing has been

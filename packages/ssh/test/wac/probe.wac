@@ -314,9 +314,9 @@ import { AuthRequest, authFailure, authSuccess, byApplication, channelClose as s
          disconnect as srvDisconnect, openFailure as srvOpenFailure,
          readOpenChannel as srvReadOpenChannel,
          channelData as srvData, channelEof as srvEof, channelFailure as srvChanFailure,
-         channelStderr, channelSuccess, disconnect, ecdhReply, exchangeHash as srvHash,
+         channelStderr, channelSuccess, ecdhReply, exchangeHash as srvHash,
          ephemeralPublic as srvEphemeral, sharedSecret as srvShared,
-         execCommand, exitStatus, hostKeyBlob, openConfirmation, openFailure, parseAuthRequest,
+         execCommand, exitStatus, hostKeyBlob, openConfirmation, parseAuthRequest,
          parseEcdhInit, pkOk, serverProposal, serviceAccept, verifyAuth } from "../../src/server.wac";
 
 /** 0 unknown, 1 ok, 2 restricted. */
@@ -364,12 +364,12 @@ export u8[] sshAuthFailure() { return authFailure(); }
 export u8[] sshAuthSuccess() { return authSuccess(); }
 export u8[] sshPkOk(u8[] keyType, u8[] blob) { return pkOk(keyType, blob); }
 export u8[] sshServiceAccept(u8[] name) { return serviceAccept(name); }
-export u8[] sshDisconnect(u8[] why) { return disconnect(byApplication(), why); }
+export u8[] sshDisconnect(u8[] why) { return srvDisconnect(byApplication(), why); }
 export u8[] sshOpenConfirmation(i32 client, i32 ours, i32 window, i32 maxPacket) {
   return openConfirmation(client, ours, window, maxPacket);
 }
 export u8[] sshOpenFailure(i32 client, i32 reason, u8[] why) {
-  return openFailure(client, reason, why);
+  return srvOpenFailure(client, reason, why);
 }
 export u8[] sshChannelSuccessMsg(i32 channel) { return channelSuccess(channel); }
 export u8[] sshServerData(i32 channel, u8[] data) { return srvData(channel, data); }

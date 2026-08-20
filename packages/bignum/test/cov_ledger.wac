@@ -1,0 +1,67 @@
+// bignum's coverage, with the package's own tests in the measurement.
+//
+//   deno task coverage:bignum
+//   deno task coverage:bignum --verbose
+//
+// **230 of 230**, and both lists below are empty. `issues/system/0205`.
+//
+// ## The four gaps were tested all along
+//
+// This read 226 of 230, and all four uncovered points were the `bits == -2147483648` handling in `shl`
+// and `shr` — the guards that stop `-i32::MIN` being `i32::MIN` from recursing for ever, which is
+// GitHub wac-mono#4.
+//
+// `test_shifts_the_most_negative_count` and `test_traps_shifting_right_by_the_most_negative_count` in
+// `test/wac/arith_test.wac` have covered them since that bug was fixed, and each carries a paragraph
+// explaining why. What could not reach them was **this driver**: twenty-five of the package's 46 tests
+// take `(Core, Cli)` because they compare against a host oracle, and until `issues/system/0221` a
+// coverage driver could not call a test that takes a capability at all.
+//
+// So there was nothing to pin here. Four entries saying "no test covers this" would each have been
+// false.
+//
+// ## The trap split, and why it is not optional
+//
+// Nine of `arith_test.wac`'s twenty-five expect a trap, and those go through `trapCase` rather than
+// being called from `main` — a trap in `main` ends the run, and the report then looks *identical* to the
+// one before the wiring, which reads as "the wiring did nothing". `packages/bytes` is where that cost
+// half an hour; the tell is `test_traps_` in the name.
+//
+// ## Why a floor here is not a floor over a lottery
+//
+// `cov_exercise.wac` seeds an `Rng` and draws random operands, and a coverage figure that moves with
+// the seed cannot hold a floor — `packages/url`'s is exactly that and is deliberately still
+// report-only. Checked rather than assumed: **changing the seed from `0x51de51de` to another value
+// leaves this at 226 of 230**, because the sampling here adds operands to a set of hand-written edge
+// cases rather than being the whole corpus. `packages/fmt` fails that check — one point moves — and is
+// the other one that wants the sampling dealt with before a floor.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/bignum/test/cov_exercise.wac";
+const string PREFIX = "packages/bignum/";
+
+/** The nine trap-expecting tests, called one at a time with the trap caught. */
+string[] cases() { return string[]("trapCase:9"); }
+
+/** What the host-comparing tests need: a process to ask and the environment to find it in. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
+                 Pin[0](fill: Pin("", 0, "", true, "")),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

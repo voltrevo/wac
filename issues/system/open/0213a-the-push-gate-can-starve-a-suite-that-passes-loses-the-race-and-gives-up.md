@@ -1,6 +1,6 @@
 # 0213a — the push gate can starve: a suite that passes, loses the race, and gives up
 
-- **Status:** open
+- **Status:** open — the counter from the recommendation is in (2026-08-20); the policy is not
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
@@ -75,3 +75,38 @@ started one N minutes ago, **with WAC_SUITE_ANYWAY**" — that override skips th
 holding it makes everyone else's gate refuse while not being subject to refusal itself. That is a
 separate question from the race and probably wants its own answer; noted here because it is what
 turned two of the five attempts into no-ops.
+
+## The counter is in — 2026-08-20
+
+The half of the recommendation that is not a policy question. `tools/push.sh` now counts how many times a
+batch has passed the suite without landing, and says so at the top of the next run:
+
+    == this batch has already passed the suite 3 time(s) without landing ==
+       2 commit(s) waiting. That is
+       issues/system/0213a — the run is longer than the gap between other agents' pushes, so
+       losing the race is expected. The suite time spent so far is real and nobody read it.
+
+Keyed on the **oldest unpushed commit**, which is the one thing about a batch a merge does not change:
+`git merge` adds commits and rewrites none, so the earliest of mine stays the same object while the batch
+grows around it. Verified — committing on top left the key identical. Per agent. Bumped when the suite
+passed and the push did not land, *before* the merge, since the merge changes what the batch is; cleared
+on a successful push; also printed after the third failed try.
+
+**Nothing about the policy is decided by this.** The five options are still open and the note above still
+stands: the agent being starved is the worst placed to choose how strict a shared gate should be. What
+this removes is the reason it went unnoticed — every symptom was a separate invocation, each looking like
+one unlucky run, so seeing it required reading four logs together.
+
+### Killing the gate does not kill the suite
+
+Timing out `push.sh` to see the banner left its `runTests` child **alive**, orphaned, still running and
+still holding `/tmp/wac-suite.lock` two and a half minutes later. I killed it by pid.
+
+**The lock was honest** — I first wrote this up as a stale-lock hazard and that was wrong.
+`tools/suiteGate.ts:139` already covers it: *"A lock whose process is gone is not a lock"*, tested with
+`kill -0`. The holder here was alive and genuinely running a suite, so refusing other agents was correct.
+
+What is actually worth knowing is narrower and still worth knowing: **`timeout`, `Ctrl-C` or any kill
+aimed at `push.sh` leaves the suite running.** It keeps a core busy, keeps the lock, and nobody is reading
+its output. Anyone stopping a gate should kill the `deno run … tools/runTests.ts` child too, or the thing
+they stopped is only the part that would have told them the answer.

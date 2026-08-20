@@ -1,7 +1,11 @@
 // The single-file slice, on files whose imports are *not* supplied.
 //
 // This is the surface `corpuscheck_test.wac` uses and the one rung 3 states its invariant against: a
-// file checked alone must be silent about everything that depends on another module. The corpus
+// file checked alone must be silent about everything that depends on another module — **about the
+// names, that is.** Since `issues/lang/0157` the *import* itself is refused when the file it names was
+// not supplied, which every program here triggers on purpose, and `codes` below drops that one code.
+// The last test asserts it is really there, because a filter that hides a diagnostic looks exactly
+// like a checker that stopped producing it. The corpus
 // asserts that over the repository, which is the widest evidence there is — and it only covers shapes
 // the repository happens to contain. `issues/lang/0096` was one it did not: a file that matches on an
 // *imported* enum while declaring an enum of its own that spells a variant the same way.
@@ -20,12 +24,22 @@ import { dumpTypeErrors } from "../../src/api.wac";
 const string IMPORTED = "import { Unzipped, unzip } from \"./a.wac\";\n";
 const string LOCAL = "enum Object { Ok(i32 kind, u8[] content), Bad(string why) }\n";
 
-/** The codes this checker reports for one file, with nothing else supplied. */
+/**
+ * The codes this checker reports for one file, with nothing else supplied — **except the import**.
+ *
+ * `errMissingImportFile` (77) is dropped, and that is the whole point of this file rather than a
+ * weakening of it. Since `issues/lang/0157` the checker refuses an import naming a file nobody
+ * supplied, so every program here now carries one: `./a.wac` is deliberately not given. What these
+ * tests are about is different and unchanged — what the checker says about the *names* it cannot see,
+ * where the answer must still be nothing. A rule that invented an error about `Unzipped` would show
+ * up here as a second code beside the import's.
+ */
 string codes(string src) {
   i32[] flat = dumpTypeErrors(src.toBytes());
   string out = "";
   for (i32 i = 0; i < flat.len(); i = i + 3) {
-    out = out + (i == 0 ? "" : ",") + itoa(flat[i]);
+    if (flat[i] == 77) { continue; }
+    out = out + (out == "" ? "" : ",") + itoa(flat[i]);
   }
   return out;
 }
@@ -80,5 +94,22 @@ export string test_a_local_enum_is_still_checked_so_the_rule_above_is_not_blanke
                "    case Ok(kind, content): { return kind; }\n  }\n}\n";
   t.isTrue(codes(src) != "",
            "a local match missing an arm was accepted — the checker is silent, not correct");
+  return t.report();
+}
+
+/**
+ * The canary for the filter in `codes`.
+ *
+ * Every program above imports `./a.wac`, which is deliberately not supplied, so every one of them
+ * must carry `errMissingImportFile`. If that stops being reported, `codes` would go on returning ""
+ * and every test here would keep passing while the rule it hides had been lost. `issues/lang/0157`.
+ */
+export string test_the_unsupplied_import_is_itself_reported() {
+  T t = T.create();
+  i32[] flat = dumpTypeErrors((IMPORTED + LOCAL + "export i32 f() { return 1; }\n").toBytes());
+  bool saw = false;
+  for (i32 i = 0; i < flat.len(); i = i + 3) { if (flat[i] == 77) { saw = true; } }
+  t.isTrue(saw, "the unsupplied `./a.wac` is not reported — `codes` is filtering nothing and every " +
+                "test in this file is vacuous");
   return t.report();
 }

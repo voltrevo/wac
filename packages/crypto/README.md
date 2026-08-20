@@ -51,6 +51,76 @@ u8[] sig    = ed25519Sign(seed, msg);          // 64 bytes
 bool ok     = ed25519Verify(vk, msg, sig);
 ```
 
+## Speed, in one place
+
+Regenerate with
+
+```sh
+wac run --allow-env packages/crypto/tools/bench.wac
+```
+
+Measured 2026-08-20, on a shared container at load ~4.7 across five cores. **Read the ratios, not
+the absolutes**: across three consecutive runs the same routine varied by up to 40%, and an
+unchanged control routine has been seen to swing by half when a suite starts next to it. For a
+figure that has to be exact, `issues/system/0225` quotes traced event counts instead, because those
+are deterministic.
+
+| operation | per call |
+|---|---:|
+| `mlkemEncaps` | 225µs |
+| `mlkemDecaps` | 250µs |
+| `mlkemKeyGen` | 325µs |
+| `x25519Base` | 825µs |
+| `rsaVerifyPkcs1`, 2048-bit, e=65537 | 850µs |
+| `rsaVerifyPss`, 2048-bit, e=65537 | 850µs |
+| `ed25519PublicKey` | 2.1ms |
+| `ed25519Sign` | 2.5ms |
+| `ed25519Verify` | 2.7ms |
+| `p256Sign` | 2.6ms |
+| `p256Ecdh` | 2.8ms |
+| `p256PublicKey` | 3.4ms |
+| `p256Verify` | 5.8ms |
+| `bcryptPbkdf`, 16 rounds | 128ms |
+| `rsaSignPkcs1`, 2048-bit | 147ms |
+
+Three things in that ordering are worth saying out loud.
+
+**ML-KEM is the fastest thing here**, by a factor of three over X25519 and ten over the signature
+schemes. The post-quantum primitive is not the expensive one; lattice arithmetic is cheap and the
+elliptic curves are not.
+
+**Ed25519 and P-256 now cost the same**, which they did not on the morning of 2026-08-20 —
+`issues/system/0209` was opened because P-256 signing was five times ed25519's, and
+`issues/system/0224` closed that by replacing the arithmetic modulo the group order. P-256
+*verification* is still twice a signature, because it is two scalar multiplications.
+
+**The two slow ones are slow on purpose and by accident respectively.** `bcryptPbkdf` at OpenSSH's
+default cost is meant to take about this long — being expensive is the whole function.
+`rsaSignPkcs1` is not: it is `modPowSecret` over `packages/bignum`, 1024 rounds of multiply and
+divide with no CRT, and `issues/system/0209` still has it open.
+
+### Why this table exists rather than a figure per section
+
+Because the figures per section were wrong. Four of them, when this was written:
+
+| said | was | out by |
+|---|---|---|
+| ed25519, "roughly 120 ms per signature" | 2.5ms | 50× |
+| P-256, "roughly 37 ms per scalar multiplication" | 3.4ms | 10× |
+| RSA, "about 170 ms per 2048-bit verification" | 850µs | 200× |
+| bcrypt, "about 10 ms per hash at the default 16 rounds" | 128ms | 13× |
+
+The RSA one was contradicted by `issues/system/0209`'s own measured table, in this repository, and
+nothing noticed because the two were prose in different files. And two *more* figures were written
+into this README on the morning of 2026-08-20 and invalidated the same afternoon by
+`issues/system/0224` — same file, same person, hours apart.
+
+`ct.wac`'s header has said since it was written that "published figures that cannot be regenerated
+go stale silently". That argument was made about the side-channel table and not applied to the
+timings printed beside it, and the timings are what rotted. So there is one table, it has a
+command, it has a date, and the sections below point at it instead of repeating it — a second copy
+of a number is a copy that drifts, and this is what that looks like after a few weeks.
+
 ## X25519
 
 Curve25519 Diffie-Hellman, RFC 7748. `src/field25519.wac` is the arithmetic in
@@ -77,9 +147,10 @@ verify two of the three public keys. `sqrt(-1)` had been computed one factor of 
 short, which only affects point *decoding* — a path signing never takes. A sign-then-
 verify test would have passed.
 
-Roughly 120 ms per signature. The scalar multiplication is a plain 256-step
-double-and-add with no windowing, which is the slowest reasonable choice and the easiest
-to read against the spec.
+The scalar multiplication is a plain 256-step double-and-add with no windowing, which is
+the slowest reasonable choice and the easiest to read against the spec. See
+[Speed](#speed-in-one-place) for what it costs, and for why the figure that used to be here
+was fifty times it.
 
 ## ML-KEM-768
 
@@ -163,9 +234,11 @@ against implementations that parsed the DigestInfo rather than matching its byte
 against ones that stopped checking after finding the hash. So the DigestInfo prefix here
 is a byte table to compare against, never something to parse.
 
-About 170 ms per 2048-bit verification. `modPow` is square-and-multiply with a divmod
-after each step; the exponent is public, so branching on its bits is the one place in
-this package where the timing caveat genuinely does not apply.
+`modPow` is square-and-multiply with a divmod after each step; the exponent is public, so
+branching on its bits is the one place in this package where the timing caveat genuinely
+does not apply. Verification is under a millisecond and signing is the most expensive
+operation in the package — [Speed](#speed-in-one-place) has both, and the figure that used
+to be here overstated verification by two orders of magnitude.
 
 ## bcrypt_pbkdf
 
@@ -200,7 +273,10 @@ something review catches. See [The AES S-box, and a lesson about generated
 tables](#the-aes-s-box-and-a-lesson-about-generated-tables) for why that is the house
 style.
 
-About 10 ms per hash at the default 16 rounds, which is the intended order of magnitude.
+At OpenSSH's default 16 rounds it is the second most expensive thing here, which is the
+intended order of magnitude: being slow is the whole function.
+[Speed](#speed-in-one-place) has the number, and the figure that used to be here was an
+order of magnitude under it.
 
 ## P-256 and P-384
 
@@ -249,7 +325,10 @@ would need a use for it. Its tests are aimed at the generalisation rather than a
 implementation: if twelve limbs work as well as eight, the shared code is genuinely
 generic.
 
-Roughly 37 ms per P-256 scalar multiplication.
+See [Speed](#speed-in-one-place). Signing used to be five times a scalar multiplication,
+because eleven of its thirteen milliseconds were the arithmetic modulo the group order
+rather than the curve; `issues/system/0224` replaced that and the two are now within a
+factor of two of each other.
 
 A caller checking for the all-zero shared secret, as RFC 7748 §6.1 permits, gets it: a
 low-order point multiplies to the identity and encodes as zero. This package does not
@@ -501,10 +580,14 @@ which is how AES keys have been recovered from cache timing since 2005.
 | `chachaBlock` | 510 | uniform |
 | `poly1305` | 140 | uniform |
 | `x25519Base` | 1,812,173 | uniform |
-| `ghash` | 740 | **leaks** — control flow diverges where one run stood at `ghash.wac:36`; not examined past that |
-| `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
-| `aesEncrypt` | 11,779 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges where one run stood at `aes.wac:66`; not examined past that |
-| `p256PublicKey` | 6,266,534 | **leaks** — control flow diverges where one run stood at `fieldp.wac:268`; not examined past that. The *ladder* is uniform since 2026-08-20 |
+| `ed25519Sign` | 7,399,082 | uniform |
+| `ghash` | 484 | uniform |
+| `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:129`, `aes.wac:130`, `aes.wac:131`, `aes.wac:132` |
+| `aesEncrypt` | 9,475 | **leaks** — secret-dependent index at `aes.wac:129`, `aes.wac:130`, `aes.wac:131`, `aes.wac:132`, `aes.wac:165` |
+| `p256PublicKey` | 8,190,814 | uniform |
+| `p256Sign` | 8,456,980 | uniform |
+| `kemDecapsSecret` | 1,023,945 | uniform |
+| `modExpSecret` | 17,430,337 | **leaks** — control flow diverges where one run stood at `packages/bignum/src/big.wac:68`; not examined past that |
 | `bcryptPbkdf` | 8,177,005 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
 
 **The event counts changed on 2026-08-12 and the verdicts did not.** These are wacc's
@@ -514,7 +597,7 @@ not comparable with the ones printed here before that date. What each routine *i
 move.
 
 The x25519 row is the one worth reading twice: the ladder is uniform across every one of
-1.6 million events, which is what "structurally uniform" was claiming without evidence.
+1,812,173 events, which is what "structurally uniform" was claiming without evidence.
 
 **And the P-256 row is the one to read beside it**, because the two started as the same
 shape of routine with opposite answers. `x25519`'s ladder does the same work whatever the
@@ -534,40 +617,205 @@ revealing it. It was measured for the first time on 2026-08-19 — the table abo
 asymmetric row at all until then, and its silence read as "not applicable" rather than
 "not measured", which is the failure this section exists to avoid. `issues/system/0210`.
 
-**The ladder was fixed on 2026-08-20 and the row still says "leaks", which is the point of
-keeping both facts.** `jacMul` adds on every bit and keeps the answer with a constant-time
-select; `jacAdd` and `jacDouble` compute their exceptional cases and select between them
-rather than branching to them. The trace no longer parts anywhere in `weierstrass.wac` —
-and it still parts, one layer down, at `reduceWide` in `fieldp.wac`, which skips a limb
-when it happens to be zero. That was always there. `ctcompare` reports the *first*
-divergence, and while the ladder parted at the first differing scalar bit nothing behind it
-could be seen.
+**The ladder was fixed on 2026-08-20, and fixing it revealed the layer underneath.** `jacMul`
+adds on every bit and keeps the answer with a constant-time select; `jacAdd` and `jacDouble`
+compute their exceptional cases and select between them rather than branching to them. The
+trace then parted one layer down, at `reduceWide` in `fieldp.wac`, which skipped a word of
+the product when it happened to be zero and folded the leftover carry a number of times that
+depended on its value. That was always there: `ctcompare` reports the *first* divergence, and
+while the ladder parted at the first differing scalar bit nothing behind it could be seen.
+`issues/system/0223` is that one, and it is fixed too — the conditional subtractions compute
+both answers and select, `lessThan` is gone from the reduction path because its loop returned
+early on the first differing limb, and the carry fold runs a fixed four passes instead of
+until it is done.
 
-**What it cost, measured rather than predicted.** This section used to say a constant-time
-fix "would put it near ed25519's number"; it does not come close to costing that much. The
-events per run roughly doubled, from 3,065,278 to 6,266,534, which is the always-add. In
-time, twenty operations each:
+So `p256PublicKey` is **uniform over 8,190,814 events**, which is the whole of a P-256
+scalar multiplication.
+
+**And `p256Sign` was not, at `weierstrass.wac:276`, which was the same defect a third time.**
+The multiplication modulo the group *order* — a different field from the coordinates — was
+byte-at-a-time double-and-add, adding only when the bit was set. Signing put the private key
+in that operand, and the nonce in it again through the inversion, whose squarings are the same
+routine over a base derived from the nonce. Both secrets a signature has passed through it.
+`issues/system/0224`.
+
+It adds on every bit now and keeps the answer with a mask — and then the whole byte-wise
+implementation was replaced, because making it constant-time on bytes cost 1.86× and the
+layout was the real problem. `packages/crypto/src/scalarn.wac` is Montgomery multiplication
+over 32-bit limbs, and it is **8,456,980 events, uniform, and 5.5× faster than the
+variable-time byte version it replaced**. A signature is 2.4ms against 13.2ms.
+
+**`cmpBE` was in there too, and no measurement caught it.** It returned on the first byte that
+differed, so how many bytes it read was a function of the value — and `curvePublicKey` and
+`ecdsaSign` both call it on the secret, to check it is below n. The table said
+`p256PublicKey` was uniform over 8.19 million events while that was still true of it, because
+both secrets the tool compares differ from n in their *first* byte, so both runs left the loop
+at i=0 and agreed. **A differential is only as wide as its inputs**, and this one was found by
+reading rather than by measuring. It reads every byte now, which is the 89 extra events in the
+`p256PublicKey` row.
+
+**The signing row was missing until 2026-08-20, and that is the finding rather than the leak.**
+The table had `p256PublicKey`, which does not call `scMul` at all — so the routine most worth
+measuring was the one not measured, and a public key leaking its private key is bad where a
+signature leaking its nonce is worse, because a partial nonce leak recovers the key from
+signatures the attacker already holds. The row that mattered most was missing because the row
+that was easiest to add went in first.
+
+## What the two fixes cost
+
+**The field reduction**, 120 operations each on one program:
 
 | | before | after |
 |---|---:|---:|
-| `p256PublicKey` | 1.3ms | 2.0ms |
-| `p256Sign` | 12.1ms | 13.1ms |
+| `p256PublicKey` | 2.08ms | 2.37ms |
+| `p256Sign` | 12.9ms | 13.0ms |
 
-Signing barely moves because the ladder is a sixth of it — `p256Sign` is 13.1ms against a
-2.0ms scalar multiplication, and where the rest of that goes is not yet measured.
-`ed25519Sign` is 2.4ms, so P-256 signing stays about five times ed25519's rather than
-landing beside it.
+Fourteen per cent on the scalar multiplication, and events per run 6,266,534 → 8,190,725. The
+earlier fix — the ladder itself — cost 1.3ms → 2.0ms against a prediction that it would "put
+P-256 near ed25519's number", which it did not come close to doing.
 
-**AES leaks in five places, not one.** Four are the key schedule's `SubWord` lookups
-(`aes.wac:113`–`116`) and the fifth is `SubBytes` itself (`aes.wac:149`), each indexing
-the S-box with a key-derived byte — index 0 for an all-zero key against 255 for an
-all-ones one. Then control flow diverges at `xtime`'s conditional reduction
-(`aes.wac:66`), which was not previously documented, and **nothing past that point has
-been examined**: once two runs take different paths their event streams describe
-different executions, so comparing them further produces noise rather than findings.
+**The order arithmetic went the other way, in two steps.** Making the byte-wise version
+constant-time cost 1.86×; replacing it with limbs and Montgomery multiplication paid that back
+and more. Three A/B rounds each, with `ed25519Sign` as a control that does not touch this code:
 
-`ghash` diverges in control flow before any index does, so the same caveat applies to
-everything after its multiply loop.
+| | bytes, leaking | bytes, constant-time | limbs, constant-time |
+|---|---:|---:|---:|
+| `p256PublicKey` | 2.52ms | 2.50ms | 2.48ms |
+| `p256Sign` | 13.2ms | 24.9ms | **2.4ms** |
+| `p256Verify` | 15.7ms | 26.9ms | **4.6ms** |
+| `ed25519Sign` (control) | 2.4ms | 2.3ms | 2.3ms |
+
+Traced events for a signature: 35.8 million, then 92.9 million, then 8.46 million.
+
+**So the constant-time version is 5.5× faster than the variable-time one it replaced**, which is
+the outcome worth aiming for and the reason the middle column was never going to be the end of
+it. Verification has no secret in it at all — `ecdsaVerify` inverts `s` and multiplies by `r`
+and the digest scalar, every one of which is on the wire — so its middle column was pure loss,
+and paying it for one commit was preferable to keeping a second faster copy of the arithmetic
+selected by whether the caller believes its operands are public. That is how a fast path ends up
+on a secret.
+
+`p256Sign` at 2.4ms is now `ed25519Sign`'s 2.3ms, which was the anomaly
+`issues/system/0209` was opened about.
+
+**Signing not moving when the field was fixed is what led to all of the above.** The scalar
+multiplication was 2.4ms of a 13.2ms signature, so eleven milliseconds were always somewhere
+else — and "somewhere else" turned out to be one function that was both the leak and the cost.
+A fix measured only against the thing it was aimed at would have reported success and left
+both.
+
+**`ed25519Sign` and ML-KEM were added on 2026-08-20, and both were the same story again: the
+routine that holds the secret was not the routine with the row.**
+
+The table had `x25519Base` and no signing row. A uniform ladder is a fact about a ladder —
+`ed25519Sign` reduces `sha512(prefix ++ msg)` modulo L, where `prefix` is half the secret key
+expansion, and that is a different scalar, a different modulus and a different piece of
+arithmetic. `scReduce` compared with an early return, so *how many bytes it read* was a
+function of the nonce, and its subtraction was conditional on top. Two seeds parted at
+`ed25519.wac:334`. `issues/system/0225`.
+
+The subtraction decides for itself now — `r - shifted` wraps exactly when `r < shifted`, so the
+borrow out answers the comparison's question and the comparison is gone. **It costs 2.8% more
+rather than less**, which was measured after the code comment had already claimed less: traced
+events for one signature went 7,199,946 to 7,399,146. Events rather than milliseconds because
+the machine was busy enough that an unchanged control routine swung by half.
+
+**The file's own header had been pointing at the wrong place.** It said the leak was that
+"signing branches on scalar bits in the double-and-add" — and `ptMul` adds on every bit and
+selects, and has for as long as anyone has looked. A header naming a leak that is not there is
+worse than one naming none, because it answers the question a reader was about to ask.
+
+**ML-KEM had no row at all**, and had two leaks and one false alarm.
+
+`mod` reduced with `r < 0 ? r + q() : r` — a ternary, which is a branch, at fourteen call sites
+inside the NTT and the polynomial arithmetic. During decapsulation those coefficients are the
+decrypted message and the key's noise. **Flipping one bit of a ciphertext parted the two traces
+there**, at event 1,067,742, a million events before the implicit rejection the whole
+construction rests on. And that rejection was itself a ternary on `diff == 0` — one bit, and the
+bit that Fujisaki-Okamoto exists to hide. Both are masks now, each canaried separately, and a
+valid and an invalid ciphertext are identical over 1,528,880 events. `issues/system/0226`.
+
+**The false alarm is the part worth reading.** The first key-variation row reported a divergence
+at `mlkem.wac:201`, the rejection-sampling loop in `sampleNTT` — whose trip count depends on ρ,
+and **ρ is published inside the encapsulation key**. Two seeds are two different public keys, so
+the traces differ for a reason an attacker gets by reading `ek` rather than by timing anything.
+Holding the ciphertext fixed did not help: decapsulation re-encrypts, which re-samples the matrix
+from the ρ carried inside `dk`, and **a decapsulation key determines its own public key**. There
+is no pair of ML-KEM keys with the same public data.
+
+So the row varies the secret vector inside one fixed keypair — `dk`'s first 1152 bytes, leaving
+`ek`, its hash and z alone — which is the comparison the question actually names, and is uniform
+over 1,023,945 events. The resulting key is not one `mlkemKeyGen` would produce and is a valid
+*input*, which is all the measurement needs.
+
+Two lessons, and the second is the one that generalises: a differential that varies "the key"
+varies whatever the key determines, and for a KEM that includes public data. A row reading
+**leaks** for that is worse than no row, because expected noise is where the next real finding
+hides.
+
+**And one thing this table cannot see.** `mod` still computes `a % q()` — a remainder by a
+constant, on secret data. Whether that costs data-dependent time is a property of how the engine
+compiles `i32.rem_s`; `wac build --trace` records branches taken and array indices, not how long
+an arithmetic instruction took, so a uniform row here is a claim about control flow and memory
+access and not about arithmetic timing. Real ML-KEM implementations use Barrett reduction for
+exactly this reason. Named because a clean row should not be read as more than it is.
+
+**AES leaks in exactly five places, and that is now the whole of it.** Four are the key
+schedule's `SubWord` lookups (`aes.wac:129`–`132`) and the fifth is `SubBytes` itself
+(`aes.wac:165`), each indexing the S-box with a key-derived byte — index 0 for an all-zero key
+against 255 for an all-ones one. That is the 2005-era cache-timing attack, it is what a
+table-driven AES *is*, and the only answer is a bitsliced S-box.
+
+**Until 2026-08-20 there was a sixth thing and it was hiding the answer.** `xtime`'s conditional
+reduction was a *branch*, at `aes.wac:66`, and `--all` stops at a split because past one the two
+journals are not aligned and every later difference is an artefact of the misalignment. So the
+row said "nothing past that point has been examined" and nobody could say whether the five index
+sites were all of it. `xtime` masks now — `s ^ (0x1B * ((a & 0x80) >> 7))` — and the whole trace
+is examined: **the same five sites and no others.** A weaker leak was concealing the strength of
+the claim about the stronger one.
+
+It is also 2,304 events cheaper, which is the branch points that went.
+
+**`ghash` was the other half of AES-GCM and no longer leaks at all.** `gfMul` was shift-and-add
+with the add taken only when the bit was set and the reduction applied only when a one fell off
+the bottom — two branches per iteration, one over the accumulator and one over H itself, and
+`ghash(h, data)` passes H as the multiplicand. **A leaked GHASH key is forgery**, not disclosure:
+an attacker who knows H can authenticate a message they wrote. Both are masks now, and it went
+740 events to 484 — exactly the 256 branch points the two `if`s contributed over 128 iterations,
+so this one was free.
+
+GCM as a whole is still not constant-time, because the block cipher under it is not. What changed
+is that one of its two halves stopped depending on its key.
+
+**RSA had no row until 2026-08-20, and it was the one routine here whose own header says at
+length that it is not constant-time.** So "we did not measure it" and "it is fine" looked
+identical for exactly the case this section exists to keep apart — the same argument that put
+`bcryptPbkdf` below in, and the same omission that let `p256Sign` and `ed25519Sign` sit
+unmeasured until they were found to be leaking.
+
+The row is `modPowSecret` rather than `rsaSignPkcs1`: it is the routine the exposure is about,
+and a 2048-bit signature would be a 300-million-event journal where 1024 bits is 17.4 million.
+The modulus and base are held and the **exponent** varies, which is the question — a private
+exponent must not change the work.
+
+It does, at event 25,728 of 17.4 million, which is inside the first few rounds. And the useful
+part is *where*: `packages/bignum/src/big.wac:68`, which is `trim`'s `while` over leading zero
+limbs. `rsa.wac`'s header predicted the class — "`bignum`'s `mul` and `divmod` take time that
+depends on their operands' magnitudes" — and the measurement names the line. That is a more
+actionable fact than "not constant-time", and it does not change the standing advice in that
+header: these functions are for keys whose compromise does not matter, and the fix is a
+constant-time `bignum`, which is a direction rather than a patch.
+
+**The row also found a bug in the tool that prints this table.** Every leak it had ever reported
+was inside `packages/crypto/src`, and the path shortening cut exactly that prefix — so it
+happened to remove the absolute path as a side effect. `modExpSecret`'s divergence is in
+`packages/bignum`, and what came out was
+`/home/claude/<agent>/workspaces/wac/packages/bignum/src/big.wac:68`: a working directory, on its
+way into a file that is public on GitHub. The repository-relative cut existed thirty lines away in
+`test/wac/constanttime_test.wac`, with a comment saying an assertion "should not also be naming
+whose checkout it is in" — in the file that does *not* publish. Both now use one
+`packages/wactest/src/tracesite.wac`, where the repository cut is unconditional and the cosmetic
+one is a separate call.
 
 **`bcryptPbkdf` is measured now, and it was the row that was not a result.** The tracer
 wrote into a buffer of 2^22 events fixed in the compiler; a single bcrypt hash is 129 full

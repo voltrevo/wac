@@ -1,0 +1,158 @@
+// Regenerate the per-operation timings this package's README quotes.
+//
+//   wac run --allow-env packages/crypto/tools/bench.wac
+//
+// The sibling of `ct.wac`, which does the same job for the side-channel table, and for the same
+// reason its header gives: **published figures that cannot be regenerated go stale silently.** That
+// argument was made about the side-channel table and not applied to the timings beside it, and the
+// timings are what rotted.
+//
+// ## What it cost to not have this
+//
+// Four figures in `README.md` were wrong when this file was written, and two of them had been wrong
+// for weeks:
+//
+//   - "Roughly 120 ms per signature" for ed25519 — **2.3ms**, a factor of fifty, stale since
+//     `issues/system/0209` found `ptAdd` inverting a field element on every point addition;
+//   - "Roughly 37 ms per P-256 scalar multiplication" — **2.5ms**, a factor of fifteen;
+//   - "About 170 ms per 2048-bit verification" for RSA — **1.1ms**, a factor of a hundred and fifty,
+//     and flatly contradicted by `issues/system/0209`'s own measured table in the same repository;
+//   - "About 10 ms per hash at the default 16 rounds" for bcrypt — **97ms**. Wrong by an order of
+//     magnitude in the one dimension that sentence claims to be about.
+//
+// And two more were written on the morning of 2026-08-20 and invalidated the same afternoon by
+// `issues/system/0224`, in the same file, by the same person, with nothing to catch it. A prose figure
+// with no generator is a measurement nobody re-takes — including the person who took it.
+//
+// ## What the numbers are and are not
+//
+// Wall clock through `Core.nowMillis`, a fixed iteration count per routine, on whatever machine runs
+// it. **They move with load**: on a busy container an unchanged routine has been seen to swing by
+// half, which is why `issues/system/0225`'s cost is quoted in traced events instead. So this is for
+// orders of magnitude and ratios, and the README says so where it quotes them.
+//
+// **The RSA rows use a modulus that is not a key.** `modPow` does the same work whatever the modulus
+// factors into, and a verification runs the exponentiation before it checks the padding — so the
+// timing is the real timing and the *answer* is meaningless. Generating a real 2048-bit key here would
+// cost more than everything else combined and would put a private key in a tool that prints its
+// inputs.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../src/ed25519.wac";
+import { x25519Base } from "../src/x25519.wac";
+import { p256PublicKey, p256Sign, p256Verify, p256Ecdh } from "../src/p256.wac";
+import { rsaVerifyPkcs1, rsaVerifyPss, rsaSignPkcs1 } from "../src/rsa.wac";
+import { bcryptPbkdf } from "../src/bcryptpbkdf.wac";
+import { mlkemKeyGen, mlkemEncaps, mlkemDecaps, ekSize, dkSize, ctSize } from "../src/mlkem.wac";
+
+/** A fixed 32-byte secret. Structured rather than random, so two runs are comparable. */
+u8[] key32() {
+  u8[] k = u8[32]();
+  for (i32 i = 0; i < 32; i++) { k[i] = ((i * 37) & 255) | 1; }
+  return k;
+}
+
+/** A 2048-bit odd modulus with the top bit set. Not a key — see the header. */
+u8[] modulus2048() {
+  u8[] n = u8[256]();
+  n[0] = 0xC7;
+  for (i32 i = 1; i < 255; i++) { n[i] = (i * 31 + 11) & 255; }
+  n[255] = 0x8B;
+  return n;
+}
+
+/** 65537, big-endian. */
+u8[] e65537() {
+  u8[] e = u8[3]();
+  e[0] = 1;
+  e[2] = 1;
+  return e;
+}
+
+/** `us` per call, from a millisecond delta and an iteration count. */
+string per(i64 from, i64 to, i32 iters) {
+  i32 us = (((to - from) * (1000 as i64)) / (iters as i64)) as~ i32;
+  if (us < 1000) { return itoa(us) + "µs"; }
+  return itoa(us / 1000) + "." + itoa((us % 1000) / 100) + "ms";
+}
+
+void row(Core core, string name, i64 from, i64 to, i32 iters) {
+  core.log("| `" + name + "` | " + per(from, to, iters) + " |");
+}
+
+export i32 main(Core core, Cli cli) {
+  u8[] k = key32();
+  u8[] msg = u8[32](fill: 7);
+  u8[] nonce = u8[32](fill: 9);
+
+  core.log("| operation | per call |");
+  core.log("|---|---:|");
+
+  i32 n = 40;
+  u8[] epub = ed25519PublicKey(k);
+  u8[] esig = ed25519Sign(k, msg);
+  i64 a = core.nowMillis().wait();
+  for (i32 i = 0; i < n; i++) { ed25519PublicKey(k); }
+  i64 b = core.nowMillis().wait();  row(core, "ed25519PublicKey", a, b, n);
+  for (i32 i = 0; i < n; i++) { ed25519Sign(k, msg); }
+  i64 c = core.nowMillis().wait();  row(core, "ed25519Sign", b, c, n);
+  for (i32 i = 0; i < n; i++) { ed25519Verify(epub, msg, esig); }
+  i64 d = core.nowMillis().wait();  row(core, "ed25519Verify", c, d, n);
+  for (i32 i = 0; i < n; i++) { x25519Base(k); }
+  i64 e = core.nowMillis().wait();  row(core, "x25519Base", d, e, n);
+
+  u8[] pub = p256PublicKey(k);
+  u8[] sig = p256Sign(k, msg, nonce);
+  i64 f = core.nowMillis().wait();
+  for (i32 i = 0; i < n; i++) { p256PublicKey(k); }
+  i64 g = core.nowMillis().wait();  row(core, "p256PublicKey", f, g, n);
+  for (i32 i = 0; i < n; i++) { p256Ecdh(k, pub); }
+  i64 h = core.nowMillis().wait();  row(core, "p256Ecdh", g, h, n);
+  for (i32 i = 0; i < n; i++) { p256Sign(k, msg, nonce); }
+  i64 j = core.nowMillis().wait();  row(core, "p256Sign", h, j, n);
+  for (i32 i = 0; i < n; i++) { p256Verify(pub, msg, sig); }
+  i64 l = core.nowMillis().wait();  row(core, "p256Verify", j, l, n);
+
+  // ML-KEM, one keypair reused so the row is the operation rather than the setup.
+  u8[] kp = mlkemKeyGen(u8[64](fill: 7));
+  u8[] ek = u8[ekSize()]();
+  for (i32 i = 0; i < ekSize(); i++) { ek[i] = kp[i]; }
+  u8[] dk = u8[dkSize()]();
+  for (i32 i = 0; i < dkSize(); i++) { dk[i] = kp[ekSize() + i]; }
+  u8[] ce = mlkemEncaps(ek, u8[32](fill: 3));
+  u8[] ct = u8[ctSize()]();
+  for (i32 i = 0; i < ctSize(); i++) { ct[i] = ce[32 + i]; }
+  i64 m = core.nowMillis().wait();
+  for (i32 i = 0; i < n; i++) { mlkemKeyGen(u8[64](fill: 7)); }
+  i64 o = core.nowMillis().wait();  row(core, "mlkemKeyGen", m, o, n);
+  for (i32 i = 0; i < n; i++) { mlkemEncaps(ek, u8[32](fill: 3)); }
+  i64 p = core.nowMillis().wait();  row(core, "mlkemEncaps", o, p, n);
+  for (i32 i = 0; i < n; i++) { mlkemDecaps(dk, ct); }
+  i64 q = core.nowMillis().wait();  row(core, "mlkemDecaps", p, q, n);
+
+  // RSA. Fewer iterations, because signing is the most expensive thing here by an order of
+  // magnitude — and the modulus is not a key, so the answers mean nothing and the times do not.
+  u8[] rn = modulus2048();
+  u8[] re = e65537();
+  u8[] rsig = u8[256]();
+  for (i32 i = 0; i < 256; i++) { rsig[i] = (i * 17 + 3) & 255; }
+  i32 rv = 20;
+  i64 r0 = core.nowMillis().wait();
+  for (i32 i = 0; i < rv; i++) { rsaVerifyPkcs1(rn, re, msg, rsig, 32); }
+  i64 r1 = core.nowMillis().wait();  row(core, "rsaVerifyPkcs1, 2048-bit, e=65537", r0, r1, rv);
+  for (i32 i = 0; i < rv; i++) { rsaVerifyPss(rn, re, msg, rsig, 32, 32); }
+  i64 r2 = core.nowMillis().wait();  row(core, "rsaVerifyPss, 2048-bit, e=65537", r1, r2, rv);
+  // Signing exponentiates by a full-width exponent, which is what makes it the expensive one.
+  i32 rs = 3;
+  i64 r3 = core.nowMillis().wait();
+  for (i32 i = 0; i < rs; i++) { rsaSignPkcs1(rn, rsig, msg, 32); }
+  i64 r4 = core.nowMillis().wait();  row(core, "rsaSignPkcs1, 2048-bit", r3, r4, rs);
+
+  // bcrypt at OpenSSH's default cost, which is what `packages/ssh` meets in the wild.
+  i32 bc = 4;
+  i64 b0 = core.nowMillis().wait();
+  for (i32 i = 0; i < bc; i++) { bcryptPbkdf(u8[16](fill: 7), u8[16](fill: 3), 32, 16); }
+  i64 b1 = core.nowMillis().wait();  row(core, "bcryptPbkdf, 16 rounds", b0, b1, bc);
+  return 0;
+}

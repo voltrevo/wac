@@ -17,11 +17,26 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { approxBits, atofSpan, scan } from "../../src/atof.wac";
 import { ftoaBytes } from "../../src/ftoa.wac";
+
+/**
+ * Two draws as one `f64`, high half first.
+ *
+ * A free function rather than a method: `Rng` is `packages/wactest/src/rng.wac`'s now, and a wac
+ * struct's methods cannot be extended from another file. The draw order is preserved — high then
+ * low — because reversing it gives the same distribution and a different corpus.
+ * `issues/system/0220`.
+ */
+f64 nextDouble(Rng rng) {
+  u64 hi = rng.next() as u64;
+  u64 lo = rng.next() as u64;
+  return ofBits((hi << 32) | lo);
+}
 
 const string ORACLE = "packages/fmt/test/oracle.ts";
 
@@ -49,25 +64,6 @@ void parsed(Lines lines, string s) {
   lines.add("p64 " + hex(s.toBytes()) + " " + bits64(atof(s)));
 }
 
-/** xorshift32, matching the host-side generators so the corpora are the same ones. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  f64 nextDouble(this) {
-    u64 hi = this.next() as u64;
-    u64 lo = this.next() as u64;
-    return ofBits((hi << 32) | lo);
-  }
-
-  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
-}
 
 export string test_atof_the_cases_that_break_naive_conversions(Core core, Cli cli) {
   T t = T.create();
@@ -168,7 +164,7 @@ export string test_atof_round_trips_every_shortest_representation(Core core, Cli
   Lines lines = Lines.create();
   i32 checked = 0;
   for (i32 i = 0; i < 4000; i++) {
-    f64 x = rng.nextDouble();
+    f64 x = nextDouble(rng);
     if (!isFinite64(x)) { continue; }
     string s = string.fromBytes(ftoaBytes(x));
     t.eqStr(bits64(atof(s)), bits64(x), "\"" + s + "\" parsed back to a different double");
@@ -221,7 +217,19 @@ export string test_atof_the_estimate_is_inside_the_bisection_window() {
     "1", "1.5", "0.1", "0.2", "3.141592653589793", "2.718281828459045",
     "9007199254740993", "123456789.123456789", "1e10", "1e-10", "6.02214076e23",
     "1.7976931348623157e308", "5e-324", "0.000001", "999999999999999999999",
-    "1.0000000000000002", "4.9406564584124654e-324", "2.2250738585072014e-308");
+    "1.0000000000000002", "4.9406564584124654e-324", "2.2250738585072014e-308",
+    // **More digits than the accumulator holds**, both before and after the point, which is the arm
+    // of `scan` that drops digits and records whether what it dropped was zero. Everything above is
+    // short enough to fit, so `scan` was only ever asked the easy question: `issues/system/0205`
+    // listed `atof.wac:203` and `:204`. A dropped non-zero digit that did not set the sticky bit
+    // would round a tie the wrong way and be invisible to a short corpus.
+    "123456789012345678901234567890123456789",
+    "1234567890123456789012345678901234567890000000000",
+    "0.123456789012345678901234567890123456789",
+    "1.000000000000000000000000000000000000001",
+    "1.000000000000000000000000000000000000000",
+    "0.00000000000000000000000000000000000000",
+    "10000000000000000000000000000000000000000000000000e-30");
   i32 guessed = 0;
   for (i32 i = 0; i < cases.len(); i++) {
     u64 estimate = approxBits(scan(cases[i].toBytes(), 0, cases[i].len()));
@@ -238,5 +246,44 @@ export string test_atof_the_estimate_is_inside_the_bisection_window() {
   t.isTrue(guessed >= cases.len() - 4,
            "only " + itoa(guessed) + " of " + itoa(cases.len()) +
            " produced an estimate; the fast path is not working");
+  return t.report();
+}
+
+/**
+ * The spellings a decimal generator does not produce, all of which are legal input.
+ *
+ * The random sweeps here build numbers the way a number is usually written: lowercase `e`, an exponent
+ * of a plausible size, at least one non-zero digit. So the arms for the other spellings had never run
+ * — `issues/system/0205` listed both exponent scanners' uppercase `E`, both of their
+ * more-digits-than-fit guards, and the all-zeros case.
+ *
+ * Every one is something a caller can type. `1E5` is what a spreadsheet exports; `1e999999999` is what
+ * a fuzzer and a typo both produce; `0.000` is what a formatter emits for a rounded-away value. Node's
+ * `Number` is the oracle for all of them, as it is for every other row in this file.
+ */
+export string test_atof_the_spellings_a_generator_does_not_produce(Core core, Cli cli) {
+  T t = T.create();
+  string[] cases = string[](
+    // **Uppercase `E`**, which both exponent scanners accept and neither had been given.
+    "1E5", "1E-5", "1E+5", "1.5E10", "-2.5E-10", "0E0", "1E308", "1E-308", "1E309", "1E-400",
+    // **An exponent with more digits than the accumulator takes**, which stops accumulating rather
+    // than wrapping. Both signs, because they end at opposite ends of the range.
+    "1e999999999", "1e-999999999", "1E1234567890", "1e00000000005", "1e-00000000005",
+    "1e123456789012345678901234567890",
+    // **Nothing but zeros**, in every spelling — the digit count is zero and the answer is a signed
+    // zero rather than a division somewhere later.
+    "0.000", "000", "0.0", "00.00", "-0.000", "0.0e5", "0.0E5", "-0.0e-5", "000e10",
+    "0.00000000000000000000000000000000000000000", "0000000000000000000000000000000000000000",
+    "0.0000000000000000000000000000000000000000e-300",
+    // Long runs where the significant digits run out and what follows decides the sticky bit: a zero
+    // beyond the cut is not the same as a one beyond it, and only the second must round up.
+    "1.0000000000000000000000000000001", "1.0000000000000000000000000000000",
+    "12345678901234567890123456789012345678901", "10000000000000000000000000000000000000001",
+    "0.10000000000000000000000000000001", "0.10000000000000000000000000000000",
+    // Digits dropped before the point rather than after it, which is the other arm of the same count.
+    "123456789012345678901234567890123456789", "-123456789012345678901234567890123456789");
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < cases.len(); i++) { parsed(lines, cases[i]); }
+  checkDeno(t, cli, ORACLE, lines, "the spellings a generator does not produce");
   return t.report();
 }

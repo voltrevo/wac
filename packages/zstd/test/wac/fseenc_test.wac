@@ -25,6 +25,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { FseTable, BackBits, readTable, buildFromCounts, initState, symbolAt,
          nextState } from "../../src/fse.wac";
@@ -130,20 +131,6 @@ export string test_what_the_encoder_writes_the_decoder_reads_back() {
   roundTrip(t, "every symbol equally", everySymbol, 15, 9);
   roundTrip(t, "a long tail", longTail, 31, 9);
   return t.report();
-}
-
-/** xorshift32, matching the host-side generator so the corpus is reproducible. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  i32 upto(this, i32 n) { return n <= 0 ? 0 : ((this.next() % (n as@ u32)) as@ i32); }
 }
 
 export string test_fuzz_random_symbol_streams_of_random_shapes() {

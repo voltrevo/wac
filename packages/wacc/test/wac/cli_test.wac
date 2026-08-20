@@ -23,26 +23,61 @@ string say(Cli cli, string[] args) {
 
 bool holds(string haystack, string needle) { return haystack.indexOf(needle) >= 0; }
 
+/** Whether a byte is one a command name is made of, so a name can be matched whole. */
+bool wordByte(string c) {
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_";
+}
+
+/**
+ * Whether the usage names `cmd` **as a word**, not as a substring of one.
+ *
+ * `holds(out, "sh")` was true because the usage says *"the shell, sealed unless granted"* — measured: two
+ * substring hits, one of them inside `shell`. So the `sh` assertion would have survived the command being
+ * removed, and `run` is worse: nine substring hits against seven real ones. A usage check that cannot
+ * fail is the shape `issues/system/0190` is about, one layer along.
+ */
+bool namesCommand(string usage, string cmd) {
+  i32 at = 0;
+  while (at <= usage.len() - cmd.len()) {
+    i32 hit = usage.slice(at, usage.len()).indexOf(cmd);
+    if (hit < 0) { return false; }
+    i32 start = at + hit;
+    i32 end = start + cmd.len();
+    bool leftOk = start == 0 || !wordByte(usage.slice(start - 1, start));
+    bool rightOk = end >= usage.len() || !wordByte(usage.slice(end, end + 1));
+    if (leftOk && rightOk) { return true; }
+    at = start + 1;
+  }
+  return false;
+}
+
 /**
  * Every command the binary dispatches is named in its usage.
  *
- * `sh` is conditional: it exists only when `native/v8/seed/sh.wasm` was built into the binary, which no
- * task produces (`issues/system/0190`), so it is asserted only when that file is there. Skipping it
- * silently would be the failure this file exists to prevent, so the test says which case it took.
+ * **`sh` is no longer conditional.** It was, because `native/v8/seed/sh.wasm` is gitignored and no task
+ * produced it, so the test was green or red per checkout — `issues/system/0190`. `deno task seed` builds
+ * all three payloads since 2026-08-20 (`issues/system/0216a`), so every build dispatches `sh` and
+ * `update`, and a build that does not is one whose seed is stale. The message says so, because "run
+ * `deno task seed`" is the whole remedy and a reader should not have to find that out.
+ *
+ * Matched **as words**: see `namesCommand`. As substrings these assertions were close to vacuous.
  */
 export string test_the_usage_names_every_command(Core core, Cli cli) {
   T t = T.create();
   string out = say(cli, string[]());
-  string[] always = string[]("check", "compile", "build", "bindgen", "run", "test");
+  string[] always = string[]("check", "compile", "build", "bindgen", "run", "test", "sh", "update");
   for (i32 i = 0; i < always.len(); i++) {
-    t.isTrue(holds(out, always[i]), "the usage does not name `" + always[i] + "`");
+    t.isTrue(namesCommand(out, always[i]),
+             "the usage does not name `" + always[i] + "` — if this build has a stale seed, " +
+             "`deno task seed` writes all three payloads");
   }
-  bool hasShell = cli.stat("native/v8/seed/sh.wasm").wait().exists;
-  if (hasShell) {
-    t.isTrue(holds(out, "sh"), "this build carries a shell and the usage does not name it");
-  } else {
-    core.log("    `sh` not asserted: this build carries no seed/sh.wasm — issues/system/0190");
-  }
+  // **Two canaries, because the matcher can fail in both directions.** A matcher that says yes to
+  // everything satisfies every line above; one that says yes only to whole words is the point of it.
+  // `est` occurs three times in this usage — inside `test`, `latest`, `requesting` — and never as a
+  // word, so it is the case the old substring check got wrong and this one has to.
+  t.isTrue(!namesCommand(out, "frobnicate"), "the usage check matches a command that does not exist");
+  t.isTrue(holds(out, "est"), "`est` should be present as a substring, or this canary proves nothing");
+  t.isTrue(!namesCommand(out, "est"), "the usage check matches a substring — it was doing that for `sh`");
   return t.report();
 }
 

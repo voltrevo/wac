@@ -1,0 +1,300 @@
+// The limits, the growth and the builder — the three things a corpus of well-formed messages misses.
+//
+// This file exists because `issues/system/0205` named its contents. Every other test in this package
+// asks whether a message means what Node says it means, over a corpus of messages Node will also
+// parse; what a corpus like that cannot contain is a message *past a limit this implementation sets
+// for itself*. `maxBody` is our number, not HTTP's — the oracle has no opinion about it, so no
+// oracle-driven test will ever pass a body that exceeds it.
+//
+// The three groups:
+//
+//   * **the body-size refusals**, five of them across `request.wac` and `incoming.wac`, each a
+//     `ERR_TOO_LARGE` on a different route into a body: declared length, chunk size, the running
+//     total, and the close-delimited case where the length is however much arrived;
+//   * **the header table's growth**, which starts at eight entries and doubles — a message with nine
+//     headers is the only thing that reaches the copy, and a copy that gets its bound wrong loses a
+//     header rather than crashing;
+//   * **`Outgoing.create` and `Outgoing.set`**, the client's request builder, which nothing called:
+//     `response_test.wac` builds an `Outgoing` with the struct literal instead, so the two methods a
+//     caller outside this package would actually use were the untested pair.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Headers } from "../../src/headers.wac";
+import { Parsed, parseRequest, ERR_TOO_LARGE, ERR_LINE, ERR_TARGET, ERR_CHUNK, ERR_HEADER_NAME }
+  from "../../src/request.wac";
+import { Incoming, ParsedResponse, parseResponse } from "../../src/incoming.wac";
+import { Outgoing, write as writeRequest } from "../../src/outgoing.wac";
+
+u8[] wire(string s) { return s.toBytes(); }
+
+/** The error code a request parse refused with, or -1 if it did not refuse. */
+i32 requestRefusal(string msg, i32 maxBody) {
+  match (parseRequest(wire(msg), maxBody)) {
+    case Bad(code): { return code; }
+    else: { return -1; }
+  }
+}
+
+/** The error code a response parse refused with, or -1 if it did not refuse. */
+i32 responseRefusal(string msg, string method, bool eof, i32 maxBody) {
+  match (parseResponse(wire(msg), method.toBytes(), eof, maxBody)) {
+    case Bad(code): { return code; }
+    else: { return -1; }
+  }
+}
+
+/**
+ * Every route into a body, each one past a limit the caller set.
+ *
+ * **`maxBody` is this implementation's number and no oracle has an opinion about it.** Node will
+ * happily parse every message below; what is being checked is that we stop, and that stopping is a
+ * *refusal* rather than a truncation — a parser that silently returned the first `maxBody` bytes
+ * would pass every framing test in this package and hand a caller half a message as if it were
+ * whole.
+ *
+ * Four routes, because the length arrives four different ways: declared in `Content-Length`, declared
+ * per chunk, accumulated across chunks, and — on a response — however many bytes arrive before the
+ * connection closes. A limit enforced on three of the four is a limit with a way round it.
+ */
+export string test_a_body_past_the_limit_is_refused_on_every_route_into_one() {
+  T t = T.create();
+
+  // 1. A declared length, on a request and on a response.
+  t.eqI32(requestRefusal("POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n", 16),
+          ERR_TOO_LARGE(), "a request declaring more than the limit");
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n", "GET", false, 16),
+          ERR_TOO_LARGE(), "a response declaring more than the limit");
+
+  // 2. One chunk larger than the whole limit, which is refused from the size line rather than after
+  //    the bytes have been copied — the difference between a bound and a bill.
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n40\r\n", "GET",
+                          false, 16),
+          ERR_TOO_LARGE(), "one chunk past the limit");
+
+  // 3. Chunks that are each under the limit and together are not, which is the route a limit checked
+  //    per chunk instead of per message would miss.
+  string many = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+  for (i32 i = 0; i < 6; i++) { many = many + "8\r\nabcdefgh\r\n"; }
+  t.eqI32(responseRefusal(many + "0\r\n\r\n", "GET", false, 16),
+          ERR_TOO_LARGE(), "six chunks of eight against a limit of sixteen");
+
+  // 4. A chunk size so large it does not fit an i32, which must be refused as too large rather than
+  //    wrapped into a small positive number. `ffffffffff` is 2^40 - 1.
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffff\r\n",
+                          "GET", false, 1024),
+          ERR_TOO_LARGE(), "a chunk size wider than an i32");
+
+  // 5. The close-delimited body — no length anywhere, so the length is what arrived. This is the one
+  //    route where the sender never declared anything, and the limit is the only thing bounding it.
+  string body = "";
+  for (i32 i = 0; i < 40; i++) { body = body + "x"; }
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n" + body, "GET", true, 16),
+          ERR_TOO_LARGE(), "a close-delimited body past the limit");
+
+  // And the same message under a limit that admits it is not refused, so the assertions above are
+  // about the limit rather than about the message being malformed.
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n" + body, "GET", true, 1024),
+          -1, "the same response inside a limit that admits it");
+  t.eqI32(requestRefusal("POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello", 1024),
+          -1, "a request inside the limit");
+  return t.report();
+}
+
+/**
+ * A message with more headers than the table starts with.
+ *
+ * `Headers` allocates eight entries and doubles, copying what it has. A copy whose bound is one short
+ * loses the *last* header it had — the one most recently pushed — and nothing crashes: the message
+ * parses, the count is right, and one field has silently become another's. So the check is not "did
+ * it parse" but that every name and value survives, read back by position.
+ *
+ * Twenty headers, which is two doublings: eight to sixteen and sixteen to thirty-two. One doubling
+ * would leave the second copy — the one that copies *existing* entries rather than none — unreached,
+ * which is the same shape `packages/regex`'s class table had.
+ */
+export string test_a_message_with_more_headers_than_the_table_holds() {
+  T t = T.create();
+  string msg = "GET / HTTP/1.1\r\nHost: a\r\n";
+  for (i32 i = 0; i < 20; i++) { msg = msg + "X-Field-" + itoa(i) + ": value-" + itoa(i) + "\r\n"; }
+  msg = msg + "\r\n";
+
+  match (parseRequest(wire(msg), 4096)) {
+    case Ok(req): {
+      t.eqI32(req.headers.len(), 21, "every header is present");
+      // Read back by position, since a lost entry shows up as a shifted one rather than a missing one.
+      for (i32 i = 0; i < 20; i++) {
+        t.eqStr(string.fromBytes(req.headers.nameAt(i + 1)), "X-Field-" + itoa(i),
+                "the name at position " + itoa(i + 1));
+        t.eqStr(string.fromBytes(req.headers.valueAt(i + 1)), "value-" + itoa(i),
+                "the value at position " + itoa(i + 1));
+      }
+    }
+    case Bad(code): { t.isTrue(false, "refused with " + itoa(code)); }
+    else: { t.isTrue(false, "the message was incomplete"); }
+  }
+
+  // The same growth reached directly, so a parser that stopped at some header count of its own would
+  // not hide it.
+  Headers h = Headers.create();
+  for (i32 i = 0; i < 40; i++) { h.push(("n" + itoa(i)).toBytes(), ("v" + itoa(i)).toBytes()); }
+  t.eqI32(h.len(), 40, "forty pushed, forty held");
+  t.eqStr(string.fromBytes(h.nameAt(0)), "n0", "the first survived three doublings");
+  t.eqStr(string.fromBytes(h.nameAt(39)), "n39", "and the last is the last");
+  return t.report();
+}
+
+/**
+ * `Outgoing.create` and `Outgoing.set` — the builder a caller outside this package would use.
+ *
+ * Nothing called either. `response_test.wac` constructs the struct positionally, which is what a test
+ * inside the package can do and a caller cannot, so the two methods that are the actual API had no
+ * test: `create` is what decides that a fresh request has empty headers and an empty body, and `set`
+ * is what decides a field is appended rather than replacing one of the same name.
+ */
+export string test_the_request_builder_produces_what_a_caller_asked_for() {
+  T t = T.create();
+  Outgoing req = Outgoing.create("POST", "/submit", "example.test");
+  t.eqI32(req.headers.len(), 0, "a fresh request has no headers");
+  t.eqI32(req.body.len(), 0, "and no body");
+
+  req.set("Accept", "text/plain");
+  req.set("X-Trace", "abc");
+  t.eqI32(req.headers.len(), 2, "two fields set, two held");
+
+  // Two fields of the same name are two fields — HTTP says a recipient may join them with commas, and
+  // the decision to do that belongs to whoever reads them, not to the builder.
+  req.set("Accept", "text/html");
+  t.eqI32(req.headers.len(), 3, "the same name twice is two fields, not a replacement");
+
+  string sent = string.fromBytes(writeRequest(req, true));
+  t.eqStr(sent.slice(0, sent.indexOf("\r\n")), "POST /submit HTTP/1.1",
+          "the request line the builder was asked for");
+  t.isTrue(sent.indexOf("\r\nHost: example.test\r\n") > 0, "the host is written — " + sent);
+  t.isTrue(sent.indexOf("\r\nAccept: text/plain\r\n") > 0, "the first Accept survived");
+  t.isTrue(sent.indexOf("\r\nAccept: text/html\r\n") > 0, "and so did the second");
+
+  // **An empty body sends no `Content-Length` at all**, which `write`'s own comment decides and this
+  // pins: "a GET with `Content-Length: 0` is legal but some servers treat it as a body, so it is not
+  // sent". I asserted the opposite first and the code was right — the rule is written down eight lines
+  // above the branch, and reading it would have been faster than running the test.
+  //
+  // The consequence is that `writeDecimal`'s zero case is unreachable from here, which is why
+  // `test/cov_ledger.wac` pins it rather than pretending an input exists.
+  t.eqI32(sent.indexOf("Content-Length"), -1, "an empty body declares no length — " + sent);
+
+  Outgoing withBody = Outgoing.create("POST", "/submit", "example.test");
+  withBody.body = "hello".toBytes();
+  string sentBody = string.fromBytes(writeRequest(withBody, true));
+  t.isTrue(sentBody.indexOf("\r\nContent-Length: 5\r\n") > 0,
+           "a body that exists is framed — " + sentBody);
+  t.isTrue(sentBody.indexOf("\r\n\r\nhello") > 0, "and the bytes follow the blank line");
+  return t.report();
+}
+
+/** The header value at `i` of a parsed response, or a marker naming what went wrong instead. */
+string responseHeader(string msg, string method, bool eof, i32 maxBody, string name) {
+  match (parseResponse(wire(msg), method.toBytes(), eof, maxBody)) {
+    case Ok(res): { return string.fromBytes(res.headers.first(name)); }
+    case Bad(code): { return "(refused " + itoa(code) + ")"; }
+    else: { return "(incomplete)"; }
+  }
+}
+
+/**
+ * The shapes a corpus generated against Node does not contain.
+ *
+ * Everything here is a message Node either refuses or never produces, so it cannot appear in the
+ * oracle-driven sweeps: a seven-letter method that is not `CONNECT`, a status line whose reason is not
+ * separated by a space, a `Transfer-Encoding` that is present and is not `chunked`, a chunk size line
+ * that is empty or followed by junk, and a trailer with a bad name. Each was an uncovered arm in
+ * `issues/system/0205`'s list and each is a refusal a server depends on.
+ *
+ * **Trailing whitespace is the exception, and it is not an error.** RFC 9110 §5.5 says a field value
+ * is the bytes between the optional leading and trailing whitespace, so `X: v   ` is the value `v` —
+ * the loop that walks back over it is uncovered because no corpus message has ever had any, and a
+ * parser that skipped the trim would hand a caller a value with spaces on the end that compares
+ * unequal to every constant it is checked against.
+ */
+export string test_the_shapes_a_node_generated_corpus_does_not_contain() {
+  T t = T.create();
+
+  // A seven-letter method that is not CONNECT — the length matches, so the byte comparison is what
+  // decides. `OPTIONS` is the one that exists; a parser comparing only lengths would treat its
+  // response as a tunnel and stop looking for a body.
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n", "OPTIONS", false, 16),
+          ERR_TOO_LARGE(), "OPTIONS is not CONNECT, so its response still has a body");
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n", "CONNECT", false, 16),
+          -1, "and a real CONNECT's 2xx has none, whatever it claims");
+
+  // A status line with a reason that is not separated by a space.
+  t.eqI32(responseRefusal("HTTP/1.1 200OK\r\n\r\n", "GET", true, 1024), ERR_LINE(),
+          "a reason phrase must be separated by a space");
+
+  // `Transfer-Encoding` present and not `chunked` — legal, and rule 5: the body runs to the close.
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nab", "GET", false, 1024),
+          -1, "not chunked and not at eof is incomplete, not an error");
+  t.eqStr(responseHeader("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nab", "GET", true, 1024,
+                         "Transfer-Encoding"),
+          "gzip", "and at eof it parses, with the body running to the close");
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabcdefghijklmnopqrstuvwxyz",
+                          "GET", true, 8),
+          ERR_TOO_LARGE(), "that route obeys the limit too");
+
+  // An empty line where a chunk size belongs, and junk after a size that is not a `;` extension.
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\r\n", "GET", false,
+                          1024),
+          ERR_CHUNK(), "an empty chunk-size line");
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5x\r\nhello\r\n0\r\n\r\n",
+                          "GET", false, 1024),
+          ERR_CHUNK(), "junk after a chunk size that is not an extension");
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;a=b\r\nhello\r\n0\r\n\r\n",
+                          "GET", false, 1024),
+          -1, "and a real chunk extension is accepted");
+
+  // A trailer whose name is not a token.
+  t.eqI32(responseRefusal("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nBad Name: v\r\n\r\n",
+                          "GET", false, 1024),
+          ERR_HEADER_NAME(), "a trailer name with a space in it");
+
+  // Trailing whitespace, trimmed rather than refused — on a trailer and on a request header.
+  t.eqStr(responseHeader("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trail: v   \r\n\r\n",
+                         "GET", false, 1024, "X-Trail"),
+          "v", "a trailer value is trimmed at both ends");
+  match (parseRequest(wire("GET / HTTP/1.1\r\nHost: a\r\nX-Pad:   spaced   \r\n\r\n"), 1024)) {
+    case Ok(req): {
+      t.eqStr(string.fromBytes(req.headers.first("X-Pad")), "spaced",
+              "a request header value is trimmed at both ends");
+    }
+    else: { t.isTrue(false, "a header with padding was not accepted"); }
+  }
+
+  // An empty request target — two spaces where the target belongs.
+  // Refused as `ERR_TARGET` rather than `ERR_LINE`: the line does have three parts, and the middle one
+  // is empty. I expected `ERR_LINE` and the more specific code is the better answer — this file's
+  // sibling `test_each_rejection_reports_its_own_reason_not_just_no` is the argument for that.
+  t.eqI32(requestRefusal("GET  HTTP/1.1\r\nHost: a\r\n\r\n", 1024), ERR_TARGET(),
+          "an empty request target");
+
+  // A chunked *request* whose chunks together pass the limit, which is the request-side twin of the
+  // accumulation check above and a separate line of code.
+  string chunks = "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n";
+  for (i32 i = 0; i < 6; i++) { chunks = chunks + "8\r\nabcdefgh\r\n"; }
+  t.eqI32(requestRefusal(chunks + "0\r\n\r\n", 16), ERR_TOO_LARGE(),
+          "a chunked request past the limit");
+
+  // A chunked request's *trailer*, padded — the request-side twin of the trailer trim above, and a
+  // separate copy of the loop. Two parsers, four trim loops, and only the two on the header block
+  // had ever seen a space.
+  match (parseRequest(wire("POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                           "5\r\nhello\r\n0\r\nX-Sum:   abc   \r\n\r\n"), 1024)) {
+    case Ok(req): {
+      t.eqStr(string.fromBytes(req.headers.first("X-Sum")), "abc",
+              "a request trailer value is trimmed at both ends");
+      t.eqStr(string.fromBytes(req.body), "hello", "and the body is still the body");
+    }
+    case Bad(code): { t.isTrue(false, "a padded request trailer was refused with " + itoa(code)); }
+    else: { t.isTrue(false, "a padded request trailer read as incomplete"); }
+  }
+  return t.report();
+}

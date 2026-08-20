@@ -55,30 +55,25 @@ Case[] singleFile(Case[] all, bool wantOk) {
 }
 
 /**
- * The one program the spec calls illegal that this checker still accepts. It was 47, then 16.
+ * The illegal single-file programs this checker does not refuse. **None**, since 2026-08-20.
  *
- * And it is not a rule: the case is a *multi-file* program recorded with one file. What the spec writes
- * is `main.wac` importing `foo` from a `b.wac` that does not export it, and the recording kept the file
- * that carries the `// error:` marker — so what reaches this test is an import of a file nobody
- * supplied. Refusing it would mean refusing every import, which is the opposite of right. The
- * multi-file contract next door holds the rule that governs it, and it passes 15 of 15.
+ * There was one, and it is worth keeping the account of it because two readings of it were wrong in
+ * sequence. The case is a *multi-file* program recorded with one file: the spec writes `main.wac`
+ * importing `foo` from a `b.wac` that does not export it, and the recording kept the file carrying the
+ * `// error:` marker — so what reached this test was an import of a file nobody supplied.
  *
- * **The number is positional and moves.** `#N` is the runner's index over cases sharing a test name, so
- * it names a program only against the sequence that produced it: it was `#28` until `spec/spec/control.md`
- * and `functions.md` gained `// error:` blocks earlier in the sequence, and the failure then read as this
- * checker having regressed on a block it never saw. Identified by its message rather than its index when
- * you are looking for it: *file not found in programs map: 'b.wac'*.
+ * The first reading was *"the miss is the runner's scope rather than the checker's"*, and that was
+ * measured wrong on 2026-08-18: `diagnoseFiles(["main.wac"], [src], "main.wac")` has the whole map and
+ * reported nothing either. The second was in this very comment — *"refusing it would mean refusing
+ * every import, which is the opposite of right"* — and that was wrong too. Refusing an import naming a
+ * file **nobody supplied** is not refusing every import, and of the 688 single-file cases recorded,
+ * zero legal ones import a relative path. `issues/lang/0157` carries both measurements and the rule
+ * that closed it: `errMissingImportFile`, reported by the checker at the import's own token.
  *
- * **"The miss is the runner's scope rather than the checker's" is what this said, and it is wrong** —
- * measured 2026-08-18. `diagnoseFiles(["main.wac"], [src], "main.wac")` has the whole map and reports
- * nothing either; what refuses is the *emitter*, through `blockedFiles`, with no position and no file
- * name. The checker has no rule for it at all. `issues/lang/0157` carries the measurements, including
- * the one that says the rule is safe to add: of the 688 single-file cases recorded, **zero** legal ones
- * import a relative path, so refusing an unsupplied import cannot make a legal program illegal here.
+ * Kept empty. An entry here is an illegal program this checker accepts, so it is a claim about a rule
+ * that is missing rather than a tolerance.
  */
-string[] knownMisses() {
-  return string[]("every block the spec marks `// error:` is still an error#34");
-}
+string[] knownMisses() { return string[0](fill: ""); }
 
 /**
  * The legal programs this checker refuses. **None.** It was fourteen when the corpus was recorded.

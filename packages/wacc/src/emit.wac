@@ -15,7 +15,7 @@ import { lex, Lexed, tokenStride } from "./lex.wac";
 import { coreFile, coreSource, stdFile } from "./coretext.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
-import { Res, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
+import { Res, normalisePath, resolveFrom, resolveFromIn, resolveVia } from "./path.wac";
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg,
   Param, Program, Stmt, StmtKind, Ty, TyKind,
@@ -773,6 +773,32 @@ bool constantFalseIs(Env env, string target, string lty) {
  * be an ambiguity to settle deliberately rather than by whichever check ran first, and this returns
  * `""` for it so the existing decline still fires.
  */
+/**
+ * The **const with identity** an `is` target names, or -1 — the other half of `identityLocalName`.
+ *
+ * `const u64[] A = …; g() is A` is an identity test for the same reason `p is Other` is: the parser
+ * cannot tell a capitalised value from a type, and only something holding the scopes can. A local is not
+ * the only kind of value a capitalised name can be.
+ *
+ * **Only a const that has identity**, which is the ones living in a global. A scalar const is
+ * *substituted* at each use — `emitExpr`'s own comment: "one array shared by every use is the whole
+ * difference between the two" — so it has no reference to compare and an identity test against it stays
+ * declined rather than answering about a copy.
+ */
+i32 identityConstIndex(Env env, u8[] src, Lexed lexed, Ty target) {
+  match (target.kind) {
+    case Named(tok, typeArgs): {
+      if (typeArgs.len() > 0) { return -1; }
+      string nm = tokenTextOf(src, lexed, tok);
+      if (env.isStructName(nm) || env.isEnumName(nm) || env.variantAt(nm) >= 0) { return -1; }
+      i32 ci = env.constAt(nm);
+      if (ci < 0) { return -1; }
+      return env.constGlobal[ci] >= 0 ? ci : -1;
+    }
+    else: { return -1; }
+  }
+}
+
 string identityLocalName(Env env, u8[] src, Lexed lexed, Ty target) {
   match (target.kind) {
     case Named(tok, typeArgs): {
@@ -2730,6 +2756,14 @@ i32 countLines(string s) {
  */
 string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] starts,
                  i32[] edges, string[] names, string[] filePaths) {
+  // **One file under two keys is refused here**, which is the one place both routes pass through:
+  // `frontOf` turns `""` into a null front and `emitLinkedWith2` turns it into a bare module, so
+  // saying it once covers `wac build`, the `emitFiles*` family and every decline report. Nominal
+  // identity *is* the key, so two keys are two types that print the same name — and what actually
+  // happened was worse than the two incompatible copies `design/lang/0009` D8 warns about: the
+  // checker stayed clean and the **engine** rejected the module, telling the user it was a compiler
+  // bug with no source line. `issues/lang/0163`.
+  if (twoKeysForOneFile(paths) != "") { return ""; }
   // **Sized for the largest program here, which is `packages/box` at 168 files and climbing.** These
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
   // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named
@@ -3075,7 +3109,12 @@ string bindTypesOf(Front f) {
       if (i > 0) { line = line + ","; }
       line = line + sigParamAt(cb, i);
     }
-    out = out + line + "\t" + cb + "\n";
+    // **The same spelling a struct field uses**, which is what the host looks this up by. A funcref
+    // field's type goes through `metaTypeSpelling`, so a name two files declare arrives as
+    // `Stat__std_platform`; this cell was the raw linker key and arrived as `Stat@1`. Two spellings of
+    // one type, and `callback_index` matches by string — so the field found no dispatcher and the host
+    // reported the *struct* as absent. `issues/lang/0162b`.
+    out = out + line + "\t" + metaTypeSpelling(env, cb) + "\n";
   }
   for (i32 i = 0; i < n; i++) {
     string name = bindStructs[i];
@@ -3249,6 +3288,69 @@ export struct Built {
  * idempotent. That the order is safe is not an argument, it is a byte comparison of every emitted
  * module — see `issues/lang/0129`.
  */
+/**
+ * Two supplied keys naming one file, or `""`.
+ *
+ * `design/lang/0009` D8 makes identity canonical after resolution, and warns that getting it wrong
+ * gives two incompatible copies of one struct. What actually happened was worse: the checker stayed
+ * clean and the **engine** rejected the module, so the user was told *"this is a compiler bug rather
+ * than a fault in your program"* with no source line. A module that fails validation is the worst
+ * available outcome — refusing here is the point. `issues/lang/0163`.
+ *
+ * **Nearly free, because a healthy map has no key to normalise.** Only a key that is not already in
+ * normal form can collide with one that is, so the first pass normalises each key once and keeps the
+ * ones that moved; in this repository that set is empty and the walk stops. The second pass is over
+ * that set alone, against every key and against each other, so two differently-written keys for one
+ * file are caught as well as one written oddly against one written plainly.
+ *
+ * Not in the checker, which is where `issues/lang/0163` asks for it: `C` does not carry the path map,
+ * and threading it is the same cost `issues/lang/0157` is still open for. This layer has the map
+ * already, and refusing here is what stops the invalid module either way.
+ */
+bool looksNormal(string p) {
+  if (p.indexOf("//") >= 0) { return false; }
+  if (p.indexOf("/./") >= 0) { return false; }
+  if (p.indexOf("/../") >= 0) { return false; }
+  if (p.len() >= 2 && p.slice(0, 2) == "./") { return false; }
+  if (p.len() >= 3 && p.slice(0, 3) == "../") { return false; }
+  if (p.len() >= 2 && p.slice(p.len() - 2, p.len()) == "/.") { return false; }
+  if (p.len() >= 3 && p.slice(p.len() - 3, p.len()) == "/..") { return false; }
+  return true;
+}
+
+string twoKeysForOneFile(string[] paths) {
+  string[] odd = string[paths.len()](fill: "");
+  string[] oddNorm = string[paths.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < paths.len(); i++) {
+    // **A substring test before `normalisePath`, because this is on the link's hot path.** Calling
+    // `normalisePath` on every key cost 3s of a 12s `packages/box` build — 20% — for a condition
+    // nothing in the tree can reach. `looksNormal` is six `indexOf`s and answers for every key here,
+    // so a healthy map pays that and stops. A key it doubts is normalised properly below.
+    if (looksNormal(paths[i])) { continue; }
+    string norm = normalisePath(paths[i]);
+    if (norm == paths[i]) { continue; }
+    odd[n] = paths[i];
+    oddNorm[n] = norm;
+    n = n + 1;
+  }
+  if (n == 0) { return ""; }
+  for (i32 k = 0; k < n; k++) {
+    for (i32 j = 0; j < paths.len(); j++) {
+      if (paths[j] == odd[k]) { continue; }
+      if (paths[j] != oddNorm[k]) { continue; }
+      return "one file is supplied under two keys: `" + odd[k] + "` and `" + paths[j] +
+             "`, which both name `" + oddNorm[k] + "`";
+    }
+    for (i32 j = k + 1; j < n; j++) {
+      if (oddNorm[j] != oddNorm[k]) { continue; }
+      return "one file is supplied under two keys: `" + odd[k] + "` and `" + odd[j] +
+             "`, which both name `" + oddNorm[k] + "`";
+    }
+  }
+  return "";
+}
+
 export Built buildLinked(string[] paths, string[] sources, Res res, string entry) {
   Front? f = frontOf(paths, sources, res, entry);
   if (f is null) {
@@ -7267,6 +7369,16 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         // **A target that is really a local**: an identity test the parser put in the type slot. Same
         // instruction as the value-on-the-right form above — the value just arrives from a local
         // rather than from a parsed expression. `identityLocalName` says why this is resolved here.
+        // A const with identity, read from its global — see `identityConstIndex`.
+        i32 cidn = identityConstIndex(env, src, lexed, target!);
+        if (cidn >= 0 && isRefType(env, env.canonType(typeOfE(src, lexed, env, left)))) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(35);   // global.get
+          fb.u32leb(env.constGlobal[cidn]);
+          fb.byte(211);  // ref.eq
+          if (negated) { fb.byte(69); }
+          return;
+        }
         string idn = identityLocalName(env, src, lexed, target!);
         if (idn != "" && isRefType(env, env.canonType(typeOfE(src, lexed, env, left)))) {
           emitExpr(fb, src, lexed, env, left);
@@ -10293,6 +10405,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         // A target naming a local is an identity test, not a type test — see `identityLocalName`. The
         // left side still has to be a reference for `ref.eq` to mean anything.
         if (identityLocalName(env, src, lexed, target!) != "" && isRefType(env, lty)) { return ""; }
+        // And a const with identity, for the same reason — `identityConstIndex`.
+        if (identityConstIndex(env, src, lexed, target!) >= 0 && isRefType(env, lty)) { return ""; }
         return "a test for " + ty3 + " on a " + (lty == "" ? "value of no known type" : lty);
       }
       string il = unsupportedValue(src, lexed, env, left);
@@ -10403,6 +10517,10 @@ string linkFailure(string[] paths, string[] sources, Res res, string entry) {
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
+  // **Asked first, because it is the one cause here that can name what is wrong.** The other two are
+  // inferred from a sentinel and say neither a path nor a position — `issues/lang/0157` is that.
+  string twoKeys = twoKeysForOneFile(paths);
+  if (twoKeys != "") { return twoKeys; }
   linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
   return starts[0] == 1 ? "more import edges than the linker was given room for"
                         : "an import of a file that was not supplied";
@@ -11076,7 +11194,15 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
         if (typeParams.len() > 0) { continue; }
         // Only the entry file's exports become the module's, which is what the counter checks too.
         bool mine = entryDecls < 0 || d < entryDecls;
-        if (exported && mine && env.funcIndex[at] < 0) {
+        // **Not only the exports, and that widening is free.** The general fault here is *the checker
+        // was clean and the function is not in the module*; an export is merely the case a person
+        // notices. Whether widening it costs anything was decidable and is now measured: over seven
+        // entry files — the compiler itself, `api.wac`, `sh`, `image`, `compile`, `consensus`, `map` —
+        // **1797 non-exported functions, of which 0 were `!funcOk` and 0 had no index.** So a template
+        // takes no slot (this walk's `continue` already assumed it), and a private function in the
+        // entry always reaches the module. The net fires on nothing today and catches the same class
+        // one declaration wider. `issues/lang/0170a`.
+        if (mine && env.funcIndex[at] < 0) {
           // **And why, when the emitter recorded one.** Every `funcOk[at] = false` already writes
           // `funcWhy[at]` — five sites, all of them — and nothing read it here, so this net named the
           // function and threw away the reason sitting beside it. Two attempts at
@@ -11085,7 +11211,8 @@ string missingExport(Env env, u8[] src, Lexed lexed, Program prog, i32 entryDecl
           // Empty is still possible and still says something: the function was dropped without any
           // decline being recorded, which is a different bug from a decline this message could quote.
           string why = at < env.funcWhy.len() ? env.funcWhy[at] : "";
-          return "the exported function `" + tokenTextOf(src, lexed, nameTok) +
+          return (exported ? "the exported function `" : "the function `") +
+                 tokenTextOf(src, lexed, nameTok) +
                  "` is not in the module the emitter produced" +
                  (why == "" ? ", and no reason was recorded" : " — " + why);
         }
@@ -11117,13 +11244,14 @@ string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
         // can be approved and still be absent, and that case was silent: `wac build` wrote a module
         // without it and exited 0. Asking both is the difference between reporting a decline and
         // reporting *the export you asked for is not in here*. `issues/lang/0170a`.
-        if (exported && (!env.funcOk[at] || env.funcIndex[at] < 0)) {
+        if (!env.funcOk[at] || env.funcIndex[at] < 0) {
           string was = env.blocked;
           env.blocked = "";
           canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
           string why = env.blocked;
           env.blocked = was;
-          return why == "" ? "an export it declined: " + tokenTextOf(src, lexed, nameTok)
+          return why == "" ? (exported ? "an export it declined: " : "a function it declined: ") +
+                             tokenTextOf(src, lexed, nameTok)
                            : why;
         }
         at = at + 1;

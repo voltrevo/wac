@@ -12,8 +12,29 @@ export u8[] modExp(u8[] base, u8[] exp, u8[] mod) {
   return toBytes(modPow(fromBytes(base), fromBytes(exp), fromBytes(mod)), mod.len());
 }
 
-// `modExpSecret` stood here — `modPowSecret` reached directly, so a private-key exponentiation could
-// be timed apart from a public one. It was added for issues/system 0099, which closed on 2026-08-11
-// when the cost turned out to be `encodeConn` rather than the arithmetic, and nothing has called it
-// since: no TypeScript names it and no wac file imports it. `modPowSecret` is covered through
-// `rawSign` now, so this loses no measurement and no coverage.
+// **`modExpSecret` was deleted on the grounds that removing it "loses no measurement", and it did.**
+// It stood here for `issues/system/0099`, which closed on 2026-08-11 when the cost turned out to be
+// `encodeConn` rather than the arithmetic, and nothing named it afterwards — so it went, correctly by
+// the rule that what nothing needs is deleted.
+//
+// It is back because a caller appeared that the deletion note did not anticipate: the side-channel
+// table had no RSA row at all, so "not measured" and "fine" looked the same for the one routine in
+// this package whose own header says at length that it is neither. A `Case` in
+// `packages/crypto/tools/ct.wac` calls one expression, and `modPowSecret` takes `Big`s, so a bytes
+// wrapper is the only way to reach it.
+//
+// The measurement it makes possible: two 1024-bit exponents part at `packages/bignum/src/big.wac:68`
+// — `trim`'s `while` over leading zero limbs — at event 25,728 of 17.4 million, which is inside the
+// first rounds. `rsa.wac`'s header predicted the class ("`bignum`'s `mul` and `divmod` take time that
+// depends on their operands' magnitudes") and this names the line.
+import { modPowSecret } from "../../src/rsa.wac";
+
+/**
+ * `base^exp mod m` through the private-key path, on bytes.
+ *
+ * `bits` is `8 * m.len()`, which is what `rawSign` passes: the modulus's bit length rather than the
+ * exponent's, so a `d` that happens to be short does not announce it by running faster.
+ */
+export u8[] modExpSecret(u8[] base, u8[] exp, u8[] m) {
+  return toBytes(modPowSecret(fromBytes(base), fromBytes(exp), fromBytes(m), 8 * m.len()), m.len());
+}

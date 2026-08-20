@@ -360,6 +360,38 @@ export string blockedFiles(string[] paths, string[] sources, string entry) {
 }
 
 /** `blockedFiles` with the project root each file sits in — `design/lang/0009` D7. */
+/**
+ * `buildFiles` for a caller that has the project roots and cannot build a `Res`.
+ *
+ * `roots` is parallel to `paths` — `roots[i]` is the project root `paths[i]` sits in, or `""` — which
+ * is exactly what `Res.of` takes and what `harness/wacFiles.ts` already computes for `wacCompile`.
+ *
+ * **Why they exist.** The Deno-hosted path bound only the root-less variants, so a project root never
+ * reached wacc and `@/` could not resolve through it: an outsider building their own project with the
+ * repository's fallback got *"an import of a file that was not supplied"* for `@/src/stats.wac`, while
+ * the same project built fine with `wac build`, which passes a root. Constructing a `Res` across the
+ * bindgen boundary is not something a host caller can do; handing over two string arrays is.
+ * GitHub issue 21, `issues/system/0228a`.
+ */
+export Built buildFilesRooted(string[] paths, string[] sources, string[] roots, string base,
+                              string entry) {
+  return buildFilesIn(paths, sources, resFor(roots, base), entry);
+}
+
+/**
+ * A `Res` with roots and a base and no mappings.
+ *
+ * **`base` is not optional here, and leaving it out is a bug that looks like a missing file.** A
+ * caller whose graph is keyed by *relative* paths gets an *absolute* project root from the walk, so
+ * `@/src/stats.wac` resolves to `/…/proj/src/stats.wac` while the graph holds `src/stats.wac` — one
+ * file under two keys, reported as "an import of a file that was not supplied". `base` is what
+ * `relativeTo` uses to bring the root back into the graph\'s own key space. `Res.of` exists for
+ * callers with no filesystem at all, and is the wrong thing to reach for here.
+ */
+Res resFor(string[] roots, string base) {
+  return Res(roots, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), base);
+}
+
 export string blockedFilesIn(string[] paths, string[] sources, Res res, string entry) {
     return blockedLinked(paths, sources, res, entry);
 }
@@ -1198,6 +1230,22 @@ C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32
     for (i32 k = 0; k < n; k++) {
       if (wantFrom[k] != paths[i]) { continue; }
       if (wantAlias[k] != wantName[k]) { c.addRename(wantName[k], wantAlias[k]); }
+    }
+    // **One declaration asked for under two spellings.** `renamed` above answers one local name per
+    // declaring name, so `declareModule` registers the declaration once — and the other spelling was
+    // left undeclared, which is silent rather than wrong: `import { E, E as E2 }` made `E` stop being
+    // a type, and every rule about it went quiet. `spec/spec/generics.md`
+    // `[§wac-generic-instantiation-identity-6pnq4wj]` says the two are *one* type — "`Box<P>` and
+    // `Box<Point>` are one struct" — so collapsing them is the stated rule rather than a kindness.
+    //
+    // The canonical spelling is whichever one `renamed` will register under: the plain name when the
+    // file imported it plainly, and otherwise the first alias, which is the first entry the loop
+    // above added. Every other spelling becomes a local alias of it, and `c.canon` is what the four
+    // bare-name lookups and the three type-name sites consult. `issues/lang/0161`.
+    for (i32 k = 0; k < n; k++) {
+      if (wantFrom[k] != paths[i]) { continue; }
+      string canonical = c.renamed(wantName[k]);
+      if (wantAlias[k] != canonical) { c.addLocalAlias(wantAlias[k], canonical); }
     }
     // **Closed over what the wanted names reach**, so a type that arrives only through somebody
     // else's field signature still has its members. Everything past `only.len()` was added here

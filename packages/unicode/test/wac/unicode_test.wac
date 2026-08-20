@@ -33,6 +33,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -197,22 +198,6 @@ export string test_fold_all_matches_fold_equal() {
   return t.report();
 }
 
-/** xorshift32, matching the host-side generator so the corpora are the same ones. */
-struct Rng {
-  i32 x;
-
-  i32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x;
-  }
-
-  i32 upto(this, i32 n) {
-    i32 v = this.next() % n;
-    return v < 0 ? v + n : v;
-  }
-}
 
 /**
  * Code points this package's own table moves, which are exactly the ones the host maps singly.
@@ -235,6 +220,19 @@ i32[] casedPoints(i32 from, i32 to, i32 limit, bool upper) {
   i32 n = 0;
   for (i32 cp = from; cp <= to && n < limit; cp++) {
     if (isSurrogate(cp)) { continue; }
+    // **Greek capital sigma is the one contextual mapping**, and it breaks this test's premise rather
+    // than the package. Per code point `Σ` maps singly and both sides agree — `Σ` → `σ`. In a *string*
+    // the host applies Unicode's SpecialCasing rule and gives `ς` at the end of a word, and this
+    // package does simple case mapping and says so: `README.md` names final sigma as a contextual form
+    // it does not do, and lists full case mapping as out of scope.
+    //
+    // So a string ending in `Σ` is a disagreement about which *specification* is being implemented, not
+    // about the string operation this test is for. Excluded here rather than tolerated at the
+    // comparison, so the corpus stays one where a difference means something.
+    //
+    // The old corpus never drew one: this file's generator returned a signed draw where the host's
+    // returned unsigned, so `% n` walked a different half of the space — `issues/system/0220`.
+    if (cp == 0x03A3) { continue; }
     if ((upper ? toUpper(cp) : toLower(cp)) == cp) { continue; }
     out[n] = cp;
     n = n + 1;
@@ -444,7 +442,7 @@ export string test_random_byte_strings_never_crash_the_decoder(Core core, Cli cl
   for (i32 trial = 0; trial < 5000; trial++) {
     i32 n = rng.upto(12);
     u8[] bytes = u8[n]();
-    for (i32 i = 0; i < n; i++) { bytes[i] = rng.next() & 0xFF; }
+    for (i32 i = 0; i < n; i++) { bytes[i] = (rng.next() & (0xFF as@ u32)) as@ i32; }
     lines.add("valid " + hex(bytes) + " " + (isValid(bytes) ? "1" : "0"));
   }
   checkDeno(t, cli, ORACLE, lines, "random bytes");
