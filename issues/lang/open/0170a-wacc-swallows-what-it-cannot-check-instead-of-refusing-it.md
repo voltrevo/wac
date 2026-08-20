@@ -436,3 +436,28 @@ Three things keep it open, and they are all *structural* rather than a list of p
 
 Anyone taking (1) should read `issues/lang/0173a` first: it is the smallest instance of the same theme,
 and fixing it lets `writeValType` refuse a bare unresolved name outright instead of tolerating one.
+
+### Measured before touching the 25: our corpora do not reach any of them
+
+A bail that fires leaves the wasm stack wrong, so the function is invalid — and `wac build` validates
+what it writes now, so a reachable bail is *loud*. That makes reachability measurable rather than
+arguable:
+
+- **40 package sources** built, 0 failures.
+- **The spec corpus**: 258 of 279 emit whole, and `wontLoad` is empty and asserted.
+- **`spec/cases`**: 221 of 221.
+- **The generated sweep**: 10,013 programs, 0 contradictions.
+
+So none of the 25 fires on anything anybody here has written. That does **not** make them unreachable —
+it makes their reachability untested, which is a different and weaker statement.
+
+**Which is why the 25 messages are not being written.** I tried exactly that once today, on the `Unwrap`
+bail, and the message could never fire — `typeOfE` answered `""` before the bail was reached — so it was
+reverted as a claim nothing checks. Writing 25 of those would be 25 such claims, and the way to avoid it
+is the method that worked for `valType`'s catch-all: break what the guard guards, watch it fire, keep it.
+That is one canary per bail, and it is the honest cost of this item.
+
+**A cheaper first step, if anyone wants one:** three of the 25 are guarded on `env.funcIndex[at] < 0` —
+a callee that was already declined. Those are the cascade working as designed and should decline the
+*caller* through `unsupportedExpr` rather than bail; they need no canary, because the condition they test
+is one the fixpoint already computes.
