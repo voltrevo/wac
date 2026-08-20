@@ -39,6 +39,8 @@ import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { sourceFiles } from "../../packages/wactest/src/repo.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
 
 /** Ten per cent either way. Rot, not drift. */
 const i32 TOLERANCE_PERCENT = 10;
@@ -526,4 +528,127 @@ string flat(string s) {
     out = out + string.fromBytes(one);
   }
   return out;
+}
+
+/**
+ * `packages/crypto`'s speed table lists exactly the operations its bench measures.
+ *
+ * ## Why this and not a lint on timing figures in prose
+ *
+ * Four figures in that README were wrong at once on 2026-08-20 — ed25519 at "roughly 120 ms per
+ * signature" against 2.5ms, P-256 at "roughly 37 ms" against 3.4ms, RSA verification at "about 170 ms"
+ * against 850µs, bcrypt at "about 10 ms" against 128ms. The RSA one was contradicted by
+ * `issues/system/0209`'s own measured table in this repository, and nothing noticed because both were
+ * prose in different files. Two more were written into that README in the morning and invalidated the
+ * same afternoon by a change to the code they described.
+ *
+ * **The first attempt at a guard was a lint**: a per-operation timing figure must sit in a section that
+ * says when it was measured or what command re-takes it. It was written, run, and thrown away, for the
+ * reason this file's header already gives about bare backticked identifiers — the narrow pattern has a
+ * corpus of *two* across every README in the tree, which cannot fail informatively, and widening it to
+ * any `N ms` finds 24 sections of which 14 are legitimate prose: a comparison against another
+ * implementation, a benchmark mentioned in passing, and a millisecond timestamp in `CONTRIBUTING.md`'s
+ * example output. A guard that cries wolf gets ignored and then deleted. It also flagged the
+ * *disavowals* written in the same commit that fixed the figures, because a pattern cannot tell a
+ * citation from a repudiation — which is the note this file carries about the link check, arriving
+ * again.
+ *
+ * ## What has an oracle
+ *
+ * The generator does. `packages/crypto/tools/bench.wac` prints one row per operation it times, and the
+ * README's table is meant to be that output. So the check is a set comparison with no tolerance and
+ * nothing to tune: an operation the bench measures and the table omits is an unpublished measurement,
+ * and one the table names and the bench does not is a figure with no way back to a number.
+ *
+ * That is the same relationship `ct.wac` has with the side-channel table, and the same argument its
+ * header makes — "published figures that cannot be regenerated go stale silently". The argument was
+ * there; what was missing was a generator for the timings and a check that the two agree.
+ */
+export string test_the_speed_table_lists_what_the_bench_measures(Core core, Cli cli) {
+  T t = T.create();
+  string bench = read(core, cli, "packages/crypto/tools/bench.wac");
+  string readme = read(core, cli, "packages/crypto/README.md");
+
+  string[] measured = identifiersMatching(bench, "row\\(core, \"([A-Za-z0-9]+)");
+  // **Bounded to that one section**, because this README has other tables whose rows are also a
+  // backticked name and a duration — the side-channel table and the two before-and-after cost
+  // tables. A pattern loose enough to read the speed table reads those too, and then names an
+  // operation the bench does not time for a reason that is not a defect.
+  string[] published = identifiersMatching(sectionNamed(readme, "## Speed, in one place"),
+                                           "^\\| `([A-Za-z0-9]+)`[,| ]");
+
+  // **Both sides get a floor**, because a set comparison of two empty sets passes: a pattern that
+  // stops matching would otherwise report perfect agreement.
+  t.isTrue(measured.len() >= 10,
+           "only " + itoa(measured.len()) + " operation(s) found in bench.wac — the pattern that " +
+           "reads its `row` calls has stopped matching");
+  t.isTrue(published.len() >= 10,
+           "only " + itoa(published.len()) + " row(s) found in the README's speed table — the " +
+           "pattern that reads it has stopped matching");
+  if (measured.len() < 10 || published.len() < 10) { return t.report(); }
+
+  string missing = "";
+  for (i32 i = 0; i < measured.len(); i++) {
+    if (!listed(published, measured[i])) { missing = missing + " " + measured[i]; }
+  }
+  string extra = "";
+  for (i32 i = 0; i < published.len(); i++) {
+    if (!listed(measured, published[i])) { extra = extra + " " + published[i]; }
+  }
+  t.eqStr(missing, "",
+          "bench.wac times these and the README's speed table does not list them:" + missing +
+          " — an unpublished measurement. Run `wac run --allow-env " +
+          "packages/crypto/tools/bench.wac` and put its output in the table.");
+  t.eqStr(extra, "",
+          "the README's speed table names these and bench.wac does not time them:" + extra +
+          " — a figure with no way back to a number, which is how the four wrong ones happened.");
+  return t.report();
+}
+
+bool listed(string[] set, string want) {
+  for (i32 i = 0; i < set.len(); i++) { if (set[i] == want) { return true; } }
+  return false;
+}
+
+/** Every capture-group-1 of `pattern`, line by line, in order and with duplicates kept. */
+string[] identifiersMatching(string text, string pattern) {
+  u8[] b = text.toBytes();
+  i32 n = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    if (firstMatch(pattern, text.slice(start, i)).len() > 0) { n = n + 1; }
+    start = i + 1;
+  }
+  string[] out = string[n > 0 ? n : 1](fill: "");
+  i32 at = 0;
+  start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    string[] m = firstMatch(pattern, text.slice(start, i));
+    if (m.len() > 0 && at < n) { out[at] = m[1]; at = at + 1; }
+    start = i + 1;
+  }
+  return at == n ? out : string[0](fill: "");
+}
+
+/**
+ * The lines from `heading` up to the next `## ` heading, or `""` if there is no such heading.
+ *
+ * `###` does not end a section: a subsection belongs to its parent, which is what makes "the section
+ * a claim sits in" the same unit a reader would name.
+ */
+string sectionNamed(string text, string heading) {
+  i32 at = -1;
+  for (i32 i = 0; i + heading.len() <= text.len() && at < 0; i++) {
+    if (text.slice(i, i + heading.len()) == heading) { at = i; }
+  }
+  if (at < 0) { return ""; }
+  u8[] b = text.toBytes();
+  for (i32 i = at + heading.len(); i + 3 < b.len(); i++) {
+    if (b[i] == '\n' && b[i + 1] == '#' && b[i + 2] == '#' && b[i + 3] == ' ') {
+      return text.slice(at, i);
+    }
+  }
+  return text.slice(at, text.len());
 }

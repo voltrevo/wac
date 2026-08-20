@@ -459,6 +459,25 @@ for attempt in 1 2 3; do
       echo "   Run \`deno task seed\` by hand to see why; every later failure would be downstream of it."
       exit 1
     fi
+  # **And the host, which is the same problem one directory over.** `native/v8/target/release/wac` is
+  # compiled Rust, gitignored, one per agent — every word of the paragraph above applies to it, and
+  # this arm was missing until 2026-08-20. Another agent's change to how the native host resolves a
+  # pushed child's paths landed while this batch was queued; the binary here was 72 minutes older,
+  # and their new test failed saying "the frame's cwd was ignored". Nothing said "binary". A full
+  # suite run to find out.
+  #
+  # `deno task seed` would also do it and costs 34s for a fixpoint that did not change. Only the Rust
+  # moved, so only `cargo build` runs, which is about six seconds.
+  #
+  # `elif`, because the wacc arm already runs `cargo build` as its last step.
+  elif ! git diff --quiet "$before" HEAD -- native; then
+    echo "   the merge touched native/ — rebuilding the host"
+    if ! (cd native/v8 && cargo build --release >/dev/null 2>&1); then
+      echo "== the host would not rebuild after the merge: not retrying =="
+      echo "   Run \`cd native/v8 && cargo build --release\` by hand to see why; every test that"
+      echo "   drives the binary would be running the older host."
+      exit 1
+    fi
   fi
 done
 

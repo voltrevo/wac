@@ -21,19 +21,19 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 130634,
+  lines: 130821,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2553,
-  programs: 80,
+  tests: 2555,
+  programs: 81,
   pages: 11,
   /**
-   * The whole repository: the packages (2553), and the compiler, harness and tooling
+   * The whole repository: the packages (2555), and the compiler, harness and tooling
    * around them (1373).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3926,
+  testsAll: 3928,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
@@ -51,7 +51,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 12 },
   { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 21 },
   { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2024, tests: 128 },
-  { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1515, tests: 22 },
+  { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1530, tests: 23 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 496, tests: 8 },
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1219, tests: 27 },
@@ -59,7 +59,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1327, tests: 40 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 58 },
-  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4292, tests: 220 },
+  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4305, tests: 221 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1071, tests: 27 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 10 },
   { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3283, tests: 42 },
@@ -67,7 +67,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7507, tests: 32 },
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4062, tests: 40 },
   { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8456, tests: 138 },
-  { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 6870, tests: 291 },
+  { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 7029, tests: 291 },
   { name: "ens", what: "The name a person types, turned into the node a contract is asked about.", lines: 389, tests: 24 },
   { name: "ethrpc", what: "Asking an Ethereum node a question, so the packages that verify answers have something to verify.", lines: 762, tests: 6 },
   { name: "git", what: "git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS.", lines: 5764, tests: 61 },

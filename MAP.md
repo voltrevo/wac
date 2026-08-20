@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-38 packages, 130,634 lines of wac, 2553 tests,
-80 command-line programs and 11 browser pages.
+38 packages, 130,821 lines of wac, 2555 tests,
+81 command-line programs and 11 browser pages.
 
 ## Packages
 
@@ -20,7 +20,7 @@ In dependency order: nothing here imports anything below it.
 | [`datetime`](packages/datetime/) | The proleptic Gregorian calendar, and RFC 3339 timestamps. | 272 | 12 | `bytes` |
 | [`fmt`](packages/fmt/) | Numbers to and from text. | 1,199 | 21 | `bytes` |
 | [`gzip`](packages/gzip/) | gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac. | 2,024 | 128 | `bytes` |
-| [`regex`](packages/regex/) | A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects `grep` reads, translated into them rather than… | 1,515 | 22 | `bytes` |
+| [`regex`](packages/regex/) | A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects `grep` reads, translated into them rather than… | 1,530 | 23 | `bytes` |
 | [`stream`](packages/stream/) | Run a wac transform as a `ReadableStream`/`WritableStream` pair, so it consumes input as it arrives instead of taking the whole thing at once. | 97 | 14 | `bytes` `unicode` |
 | [`tty`](packages/tty/) | What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, `^C`, `^D`. | 496 | 8 | `bytes` |
 | [`url`](packages/url/) | A WHATWG URL parser: parse, serialize, and resolve a reference against a base. | 1,219 | 27 | `bytes` |
@@ -28,7 +28,7 @@ In dependency order: nothing here imports anything below it.
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 9 | `fmt` |
 | [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,327 | 40 | `bytes` `codec` `fmt` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point. | 1,321 | 58 | `bytes` `fmt` |
-| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,292 | 220 | `bytes` `fmt` |
+| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,305 | 221 | `bytes` `fmt` |
 | [`raster`](packages/raster/) | A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell. | 1,071 | 27 | `fmt` `unicode` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 10 | `fmt` |
 | [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,283 | 42 | `bytes` `fmt` `gzip` `platform` |
@@ -36,7 +36,7 @@ In dependency order: nothing here imports anything below it.
 | [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,507 | 32 | `bytes` `codec` `fmt` `fs` `platform` |
 | [`bls`](packages/bls/) | BLS signature verification on BLS12-381 — the Ethereum parameters and encodings. | 4,062 | 40 | `crypto` |
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,456 | 138 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `raster` `regex` `server` `sh` `tls` `unicode` `url` `zstd` |
-| [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 6,870 | 291 | `bignum` `codec` `fmt` `wactest` |
+| [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 7,029 | 291 | `bignum` `codec` `fmt` `wactest` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 389 | 24 | `bytes` `crypto` `mpt` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 762 | 6 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `rlp` |
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,764 | 61 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `tls` |
@@ -109,6 +109,7 @@ reach — see `packages/platform/README.md`.
 | `packages/box/src/bin/sha256sum.wac` | `sha256sum` on its own: the same applet, built as its own program. |
 | `packages/box/src/bin/wc.wac` | `wc` on its own: the same applet, built as its own program. |
 | `packages/box/src/box.wac` | A busybox-shaped application: one program, many applets, chosen by the first argument. |
+| `packages/crypto/tools/bench.wac` | Regenerate the per-operation timings this package's README quotes. |
 | `packages/crypto/tools/capture-hkdfcap.wac` | HKDF at its 255-block cap, answered by WebCrypto. |
 | `packages/crypto/tools/ct.wac` | Regenerate the side-channel table in README.md. |
 | `packages/ethrpc/example/blocknumber.wac` | The smallest thing that asks a node a question: `eth_blockNumber`, printed. |

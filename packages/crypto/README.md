@@ -51,6 +51,76 @@ u8[] sig    = ed25519Sign(seed, msg);          // 64 bytes
 bool ok     = ed25519Verify(vk, msg, sig);
 ```
 
+## Speed, in one place
+
+Regenerate with
+
+```sh
+wac run --allow-env packages/crypto/tools/bench.wac
+```
+
+Measured 2026-08-20, on a shared container at load ~4.7 across five cores. **Read the ratios, not
+the absolutes**: across three consecutive runs the same routine varied by up to 40%, and an
+unchanged control routine has been seen to swing by half when a suite starts next to it. For a
+figure that has to be exact, `issues/system/0225` quotes traced event counts instead, because those
+are deterministic.
+
+| operation | per call |
+|---|---:|
+| `mlkemEncaps` | 225µs |
+| `mlkemDecaps` | 250µs |
+| `mlkemKeyGen` | 325µs |
+| `x25519Base` | 825µs |
+| `rsaVerifyPkcs1`, 2048-bit, e=65537 | 850µs |
+| `rsaVerifyPss`, 2048-bit, e=65537 | 850µs |
+| `ed25519PublicKey` | 2.1ms |
+| `ed25519Sign` | 2.5ms |
+| `ed25519Verify` | 2.7ms |
+| `p256Sign` | 2.6ms |
+| `p256Ecdh` | 2.8ms |
+| `p256PublicKey` | 3.4ms |
+| `p256Verify` | 5.8ms |
+| `bcryptPbkdf`, 16 rounds | 128ms |
+| `rsaSignPkcs1`, 2048-bit | 147ms |
+
+Three things in that ordering are worth saying out loud.
+
+**ML-KEM is the fastest thing here**, by a factor of three over X25519 and ten over the signature
+schemes. The post-quantum primitive is not the expensive one; lattice arithmetic is cheap and the
+elliptic curves are not.
+
+**Ed25519 and P-256 now cost the same**, which they did not on the morning of 2026-08-20 —
+`issues/system/0209` was opened because P-256 signing was five times ed25519's, and
+`issues/system/0224` closed that by replacing the arithmetic modulo the group order. P-256
+*verification* is still twice a signature, because it is two scalar multiplications.
+
+**The two slow ones are slow on purpose and by accident respectively.** `bcryptPbkdf` at OpenSSH's
+default cost is meant to take about this long — being expensive is the whole function.
+`rsaSignPkcs1` is not: it is `modPowSecret` over `packages/bignum`, 1024 rounds of multiply and
+divide with no CRT, and `issues/system/0209` still has it open.
+
+### Why this table exists rather than a figure per section
+
+Because the figures per section were wrong. Four of them, when this was written:
+
+| said | was | out by |
+|---|---|---|
+| ed25519, "roughly 120 ms per signature" | 2.5ms | 50× |
+| P-256, "roughly 37 ms per scalar multiplication" | 3.4ms | 10× |
+| RSA, "about 170 ms per 2048-bit verification" | 850µs | 200× |
+| bcrypt, "about 10 ms per hash at the default 16 rounds" | 128ms | 13× |
+
+The RSA one was contradicted by `issues/system/0209`'s own measured table, in this repository, and
+nothing noticed because the two were prose in different files. And two *more* figures were written
+into this README on the morning of 2026-08-20 and invalidated the same afternoon by
+`issues/system/0224` — same file, same person, hours apart.
+
+`ct.wac`'s header has said since it was written that "published figures that cannot be regenerated
+go stale silently". That argument was made about the side-channel table and not applied to the
+timings printed beside it, and the timings are what rotted. So there is one table, it has a
+command, it has a date, and the sections below point at it instead of repeating it — a second copy
+of a number is a copy that drifts, and this is what that looks like after a few weeks.
+
 ## X25519
 
 Curve25519 Diffie-Hellman, RFC 7748. `src/field25519.wac` is the arithmetic in
@@ -77,15 +147,10 @@ verify two of the three public keys. `sqrt(-1)` had been computed one factor of 
 short, which only affects point *decoding* — a path signing never takes. A sign-then-
 verify test would have passed.
 
-**2.3ms per signature and 2.2ms per verification**, 40 operations each on this machine. The
-scalar multiplication is a plain 256-step double-and-add with no windowing, which is the
-slowest reasonable choice and the easiest to read against the spec — and it is still six
-times faster than this package's P-256 signing, for the reason `issues/system/0224` gives.
-
-This said "roughly 120 ms per signature" until 2026-08-20, which was true when it was
-written and had been wrong by a factor of fifty since `issues/system/0209` found `ptAdd`
-inverting a field element on every point addition. A timing figure in prose is a
-measurement nothing re-takes.
+The scalar multiplication is a plain 256-step double-and-add with no windowing, which is
+the slowest reasonable choice and the easiest to read against the spec. See
+[Speed](#speed-in-one-place) for what it costs, and for why the figure that used to be here
+was fifty times it.
 
 ## ML-KEM-768
 
@@ -169,9 +234,11 @@ against implementations that parsed the DigestInfo rather than matching its byte
 against ones that stopped checking after finding the hash. So the DigestInfo prefix here
 is a byte table to compare against, never something to parse.
 
-About 170 ms per 2048-bit verification. `modPow` is square-and-multiply with a divmod
-after each step; the exponent is public, so branching on its bits is the one place in
-this package where the timing caveat genuinely does not apply.
+`modPow` is square-and-multiply with a divmod after each step; the exponent is public, so
+branching on its bits is the one place in this package where the timing caveat genuinely
+does not apply. Verification is under a millisecond and signing is the most expensive
+operation in the package — [Speed](#speed-in-one-place) has both, and the figure that used
+to be here overstated verification by two orders of magnitude.
 
 ## bcrypt_pbkdf
 
@@ -206,7 +273,10 @@ something review catches. See [The AES S-box, and a lesson about generated
 tables](#the-aes-s-box-and-a-lesson-about-generated-tables) for why that is the house
 style.
 
-About 10 ms per hash at the default 16 rounds, which is the intended order of magnitude.
+At OpenSSH's default 16 rounds it is the second most expensive thing here, which is the
+intended order of magnitude: being slow is the whole function.
+[Speed](#speed-in-one-place) has the number, and the figure that used to be here was an
+order of magnitude under it.
 
 ## P-256 and P-384
 
@@ -255,12 +325,10 @@ would need a use for it. Its tests are aimed at the generalisation rather than a
 implementation: if twelve limbs work as well as eight, the shared code is genuinely
 generic.
 
-**2.5ms per P-256 scalar multiplication** — a public key or an ECDH — and 13.7ms per
-signature, which is a different story: eleven of those milliseconds are the arithmetic
-modulo the group order, not the curve. `issues/system/0224`.
-
-This said "roughly 37 ms" until 2026-08-20. Same as the ed25519 figure above: written
-from a measurement, then left alone while the code got fifteen times faster.
+See [Speed](#speed-in-one-place). Signing used to be five times a scalar multiplication,
+because eleven of its thirteen milliseconds were the arithmetic modulo the group order
+rather than the curve; `issues/system/0224` replaced that and the two are now within a
+factor of two of each other.
 
 A caller checking for the all-zero shared secret, as RFC 7748 §6.1 permits, gets it: a
 low-order point multiplies to the identity and encodes as zero. This package does not
@@ -529,7 +597,7 @@ not comparable with the ones printed here before that date. What each routine *i
 move.
 
 The x25519 row is the one worth reading twice: the ladder is uniform across every one of
-1.6 million events, which is what "structurally uniform" was claiming without evidence.
+1,812,173 events, which is what "structurally uniform" was claiming without evidence.
 
 **And the P-256 row is the one to read beside it**, because the two started as the same
 shape of routine with opposite answers. `x25519`'s ladder does the same work whatever the
