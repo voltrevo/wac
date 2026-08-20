@@ -108,6 +108,39 @@ is total over its documented domain.
 Canaried both ways: breaking the pin's snippet reports "no longer holds", and dropping the trap case
 from `cases()` reports "1 reachable branch point(s) uncovered".
 
+### `unicode` third, and it found the thing this issue was arguing about
+
+**8 hold a coverage floor, 0 only check their own exemptions have not drifted, 13 report and cannot
+fail.**
+
+Its three gaps were not the code's testing but **the driver's reach**, and that is the "Against"
+argument in this issue, live: nine of `unicode`'s thirteen tests take `(Core, Cli)`, so before
+`issues/system/0221` the exercise could not call them and was written as hand-built probes instead.
+`wac covdump` runs the ordinary program path, so `main` gets a real `Core` and `Cli` and calls all
+thirteen. The ledger passes the grants they need — read, write, run, env, and deliberately not net.
+
+**Only three of nineteen exercises had been rewired when this was written**: `crypto` with 288 test
+calls, `ssh` with 32, `wacpkg` with 2. Sixteen were still measuring their probes. That is the number
+worth knowing before anyone sets the remaining floors, because a floor over a probe corpus records what
+the probes happened to reach — the exact sentence this issue used to argue against floors, and now a
+fixable one.
+
+What it recovered, and what it did not:
+
+- **`encodedLength` refusing a surrogate** was a real gap, and a small one: the exercise's main loop
+  *skips* surrogates and its edge list had none. Closed by adding `0xd800` and `0xdfff` to the list;
+- **`utf8.wac:45`, the over-long two-byte check, is unreachable** — and it reads like the opposite. An
+  uncovered over-long check looks exactly like the classic UTF-8 attack going untested, and `0xC0 0x80`
+  *is* in `unicode_test.wac`'s rejection table. It is rejected sixteen lines earlier, by
+  `if (b0 < 0xC2)`, so a two-byte sequence reaching line 45 has `code >= 0x80` and the condition cannot
+  hold. Pinned with that argument rather than with "no test covers it";
+- **`encode`'s fall-through** past all four arms needs `encodedLength` to answer 0, which only a caller
+  ignoring that same answer can arrange. Pinned as the defensive arm it is.
+
+106 of 108. The lesson for the remaining thirteen: **rewire the exercise to call the tests first, then
+read what is left.** Doing it the other way round would have written three pins here, one of them
+claiming a security-relevant check was untested when it was unreachable.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,

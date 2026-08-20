@@ -1,0 +1,93 @@
+// unicode's coverage, and two points an earlier check already refused.
+//
+//   deno task coverage:unicode
+//   deno task coverage:unicode --verbose
+//
+// **106 of 108**, and the two below are both subsumed by a check that fires first.
+// `issues/system/0205`.
+//
+// ## The three gaps were the driver's reach, not the code's testing
+//
+// This package read 105 of 108, and the three uncovered points were
+//
+//   - `utf8.wac:45` — the over-long check inside `decode`;
+//   - `utf8.wac:58` — `encodedLength` refusing a surrogate;
+//   - `utf8.wac:76` — the `else` past every arm of `encode`.
+//
+// **One of the three was a gap and is closed**: the exercise's main loop *skips* surrogates, and its
+// list of edge code points had none, so `encodedLength`'s refusal of one had never been reached from
+// here — while `test/wac/unicode_test.wac` has tested the *decoder's* refusal of a surrogate since it
+// was written. `0xd800` and `0xdfff` are in the edge list now.
+//
+// The other two are pinned below, and reading them was the point: the first looked like the classic
+// over-long-encoding attack and is not reachable at all.
+//
+// **Nine of this package's thirteen tests take `(Core, Cli)`**, and until `issues/system/0221` a
+// driver could not call one: `harness/wacCoverage.ts` skips any test whose `fn.length > 0`, because
+// `instrument` cannot supply a capability. So `cov_exercise.wac` was hand-built probes, and its number
+// answered "what do the probes reach" rather than "what do the tests reach". `wac covdump` runs the
+// ordinary program path, so the exercise's `main` has a real `Core` and `Cli` and simply calls them.
+//
+// **That was true of sixteen of nineteen exercises when this was written** — only `crypto` (288 test
+// calls), `ssh` (32) and `wacpkg` (2) had been rewired. It is the same sentence `issues/system/0205`
+// used as the argument *against* floors: "a floor recorded against a driver that cannot run them is a
+// number that means what the probes happened to reach". That is fixable now, one package at a time,
+// and pinning the gaps instead would have written three exemptions for code that was tested all along.
+//
+// ## The grants, and why a driver has them at all
+//
+// The host-agreeing tests spawn a process to ask a second implementation, so the exercise is compiled
+// with what they need and nothing else. `--allow-net` is deliberately absent: nothing here opens a
+// socket, and a driver given a capability it does not need is one whose exercises could quietly start
+// using it.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/unicode/test/cov_exercise.wac";
+const string PREFIX = "packages/unicode/";
+
+/** What the exercise's tests need: a process to ask, files to read, and the environment to find them. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/unicode/src/utf8.wac", 45, "if (need == 1 && code < 0x80)", true,
+        "**The over-long two-byte check, and an earlier line already made it impossible.** " +
+        "`decode` refuses `b0 < 0xC2` up front — its comment says \"a continuation byte, or an " +
+        "over-long C0/C1\" — so a two-byte sequence that gets this far has `b0 >= 0xC2`, which " +
+        "makes `code` at least 2 before the continuation byte is folded in and at least 0x80 " +
+        "after. `code < 0x80` cannot happen.\n" +
+        "         Worth stating because it looks like the opposite: an uncovered over-long check " +
+        "reads as the classic UTF-8 attack going untested, and `0xC0 0x80` *is* in " +
+        "`test/wac/unicode_test.wac`'s rejection table. It is rejected — sixteen lines earlier. " +
+        "Kept because it is what makes the three-way over-long test below it uniform, and a later " +
+        "edit that widened the lead-byte range would need it."),
+    Pin("packages/unicode/src/utf8.wac", 76, "} else if (n == 4) {", true,
+        "The fall-through past every arm of `encode` — `n` neither 1, 2, 3 nor 4. `n` comes from " +
+        "`encodedLength` one line above, which answers 0 for a negative, a surrogate or anything " +
+        "above U+10FFFF and otherwise 1..4. So reaching this needs a 0, and the only caller that " +
+        "could produce one is a caller that ignored the same function's answer: `test/probe.wac`'s " +
+        "`encodeOne` guards `if (n > 0)`, which is what a caller does. `encode`'s doc says \"the " +
+        "caller sizes `out`\", and a caller sizing it from `encodedLength` has already been told 0.\n" +
+        "         Kept as the defensive arm it is: writing nothing and returning 0 is the right " +
+        "answer for a code point that encodes to nothing, and the alternative is three arms that " +
+        "silently do not run."));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

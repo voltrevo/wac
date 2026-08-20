@@ -21,25 +21,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 130931,
+  lines: 130990,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2562,
+  tests: 2566,
   programs: 81,
   pages: 11,
   /**
-   * The whole repository: the packages (2562), and the compiler, harness and tooling
+   * The whole repository: the packages (2566), and the compiler, harness and tooling
    * around them (1374).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3936,
+  testsAll: 3940,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 490,
+  wacTests: 491,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -78,7 +78,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 185 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17363, tests: 313 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34537, tests: 267 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34596, tests: 271 },
   { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 1749, tests: 45 },
   { name: "wactest", what: "Assertions for tests written in wac.", lines: 2103, tests: 34 },
   { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3711, tests: 73 },
