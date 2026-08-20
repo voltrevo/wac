@@ -59,3 +59,19 @@ That is the reporting half. The emit itself is still `issues/lang/0154`.
 `emitLinked` answering an empty or header-only module — is not checked for having produced anything. The
 same question applies to `wac <module.wasm> <fn>`: `is not callable` is a diagnosis, and exit 0 says the run
 was fine.
+
+## 2026-08-20: the guard this asks for exists; the trigger no longer reaches it
+
+`wacc.wac` has it, with a comment citing this issue — a module of `wasm.len() <= 8` is named and the
+build exits 1. Two stronger nets now sit beside it, both from `issues/lang/0170a`: an export the
+source declared and the module lacks fails the build, and `wac build` validates what it wrote.
+
+**Not closed, because the reproduction cannot be re-run.** It needed the `0154` trigger, and that no
+longer produces a bare module: the `Case` collisions in `packages/wacc/test/wac` were renamed, so the
+aggregate builds, and the collision that remains produces a 4.5 KB *invalid* module which the new
+validator catches rather than an eight-byte one. So the guard is in place and unreachable by the only
+route anybody has recorded — which is a good state and not a demonstrated one.
+
+To close this properly somebody needs an input that still makes the emitter produce nothing at all.
+If no such input exists, the honest close is "the guard is here, and nothing can reach it" — but that
+is a claim about every input, and this issue exists because a claim like that was wrong once.
