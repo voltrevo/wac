@@ -4300,6 +4300,16 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   // `() => { i32 x = 2; return x; }` reported *undefined name* at `x`.
   declareAll(c, body);
   for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], tyPrim(-1, e.line, e.col)); }
+  // **A lambda owes its slot a value, which a plain function is already held to.** `export i32 f() {
+  // }` is *not every path returns a value*; `fn[i32(i32)] g = (i32 a) => { };` was accepted, and the
+  // failure arrived as `unreachable` at runtime, from a call site that looks fine. The rule is the
+  // function's, applied to the return type the funcref names. `issues/lang/0170a`.
+  //
+  // `ret == ""` is a lambda in a slot this checker cannot name, where an empty answer means "not
+  // known" rather than "returns nothing" — the same exemption every rule here takes.
+  if (ret != "" && returnsAValue(ret) && !alwaysLeaves(body)) {
+    c.report(errMissingReturn(), e.line, e.col);
+  }
   c.popScope();
   c.lambdaReturn = outer;
 }

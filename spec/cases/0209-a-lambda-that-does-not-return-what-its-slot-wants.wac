@@ -1,0 +1,5 @@
+// expect: refused
+// only: wacc
+// why: a lambda owes its slot a value, the way a function owes its return type one
+// from: issues/lang/0170a
+export i32 main() { fn[i32(i32)] g = (i32 a) => { }; return g(7); }
