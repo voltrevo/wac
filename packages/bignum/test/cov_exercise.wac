@@ -51,6 +51,60 @@ import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr,
 import { test_toStr_returns_text, test_arithmetic_from_wac, test_signs_and_predicates,
          test_shifts_floor_for_negatives, test_truncated_division, test_divSmall_remainder_is_a_magnitude,
          test_bitLen_and_hex, test_formatDecimal_pads_interior_chunks } from "./wac/big_test.wac";
+import {
+  test_arith_exhaustive_over_small_values as arith__arith_exhaustive_over_small_values,
+  test_arith_limb_boundaries as arith__arith_limb_boundaries,
+  test_arith_all_ones_and_all_zeros_limb_runs as arith__arith_all_ones_and_all_zeros_limb_runs,
+  test_arith_random_operands_across_a_wide_size_range as arith__arith_random_operands_across_a_wide_size_range,
+  test_arith_divisors_engineered_to_need_the_add_back as arith__arith_divisors_engineered_to_need_the_add_back,
+  test_arith_the_quotient_estimate_survives_rhat_reaching_base as arith__arith_the_quotient_estimate_survives_rhat_reaching_base,
+  test_arith_division_identity_holds as arith__arith_division_identity_holds,
+  test_arith_truncated_division_on_every_sign as arith__arith_truncated_division_on_every_sign,
+  test_traps_general_division_of_zero_by_zero as arith__traps_general_division_of_zero_by_zero,
+  test_traps_general_division_by_zero as arith__traps_general_division_by_zero,
+  test_traps_general_division_of_a_negative_by_zero as arith__traps_general_division_of_a_negative_by_zero,
+  test_traps_general_division_of_a_large_value_by_zero as arith__traps_general_division_of_a_large_value_by_zero,
+  test_traps_small_division_of_zero_by_zero as arith__traps_small_division_of_zero_by_zero,
+  test_traps_small_division_by_zero as arith__traps_small_division_by_zero,
+  test_traps_small_remainder_of_zero_by_zero as arith__traps_small_remainder_of_zero_by_zero,
+  test_traps_small_remainder_by_zero as arith__traps_small_remainder_by_zero,
+  test_shifts_match_bigint_including_negative_values as arith__shifts_match_bigint_including_negative_values,
+  test_shifts_the_most_negative_count as arith__shifts_the_most_negative_count,
+  test_traps_shifting_right_by_the_most_negative_count as arith__traps_shifting_right_by_the_most_negative_count,
+  test_shifts_a_negative_count_reverses_direction as arith__shifts_a_negative_count_reverses_direction,
+  test_shifts_shifting_everything_out as arith__shifts_shifting_everything_out,
+  test_mul_small_and_div_small_match_the_general_operations as arith__mul_small_and_div_small_match_the_general_operations,
+  test_cmp_and_cmp_abs_match_bigint as arith__cmp_and_cmp_abs_match_bigint,
+  test_negate_abs_and_copy_preserve_value as arith__negate_abs_and_copy_preserve_value,
+  test_negating_zero_cannot_produce_minus_zero as arith__negating_zero_cannot_produce_minus_zero,
+} from "./wac/arith_test.wac";
+import {
+  test_arithmetic_from_wac as big__arithmetic_from_wac,
+  test_signs_and_predicates as big__signs_and_predicates,
+  test_shifts_floor_for_negatives as big__shifts_floor_for_negatives,
+  test_truncated_division as big__truncated_division,
+} from "./wac/big_test.wac";
+import {
+  test_decimal_small_values_round_trip as text__decimal_small_values_round_trip,
+  test_decimal_limb_boundaries_round_trip as text__decimal_limb_boundaries_round_trip,
+  test_decimal_random_values_round_trip_across_sizes as text__decimal_random_values_round_trip_across_sizes,
+  test_decimal_zero_has_one_spelling as text__decimal_zero_has_one_spelling,
+  test_decimal_leading_zeros_are_accepted_and_dropped as text__decimal_leading_zeros_are_accepted_and_dropped,
+  test_decimal_malformed_input_is_rejected as text__decimal_malformed_input_is_rejected,
+  test_decimal_a_non_digit_in_a_later_chunk_is_rejected as text__decimal_a_non_digit_in_a_later_chunk_is_rejected,
+  test_hex_matches_bigints_to_string as text__hex_matches_bigints_to_string,
+  test_hex_prefix_case_and_malformed_input as text__hex_prefix_case_and_malformed_input,
+  test_from_i64_and_from_u64_cover_the_extremes as text__from_i64_and_from_u64_cover_the_extremes,
+  test_bit_len_matches_bigint as text__bit_len_matches_bigint,
+} from "./wac/text_test.wac";
+import {
+  test_u64_division_and_remainder_are_unsigned as u64__u64_division_and_remainder_are_unsigned,
+  test_u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four as u64__u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four,
+  test_u64_shift_right_does_not_sign_extend as u64__u64_shift_right_does_not_sign_extend,
+  test_u64_comparison_is_unsigned as u64__u64_comparison_is_unsigned,
+  test_u64_truncation_keeps_the_low_thirty_two_bits as u64__u64_truncation_keeps_the_low_thirty_two_bits,
+  test_u64_a_u32_product_widens as u64__u64_a_u32_product_widens,
+} from "./wac/u64_test.wac";
 
 const string ORACLE = "packages/bignum/test/operands.ts";
 
@@ -332,6 +386,167 @@ export i32 main(Core core, Cli cli) {
   seen = seen + test_bitLen_and_hex().len();
   seen = seen + test_formatDecimal_pads_interior_chunks().len();
 
+
+  // **The package's own tests.** Twenty-five of the 46 take `(Core, Cli)` — they compare against a
+  // host oracle — so before `issues/system/0221` a coverage driver could not call them.
+  //
+  // What this recovers: the four points around `bits == -2147483648` in `shl` and `shr`, which
+  // `test_shifts_the_most_negative_count` and `test_traps_shifting_right_by_the_most_negative_count`
+  // have covered since GitHub wac-mono#4 was fixed. Tested all along, and unreachable from here.
+  //
+  // Nine expect a trap and go through `trapCase` below rather than here: a trap in `main` ends the
+  // run, and the report then looks exactly like the one before the change.
+  i32 bad = 0;
+  if (arith__arith_exhaustive_over_small_values(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_arith_exhaustive_over_small_values");
+    bad = bad + 1;
+  }
+  if (arith__arith_limb_boundaries(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_arith_limb_boundaries");
+    bad = bad + 1;
+  }
+  if (arith__arith_all_ones_and_all_zeros_limb_runs(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_arith_all_ones_and_all_zeros_limb_runs");
+    bad = bad + 1;
+  }
+  if (arith__arith_random_operands_across_a_wide_size_range(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_arith_random_operands_across_a_wide_size_range");
+    bad = bad + 1;
+  }
+  if (arith__arith_divisors_engineered_to_need_the_add_back(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_arith_divisors_engineered_to_need_the_add_back");
+    bad = bad + 1;
+  }
+  if (arith__arith_the_quotient_estimate_survives_rhat_reaching_base(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_arith_the_quotient_estimate_survives_rhat_reaching_base");
+    bad = bad + 1;
+  }
+  if (arith__arith_division_identity_holds(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_arith_division_identity_holds");
+    bad = bad + 1;
+  }
+  if (arith__arith_truncated_division_on_every_sign().len() > 0) {
+    core.warn("error: FAILED arith_test test_arith_truncated_division_on_every_sign");
+    bad = bad + 1;
+  }
+  if (arith__shifts_match_bigint_including_negative_values(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_shifts_match_bigint_including_negative_values");
+    bad = bad + 1;
+  }
+  if (arith__shifts_the_most_negative_count().len() > 0) {
+    core.warn("error: FAILED arith_test test_shifts_the_most_negative_count");
+    bad = bad + 1;
+  }
+  if (arith__shifts_a_negative_count_reverses_direction(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_shifts_a_negative_count_reverses_direction");
+    bad = bad + 1;
+  }
+  if (arith__shifts_shifting_everything_out(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_shifts_shifting_everything_out");
+    bad = bad + 1;
+  }
+  if (arith__mul_small_and_div_small_match_the_general_operations(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_mul_small_and_div_small_match_the_general_operations");
+    bad = bad + 1;
+  }
+  if (arith__cmp_and_cmp_abs_match_bigint(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_cmp_and_cmp_abs_match_bigint");
+    bad = bad + 1;
+  }
+  if (arith__negate_abs_and_copy_preserve_value(core, cli).len() > 0) {
+    core.warn("error: FAILED arith_test test_negate_abs_and_copy_preserve_value");
+    bad = bad + 1;
+  }
+  if (arith__negating_zero_cannot_produce_minus_zero().len() > 0) {
+    core.warn("error: FAILED arith_test test_negating_zero_cannot_produce_minus_zero");
+    bad = bad + 1;
+  }
+  if (big__arithmetic_from_wac().len() > 0) {
+    core.warn("error: FAILED big_test test_arithmetic_from_wac");
+    bad = bad + 1;
+  }
+  if (big__signs_and_predicates().len() > 0) {
+    core.warn("error: FAILED big_test test_signs_and_predicates");
+    bad = bad + 1;
+  }
+  if (big__shifts_floor_for_negatives().len() > 0) {
+    core.warn("error: FAILED big_test test_shifts_floor_for_negatives");
+    bad = bad + 1;
+  }
+  if (big__truncated_division().len() > 0) {
+    core.warn("error: FAILED big_test test_truncated_division");
+    bad = bad + 1;
+  }
+  if (text__decimal_small_values_round_trip(core, cli).len() > 0) {
+    core.warn("error: FAILED text_test test_decimal_small_values_round_trip");
+    bad = bad + 1;
+  }
+  if (text__decimal_limb_boundaries_round_trip(core, cli).len() > 0) {
+    core.warn("error: FAILED text_test test_decimal_limb_boundaries_round_trip");
+    bad = bad + 1;
+  }
+  if (text__decimal_random_values_round_trip_across_sizes(core, cli).len() > 0) {
+    core.warn("error: FAILED text_test test_decimal_random_values_round_trip_across_sizes");
+    bad = bad + 1;
+  }
+  if (text__decimal_zero_has_one_spelling().len() > 0) {
+    core.warn("error: FAILED text_test test_decimal_zero_has_one_spelling");
+    bad = bad + 1;
+  }
+  if (text__decimal_leading_zeros_are_accepted_and_dropped().len() > 0) {
+    core.warn("error: FAILED text_test test_decimal_leading_zeros_are_accepted_and_dropped");
+    bad = bad + 1;
+  }
+  if (text__decimal_malformed_input_is_rejected().len() > 0) {
+    core.warn("error: FAILED text_test test_decimal_malformed_input_is_rejected");
+    bad = bad + 1;
+  }
+  if (text__decimal_a_non_digit_in_a_later_chunk_is_rejected().len() > 0) {
+    core.warn("error: FAILED text_test test_decimal_a_non_digit_in_a_later_chunk_is_rejected");
+    bad = bad + 1;
+  }
+  if (text__hex_matches_bigints_to_string(core, cli).len() > 0) {
+    core.warn("error: FAILED text_test test_hex_matches_bigints_to_string");
+    bad = bad + 1;
+  }
+  if (text__hex_prefix_case_and_malformed_input().len() > 0) {
+    core.warn("error: FAILED text_test test_hex_prefix_case_and_malformed_input");
+    bad = bad + 1;
+  }
+  if (text__from_i64_and_from_u64_cover_the_extremes(core, cli).len() > 0) {
+    core.warn("error: FAILED text_test test_from_i64_and_from_u64_cover_the_extremes");
+    bad = bad + 1;
+  }
+  if (text__bit_len_matches_bigint(core, cli).len() > 0) {
+    core.warn("error: FAILED text_test test_bit_len_matches_bigint");
+    bad = bad + 1;
+  }
+  if (u64__u64_division_and_remainder_are_unsigned(core, cli).len() > 0) {
+    core.warn("error: FAILED u64_test test_u64_division_and_remainder_are_unsigned");
+    bad = bad + 1;
+  }
+  if (u64__u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four(core, cli).len() > 0) {
+    core.warn("error: FAILED u64_test test_u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four");
+    bad = bad + 1;
+  }
+  if (u64__u64_shift_right_does_not_sign_extend(core, cli).len() > 0) {
+    core.warn("error: FAILED u64_test test_u64_shift_right_does_not_sign_extend");
+    bad = bad + 1;
+  }
+  if (u64__u64_comparison_is_unsigned(core, cli).len() > 0) {
+    core.warn("error: FAILED u64_test test_u64_comparison_is_unsigned");
+    bad = bad + 1;
+  }
+  if (u64__u64_truncation_keeps_the_low_thirty_two_bits(core, cli).len() > 0) {
+    core.warn("error: FAILED u64_test test_u64_truncation_keeps_the_low_thirty_two_bits");
+    bad = bad + 1;
+  }
+  if (u64__u64_a_u32_product_widens(core, cli).len() > 0) {
+    core.warn("error: FAILED u64_test test_u64_a_u32_product_widens");
+    bad = bad + 1;
+  }
+  seen = seen + bad;
+
   return seen;
 }
 
@@ -345,3 +560,16 @@ export i32 trap_add_malformed_empty() { opAdd("".toBytes(), "1".toBytes()); retu
 export i32 trap_add_malformed_decimal() { opAdd("1.5".toBytes(), "1".toBytes()); return 0; }
 export i32 trap_add_malformed_sign() { opAdd("-".toBytes(), "1".toBytes()); return 0; }
 export i32 trap_from_hex_malformed() { fromHex("zz".toBytes()); return 0; }
+
+/** The nine tests that expect a trap, for `covdump` to call one at a time with the trap caught. */
+export void trapCase(i32 i) {
+  if (i == 0) { arith__traps_general_division_of_zero_by_zero(); return; }
+  if (i == 1) { arith__traps_general_division_by_zero(); return; }
+  if (i == 2) { arith__traps_general_division_of_a_negative_by_zero(); return; }
+  if (i == 3) { arith__traps_general_division_of_a_large_value_by_zero(); return; }
+  if (i == 4) { arith__traps_small_division_of_zero_by_zero(); return; }
+  if (i == 5) { arith__traps_small_division_by_zero(); return; }
+  if (i == 6) { arith__traps_small_remainder_of_zero_by_zero(); return; }
+  if (i == 7) { arith__traps_small_remainder_by_zero(); return; }
+  if (i == 8) { arith__traps_shifting_right_by_the_most_negative_count(); return; }
+}
