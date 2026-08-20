@@ -18,11 +18,19 @@
 // up produces something that verifies against itself and against nothing else, so scalar
 // arithmetic is kept in its own section and works on bytes rather than field elements.
 //
-// ## What this does not promise
+// ## What this does not promise, and what it says wrongly
 //
-// Not constant-time — see the package README. Signing branches on scalar bits in the
-// double-and-add, which leaks the nonce and therefore the key to anyone who can measure
-// it. This is a correctness exercise.
+// Not constant-time — see the package README. This header used to say the leak was that "signing
+// branches on scalar bits in the double-and-add", and **that has not been true of `ptMul` for as long
+// as anyone has looked**: it adds on every bit and keeps the answer with `feSelect`, which is exactly
+// what a header claiming otherwise stops a reader from checking. The sentence sent people to the one
+// place that was already right.
+//
+// Where signing *did* part on the secret, measured on 2026-08-20, was `scReduce` — a compare that
+// left early and a subtraction that was taken or not, per round, on a value derived from the secret
+// key expansion. Two seeds through `ed25519Sign` parted at `ed25519.wac:334`.
+// `issues/system/0225`. It is fixed, and nothing in this file is asserted uniform on that basis:
+// what the side-channel table in the README says is what has been traced.
 
 import { sha512 } from "./sha512.wac";
 import {
@@ -304,10 +312,15 @@ const u8[] L = u8[](
 /**
  * Reduce a 64-byte little-endian integer modulo L, to 32 bytes.
  *
- * Schoolbook long division by repeated conditional subtraction of shifted L, which is
- * 512 iterations of a 33-byte compare-and-subtract. Slower than Barrett reduction by a
- * wide margin and short enough to check by reading, which is the trade this package
- * makes everywhere the answer has to be right more than it has to be quick.
+ * Schoolbook long division by subtracting shifted L and keeping the difference when it did not
+ * borrow, 260 times. Slower than Barrett reduction by a wide margin and short enough to check by
+ * reading, which is the trade this package makes everywhere the answer has to be right more than it
+ * has to be quick.
+ *
+ * **Nothing inside a round depends on the value**, which was not true until 2026-08-20 — see the
+ * comment at the subtraction, which also has what it cost. `scLessThanL` below still returns early
+ * and does not need fixing: it is called on the `S` of a signature being verified, which came off
+ * the wire.
  */
 u8[] scReduce(u8[] wide) {
   // Work in a 64-byte accumulator, subtracting L shifted left by k bits for k from the
@@ -328,19 +341,31 @@ u8[] scReduce(u8[] wide) {
     }
     if (byteShift + 32 < 64) { shifted[byteShift + 32] = carry; }
 
-    // r >= shifted ?
-    i32 ge = 1;
-    for (i32 i = 63; i >= 0; i--) {
-      if (r[i] != shifted[i]) { ge = r[i] > shifted[i] ? 1 : 0; i = -1; }
+    // **The subtraction decides for itself, and there is no comparison any more.** `r - shifted`
+    // wraps exactly when `r < shifted`, and the borrow out says so — which is the same question the
+    // compare loop used to ask, for the cost of a subtraction that was going to happen anyway.
+    //
+    // That loop returned on the first differing byte, so *how many bytes it read* was a function of
+    // `r` — and `r` is the nonce here: `ed25519Sign` reduces `sha512(prefix ++ msg)` where `prefix`
+    // is half the secret key expansion, and a partial leak of an EdDSA nonce recovers the private
+    // key from a signature the attacker already holds. The subtraction was conditional as well.
+    // `issues/system/0225`, and `weierstrass.wac`'s `reduceOnce` is the same trick.
+    //
+    // **It costs 2.8% more, not less, and that was measured after the comment said less.** The
+    // reasoning was that one unconditional pass replaces a compare pass plus a subtraction taken
+    // half the time — which ignores that the compare left after a byte or two, so what it really
+    // replaces is cheap. Traced events for one `ed25519Sign`: 7,199,946 to 7,399,146. Events rather
+    // than milliseconds because the box was busy enough that the unchanged control swung by half,
+    // and an event count is deterministic; it is a proxy for time and not time.
+    u8[] t = u8[64]();
+    i32 borrow = 0;
+    for (i32 i = 0; i < 64; i++) {
+      i32 d = r[i] - shifted[i] - borrow;
+      borrow = (d >> 31) & 1;
+      t[i] = d & 0xFF;
     }
-    if (ge == 1) {
-      i32 borrow = 0;
-      for (i32 i = 0; i < 64; i++) {
-        i32 diff = r[i] - shifted[i] - borrow;
-        borrow = diff < 0 ? 1 : 0;
-        r[i] = diff & 0xFF;
-      }
-    }
+    i32 mask = 0 - (1 - borrow);
+    for (i32 i = 0; i < 64; i++) { r[i] = (r[i] ^ (mask & (r[i] ^ t[i]))) & 0xFF; }
   }
 
   u8[] out = u8[32]();

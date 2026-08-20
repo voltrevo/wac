@@ -512,11 +512,13 @@ which is how AES keys have been recovered from cache timing since 2005.
 | `chachaBlock` | 510 | uniform |
 | `poly1305` | 140 | uniform |
 | `x25519Base` | 1,812,173 | uniform |
+| `ed25519Sign` | 7,399,082 | uniform |
 | `ghash` | 740 | **leaks** — control flow diverges where one run stood at `ghash.wac:36`; not examined past that |
 | `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
 | `aesEncrypt` | 11,779 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges where one run stood at `aes.wac:66`; not examined past that |
 | `p256PublicKey` | 8,190,814 | uniform |
 | `p256Sign` | 8,456,980 | uniform |
+| `kemDecapsSecret` | 1,023,945 | uniform |
 | `bcryptPbkdf` | 8,177,005 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
 
 **The event counts changed on 2026-08-12 and the verdicts did not.** These are wacc's
@@ -632,6 +634,62 @@ multiplication was 2.4ms of a 13.2ms signature, so eleven milliseconds were alwa
 else — and "somewhere else" turned out to be one function that was both the leak and the cost.
 A fix measured only against the thing it was aimed at would have reported success and left
 both.
+
+**`ed25519Sign` and ML-KEM were added on 2026-08-20, and both were the same story again: the
+routine that holds the secret was not the routine with the row.**
+
+The table had `x25519Base` and no signing row. A uniform ladder is a fact about a ladder —
+`ed25519Sign` reduces `sha512(prefix ++ msg)` modulo L, where `prefix` is half the secret key
+expansion, and that is a different scalar, a different modulus and a different piece of
+arithmetic. `scReduce` compared with an early return, so *how many bytes it read* was a
+function of the nonce, and its subtraction was conditional on top. Two seeds parted at
+`ed25519.wac:334`. `issues/system/0225`.
+
+The subtraction decides for itself now — `r - shifted` wraps exactly when `r < shifted`, so the
+borrow out answers the comparison's question and the comparison is gone. **It costs 2.8% more
+rather than less**, which was measured after the code comment had already claimed less: traced
+events for one signature went 7,199,946 to 7,399,146. Events rather than milliseconds because
+the machine was busy enough that an unchanged control routine swung by half.
+
+**The file's own header had been pointing at the wrong place.** It said the leak was that
+"signing branches on scalar bits in the double-and-add" — and `ptMul` adds on every bit and
+selects, and has for as long as anyone has looked. A header naming a leak that is not there is
+worse than one naming none, because it answers the question a reader was about to ask.
+
+**ML-KEM had no row at all**, and had two leaks and one false alarm.
+
+`mod` reduced with `r < 0 ? r + q() : r` — a ternary, which is a branch, at fourteen call sites
+inside the NTT and the polynomial arithmetic. During decapsulation those coefficients are the
+decrypted message and the key's noise. **Flipping one bit of a ciphertext parted the two traces
+there**, at event 1,067,742, a million events before the implicit rejection the whole
+construction rests on. And that rejection was itself a ternary on `diff == 0` — one bit, and the
+bit that Fujisaki-Okamoto exists to hide. Both are masks now, each canaried separately, and a
+valid and an invalid ciphertext are identical over 1,528,880 events. `issues/system/0226`.
+
+**The false alarm is the part worth reading.** The first key-variation row reported a divergence
+at `mlkem.wac:201`, the rejection-sampling loop in `sampleNTT` — whose trip count depends on ρ,
+and **ρ is published inside the encapsulation key**. Two seeds are two different public keys, so
+the traces differ for a reason an attacker gets by reading `ek` rather than by timing anything.
+Holding the ciphertext fixed did not help: decapsulation re-encrypts, which re-samples the matrix
+from the ρ carried inside `dk`, and **a decapsulation key determines its own public key**. There
+is no pair of ML-KEM keys with the same public data.
+
+So the row varies the secret vector inside one fixed keypair — `dk`'s first 1152 bytes, leaving
+`ek`, its hash and z alone — which is the comparison the question actually names, and is uniform
+over 1,023,945 events. The resulting key is not one `mlkemKeyGen` would produce and is a valid
+*input*, which is all the measurement needs.
+
+Two lessons, and the second is the one that generalises: a differential that varies "the key"
+varies whatever the key determines, and for a KEM that includes public data. A row reading
+**leaks** for that is worse than no row, because expected noise is where the next real finding
+hides.
+
+**And one thing this table cannot see.** `mod` still computes `a % q()` — a remainder by a
+constant, on secret data. Whether that costs data-dependent time is a property of how the engine
+compiles `i32.rem_s`; `wac build --trace` records branches taken and array indices, not how long
+an arithmetic instruction took, so a uniform row here is a claim about control flow and memory
+access and not about arithmetic timing. Real ML-KEM implementations use Barrett reduction for
+exactly this reason. Named because a clean row should not be read as more than it is.
 
 **AES leaks in five places, not one.** Four are the key schedule's `SubWord` lookups
 (`aes.wac:113`–`116`) and the fifth is `SubBytes` itself (`aes.wac:149`), each indexing

@@ -174,6 +174,22 @@ export string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/
  *
  * Answers the path either way. A build that fails leaves no module, and the caller's first run says
  * so: `wac` reports the missing file and the test's own assertion on the exit status carries it.
+ *
+ * ## The flags are part of the cache key, and were not until 2026-08-20
+ *
+ * The key was `name` plus the mtimes of the entry's closure and of the `wac` binary. `grants` was not
+ * in it — so **two calls with the same `name` and different flags got the first one's module**, with
+ * nothing said. `builtByDeno` below has the identical hazard and documents it ("`name` must
+ * distinguish everything that changes the output"); this one had it and did not.
+ *
+ * It cost about ten minutes: `packages/crypto/test/wac/constanttime_test.wac` gained a journal-size
+ * argument, passed `--trace-slots 16777216` for a routine whose 7.4 million events overflow the
+ * default, and kept being told `truncated 7399082` with the *same* count each time. The flag was
+ * never reaching a build.
+ *
+ * The flags are written beside the module and compared verbatim rather than hashed — an exact
+ * comparison cannot collide, the file is two lines, and a missing sidecar forces a rebuild, which is
+ * the right way to be wrong.
  */
 export string builtProgram(Cli cli, string entry, string name, string[] grants) {
   string wac = wacBinary(cli);
@@ -182,10 +198,15 @@ export string builtProgram(Cli cli, string entry, string name, string[] grants) 
   string stem = dir + "/" + name;
   Stat have = cli.stat(stem + ".wasm").wait();
 
+  string want = "";
+  for (i32 i = 0; i < grants.len(); i++) { want = want + grants[i] + "\n"; }
+  FileResult had = cli.readFile(stem + ".flags").wait();
+  bool sameFlags = had.ok && string.fromBytes(had.bytes) == want;
+
   i64 newest = newestInClosure(cli, entry);
   Stat bin = cli.stat(wac).wait();
   if (bin.exists && bin.modifiedMillis > newest) { newest = bin.modifiedMillis; }
-  if (have.exists && have.modifiedMillis > newest) { return stem + ".wasm"; }
+  if (have.exists && sameFlags && have.modifiedMillis > newest) { return stem + ".wasm"; }
 
   string[] args = string[4 + grants.len()](fill: "");
   args[0] = "build";
@@ -194,6 +215,7 @@ export string builtProgram(Cli cli, string entry, string name, string[] grants) 
   args[3] = stem;
   for (i32 i = 0; i < grants.len(); i++) { args[4 + i] = grants[i]; }
   cli.exec(wac, args, u8[0]()).wait();
+  cli.writeFile(stem + ".flags", want.toBytes()).wait();
   return stem + ".wasm";
 }
 

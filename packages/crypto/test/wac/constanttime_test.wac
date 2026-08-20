@@ -319,6 +319,24 @@ export string test_x25519s_ladder_does_not_vary_with_the_scalar(Core core, Cli c
   return t.report();
 }
 
+export string test_ed25519_signing_does_not_vary_with_the_secret_key(Core core, Cli cli) {
+  // **The row `x25519Base` above was standing in for.** A uniform ladder is a fact about a ladder;
+  // signing reduces `sha512(prefix ++ msg)` modulo L, where `prefix` is half the secret key
+  // expansion — a different scalar, a different modulus and a different piece of arithmetic. It
+  // parted at `ed25519.wac:334` until 2026-08-20: `scReduce`'s comparison left on the first
+  // differing byte, so how many bytes it read was a function of the nonce, and a partial EdDSA nonce
+  // leak recovers the key from a signature the attacker already holds. `issues/system/0225`.
+  //
+  // 7.4 million events, so it needs a journal of 2^24 slots. Written as fitting the compiler's
+  // default first, which is 2^22 and about 4.19 million — and `ctcompare` said `truncated` rather
+  // than agreeing, which is the whole reason that answer is not a pass.
+  T t = T.create();
+  noSecretDependence(t, cli, "ed25519", "packages/crypto/src/ed25519.wac", "ed25519Sign",
+                     "ed25519Sign($KEY, " + literal(block16()) + ")", i32[](0, 1, 2, 3), 32,
+                     16777216);
+  return t.report();
+}
+
 export string test_p256_public_key_does_not_vary_with_the_private_key(Core core, Cli cli) {
   // **This was a known leak in two places, and is neither.** Both are worth stating, because the
   // second was invisible while the first was live.
@@ -366,6 +384,40 @@ export string test_the_scalar_multiply_mod_the_order_does_not_vary_with_its_oper
   T t = T.create();
   noSecretDependence(t, cli, "scmul", "packages/crypto/test/wac/p256_probe.wac", "scalarMulOrder",
                      "scalarMulOrder($KEY)", i32[](0, 1, 2, 3), 32, 0);
+  return t.report();
+}
+
+export string test_ml_kem_decapsulation_does_not_reveal_whether_the_ciphertext_was_valid(Core core,
+                                                                                        Cli cli) {
+  // **The one question the side-channel table cannot ask.** Its `Case` varies the secret and holds
+  // the public input; a KEM's most important property is the other way round — an attacker submits
+  // chosen ciphertexts to the *same* key and wants to learn which were valid, which is exactly the
+  // decryption oracle the Fujisaki-Okamoto transform exists to deny them. So this is here rather than
+  // in `ct.wac`, and it uses `pair` directly because `noSecretDependence`'s wording is about secrets.
+  //
+  // The two programs are the same key, the same message and one exclusive-or into the ciphertext's
+  // first byte: zero in one, 0xFF in the other. They parted at `mlkem.wac:56` — `mod`'s ternary on a
+  // polynomial coefficient, a million events inside `pkeDecrypt` and long before the rejection
+  // itself. `issues/system/0226`.
+  T t = T.create();
+  string dir = scratchDir(cli, "mlkem");
+  const string SRC = "packages/crypto/test/wac/mlkem_probe.wac";
+  string[] ab = pair(t, cli, dir, "kemDecapsFlip",
+                     driver(t, cli, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", i32[](0)),
+                     driver(t, cli, dir, "kemDecapsFlip", SRC, "kemDecapsFlip($KEY)", i32[](255)));
+  string a = ab[0];
+  string b = ab[1];
+  if (a == "" || b == "") { return t.report(); }
+
+  string said = compared(t, cli, a, b, false);
+  t.isTrue(startsWith(said, "same "),
+           "a valid and an invalid ciphertext are distinguishable: " + said +
+           (startsWith(said, "differs ") ? " at " + siteAt(cli, a, numberOf(word(said, 2))) : ""));
+  // `truncated` is not a pass here any more than anywhere else, and the count is the evidence the
+  // programs ran at all: two empty journals agree perfectly.
+  if (startsWith(said, "same ")) {
+    t.isTrue(numberOf(word(said, 1)) > 0, "no events recorded — did decapsulation happen? " + said);
+  }
   return t.report();
 }
 
