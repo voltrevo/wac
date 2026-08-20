@@ -27,7 +27,7 @@
     "coverage": "deno run -A tools/coverage.ts",
     "coverage:all": "deno run -A tools/coverageAll.ts",
     "size": "deno run -A tools/size.ts",
-    "coverage:bignum": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/bignum/test/cov_exercise.wac packages/bignum/ --allow-run trap_divide_by_zero trap_divide_zero_by_zero trap_remainder_by_zero_small trap_add_malformed_empty trap_add_malformed_decimal trap_add_malformed_sign trap_from_hex_malformed",
+    "coverage:bignum": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/bignum/test/cov_ledger.wac",
     "coverage:bytes": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/bytes/test/cov_ledger.wac",
     "coverage:codec": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/codec/test/cov_ledger.wac",
     "coverage:core": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- core/test/cov_exercise.wac core/ trapCase:11",

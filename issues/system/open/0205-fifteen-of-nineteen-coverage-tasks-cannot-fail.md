@@ -257,6 +257,41 @@ does not reach. Eleven pins where several would have to say "I could not reach i
 floor — that is a list of low-confidence prose, which is the failure this issue is about. The
 sampled-corpus problem wants fixing first, and then the eleven want reading one at a time.
 
+### `bignum` seventh: 226 → **230 of 230**, and a seed test worth doing before each floor
+
+**12 hold a coverage floor, 0 only check their own exemptions have not drifted, 9 report and cannot
+fail.**
+
+All four gaps were the `bits == -2147483648` handling in `shl` and `shr` — the guards that stop
+`-i32::MIN` being `i32::MIN` from recursing for ever, GitHub wac-mono#4. **Both are tested**, by
+`test_shifts_the_most_negative_count` and
+`test_traps_shifting_right_by_the_most_negative_count`, each with a paragraph explaining itself. What
+could not reach them was this driver: 25 of the package's 46 tests take `(Core, Cli)`. Four pins saying
+"no test covers this" would each have been false.
+
+**What the grants are worth, measured:** dropping them from the ledger takes this package from 230 of
+230 to **126 of 230**, because every host-comparing test then fails. That is the size of what
+`issues/system/0221` unlocked, in one package.
+
+### The seed test, and which packages fail it
+
+`packages/url` is report-only because its corpus is a *sampled* cross product, so its number moves when
+an unrelated input is added. That raised a fair question about the floors already set, since seven
+exercises seed an `Rng`. Answered by changing the seed and re-running:
+
+| package | covered before | after a different seed |
+|---|---:|---:|
+| `datetime` | 123 / 123 | 123 / 123 |
+| `unicode` | 106 / 108 | 106 / 108 |
+| `bignum` | 226 / 230 | 226 / 230 |
+| `http` | 404 / 447 | 404 / 447 |
+| `regex` | 573 / 649 | 573 / 649 |
+| **`fmt`** | **383 / 429** | **382 / 429** |
+
+So the test is not "does it use an `Rng`" — it is "does the number move when the seed does". Five are
+insensitive because their sampling *adds* to a hand-written set of edge cases; `url` and `fmt` are the
+two where the sample is load-bearing, and both want that dealt with before a floor.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
