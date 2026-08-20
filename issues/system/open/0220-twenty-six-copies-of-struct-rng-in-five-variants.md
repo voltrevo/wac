@@ -79,6 +79,26 @@ returned unsigned, so the unsigned family reproduces what the expectations were 
 the signed family does not. That makes the twelve signed copies suspect rather than merely different,
 and each wants checking the way datetime's was.
 
+## Re-checked after the merge: no copy produces a signed draw any more
+
+Measured over *code* with comments stripped, which the previous census did not do — it counted a
+comment describing the fold that had just been **removed** as an instance of the fold, in
+`packages/unicode/test/wac/unicode_test.wac`. That is a pattern failing to tell a citation from a
+repudiation, which is written down in `tools/wac/readmefigures_test.wac`'s header as the reason a
+different guard was rejected, and was repeated here within the hour of writing it.
+
+Of the 24 canonical copies remaining:
+
+- **zero** use the signed fold `v < 0 ? v + n : v`. Every one was swept;
+- 8 still declare `i32 next`, and **none of them draws signed**: one uses `next` alone, so the bits
+  are identical either way, and the other seven cast at the use site —
+  `((this.next() as@ u32) % (n as@ u32)) as@ i32`.
+
+**So the correctness half of this issue is closed.** What is left is mechanical: 24 declarations
+become one import, with no corpus moving anywhere, because every copy already draws what the deleted
+host drivers drew. That is a different and much duller job than the one filed this morning, and it is
+duller because two agents measured the same thing from opposite ends within an hour.
+
 ## What to do, revised
 
 Unify on the **u32** family — the one the deleted host drivers returned, the one
