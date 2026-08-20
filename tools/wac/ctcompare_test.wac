@@ -37,7 +37,7 @@ string indexed(i32 secret) {
   return "const u8[] SBOX = u8[](3, 1, 4, 1, 5, 9, 2, 6);\n" +
          "export i32 main() {\n" +
          "  i32 secret = " + itoa(secret) + ";\n" +
-         "  return SBOX[secret & 7] as~ i32;\n" +
+         "  return SBOX[secret & 7];\n" +
          "}\n";
 }
 
