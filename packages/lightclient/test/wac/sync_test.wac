@@ -88,14 +88,14 @@ i64 slotOf(string s) {
   i64 v = 0 as i64;
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] < '0' || b[i] > '9') { break; }
-    v = v * (10 as i64) + ((b[i] - '0') as! i64);
+    v = v * (10 as i64) + ((b[i] - '0') as i64);
   }
   return v;
 }
 
 i64 readU64(u8[] b, i32 at) {
   i64 v = 0 as i64;
-  for (i32 i = 7; i >= 0; i--) { v = v * (256 as i64) + (b[at + i] as! i64); }
+  for (i32 i = 7; i >= 0; i--) { v = v * (256 as i64) + (b[at + i] as i64); }
   return v;
 }
 

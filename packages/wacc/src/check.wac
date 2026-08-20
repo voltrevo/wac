@@ -2778,11 +2778,16 @@ export string typeOfExpr(C c, Expr e) {
       if (a == "string") { return "string"; }
       if (!isArrayName(a)) { return typeNone(); }
       string elem = dropLast(a, 2);
-      // Reading a packed element **widens**: `bytes[i]` from a `u8[]` is an i32-shaped value, which
-      // is why `return this.data[i];` from an `i32` function is the ordinary way this repository
-      // reads a byte. Calling it a `u8` reported 115 files. The exact widened type is not measured,
-      // so this says nothing — the same answer, and the same reason, as a packed assignment target.
-      if (isPackedName(elem)) { return typeNone(); }
+      // Reading a packed element **widens to `i32`**, which is why `return this.data[i];` from an
+      // `i32` function is the ordinary way this repository reads a byte. Calling it a `u8` reported
+      // 115 files, and that is what this used to avoid by saying nothing at all — but nothing is not
+      // the same answer as `i32`, and saying nothing silenced the rules that need it: `i64 x = b[0];`
+      // and `return b[0];` from an `i64` function were both accepted, and the emitter then wrote a
+      // module the engine refuses — `local.set[0] expected type i64, found array.get_u of type i32`.
+      //
+      // `i32` exactly, not "some integer": the reference accepts `i32 x = b[0];` and refuses
+      // `i64 x = b[0];` with *found i32*. `issues/lang/0170a`.
+      if (isPackedName(elem)) { return "i32"; }
       return elem;
     }
     // `!x` is a boolean; `-x` and `~x` are whatever `x` is.

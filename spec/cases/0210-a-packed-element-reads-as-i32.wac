@@ -1,0 +1,4 @@
+// expect: refused
+// why: reading a packed element widens to i32 exactly, so an i64 slot does not take one
+// from: issues/lang/0170a
+export i64 main(u8[] b) { i64 x = b[0]; return x; }
