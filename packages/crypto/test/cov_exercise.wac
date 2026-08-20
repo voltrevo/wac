@@ -1,0 +1,998 @@
+// Branch coverage for crypto: its own tests, plus the shapes no test drives.
+//
+//   deno task coverage:crypto
+//
+// This was crypto's `cov.ts` until 2026-08-20 — `issues/system/0161`, `issues/system/0222`. The ledger
+// is `cov_ledger.wac` beside this file and the reporting is `tools/wac/covledger.wac`, shared.
+//
+// ## The tests are the workload now, and that is the whole change
+//
+// The TypeScript could not call them. `harness/wacCoverage.ts`'s `runTestExports` skips any test taking
+// an argument — `fn.length > 0` — because `instrument` and `wacBind` cannot supply a capability: a `Cli`
+// is built by the wac side against a shared-memory bridge that only a real host sets up. So **64 of
+// this package's 152 returning tests were unreachable from its own coverage driver**, and it made up
+// the difference with about six hundred lines of hand-built probe calls.
+//
+// `wac covdump` runs the ordinary program path (`issues/system/0221`), so `main` here has a real `Core`
+// and `Cli` and simply calls them. Measured: the tests alone reach **1100 of 1173** points, against the
+// TypeScript's 974 of 1053 — more points seen and fewer missed, because a test file pulls in modules
+// the seven probes never imported.
+//
+// **So `MEASURED_BY_THE_BINARY` is gone.** That list existed for exactly one entry: all five of
+// `mlkem_test.wac`'s tests take `(Core core, Cli cli)`, so the driver called none of them and reported
+// fifty of `mlkem.wac`'s points uncovered, while `wac test --coverage` read 125 of 132. The fix was to
+// spawn the binary, take that measurement and assert the figure. Here `mlkem.wac` reads **131 of 132**
+// in the same counter array as everything else — better than the number that was being asserted, since
+// the shared paths are covered by the rest of the run too. A measurement in one place beats a
+// measurement asserted from another.
+//
+// ## What the probe calls are still for
+//
+// Not everything. The tests leave 73 points, and they are concentrated: `sha1.wac` 15,
+// `weierstrass.wac` 14, `rsa.wac` 11, `rsagen.wac` 8, `aesctr.wac` 6. Those are the field boundaries
+// and streaming shapes a test asserts *an answer* about at one or two lengths, where coverage wants
+// every arm. So the probe half stays, aimed at those, and the rest of the six hundred lines went with
+// the tests that already cover them.
+//
+// ## A trap is an export, and a test that wants one is a sweep
+//
+// 130 of this package's 283 tests are `test_traps_*`: a guard against a caller error is exactly the code
+// nothing exercises by accident, and one export per case is what lets a test say it *wants* a trap. A
+// trap ends the call, so they cannot be called from `main` — `trapCase` is one sweep over all 130
+// (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`).
+//
+// **The exercise does not assert that a forgery is refused.** `cov.ts` had a `mustTrap` that failed if a
+// call returned, on the reasoning that catching silently would turn "the forgery was accepted" into a
+// passing coverage run. That reasoning is right and the claim belongs where it can fail:
+// `aead_test.wac`'s `test_traps_on_a_flipped_tag_bit` and its fifteen siblings, run by `wac test`, where
+// a case that does not trap is a red test rather than a silent one. It was a second copy here.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { decoded } from "../../codec/src/hex.wac";
+
+import { test_rfc_8439_poly1305 as aead__rfc_8439_poly1305, test_poly1305_forced_carries as aead__poly1305_forced_carries, test_rfc_8439_aead as aead__rfc_8439_aead, test_the_length_fields_stop_a_block_moving as aead__the_length_fields_stop_a_block_moving, test_the_tag_covers_everything as aead__the_tag_covers_everything, test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks as aead__poly1305_agrees_with_the_reference_at_every_length_to_three_blocks, test_poly1305_agrees_with_the_reference_under_fuzzing as aead__poly1305_agrees_with_the_reference_under_fuzzing, test_traps_on_a_flipped_first_ciphertext_bit as aead__traps_on_a_flipped_first_ciphertext_bit, test_traps_on_a_flipped_last_ciphertext_bit as aead__traps_on_a_flipped_last_ciphertext_bit, test_traps_on_modified_associated_data as aead__traps_on_modified_associated_data, test_traps_on_a_flipped_tag_bit as aead__traps_on_a_flipped_tag_bit, test_traps_on_the_wrong_key as aead__traps_on_the_wrong_key, test_traps_on_the_wrong_nonce as aead__traps_on_the_wrong_nonce, test_traps_on_a_short_tag as aead__traps_on_a_short_tag, test_traps_on_a_seventeen_byte_tag as aead__traps_on_a_seventeen_byte_tag, test_traps_on_an_eighteen_byte_tag as aead__traps_on_an_eighteen_byte_tag, test_traps_on_a_double_length_tag as aead__traps_on_a_double_length_tag, test_traps_on_a_truncated_ciphertext as aead__traps_on_a_truncated_ciphertext }
+  from "./wac/aead_test.wac";
+import { test_fips_197_worked_examples as aes__fips_197_worked_examples, test_the_block_agrees_with_the_host as aes__the_block_agrees_with_the_host, test_ctr_agrees_and_the_counter_carries as aes__ctr_agrees_and_the_counter_carries, test_gcm_agrees_including_the_short_nonce_path as aes__gcm_agrees_including_the_short_nonce_path, test_the_gcm_counter_wraps_at_32_bits as aes__the_gcm_counter_wraps_at_32_bits, test_a_ctr_stream_in_pieces_matches_the_one_shot as aes__a_ctr_stream_in_pieces_matches_the_one_shot, test_a_ctr_stream_never_repeats_its_keystream as aes__a_ctr_stream_never_repeats_its_keystream, test_a_genuine_gcm_message_decrypts_to_the_plaintext as aes__a_genuine_gcm_message_decrypts_to_the_plaintext, test_the_aad_ciphertext_boundary_is_authenticated as aes__the_aad_ciphertext_boundary_is_authenticated, test_traps_on_a_flipped_ciphertext_bit as aes__traps_on_a_flipped_ciphertext_bit, test_traps_on_a_flip_in_the_final_partial_block as aes__traps_on_a_flip_in_the_final_partial_block, test_traps_on_modified_additional_data as aes__traps_on_modified_additional_data, test_traps_on_a_flipped_tag_bit as aes__traps_on_a_flipped_tag_bit, test_traps_on_the_wrong_key as aes__traps_on_the_wrong_key, test_traps_on_the_wrong_nonce as aes__traps_on_the_wrong_nonce, test_traps_on_a_truncated_ciphertext as aes__traps_on_a_truncated_ciphertext, test_traps_on_a_short_tag as aes__traps_on_a_short_tag, test_traps_on_an_over_long_tag_with_a_valid_prefix as aes__traps_on_an_over_long_tag_with_a_valid_prefix, test_traps_encrypting_with_an_empty_iv as aes__traps_encrypting_with_an_empty_iv, test_traps_tagging_with_an_empty_iv as aes__traps_tagging_with_an_empty_iv, test_traps_on_an_empty_key as aes__traps_on_an_empty_key, test_traps_on_a_one_byte_key as aes__traps_on_a_one_byte_key, test_traps_one_byte_below_aes128 as aes__traps_one_byte_below_aes128, test_traps_one_byte_above_aes128 as aes__traps_one_byte_above_aes128, test_traps_between_aes128_and_aes192 as aes__traps_between_aes128_and_aes192, test_traps_one_byte_below_aes256 as aes__traps_one_byte_below_aes256, test_traps_one_byte_above_aes256 as aes__traps_one_byte_above_aes256, test_traps_on_a_sixty_four_byte_key as aes__traps_on_a_sixty_four_byte_key }
+  from "./wac/aes_test.wac";
+import { test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf as bcryptpbkdf__an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf, test_bcrypt_pbkdf_is_pinned_to_a_fixed_answer as bcryptpbkdf__bcrypt_pbkdf_is_pinned_to_a_fixed_answer, test_the_second_block_interleaves_with_the_first_rather_than_following_it as bcryptpbkdf__the_second_block_interleaves_with_the_first_rather_than_following_it }
+  from "./wac/bcryptpbkdf_test.wac";
+import { test_rfc_8439_block_function as chacha20__rfc_8439_block_function, test_rfc_8439_encryption as chacha20__rfc_8439_encryption, test_rfc_8439_a2_counter_zero as chacha20__rfc_8439_a2_counter_zero, test_decryption_is_encryption_and_blocks_chain as chacha20__decryption_is_encryption_and_blocks_chain, test_the_counter_actually_counts as chacha20__the_counter_actually_counts }
+  from "./wac/chacha20_test.wac";
+import { test_sha256_does_not_vary_with_its_inputs_content as constanttime__sha256_does_not_vary_with_its_inputs_content, test_chacha20s_block_function_does_not_vary_with_the_key as constanttime__chacha20s_block_function_does_not_vary_with_the_key, test_poly1305_does_not_vary_with_the_key as constanttime__poly1305_does_not_vary_with_the_key, test_x25519s_ladder_does_not_vary_with_the_scalar as constanttime__x25519s_ladder_does_not_vary_with_the_scalar, test_ghash_branches_on_the_bits_of_h_known_leak as constanttime__ghash_branches_on_the_bits_of_h_known_leak, test_the_weierstrass_ladder_branches_on_the_scalar_known_leak as constanttime__the_weierstrass_ladder_branches_on_the_scalar_known_leak, test_aes_indexes_its_s_box_with_key_dependent_values_known_leak as constanttime__aes_indexes_its_s_box_with_key_dependent_values_known_leak }
+  from "./wac/constanttime_test.wac";
+import { test_sha256_streaming_matches_oneshot as crypto__sha256_streaming_matches_oneshot, test_sha512_streaming_matches_oneshot as crypto__sha512_streaming_matches_oneshot, test_sha256_avalanche as crypto__sha256_avalanche, test_sha256_length_matters as crypto__sha256_length_matters, test_hmac_depends_on_key as crypto__hmac_depends_on_key, test_chacha_roundtrip_and_keystream as crypto__chacha_roundtrip_and_keystream, test_hkdf_lengths_and_binding as crypto__hkdf_lengths_and_binding }
+  from "./wac/crypto_test.wac";
+import { test_it_compares_what_it_is_given as ct__it_compares_what_it_is_given, test_every_byte_is_compared as ct__every_byte_is_compared, test_the_counted_form as ct__the_counted_form }
+  from "./wac/ct_test.wac";
+import { test_rfc_7748_x25519_vectors as curve25519__rfc_7748_x25519_vectors, test_x25519_agrees_with_the_host as curve25519__x25519_agrees_with_the_host, test_x25519_clamps_its_scalar as curve25519__x25519_clamps_its_scalar, test_ed25519_is_byte_identical_to_the_host as curve25519__ed25519_is_byte_identical_to_the_host, test_ed25519_rejects_what_it_should as curve25519__ed25519_rejects_what_it_should, test_low_order_points_give_an_all_zero_secret as curve25519__low_order_points_give_an_all_zero_secret, test_the_top_bit_of_a_u_coordinate_is_ignored as curve25519__the_top_bit_of_a_u_coordinate_is_ignored, test_rfc_8032_ed25519_vectors as curve25519__rfc_8032_ed25519_vectors, test_a_non_canonical_s_is_rejected as curve25519__a_non_canonical_s_is_rejected, test_x_equals_zero_with_the_sign_bit_is_not_a_point as curve25519__x_equals_zero_with_the_sign_bit_is_not_a_point, test_the_expanded_key_path_agrees_with_the_seed_one as curve25519__the_expanded_key_path_agrees_with_the_seed_one, test_the_curve25519_conversion_agrees_in_both_directions as curve25519__the_curve25519_conversion_agrees_in_both_directions, test_the_rfc_7748_iterated_vectors as curve25519__the_rfc_7748_iterated_vectors, test_a_malformed_key_or_signature_is_refused as curve25519__a_malformed_key_or_signature_is_refused }
+  from "./wac/curve25519_test.wac";
+import { test_the_written_out_d_is_the_derived_d as ed25519const__the_written_out_d_is_the_derived_d, test_every_limb_matches as ed25519const__every_limb_matches, test_sqrt_minus_one_and_the_base_point_match_their_derivations as ed25519const__sqrt_minus_one_and_the_base_point_match_their_derivations }
+  from "./wac/ed25519const_test.wac";
+import { test_the_anchors_that_name_this_field as field25519__the_anchors_that_name_this_field, test_the_ring_laws as field25519__the_ring_laws, test_inversion_undoes_multiplication as field25519__inversion_undoes_multiplication, test_the_small_multiply_matches_repeated_addition as field25519__the_small_multiply_matches_repeated_addition, test_encoding_round_trips_and_canonicalises as field25519__encoding_round_trips_and_canonicalises, test_conditional_swap_is_conditional as field25519__conditional_swap_is_conditional, test_encoding_round_trips_and_reduces_a_non_canonical_input as field25519__encoding_round_trips_and_reduces_a_non_canonical_input, test_add_sub_mul_and_square_agree_with_bigint as field25519__add_sub_mul_and_square_agree_with_bigint, test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses as field25519__the_small_multiply_agrees_at_every_multiplier_the_curve_uses, test_inversion_agrees_with_bigint_including_zero as field25519__inversion_agrees_with_bigint_including_zero }
+  from "./wac/field25519_test.wac";
+import { test_multiplication_is_bilinear as ghash__multiplication_is_bilinear, test_multiplication_commutes as ghash__multiplication_commutes, test_the_identity_and_zero_are_where_gcm_puts_them as ghash__the_identity_and_zero_are_where_gcm_puts_them, test_it_is_associative_over_three_blocks as ghash__it_is_associative_over_three_blocks, test_traps_on_data_that_is_not_a_whole_number_of_blocks as ghash__traps_on_data_that_is_not_a_whole_number_of_blocks, test_traps_on_one_byte_of_data as ghash__traps_on_one_byte_of_data, test_traps_on_seventeen_bytes_of_data as ghash__traps_on_seventeen_bytes_of_data, test_traps_on_a_short_subkey as ghash__traps_on_a_short_subkey, test_traps_on_a_subkey_of_seventeen_bytes as ghash__traps_on_a_subkey_of_seventeen_bytes, test_traps_on_a_subkey_of_twenty_bytes as ghash__traps_on_a_subkey_of_twenty_bytes, test_traps_on_a_subkey_of_thirty_two_bytes as ghash__traps_on_a_subkey_of_thirty_two_bytes }
+  from "./wac/ghash_test.wac";
+import { test_sha256_agrees_with_the_host as hash__sha256_agrees_with_the_host, test_sha512_and_sha384_agree_with_the_host as hash__sha512_and_sha384_agree_with_the_host, test_the_three_are_different_functions as hash__the_three_are_different_functions, test_hashing_is_a_function as hash__hashing_is_a_function, test_the_published_nist_vectors as hash__the_published_nist_vectors, test_the_long_nist_vector as hash__the_long_nist_vector, test_every_length_through_two_blocks as hash__every_length_through_two_blocks, test_random_inputs as hash__random_inputs }
+  from "./wac/hash_test.wac";
+import { test_rfc_2202_hmac_sha1_vectors as kdf__rfc_2202_hmac_sha1_vectors, test_rfc_4231_hmac_vectors as kdf__rfc_4231_hmac_vectors, test_the_key_length_boundaries as kdf__the_key_length_boundaries, test_rfc_5869_hkdf_vectors as kdf__rfc_5869_hkdf_vectors, test_expand_chains_across_blocks as kdf__expand_chains_across_blocks, test_every_input_changes_the_output as kdf__every_input_changes_the_output, test_the_255_block_cap_matches_webcrypto as kdf__the_255_block_cap_matches_webcrypto, test_traps_past_the_255_block_cap as kdf__traps_past_the_255_block_cap }
+  from "./wac/kdf_test.wac";
+import { test_the_permutation_of_an_all_zero_state as keccak__the_permutation_of_an_all_zero_state, test_sha3_agrees_with_the_host as keccak__sha3_agrees_with_the_host, test_shake_agrees_with_the_host as keccak__shake_agrees_with_the_host, test_a_longer_squeeze_extends_a_shorter_one as keccak__a_longer_squeeze_extends_a_shorter_one, test_the_domain_separation_actually_separates as keccak__the_domain_separation_actually_separates, test_keccak256_matches_the_published_vectors as keccak__keccak256_matches_the_published_vectors, test_keccak256_is_not_sha3_256 as keccak__keccak256_is_not_sha3_256, test_the_running_sha3_agrees_with_the_one_shot as keccak__the_running_sha3_agrees_with_the_one_shot, test_peeking_does_not_end_the_hash as keccak__peeking_does_not_end_the_hash, test_a_clone_is_independent_of_the_hash_it_came_from as keccak__a_clone_is_independent_of_the_hash_it_came_from }
+  from "./wac/keccak_test.wac";
+import { test_the_two_orders_disagree_where_they_should as layout__the_two_orders_disagree_where_they_should, test_reads_and_stores_are_inverses_at_every_offset as layout__reads_and_stores_are_inverses_at_every_offset, test_the_top_bit_survives as layout__the_top_bit_survives, test_pad_to_16_is_the_distance_to_the_next_boundary as layout__pad_to_16_is_the_distance_to_the_next_boundary }
+  from "./wac/layout_test.wac";
+import { test_key_generation_matches_webcrypto_byte_for_byte as mlkem__key_generation_matches_webcrypto_byte_for_byte, test_webcryptos_ciphertext_decapsulates_here as mlkem__webcryptos_ciphertext_decapsulates_here, test_encapsulation_is_deterministic_in_its_randomness as mlkem__encapsulation_is_deterministic_in_its_randomness, test_our_ciphertext_round_trips as mlkem__our_ciphertext_round_trips, test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure as mlkem__a_corrupted_ciphertext_gives_a_different_secret_not_a_failure }
+  from "./wac/mlkem_test.wac";
+import { test_the_group_orders as nistcurve__the_group_orders, test_public_keys_match_the_host as nistcurve__public_keys_match_the_host, test_we_verify_the_hosts_signatures as nistcurve__we_verify_the_hosts_signatures, test_the_host_verifies_ours as nistcurve__the_host_verifies_ours, test_p384_verifies_the_hosts_signatures as nistcurve__p384_verifies_the_hosts_signatures, test_ecdh_agrees_from_both_ends as nistcurve__ecdh_agrees_from_both_ends, test_signatures_outside_the_group_order_are_refused as nistcurve__signatures_outside_the_group_order_are_refused, test_the_fields_agree_with_bigint as nistcurve__the_fields_agree_with_bigint, test_inversion_agrees_with_bigint_and_undoes_multiplication as nistcurve__inversion_agrees_with_bigint_and_undoes_multiplication, test_the_p256_base_point_is_the_one_fips_186_4_publishes as nistcurve__the_p256_base_point_is_the_one_fips_186_4_publishes, test_the_exceptional_cases_in_the_p256_addition_law as nistcurve__the_exceptional_cases_in_the_p256_addition_law, test_a_p384_signature_is_rejected_under_the_wrong_key as nistcurve__a_p384_signature_is_rejected_under_the_wrong_key, test_a_sha256_digest_under_a_p384_key_is_right_aligned as nistcurve__a_sha256_digest_under_a_p384_key_is_right_aligned }
+  from "./wac/nistcurve_test.wac";
+import { test_pkcs1_signatures_from_the_host as rsa__pkcs1_signatures_from_the_host, test_pkcs1_refuses_a_block_that_is_not_exact as rsa__pkcs1_refuses_a_block_that_is_not_exact, test_pss_at_every_salt_length as rsa__pss_at_every_salt_length, test_pss_refuses_tampering as rsa__pss_refuses_tampering, test_our_pkcs1_signature_is_byte_identical_to_the_hosts as rsa__our_pkcs1_signature_is_byte_identical_to_the_hosts, test_the_host_accepts_what_we_signed as rsa__the_host_accepts_what_we_signed, test_a_raw_signature_carries_exactly_the_payload as rsa__a_raw_signature_carries_exactly_the_payload, test_a_forged_block_that_is_wrong_in_one_place_is_refused as rsa__a_forged_block_that_is_wrong_in_one_place_is_refused, test_our_pss_signatures_verify_elsewhere as rsa__our_pss_signatures_verify_elsewhere, test_signing_refuses_moduli_it_cannot_use as rsa__signing_refuses_moduli_it_cannot_use, test_recovering_refuses_malformed_blocks as rsa__recovering_refuses_malformed_blocks, test_pss_refuses_a_signature_with_bits_above_embits as rsa__pss_refuses_a_signature_with_bits_above_embits, test_modular_exponentiation_agrees_with_bigint as rsa__modular_exponentiation_agrees_with_bigint, test_pss_refuses_a_key_too_small_for_the_encoding as rsa__pss_refuses_a_key_too_small_for_the_encoding, test_a_pss_signature_we_made_verifies_here as rsa__a_pss_signature_we_made_verifies_here, test_a_pkcs1_signature_recovers_the_payload_it_carried as rsa__a_pkcs1_signature_recovers_the_payload_it_carried }
+  from "./wac/rsa_test.wac";
+import { test_openssl_agrees_the_generated_key_is_a_valid_rsa_key as rsagen__openssl_agrees_the_generated_key_is_a_valid_rsa_key, test_the_same_seed_gives_the_same_key as rsagen__the_same_seed_gives_the_same_key, test_miller_rabin_knows_primes_from_composites as rsagen__miller_rabin_knows_primes_from_composites, test_gcd_and_modular_inverse as rsagen__gcd_and_modular_inverse, test_a_prime_is_rejected_when_e_has_no_inverse as rsagen__a_prime_is_rejected_when_e_has_no_inverse }
+  from "./wac/rsagen_test.wac";
+import { test_the_published_vectors as sha1__the_published_vectors, test_every_length_through_two_blocks as sha1__every_length_through_two_blocks, test_the_incremental_form_matches_the_one_shot as sha1__the_incremental_form_matches_the_one_shot, test_peek_does_not_end_the_stream as sha1__peek_does_not_end_the_stream, test_a_long_message_crosses_many_blocks as sha1__a_long_message_crosses_many_blocks }
+  from "./wac/sha1_test.wac";
+import { test_the_legal_widths_do_not_trap as traps__the_legal_widths_do_not_trap, test_the_genuine_lengths_are_accepted as traps__the_genuine_lengths_are_accepted, test_the_genuine_p256_operations_still_work as traps__the_genuine_p256_operations_still_work, test_the_small_x_point_is_on_the_curve as traps__the_small_x_point_is_on_the_curve, test_the_p384_small_x_point_decodes as traps__the_p384_small_x_point_decodes, test_the_two_widths_that_are_curves_still_work as traps__the_two_widths_that_are_curves_still_work, test_values_at_or_above_p_are_not_in_range as traps__values_at_or_above_p_are_not_in_range, test_traps_on_a_field_element_of_ragged_length as traps__traps_on_a_field_element_of_ragged_length, test_traps_on_a_field_element_of_the_wrong_width as traps__traps_on_a_field_element_of_the_wrong_width, test_traps_multiplying_across_widths as traps__traps_multiplying_across_widths, test_traps_on_a_short_ecdh_scalar as traps__traps_on_a_short_ecdh_scalar, test_traps_on_a_zero_ecdh_scalar as traps__traps_on_a_zero_ecdh_scalar, test_traps_resuming_with_a_short_counter as traps__traps_resuming_with_a_short_counter, test_traps_on_an_unknown_hash_length_in_pkcs1 as traps__traps_on_an_unknown_hash_length_in_pkcs1, test_traps_on_an_unknown_hash_length_in_pss as traps__traps_on_an_unknown_hash_length_in_pss, test_traps_aes_ctr_refuses_a_15_byte_iv as traps__traps_aes_ctr_refuses_a_15_byte_iv, test_traps_aes_ctr_refuses_a_17_byte_iv as traps__traps_aes_ctr_refuses_a_17_byte_iv, test_traps_aes_ctr_refuses_a_20_byte_iv as traps__traps_aes_ctr_refuses_a_20_byte_iv, test_traps_aes_ctr_refuses_a_32_byte_iv as traps__traps_aes_ctr_refuses_a_32_byte_iv, test_traps_x25519_refuses_a_0_byte_scalar as traps__traps_x25519_refuses_a_0_byte_scalar, test_traps_x25519_refuses_a_0_byte_u_coordinate as traps__traps_x25519_refuses_a_0_byte_u_coordinate, test_traps_x25519_refuses_a_31_byte_scalar as traps__traps_x25519_refuses_a_31_byte_scalar, test_traps_x25519_refuses_a_31_byte_u_coordinate as traps__traps_x25519_refuses_a_31_byte_u_coordinate, test_traps_x25519_refuses_a_33_byte_scalar as traps__traps_x25519_refuses_a_33_byte_scalar, test_traps_x25519_refuses_a_33_byte_u_coordinate as traps__traps_x25519_refuses_a_33_byte_u_coordinate, test_traps_x25519_refuses_a_64_byte_scalar as traps__traps_x25519_refuses_a_64_byte_scalar, test_traps_x25519_refuses_a_64_byte_u_coordinate as traps__traps_x25519_refuses_a_64_byte_u_coordinate, test_traps_ed25519_refuses_a_0_byte_seed_for_a_key as traps__traps_ed25519_refuses_a_0_byte_seed_for_a_key, test_traps_ed25519_refuses_a_0_byte_seed_for_signing as traps__traps_ed25519_refuses_a_0_byte_seed_for_signing, test_traps_ed25519_refuses_a_0_byte_public_key_for_a_sign_bit as traps__traps_ed25519_refuses_a_0_byte_public_key_for_a_sign_bit, test_traps_ed25519_refuses_a_0_byte_u_coordinate_to_convert as traps__traps_ed25519_refuses_a_0_byte_u_coordinate_to_convert, test_traps_ed25519_refuses_a_0_byte_curve_secret_to_convert as traps__traps_ed25519_refuses_a_0_byte_curve_secret_to_convert, test_traps_ed25519_refuses_a_31_byte_seed_for_a_key as traps__traps_ed25519_refuses_a_31_byte_seed_for_a_key, test_traps_ed25519_refuses_a_31_byte_seed_for_signing as traps__traps_ed25519_refuses_a_31_byte_seed_for_signing, test_traps_ed25519_refuses_a_31_byte_public_key_for_a_sign_bit as traps__traps_ed25519_refuses_a_31_byte_public_key_for_a_sign_bit, test_traps_ed25519_refuses_a_31_byte_u_coordinate_to_convert as traps__traps_ed25519_refuses_a_31_byte_u_coordinate_to_convert, test_traps_ed25519_refuses_a_31_byte_curve_secret_to_convert as traps__traps_ed25519_refuses_a_31_byte_curve_secret_to_convert, test_traps_ed25519_refuses_a_33_byte_seed_for_a_key as traps__traps_ed25519_refuses_a_33_byte_seed_for_a_key, test_traps_ed25519_refuses_a_33_byte_seed_for_signing as traps__traps_ed25519_refuses_a_33_byte_seed_for_signing, test_traps_ed25519_refuses_a_33_byte_public_key_for_a_sign_bit as traps__traps_ed25519_refuses_a_33_byte_public_key_for_a_sign_bit, test_traps_ed25519_refuses_a_33_byte_u_coordinate_to_convert as traps__traps_ed25519_refuses_a_33_byte_u_coordinate_to_convert, test_traps_ed25519_refuses_a_33_byte_curve_secret_to_convert as traps__traps_ed25519_refuses_a_33_byte_curve_secret_to_convert, test_traps_ed25519_refuses_a_64_byte_seed_for_a_key as traps__traps_ed25519_refuses_a_64_byte_seed_for_a_key, test_traps_ed25519_refuses_a_64_byte_seed_for_signing as traps__traps_ed25519_refuses_a_64_byte_seed_for_signing, test_traps_ed25519_refuses_a_64_byte_public_key_for_a_sign_bit as traps__traps_ed25519_refuses_a_64_byte_public_key_for_a_sign_bit, test_traps_ed25519_refuses_a_64_byte_u_coordinate_to_convert as traps__traps_ed25519_refuses_a_64_byte_u_coordinate_to_convert, test_traps_ed25519_refuses_a_64_byte_curve_secret_to_convert as traps__traps_ed25519_refuses_a_64_byte_curve_secret_to_convert, test_traps_ed25519_refuses_a_0_byte_expanded_secret_for_a_key as traps__traps_ed25519_refuses_a_0_byte_expanded_secret_for_a_key, test_traps_ed25519_refuses_a_0_byte_expanded_secret_for_signing as traps__traps_ed25519_refuses_a_0_byte_expanded_secret_for_signing, test_traps_ed25519_refuses_a_63_byte_expanded_secret_for_a_key as traps__traps_ed25519_refuses_a_63_byte_expanded_secret_for_a_key, test_traps_ed25519_refuses_a_63_byte_expanded_secret_for_signing as traps__traps_ed25519_refuses_a_63_byte_expanded_secret_for_signing, test_traps_ed25519_refuses_a_65_byte_expanded_secret_for_a_key as traps__traps_ed25519_refuses_a_65_byte_expanded_secret_for_a_key, test_traps_ed25519_refuses_a_65_byte_expanded_secret_for_signing as traps__traps_ed25519_refuses_a_65_byte_expanded_secret_for_signing, test_traps_ed25519_refuses_a_128_byte_expanded_secret_for_a_key as traps__traps_ed25519_refuses_a_128_byte_expanded_secret_for_a_key, test_traps_ed25519_refuses_a_128_byte_expanded_secret_for_signing as traps__traps_ed25519_refuses_a_128_byte_expanded_secret_for_signing, test_traps_mlkem_refuses_a_0_byte_seed as traps__traps_mlkem_refuses_a_0_byte_seed, test_traps_mlkem_refuses_a_63_byte_seed as traps__traps_mlkem_refuses_a_63_byte_seed, test_traps_mlkem_refuses_a_65_byte_seed as traps__traps_mlkem_refuses_a_65_byte_seed, test_traps_mlkem_refuses_an_empty_encapsulation_key as traps__traps_mlkem_refuses_an_empty_encapsulation_key, test_traps_mlkem_refuses_an_encapsulation_key_one_byte_short as traps__traps_mlkem_refuses_an_encapsulation_key_one_byte_short, test_traps_mlkem_refuses_an_encapsulation_key_one_byte_long as traps__traps_mlkem_refuses_an_encapsulation_key_one_byte_long, test_traps_mlkem_refuses_a_0_byte_message as traps__traps_mlkem_refuses_a_0_byte_message, test_traps_mlkem_refuses_a_31_byte_message as traps__traps_mlkem_refuses_a_31_byte_message, test_traps_mlkem_refuses_a_33_byte_message as traps__traps_mlkem_refuses_a_33_byte_message, test_traps_mlkem_refuses_a_64_byte_message as traps__traps_mlkem_refuses_a_64_byte_message, test_traps_mlkem_refuses_an_empty_decapsulation_key as traps__traps_mlkem_refuses_an_empty_decapsulation_key, test_traps_mlkem_refuses_a_decapsulation_key_one_byte_short as traps__traps_mlkem_refuses_a_decapsulation_key_one_byte_short, test_traps_mlkem_refuses_a_decapsulation_key_one_byte_long as traps__traps_mlkem_refuses_a_decapsulation_key_one_byte_long, test_traps_mlkem_refuses_an_empty_ciphertext as traps__traps_mlkem_refuses_an_empty_ciphertext, test_traps_mlkem_refuses_a_ciphertext_one_byte_short as traps__traps_mlkem_refuses_a_ciphertext_one_byte_short, test_traps_mlkem_refuses_a_ciphertext_one_byte_long as traps__traps_mlkem_refuses_a_ciphertext_one_byte_long, test_traps_mlkem_refuses_a_coefficient_at_or_above_q as traps__traps_mlkem_refuses_a_coefficient_at_or_above_q, test_traps_p256_ecdh_on_a_point_off_the_curve as traps__traps_p256_ecdh_on_a_point_off_the_curve, test_traps_p256_ecdh_on_a_compressed_point as traps__traps_p256_ecdh_on_a_compressed_point, test_traps_p256_ecdh_on_an_empty_point as traps__traps_p256_ecdh_on_an_empty_point, test_traps_p256_ecdh_on_a_32_byte_point as traps__traps_p256_ecdh_on_a_32_byte_point, test_traps_p256_ecdh_on_a_64_byte_point as traps__traps_p256_ecdh_on_a_64_byte_point, test_traps_p256_ecdh_on_a_66_byte_point as traps__traps_p256_ecdh_on_a_66_byte_point, test_traps_p256_ecdh_on_an_x_outside_the_field as traps__traps_p256_ecdh_on_an_x_outside_the_field, test_traps_p256_on_a_zero_private_key as traps__traps_p256_on_a_zero_private_key, test_traps_p256_on_a_private_key_equal_to_the_order as traps__traps_p256_on_a_private_key_equal_to_the_order, test_traps_p256_on_a_private_key_above_the_order as traps__traps_p256_on_a_private_key_above_the_order, test_traps_p256_scalar_base_at_the_order as traps__traps_p256_scalar_base_at_the_order, test_traps_p256_reencode_on_a_66_byte_point as traps__traps_p256_reencode_on_a_66_byte_point, test_traps_p256_public_key_on_a_33_byte_scalar as traps__traps_p256_public_key_on_a_33_byte_scalar, test_traps_p256_ecdh_on_a_33_byte_private_key as traps__traps_p256_ecdh_on_a_33_byte_private_key, test_traps_p256_ecdh_on_a_66_byte_peer_point as traps__traps_p256_ecdh_on_a_66_byte_peer_point, test_traps_p256_sign_on_a_33_byte_private_key as traps__traps_p256_sign_on_a_33_byte_private_key, test_traps_p256_sign_on_a_33_byte_nonce as traps__traps_p256_sign_on_a_33_byte_nonce, test_traps_p256_on_an_x_that_is_x_plus_p as traps__traps_p256_on_an_x_that_is_x_plus_p, test_traps_p384_on_an_x_that_is_x_plus_p as traps__traps_p384_on_an_x_that_is_x_plus_p, test_traps_on_a_one_byte_field_element as traps__traps_on_a_one_byte_field_element, test_traps_on_a_33_byte_field_element as traps__traps_on_a_33_byte_field_element, test_traps_on_a_47_byte_field_element as traps__traps_on_a_47_byte_field_element, test_traps_on_a_49_byte_field_element as traps__traps_on_a_49_byte_field_element, test_traps_on_a_four_byte_field_element as traps__traps_on_a_four_byte_field_element, test_traps_on_a_16_byte_field_element as traps__traps_on_a_16_byte_field_element, test_traps_on_a_64_byte_field_element as traps__traps_on_a_64_byte_field_element, test_traps_multiplying_a_p256_element_by_a_p384_one as traps__traps_multiplying_a_p256_element_by_a_p384_one, test_traps_multiplying_a_p384_element_by_a_p256_one as traps__traps_multiplying_a_p384_element_by_a_p256_one }
+  from "./wac/traps_test.wac";
+
+import { sha256, hmac, hmacSha1, hkdf, hkdfExtract, chachaBlock, chacha20, poly1305,
+         aeadEncrypt, aeadTag, aeadDecrypt, sha512, sha384, sha1, sha1Streamed, sha1Restored,
+         aesEncrypt, aesDecrypt, aesCtr, ghash, gcmEncrypt, gcmTag, gcmDecrypt, gcmInc32,
+         leWord32, beWord32, beWord64, storeLE32, storeBE32, storeBE64, padTo16,
+         ctEqual, ctEqualN, ctrStreamed, ctrResumed, sha256Streamed, sha512Streamed }
+  from "./wac/probe.wac";
+import { fAdd, fSub, fMul, fSquare, fMulSmall, fInvert, fRoundTrip, fCSwap, x25519, x25519Base,
+         edPublicKey, edSign, edVerify, edBaseEncoded, edRecode, edScalarBase, edExpanded,
+         edPublicKeyExpanded, edSignExpanded, edSignBit, curveToEdSecret, edFromCurvePublic }
+  from "./wac/curve25519_probe.wac";
+
+/** Deterministic filler; `seed` varies the contents so repeats are not identical. */
+u8[] bytes(i32 n, i32 seed) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + seed * 17 + 7) & 255; }
+  return out;
+}
+
+/**
+ * Lengths that straddle every block and padding boundary in the package.
+ *
+ * SHA-256 pads at 64 with a 9-byte tail and SHA-512 at 128 with a 17-byte tail, so the two need
+ * different sets — 55/56 is the interesting pair for one and 111/112 for the other.
+ */
+i32[] sha256Lens() { return i32[](0, 1, 55, 56, 63, 64, 65, 119, 120, 200); }
+i32[] sha512Lens() { return i32[](0, 1, 111, 112, 127, 128, 129, 239, 240, 400); }
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+
+  // ── Every returning test, which is 152 of the 283 ──────────────────────────
+  if (aead__rfc_8439_poly1305().len() > 0) { core.warn("error: FAILED aead_test test_rfc_8439_poly1305"); bad = bad + 1; }
+  if (aead__poly1305_forced_carries().len() > 0) { core.warn("error: FAILED aead_test test_poly1305_forced_carries"); bad = bad + 1; }
+  if (aead__rfc_8439_aead(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_rfc_8439_aead"); bad = bad + 1; }
+  if (aead__the_length_fields_stop_a_block_moving(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_the_length_fields_stop_a_block_moving"); bad = bad + 1; }
+  if (aead__the_tag_covers_everything(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_the_tag_covers_everything"); bad = bad + 1; }
+  if (aead__poly1305_agrees_with_the_reference_at_every_length_to_three_blocks(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks"); bad = bad + 1; }
+  if (aead__poly1305_agrees_with_the_reference_under_fuzzing(core, cli).len() > 0) { core.warn("error: FAILED aead_test test_poly1305_agrees_with_the_reference_under_fuzzing"); bad = bad + 1; }
+  if (aes__fips_197_worked_examples().len() > 0) { core.warn("error: FAILED aes_test test_fips_197_worked_examples"); bad = bad + 1; }
+  if (aes__the_block_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED aes_test test_the_block_agrees_with_the_host"); bad = bad + 1; }
+  if (aes__ctr_agrees_and_the_counter_carries(core, cli).len() > 0) { core.warn("error: FAILED aes_test test_ctr_agrees_and_the_counter_carries"); bad = bad + 1; }
+  if (aes__gcm_agrees_including_the_short_nonce_path(core, cli).len() > 0) { core.warn("error: FAILED aes_test test_gcm_agrees_including_the_short_nonce_path"); bad = bad + 1; }
+  if (aes__the_gcm_counter_wraps_at_32_bits().len() > 0) { core.warn("error: FAILED aes_test test_the_gcm_counter_wraps_at_32_bits"); bad = bad + 1; }
+  if (aes__a_ctr_stream_in_pieces_matches_the_one_shot().len() > 0) { core.warn("error: FAILED aes_test test_a_ctr_stream_in_pieces_matches_the_one_shot"); bad = bad + 1; }
+  if (aes__a_ctr_stream_never_repeats_its_keystream().len() > 0) { core.warn("error: FAILED aes_test test_a_ctr_stream_never_repeats_its_keystream"); bad = bad + 1; }
+  if (aes__a_genuine_gcm_message_decrypts_to_the_plaintext().len() > 0) { core.warn("error: FAILED aes_test test_a_genuine_gcm_message_decrypts_to_the_plaintext"); bad = bad + 1; }
+  if (aes__the_aad_ciphertext_boundary_is_authenticated().len() > 0) { core.warn("error: FAILED aes_test test_the_aad_ciphertext_boundary_is_authenticated"); bad = bad + 1; }
+  if (bcryptpbkdf__an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf(core, cli).len() > 0) { core.warn("error: FAILED bcryptpbkdf_test test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcrypt_pbkdf"); bad = bad + 1; }
+  if (bcryptpbkdf__bcrypt_pbkdf_is_pinned_to_a_fixed_answer().len() > 0) { core.warn("error: FAILED bcryptpbkdf_test test_bcrypt_pbkdf_is_pinned_to_a_fixed_answer"); bad = bad + 1; }
+  if (bcryptpbkdf__the_second_block_interleaves_with_the_first_rather_than_following_it().len() > 0) { core.warn("error: FAILED bcryptpbkdf_test test_the_second_block_interleaves_with_the_first_rather_than_following_it"); bad = bad + 1; }
+  if (chacha20__rfc_8439_block_function().len() > 0) { core.warn("error: FAILED chacha20_test test_rfc_8439_block_function"); bad = bad + 1; }
+  if (chacha20__rfc_8439_encryption().len() > 0) { core.warn("error: FAILED chacha20_test test_rfc_8439_encryption"); bad = bad + 1; }
+  if (chacha20__rfc_8439_a2_counter_zero().len() > 0) { core.warn("error: FAILED chacha20_test test_rfc_8439_a2_counter_zero"); bad = bad + 1; }
+  if (chacha20__decryption_is_encryption_and_blocks_chain().len() > 0) { core.warn("error: FAILED chacha20_test test_decryption_is_encryption_and_blocks_chain"); bad = bad + 1; }
+  if (chacha20__the_counter_actually_counts().len() > 0) { core.warn("error: FAILED chacha20_test test_the_counter_actually_counts"); bad = bad + 1; }
+  if (constanttime__sha256_does_not_vary_with_its_inputs_content(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_sha256_does_not_vary_with_its_inputs_content"); bad = bad + 1; }
+  if (constanttime__chacha20s_block_function_does_not_vary_with_the_key(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_chacha20s_block_function_does_not_vary_with_the_key"); bad = bad + 1; }
+  if (constanttime__poly1305_does_not_vary_with_the_key(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_poly1305_does_not_vary_with_the_key"); bad = bad + 1; }
+  if (constanttime__x25519s_ladder_does_not_vary_with_the_scalar(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_x25519s_ladder_does_not_vary_with_the_scalar"); bad = bad + 1; }
+  if (constanttime__ghash_branches_on_the_bits_of_h_known_leak(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_ghash_branches_on_the_bits_of_h_known_leak"); bad = bad + 1; }
+  if (constanttime__the_weierstrass_ladder_branches_on_the_scalar_known_leak(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_the_weierstrass_ladder_branches_on_the_scalar_known_leak"); bad = bad + 1; }
+  if (constanttime__aes_indexes_its_s_box_with_key_dependent_values_known_leak(core, cli).len() > 0) { core.warn("error: FAILED constanttime_test test_aes_indexes_its_s_box_with_key_dependent_values_known_leak"); bad = bad + 1; }
+  if (crypto__sha256_streaming_matches_oneshot().len() > 0) { core.warn("error: FAILED crypto_test test_sha256_streaming_matches_oneshot"); bad = bad + 1; }
+  if (crypto__sha512_streaming_matches_oneshot().len() > 0) { core.warn("error: FAILED crypto_test test_sha512_streaming_matches_oneshot"); bad = bad + 1; }
+  if (crypto__sha256_avalanche().len() > 0) { core.warn("error: FAILED crypto_test test_sha256_avalanche"); bad = bad + 1; }
+  if (crypto__sha256_length_matters().len() > 0) { core.warn("error: FAILED crypto_test test_sha256_length_matters"); bad = bad + 1; }
+  if (crypto__hmac_depends_on_key().len() > 0) { core.warn("error: FAILED crypto_test test_hmac_depends_on_key"); bad = bad + 1; }
+  if (crypto__chacha_roundtrip_and_keystream().len() > 0) { core.warn("error: FAILED crypto_test test_chacha_roundtrip_and_keystream"); bad = bad + 1; }
+  if (crypto__hkdf_lengths_and_binding().len() > 0) { core.warn("error: FAILED crypto_test test_hkdf_lengths_and_binding"); bad = bad + 1; }
+  if (ct__it_compares_what_it_is_given().len() > 0) { core.warn("error: FAILED ct_test test_it_compares_what_it_is_given"); bad = bad + 1; }
+  if (ct__every_byte_is_compared().len() > 0) { core.warn("error: FAILED ct_test test_every_byte_is_compared"); bad = bad + 1; }
+  if (ct__the_counted_form().len() > 0) { core.warn("error: FAILED ct_test test_the_counted_form"); bad = bad + 1; }
+  if (curve25519__rfc_7748_x25519_vectors().len() > 0) { core.warn("error: FAILED curve25519_test test_rfc_7748_x25519_vectors"); bad = bad + 1; }
+  if (curve25519__x25519_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED curve25519_test test_x25519_agrees_with_the_host"); bad = bad + 1; }
+  if (curve25519__x25519_clamps_its_scalar().len() > 0) { core.warn("error: FAILED curve25519_test test_x25519_clamps_its_scalar"); bad = bad + 1; }
+  if (curve25519__ed25519_is_byte_identical_to_the_host(core, cli).len() > 0) { core.warn("error: FAILED curve25519_test test_ed25519_is_byte_identical_to_the_host"); bad = bad + 1; }
+  if (curve25519__ed25519_rejects_what_it_should(core, cli).len() > 0) { core.warn("error: FAILED curve25519_test test_ed25519_rejects_what_it_should"); bad = bad + 1; }
+  if (curve25519__low_order_points_give_an_all_zero_secret().len() > 0) { core.warn("error: FAILED curve25519_test test_low_order_points_give_an_all_zero_secret"); bad = bad + 1; }
+  if (curve25519__the_top_bit_of_a_u_coordinate_is_ignored().len() > 0) { core.warn("error: FAILED curve25519_test test_the_top_bit_of_a_u_coordinate_is_ignored"); bad = bad + 1; }
+  if (curve25519__rfc_8032_ed25519_vectors().len() > 0) { core.warn("error: FAILED curve25519_test test_rfc_8032_ed25519_vectors"); bad = bad + 1; }
+  if (curve25519__a_non_canonical_s_is_rejected().len() > 0) { core.warn("error: FAILED curve25519_test test_a_non_canonical_s_is_rejected"); bad = bad + 1; }
+  if (curve25519__x_equals_zero_with_the_sign_bit_is_not_a_point().len() > 0) { core.warn("error: FAILED curve25519_test test_x_equals_zero_with_the_sign_bit_is_not_a_point"); bad = bad + 1; }
+  if (curve25519__the_expanded_key_path_agrees_with_the_seed_one().len() > 0) { core.warn("error: FAILED curve25519_test test_the_expanded_key_path_agrees_with_the_seed_one"); bad = bad + 1; }
+  if (curve25519__the_curve25519_conversion_agrees_in_both_directions().len() > 0) { core.warn("error: FAILED curve25519_test test_the_curve25519_conversion_agrees_in_both_directions"); bad = bad + 1; }
+  if (curve25519__the_rfc_7748_iterated_vectors().len() > 0) { core.warn("error: FAILED curve25519_test test_the_rfc_7748_iterated_vectors"); bad = bad + 1; }
+  if (curve25519__a_malformed_key_or_signature_is_refused().len() > 0) { core.warn("error: FAILED curve25519_test test_a_malformed_key_or_signature_is_refused"); bad = bad + 1; }
+  if (ed25519const__the_written_out_d_is_the_derived_d().len() > 0) { core.warn("error: FAILED ed25519const_test test_the_written_out_d_is_the_derived_d"); bad = bad + 1; }
+  if (ed25519const__every_limb_matches().len() > 0) { core.warn("error: FAILED ed25519const_test test_every_limb_matches"); bad = bad + 1; }
+  if (ed25519const__sqrt_minus_one_and_the_base_point_match_their_derivations().len() > 0) { core.warn("error: FAILED ed25519const_test test_sqrt_minus_one_and_the_base_point_match_their_derivations"); bad = bad + 1; }
+  if (field25519__the_anchors_that_name_this_field().len() > 0) { core.warn("error: FAILED field25519_test test_the_anchors_that_name_this_field"); bad = bad + 1; }
+  if (field25519__the_ring_laws().len() > 0) { core.warn("error: FAILED field25519_test test_the_ring_laws"); bad = bad + 1; }
+  if (field25519__inversion_undoes_multiplication().len() > 0) { core.warn("error: FAILED field25519_test test_inversion_undoes_multiplication"); bad = bad + 1; }
+  if (field25519__the_small_multiply_matches_repeated_addition().len() > 0) { core.warn("error: FAILED field25519_test test_the_small_multiply_matches_repeated_addition"); bad = bad + 1; }
+  if (field25519__encoding_round_trips_and_canonicalises().len() > 0) { core.warn("error: FAILED field25519_test test_encoding_round_trips_and_canonicalises"); bad = bad + 1; }
+  if (field25519__conditional_swap_is_conditional().len() > 0) { core.warn("error: FAILED field25519_test test_conditional_swap_is_conditional"); bad = bad + 1; }
+  if (field25519__encoding_round_trips_and_reduces_a_non_canonical_input(core, cli).len() > 0) { core.warn("error: FAILED field25519_test test_encoding_round_trips_and_reduces_a_non_canonical_input"); bad = bad + 1; }
+  if (field25519__add_sub_mul_and_square_agree_with_bigint(core, cli).len() > 0) { core.warn("error: FAILED field25519_test test_add_sub_mul_and_square_agree_with_bigint"); bad = bad + 1; }
+  if (field25519__the_small_multiply_agrees_at_every_multiplier_the_curve_uses(core, cli).len() > 0) { core.warn("error: FAILED field25519_test test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses"); bad = bad + 1; }
+  if (field25519__inversion_agrees_with_bigint_including_zero(core, cli).len() > 0) { core.warn("error: FAILED field25519_test test_inversion_agrees_with_bigint_including_zero"); bad = bad + 1; }
+  if (ghash__multiplication_is_bilinear().len() > 0) { core.warn("error: FAILED ghash_test test_multiplication_is_bilinear"); bad = bad + 1; }
+  if (ghash__multiplication_commutes().len() > 0) { core.warn("error: FAILED ghash_test test_multiplication_commutes"); bad = bad + 1; }
+  if (ghash__the_identity_and_zero_are_where_gcm_puts_them().len() > 0) { core.warn("error: FAILED ghash_test test_the_identity_and_zero_are_where_gcm_puts_them"); bad = bad + 1; }
+  if (ghash__it_is_associative_over_three_blocks().len() > 0) { core.warn("error: FAILED ghash_test test_it_is_associative_over_three_blocks"); bad = bad + 1; }
+  if (hash__sha256_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED hash_test test_sha256_agrees_with_the_host"); bad = bad + 1; }
+  if (hash__sha512_and_sha384_agree_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED hash_test test_sha512_and_sha384_agree_with_the_host"); bad = bad + 1; }
+  if (hash__the_three_are_different_functions().len() > 0) { core.warn("error: FAILED hash_test test_the_three_are_different_functions"); bad = bad + 1; }
+  if (hash__hashing_is_a_function().len() > 0) { core.warn("error: FAILED hash_test test_hashing_is_a_function"); bad = bad + 1; }
+  if (hash__the_published_nist_vectors().len() > 0) { core.warn("error: FAILED hash_test test_the_published_nist_vectors"); bad = bad + 1; }
+  if (hash__the_long_nist_vector().len() > 0) { core.warn("error: FAILED hash_test test_the_long_nist_vector"); bad = bad + 1; }
+  if (hash__every_length_through_two_blocks(core, cli).len() > 0) { core.warn("error: FAILED hash_test test_every_length_through_two_blocks"); bad = bad + 1; }
+  if (hash__random_inputs(core, cli).len() > 0) { core.warn("error: FAILED hash_test test_random_inputs"); bad = bad + 1; }
+  if (kdf__rfc_2202_hmac_sha1_vectors().len() > 0) { core.warn("error: FAILED kdf_test test_rfc_2202_hmac_sha1_vectors"); bad = bad + 1; }
+  if (kdf__rfc_4231_hmac_vectors().len() > 0) { core.warn("error: FAILED kdf_test test_rfc_4231_hmac_vectors"); bad = bad + 1; }
+  if (kdf__the_key_length_boundaries(core, cli).len() > 0) { core.warn("error: FAILED kdf_test test_the_key_length_boundaries"); bad = bad + 1; }
+  if (kdf__rfc_5869_hkdf_vectors().len() > 0) { core.warn("error: FAILED kdf_test test_rfc_5869_hkdf_vectors"); bad = bad + 1; }
+  if (kdf__expand_chains_across_blocks(core, cli).len() > 0) { core.warn("error: FAILED kdf_test test_expand_chains_across_blocks"); bad = bad + 1; }
+  if (kdf__every_input_changes_the_output().len() > 0) { core.warn("error: FAILED kdf_test test_every_input_changes_the_output"); bad = bad + 1; }
+  if (kdf__the_255_block_cap_matches_webcrypto(core, cli).len() > 0) { core.warn("error: FAILED kdf_test test_the_255_block_cap_matches_webcrypto"); bad = bad + 1; }
+  if (keccak__the_permutation_of_an_all_zero_state().len() > 0) { core.warn("error: FAILED keccak_test test_the_permutation_of_an_all_zero_state"); bad = bad + 1; }
+  if (keccak__sha3_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED keccak_test test_sha3_agrees_with_the_host"); bad = bad + 1; }
+  if (keccak__shake_agrees_with_the_host(core, cli).len() > 0) { core.warn("error: FAILED keccak_test test_shake_agrees_with_the_host"); bad = bad + 1; }
+  if (keccak__a_longer_squeeze_extends_a_shorter_one().len() > 0) { core.warn("error: FAILED keccak_test test_a_longer_squeeze_extends_a_shorter_one"); bad = bad + 1; }
+  if (keccak__the_domain_separation_actually_separates().len() > 0) { core.warn("error: FAILED keccak_test test_the_domain_separation_actually_separates"); bad = bad + 1; }
+  if (keccak__keccak256_matches_the_published_vectors().len() > 0) { core.warn("error: FAILED keccak_test test_keccak256_matches_the_published_vectors"); bad = bad + 1; }
+  if (keccak__keccak256_is_not_sha3_256().len() > 0) { core.warn("error: FAILED keccak_test test_keccak256_is_not_sha3_256"); bad = bad + 1; }
+  if (keccak__the_running_sha3_agrees_with_the_one_shot().len() > 0) { core.warn("error: FAILED keccak_test test_the_running_sha3_agrees_with_the_one_shot"); bad = bad + 1; }
+  if (keccak__peeking_does_not_end_the_hash().len() > 0) { core.warn("error: FAILED keccak_test test_peeking_does_not_end_the_hash"); bad = bad + 1; }
+  if (keccak__a_clone_is_independent_of_the_hash_it_came_from().len() > 0) { core.warn("error: FAILED keccak_test test_a_clone_is_independent_of_the_hash_it_came_from"); bad = bad + 1; }
+  if (layout__the_two_orders_disagree_where_they_should().len() > 0) { core.warn("error: FAILED layout_test test_the_two_orders_disagree_where_they_should"); bad = bad + 1; }
+  if (layout__reads_and_stores_are_inverses_at_every_offset().len() > 0) { core.warn("error: FAILED layout_test test_reads_and_stores_are_inverses_at_every_offset"); bad = bad + 1; }
+  if (layout__the_top_bit_survives().len() > 0) { core.warn("error: FAILED layout_test test_the_top_bit_survives"); bad = bad + 1; }
+  if (layout__pad_to_16_is_the_distance_to_the_next_boundary().len() > 0) { core.warn("error: FAILED layout_test test_pad_to_16_is_the_distance_to_the_next_boundary"); bad = bad + 1; }
+  if (mlkem__key_generation_matches_webcrypto_byte_for_byte(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_key_generation_matches_webcrypto_byte_for_byte"); bad = bad + 1; }
+  if (mlkem__webcryptos_ciphertext_decapsulates_here(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_webcryptos_ciphertext_decapsulates_here"); bad = bad + 1; }
+  if (mlkem__encapsulation_is_deterministic_in_its_randomness(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_encapsulation_is_deterministic_in_its_randomness"); bad = bad + 1; }
+  if (mlkem__our_ciphertext_round_trips(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_our_ciphertext_round_trips"); bad = bad + 1; }
+  if (mlkem__a_corrupted_ciphertext_gives_a_different_secret_not_a_failure(core, cli).len() > 0) { core.warn("error: FAILED mlkem_test test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure"); bad = bad + 1; }
+  if (nistcurve__the_group_orders().len() > 0) { core.warn("error: FAILED nistcurve_test test_the_group_orders"); bad = bad + 1; }
+  if (nistcurve__public_keys_match_the_host(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_public_keys_match_the_host"); bad = bad + 1; }
+  if (nistcurve__we_verify_the_hosts_signatures(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_we_verify_the_hosts_signatures"); bad = bad + 1; }
+  if (nistcurve__the_host_verifies_ours(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_the_host_verifies_ours"); bad = bad + 1; }
+  if (nistcurve__p384_verifies_the_hosts_signatures(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_p384_verifies_the_hosts_signatures"); bad = bad + 1; }
+  if (nistcurve__ecdh_agrees_from_both_ends().len() > 0) { core.warn("error: FAILED nistcurve_test test_ecdh_agrees_from_both_ends"); bad = bad + 1; }
+  if (nistcurve__signatures_outside_the_group_order_are_refused().len() > 0) { core.warn("error: FAILED nistcurve_test test_signatures_outside_the_group_order_are_refused"); bad = bad + 1; }
+  if (nistcurve__the_fields_agree_with_bigint(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_the_fields_agree_with_bigint"); bad = bad + 1; }
+  if (nistcurve__inversion_agrees_with_bigint_and_undoes_multiplication(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_inversion_agrees_with_bigint_and_undoes_multiplication"); bad = bad + 1; }
+  if (nistcurve__the_p256_base_point_is_the_one_fips_186_4_publishes().len() > 0) { core.warn("error: FAILED nistcurve_test test_the_p256_base_point_is_the_one_fips_186_4_publishes"); bad = bad + 1; }
+  if (nistcurve__the_exceptional_cases_in_the_p256_addition_law().len() > 0) { core.warn("error: FAILED nistcurve_test test_the_exceptional_cases_in_the_p256_addition_law"); bad = bad + 1; }
+  if (nistcurve__a_p384_signature_is_rejected_under_the_wrong_key(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_a_p384_signature_is_rejected_under_the_wrong_key"); bad = bad + 1; }
+  if (nistcurve__a_sha256_digest_under_a_p384_key_is_right_aligned(core, cli).len() > 0) { core.warn("error: FAILED nistcurve_test test_a_sha256_digest_under_a_p384_key_is_right_aligned"); bad = bad + 1; }
+  if (rsa__pkcs1_signatures_from_the_host(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_pkcs1_signatures_from_the_host"); bad = bad + 1; }
+  if (rsa__pkcs1_refuses_a_block_that_is_not_exact(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_pkcs1_refuses_a_block_that_is_not_exact"); bad = bad + 1; }
+  if (rsa__pss_at_every_salt_length(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_pss_at_every_salt_length"); bad = bad + 1; }
+  if (rsa__pss_refuses_tampering(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_pss_refuses_tampering"); bad = bad + 1; }
+  if (rsa__our_pkcs1_signature_is_byte_identical_to_the_hosts(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_our_pkcs1_signature_is_byte_identical_to_the_hosts"); bad = bad + 1; }
+  if (rsa__the_host_accepts_what_we_signed(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_the_host_accepts_what_we_signed"); bad = bad + 1; }
+  if (rsa__a_raw_signature_carries_exactly_the_payload(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_a_raw_signature_carries_exactly_the_payload"); bad = bad + 1; }
+  if (rsa__a_forged_block_that_is_wrong_in_one_place_is_refused(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_a_forged_block_that_is_wrong_in_one_place_is_refused"); bad = bad + 1; }
+  if (rsa__our_pss_signatures_verify_elsewhere(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_our_pss_signatures_verify_elsewhere"); bad = bad + 1; }
+  if (rsa__signing_refuses_moduli_it_cannot_use().len() > 0) { core.warn("error: FAILED rsa_test test_signing_refuses_moduli_it_cannot_use"); bad = bad + 1; }
+  if (rsa__recovering_refuses_malformed_blocks().len() > 0) { core.warn("error: FAILED rsa_test test_recovering_refuses_malformed_blocks"); bad = bad + 1; }
+  if (rsa__pss_refuses_a_signature_with_bits_above_embits().len() > 0) { core.warn("error: FAILED rsa_test test_pss_refuses_a_signature_with_bits_above_embits"); bad = bad + 1; }
+  if (rsa__modular_exponentiation_agrees_with_bigint(core, cli).len() > 0) { core.warn("error: FAILED rsa_test test_modular_exponentiation_agrees_with_bigint"); bad = bad + 1; }
+  if (rsa__pss_refuses_a_key_too_small_for_the_encoding().len() > 0) { core.warn("error: FAILED rsa_test test_pss_refuses_a_key_too_small_for_the_encoding"); bad = bad + 1; }
+  if (rsa__a_pss_signature_we_made_verifies_here().len() > 0) { core.warn("error: FAILED rsa_test test_a_pss_signature_we_made_verifies_here"); bad = bad + 1; }
+  if (rsa__a_pkcs1_signature_recovers_the_payload_it_carried().len() > 0) { core.warn("error: FAILED rsa_test test_a_pkcs1_signature_recovers_the_payload_it_carried"); bad = bad + 1; }
+  if (rsagen__openssl_agrees_the_generated_key_is_a_valid_rsa_key(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_openssl_agrees_the_generated_key_is_a_valid_rsa_key"); bad = bad + 1; }
+  if (rsagen__the_same_seed_gives_the_same_key(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_the_same_seed_gives_the_same_key"); bad = bad + 1; }
+  if (rsagen__miller_rabin_knows_primes_from_composites(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_miller_rabin_knows_primes_from_composites"); bad = bad + 1; }
+  if (rsagen__gcd_and_modular_inverse(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_gcd_and_modular_inverse"); bad = bad + 1; }
+  if (rsagen__a_prime_is_rejected_when_e_has_no_inverse(core, cli).len() > 0) { core.warn("error: FAILED rsagen_test test_a_prime_is_rejected_when_e_has_no_inverse"); bad = bad + 1; }
+  if (sha1__the_published_vectors().len() > 0) { core.warn("error: FAILED sha1_test test_the_published_vectors"); bad = bad + 1; }
+  if (sha1__every_length_through_two_blocks(core, cli).len() > 0) { core.warn("error: FAILED sha1_test test_every_length_through_two_blocks"); bad = bad + 1; }
+  if (sha1__the_incremental_form_matches_the_one_shot(core, cli).len() > 0) { core.warn("error: FAILED sha1_test test_the_incremental_form_matches_the_one_shot"); bad = bad + 1; }
+  if (sha1__peek_does_not_end_the_stream(core, cli).len() > 0) { core.warn("error: FAILED sha1_test test_peek_does_not_end_the_stream"); bad = bad + 1; }
+  if (sha1__a_long_message_crosses_many_blocks(core, cli).len() > 0) { core.warn("error: FAILED sha1_test test_a_long_message_crosses_many_blocks"); bad = bad + 1; }
+  if (traps__the_legal_widths_do_not_trap().len() > 0) { core.warn("error: FAILED traps_test test_the_legal_widths_do_not_trap"); bad = bad + 1; }
+  if (traps__the_genuine_lengths_are_accepted().len() > 0) { core.warn("error: FAILED traps_test test_the_genuine_lengths_are_accepted"); bad = bad + 1; }
+  if (traps__the_genuine_p256_operations_still_work().len() > 0) { core.warn("error: FAILED traps_test test_the_genuine_p256_operations_still_work"); bad = bad + 1; }
+  if (traps__the_small_x_point_is_on_the_curve().len() > 0) { core.warn("error: FAILED traps_test test_the_small_x_point_is_on_the_curve"); bad = bad + 1; }
+  if (traps__the_p384_small_x_point_decodes().len() > 0) { core.warn("error: FAILED traps_test test_the_p384_small_x_point_decodes"); bad = bad + 1; }
+  if (traps__the_two_widths_that_are_curves_still_work().len() > 0) { core.warn("error: FAILED traps_test test_the_two_widths_that_are_curves_still_work"); bad = bad + 1; }
+  if (traps__values_at_or_above_p_are_not_in_range().len() > 0) { core.warn("error: FAILED traps_test test_values_at_or_above_p_are_not_in_range"); bad = bad + 1; }
+  if (bad > 0) {
+    core.warn("error: " + itoa(bad) + " test(s) failed, so this measured a broken package");
+    return 1;
+  }
+  return probes(core, cli);
+}
+
+export void trapCase(i32 i) {
+  if (i == 0) { aead__traps_on_a_flipped_first_ciphertext_bit(); return; }
+  if (i == 1) { aead__traps_on_a_flipped_last_ciphertext_bit(); return; }
+  if (i == 2) { aead__traps_on_modified_associated_data(); return; }
+  if (i == 3) { aead__traps_on_a_flipped_tag_bit(); return; }
+  if (i == 4) { aead__traps_on_the_wrong_key(); return; }
+  if (i == 5) { aead__traps_on_the_wrong_nonce(); return; }
+  if (i == 6) { aead__traps_on_a_short_tag(); return; }
+  if (i == 7) { aead__traps_on_a_seventeen_byte_tag(); return; }
+  if (i == 8) { aead__traps_on_an_eighteen_byte_tag(); return; }
+  if (i == 9) { aead__traps_on_a_double_length_tag(); return; }
+  if (i == 10) { aead__traps_on_a_truncated_ciphertext(); return; }
+  if (i == 11) { aes__traps_on_a_flipped_ciphertext_bit(); return; }
+  if (i == 12) { aes__traps_on_a_flip_in_the_final_partial_block(); return; }
+  if (i == 13) { aes__traps_on_modified_additional_data(); return; }
+  if (i == 14) { aes__traps_on_a_flipped_tag_bit(); return; }
+  if (i == 15) { aes__traps_on_the_wrong_key(); return; }
+  if (i == 16) { aes__traps_on_the_wrong_nonce(); return; }
+  if (i == 17) { aes__traps_on_a_truncated_ciphertext(); return; }
+  if (i == 18) { aes__traps_on_a_short_tag(); return; }
+  if (i == 19) { aes__traps_on_an_over_long_tag_with_a_valid_prefix(); return; }
+  if (i == 20) { aes__traps_encrypting_with_an_empty_iv(); return; }
+  if (i == 21) { aes__traps_tagging_with_an_empty_iv(); return; }
+  if (i == 22) { aes__traps_on_an_empty_key(); return; }
+  if (i == 23) { aes__traps_on_a_one_byte_key(); return; }
+  if (i == 24) { aes__traps_one_byte_below_aes128(); return; }
+  if (i == 25) { aes__traps_one_byte_above_aes128(); return; }
+  if (i == 26) { aes__traps_between_aes128_and_aes192(); return; }
+  if (i == 27) { aes__traps_one_byte_below_aes256(); return; }
+  if (i == 28) { aes__traps_one_byte_above_aes256(); return; }
+  if (i == 29) { aes__traps_on_a_sixty_four_byte_key(); return; }
+  if (i == 30) { ghash__traps_on_data_that_is_not_a_whole_number_of_blocks(); return; }
+  if (i == 31) { ghash__traps_on_one_byte_of_data(); return; }
+  if (i == 32) { ghash__traps_on_seventeen_bytes_of_data(); return; }
+  if (i == 33) { ghash__traps_on_a_short_subkey(); return; }
+  if (i == 34) { ghash__traps_on_a_subkey_of_seventeen_bytes(); return; }
+  if (i == 35) { ghash__traps_on_a_subkey_of_twenty_bytes(); return; }
+  if (i == 36) { ghash__traps_on_a_subkey_of_thirty_two_bytes(); return; }
+  if (i == 37) { traps__traps_on_a_field_element_of_ragged_length(); return; }
+  if (i == 38) { traps__traps_on_a_field_element_of_the_wrong_width(); return; }
+  if (i == 39) { traps__traps_multiplying_across_widths(); return; }
+  if (i == 40) { traps__traps_on_a_short_ecdh_scalar(); return; }
+  if (i == 41) { traps__traps_on_a_zero_ecdh_scalar(); return; }
+  if (i == 42) { traps__traps_resuming_with_a_short_counter(); return; }
+  if (i == 43) { traps__traps_on_an_unknown_hash_length_in_pkcs1(); return; }
+  if (i == 44) { traps__traps_on_an_unknown_hash_length_in_pss(); return; }
+  if (i == 45) { traps__traps_aes_ctr_refuses_a_15_byte_iv(); return; }
+  if (i == 46) { traps__traps_aes_ctr_refuses_a_17_byte_iv(); return; }
+  if (i == 47) { traps__traps_aes_ctr_refuses_a_20_byte_iv(); return; }
+  if (i == 48) { traps__traps_aes_ctr_refuses_a_32_byte_iv(); return; }
+  if (i == 49) { traps__traps_x25519_refuses_a_0_byte_scalar(); return; }
+  if (i == 50) { traps__traps_x25519_refuses_a_0_byte_u_coordinate(); return; }
+  if (i == 51) { traps__traps_x25519_refuses_a_31_byte_scalar(); return; }
+  if (i == 52) { traps__traps_x25519_refuses_a_31_byte_u_coordinate(); return; }
+  if (i == 53) { traps__traps_x25519_refuses_a_33_byte_scalar(); return; }
+  if (i == 54) { traps__traps_x25519_refuses_a_33_byte_u_coordinate(); return; }
+  if (i == 55) { traps__traps_x25519_refuses_a_64_byte_scalar(); return; }
+  if (i == 56) { traps__traps_x25519_refuses_a_64_byte_u_coordinate(); return; }
+  if (i == 57) { traps__traps_ed25519_refuses_a_0_byte_seed_for_a_key(); return; }
+  if (i == 58) { traps__traps_ed25519_refuses_a_0_byte_seed_for_signing(); return; }
+  if (i == 59) { traps__traps_ed25519_refuses_a_0_byte_public_key_for_a_sign_bit(); return; }
+  if (i == 60) { traps__traps_ed25519_refuses_a_0_byte_u_coordinate_to_convert(); return; }
+  if (i == 61) { traps__traps_ed25519_refuses_a_0_byte_curve_secret_to_convert(); return; }
+  if (i == 62) { traps__traps_ed25519_refuses_a_31_byte_seed_for_a_key(); return; }
+  if (i == 63) { traps__traps_ed25519_refuses_a_31_byte_seed_for_signing(); return; }
+  if (i == 64) { traps__traps_ed25519_refuses_a_31_byte_public_key_for_a_sign_bit(); return; }
+  if (i == 65) { traps__traps_ed25519_refuses_a_31_byte_u_coordinate_to_convert(); return; }
+  if (i == 66) { traps__traps_ed25519_refuses_a_31_byte_curve_secret_to_convert(); return; }
+  if (i == 67) { traps__traps_ed25519_refuses_a_33_byte_seed_for_a_key(); return; }
+  if (i == 68) { traps__traps_ed25519_refuses_a_33_byte_seed_for_signing(); return; }
+  if (i == 69) { traps__traps_ed25519_refuses_a_33_byte_public_key_for_a_sign_bit(); return; }
+  if (i == 70) { traps__traps_ed25519_refuses_a_33_byte_u_coordinate_to_convert(); return; }
+  if (i == 71) { traps__traps_ed25519_refuses_a_33_byte_curve_secret_to_convert(); return; }
+  if (i == 72) { traps__traps_ed25519_refuses_a_64_byte_seed_for_a_key(); return; }
+  if (i == 73) { traps__traps_ed25519_refuses_a_64_byte_seed_for_signing(); return; }
+  if (i == 74) { traps__traps_ed25519_refuses_a_64_byte_public_key_for_a_sign_bit(); return; }
+  if (i == 75) { traps__traps_ed25519_refuses_a_64_byte_u_coordinate_to_convert(); return; }
+  if (i == 76) { traps__traps_ed25519_refuses_a_64_byte_curve_secret_to_convert(); return; }
+  if (i == 77) { traps__traps_ed25519_refuses_a_0_byte_expanded_secret_for_a_key(); return; }
+  if (i == 78) { traps__traps_ed25519_refuses_a_0_byte_expanded_secret_for_signing(); return; }
+  if (i == 79) { traps__traps_ed25519_refuses_a_63_byte_expanded_secret_for_a_key(); return; }
+  if (i == 80) { traps__traps_ed25519_refuses_a_63_byte_expanded_secret_for_signing(); return; }
+  if (i == 81) { traps__traps_ed25519_refuses_a_65_byte_expanded_secret_for_a_key(); return; }
+  if (i == 82) { traps__traps_ed25519_refuses_a_65_byte_expanded_secret_for_signing(); return; }
+  if (i == 83) { traps__traps_ed25519_refuses_a_128_byte_expanded_secret_for_a_key(); return; }
+  if (i == 84) { traps__traps_ed25519_refuses_a_128_byte_expanded_secret_for_signing(); return; }
+  if (i == 85) { traps__traps_mlkem_refuses_a_0_byte_seed(); return; }
+  if (i == 86) { traps__traps_mlkem_refuses_a_63_byte_seed(); return; }
+  if (i == 87) { traps__traps_mlkem_refuses_a_65_byte_seed(); return; }
+  if (i == 88) { traps__traps_mlkem_refuses_an_empty_encapsulation_key(); return; }
+  if (i == 89) { traps__traps_mlkem_refuses_an_encapsulation_key_one_byte_short(); return; }
+  if (i == 90) { traps__traps_mlkem_refuses_an_encapsulation_key_one_byte_long(); return; }
+  if (i == 91) { traps__traps_mlkem_refuses_a_0_byte_message(); return; }
+  if (i == 92) { traps__traps_mlkem_refuses_a_31_byte_message(); return; }
+  if (i == 93) { traps__traps_mlkem_refuses_a_33_byte_message(); return; }
+  if (i == 94) { traps__traps_mlkem_refuses_a_64_byte_message(); return; }
+  if (i == 95) { traps__traps_mlkem_refuses_an_empty_decapsulation_key(); return; }
+  if (i == 96) { traps__traps_mlkem_refuses_a_decapsulation_key_one_byte_short(); return; }
+  if (i == 97) { traps__traps_mlkem_refuses_a_decapsulation_key_one_byte_long(); return; }
+  if (i == 98) { traps__traps_mlkem_refuses_an_empty_ciphertext(); return; }
+  if (i == 99) { traps__traps_mlkem_refuses_a_ciphertext_one_byte_short(); return; }
+  if (i == 100) { traps__traps_mlkem_refuses_a_ciphertext_one_byte_long(); return; }
+  if (i == 101) { traps__traps_mlkem_refuses_a_coefficient_at_or_above_q(); return; }
+  if (i == 102) { traps__traps_p256_ecdh_on_a_point_off_the_curve(); return; }
+  if (i == 103) { traps__traps_p256_ecdh_on_a_compressed_point(); return; }
+  if (i == 104) { traps__traps_p256_ecdh_on_an_empty_point(); return; }
+  if (i == 105) { traps__traps_p256_ecdh_on_a_32_byte_point(); return; }
+  if (i == 106) { traps__traps_p256_ecdh_on_a_64_byte_point(); return; }
+  if (i == 107) { traps__traps_p256_ecdh_on_a_66_byte_point(); return; }
+  if (i == 108) { traps__traps_p256_ecdh_on_an_x_outside_the_field(); return; }
+  if (i == 109) { traps__traps_p256_on_a_zero_private_key(); return; }
+  if (i == 110) { traps__traps_p256_on_a_private_key_equal_to_the_order(); return; }
+  if (i == 111) { traps__traps_p256_on_a_private_key_above_the_order(); return; }
+  if (i == 112) { traps__traps_p256_scalar_base_at_the_order(); return; }
+  if (i == 113) { traps__traps_p256_reencode_on_a_66_byte_point(); return; }
+  if (i == 114) { traps__traps_p256_public_key_on_a_33_byte_scalar(); return; }
+  if (i == 115) { traps__traps_p256_ecdh_on_a_33_byte_private_key(); return; }
+  if (i == 116) { traps__traps_p256_ecdh_on_a_66_byte_peer_point(); return; }
+  if (i == 117) { traps__traps_p256_sign_on_a_33_byte_private_key(); return; }
+  if (i == 118) { traps__traps_p256_sign_on_a_33_byte_nonce(); return; }
+  if (i == 119) { traps__traps_p256_on_an_x_that_is_x_plus_p(); return; }
+  if (i == 120) { traps__traps_p384_on_an_x_that_is_x_plus_p(); return; }
+  if (i == 121) { traps__traps_on_a_one_byte_field_element(); return; }
+  if (i == 122) { traps__traps_on_a_33_byte_field_element(); return; }
+  if (i == 123) { traps__traps_on_a_47_byte_field_element(); return; }
+  if (i == 124) { traps__traps_on_a_49_byte_field_element(); return; }
+  if (i == 125) { traps__traps_on_a_four_byte_field_element(); return; }
+  if (i == 126) { traps__traps_on_a_16_byte_field_element(); return; }
+  if (i == 127) { traps__traps_on_a_64_byte_field_element(); return; }
+  if (i == 128) { traps__traps_multiplying_a_p256_element_by_a_p384_one(); return; }
+  if (i == 129) { traps__traps_multiplying_a_p384_element_by_a_p256_one(); return; }
+}
+
+// ── The shapes no test drives ─────────────────────────────────────────────────
+//
+// A test asserts an *answer* at one or two lengths; coverage wants every arm. These are the boundaries
+// where a padding tail, a carry, or a streaming remainder changes which branch runs, aimed at the
+// files the tests leave short.
+
+i32 probes(Core core, Cli cli) {
+  // **SHA-1, 15 points short from the tests alone.** Its padding boundaries are SHA-256's, being the
+  // same 64-byte block and 9-byte tail. `sha1Restored` is the save/load of a mid-stream state, which
+  // `packages/tor` needs and no one-shot reaches.
+  i32[] lens = sha256Lens();
+  for (i32 i = 0; i < lens.len(); i++) {
+    i32 n = lens[i];
+    sha256(bytes(n, 0));
+    sha1(bytes(n, 0));
+    sha1Streamed(bytes(n, 0), 1);
+    sha1Streamed(bytes(n, 0), 7);
+    sha1Streamed(bytes(n, 0), 64);
+    if (n > 1) { sha1Restored(bytes(n, 0), 1); }
+    if (n > 64) { sha1Restored(bytes(n, 0), 64); }
+  }
+  i32[] lens512 = sha512Lens();
+  for (i32 i = 0; i < lens512.len(); i++) {
+    sha512(bytes(lens512[i], 0));
+    sha384(bytes(lens512[i], 0));
+  }
+  // The partial-block arm of each streaming hash, which no one-shot can take.
+  i32[] streamLens = i32[](1, 63, 64, 65, 200);
+  for (i32 i = 0; i < streamLens.len(); i++) {
+    sha256Streamed(bytes(streamLens[i], 0), 1);
+    sha256Streamed(bytes(streamLens[i], 0), 7);
+    sha512Streamed(bytes(streamLens[i], 0), 1);
+    sha512Streamed(bytes(streamLens[i], 0), 7);
+  }
+
+  // **`CtrStream`, 6 points short.** Tor's resumable keystream: 509 is a cell payload, which is the
+  // length that leaves the stream mid-block, and the rest straddle a block boundary from either side.
+  // `cut` values that do not divide 16 are the point.
+  u8[] key = bytes(16, 0);
+  u8[] iv = bytes(16, 0);
+  i32[] ctrLens = i32[](0, 1, 15, 16, 17, 509, 1024);
+  i32[] cuts = i32[](1, 5, 16, 509);
+  i32[] ats = i32[](0, 1, 11, 16);
+  for (i32 i = 0; i < ctrLens.len(); i++) {
+    for (i32 k = 0; k < cuts.len(); k++) { ctrStreamed(key, iv, bytes(ctrLens[i], 0), cuts[k]); }
+    for (i32 k = 0; k < ats.len(); k++) {
+      if (ats[k] <= ctrLens[i]) { ctrResumed(key, iv, bytes(ctrLens[i], 0), ats[k]); }
+    }
+  }
+
+  // HMAC's three key regimes: shorter than the block, exactly it, and hashed down. SHA-1's block is 64
+  // too, so `hmacSha1` shares the boundary.
+  i32[] keyLens = i32[](0, 1, 32, 63, 64, 65, 200);
+  i32[] msgLens = i32[](0, 1, 64, 150);
+  for (i32 i = 0; i < keyLens.len(); i++) {
+    for (i32 k = 0; k < msgLens.len(); k++) { hmac(bytes(keyLens[i], 1), bytes(msgLens[k], 2)); }
+    hmacSha1(bytes(keyLens[i], 0), bytes(keyLens[i], 0));
+  }
+
+  // Equal, differing, and differing in length — the third returns early, and that is deliberate.
+  u8[] a32 = bytes(32, 0);
+  u8[] b32 = bytes(32, 0);
+  b32[31] = b32[31] ^ 1;
+  ctEqual(a32, a32);
+  ctEqual(a32, b32);
+  ctEqual(a32, bytes(31, 0));
+  ctEqualN(a32, a32, 32);
+  ctEqualN(a32, b32, 32);
+  ctEqualN(a32, bytes(31, 0), 31);
+
+  // HKDF: the zero-salt default, output lengths either side of a hash block, and the largest legal
+  // request. RFC 5869 caps output at 255 hash lengths because the counter is one byte; one more traps,
+  // which `traps_test.wac` is where.
+  hkdfExtract(u8[0](), bytes(22, 3));
+  i32[] outLens = i32[](1, 31, 32, 33, 42, 64, 82, 255 * 32);
+  for (i32 i = 0; i < outLens.len(); i++) { hkdf(bytes(13, 4), bytes(22, 5), bytes(10, 6), outLens[i]); }
+  hkdf(u8[0](), bytes(22, 7), u8[0](), 42);
+
+  // ChaCha20: the counter's low word, and messages that do and do not fill a block.
+  u32[] ctrs = u32[](0 as~ u32, 1 as~ u32, 0xFFFFFFFF as~ u32);
+  for (i32 i = 0; i < ctrs.len(); i++) { chachaBlock(bytes(32, 8), ctrs[i], bytes(12, 9)); }
+  i32[] msgN = i32[](0, 1, 63, 64, 65, 127, 128, 375);
+  for (i32 i = 0; i < msgN.len(); i++) {
+    chacha20(bytes(32, 10), 1 as~ u32, bytes(12, 11), bytes(msgN[i], 0));
+  }
+
+  // Poly1305: the partial-final-block path, and the r-clamping in the key.
+  i32[] polyN = i32[](0, 1, 15, 16, 17, 32, 33, 64, 129);
+  for (i32 i = 0; i < polyN.len(); i++) { poly1305(bytes(32, 12), bytes(polyN[i], 13)); }
+
+  // ChaCha20-Poly1305: AAD and ciphertext each padded to 16 independently.
+  i32[] aadLens = i32[](0, 1, 15, 16, 17, 20);
+  i32[] ptLens = i32[](0, 1, 15, 16, 17, 114);
+  for (i32 i = 0; i < aadLens.len(); i++) {
+    for (i32 k = 0; k < ptLens.len(); k++) {
+      u8[] ct = aeadEncrypt(bytes(32, 14), bytes(12, 15), bytes(ptLens[k], 16));
+      u8[] tag = aeadTag(bytes(32, 14), bytes(12, 15), bytes(aadLens[i], 17), ct);
+      aeadDecrypt(bytes(32, 14), bytes(12, 15), bytes(aadLens[i], 17), ct, tag);
+    }
+  }
+
+  // AES: all three key sizes, both directions, since the round count differs.
+  i32[] aesKeys = i32[](16, 24, 32);
+  i32[] ctrN = i32[](0, 1, 15, 16, 17, 64, 100);
+  for (i32 i = 0; i < aesKeys.len(); i++) {
+    aesEncrypt(bytes(aesKeys[i], 18), bytes(16, 19));
+    aesDecrypt(bytes(aesKeys[i], 18), bytes(16, 19));
+    for (i32 k = 0; k < ctrN.len(); k++) {
+      aesCtr(bytes(aesKeys[i], 18), bytes(16, 20), bytes(ctrN[k], 21));
+    }
+  }
+
+  // GHASH: whole blocks only — it refuses anything else rather than zero-filling. All-ones drives the
+  // reduction branch on nearly every one of the 128 iterations.
+  i32[] ghashN = i32[](0, 16, 32, 48, 160);
+  for (i32 i = 0; i < ghashN.len(); i++) { ghash(bytes(16, 22), bytes(ghashN[i], 23)); }
+  u8[] ones16 = u8[16]();
+  for (i32 i = 0; i < 16; i++) { ones16[i] = 0xFF; }
+  u8[] ones32 = u8[32]();
+  for (i32 i = 0; i < 32; i++) { ones32[i] = 0xFF; }
+  ghash(ones16, ones32);
+
+  // AES-GCM: the 96-bit IV shortcut and the GHASH-the-IV path for every other length.
+  i32[] ivLens = i32[](8, 12, 16, 60);
+  i32[] gcmAad = i32[](0, 16, 20);
+  i32[] gcmPt = i32[](0, 1, 15, 16, 60);
+  for (i32 i = 0; i < ivLens.len(); i++) {
+    for (i32 k = 0; k < gcmAad.len(); k++) {
+      for (i32 q = 0; q < gcmPt.len(); q++) {
+        u8[] ct = gcmEncrypt(bytes(16, 24), bytes(ivLens[i], 25), bytes(gcmPt[q], 26));
+        u8[] tag = gcmTag(bytes(16, 24), bytes(ivLens[i], 25), bytes(gcmAad[k], 27), ct);
+        gcmDecrypt(bytes(16, 24), bytes(ivLens[i], 25), bytes(gcmAad[k], 27), ct, tag);
+      }
+    }
+  }
+  // The counter increment's wrap: all-ones in the low word must carry into nothing.
+  gcmInc32(u8[16]());
+  u8[] wrap = u8[16]();
+  for (i32 i = 12; i < 16; i++) { wrap[i] = 0xFF; }
+  gcmInc32(wrap);
+
+  // `layout.wac`'s conversions directly. Every primitive above already drives them, but `padTo16`'s
+  // aligned and unaligned arms are the kind of two-branch helper where the callers happen to cover
+  // both — driving it explicitly keeps that from being luck.
+  for (i32 off = 0; off < 8; off++) {
+    leWord32(bytes(16, 29), off);
+    beWord32(bytes(16, 29), off);
+    beWord64(bytes(16, 29), off);
+  }
+  u32[] words = u32[](0 as~ u32, 1 as~ u32, 0x80000000 as~ u32, 0xFFFFFFFF as~ u32);
+  for (i32 i = 0; i < words.len(); i++) {
+    storeLE32(words[i]);
+    storeBE32(words[i]);
+  }
+  u64[] longs = u64[](0 as~ u64, 1 as~ u64, (1 as i64 << (63 as i64)) as~ u64, (0 - 1) as~ u64);
+  for (i32 i = 0; i < longs.len(); i++) { storeBE64(longs[i]); }
+  for (i32 n = 0; n <= 32; n++) { padTo16(n); }
+
+  return curves(core, cli);
+}
+
+// ── Curve25519 and Ed25519, at the field boundaries a ladder never reaches ────
+//
+// The ladder covers nearly everything on its own — 255 rounds of every field operation — so what is
+// driven separately here is the parts it never reaches: the encoder's conditional final subtraction,
+// which needs a value at or above p, and both arms of the conditional swap.
+//
+// **The values are hex rather than arithmetic.** `p = 2^255 - 19` little-endian is `ED FF…FF 7F`, and
+// writing the neighbours out is clearer than a bignum this file would otherwise need — and shorter than
+// the TypeScript's, which built them with BigInt.
+
+/** 32-byte little-endian field elements around p = 2^255 - 19. */
+u8[][] feValues() {
+  return u8[][](
+    decoded("0000000000000000000000000000000000000000000000000000000000000000"),  // 0
+    decoded("0100000000000000000000000000000000000000000000000000000000000000"),  // 1
+    decoded("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),  // p - 1
+    decoded("ebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),  // p - 2
+    decoded("0000000000000000000000000000000000000000000000000000000000000040"),  // 1 << 254
+    decoded("0000000400000000000000000000000000000000000000000000000000000000"),  // 1 << 26
+    decoded("0000000200000000000000000000000000000000000000000000000000000000")); // 1 << 25
+}
+
+u8[] fePMinus1() { return feValues()[2]; }
+u8[] fePMinus2() { return feValues()[3]; }
+/** p - 19, so that adding 19 lands on exactly p. */
+u8[] fePMinus19() {
+  return decoded("daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+}
+u8[] feNineteen() {
+  return decoded("1300000000000000000000000000000000000000000000000000000000000000");
+}
+u8[] feOne() { return feValues()[1]; }
+u8[] feThree() {
+  return decoded("0300000000000000000000000000000000000000000000000000000000000000");
+}
+u8[] feFive() {
+  return decoded("0500000000000000000000000000000000000000000000000000000000000000");
+}
+
+i32 curves(Core core, Cli cli) {
+  u8[][] vs = feValues();
+  for (i32 i = 0; i < vs.len(); i++) {
+    fRoundTrip(vs[i]);
+    fInvert(vs[i]);
+    fSquare(vs[i]);
+    fMulSmall(vs[i], 121665 as i64);
+    fAdd(vs[i], fePMinus1());
+    fSub(vs[i], fePMinus1());
+    fMul(vs[i], fePMinus2());
+  }
+  // A u-coordinate with bit 255 set: ignored, and ignored *structurally* rather than by a branch.
+  u8[] masked = u8[32]();
+  u8[] one = feOne();
+  for (i32 i = 0; i < 32; i++) { masked[i] = one[i]; }
+  masked[31] = masked[31] | 0x80;
+  fRoundTrip(masked);
+  // **A sum that lands on exactly p.** Every canonical input is already below p, so nothing above
+  // reaches `feToBytes`' final conditional subtraction; this is the only way to.
+  fAdd(fePMinus19(), feNineteen());
+  fAdd(fePMinus1(), feOne());
+  fCSwap(feThree(), feFive(), 0);
+  fCSwap(feThree(), feFive(), 1);
+
+  // Ed25519. Signing and verifying between them reach the group law, both branches of the scalar
+  // select, encoding and decoding; the rejections reach the rest.
+  edBaseEncoded();
+  u8[] seed = bytes(32, 50);
+  u8[] pub = edPublicKey(seed);
+  i32[] msgLens = i32[](0, 1, 64);
+  for (i32 i = 0; i < msgLens.len(); i++) {
+    u8[] msg = bytes(msgLens[i], 51);
+    u8[] sig = edSign(seed, msg);
+    edVerify(pub, msg, sig);
+    u8[] tampered = u8[sig.len()]();
+    for (i32 k = 0; k < sig.len(); k++) { tampered[k] = sig[k]; }
+    tampered[0] = tampered[0] ^ 1;
+    edVerify(pub, msg, tampered);        // R decodes but the equation fails
+  }
+
+  // **The expanded-key surface**, which `packages/tor` uses. The assertions are in
+  // `curve25519_test.wac`'s two expanded-key tests; these are the same shapes.
+  u8[] expanded = edExpanded(seed);
+  edPublicKeyExpanded(expanded);
+  edSignExpanded(expanded, bytes(8, 56));
+  edExpanded(bytes(31, 57));             // the wrong seed length, which answers rather than trapping
+  // prop228, both directions. Clamped first: `x25519Base` clamps and the expanded path does not, so an
+  // unclamped secret sends the two down different scalars.
+  u8[] cs = bytes(32, 58);
+  cs[0] = cs[0] & 248;
+  cs[31] = (cs[31] & 127) | 64;
+  u8[] conv = curveToEdSecret(cs);
+  i32 bit = edSignBit(edPublicKeyExpanded(conv));
+  edFromCurvePublic(x25519Base(cs), bit);
+  edFromCurvePublic(x25519Base(cs), 1 - bit);
+  // **u = p - 1 makes u + 1 zero**, the one input the conversion refuses rather than answering with a
+  // well-formed key that is wrong. `feInvert` returns zero for zero instead of trapping, which is why
+  // the guard exists at all.
+  edFromCurvePublic(fePMinus1(), 0);
+
+  // Rejections: bad lengths, an S at or above L, a y that is not on the curve.
+  edVerify(bytes(31, 52), bytes(4, 53), bytes(64, 54));
+  edVerify(pub, bytes(4, 53), bytes(63, 54));
+  edVerify(pub, bytes(4, 53), bytes(64, 55));   // random S is almost surely >= L or a bad point
+  u8[] notAPoint = u8[32]();
+  notAPoint[0] = 2;
+  edRecode(notAPoint);
+  edRecode(pub);
+  // An odd-x point, so the sign branch in `recoverX` runs both ways.
+  u8[] oddX = u8[32]();
+  for (i32 i = 0; i < 32; i++) { oddX[i] = pub[i]; }
+  oddX[31] = oddX[31] ^ 0x80;
+  edRecode(oddX);
+  edScalarBase(bytes(32, 56));
+  // **y = 1 with the sign bit set**: x is zero, which has no odd root, so the decode must fail. This is
+  // the one branch in `recoverX` that a valid point never reaches.
+  u8[] yOneOddX = u8[32]();
+  yOneOddX[0] = 1;
+  yOneOddX[31] = 0x80;
+  edRecode(yOneOddX);
+  edRecode(bytes(31, 57));                      // wrong length
+  // A public key that is not a point, and a signature whose R is not a point.
+  u8[] goodSig = edSign(seed, bytes(8, 60));
+  edVerify(notAPoint, bytes(8, 60), goodSig);
+  u8[] badR = u8[goodSig.len()]();
+  for (i32 i = 0; i < goodSig.len(); i++) { badR[i] = goodSig[i]; }
+  for (i32 i = 0; i < 32; i++) { badR[i] = notAPoint[i]; }
+  edVerify(pub, bytes(8, 60), badR);
+
+  x25519Base(bytes(32, 40));
+  x25519(bytes(32, 41), x25519Base(bytes(32, 42)));
+  return nist(core, cli);
+}
+
+/** 32-byte big-endian field elements around the P-256 prime. */
+u8[][] p256Values() {
+  return u8[][](
+    decoded("0000000000000000000000000000000000000000000000000000000000000000"),  // 0
+    decoded("0000000000000000000000000000000000000000000000000000000000000001"),  // 1
+    decoded("ffffffff00000001000000000000000000000000fffffffffffffffffffffffe"),  // p - 1
+    decoded("0000000100000000000000000000000000000000000000000000000000000000"),  // 1 << 224
+    decoded("0000000000000000000000000000000000000001000000000000000000000000"),  // 1 << 96
+    decoded("8000000000000000000000000000000000000000000000000000000000000000"));  // 1 << 255
+}
+
+/** p - 1 */
+u8[] p256PMinus1() { return decoded("ffffffff00000001000000000000000000000000fffffffffffffffffffffffe"); }
+/** p - 2 */
+u8[] p256PMinus2() { return decoded("ffffffff00000001000000000000000000000000fffffffffffffffffffffffd"); }
+/** n, the group order */
+u8[] p256Order() { return decoded("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"); }
+/** n - 1 */
+u8[] p256OrderMinus1() { return decoded("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550"); }
+/** 2 */
+u8[] p256Two() { return decoded("0000000000000000000000000000000000000000000000000000000000000002"); }
+/** 3 */
+u8[] p256Three() { return decoded("0000000000000000000000000000000000000000000000000000000000000003"); }
+/** a small private key */
+u8[] p256Priv() { return decoded("0000000000000000000000000000000000000000000000000000000000003039"); }
+/** a chosen nonce */
+u8[] p256K() { return decoded("00000000000000000000000000000000000000000000000000000000deadbeef"); }
+
+/** 48-byte big-endian field elements around the P-384 prime. */
+u8[][] p384Values() {
+  return u8[][](
+    decoded("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),  // 0
+    decoded("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"),  // 1
+    decoded("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffe"),  // p - 1
+    decoded("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000"),  // 1 << 32
+    decoded("000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000"),  // 1 << 96
+    decoded("000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000"),  // 1 << 128
+    decoded("800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));  // 1 << 383
+}
+
+u8[] p384PMinus1() { return decoded("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffe"); }
+u8[] p384PMinus2() { return decoded("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffd"); }
+
+// ── The NIST curves: the field boundaries, and the point arithmetic's four cases ──
+//
+// `weierstrass.wac` is shared between P-256 and P-384, and the field functions read their prime off the
+// operand *length* — so 48-byte inputs drive the twelve-limb side of every branch the 32-byte ones just
+// drove. That is why both are here rather than in separate files: the point is the shared code.
+//
+// The curve half needs the general case, the doubling case, the identity and the negation case, which is
+// what `scalarBase` at 2, 3 and n-1 gets. `n*G` has no affine form and traps, so it lives in
+// `traps_test.wac`.
+
+import { pAdd, pSub, pMul, pSquare, pInvert, pNeg, pRoundTrip, pInRange, baseEncoded, order,
+         order384, pubKey, ecdh, sign, verify, verifyDigest, scalarBase, reencode,
+         compareSharingAPrefix, compareEqual, compareGreater } from "./wac/p256_probe.wac";
+import { modExp, verifyPkcs1, verifyPss } from "./wac/rsa_probe.wac";
+import { sha1LoadBad, ctrBadIv } from "./wac/probe.wac";
+import { bcryptPbkdf } from "../src/bcryptpbkdf.wac";
+import { small, gcd, modInverse, randomPrime } from "../src/rsagen.wac";
+
+i32 nist(Core core, Cli cli) {
+  u8[][] vs = p256Values();
+  for (i32 i = 0; i < vs.len(); i++) {
+    pAdd(vs[i], p256PMinus1());
+    pSub(vs[i], p256PMinus1());
+    pMul(vs[i], p256PMinus2());
+    pSquare(vs[i]);
+    pInvert(vs[i]);
+    pNeg(vs[i]);
+    pRoundTrip(vs[i]);
+    pInRange(vs[i]);
+  }
+  baseEncoded();
+  order();
+  order384();
+
+  // The same functions at 48 bytes, which is the twelve-limb side of each of them.
+  u8[][] ws = p384Values();
+  for (i32 i = 0; i < ws.len(); i++) {
+    pAdd(ws[i], p384PMinus1());
+    pSub(ws[i], p384PMinus1());
+    pMul(ws[i], p384PMinus2());
+    pSquare(ws[i]);
+    pInvert(ws[i]);
+    pNeg(ws[i]);
+    pRoundTrip(ws[i]);
+    pInRange(ws[i]);
+  }
+
+  // The curve: the general case, the doubling case, the identity and the negation case.
+  u8[] priv = p256Priv();
+  u8[] pub = pubKey(priv);
+  scalarBase(p256Two());
+  scalarBase(p256Three());
+  scalarBase(p256OrderMinus1());
+  ecdh(priv, pub);
+  u8[] msg = bytes(20, 70);
+  u8[] sig = sign(priv, msg, p256K());
+  verify(pub, msg, sig);
+  u8[] bad = u8[sig.len()]();
+  for (i32 i = 0; i < sig.len(); i++) { bad[i] = sig[i]; }
+  bad[0] = bad[0] ^ 1;
+  verify(pub, msg, bad);
+  verify(pub, msg, u8[63]());
+  verify(pub, msg, u8[64]());
+  // An r or an s at the group order, which the bounds check has to refuse.
+  u8[] n = p256Order();
+  u8[] bigR = u8[sig.len()]();
+  u8[] bigS = u8[sig.len()]();
+  for (i32 i = 0; i < sig.len(); i++) { bigR[i] = sig[i]; bigS[i] = sig[i]; }
+  for (i32 i = 0; i < 32; i++) { bigR[i] = n[i]; bigS[32 + i] = n[i]; }
+  verify(pub, msg, bigR);
+  verify(pub, msg, bigS);
+  sign(priv, msg, u8[32]());
+  // Decode-and-re-encode, and a digest verified directly — `p256VerifyDigest` exists for x509, which
+  // hashes with whatever the certificate says rather than always SHA-256.
+  reencode(pub);
+  verifyDigest(pub, sha256(msg), sig);
+
+  // **A big-endian comparison that has to look past the first byte.** Random keys differ in their
+  // leading byte almost always, so `cmpBE`'s continue side was covered by chance and the ledger
+  // flickered between runs on it. Driven on purpose, and *checked*: a scalar sharing a leading byte
+  // with the group order is exactly what a bounds check against `n` has to get right.
+  if (compareSharingAPrefix() != 0 - 1) {
+    core.warn("error: cmpBE did not compare past the shared leading byte");
+    return 1;
+  }
+  if (compareGreater() != 1) { core.warn("error: cmpBE did not answer greater"); return 1; }
+  if (compareEqual() != 0) { core.warn("error: cmpBE did not answer equal"); return 1; }
+
+  // `modExp` on its own, at the two shapes the verifier never produces: a tiny modulus, and a base of
+  // zero, which short-circuits before the ladder.
+  modExp(decoded("0000000000000000000000000000000000000000000000000000000000000003"),
+         decoded("0000000000000000000000000000000000000000000000000000000000000005"),
+         decoded("0000000000000000000000000000000000000000000000000000000000000007"));
+  modExp(u8[32](),
+         decoded("0000000000000000000000000000000000000000000000000000000000010001"),
+         decoded("0000000000000000000000000000000000000000000000000000000000000ca1"));
+
+  // ## RSA's rejections, which need a *shape* rather than a key
+  //
+  // `rsa_test.wac` drives the accepting path against openssl in both directions, so what is left is the
+  // four checks each verifier makes before it does any arithmetic. The TypeScript reached these by
+  // generating a real 2048-bit key with WebCrypto and then damaging the signature — but none of these
+  // branches looks at the key: they compare *lengths*, ask whether the modulus is zero, and compare the
+  // signature against it. A plausible modulus is a 256-byte number with its top bits set.
+  u8[] e = decoded("010001");
+  u8[] rsaMsg = bytes(24, 80);
+  u8[] modulus = u8[256]();
+  modulus[0] = 0xC0;
+  for (i32 i = 1; i < 256; i++) { modulus[i] = (i * 7 + 3) & 255; }
+  i32[] hashLens = i32[](32, 48, 64);
+  for (i32 i = 0; i < hashLens.len(); i++) {
+    verifyPkcs1(modulus, e, rsaMsg, u8[10](), hashLens[i]);      // a signature of the wrong length
+    verifyPkcs1(u8[256](), e, rsaMsg, u8[256](), hashLens[i]);   // a modulus of zero
+    verifyPkcs1(modulus, e, rsaMsg, modulus, hashLens[i]);       // s = n, so s >= n
+  }
+  // **A modulus too small to hold the padding at all**: 64 bytes cannot carry a SHA-512 DigestInfo plus
+  // eight padding bytes, so the length check fires before any work.
+  u8[] tiny = u8[64]();
+  tiny[0] = 0xC0;
+  verifyPkcs1(tiny, e, rsaMsg, u8[64](), 64);
+
+  verifyPss(modulus, e, rsaMsg, u8[10](), 32, 32);
+  verifyPss(u8[256](), e, rsaMsg, u8[256](), 32, 32);
+  verifyPss(modulus, e, rsaMsg, modulus, 32, 32);
+  verifyPss(modulus, e, rsaMsg, u8[256](), 32, 250);             // a salt too long for the modulus
+
+  // ## Key generation's own helpers, which its tests reach only through a whole key
+  //
+  // `rsagen_test.wac` generates one key and checks it against openssl, which is the right test and
+  // walks one path through each helper. These are the arms that path does not take.
+  //
+  // A zero modulus has no inverse, and `modInverse` answers zero rather than trapping — its callers
+  // here always pass λ(n), which is never zero for real primes, so only a direct call reaches it.
+  modInverse(small(3 as i64), small(0 as i64));
+  modInverse(small(0 as i64), small(7 as i64));
+  // **A candidate with a small factor.** `randomPrime` forces the top two bits and the low one, so
+  // roughly nine candidates in ten are divisible by something under a thousand and the cheap test
+  // rejects them before Miller–Rabin runs. Generating a key reaches that only until the first prime is
+  // found; asking for a few attempts at a small width reaches it many times over.
+  randomPrime(256, bytes(32, 90), 1 as i64, 12);
+  randomPrime(256, bytes(32, 91), 500 as i64, 12);
+  // `gcd` and `millerRabin` on their own, at the arguments a generated key never presents: a base of
+  // one and a composite with a small factor.
+  gcd(small(0 as i64), small(12 as i64));
+  gcd(small(12 as i64), small(0 as i64));
+
+  // **bcrypt-PBKDF at key lengths that are not a multiple of the hash size**, which is where the
+  // interleaved placement's final stride overruns and the loop has to stop early. `packages/ssh` asks
+  // for 48 — a 32-byte key and a 16-byte IV — and nothing here had asked for anything but 32.
+  i32[] keyLens = i32[](1, 31, 33, 48, 63, 64, 65);
+  for (i32 i = 0; i < keyLens.len(); i++) {
+    bcryptPbkdf(bytes(8, 92), bytes(16, 93), keyLens[i], 2);
+  }
+  return 0;
+}
+
+/**
+ * The guards that **trap**, driven so the branch is reached and counted.
+ *
+ * Asserted in `traps_test.wac`, where `test_traps_*` says a trap is the expected outcome — these are
+ * the ones that file does not carry, reached through the probe's own wrappers because the constructors
+ * they guard cannot be called from outside their module with a bad argument any other way.
+ */
+export void trapProbe(i32 i) {
+  // `Sha1.loadState` of anything but 96 bytes: the save/load `packages/tor` needs, where a short state
+  // would be read past its end and a long one silently truncated.
+  i32[] stateLens = i32[](0, 95, 97);
+  if (i < stateLens.len()) { sha1LoadBad(stateLens[i]); return; }
+  i = i - stateLens.len();
+  // A CTR IV that is not 16 bytes. The long case is the one that matters: a short buffer runs off its
+  // end and traps whatever the guard does, so only an over-long one tests the check.
+  i32[] ivLens = i32[](0, 15, 17, 32);
+  if (i < ivLens.len()) { ctrBadIv(bytes(16, 0), ivLens[i]); return; }
+  i = i - ivLens.len();
+  // **RFC 5869 caps HKDF output at 255 hash lengths**, because the counter is one byte. `probes` drives
+  // the largest legal request; this is one more.
+  if (i == 0) { hkdf(bytes(13, 4), bytes(22, 5), bytes(10, 6), 255 * 32 + 1); return; }
+  i = i - 1;
+  // bcrypt-PBKDF's four argument guards, which `packages/ssh` reaches through a key file and nothing
+  // here reached at all.
+  if (i == 0) { bcryptPbkdf(bytes(8, 0), bytes(8, 1), 32, 0); return; }
+  if (i == 1) { bcryptPbkdf(u8[0](), bytes(8, 1), 32, 1); return; }
+  if (i == 2) { bcryptPbkdf(bytes(8, 0), u8[0](), 32, 1); return; }
+  if (i == 3) { bcryptPbkdf(bytes(8, 0), bytes(8, 1), 0, 1); return; }
+  if (i == 4) { bcryptPbkdf(bytes(8, 0), bytes(8, 1), 32 * 32 + 1, 1); return; }
+  i = i - 5;
+  // `aesCtr`'s own IV check, which is a **different function** from `CtrStream.create`'s above — the two
+  // are separate exports with separate guards, so one does not stand in for the other.
+  i32[] badIvs = i32[](0, 15, 17, 32);
+  if (i < badIvs.len()) { aesCtr(bytes(16, 18), u8[badIvs[i]](), bytes(32, 21)); return; }
+  i = i - badIvs.len();
+  if (i == 0) { aesEncrypt(bytes(20, 18), bytes(16, 19)); return; }   // a key of no legal size
+  if (i == 1) { ghash(bytes(16, 22), bytes(17, 23)); return; }        // a partial GHASH block
+  if (i == 2) { ghash(bytes(15, 22), bytes(16, 23)); return; }        // a short h
+  if (i == 3) { gcmEncrypt(bytes(16, 24), u8[0](), bytes(16, 26)); return; }
+  if (i == 4) { gcmTag(bytes(16, 24), u8[0](), bytes(16, 27), bytes(16, 26)); return; }
+  if (i == 5) { gcmDecrypt(bytes(16, 24), bytes(12, 25), bytes(16, 27), bytes(16, 26), bytes(15, 28)); return; }
+  i = i - 6;
+  // **The NIST point validation, which is the whole of what a decoder owes its caller.** Each of these
+  // is a different reason to refuse a public key, and `weierstrass.wac` checks them in order — so a
+  // point that is off the curve and a coordinate that is outside the field reach different lines.
+  u8[] priv = p256Priv();
+  u8[] pub = pubKey(priv);
+  if (i == 0) { pubKey(u8[32]()); return; }                          // a zero scalar
+  if (i == 1) { pubKey(p256Order()); return; }                       // a scalar at n
+  if (i == 2) { pubKey(u8[31]()); return; }                          // a short private key
+  if (i == 3) { ecdh(u8[31](), pub); return; }
+  if (i == 4) { sign(u8[31](), bytes(20, 70), p256K()); return; }
+  if (i == 5) { ecdh(priv, u8[64]()); return; }                      // a point one byte short
+  if (i == 6) { scalarBase(p256Order()); return; }                   // n*G has no affine form
+  if (i == 7) {
+    u8[] offCurve = u8[pub.len()]();
+    for (i32 k = 0; k < pub.len(); k++) { offCurve[k] = pub[k]; }
+    offCurve[64] = offCurve[64] ^ 1;
+    ecdh(priv, offCurve);
+    return;
+  }
+  if (i == 8) {
+    u8[] badTag = u8[pub.len()]();
+    for (i32 k = 0; k < pub.len(); k++) { badTag[k] = pub[k]; }
+    badTag[0] = 3;                                                   // compressed, which is refused
+    ecdh(priv, badTag);
+    return;
+  }
+  // **A coordinate at or above p.** `p - 1` is still *in* the field, so it exercises the curve check
+  // rather than the range check; all-ones is above p and exercises both. x and y separately, because
+  // they are checked one at a time.
+  if (i == 9) {
+    u8[] overX = u8[pub.len()]();
+    for (i32 k = 0; k < pub.len(); k++) { overX[k] = pub[k]; }
+    for (i32 k = 1; k <= 32; k++) { overX[k] = 0xFF; }
+    ecdh(priv, overX);
+    return;
+  }
+  if (i == 10) {
+    u8[] overY = u8[pub.len()]();
+    for (i32 k = 0; k < pub.len(); k++) { overY[k] = pub[k]; }
+    for (i32 k = 33; k <= 64; k++) { overY[k] = 0xFF; }
+    ecdh(priv, overY);
+    return;
+  }
+}

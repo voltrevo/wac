@@ -14,7 +14,7 @@ another agent.
 
 | package | lines | pins | ledger machinery |
 |---|---:|---:|---|
-| `crypto` | 1,101 | 28 | snippet staleness, `Deno.exit(1)` |
+| ~~`crypto`~~ | ~~1,101~~ | 28 → 32 | done 2026-08-20 — six of its entries were covered |
 | ~~`zstd`~~ | ~~1,022~~ | 8 → 17 | done 2026-08-20 — the staleness check was hiding sixteen |
 | `ssh` | 794 | 0 | **none** — no staleness check at all |
 | ~~`gzip`~~ | ~~605~~ | 3 | done 2026-08-20 — the contract this generalised |
@@ -207,8 +207,41 @@ That is the **third** vacuous entry this issue has turned up — after zstd's pi
 point at all — and they share a shape: a staleness check can only ask whether a line still says what it
 said, never whether the claim about it is still true.
 
-Left: `crypto` (28 pins), and `ssh`, which has never ratcheted and is therefore the one most likely to
-go red.
+## Done: `crypto`, and the driver could not call its own tests — 2026-08-20
+
+**1140 of 1173 points, against the TypeScript's 974 of 1053.** More points seen *and* fewer missed, and
+one thing explains it: `harness/wacCoverage.ts`'s `runTestExports` skips any test whose `fn.length > 0`,
+because `instrument` and `wacBind` cannot supply a capability. **64 of this package's 152 returning tests
+were unreachable from its own coverage driver**, and it made up the difference with about six hundred
+lines of hand-built probe calls. `wac covdump` runs the ordinary program path (`issues/system/0221`), so
+the exercise's `main` has a real `Core` and `Cli` and calls them.
+
+Measured on the way: the tests *alone* reach 1100 of 1173. The probe half still earns its place — the
+tests leave 73 points, concentrated in `sha1.wac` (15), `weierstrass.wac` (14), `rsa.wac` (11) — because
+a test asserts an answer at one or two lengths where coverage wants every arm. But five sixths of those
+six hundred lines were driving what the tests already drive.
+
+**`MEASURED_BY_THE_BINARY` is gone.** That list existed for one entry, and it was a good answer to a
+real problem: all five of `mlkem_test.wac`'s tests take `(Core core, Cli cli)`, so the driver called none
+of them and reported fifty of `mlkem.wac`'s points uncovered, while `wac test --coverage` read 125 of
+132. So it spawned the binary, took that measurement every run, and required the figure in both
+directions. `mlkem.wac` reads **131 of 132** here, in the same counter array as everything else. A
+measurement in one place beats a measurement asserted from another — `issues/system/0200` is updated.
+
+**And six of its 28 entries were covered** — `ed25519.wac` lines 70, 75, 107, 113, 153 and 394, which the
+expanded-key and prop228 tests reach. The old check only asked whether the snippet had moved, so it would
+have kept printing their reasons for ever.
+
+Seventeen of the 32 pins are `proven: false`. That is the highest proportion of any package here and it is
+the right answer: an ECDSA verification landing on the identity is *constructible by an attacker* choosing
+r and s together, which is exactly why the check exists. The flag is set from what each reason actually
+claims — "no input reaches it" against "reachable with the right scalar" — rather than from which list it
+lived in, because `UNREACHED` had no such field and calling all 28 unreachable would have buried thirteen
+gaps among the exemptions.
+
+`packages/crypto/cov.ts` is deleted, and `test/rsaOracle.ts` with it — the driver was its only importer.
+
+Left: **`ssh`**, which has never ratcheted, and is therefore the one most likely to go red.
 
 ## Notes
 

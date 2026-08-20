@@ -171,7 +171,7 @@ for (const r of failed) {
   // these lines is what that task's own report already said — repeated here so one screen has all of it.
   //
   // **`is listed as unreach` and not the whole sentence**, because the whole sentence was one word too
-  // specific. `packages/crypto/cov.ts` says "is listed as unreached but was covered" and
+  // specific. `packages/crypto`'s driver said "is listed as unreached but was covered" and
   // gzip's `cov.ts` said "unreachable" — so a stale gzip entry of that kind exited 1 and had its
   // only explanation filtered out here. What reached the screen was the *continuation* line, "That
   // reason no longer holds — drop the entry.", which matched on `no longer holds` by accident: a reason
