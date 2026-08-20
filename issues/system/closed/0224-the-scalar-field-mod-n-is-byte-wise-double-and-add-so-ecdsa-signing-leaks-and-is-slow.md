@@ -1,6 +1,6 @@
 # 0224 — the scalar field mod n is byte-wise double-and-add, so ECDSA signing leaks and is slow
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-20
@@ -127,17 +127,59 @@ to make the constant-time version *faster than the variable-time one it replaced
 change does — and X.509 chain verification is `packages/tls`'s hot path, so this is the strongest
 argument for doing it soon rather than the weakest.
 
-## The shape of the fix that remains
+## Fixed — 2026-08-20 — and it ended up faster than the version that leaked
 
-**The branch half is done; what is left is the layout**, and it is the whole of the remaining time:
-the order as `i64[]` 32-bit limbs, like `fieldp.wac`, rather than `u8[]` big-endian bytes. Every pass
-in `scAdd` and `scSelect` is currently 32 or 48 bytes where it could be 8 or 12 limbs, and `scMul` is
-bit-serial where a limb layout makes it a schoolbook `n²` multiply — 64 products for P-256 against
-256 rounds of a 32-byte add. That is where the 24.9ms goes and where it comes back from.
+`packages/crypto/src/scalarn.wac`: 32-bit limbs, Montgomery form, a coarsely-integrated multiply.
+`weierstrass.wac`'s byte-wise `scAdd`, `scMul`, `scInvert` and `scReduce` are deleted; `cmpBE` and
+`isZeroBE` stay, because validating a scalar against n happens on the wire form.
 
-**The order is not a Solinas prime**, so `fieldp.wac`'s reduction does not carry over — that is
-`reduceWide` folding `2^(32n) mod p`, and for the order there is no such short vector. Montgomery
-multiplication is the usual answer and is what to price first.
+| | bytes, leaking | bytes, constant-time | limbs, constant-time |
+|---|---:|---:|---:|
+| `p256PublicKey` | 2.52ms | 2.50ms | 2.48ms |
+| `p256Sign` | 13.2ms | 24.9ms | **2.4ms** |
+| `p256Verify` | 15.7ms | 26.9ms | **4.6ms** |
+| `ed25519Sign` (control) | 2.4ms | 2.3ms | 2.3ms |
+
+Traced events for a signature: 35.8M → 92.9M → **8.46M, uniform**. **5.5× faster than the
+variable-time version it replaced**, and `p256Sign` at 2.4ms is now `ed25519Sign`'s 2.3ms — which
+closes the P-256 half of `issues/system/0209`. Only RSA at 117ms is left there.
+
+### Montgomery, and the fold that was tried first
+
+The obvious approach was `fieldp.wac`'s: fold `R − n` down from the top half, since both orders are
+close enough to R that `R − n` has a zero top limb. **Modelled in Python before any wac was
+written, and it does not work.** Folding word j carries into word j−1, which is the operand the next
+iteration reads — so that operand reaches 2^33, and `f[k]·v` then needs 65 bits where a 32×32
+product accumulated with a limb and a carry fits 64 exactly. Splitting the operand puts a carry back
+at word j, which the descending pass has already left. Montgomery has none of that: every
+accumulation in CIOS is `t[j] + a[j]·b[i] + carry ≤ 2^64 − 1` by construction.
+
+**Both constants are derived, not transcribed** — `fieldp.wac`'s rule. `ninv` is `-n⁻¹ mod 2^32` by
+five Newton steps, checked against `n₀·x ≡ 1` where it is computed; `r2` is `R² mod n` by `32·len`
+modular doublings from `R − n`, which is one wrapped subtraction. `r2` costs about eight thousand
+operations against fifty thousand limb products for the inversion it enables, paid once per
+signature — putting it on `Curve` would remove that and would mean a constant outliving the modulus
+it came from.
+
+### The oracle is `packages/bignum`, on purpose
+
+`test/wac/scalarn_test.wac` compares against `divmod(mul(a, b), n).r` — schoolbook multiply and long
+division, a different algorithm in a different package, with no Montgomery form and no derived
+constant. The byte-wise implementation would have been the obvious comparison and is being deleted,
+so a differential against it would have made the retiree an oracle. `bignum` stays.
+
+**Four mutations, all caught**, which is why the five-first-time pass is believable:
+
+| mutation | what failed |
+|---|---|
+| four Newton steps instead of five | `ninvOf`'s own assertion traps |
+| no final conditional subtract in `scnMont` | the inverse test |
+| one doubling short in `r2` | the enter/leave round trip |
+| drop the high-limb term in the shift | **only** `(n−1)·(n−1)`, and only on P-384 |
+
+The last is the one worth keeping: 24 sha256-derived operand pairs per curve missed it completely,
+and the hand-written edge cases caught it on one curve out of two. A differential is only as wide as
+its inputs — twice in one issue.
 
 ## Notes
 

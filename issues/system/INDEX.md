@@ -5,7 +5,6 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0224](open/0224-the-scalar-field-mod-n-is-byte-wise-double-and-add-so-ecdsa-signing-leaks-and-is-slow.md) | the arithmetic modulo the group order is byte-wise double-and-add adding only when the bit is set, so `p256Sign` leaks both the private key and the nonce at `weierstrass.wac:276` — and it is eleven of a signature's 13.7ms, so the leak and `issues/system/0209`'s remaining factor are one rewrite | bug | no error |
 | [0220](open/0220-twenty-six-copies-of-struct-rng-in-five-variants.md) | twenty-six `.wac` files declare their own `struct Rng` in five variants; eighteen are one xorshift32 split by whether the result is cast, which changes what `next() % n` samples, and several claim to match a host-side generator that nothing checks | task | wrong answer |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
@@ -69,7 +68,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-232 issues, 175 closed.
+232 issues, 176 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

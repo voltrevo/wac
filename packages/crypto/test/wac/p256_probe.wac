@@ -44,8 +44,8 @@ export bool verifyDigest(u8[] pub, u8[] d, u8[] sig) { return p256VerifyDigest(p
 // the common case and wrong when the leading bytes are equal — which is exactly a scalar at or above
 // the group order, the input a bounds check exists for. `issues/lang/0112`.
 import { cmpBE } from "../../src/weierstrass.wac";
-import { scMul } from "../../src/weierstrass.wac";
-import { p256 } from "../../src/p256.wac";
+import { ScOrder, scOrder, scnFromBytes, scnToBytes, scnMont, scnEnter, scnLeave, scnReduce }
+  from "../../src/scalarn.wac";
 
 /**
  * One multiplication modulo the group order, with `b` the secret.
@@ -58,7 +58,12 @@ import { p256 } from "../../src/p256.wac";
  * `b` is the operand whose bits drive the loop, which is the private key at `scMul(c, r, priv)` and
  * the nonce inside `scInvert`. `a` is fixed here because it does not select anything.
  */
-export u8[] scalarMulOrder(u8[] b) { return scMul(p256(), u8[32](fill: 3), b); }
+export u8[] scalarMulOrder(u8[] b) {
+  ScOrder o = scOrder(p256Order());
+  i64[] x = scnEnter(o, scnReduce(o, scnFromBytes(u8[32](fill: 3))));
+  i64[] y = scnEnter(o, scnReduce(o, scnFromBytes(b)));
+  return scnToBytes(scnLeave(o, scnMont(o, x, y)));
+}
 
 export i32 compareSharingAPrefix() {
   u8[] a = u8[4]();

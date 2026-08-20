@@ -48,13 +48,18 @@ Measured on this machine, 40 operations each, after `issues/system/0210` and `is
 | `x25519Base` | 0.6ms |
 
 **The scalar multiplication is 2.5ms of a 13.7ms signature**, so the curve is not where signing's time
-goes and never was — eleven milliseconds are the order arithmetic. That also means the ordering this
-issue is named after is now inverted the other way: ed25519 signs six times faster than P-256, rather
-than five times slower.
+goes and never was — eleven milliseconds are the order arithmetic. Those figures are from before the
+fix below; they are what pointed at it.
 
 `issues/system/0224` is that code, and it is a **leak** as well as slow: `scMul` adding only when the
 bit is set is `0210`'s defect in a second field, over the private key and the nonce. One rewrite is
 both fixes, which is why they should not be scheduled against each other.
+
+`issues/system/0224` is that code, and it was a **leak** as well as slow: `scMul` adding only when the
+bit was set is `0210`'s defect in a second field, over the private key and the nonce. It is fixed, and
+the fix went the right way — Montgomery multiplication over 32-bit limbs is **5.5× faster than the
+variable-time byte version**, so `p256Sign` is 2.4ms against `ed25519Sign`'s 2.3ms. The ordering this
+issue is named after is no longer inverted in either direction; the two are the same speed.
 
 So what remains of this issue is **RSA at 117ms**, and nothing has looked at it.
 

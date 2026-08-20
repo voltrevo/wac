@@ -3,13 +3,13 @@
 //   deno task coverage:crypto
 //   deno task coverage:crypto --verbose
 //
-// **Named rather than tolerated as a percentage below 100.** A report that sits at 97.5% for ever
+// **Named rather than tolerated as a percentage below 100.** A report that sits at 97.3% for ever
 // teaches everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one
 // that was always there. So this is a two-way ratchet over `tools/wac/covledger.wac`: anything not
 // listed here is expected to be covered and the run fails if it is not — and anything listed that *does*
 // get covered fails too, since the reason has stopped holding. `issues/system/0222`.
 //
-// ## 1112 of 1140, against the TypeScript's 974 of 1053
+// ## 1135 of 1166, against the TypeScript's 974 of 1053
 //
 // More points seen *and* fewer missed, and the reason is one thing: `harness/wacCoverage.ts` could not
 // call a test that takes an argument. `runTestExports` skips any whose `fn.length > 0`, because
@@ -149,28 +149,51 @@ Pin[] pins() {
         "The signing side of the same arithmetic — see the entry for `rsa.wac:272`. Both are " +
         "the `else`: the mask *is* applied on every key anyone uses, and the branch that " +
         "skips it needs a modulus of 8k+1 bits."),
-    Pin("packages/crypto/src/weierstrass.wac", 334, "if (e[at] >= 2)", false,
-        "The borrow side of the odd-scalar adjustment: it runs when a digit is below two and " +
-        "the subtraction has to borrow from the next. Reachable with the right scalar and not " +
-        "driven by the vectors here, which are real keys and signatures. Same status as " +
-        "`ed25519.wac:327` — a test to write."),
-    Pin("packages/crypto/src/weierstrass.wac", 392, "if (jacIsInfinity(shared)) { trap; }", true,
+    Pin("packages/crypto/src/weierstrass.wac", 294, "if (jacIsInfinity(shared)) { trap; }", true,
         "An ECDH result at infinity. P-256 has prime order, so the only point of small order " +
         "is the identity itself, and p256Decode rejects anything not on the curve — so a " +
         "validated peer point times a scalar in [1, n) cannot be the identity. Kept because " +
         "that argument depends on the validation above it staying correct."),
-    Pin("packages/crypto/src/weierstrass.wac", 446, "if (jacIsInfinity(point)) { return false; }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 352, "if (jacIsInfinity(point)) { return false; }", false,
         "u1*G + u2*Q landing on the identity during verification. Constructible by an " +
         "attacker choosing r and s together, which is exactly why the check is here; not " +
         "constructible by accident, which is why no test drives it."),
-    Pin("packages/crypto/src/weierstrass.wac", 468, "if (jacIsInfinity(point)) { return u8[0](); }", true,
+    Pin("packages/crypto/src/weierstrass.wac", 375, "if (jacIsInfinity(point)) { return u8[0](); }", true,
         "k*G at infinity during signing, which needs k = 0 mod n — already rejected above. " +
         "FIPS 186-4 specifies the retry anyway."),
-    Pin("packages/crypto/src/weierstrass.wac", 473, "if (isZeroBE(r)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 381, "if (scnIsZero(rN)) { return u8[0](); }", false,
         "r = 0 during signing. FIPS 186-4 requires the retry; the probability is about 2^-256 " +
         "and no test can produce it without solving for k."),
-    Pin("packages/crypto/src/weierstrass.wac", 477, "if (isZeroBE(s)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 392, "if (scnIsZero(sN)) { return u8[0](); }", false,
         "s = 0 during signing. As above."),
+    Pin("packages/crypto/src/scalarn.wac", 79, "if (be.len() % 4 != 0) { trap; }", true,
+        "`scnFromBytes` given a byte count that is not a whole number of 32-bit limbs. Every " +
+        "caller passes `Curve.order`'s length or a value derived from it, and both curve orders " +
+        "are a whole number of bytes *and* of words — 32 and 48. `fieldp.wac`'s `fpFromBytes` " +
+        "carries the same guard for the same reason and is pinned the same way. It stays because " +
+        "the alternative to trapping is a limb count rounded down and a value silently missing " +
+        "its top bytes."),
+    Pin("packages/crypto/src/scalarn.wac", 184, "if (a.len() != len || b.len() != len) { trap; }", true,
+        "`scnMont` given operands of the wrong width. The two operands and the modulus all come " +
+        "from one `ScOrder` in every call site, so the widths agree by construction — and " +
+        "`fpMul` has the identical guard. What it prevents is worse than a wrong answer: the " +
+        "inner loops are bounded by `len` from the modulus, so a short operand would be read " +
+        "past its end."),
+    Pin("packages/crypto/src/scalarn.wac", 297, "if ((n0 & 1) == 0) { trap; }", true,
+        "Newton's iteration for `-n^-1 mod 2^32` needs an odd modulus, and both group orders " +
+        "are prime. **Unreachable through any input this repository has**, and kept because the " +
+        "iteration does not fail on an even `n0` — it converges to something, and the check " +
+        "below is what notices. Nothing constructs an `ScOrder` from anything but a curve's " +
+        "order; the day something does, this is the sentence that explains the trap."),
+    Pin("packages/crypto/src/scalarn.wac", 300, "if (((n0 * x) & LOW32) != 1) { trap; }", true,
+        "**The assertion on the derived constant, which is the point of deriving it.** Five " +
+        "Newton steps are exact for a 32-bit word, so this cannot fire — and a wrong `ninv` is " +
+        "the failure this file's header is about: `scnMont` would fail to clear the bottom limb, " +
+        "the shift would carry rubbish down, and the output would be a plausible number that is " +
+        "not the product. Checked where it is computed rather than trusted, because there is no " +
+        "later point at which the mistake looks like a mistake.\n" +
+        "         It is not dead code, and that was measured rather than argued: four Newton " +
+        "steps instead of five makes `test/wac/scalarn_test.wac` trap immediately."),
     Pin("packages/crypto/src/bcryptpbkdf.wac", 134, "if (dest >= origKeylen) { break; }", false,
         "The striped write's bound: it fires when a destination lands past the end of the " +
         "key, which needs a stride and a block count that overrun together. Seven key lengths " +

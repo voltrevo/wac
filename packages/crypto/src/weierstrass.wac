@@ -14,6 +14,10 @@ import {
   fpIsZeroBit, fpEqualsBit, fpSelect,
   fpIsZero, fpEquals, fpToBytes, fpFromBytes, fpInRange,
 } from "./fieldp.wac";
+import {
+  ScOrder, scOrder, scnFromBytes, scnToBytes, scnAdd, scnMont, scnEnter, scnLeave,
+  scnInvert, scnReduce, scnIsZero,
+} from "./scalarn.wac";
 
 /**
  * A curve's constants.
@@ -258,115 +262,13 @@ export bool isZeroBE(u8[] a) {
   return acc == 0;
 }
 
-/**
- * `out = pick ? t : out`, byte by byte and with no branch. `pick` must be 0 or 1.
- *
- * The sibling of `fieldp.wac`'s `selectInto`, over bytes rather than limbs. Both arrays are read in
- * full whichever is kept, so the choice is invisible in the memory trace as well as in the control
- * flow.
- */
-void scSelect(u8[] out, u8[] t, i32 pick) {
-  i32 mask = 0 - pick;
-  for (i32 i = 0; i < out.len(); i++) { out[i] = (out[i] ^ (mask & (out[i] ^ t[i]))) & 255; }
-}
-
-/**
- * (a + b) mod n, with the reduction done either way and one of the two answers kept.
- *
- * `a` and `b` are both below n, so the sum is below 2n and one subtraction is the whole reduction.
- * Whether to keep it is `carry | !borrow`: the addition carrying out of the top byte means the true
- * sum is at least 2^(8·len), which is above n for both curves, and a subtraction that does not borrow
- * means the sum was at or above n to begin with.
- */
-u8[] scAdd(Curve c, u8[] a, u8[] b) {
-  u8[] n = c.order;
-  i32 len = n.len();
-  u8[] out = u8[len]();
-  i32 carry = 0;
-  for (i32 i = len - 1; i >= 0; i--) {
-    i32 s = a[i] + b[i] + carry;
-    out[i] = s & 0xFF;
-    carry = s >> 8;
-  }
-  u8[] t = u8[len]();
-  i32 borrow = 0;
-  for (i32 i = len - 1; i >= 0; i--) {
-    i32 d = out[i] - n[i] - borrow;
-    borrow = (d >> 31) & 1;
-    t[i] = d & 255;
-  }
-  scSelect(out, t, carry | (1 - borrow));
-  return out;
-}
-
-/**
- * (a * b) mod n, by double-and-add over the bits of b — **adding on every bit**.
- *
- * A modular doubling and a modular addition per bit, with the addition's result kept or dropped by a
- * mask. Far slower than a Montgomery multiplication and about a tenth the code.
- *
- * It added only when the bit was set until 2026-08-20, which is `issues/system/0210`'s defect in a
- * second field and cost more than that one did: `ecdsaSign` calls this as `scMul(c, r, priv)`, so `b`
- * is the private key, and again inside `scInvert(c, k)`, where the squarings are `scMul(c, base,
- * base)` over a base derived from the nonce. A partial nonce leak recovers the key from signatures an
- * attacker already holds, which makes it the worse of the two.
- */
-export u8[] scMul(Curve c, u8[] a, u8[] b) {
-  i32 len = c.order.len();
-  u8[] acc = u8[len]();
-  u8[] addend = u8[len]();
-  for (i32 i = 0; i < len; i++) { addend[i] = a[i]; }
-  for (i32 i = 8 * len - 1; i >= 0; i--) {
-    i32 bit = (b[i / 8] >> (7 - (i % 8))) & 1;
-    scSelect(acc, scAdd(c, acc, addend), bit);
-    addend = scAdd(c, addend, addend);
-  }
-  return acc;
-}
-
-/** 1/a mod n, by Fermat. n is prime, so a^(n-2) is the inverse. */
-u8[] scInvert(Curve c, u8[] a) {
-  i32 len = c.order.len();
-  u8[] e = u8[len]();
-  for (i32 i = 0; i < len; i++) { e[i] = c.order[i]; }
-  i32 at = len - 1;
-  while (at >= 0) {
-    if (e[at] >= 2) { e[at] -= 2; at = -1; } else { e[at] = e[at] + 254; at--; }
-  }
-  u8[] result = u8[len]();
-  result[len - 1] = 1;
-  u8[] base = u8[len]();
-  for (i32 i = 0; i < len; i++) { base[i] = a[i]; }
-  for (i32 bit = 8 * len - 1; bit >= 0; bit--) {
-    i32 b = (e[bit / 8] >> (7 - (bit % 8))) & 1;
-    if (b == 1) { result = scMul(c, result, base); }
-    base = scMul(c, base, base);
-  }
-  return result;
-}
-
-/**
- * Reduce a big-endian value of the order's length mod n, by one conditional subtraction.
- *
- * **One, not a loop.** Both curves' group orders are above 2^(8·len − 1) — each starts 0xFF — so a
- * value of the order's length is below 2n and a single subtraction reduces it. This was
- * `while (cmpBE(out, c.order) >= 0)`, whose trip count was a function of the value, and the value
- * here is `r` from a signature and the digest scalar. `issues/system/0224`.
- */
-u8[] scReduce(Curve c, u8[] a) {
-  i32 len = c.order.len();
-  u8[] out = u8[len]();
-  for (i32 i = 0; i < len; i++) { out[i] = a[i]; }
-  u8[] t = u8[len]();
-  i32 borrow = 0;
-  for (i32 i = len - 1; i >= 0; i--) {
-    i32 d = out[i] - c.order[i] - borrow;
-    borrow = (d >> 31) & 1;
-    t[i] = d & 255;
-  }
-  scSelect(out, t, 1 - borrow);
-  return out;
-}
+// The byte-wise `scAdd`, `scMul`, `scInvert` and `scReduce` that used to stand here are gone —
+// `scalarn.wac` does this arithmetic on 32-bit limbs in Montgomery form. `issues/system/0224` has the
+// numbers; the short version is that a bit-serial multiply over 32-byte operands was eleven of a
+// signature's thirteen milliseconds, and making it constant-time first pushed that to twenty-five.
+//
+// `cmpBE` and `isZeroBE` stay above, because validating a scalar against n is done on the wire form
+// before anything is converted.
 
 // ── ECDH ──────────────────────────────────────────────────────────────────────
 
@@ -407,8 +309,7 @@ export u8[] curveEcdh(Curve c, u8[] priv, u8[] peerPublic) {
  * (exactly 256 and 384 bits), so there is no trailing bit shift, which there would be for
  * a curve like P-521.
  */
-u8[] digestScalar(Curve c, u8[] digest) {
-  i32 len = c.order.len();
+i64[] digestScalar(ScOrder o, i32 len, u8[] digest) {
   u8[] e = u8[len]();
   if (digest.len() >= len) {
     for (i32 i = 0; i < len; i++) { e[i] = digest[i]; }
@@ -416,7 +317,7 @@ u8[] digestScalar(Curve c, u8[] digest) {
     i32 pad = len - digest.len();
     for (i32 i = 0; i < digest.len(); i++) { e[pad + i] = digest[i]; }
   }
-  return scReduce(c, e);
+  return scnReduce(o, scnFromBytes(e));
 }
 
 /**
@@ -436,10 +337,15 @@ export bool ecdsaVerify(Curve c, u8[] publicKey, u8[] digest, u8[] sig) {
   if (isZeroBE(r) || cmpBE(r, c.order) >= 0) { return false; }
   if (isZeroBE(s) || cmpBE(s, c.order) >= 0) { return false; }
 
-  u8[] e = digestScalar(c, digest);
-  u8[] sInv = scInvert(c, s);
-  u8[] u1 = scMul(c, e, sInv);
-  u8[] u2 = scMul(c, r, sInv);
+  // Nothing in a verification is secret — r, s and the digest are all on the wire — so the
+  // constant-time arithmetic below buys nothing here. It is used anyway rather than kept as a
+  // second faster copy selected by whether the caller believes its operands are public, which is
+  // how a fast path ends up on a secret. `issues/system/0224`.
+  ScOrder o = scOrder(c.order);
+  i64[] e = digestScalar(o, len, digest);
+  i64[] sInv = scnInvert(o, scnEnter(o, scnFromBytes(s)));
+  u8[] u1 = scnToBytes(scnLeave(o, scnMont(o, scnEnter(o, e), sInv)));
+  u8[] u2 = scnToBytes(scnLeave(o, scnMont(o, scnEnter(o, scnFromBytes(r)), sInv)));
 
   Jac pub = curveDecode(c, publicKey);
   Jac point = jacAdd(c, jacMul(c, u1, curveBase(c)), jacMul(c, u2, pub));
@@ -448,7 +354,7 @@ export bool ecdsaVerify(Curve c, u8[] publicKey, u8[] digest, u8[] sig) {
   u8[] xy = jacToAffine(c, point);
   u8[] x = u8[len]();
   for (i32 i = 0; i < len; i++) { x[i] = xy[i]; }
-  return cmpBE(scReduce(c, x), r) == 0;
+  return cmpBE(scnToBytes(scnReduce(o, scnFromBytes(x))), r) == 0;
 }
 
 /**
@@ -464,17 +370,26 @@ export u8[] ecdsaSign(Curve c, u8[] priv, u8[] digest, u8[] k) {
   if (priv.len() != len || k.len() != len) { trap; }
   if (isZeroBE(k) || cmpBE(k, c.order) >= 0) { return u8[0](); }
 
+  ScOrder o = scOrder(c.order);
   Jac point = jacMul(c, k, curveBase(c));
   if (jacIsInfinity(point)) { return u8[0](); }
   u8[] xy = jacToAffine(c, point);
-  u8[] r = u8[len]();
-  for (i32 i = 0; i < len; i++) { r[i] = xy[i]; }
-  r = scReduce(c, r);
-  if (isZeroBE(r)) { return u8[0](); }
+  u8[] rx = u8[len]();
+  for (i32 i = 0; i < len; i++) { rx[i] = xy[i]; }
+  i64[] rN = scnReduce(o, scnFromBytes(rx));
+  u8[] r = scnToBytes(rN);
+  if (scnIsZero(rN)) { return u8[0](); }
 
-  u8[] e = digestScalar(c, digest);
-  u8[] s = scMul(c, scInvert(c, k), scAdd(c, e, scMul(c, r, priv)));
-  if (isZeroBE(s)) { return u8[0](); }
+  // `s = (e + r*priv) / k`, every multiply in Montgomery form so that the form cancels: a product
+  // of two values in it is in it, and only the answer leaves. `priv` is reduced rather than
+  // trusted — the range check above is on `k`, not on it, and `scnEnter` needs its argument below
+  // n for the product's bound to hold.
+  i64[] e = digestScalar(o, len, digest);
+  i64[] kInv = scnInvert(o, scnEnter(o, scnFromBytes(k)));
+  i64[] rp = scnMont(o, scnEnter(o, rN), scnEnter(o, scnReduce(o, scnFromBytes(priv))));
+  i64[] sN = scnLeave(o, scnMont(o, kInv, scnAdd(o, scnEnter(o, e), rp)));
+  u8[] s = scnToBytes(sN);
+  if (scnIsZero(sN)) { return u8[0](); }
 
   u8[] out = u8[2 * len]();
   for (i32 i = 0; i < len; i++) { out[i] = r[i]; out[len + i] = s[i]; }
