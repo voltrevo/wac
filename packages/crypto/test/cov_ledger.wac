@@ -136,48 +136,36 @@ Pin[] pins() {
         "The signing side of the same arithmetic — see the entry for `rsa.wac:272`. Both are " +
         "the `else`: the mask *is* applied on every key anyone uses, and the branch that " +
         "skips it needs a modulus of 8k+1 bits."),
-    Pin("packages/crypto/src/weierstrass.wac", 88, "if (jacIsInfinity(q))", false,
-        "jacAdd with the *second* operand at infinity. The ladder only ever adds a fixed " +
-        "point to an accumulator, so the identity always arrives as the first operand and " +
-        "line 110 catches it. Kept because jacAdd is exported and a caller could pass them " +
-        "the other way round."),
-    Pin("packages/crypto/src/weierstrass.wac", 98, "if (fpEquals(s1, s2)) { return jacDouble(c, p); }", false,
-        "The doubling case inside jacAdd, for P + P. The ladder doubles the accumulator " +
-        "before every conditional add, so the accumulator is never equal to the addend at the " +
-        "point of adding. It is reachable through the exported jacAdd and through an ECDSA " +
-        "verification where u1*G happens to equal u2*Q, which needs a signature constructed " +
-        "for the purpose. This is the branch whose absence would be worst — the general " +
-        "formula divides by zero for P + P — so it stays."),
-    Pin("packages/crypto/src/weierstrass.wac", 247, "if (e[at] >= 2)", false,
+    Pin("packages/crypto/src/weierstrass.wac", 289, "if (e[at] >= 2)", false,
         "The borrow side of the odd-scalar adjustment: it runs when a digit is below two and " +
         "the subtraction has to borrow from the next. Reachable with the right scalar and not " +
         "driven by the vectors here, which are real keys and signatures. Same status as " +
         "`ed25519.wac:327` — a test to write."),
-    Pin("packages/crypto/src/weierstrass.wac", 266, "while (cmpBE(out, c.order) >= 0)", false,
+    Pin("packages/crypto/src/weierstrass.wac", 308, "while (cmpBE(out, c.order) >= 0)", false,
         "scReduce's conditional subtraction, for a value at or above n. n is within 2^-32 of " +
         "2^256, so a uniformly random 32-byte value — a SHA-256 digest, or a point's " +
         "x-coordinate — lands above it about once in four billion times. Not reachable by " +
         "choosing inputs; reachable in the field, eventually, by somebody."),
-    Pin("packages/crypto/src/weierstrass.wac", 268, "for (i32 i = len - 1; i >= 0; i--)", false,
+    Pin("packages/crypto/src/weierstrass.wac", 310, "for (i32 i = len - 1; i >= 0; i--)", false,
         "The subtraction inside that same loop."),
-    Pin("packages/crypto/src/weierstrass.wac", 270, "borrow = d < 0 ? 1 : 0;", false,
+    Pin("packages/crypto/src/weierstrass.wac", 312, "borrow = d < 0 ? 1 : 0;", false,
         "The borrow inside that same loop."),
-    Pin("packages/crypto/src/weierstrass.wac", 298, "if (jacIsInfinity(shared)) { trap; }", true,
+    Pin("packages/crypto/src/weierstrass.wac", 340, "if (jacIsInfinity(shared)) { trap; }", true,
         "An ECDH result at infinity. P-256 has prime order, so the only point of small order " +
         "is the identity itself, and p256Decode rejects anything not on the curve — so a " +
         "validated peer point times a scalar in [1, n) cannot be the identity. Kept because " +
         "that argument depends on the validation above it staying correct."),
-    Pin("packages/crypto/src/weierstrass.wac", 352, "if (jacIsInfinity(point)) { return false; }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 394, "if (jacIsInfinity(point)) { return false; }", false,
         "u1*G + u2*Q landing on the identity during verification. Constructible by an " +
         "attacker choosing r and s together, which is exactly why the check is here; not " +
         "constructible by accident, which is why no test drives it."),
-    Pin("packages/crypto/src/weierstrass.wac", 374, "if (jacIsInfinity(point)) { return u8[0](); }", true,
+    Pin("packages/crypto/src/weierstrass.wac", 416, "if (jacIsInfinity(point)) { return u8[0](); }", true,
         "k*G at infinity during signing, which needs k = 0 mod n — already rejected above. " +
         "FIPS 186-4 specifies the retry anyway."),
-    Pin("packages/crypto/src/weierstrass.wac", 379, "if (isZeroBE(r)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 421, "if (isZeroBE(r)) { return u8[0](); }", false,
         "r = 0 during signing. FIPS 186-4 requires the retry; the probability is about 2^-256 " +
         "and no test can produce it without solving for k."),
-    Pin("packages/crypto/src/weierstrass.wac", 383, "if (isZeroBE(s)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 425, "if (isZeroBE(s)) { return u8[0](); }", false,
         "s = 0 during signing. As above."),
     Pin("packages/crypto/src/bcryptpbkdf.wac", 134, "if (dest >= origKeylen) { break; }", false,
         "The striped write's bound: it fires when a destination lands past the end of the " +
