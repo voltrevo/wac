@@ -1,0 +1,151 @@
+// A line that is one thing written twice, end to end.
+//
+// `## The decision in step 4## The decision in step 4## The decision in step 4` sat in
+// `issues/system/0161` and a doc comment sat duplicated in `packages/wacc/src/emit.wac`. Both are the
+// residue of an edit that pasted over itself, and neither is visible while reading: the eye takes the
+// second copy for the start of the next line.
+//
+// **This exists because I swept for it and reported the repository clean.** The sweep was
+// `grep -rnE '^(#{1,4} .+)\1' … 2>/dev/null | head`, and the `grep` here is **ugrep**, which rejects a
+// backreference in both ERE and BRE — *"invalid escape"*, only `-P` accepts one. So the command did not
+// fail to match; it **errored**, `2>/dev/null` swallowed the message, and empty output read as no
+// findings. Two duplications were sitting in the tree at the time.
+//
+// Both halves of that are on the list already: a flag from the wrong tool fails by narrowing, and a
+// pipeline's silence is not a result. Which is why the second test below asserts the rule *can* match,
+// against strings that are known duplications.
+//
+// ## Written out rather than as a pattern — `issues/system/0161`
+//
+// It was duplicatedLine.test.ts in tools/ until 2026-08-20, and the rule was `^(.{12,}?)\1+$`: a
+// non-greedy prefix of at least twelve characters, repeated to the end of the line. `repeatedUnit`
+// below is that spelled out — for each length from the floor up to half the line, is the line that
+// many copies of its first block — and the arithmetic makes two things explicit that the regex left
+// implied. The line's length must be a *multiple* of the unit, and "non-greedy" means the shortest
+// unit wins, which is the one worth printing.
+//
+// The floor is what keeps `====`, `----`, `////` and a row of box-drawing characters from being
+// findings. Those are how this file's own section rules are written.
+//
+// **It costs 3.7s where the TypeScript cost 0.4s, and 2.0s of that is not the scan.** 2,009 tracked
+// files at one `readFile` each is 2,009 host round trips, and there is no batch read to ask for. The
+// scan itself came down from 3.9s to 2.0s of CPU by working on the file's bytes rather than building a
+// `string` per line — worth doing and not where the money is. Said out loud because this runs in
+// `deno task docs`, which the push gate runs, and a guard that quietly costs four seconds a push is a
+// thing somebody should be able to find.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { sourceFiles } from "../../packages/wactest/src/repo.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** The shortest repeated unit worth reporting. Below this it is punctuation, not prose. */
+const i32 FLOOR = 12;
+
+/**
+ * The length of the shortest unit `b[from, to)` is two or more copies of, or `0`.
+ *
+ * Bytes rather than characters, which is a difference from the regex this replaces and does not
+ * matter: a line that is one byte sequence repeated is one character sequence repeated, because UTF-8
+ * has no other way to spell the same text.
+ *
+ * **On the file's own bytes, and that is the whole cost.** The first version took the line as a
+ * `string` and compared `slice(i, i + 1)` against `slice(i % unit, …)` — two allocations per character
+ * per candidate unit, over a thousand files, which was 3.9s against the TypeScript's 0.4s. Reading a
+ * `u8[]` element is neither.
+ */
+i32 repeatedUnitLen(u8[] b, i32 from, i32 to) {
+  i32 n = to - from;
+  if (n < FLOOR * 2) { return 0; }
+  for (i32 unit = FLOOR; unit * 2 <= n; unit++) {
+    if (n % unit != 0) { continue; }
+    bool same = true;
+    for (i32 i = unit; i < n && same; i++) {
+      if (b[from + i] != b[from + (i % unit)]) { same = false; }
+    }
+    if (same) { return unit; }
+  }
+  return 0;
+}
+
+/** The same question about a whole string, which is what the canary asks. */
+string repeatedUnit(string line) {
+  u8[] b = line.toBytes();
+  i32 unit = repeatedUnitLen(b, 0, b.len());
+  return unit == 0 ? "" : line.slice(0, unit);
+}
+
+export string test_no_line_is_one_thing_written_twice(Core core, Cli cli) {
+  T t = T.create();
+  // `site/` is the one npm subtree and is excluded from every repo-wide walk here; the four extensions
+  // are the ones with prose in them.
+  string[] files = sourceFiles(core, cli, string[](".md", ".ts", ".wac", ".rs"), string[]("site/"));
+
+  // **A floor, so a walk that resolved nothing cannot pass as a clean result** — which is the failure
+  // this whole file is about, one level up.
+  t.isTrue(files.len() >= 500,
+           "only " + itoa(files.len()) + " file(s) walked — did the corpus resolve?");
+  if (files.len() < 500) { return t.report(); }
+
+  // The line boundaries are walked in the bytes rather than split into strings: a `string` per line
+  // over a thousand files is an allocation per line and nothing reads all but the few that match.
+  string found = "";
+  i32 n = 0;
+  for (i32 f = 0; f < files.len(); f++) {
+    FileResult r = cli.readFile(files[f]).wait();
+    if (!r.ok) { continue; }
+    u8[] b = r.bytes;
+    i32 line = 1;
+    i32 from = 0;
+    for (i32 i = 0; i <= b.len(); i++) {
+      if (i < b.len() && b[i] != '\n') { continue; }
+      i32 unit = repeatedUnitLen(b, from, i);
+      if (unit > 0) {
+        n = n + 1;
+        if (n <= 20) {
+          u8[] head = u8[unit < 60 ? unit : 60]();
+          for (i32 k = 0; k < head.len(); k++) { head[k] = b[from + k]; }
+          found = found + "\n  " + files[f] + ":" + itoa(line) + "  " + string.fromBytes(head);
+        }
+      }
+      line = line + 1;
+      from = i + 1;
+    }
+  }
+  t.eqI32(n, 0, itoa(n) + " line(s) that are one thing repeated end to end:" + found +
+                "\nEach is an edit that pasted over itself. Keep one copy.");
+  return t.report();
+}
+
+export string test_the_check_can_actually_match_which_the_sweep_it_replaces_could_not(Core core,
+                                                                                      Cli cli) {
+  T t = T.create();
+  // **The canary, and it is the point of this file rather than a formality.** The predecessor reported
+  // the repository clean while two duplications sat in it — not by matching nothing, but by being a
+  // backreference handed to a grep that refuses them, with stderr discarded.
+  string[] real = string[](
+    "## The decision in step 4## The decision in step 4",
+    "/** one constructor, and a getter *//** one constructor, and a getter */",
+    "## The decision in step 4## The decision in step 4## The decision in step 4");
+  for (i32 i = 0; i < real.len(); i++) {
+    t.isTrue(repeatedUnit(real[i]) != "", "a real duplication is not matched: " + real[i]);
+  }
+
+  // And it must not fire on the things that are legitimately repetitive.
+  string[] fine = string[](
+    "// ─────────────────────────",
+    "====================",
+    "----------",
+    "////////",
+    "",
+    "a short one twice a short one twice");
+  for (i32 i = 0; i < fine.len(); i++) {
+    t.eqStr(repeatedUnit(fine[i]), "", "a rule line was reported as a duplication: " + fine[i]);
+  }
+
+  // **The shortest unit, not any unit.** A line that is four copies of a twelve-character block is also
+  // two copies of a twenty-four-character one, and the twelve is what a reader needs to see.
+  t.eqStr(repeatedUnit("abcdefghijklabcdefghijklabcdefghijklabcdefghijkl"), "abcdefghijkl",
+          "the shortest repeated unit is the one reported");
+  return t.report();
+}

@@ -50,41 +50,14 @@
 // anyway. `issues/system/0161`.
 
 import { T } from "../../packages/wactest/src/assert.wac";
+// `tracked` and `nonEmptyLines` moved to `packages/wactest/src/repo.wac` when
+// `duplicatedline_test.wac` became the second guard to want them.
+import { tracked, nonEmptyLines } from "../../packages/wactest/src/repo.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { hashString } from "core/hash.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 
 // ── the corpus ───────────────────────────────────────────────────────────────
-
-/** Every file git tracks, which is the set a link may point into. */
-string[] tracked(Core core, Cli cli) {
-  Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
-  if (!r.ran() || r.status != 0) {
-    core.warn("links: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
-    trap;
-  }
-  return nonEmptyLines(string.fromBytes(r.stdout));
-}
-
-string[] nonEmptyLines(string s) {
-  u8[] b = s.toBytes();
-  i32 n = 0;
-  i32 start = 0;
-  for (i32 i = 0; i <= b.len(); i++) {
-    if (i < b.len() && b[i] != '\n') { continue; }
-    if (i > start) { n = n + 1; }
-    start = i + 1;
-  }
-  string[] out = string[n](fill: "");
-  i32 at = 0;
-  start = 0;
-  for (i32 i = 0; i <= b.len(); i++) {
-    if (i < b.len() && b[i] != '\n') { continue; }
-    if (i > start) { out[at] = s.slice(start, i); at = at + 1; }
-    start = i + 1;
-  }
-  return out;
-}
 
 string read(Cli cli, string path) {
   FileResult r = cli.readFile(path).wait();

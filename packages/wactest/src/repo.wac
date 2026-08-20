@@ -1,0 +1,92 @@
+// The repository's own files, for the checks that are about the repository rather than about a package.
+//
+// Nineteen guards live in `tools/wac/` and several of them start the same way: ask git what it tracks,
+// keep the ones with an interesting extension, and refuse to pass on an empty answer. This is that
+// start, once.
+//
+// ## Why `git ls-files` rather than a walk
+//
+// A walk has to carry a skip list — `.git`, `node_modules`, `target`, `.cache`, `site` — and a skip
+// list is a second place to record what is not source. git already has that answer and keeps it
+// current: a file that is ignored is not tracked, and a file that is tracked is one somebody meant to
+// put here. It is also the set a *link* may point into, which is what made `tools/wac/links_test.wac`
+// ask the question first.
+//
+// **The trap on failure is deliberate.** A guard whose corpus came back empty reports a clean
+// repository, which is the exact failure `tools/wac/duplicatedline_test.wac`'s header describes at
+// length: its predecessor was a `grep` with a backreference the tool refused, stderr discarded, and
+// empty output read as no findings while two duplications sat in the tree. So this cannot answer
+// "nothing" quietly — and every caller should still put a floor under the count, because git
+// succeeding with a short list is a different way to get the same wrong answer.
+
+import { Core, Cli, Exec } from "std/platform.wac";
+
+/** Every path git tracks, in git's order. Traps if git cannot say. */
+export string[] tracked(Core core, Cli cli) {
+  Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("repo: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
+    trap;
+  }
+  return nonEmptyLines(string.fromBytes(r.stdout));
+}
+
+/** `s` cut at newlines with the empty pieces dropped, which is what a command's output needs. */
+export string[] nonEmptyLines(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    if (i > start) { n = n + 1; }
+    start = i + 1;
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    if (i > start) { out[at] = s.slice(start, i); at = at + 1; }
+    start = i + 1;
+  }
+  return out;
+}
+
+/** Whether `path` ends with any of `exts` — each written with its dot, as `".md"`. */
+export bool hasExtension(string path, string[] exts) {
+  for (i32 i = 0; i < exts.len(); i++) {
+    string e = exts[i];
+    if (path.len() > e.len() && path.slice(path.len() - e.len(), path.len()) == e) { return true; }
+  }
+  return false;
+}
+
+/** Whether `path` is inside any of `dirs`, each written with its trailing slash, as `"site/"`. */
+export bool under(string path, string[] dirs) {
+  for (i32 i = 0; i < dirs.len(); i++) {
+    string d = dirs[i];
+    if (path.len() >= d.len() && path.slice(0, d.len()) == d) { return true; }
+  }
+  return false;
+}
+
+/**
+ * The tracked files with one of `exts`, excluding anything under `skip`.
+ *
+ * The two lists are the caller's because they differ: a link check reads markdown, a duplicated-line
+ * check reads everything with prose in it, and `site/` is excluded from repo-wide walks because it is
+ * the one npm subtree and its sources are vite-resolved.
+ */
+export string[] sourceFiles(Core core, Cli cli, string[] exts, string[] skip) {
+  string[] all = tracked(core, cli);
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (hasExtension(all[i], exts) && !under(all[i], skip)) { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (hasExtension(all[i], exts) && !under(all[i], skip)) { out[at] = all[i]; at = at + 1; }
+  }
+  return out;
+}
