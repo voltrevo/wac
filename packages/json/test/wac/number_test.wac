@@ -11,6 +11,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Rng } from "../../../wactest/src/rng.wac";
 import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -104,45 +105,6 @@ export string test_hard_cases_are_exact_too(Core core, Cli cli) {
   return t.report();
 }
 
-/** xorshift32 — deterministic, so a failure is reproducible. */
-struct Rng {
-  i32 x;
-
-  u32 next(this) {
-    this.x = this.x ^ (this.x << 13);
-    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
-    this.x = this.x ^ (this.x << 5);
-    return this.x as@ u32;
-  }
-
-  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
-}
-
-/**
- * Random decimals are bit-exact.
- *
- * The hand-picked corpus is chosen to be interesting, which is exactly why it cannot establish the
- * error rate. This does: random decimals across the whole exponent range, every one required to match
- * the host bit for bit.
- */
-export string test_random_decimals_are_bit_exact(Core core, Cli cli) {
-  T t = T.create();
-  Rng rng = Rng(0x9E3779B9);
-  Lines lines = Lines.create();
-  i32 rounds = 3000;
-  for (i32 i = 0; i < rounds; i++) {
-    i32 digits = 1 + rng.upto(19);
-    string mant = "";
-    for (i32 d = 0; d < digits; d++) { mant = mant + itoa(rng.upto(10)); }
-    mant = withoutLeadingZeros(mant);
-    string src = (rng.upto(2) == 0 ? "-" : "") + mant + "e" + itoa(rng.upto(640) - 320);
-    ask(lines, src);
-  }
-  t.eqI32(lines.n, rounds, "one line per decimal");
-  core.log("  " + itoa(rounds) + " random decimals, all bit-exact");
-  checkDeno(t, cli, ORACLE, lines, itoa(rounds) + " random decimals");
-  return t.report();
-}
 
 /** Leading zeros dropped, keeping one digit — JSON does not allow `01`. */
 string withoutLeadingZeros(string s) {

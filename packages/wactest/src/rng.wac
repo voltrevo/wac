@@ -1,0 +1,64 @@
+// One xorshift32, for the tests that need a reproducible corpus.
+//
+// Thirty-three `.wac` files declared their own `struct Rng` before this existed, and twenty-five of
+// them were this generator character for character. `issues/system/0220` has the census; what matters
+// here is which of the two families this is and why.
+//
+// ## The unsigned one, on purpose
+//
+// The twenty-five split into two `upto` bodies that land in `[0, n)` by different routes and **do not
+// land on the same value** — for a state of `0xC6E5747A` and `n = 10` one gives 0 and the other 4, and
+// over twenty thousand states at four moduli they disagree on 37% of draws:
+//
+//     unsigned:  (next() % (n as@ u32)) as@ i32
+//     signed:    i32 v = next() % n; return v < 0 ? v + n : v;
+//
+// This is the unsigned one, for a reason rather than a coin toss. `packages/fmt/tools/sweep.ts` is the
+// only host-side generator any of these still have to agree with, and its `x >>> 0` makes the draw
+// unsigned; the four `packages/fmt` copies are already on this side, so their claim to match it holds.
+// Twelve other copies claimed to match a host generator their package no longer has at all — the
+// TypeScript driver went with `issues/system/0161` and the comment outlived it.
+//
+// So a file moving from the *signed* family gets a different corpus. That is expected, it is not a
+// regression, and it wants its package's numbers looked at rather than assumed — which is why they are
+// being converted one at a time.
+//
+// ## The mask is the algorithm, not a tidy-up
+//
+// `(this.x >> 17) & 0x7FFF` looks like belt-and-braces and is load-bearing: `x` is an `i32`, wac's
+// `>>` on a signed type is arithmetic, and xorshift32 needs a *logical* shift. Seventeen places from
+// the top of thirty-two bits leaves fifteen, so masking to fifteen bits is exactly what discards the
+// sign extension. Drop it and the generator is a different one.
+//
+// ## What is not here
+//
+// The extras each caller grew — `bit`, `nextDouble`, `pick` — stay with their callers. A wac struct's
+// methods cannot be extended from another file, so they belong as free functions over an `Rng`, and
+// there are only five of them across the twenty-five.
+
+/**
+ * xorshift32. Seed it with anything but zero, which is the generator's fixed point.
+ *
+ * `next` is unsigned so that `next() % n` is an unsigned remainder — see the header. A caller that
+ * wants the raw bits gets the same thirty-two either way, since `as@` reinterprets rather than
+ * converts; it is only arithmetic on the result that can tell.
+ */
+export struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  /**
+   * A draw in `[0, n)`, and `0` for a non-positive `n`.
+   *
+   * Six of the copies this replaces had no guard and four did; the guard is the superset, and the
+   * difference is only reachable by a caller passing zero or less — where the unguarded version
+   * divides by zero and traps. Answering `0` is what the majority of the guarded copies chose.
+   */
+  i32 upto(this, i32 n) { return n <= 0 ? 0 : ((this.next() % (n as@ u32)) as@ i32); }
+}
