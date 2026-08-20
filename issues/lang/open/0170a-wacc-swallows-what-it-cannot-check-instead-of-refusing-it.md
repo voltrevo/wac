@@ -162,45 +162,54 @@ This is not what silenced the cases in the table above: those have no struct, so
 and `declinedExport` still said nothing — meaning `funcOk` was **true** for a function that did not
 reach the module. That is a third thing to find, and it is the one the report has to expose.
 
-## Correction to round 3, and the phantom type behind it
+## Corrections to the attempt above, and what is actually established
 
-Round 3 concluded "`i32` and `u8` agree, so agreement is by *widened* type", and added a `widenedTy`
-helper. That was wrong, and wrong in the direction this issue is about: it invented a concept to
-accommodate a wrong answer instead of asking where the wrong answer came from.
+Two explanations offered here were wrong. Both are left named rather than deleted, because the
+pattern in them is the same one this issue is about — accommodating a wrong answer instead of asking
+where it came from.
 
-**There is no `u8` value in wac.** `spec/spec/grammar.md`: `packed_type = "i8" | "i16" | "u8" |
-"u16" ;   (* array elements only *)`. Both compilers agree:
+**Round 3 was wrong.** It concluded "`i32` and `u8` agree, so agreement is by *widened* type" and
+added a `widenedTy` helper. There is no `u8` value in wac: `spec/spec/types.md` says *array element
+only — no locals, params, or struct fields*, and both compilers refuse `u8 x = 1;`. So `n + b[0]` is
+plain `i32 + i32` and no widening rule is needed.
 
-| | reference | wacc |
-|---|---|---|
-| `u8 x = 1;` | *packed type 'u8' cannot be a local* | same |
-| `u8 x = b[0];` | *packed type 'u8' cannot be a local* | same |
-| `i32 x = b[0];` | clean | clean |
+**The "phantom type" explanation that replaced it was also wrong.** It claimed `typeOfE` answers
+`"u8"` for `b[0]`. It does not — the `Index` arm already handles this, with a comment saying exactly
+why:
 
-So indexing a `u8[]` yields an **`i32`**, and `n + b[0]` is plain `i32 + i32`. No widening rule is
-needed and none should exist.
+```wac
+// A packed element is an `i32` where it is used — the getter zero- or sign-extends it — which
+// is the checker's rule about packed types arrived at from the emitter's side.
+if (e == "u8" || e == "i8" || e == "u16" || e == "i16") { return "i32"; }
+```
 
-**What actually needed the exception is that wacc's `typeOfE` answers `"u8"` for `b[0]`** — a type
-the language says cannot be the type of a value. That is the bug, and it is the same shape as the
-rest of this issue: a walk answering with something that is not a real type, confidently.
+**And rounds 2 and 3 were never verified.** The seed failed identically before and after each, so
+adding packed types to `arithmeticTy` and then `widenedTy` may both have been no-ops. What is
+established about the attempt is only that the rule broke self-hosting and that the collapse hid its
+own cause; the four-round table above is a record of guessing, not of diagnosis.
 
-### And it produces an invalid module, not a dropped function
+### What *is* established, on its own evidence
 
-The phantom type is worse than the guessing in the table above, because it gets *past* the emitter:
+`u8`/`u16` do exist as element types and are load-bearing: `bulkGet` picks `array.get_u` (13) for
+them against `array.get_s` (12) for `i8`/`i16`, and `bulkValType` is documented as *"the wasm value
+type an element arrives as, which is not the element's own for a packed one"*. That distinction is
+already made and already named.
+
+And this is real, proved by the engine rather than by a story about it:
 
 ```wac
 export i64 f(u8[] b) { i64 x = b[0]; return x; }
 ```
 
     reference:  typecheck: type mismatch: expected i64, …
-    wacc:       1 file(s), no diagnostics
-    wac build:  exit 0
+    wacc:       1 file(s), no diagnostics — wac build exits 0
     engine:     CompileError: local.set[0] expected type i64, found array.get_u of type i32
 
-`wac build` writes an artefact the engine refuses and reports success. `export i64 f(u8[] b) {
-return b[0]; }` is the same, and there the reference names the real type outright — *"return:
-expected i64, found **i32**"*.
+`wac build` writes an artefact the engine refuses and reports success — a *worse* outcome than the
+dropped functions in the table above, which at least produced a loadable module. `export i64 f(u8[]
+b) { return b[0]; }` is the same, and there the reference names the real type: *return: expected i64,
+found i32*.
 
-So the fix is not a widening rule anywhere. It is `typeOfE` answering `i32` for a packed-array index,
-which is what the value is — after which agreement is plain equality and the special case that made
-round 3 look necessary disappears.
+**Why the initialiser check does not fire is not yet known.** `typeOfE` answers `i32`, the slot is
+`i64`, and the rule that catches `i32 n = s;` exists — so something on the packed path bypasses it.
+That is the next thing to find, and it should be found before any rule is tightened.
