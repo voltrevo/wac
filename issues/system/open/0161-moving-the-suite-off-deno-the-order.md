@@ -13,15 +13,39 @@ got the order wrong twice from reasoning about it.
 
 ## Where this stands — 2026-08-20
 
-**17,325 lines of `.test.ts` under `packages/`**, and every one accounted for — not "looked at": each
-has a determination here.
+**17,244 lines of `.test.ts` under `packages/`, in 64 files**, and every one accounted for — not
+"looked at": each has a determination here.
 
-| where | lines | what it is |
-|---|---|---|
-| `box`, `sh` | 5,697 + 1,574 | another agent's packages |
-| `platform` | 6,411 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20 |
-| `wacc` | 2,091 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
-| `webrtc`, `raster`, `stream` | 899 + 218 + 297 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
+| where | lines | files | what it is |
+|---|---|---|---|
+| `box`, `sh` | 5,680 + 1,570 | 17 + 4 | another agent's packages |
+| `platform` | 6,382 | 29 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20 |
+| `wacc` | 2,190 | 11 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
+| `webrtc`, `raster`, `stream` | 909 + 217 + 296 | 1 + 1 + 1 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
+
+**The classification is checked now, and the arithmetic is deliberately not.**
+`tools/wac/testtsclassified_test.wac` fails if a package under `packages/` holds a `.test.ts` and this
+table does not name it — the event that makes the sentence above quietly false. It does *not* check the
+numbers, for the reason below, and it does not check that a determination is right: a row saying
+"`newpkg` | 40 | 1 | —" satisfies it, because the judgement is the operator's to make and mine to argue
+here, and a guard that graded it would be asserting the conclusion.
+
+It reads the table rather than the file. The first version searched the whole document and could not be
+made to fail by deleting a row, because `raster` is mentioned six other times in prose — a check passing
+on evidence unrelated to what it says.
+
+**Re-measured 2026-08-20, and the arithmetic is the part that rots.** The headline above read 17,325
+while its own rows added to 17,187 and the tree held 17,244 — three numbers, no two alike, and none of
+them wrong when it was written. `wacc` had grown by 99 against its recorded figure; over the last
+eighteen hours its `.test.ts` lost 173 lines and gained 146, which is what a package being actively
+worked in looks like.
+
+So the durable part of this table is the **last column**, and it is complete: every package on disk with
+a `.test.ts` in it appears here, and each has a determination rather than a count. A file count is added
+beside the lines because it moves less and because "29 files" is the number that says why `platform` is
+the row it is. Anyone quoting the totals should re-derive them:
+
+    find packages -name '*.test.ts' | xargs wc -l | tail -1
 
 `tor` came off that last row on 2026-08-20. Its entry read "a C tor this machine has not got", and
 there is one at `$HOME/tor-build/…/src/app/tor` dated 3 August — the claim was about this machine and

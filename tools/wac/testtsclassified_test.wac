@@ -1,0 +1,130 @@
+// Every package holding TypeScript tests is named in `issues/system/0161`, which is the issue that
+// decides what happens to them.
+//
+//     ./native/v8/target/release/wac test tools/wac/testtsclassified_test.wac --allow-read --allow-run
+//
+// ## Why a check, and why *this* claim rather than the totals
+//
+// `0161` opens with a table of `.test.ts` lines under `packages/`, one row per package, and the sentence
+// "every one accounted for — not 'looked at': each has a determination here". That sentence is the
+// issue's whole method: the goal is no Deno after bootstrapping, so a file is either going to move or
+// there is a reason it stays, and the table is where the reason lives.
+//
+// **The arithmetic in it cannot be checked, and should not be.** Re-measured on 2026-08-20 the headline
+// read 17,325, its own rows added to 17,187, and the tree held 17,244 — three numbers, no two alike, and
+// none of them wrong when written. `wacc` alone lost 173 lines and gained 146 in eighteen hours. A test
+// pinning those would go red on every test anybody writes, which is churn dressed as rigour.
+//
+// The *classification* is different. It changes only when a package acquires TypeScript tests or loses
+// its last one, and both are events this issue exists to notice. Today the check passes for all seven;
+// what it is for is the eighth — a package that grows a `.test.ts` and is quietly not in the table, so
+// the sentence above stops being true without anything saying so.
+//
+// This is the same distinction `tools/wac/readmefigures_test.wac` draws for the crypto tables: the
+// generated number is checked against its generator, and the prose around it is not pinned.
+//
+// ## What it does not check
+//
+// That a determination is *right*, or even that the row says anything useful. A row reading
+// "`newpkg` | 40 | 1 | —" would satisfy this. That is deliberate: the judgement is the operator's and
+// mine to argue in the issue, and a guard that tried to grade it would be asserting the conclusion.
+// What it holds is that the name is on the page, which is the thing that goes missing by accident.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { sourceFiles } from "../../packages/wactest/src/repo.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+const string ISSUE_NAME = "0161-moving-the-suite-off-deno-the-order.md";
+
+/**
+ * The issue, wherever it currently lives.
+ *
+ * `open/` today and `closed/` when it closes, and this check has to survive that move: the table is the
+ * record of the decisions whether or not the work is finished, and a guard that pinned the directory
+ * would fail on the commit that closed the issue — the one commit where nothing is wrong.
+ */
+string issueText(Cli cli) {
+  string[] where = string[]("issues/system/open/", "issues/system/closed/");
+  for (i32 i = 0; i < where.len(); i++) {
+    FileResult r = cli.readFile(where[i] + ISSUE_NAME).wait();
+    if (r.ok) { return string.fromBytes(r.bytes); }
+  }
+  return "";
+}
+
+/** The package directory a path under `packages/` belongs to, or "" if it is not one. */
+string packageOf(string path) {
+  if (path.len() < 10 || path.slice(0, 9) != "packages/") { return ""; }
+  string rest = path.slice(9, path.len());
+  i32 slash = rest.indexOf("/");
+  return slash <= 0 ? "" : rest.slice(0, slash);
+}
+
+/**
+ * Just the table, cut from the header row to the blank line after it.
+ *
+ * **Scoped, because `0161` is a long document and mentions most of these packages in prose.** The check
+ * claims the package is *classified*, and searching the whole file would let an incidental "`raster`'s
+ * live test" three sections down stand in for a row — which is the check passing on evidence that has
+ * nothing to do with what it says. Written this way after the first version did exactly that: the
+ * canary could not be made to fire by deleting the row, because six other mentions remained.
+ */
+string tableOf(string text) {
+  i32 head = text.indexOf("| where | lines |");
+  if (head < 0) { return ""; }
+  string rest = text.slice(head, text.len());
+  i32 end = rest.indexOf("\n\n");
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
+/** Whether `name` appears in the table wrapped in backticks, which is how it spells a package. */
+bool namedInTable(string table, string name) {
+  return table.indexOf("`" + name + "`") >= 0;
+}
+
+export string test_every_package_with_typescript_tests_is_named_in_0161(Core core, Cli cli) {
+  T t = T.create();
+
+  // Paths only — no file is read to find them, which is what keeps this cheap enough to sit in
+  // `deno task docs`. `duplicatedline_test.wac`'s header is the warning: 2,009 reads is two seconds.
+  string[] files = sourceFiles(core, cli, string[](".ts"), string[0](fill: ""));
+
+  string[] found = string[64](fill: "");
+  i32 n = 0;
+  i32 tests = 0;
+  for (i32 i = 0; i < files.len(); i++) {
+    string p = files[i];
+    if (p.len() < 9 || p.slice(p.len() - 8, p.len()) != ".test.ts") { continue; }
+    string pkg = packageOf(p);
+    if (pkg == "") { continue; }
+    tests = tests + 1;
+    bool seen = false;
+    for (i32 k = 0; k < n; k++) { if (found[k] == pkg) { seen = true; } }
+    if (!seen && n < found.len()) { found[n] = pkg; n = n + 1; }
+  }
+
+  // Said out loud: a walk that found nothing would satisfy every assertion below.
+  t.isTrue(tests > 40, "only " + itoa(tests) + " `.test.ts` files were found under packages/");
+  t.isTrue(n >= 5, "only " + itoa(n) + " packages hold them, which is fewer than the table's rows");
+
+  string text = issueText(cli);
+  t.isTrue(text.len() > 0, ISSUE_NAME + " is in neither issues/system/open/ nor closed/");
+  if (text.len() == 0) { return t.report(); }
+  string table = tableOf(text);
+  t.isTrue(table.len() > 0,
+           ISSUE_NAME + " no longer opens with a `| where | lines |` table — this check reads that "
+           + "table and cannot find it");
+
+  for (i32 i = 0; i < n; i++) {
+    t.isTrue(namedInTable(table, found[i]),
+             "`packages/" + found[i] + "` holds TypeScript tests and the issue does not name it. Add a row to " + ISSUE_NAME + " saying what happens to them — its claim is that " +
+             "every one is accounted for.");
+  }
+
+  // And the check can fail, against a name no package has. Without this the loop above would pass on a
+  // corpus of zero names, and on a `namedInTable` that answered true for anything.
+  t.isFalse(namedInTable(table, "nosuchpackagename"),
+            "the table appears to name a package that does not exist, so this check cannot fail");
+  return t.report();
+}
