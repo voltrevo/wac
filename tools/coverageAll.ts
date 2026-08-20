@@ -118,18 +118,22 @@ const failed = results.filter((r) => r.code !== 0);
 const total = results.reduce((n, r) => n + r.ms, 0) / 1000;
 const elapsed = (performance.now() - startedAll) / 1000;
 /**
- * How many of these can actually fail — and it is four of twenty-one.
+ * How many of these can actually fail — and it is five of twenty-one.
  *
  * **The line below used to read `19/19 passed`, which is not what happened.** Only `crypto`, `fs`,
- * `gzip` and `zstd` end their driver with a failure path; the other seventeen finish with `report(...)`
- * and exit 0 whatever they measured. So a run where a package lost half its coverage says `passed`
- * about it, and the paragraph `tools/push.sh` prints underneath — "a package above is below its
- * recorded coverage" — is true of four of them.
+ * `gzip`, `ssh` and `zstd` end their driver with a failure path; the other sixteen finish with
+ * `report(...)` and exit 0 whatever they measured. So a run where a package lost half its coverage says
+ * `passed` about it, and the paragraph `tools/push.sh` prints underneath — "a package above is below
+ * its recorded coverage" — is true of five of them.
+ *
+ * **It was four until 2026-08-20**, and `ssh` is the fifth: `issues/system/0222` gave it a ratchet,
+ * which it had never had — it measured 561 of 672 points, printed the 111 it missed and exited 0, so an
+ * uncovered branch arriving was indistinguishable from the hundred and eleven that were always there.
  *
  * Counted by looking for a failure path in each driver rather than hardcoded, so the number follows the
- * drivers instead of aging into another wrong figure. Whether the other seventeen *should* assert a
- * floor is a decision about each package, not something to infer here; naming the count is what stops
- * the summary from claiming it either way.
+ * drivers instead of aging into another wrong figure. Whether the other sixteen *should* assert a floor
+ * is a decision about each package, not something to infer here; naming the count is what stops the
+ * summary from claiming it either way.
  */
 const kinds = await Promise.all(results.map(async (r) => {
   // **Either driver, and "neither" is its own answer.** A package's driver is `cov.ts` until it moves

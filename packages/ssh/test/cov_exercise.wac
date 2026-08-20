@@ -1,0 +1,1045 @@
+// Branch coverage for ssh: the probe's shapes, plus the tests that do not need a real port.
+//
+//   deno task coverage:ssh
+//
+// This was ssh's `cov.ts` until 2026-08-20 — `issues/system/0161`, `issues/system/0222`. The ledger is
+// `cov_ledger.wac` beside this file and the reporting is `tools/wac/covledger.wac`, shared.
+//
+// ## The probe carries this package, which is the opposite of `packages/crypto`
+//
+// crypto's driver was mostly redundant with its own tests once a driver could call them — 1100 of 1173
+// from the tests alone. This one is not: **26 of ssh's 58 tests are in the exclusive lane**, because they
+// bind a real port and drive a real OpenSSH binary, and a coverage driver must not race that lane. The
+// 32 that remain reach 464 of 672 on their own, against the 561 the probe reaches. So both halves are
+// here and the probe is the larger one.
+//
+// The 32 safe tests are called anyway, from `main` with a real `Core` and `Cli` — which
+// `harness/wacCoverage.ts` could not do, since `runTestExports` skips any test taking an argument and 29
+// of the 32 take capabilities.
+//
+// ## What the probe is for
+//
+// `test/wac/probe.wac` exports the parser and the encoder at 108 entry points, most of which take an
+// offset and an end so a caller can parse in place. The bounds checks only fire for a caller parsing at
+// an offset, and the traps only for a caller that got an argument wrong — neither is reachable through
+// the whole-buffer forms, which is why the offset forms exist and are driven separately.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { decoded } from "../../codec/src/hex.wac";
+
+import { sshClientVersion, sshClientVersionLine, sshScanStatus, sshScanUsed, sshScanLine,
+         sshSpeaksV2, sshMinBlock, sshPaddingFor, sshFrame, sshUnframeStatus, sshUnframeUsed,
+         sshUnframePayload, sshKexInit, sshProposalField, sshProposalOk, sshNegotiate,
+         sshWriteMpint, sshWriteString, sshReadString, sshReadStringOk,
+         sshUnframeStatusAt, sshScanStatusAt, sshReadStringOkAt, sshKexInitFirst }
+  from "./wac/probe.wac";
+
+// ── Building bytes ────────────────────────────────────────────────────────────
+
+u8[] joinBytes(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+u8[] head(u8[] b, i32 n) {
+  i32 to = n < 0 ? 0 : (n < b.len() ? n : b.len());
+  u8[] out = u8[to]();
+  for (i32 i = 0; i < to; i++) { out[i] = b[i]; }
+  return out;
+}
+
+u8[] filledWith(i32 n, i32 byte) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = byte; }
+  return out;
+}
+
+u8[] repeated(string s, i32 times) {
+  u8[] one = s.toBytes();
+  u8[] out = u8[one.len() * times]();
+  for (i32 i = 0; i < times; i++) {
+    for (i32 k = 0; k < one.len(); k++) { out[i * one.len() + k] = one[k]; }
+  }
+  return out;
+}
+
+/** A four-byte big-endian length, which is how every string on this wire is prefixed. */
+u8[] be32(i32 v) {
+  return u8[]((v >> 24) & 255, (v >> 16) & 255, (v >> 8) & 255, v & 255);
+}
+
+// ── The probe's shapes ────────────────────────────────────────────────────────
+
+/**
+ * Version lines, which is the one part of the protocol that is text.
+ *
+ * A banner may precede the version, the terminator may be a bare LF, and `1.99` speaks 2 while `1.5`
+ * does not. The two over-long cases are the limit from either side: one that will never be a line, and
+ * one that is a complete line but too long to accept.
+ */
+string[] versionLines() {
+  return string[](
+    "SSH-2.0-OpenSSH_9.6\r\n",
+    "SSH-2.0-Other\n",                       // bare LF, no CR to strip
+    "SSH-1.99-Legacy\r\n",                   // speaks 2 as well
+    "SSH-1.5-Ancient\r\n",                   // does not
+    "banner\r\nSSH-2.0-X\r\n",               // one banner line
+    "a\r\nb\r\nc\r\nSSH-2.0-X\r\n",          // several
+    "SSH-2.0-Trailing\r\nextra bytes",       // `used` must stop after the CR LF
+    "SSH-2.0-Partial",                       // incomplete
+    "",                                      // nothing at all
+    "\r\n",                                  // an empty line before anything
+    "SSH-",                                  // exactly the prefix, still incomplete
+    "SSH-\r\n");                             // a version line with no version
+}
+
+void versions() {
+  sshClientVersion();
+  sshClientVersionLine();
+  string[] ls = versionLines();
+  for (i32 i = 0; i < ls.len(); i++) {
+    u8[] b = ls[i].toBytes();
+    if (sshScanStatus(b) == 0) {
+      sshScanUsed(b);
+      sshSpeaksV2(sshScanLine(b));
+    }
+  }
+  // Never going to be a line, and a complete line over the limit.
+  u8[] long1 = repeated("x", 300);
+  u8[] long2 = joinBytes(repeated("y", 300), "\r\n".toBytes());
+  if (sshScanStatus(long1) == 0) { sshScanUsed(long1); sshSpeaksV2(sshScanLine(long1)); }
+  if (sshScanStatus(long2) == 0) { sshScanUsed(long2); sshSpeaksV2(sshScanLine(long2)); }
+  sshSpeaksV2(u8[0]());
+  sshSpeaksV2("SSH".toBytes());
+}
+
+/**
+ * Framing: the padding arithmetic at every remainder, and every way a packet can be malformed.
+ *
+ * The lengths straddle the block size from both sides and pass the point where the padding has to be a
+ * whole extra block. Each packet is then unframed, and truncated twice — one byte short, and shorter
+ * than the length field itself, which are different answers: "read more" against "malformed".
+ */
+void framing() {
+  i32 block = sshMinBlock();
+  i32[] ns = i32[](0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 17, 63, 64, 200, 5000);
+  i32[] blocks = i32[](8, 16);
+  for (i32 i = 0; i < ns.len(); i++) {
+    i32 n = ns[i];
+    for (i32 k = 0; k < blocks.len(); k++) { sshPaddingFor(n, blocks[k]); }
+    u8[] payload = u8[n]();
+    for (i32 k = 0; k < n; k++) { payload[k] = k & 255; }
+    u8[] packet = sshFrame(payload, filledWith(sshPaddingFor(n, block), 7), block);
+    sshUnframeStatus(packet);
+    sshUnframeUsed(packet);
+    sshUnframePayload(packet);
+    sshUnframeStatus(head(packet, packet.len() - 1 > 0 ? packet.len() - 1 : 0));
+    sshUnframeStatus(head(packet, 2));
+  }
+  // Every refusal the unframer owes its caller, each a different reason.
+  u8[][] bad = u8[][](
+    joinBytes(u8[](0, 0, 0, 12, 3), u8[11]()),          // padding under 4
+    u8[](0, 1, 0, 0, 8, 0, 0, 0),                       // over the maximum
+    u8[](0, 0, 0, 6, 200, 0, 0, 0, 0, 0),               // padding longer than the packet
+    u8[](0x80, 0, 0, 0, 8, 0, 0, 0),                    // length negative as an i32
+    u8[](0, 0, 0, 0, 0, 0, 0, 0),                       // length zero
+    u8[](0, 0, 0, 4, 4, 0, 0, 0));                      // length below the minimum
+  for (i32 i = 0; i < bad.len(); i++) { sshUnframeStatus(bad[i]); }
+  sshUnframeStatus(u8[0]());
+}
+
+/**
+ * The two wire types: `mpint`, which is signed and so needs a leading zero when the top bit is set, and
+ * `string`, which is a length and bytes.
+ *
+ * The magnitudes are the encoder's edges — nothing, zeros that must collapse, a value at the sign
+ * boundary from either side, and a leading zero that must not be dropped twice.
+ */
+void wireTypes() {
+  u8[][] magnitudes = u8[][](
+    u8[0](), u8[](0), u8[](0, 0, 0), u8[](1), u8[](0x7F), u8[](0x80), u8[](0xFF),
+    u8[](0, 0x80), u8[](0, 0, 0x7F),
+    u8[](0x09, 0xA3, 0x78, 0xF9, 0xB2, 0xE3, 0x32, 0xA7));
+  for (i32 i = 0; i < magnitudes.len(); i++) { sshWriteMpint(magnitudes[i]); }
+
+  u8[][] strings = u8[][](u8[0](), u8[](0), u8[](0, 1, 255), u8[](0x2C));
+  for (i32 i = 0; i < strings.len(); i++) {
+    u8[] wire = sshWriteString(strings[i]);
+    sshReadStringOk(wire);
+    sshReadString(wire);
+  }
+  u8[][] badStrings = u8[][](
+    u8[](0, 0, 0, 8, 1, 2, 3),                          // claims more than it has
+    u8[](0x80, 0, 0, 0, 1),                             // negative length
+    u8[](0, 0));                                        // not even a length
+  for (i32 i = 0; i < badStrings.len(); i++) {
+    sshReadStringOk(badStrings[i]);
+    sshReadString(badStrings[i]);
+  }
+}
+
+/** A KEXINIT carrying the given ten name-lists, which is what a peer sends. */
+u8[] kexInitOf(string[] lists) {
+  u8[] out = joinBytes(u8[](20), u8[16]());
+  for (i32 i = 0; i < lists.len(); i++) {
+    u8[] b = lists[i].toBytes();
+    out = joinBytes(out, joinBytes(be32(b.len()), b));
+  }
+  return joinBytes(out, u8[](0, 0, 0, 0, 0));
+}
+
+void kexInits() {
+  u8[] ours = sshKexInit(filledWith(16, 9));
+  for (i32 which = 0; which < 9; which++) {
+    sshProposalField(ours, which);
+    sshNegotiate(ours, which);
+  }
+  sshProposalOk(ours);
+
+  u8[] overlapping = kexInitOf(string[](
+    "curve25519-sha256@libssh.org,curve25519-sha256", "ssh-ed25519",
+    "chacha20-poly1305@openssh.com", "chacha20-poly1305@openssh.com",
+    "hmac-sha2-256", "hmac-sha2-256", "none", "none", "", ""));
+  u8[] disjoint = kexInitOf(string[](
+    "diffie-hellman-group1-sha1", "ssh-dss", "3des-cbc", "3des-cbc",
+    "hmac-md5", "hmac-md5", "zlib", "zlib", "", ""));
+  // A single-element list, an empty one, and a trailing comma — the list walker's edges.
+  u8[] odd = kexInitOf(string[](
+    "curve25519-sha256", "", "chacha20-poly1305@openssh.com,", ",none",
+    "hmac-sha2-256", "", "none", "none", "", ""));
+
+  u8[][] ps = u8[][](overlapping, disjoint, odd);
+  for (i32 i = 0; i < ps.len(); i++) {
+    sshProposalOk(ps[i]);
+    for (i32 which = 0; which < 9; which++) {
+      sshProposalField(ps[i], which);
+      sshNegotiate(ps[i], which);
+    }
+  }
+  // Not a KEXINIT at all, and a truncated one.
+  u8[][] notOne = u8[][](u8[](21), u8[0](), head(overlapping, 30));
+  for (i32 i = 0; i < notOne.len(); i++) {
+    sshProposalOk(notOne[i]);
+    sshProposalField(notOne[i], 0);
+    sshNegotiate(notOne[i], 0);
+  }
+
+  // **A name the same length as one of ours but not equal** — `curve25519-sha255` against
+  // `curve25519-sha256`. Without it the comparison loop never takes its mismatch branch, because every
+  // other disagreement here differs in *length* and is rejected before any byte is compared.
+  u8[] sameLength = kexInitOf(string[](
+    "curve25519-sha255", "ssh-ed25519", "chacha20-poly1305@openssh.com",
+    "chacha20-poly1305@openssh.com", "hmac-sha2-256", "hmac-sha2-256", "none", "none", "", ""));
+  sshNegotiate(sameLength, 0);
+  sshProposalField(sameLength, 0);
+
+  // `first_kex_packet_follows` true is the only way to write a boolean of 1.
+  sshKexInitFirst(u8[16](), true);
+  sshKexInitFirst(u8[16](), false);
+}
+
+/**
+ * The offset forms, which is where the bounds checks live.
+ *
+ * A whole-buffer call always has `at = 0` and `end = len`, so none of these fires through it — they are
+ * for a caller parsing several values out of one packet, which is what the transport does.
+ */
+void ranges() {
+  u8[] sample = u8[](0, 0, 0, 12, 4, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+  u8[] line = "SSH-2.0-X\r\n".toBytes();
+  i32[] ats = i32[](0, 4, 0 - 1, 0, 8);
+  i32[] ends = i32[](16, 16, 4, 999, 4);
+  for (i32 i = 0; i < ats.len(); i++) {
+    sshUnframeStatusAt(sample, ats[i], ends[i]);
+    sshScanStatusAt(line, ats[i], ends[i] < 11 ? ends[i] : 11);
+    sshReadStringOkAt(sample, ats[i], ends[i]);
+  }
+  // Fewer bytes than a length field, through the offset form: "read more", not a verdict.
+  sshUnframeStatusAt(sample, 0, 2);
+  sshScanStatusAt("SSH-2.0-Partial".toBytes(), 0, 15);
+}
+
+// ── Key exchange ──────────────────────────────────────────────────────────────
+//
+// Kept to a handful of curve operations: X25519 and Ed25519 are the expensive things in this repository
+// and the branches here are all in the parsing and checking *around* them, not inside.
+
+import { sshMsgKexEcdhReply, sshEphemeralPublic, sshEcdhInit, sshEcdhReplyOk, sshEcdhReplyField,
+         sshSharedSecret, sshExchangeHash, sshVerifyHostKey, sshDeriveKey } from "./wac/probe.wac";
+
+/** A length-prefixed string, which is how everything on this wire is carried. */
+u8[] wireStr(u8[] b) { return joinBytes(be32(b.len()), b); }
+
+u8[] kexSecret() {
+  u8[] out = u8[32]();
+  for (i32 i = 0; i < 32; i++) { out[i] = i + 1; }
+  return out;
+}
+
+u8[] hostKeyBlob() {
+  return joinBytes(wireStr("ssh-ed25519".toBytes()), wireStr(filledWith(32, 2)));
+}
+u8[] sigBlob() {
+  return joinBytes(wireStr("ssh-ed25519".toBytes()), wireStr(filledWith(64, 3)));
+}
+
+/** A host key or a signature under some other algorithm name, or of some other length. */
+u8[] blobOf(string name, i32 len, i32 fill) {
+  return joinBytes(wireStr(name.toBytes()), wireStr(filledWith(len, fill)));
+}
+
+void keyExchange() {
+  sshMsgKexEcdhReply();
+  u8[] secret = kexSecret();
+  u8[] qc = sshEphemeralPublic(secret);
+  sshEcdhInit(qc);
+
+  u8[] reply = joinBytes(joinBytes(u8[](31), wireStr(hostKeyBlob())),
+                         joinBytes(wireStr(qc), wireStr(sigBlob())));
+  sshEcdhReplyOk(reply);
+  for (i32 which = 0; which < 4; which++) { sshEcdhReplyField(reply, which); }
+
+  u8[][] bad = u8[][](
+    u8[](20),                                            // not an ECDH reply
+    u8[](31),                                            // truncated immediately
+    head(reply, 20),                                     // truncated mid-field
+    joinBytes(joinBytes(u8[](31), wireStr(hostKeyBlob())),
+              joinBytes(wireStr(u8[31]()), wireStr(sigBlob()))));   // Q_S 31 bytes
+  for (i32 i = 0; i < bad.len(); i++) {
+    sshEcdhReplyOk(bad[i]);
+    sshEcdhReplyField(bad[i], 0);
+  }
+
+  sshSharedSecret(secret, qc);
+  sshSharedSecret(secret, u8[32]());                     // an all-zero point
+  sshSharedSecret(u8[31](), qc);                         // the wrong secret length
+  sshSharedSecret(secret, u8[31]());                     // the wrong peer length
+
+  u8[] h = sshExchangeHash("SSH-2.0-a".toBytes(), "SSH-2.0-b".toBytes(), u8[](20), u8[](20),
+                           hostKeyBlob(), qc, qc, secret);
+
+  // Every rejection in the host key check. The names are right and the bytes bogus in the first,
+  // which is the case that gets as far as the curve.
+  sshVerifyHostKey(hostKeyBlob(), sigBlob(), h);
+  sshVerifyHostKey(blobOf("ssh-rsa", 32, 0), sigBlob(), h);
+  sshVerifyHostKey(hostKeyBlob(), blobOf("ssh-rsa", 64, 0), h);
+  sshVerifyHostKey(blobOf("ssh-ed25519", 31, 0), sigBlob(), h);
+  sshVerifyHostKey(hostKeyBlob(), blobOf("ssh-ed25519", 63, 0), h);
+  sshVerifyHostKey(u8[0](), sigBlob(), h);
+  sshVerifyHostKey(hostKeyBlob(), u8[0](), h);
+  // **A name the same length as `ssh-ed25519` but not equal.** Every other wrong name here differs in
+  // length and is rejected before the bytes are compared, so without this the comparison loop never
+  // takes its mismatch branch.
+  sshVerifyHostKey(blobOf("ssh-ed25518", 32, 0), sigBlob(), h);
+  sshVerifyHostKey(hostKeyBlob(), blobOf("ssh-ed25518", 64, 0), h);
+
+  // One hash block, and more than one, so the extension loop is entered as well as skipped.
+  i32[] needed = i32[](16, 32, 64);
+  for (i32 i = 0; i < needed.len(); i++) { sshDeriveKey(secret, h, h, 0x41, needed[i]); }
+}
+
+// ── The cipher ────────────────────────────────────────────────────────────────
+
+import { sshCipherKeyLength, sshCipherTagLength, sshAeadPaddingFor, sshSeal, sshPeekLength,
+         sshOpenStatus, sshOpenPayload, sshOpenUsed, sshSealBody } from "./wac/probe.wac";
+
+u8[] cipherKey() {
+  u8[] out = u8[64]();
+  for (i32 i = 0; i < 64; i++) { out[i] = (i * 7 + 1) & 255; }
+  return out;
+}
+
+void cipher() {
+  sshCipherKeyLength();
+  sshCipherTagLength();
+  u8[] ckey = cipherKey();
+  i32[] ns = i32[](0, 1, 6, 7, 8, 100);
+  i32[] blocks = i32[](8, 16);
+  for (i32 i = 0; i < ns.len(); i++) {
+    i32 n = ns[i];
+    for (i32 k = 0; k < blocks.len(); k++) { sshAeadPaddingFor(n, blocks[k]); }
+    u8[] payload = u8[n]();
+    for (i32 k = 0; k < n; k++) { payload[k] = k & 255; }
+    u8[] packet = sshSeal(ckey, n, payload, filledWith(sshAeadPaddingFor(n, 8), 1), 8);
+    sshPeekLength(ckey, n, packet, 0);
+    sshOpenStatus(ckey, n, packet, 0, packet.len(), 35000);
+    sshOpenPayload(ckey, n, packet, 0, packet.len(), 35000);
+    sshOpenUsed(ckey, n, packet, 0, packet.len(), 35000);
+    sshOpenStatus(ckey, n, packet, 0, packet.len() - 1, 35000);   // incomplete
+    sshOpenStatus(ckey, n, packet, 0, 2, 35000);                  // shorter than a length
+    sshOpenStatus(ckey, n + 1, packet, 0, packet.len(), 35000);    // the wrong sequence number
+    sshOpenStatus(ckey, n, packet, 0, packet.len(), 4);            // over the caller's limit
+    sshOpenStatus(ckey, n, packet, 0 - 1, packet.len(), 35000);    // a bad range
+    sshOpenStatus(ckey, n, packet, 0, packet.len() + 5, 35000);    // end past the buffer
+  }
+
+  // A tag that does not match.
+  u8[] tampered = sshSeal(ckey, 0, "tamper".toBytes(), filledWith(16, 2), 8);
+  tampered[tampered.len() - 1] = tampered[tampered.len() - 1] ^ 0xFF;
+  sshOpenStatus(ckey, 0, tampered, 0, tampered.len(), 35000);
+
+  // **A packet whose tag is right and whose padding length is impossible.** Only reachable by sealing a
+  // body directly, since `seal` computes a valid one — this is the check that runs *after* the MAC, and
+  // it is the one that matters, because by then the bytes are authenticated and still nonsense.
+  i32[] padBytes = i32[](200, 0, 3);
+  for (i32 i = 0; i < padBytes.len(); i++) {
+    u8[] body = u8[8]();
+    body[0] = padBytes[i];
+    u8[] forged = sshSealBody(ckey, 0, body);
+    sshOpenStatus(ckey, 0, forged, 0, forged.len(), 35000);
+  }
+
+  sshPeekLength(ckey, 0, u8[2](), 0);                             // too short to peek
+  sshPeekLength(ckey, 0, u8[8](), 0 - 1);                         // a bad offset
+}
+
+// ── Private keys and authentication ───────────────────────────────────────────
+//
+// Key files are built by hand rather than by ssh-keygen: coverage is about reaching the refusals, and
+// every one of them needs a file that is wrong in a specific way. `keyFileOf` and `sectionOf` take every
+// part as an argument for that reason — a builder with defaults would hide which part each case varies.
+
+import { sshReadKeyStatus, sshReadKeySeed, sshReadKeyPublic, sshMsgUserAuthSuccess,
+         sshMsgUserAuthFailure, sshMsgServiceAccept, sshServiceRequest, sshSignedData,
+         sshPublicKeyRequest } from "./wac/probe.wac";
+import { encode as b64encode, ALPHABET_STANDARD } from "../../codec/src/base64.wac";
+
+/** PEM armour, wrapped at 70 characters as ssh-keygen writes it. */
+u8[] armour(u8[] blob) {
+  u8[] b64 = b64encode(blob, ALPHABET_STANDARD(), true);
+  string body = "";
+  for (i32 i = 0; i < b64.len(); i = i + 70) {
+    i32 to = i + 70 < b64.len() ? i + 70 : b64.len();
+    u8[] piece = u8[to - i]();
+    for (i32 k = 0; k < piece.len(); k++) { piece[k] = b64[i + k]; }
+    body = body + string.fromBytes(piece) + "\n";
+  }
+  return ("-----BEGIN OPENSSH PRIVATE KEY-----\n" + body +
+          "-----END OPENSSH PRIVATE KEY-----\n").toBytes();
+}
+
+/** An `openssh-key-v1` file with the given parts. */
+u8[] keyFileOf(string cipher, string kdf, u8[] kdfOptions, i32 keyCount, u8[] pubBlob, u8[] section) {
+  u8[] out = "openssh-key-v1\0".toBytes();
+  out = joinBytes(out, wireStr(cipher.toBytes()));
+  out = joinBytes(out, wireStr(kdf.toBytes()));
+  out = joinBytes(out, wireStr(kdfOptions));
+  out = joinBytes(out, be32(keyCount));
+  out = joinBytes(out, wireStr(pubBlob));
+  out = joinBytes(out, wireStr(section));
+  return armour(out);
+}
+
+u8[] defaultPub() {
+  return joinBytes(wireStr("ssh-ed25519".toBytes()), wireStr(filledWith(32, 4)));
+}
+
+/** A private section: two check words, key type, public key, private key, comment. */
+u8[] sectionOf(i32 check1, i32 check2, string type, u8[] pub, u8[] priv) {
+  u8[] out = joinBytes(be32(check1), be32(check2));
+  out = joinBytes(out, wireStr(type.toBytes()));
+  out = joinBytes(out, wireStr(pub));
+  out = joinBytes(out, wireStr(priv));
+  out = joinBytes(out, wireStr("comment".toBytes()));
+  return joinBytes(out, u8[](1, 2, 3));
+}
+
+u8[] goodSection() {
+  return sectionOf(0x01020304, 0x01020304, "ssh-ed25519", filledWith(32, 4), filledWith(64, 5));
+}
+u8[] goodKeyFile() {
+  return keyFileOf("none", "none", u8[0](), 1, defaultPub(), goodSection());
+}
+/** A bcrypt KDF options blob: a salt and a round count. */
+u8[] kdfOpts(i32 saltLen, i32 rounds) {
+  return joinBytes(wireStr(filledWith(saltLen, 1)), be32(rounds));
+}
+
+void privateKeys(Core core, Cli cli) {
+  sshMsgUserAuthSuccess();
+  sshMsgUserAuthFailure();
+  sshMsgServiceAccept();
+  sshServiceRequest();
+
+  u8[] noPass = u8[0]();
+  u8[] good = goodKeyFile();
+  sshReadKeyStatus(good, noPass);
+  sshReadKeySeed(good, noPass);
+  sshReadKeyPublic(good, noPass);
+
+  // Every refusal, each a file that is wrong in one specific way.
+  u8[][] pems = u8[][](
+    u8[0](),                                                            // nothing at all
+    "-----BEGIN X-----\nnot base64 ~~~\n-----END X-----\n".toBytes(),
+    armour("wrong magic!!!!".toBytes()),                                // decodes, wrong magic
+    armour("openssh-key-v1\0".toBytes()),                               // magic then nothing
+    keyFileOf("none", "none", u8[0](), 2, defaultPub(), goodSection()),  // more than one key
+    keyFileOf("aes128-ctr", "bcrypt", u8[0](), 1, defaultPub(), goodSection()),
+    keyFileOf("aes256-ctr", "none", u8[0](), 1, defaultPub(), goodSection()),
+    keyFileOf("aes256-ctr", "bcrypt", u8[0](), 1, defaultPub(), goodSection()),
+    keyFileOf("aes256-ctr", "bcrypt", kdfOpts(16, 0), 1, defaultPub(), goodSection()),
+    keyFileOf("aes256-ctr", "bcrypt", kdfOpts(0, 4), 1, defaultPub(), goodSection()),
+    // Encrypted, and then the same file with a passphrase: it decrypts to noise, so the check words
+    // disagree — a different refusal from having no passphrase at all.
+    keyFileOf("aes256-ctr", "bcrypt", kdfOpts(16, 2), 1, defaultPub(), u8[96]()),
+    keyFileOf("none", "none", u8[0](), 1, defaultPub(),
+              sectionOf(0x01020304, 0x99999999, "ssh-ed25519", filledWith(32, 4), filledWith(64, 5))),
+    keyFileOf("none", "none", u8[0](), 1, defaultPub(),
+              sectionOf(0x01020304, 0x01020304, "ssh-rsa", filledWith(32, 4), filledWith(64, 5))),
+    keyFileOf("none", "none", u8[0](), 1, defaultPub(),
+              sectionOf(0x01020304, 0x01020304, "ssh-ed25519", u8[31](), filledWith(64, 5))),
+    keyFileOf("none", "none", u8[0](), 1, defaultPub(),
+              sectionOf(0x01020304, 0x01020304, "ssh-ed25519", filledWith(32, 4), u8[63]())),
+    keyFileOf("none", "none", u8[0](), 1, defaultPub(), u8[](0, 0, 0, 1)),   // section truncated
+    armour(joinBytes("openssh-key-v1\0".toBytes(), wireStr("none".toBytes()))));  // header truncated
+  string[] passes = string[]("", "", "", "", "", "x", "x", "x", "x", "x", "", "", "", "", "", "", "");
+  for (i32 i = 0; i < pems.len(); i++) {
+    u8[] pass = i < passes.len() ? passes[i].toBytes() : noPass;
+    sshReadKeyStatus(pems[i], pass);
+    sshReadKeySeed(pems[i], pass);
+  }
+  // The encrypted file *with* a passphrase, which decrypts to noise.
+  u8[] enc = keyFileOf("aes256-ctr", "bcrypt", kdfOpts(16, 2), 1, defaultPub(), u8[96]());
+  sshReadKeyStatus(enc, "pw".toBytes());
+  sshReadKeySeed(enc, "pw".toBytes());
+
+  // **CR LF line endings**, which ssh-keygen does not write but a file copied through Windows has.
+  string asText = string.fromBytes(good);
+  string crlf = "";
+  for (i32 i = 0; i < asText.len(); i++) {
+    string c = asText.slice(i, i + 1);
+    crlf = crlf + (c == "\n" ? "\r\n" : c);
+  }
+  sshReadKeyStatus(crlf.toBytes(), noPass);
+
+  // Valid check words, then nothing — the truncation only the second `ok` check catches.
+  sshReadKeyStatus(keyFileOf("none", "none", u8[0](), 1, defaultPub(),
+                             joinBytes(joinBytes(be32(9), be32(9)), u8[](0, 0))), noPass);
+
+  u8[] sessionId = filledWith(32, 7);
+  u8[] pubBlob = defaultPub();
+  sshSignedData(sessionId, "user".toBytes(), pubBlob);
+  sshPublicKeyRequest(sessionId, "user".toBytes(), pubBlob, filledWith(32, 6));
+}
+
+// ── known_hosts ───────────────────────────────────────────────────────────────
+//
+// The file format is a matcher, so most of these are patterns rather than keys: a comma list, two kinds
+// of wildcard, a negation, a bracketed port, the two `@` markers and the hashed form. Each line is asked
+// three times — with the matching key, a different key of the same length, and a different algorithm —
+// because "this host is known" and "this host is known with a different key" are the two answers that
+// matter and they take different paths.
+
+import { sshKnownHost } from "./wac/probe.wac";
+
+u8[] khBlob() {
+  u8[] out = u8[51]();
+  for (i32 i = 0; i < 51; i++) { out[i] = (i * 3) & 255; }
+  return out;
+}
+u8[] khOther() {
+  u8[] out = u8[51]();
+  for (i32 i = 0; i < 51; i++) { out[i] = (i * 5) & 255; }
+  return out;
+}
+string b64Of(u8[] b) { return string.fromBytes(b64encode(b, ALPHABET_STANDARD(), true)); }
+
+void knownHosts() {
+  u8[] blob = khBlob();
+  u8[] other = khOther();
+  string k = b64Of(blob);
+  string ko = b64Of(other);
+  u8[] khType = "ssh-ed25519".toBytes();
+
+  string[] files = string[](
+    "",
+    "# just a comment\n",
+    "\n\n",
+    "   \n",                                                    // whitespace only
+    "example.com ssh-ed25519 " + k + "\n",
+    "example.com ssh-ed25519 " + k + "\r\n",                     // CR LF
+    "example.com ssh-ed25519 " + k + " a comment\n",
+    "a.example,b.example ssh-ed25519 " + k + "\n",
+    "*.example ssh-ed25519 " + k + "\n",
+    "*.exa*ple ssh-ed25519 " + k + "\n",                         // two stars
+    "h??t.example ssh-ed25519 " + k + "\n",
+    "*.example,!bad.example ssh-ed25519 " + k + "\n",
+    ",,example.com,, ssh-ed25519 " + k + "\n",                   // empty list entries
+    "example.com ssh-rsa " + k + "\n",                           // another algorithm
+    "[example.com]:2222 ssh-ed25519 " + k + "\n",
+    "@revoked example.com ssh-ed25519 " + k + "\n",
+    "@cert-authority *.example ssh-ed25519 " + k + "\n",
+    "@revoked\n",                                                // a marker and nothing else
+    "example.com ssh-ed25519 !!!\n",                             // unreadable base64
+    "example.com\n",                                             // no key at all
+    "example.com ssh-ed25519\n",                                 // no blob
+    "|1|bad ssh-ed25519 " + k + "\n",                            // hashed, no second bar
+    "|2|c2FsdA==|aGFzaA== ssh-ed25519 " + k + "\n",              // an unknown revision
+    "|1|!!!|!!! ssh-ed25519 " + k + "\n",                        // hashed, unreadable base64
+    "|1|c2FsdA==|aGFzaA== ssh-ed25519 " + k + "\n",              // hashed, the wrong hash
+    "\texample.com ssh-ed25519 " + k + "\n");                    // a leading tab
+  // The host each line is asked about, and the port. A pattern is only interesting against a name it
+  // does and does not match, which is why some lines appear twice with different hosts.
+  string[] hosts = string[](
+    "example.com", "example.com", "example.com", "example.com", "example.com", "example.com",
+    "example.com", "b.example", "host.example", "host.example", "host.example", "bad.example",
+    "example.com", "example.com", "example.com", "example.com", "host.example", "example.com",
+    "example.com", "example.com", "example.com", "example.com", "example.com", "example.com",
+    "example.com", "example.com");
+  i32[] ports = i32[](22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 22, 2222, 22, 22, 22,
+                      22, 22, 22, 22, 22, 22, 22, 22);
+  for (i32 i = 0; i < files.len(); i++) {
+    u8[] f = files[i].toBytes();
+    u8[] host = hosts[i].toBytes();
+    sshKnownHost(f, host, ports[i], khType, blob);
+    sshKnownHost(f, host, ports[i], khType, other);
+    sshKnownHost(f, host, ports[i], "ssh-rsa".toBytes(), blob);
+  }
+  // The wildcards against a name they do *not* match, and the bracketed port against the wrong port.
+  sshKnownHost(("*.example ssh-ed25519 " + k + "\n").toBytes(), "example".toBytes(), 22, khType, blob);
+  sshKnownHost(("h??t.example ssh-ed25519 " + k + "\n").toBytes(), "hoost.example".toBytes(), 22,
+               khType, blob);
+  sshKnownHost(("*.example,!bad.example ssh-ed25519 " + k + "\n").toBytes(), "ok.example".toBytes(),
+               22, khType, blob);
+  sshKnownHost(("[example.com]:2222 ssh-ed25519 " + k + "\n").toBytes(), "example.com".toBytes(), 22,
+               khType, blob);
+  // A multi-digit port, and port 0 — not a real port, but what the digit loop's zero guard exists for.
+  sshKnownHost(("example.com ssh-ed25519 " + k + "\n").toBytes(), "example.com".toBytes(), 65535,
+               khType, blob);
+  sshKnownHost(("[example.com]:0 ssh-ed25519 " + k + "\n").toBytes(), "example.com".toBytes(), 0,
+               khType, blob);
+
+  // **A marker and a key type the *same length* as the ones being compared but different.** Everything
+  // above differs in length and is rejected before the bytes are looked at, so without these the
+  // byte-comparison loop never takes its mismatch branch — the third time that exact gap has turned up
+  // in this package, which is why it is called out here as well as in `kexInits` and `keyExchange`.
+  sshKnownHost(("@revoke1 example.com ssh-ed25519 " + k + "\n").toBytes(), "example.com".toBytes(),
+               22, khType, blob);
+  sshKnownHost(("example.com ssh-ed25518 " + k + "\n").toBytes(), "example.com".toBytes(), 22,
+               khType, blob);
+
+  // A match after a mismatch, and a revocation after a match: the whole file is read either way.
+  sshKnownHost(("example.com ssh-ed25519 " + ko + "\nexample.com ssh-ed25519 " + k + "\n").toBytes(),
+               "example.com".toBytes(), 22, khType, blob);
+  sshKnownHost(("example.com ssh-ed25519 " + k + "\n@revoked example.com ssh-ed25519 " + k +
+                "\n").toBytes(), "example.com".toBytes(), 22, khType, blob);
+}
+
+// ── Channels ──────────────────────────────────────────────────────────────────
+
+import { sshDefaultWindow, sshDefaultMaxPacket, sshExtendedDataStderr, sshMsgChannelData,
+         sshMsgChannelExtendedData, sshMsgChannelOpenConfirmation, sshMsgChannelOpenFailure,
+         sshMsgChannelClose, sshMsgChannelEof, sshMsgChannelRequest, sshMsgChannelSuccess,
+         sshMsgChannelWindowAdjust, sshOpenSession, sshExecRequest, sshWindowAdjust, sshChannelEof,
+         sshChannelClose, sshChannelData, sshIncomingField, sshIncomingData, sshWindowCreate,
+         sshWindowConsume, sshWindowLeft } from "./wac/probe.wac";
+import { Window } from "../src/channel.wac";
+// Straight from the source, because the probe wraps neither: they are pure parsers over a payload,
+// so a wrapper would add a name and nothing else.
+import { requestName, requestWantsReply, readOpenChannel, readPtyReq, readWindowChange, Terminal }
+  from "../src/server.wac";
+
+void channels() {
+  sshDefaultWindow();
+  sshDefaultMaxPacket();
+  sshExtendedDataStderr();
+  sshMsgChannelData();
+  sshMsgChannelExtendedData();
+  sshMsgChannelOpenConfirmation();
+  sshMsgChannelOpenFailure();
+  sshMsgChannelClose();
+  sshMsgChannelEof();
+  sshMsgChannelRequest();
+  sshMsgChannelSuccess();
+  sshMsgChannelWindowAdjust();
+
+  sshOpenSession(0, 8192, 32768);
+  sshExecRequest(1, "true".toBytes(), true);
+  sshExecRequest(1, "true".toBytes(), false);
+  sshWindowAdjust(1, 4096);
+  sshChannelEof(1);
+  sshChannelClose(1);
+  sshChannelData(1, "x".toBytes());
+
+  // The window: above half, at half, across it, and a read larger than the whole window.
+  Window cw = sshWindowCreate(1000);
+  sshWindowConsume(cw, 100);
+  sshWindowLeft(cw);
+  sshWindowConsume(cw, 400);
+  sshWindowConsume(cw, 2000);
+
+  // Every channel message, and every one of them cut short. The two out-of-range message numbers are
+  // either side of the channel range, which is what makes them worth having: 89 and 101 are not
+  // channel messages and must be refused as such rather than parsed as one.
+  u8[][] ps = u8[][](
+    u8[0](),                                                    // nothing
+    u8[](21),                                                   // a transport message
+    u8[](89),                                                   // just below the range
+    u8[](101),                                                  // just above it
+    u8[](90),                                                   // a channel message, truncated
+    joinBytes(joinBytes(u8[](90), wireStr("session".toBytes())),
+              joinBytes(be32(0), joinBytes(be32(1), be32(2)))),
+    joinBytes(joinBytes(u8[](91), be32(7)),
+              joinBytes(be32(42), joinBytes(be32(2097152), be32(32768)))),
+    joinBytes(u8[](91), be32(7)),                               // confirmation cut short
+    joinBytes(joinBytes(u8[](92), be32(7)),
+              joinBytes(be32(4), joinBytes(wireStr("no".toBytes()), wireStr(u8[0]())))),
+    joinBytes(joinBytes(u8[](92), be32(7)), be32(4)),           // failure cut short
+    joinBytes(joinBytes(u8[](93), be32(7)), be32(4096)),
+    joinBytes(u8[](93), be32(7)),                               // adjust cut short
+    joinBytes(joinBytes(u8[](94), be32(7)), wireStr("hello".toBytes())),
+    joinBytes(joinBytes(u8[](94), be32(7)), u8[](0, 0, 0, 9, 1)),   // data cut short
+    joinBytes(joinBytes(u8[](95), be32(7)), joinBytes(be32(1), wireStr("err".toBytes()))),
+    joinBytes(joinBytes(u8[](95), be32(7)), be32(1)),           // extended cut short
+    joinBytes(u8[](96), be32(7)),                               // EOF
+    joinBytes(u8[](97), be32(7)),                               // CLOSE
+    joinBytes(joinBytes(u8[](98), be32(7)),
+              joinBytes(wireStr("exit-status".toBytes()), joinBytes(u8[](0), be32(3)))),
+    joinBytes(joinBytes(u8[](98), be32(7)),
+              joinBytes(wireStr("exit-status".toBytes()), u8[](0))),
+    joinBytes(joinBytes(u8[](98), be32(7)), joinBytes(wireStr("keepalive".toBytes()), u8[](1))),
+    // **The same length, a different name** — `exit-statu5`, so the byte loop takes its mismatch
+    // branch. The fourth time this gap has appeared in this package.
+    joinBytes(joinBytes(u8[](98), be32(7)),
+              joinBytes(wireStr("exit-statu5".toBytes()), u8[](0))),
+    joinBytes(u8[](98), be32(7)),                               // request cut short
+    joinBytes(u8[](99), be32(7)),                               // SUCCESS
+    joinBytes(u8[](100), be32(7)));                             // FAILURE
+  for (i32 i = 0; i < ps.len(); i++) {
+    for (i32 which = 0; which < 6; which++) { sshIncomingField(ps[i], which); }
+    sshIncomingData(ps[i]);
+  }
+}
+
+// ── The server half ───────────────────────────────────────────────────────────
+//
+// Separate functions from the client's throughout, which is the point: a server that shared the
+// client's parser would agree with it about a misreading. `authorized_keys` is the largest piece — an
+// options list with quoting rules of its own, then an algorithm and a blob.
+
+import { sshAuthorized, sshServerProposalField, sshHostKeyBlob, sshParseEcdhInit, sshEcdhReply,
+         sshServerExchangeHash, sshAuthRequestField, sshAuthRequestUser, sshAuthRequestMethod,
+         sshVerifyAuth, sshAuthFailure, sshAuthSuccess, sshPkOk, sshServiceAccept, sshDisconnect,
+         sshOpenConfirmation, sshOpenFailure, sshChannelSuccessMsg, sshServerData, sshServerStderr,
+         sshExitStatus, sshExecCommand, sshEphemeralPublicForSeed, sshServerEphemeral,
+         sshServerShared, sshServerChannelFailure, sshServerChannelEof, sshServerChannelClose }
+  from "./wac/probe.wac";
+
+u8[] srvSeed() {
+  u8[] out = u8[32]();
+  for (i32 i = 0; i < 32; i++) { out[i] = (i * 9 + 1) & 255; }
+  return out;
+}
+
+void authorizedKeys() {
+  u8[] blob = khBlob();
+  u8[] other = khOther();
+  string k = b64Of(blob);
+  u8[] akType = "ssh-ed25519".toBytes();
+  string[] files = string[](
+    "",
+    "# comment only\n",
+    "\n\n",
+    "   \n",
+    "ssh-ed25519 " + k + "\n",
+    "ssh-ed25519 " + k + "\r\n",
+    "ssh-ed25519 " + k + " me@here\n",
+    "\tssh-ed25519 " + k + "\n",                                 // a leading tab
+    "ssh-rsa " + k + "\n",                                       // another algorithm
+    "ssh-ed2551a " + k + "\n",                                   // the same length, different
+    "no-pty ssh-ed25519 " + k + "\n",                            // an option
+    "restrict,pty ssh-ed25519 " + k + "\n",
+    "command=\"echo hello world\" ssh-ed25519 " + k + "\n",       // spaces inside quotes
+    "command=\"a,b c\",no-pty ssh-ed25519 " + k + "\n",           // a comma inside quotes
+    "command=\"say \\\"hi\\\" now\" ssh-ed25519 " + k + "\n",     // an escaped quote
+    "command=\"unterminated ssh-ed25519 " + k + "\n",             // a quote that never closes
+    "no-pty ssh-rsa " + k + "\n",                                // options then another algorithm
+    "no-pty\n",                                                  // options and nothing else
+    "ssh-ed25519\n",                                             // no blob
+    "ssh-ed25519 !!!\n",                                         // unreadable base64
+    "no-pty ssh-ed25519 " + k + "\nssh-ed25519 " + k + "\n");    // restricted then plain
+  for (i32 i = 0; i < files.len(); i++) {
+    u8[] f = files[i].toBytes();
+    sshAuthorized(f, akType, blob);
+    sshAuthorized(f, akType, other);
+    sshAuthorized(f, "ssh-rsa".toBytes(), blob);
+  }
+  // **A line whose key decodes to a *different length*.** Every blob above is 51 bytes, so the length
+  // check in the comparison never fired — the same shape as the same-length name gaps, inverted.
+  sshAuthorized(("ssh-ed25519 " + b64Of("short".toBytes()) + "\n").toBytes(), akType, blob);
+}
+
+void serverHalf() {
+  authorizedKeys();
+  for (i32 which = 0; which < 4; which++) { sshServerProposalField(which); }
+
+  u8[] seed = srvSeed();
+  u8[] point = sshEphemeralPublicForSeed(seed);
+  u8[] ks = sshHostKeyBlob(point);
+
+  u8[] peer = u8[32]();
+  for (i32 i = 0; i < 32; i++) { peer[i] = i + 2; }
+  u8[] q = sshEphemeralPublic(peer);
+  sshParseEcdhInit(joinBytes(u8[](30), wireStr(q)));
+  sshParseEcdhInit(joinBytes(u8[](31), wireStr(q)));                  // the wrong message number
+  sshParseEcdhInit(u8[](30));                                         // truncated
+  sshParseEcdhInit(joinBytes(u8[](30), wireStr(u8[31]())));           // the wrong length
+
+  u8[] h = sshServerExchangeHash("SSH-2.0-a".toBytes(), "SSH-2.0-b".toBytes(), u8[](20), u8[](20),
+                                 ks, q, q, seed);
+  sshEcdhReply(ks, q, h, seed);
+
+  u8[] session = u8[32]();
+  for (i32 i = 0; i < 32; i++) { session[i] = (i * 13) & 255; }
+  u8[] user = "claude".toBytes();
+  u8[] genuine = sshPublicKeyRequest(session, user, ks, seed);
+  for (i32 which = 0; which < 4; which++) { sshAuthRequestField(genuine, which); }
+  sshAuthRequestUser(genuine);
+  sshAuthRequestMethod(genuine);
+  sshVerifyAuth(genuine, session);
+  sshVerifyAuth(genuine, u8[32]());                                   // the wrong session id
+
+  u8[] svc = wireStr("ssh-connection".toBytes());
+  u8[] pk = wireStr("publickey".toBytes());
+  u8[] edName = wireStr("ssh-ed25519".toBytes());
+  u8[][] bad = u8[][](
+    u8[0](),
+    u8[](49),                                                         // not a userauth request
+    u8[](50),                                                         // truncated
+    joinBytes(joinBytes(u8[](50), wireStr(user)),
+              joinBytes(joinBytes(svc, wireStr("password".toBytes())),
+                        joinBytes(u8[](0), wireStr("hunter2".toBytes())))),   // another method
+    joinBytes(joinBytes(u8[](50), wireStr(user)),
+              joinBytes(joinBytes(svc, pk), joinBytes(u8[](0), joinBytes(edName, wireStr(ks))))),
+    joinBytes(joinBytes(u8[](50), wireStr(user)),
+              joinBytes(joinBytes(svc, pk),
+                        joinBytes(u8[](1), joinBytes(wireStr("ssh-rsa".toBytes()),
+                                                     joinBytes(wireStr(ks), wireStr(u8[64]())))))),
+    joinBytes(joinBytes(u8[](50), wireStr(user)),
+              joinBytes(joinBytes(svc, pk),
+                        joinBytes(u8[](1), joinBytes(edName,
+                                                     joinBytes(wireStr(u8[4]()), wireStr(u8[64]())))))),
+    joinBytes(joinBytes(u8[](50), wireStr(user)),
+              joinBytes(joinBytes(svc, pk),
+                        joinBytes(u8[](1), joinBytes(edName,
+                          joinBytes(wireStr(ks),
+                                    joinBytes(wireStr("ssh-rsa".toBytes()), wireStr(u8[64]()))))))),
+    joinBytes(joinBytes(u8[](50), wireStr(user)),
+              joinBytes(joinBytes(svc, pk),
+                        joinBytes(u8[](1), joinBytes(edName,
+                          joinBytes(wireStr(ks), joinBytes(edName, wireStr(u8[63]()))))))),
+    joinBytes(joinBytes(u8[](50), wireStr(user)),
+              joinBytes(joinBytes(svc, pk),
+                        joinBytes(u8[](1), joinBytes(edName, wireStr(ks))))));   // signature missing
+  for (i32 i = 0; i < bad.len(); i++) {
+    for (i32 which = 0; which < 4; which++) { sshAuthRequestField(bad[i], which); }
+    sshAuthRequestUser(bad[i]);
+    sshVerifyAuth(bad[i], session);
+  }
+
+  // The server's own curve operations, which are separate functions from the client's.
+  u8[] secret = u8[32]();
+  for (i32 i = 0; i < 32; i++) { secret[i] = i + 3; }
+  u8[] pub = sshServerEphemeral(secret);
+  sshServerShared(secret, pub);
+  sshServerShared(secret, u8[32]());                                  // an all-zero point
+  sshServerShared(u8[31](), pub);                                     // the wrong secret length
+  sshServerShared(secret, u8[31]());                                  // the wrong peer length
+  sshServerChannelFailure(7);
+  sshServerChannelEof(7);
+  sshServerChannelClose(7);
+
+  sshAuthFailure();
+  sshAuthSuccess();
+  sshPkOk("ssh-ed25519".toBytes(), ks);
+  sshServiceAccept("ssh-userauth".toBytes());
+  sshDisconnect("done".toBytes());
+  sshOpenConfirmation(11, 22, 4096, 1024);
+  sshOpenFailure(11, 3, "only session channels".toBytes());
+  sshChannelSuccessMsg(7);
+  sshServerData(7, "out".toBytes());
+  sshServerStderr(7, "err".toBytes());
+  sshExitStatus(7, 42);
+
+  sshExecCommand(joinBytes(joinBytes(u8[](98), be32(0)),
+                           joinBytes(wireStr("exec".toBytes()),
+                                     joinBytes(u8[](1), wireStr("uname -a".toBytes())))));
+  // The same length, a different name — the mismatch branch again.
+  sshExecCommand(joinBytes(joinBytes(u8[](98), be32(0)),
+                           joinBytes(wireStr("exe0".toBytes()),
+                                     joinBytes(u8[](1), wireStr("x".toBytes())))));
+  sshExecCommand(joinBytes(joinBytes(u8[](98), be32(0)),
+                           joinBytes(wireStr("pty-req".toBytes()), u8[](1))));
+  sshExecCommand(joinBytes(joinBytes(u8[](98), be32(0)),
+                           joinBytes(wireStr("exec".toBytes()), u8[](1))));
+  sshExecCommand(u8[](94));
+  sshExecCommand(u8[](98));
+  serverRequests();
+}
+
+/**
+ * The five request parsers the probe does not wrap, called directly.
+ *
+ * They need no capability and no port — they are pure parsers over a payload — so pinning them would
+ * have been a ledger entry for something a call reaches. Each is asked with the right message and the
+ * wrong one, and with the name it wants and a name of the same length that it does not, so the byte
+ * comparison takes its mismatch branch as well as its match.
+ */
+void serverRequests() {
+  u8[] exec = joinBytes(joinBytes(u8[](98), be32(7)),
+                        joinBytes(wireStr("exec".toBytes()),
+                                  joinBytes(u8[](1), wireStr("uname -a".toBytes()))));
+  requestName(exec);
+  requestName(u8[](94));                                          // not a CHANNEL_REQUEST
+  requestName(u8[](98));                                          // truncated before the name
+  requestWantsReply(exec);
+  requestWantsReply(u8[](94));
+  requestWantsReply(u8[](98));
+
+  // `readOpenChannel`: a session, a type of the right length that is not `session`, a wrong length,
+  // and a message that is not an open at all.
+  u8[] open = joinBytes(joinBytes(u8[](90), wireStr("session".toBytes())),
+                        joinBytes(be32(3), joinBytes(be32(4096), be32(32768))));
+  readOpenChannel(open);
+  readOpenChannel(joinBytes(joinBytes(u8[](90), wireStr("sessio1".toBytes())),
+                            joinBytes(be32(3), joinBytes(be32(4096), be32(32768)))));
+  readOpenChannel(joinBytes(joinBytes(u8[](90), wireStr("x11".toBytes())),
+                            joinBytes(be32(3), joinBytes(be32(4096), be32(32768)))));
+  readOpenChannel(u8[](91));
+  readOpenChannel(u8[0]());
+
+  // `pty-req` carries a terminal name and a geometry; `window-change` carries the geometry alone.
+  u8[] pty = joinBytes(joinBytes(u8[](98), be32(7)),
+                       joinBytes(wireStr("pty-req".toBytes()),
+                                 joinBytes(u8[](0), joinBytes(wireStr("xterm-256color".toBytes()),
+                                           joinBytes(be32(80), be32(24))))));
+  readPtyReq(pty);
+  readPtyReq(u8[](94));                                           // not a CHANNEL_REQUEST
+  readPtyReq(joinBytes(joinBytes(u8[](98), be32(7)), wireStr("pty-re1".toBytes())));
+  // **Cut short after the name rather than before it**, which is the other `!r.ok`: the name checks out
+  // and the geometry runs out, so the reader fails on a field it was told to expect.
+  readPtyReq(joinBytes(joinBytes(u8[](98), be32(7)), wireStr("pty-req".toBytes())));
+  readPtyReq(joinBytes(joinBytes(joinBytes(u8[](98), be32(7)), wireStr("pty-req".toBytes())),
+                       joinBytes(u8[](0), joinBytes(wireStr("xterm".toBytes()), u8[](0, 0)))));
+
+  u8[] winch = joinBytes(joinBytes(u8[](98), be32(7)),
+                         joinBytes(wireStr("window-change".toBytes()),
+                                   joinBytes(u8[](0), joinBytes(be32(100), be32(40)))));
+  readWindowChange(winch);
+  readWindowChange(u8[](94));
+  readWindowChange(joinBytes(joinBytes(u8[](98), be32(7)), wireStr("window-chang3".toBytes())));
+  readWindowChange(joinBytes(joinBytes(u8[](98), be32(7)), wireStr("window-change".toBytes())));
+  readWindowChange(joinBytes(joinBytes(joinBytes(u8[](98), be32(7)),
+                                       wireStr("window-change".toBytes())),
+                             joinBytes(u8[](0), u8[](0, 0, 0, 100, 0, 0))));
+}
+
+/**
+ * The guards that **trap** by contract, driven so the branch is reached and counted.
+ *
+ * Each is a caller that got an argument wrong — a cookie that is not sixteen bytes, a key that is not
+ * sixty-four, padding that runs out — and every one of them is a length this protocol fixes. A trap ends
+ * the call, so they are a sweep rather than part of `main`.
+ */
+export void trapProbe(i32 i) {
+  if (i == 0) { sshKexInitFirst(u8[15](), false); return; }
+  if (i == 1) { sshKexInit(u8[0]()); return; }
+  if (i == 2) { sshFrame(u8[10](), u8[0](), 8); return; }        // padding that runs out
+  if (i == 3) { sshEphemeralPublic(u8[31]()); return; }
+  if (i == 4) { sshSealBody(u8[63](), 0, u8[8]()); return; }
+  if (i == 5) { sshSeal(u8[63](), 0, "x".toBytes(), u8[16](), 8); return; }
+  if (i == 6) { sshSeal(cipherKey(), 0, "x".toBytes(), u8[0](), 8); return; }
+  if (i == 7) { sshPeekLength(u8[63](), 0, u8[8](), 0); return; }
+  if (i == 8) { sshOpenStatus(u8[63](), 0, u8[40](), 0, 40, 35000); return; }
+  if (i == 9) {
+    sshPublicKeyRequest(filledWith(32, 7), "user".toBytes(), defaultPub(), u8[31]());
+    return;
+  }
+  if (i == 10) { sshHostKeyBlob(u8[31]()); return; }
+  if (i == 11) { sshServerEphemeral(u8[31]()); return; }
+  if (i == 12) {
+    u8[] seed = srvSeed();
+    u8[] ks = sshHostKeyBlob(sshEphemeralPublicForSeed(seed));
+    sshEcdhReply(ks, sshEphemeralPublic(seed), filledWith(32, 1), u8[31]());
+    return;
+  }
+}
+
+// ── main ─────────────────────────────────────────────────────────────────────
+//
+// The probe first, then the tests that do not need a real port. **Four of ssh's eleven test files
+// are in the exclusive lane** — `cli`, `live`, `wacsshd` and `wacsshdimage` bind a real port and
+// drive a real OpenSSH binary — and a coverage driver must not race that lane, so the 26 tests in
+// them are not called here. `cov_ledger.wac` says which points that leaves and why.
+import { test_the_window_returns_credit_before_it_runs_out_not_after as channel__the_window_returns_credit_before_it_runs_out_not_after, test_channel_messages_parse_to_their_fields as channel__channel_messages_parse_to_their_fields, test_channel_messages_address_the_recipients_channel_number as channel__channel_messages_address_the_recipients_channel_number }
+  from "./wac/channel_test.wac";
+import { test_sealing_and_opening_round_trips_and_the_padding_rule_is_the_aead_one as cipher__sealing_and_opening_round_trips_and_the_padding_rule_is_the_aead_one, test_a_packet_does_not_open_under_the_wrong_sequence_number as cipher__a_packet_does_not_open_under_the_wrong_sequence_number, test_any_single_flipped_bit_is_caught_wherever_it_lands as cipher__any_single_flipped_bit_is_caught_wherever_it_lands, test_the_two_key_halves_are_not_interchangeable as cipher__the_two_key_halves_are_not_interchangeable, test_an_unauthenticated_length_is_bounded_before_it_is_believed as cipher__an_unauthenticated_length_is_bounded_before_it_is_believed, test_the_cipher_is_pinned_to_a_fixed_answer as cipher__the_cipher_is_pinned_to_a_fixed_answer }
+  from "./wac/cipher_test.wac";
+import { test_known_hosts_plain_entries_patterns_negation_markers_and_comments as files__known_hosts_plain_entries_patterns_negation_markers_and_comments, test_authorized_keys_a_key_is_found_and_options_are_refused_rather_than_ignored as files__authorized_keys_a_key_is_found_and_options_are_refused_rather_than_ignored }
+  from "./wac/files_test.wac";
+import { test_key_derivation_extends_by_hashing_the_accumulated_output as kex__key_derivation_extends_by_hashing_the_accumulated_output, test_a_host_key_blob_that_names_the_wrong_algorithm_is_refused as kex__a_host_key_blob_that_names_the_wrong_algorithm_is_refused, test_a_low_order_peer_point_is_rejected_rather_than_shared as kex__a_low_order_peer_point_is_rejected_rather_than_shared }
+  from "./wac/kex_test.wac";
+import { test_an_openssh_private_key_reads_encrypted_or_not as privatekey__an_openssh_private_key_reads_encrypted_or_not, test_a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread as privatekey__a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread, test_a_key_whose_two_public_halves_disagree_is_refused as privatekey__a_key_whose_two_public_halves_disagree_is_refused }
+  from "./wac/privatekey_test.wac";
+import { test_the_signed_data_length_prefixes_the_session_id as server__the_signed_data_length_prefixes_the_session_id, test_the_servers_messages_carry_the_fields_a_client_reads as server__the_servers_messages_carry_the_fields_a_client_reads, test_a_userauth_request_is_verified_against_bytes_we_rebuild as server__a_userauth_request_is_verified_against_bytes_we_rebuild, test_every_message_number_is_the_one_the_rfc_assigns as server__every_message_number_is_the_one_the_rfc_assigns, test_the_refusal_messages_are_laid_out_as_the_rfc_says_byte_for_byte as server__the_refusal_messages_are_laid_out_as_the_rfc_says_byte_for_byte, test_a_channel_open_is_read_for_its_number_whatever_the_number_is as server__a_channel_open_is_read_for_its_number_whatever_the_number_is }
+  from "./wac/server_test.wac";
+import { test_mpint_is_minimal_and_signed as transport__mpint_is_minimal_and_signed, test_a_string_carries_arbitrary_binary_including_nuls as transport__a_string_carries_arbitrary_binary_including_nuls, test_a_truncated_or_oversized_string_is_refused_not_guessed_at as transport__a_truncated_or_oversized_string_is_refused_not_guessed_at, test_padding_keeps_the_whole_packet_aligned_including_the_length_field as transport__padding_keeps_the_whole_packet_aligned_including_the_length_field, test_a_framed_packet_unframes_to_what_went_in as transport__a_framed_packet_unframes_to_what_went_in, test_a_packet_that_cannot_be_one_is_malformed_rather_than_trusted as transport__a_packet_that_cannot_be_one_is_malformed_rather_than_trusted, test_the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out as transport__the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out, test_negotiation_takes_the_clients_preference_not_the_servers as transport__negotiation_takes_the_clients_preference_not_the_servers, test_no_overlap_is_an_empty_answer_rather_than_a_default as transport__no_overlap_is_an_empty_answer_rather_than_a_default }
+  from "./wac/transport_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  versions();
+  framing();
+  wireTypes();
+  kexInits();
+  ranges();
+  keyExchange();
+  cipher();
+  privateKeys(core, cli);
+  knownHosts();
+  channels();
+  serverHalf();
+
+  // The 32 tests that need no port. `harness/wacCoverage.ts` could call three of them: 29 take
+  // capabilities and `runTestExports` skips any test whose `fn.length > 0`.
+  i32 bad = 0;
+  if (channel__the_window_returns_credit_before_it_runs_out_not_after().len() > 0) { core.warn("error: FAILED channel_test test_the_window_returns_credit_before_it_runs_out_not_after"); bad = bad + 1; }
+  if (channel__channel_messages_parse_to_their_fields().len() > 0) { core.warn("error: FAILED channel_test test_channel_messages_parse_to_their_fields"); bad = bad + 1; }
+  if (channel__channel_messages_address_the_recipients_channel_number().len() > 0) { core.warn("error: FAILED channel_test test_channel_messages_address_the_recipients_channel_number"); bad = bad + 1; }
+  if (cipher__sealing_and_opening_round_trips_and_the_padding_rule_is_the_aead_one().len() > 0) { core.warn("error: FAILED cipher_test test_sealing_and_opening_round_trips_and_the_padding_rule_is_the_aead_one"); bad = bad + 1; }
+  if (cipher__a_packet_does_not_open_under_the_wrong_sequence_number().len() > 0) { core.warn("error: FAILED cipher_test test_a_packet_does_not_open_under_the_wrong_sequence_number"); bad = bad + 1; }
+  if (cipher__any_single_flipped_bit_is_caught_wherever_it_lands().len() > 0) { core.warn("error: FAILED cipher_test test_any_single_flipped_bit_is_caught_wherever_it_lands"); bad = bad + 1; }
+  if (cipher__the_two_key_halves_are_not_interchangeable().len() > 0) { core.warn("error: FAILED cipher_test test_the_two_key_halves_are_not_interchangeable"); bad = bad + 1; }
+  if (cipher__an_unauthenticated_length_is_bounded_before_it_is_believed().len() > 0) { core.warn("error: FAILED cipher_test test_an_unauthenticated_length_is_bounded_before_it_is_believed"); bad = bad + 1; }
+  if (cipher__the_cipher_is_pinned_to_a_fixed_answer().len() > 0) { core.warn("error: FAILED cipher_test test_the_cipher_is_pinned_to_a_fixed_answer"); bad = bad + 1; }
+  if (files__known_hosts_plain_entries_patterns_negation_markers_and_comments().len() > 0) { core.warn("error: FAILED files_test test_known_hosts_plain_entries_patterns_negation_markers_and_comments"); bad = bad + 1; }
+  if (files__authorized_keys_a_key_is_found_and_options_are_refused_rather_than_ignored().len() > 0) { core.warn("error: FAILED files_test test_authorized_keys_a_key_is_found_and_options_are_refused_rather_than_ignored"); bad = bad + 1; }
+  if (kex__key_derivation_extends_by_hashing_the_accumulated_output(core, cli).len() > 0) { core.warn("error: FAILED kex_test test_key_derivation_extends_by_hashing_the_accumulated_output"); bad = bad + 1; }
+  if (kex__a_host_key_blob_that_names_the_wrong_algorithm_is_refused().len() > 0) { core.warn("error: FAILED kex_test test_a_host_key_blob_that_names_the_wrong_algorithm_is_refused"); bad = bad + 1; }
+  if (kex__a_low_order_peer_point_is_rejected_rather_than_shared().len() > 0) { core.warn("error: FAILED kex_test test_a_low_order_peer_point_is_rejected_rather_than_shared"); bad = bad + 1; }
+  if (privatekey__an_openssh_private_key_reads_encrypted_or_not(core, cli).len() > 0) { core.warn("error: FAILED privatekey_test test_an_openssh_private_key_reads_encrypted_or_not"); bad = bad + 1; }
+  if (privatekey__a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread().len() > 0) { core.warn("error: FAILED privatekey_test test_a_file_that_is_not_an_openssh_key_is_refused_by_shape_not_misread"); bad = bad + 1; }
+  if (privatekey__a_key_whose_two_public_halves_disagree_is_refused(core, cli).len() > 0) { core.warn("error: FAILED privatekey_test test_a_key_whose_two_public_halves_disagree_is_refused"); bad = bad + 1; }
+  if (server__the_signed_data_length_prefixes_the_session_id().len() > 0) { core.warn("error: FAILED server_test test_the_signed_data_length_prefixes_the_session_id"); bad = bad + 1; }
+  if (server__the_servers_messages_carry_the_fields_a_client_reads().len() > 0) { core.warn("error: FAILED server_test test_the_servers_messages_carry_the_fields_a_client_reads"); bad = bad + 1; }
+  if (server__a_userauth_request_is_verified_against_bytes_we_rebuild().len() > 0) { core.warn("error: FAILED server_test test_a_userauth_request_is_verified_against_bytes_we_rebuild"); bad = bad + 1; }
+  if (server__every_message_number_is_the_one_the_rfc_assigns().len() > 0) { core.warn("error: FAILED server_test test_every_message_number_is_the_one_the_rfc_assigns"); bad = bad + 1; }
+  if (server__the_refusal_messages_are_laid_out_as_the_rfc_says_byte_for_byte().len() > 0) { core.warn("error: FAILED server_test test_the_refusal_messages_are_laid_out_as_the_rfc_says_byte_for_byte"); bad = bad + 1; }
+  if (server__a_channel_open_is_read_for_its_number_whatever_the_number_is().len() > 0) { core.warn("error: FAILED server_test test_a_channel_open_is_read_for_its_number_whatever_the_number_is"); bad = bad + 1; }
+  if (transport__mpint_is_minimal_and_signed().len() > 0) { core.warn("error: FAILED transport_test test_mpint_is_minimal_and_signed"); bad = bad + 1; }
+  if (transport__a_string_carries_arbitrary_binary_including_nuls().len() > 0) { core.warn("error: FAILED transport_test test_a_string_carries_arbitrary_binary_including_nuls"); bad = bad + 1; }
+  if (transport__a_truncated_or_oversized_string_is_refused_not_guessed_at().len() > 0) { core.warn("error: FAILED transport_test test_a_truncated_or_oversized_string_is_refused_not_guessed_at"); bad = bad + 1; }
+  if (transport__padding_keeps_the_whole_packet_aligned_including_the_length_field().len() > 0) { core.warn("error: FAILED transport_test test_padding_keeps_the_whole_packet_aligned_including_the_length_field"); bad = bad + 1; }
+  if (transport__a_framed_packet_unframes_to_what_went_in().len() > 0) { core.warn("error: FAILED transport_test test_a_framed_packet_unframes_to_what_went_in"); bad = bad + 1; }
+  if (transport__a_packet_that_cannot_be_one_is_malformed_rather_than_trusted().len() > 0) { core.warn("error: FAILED transport_test test_a_packet_that_cannot_be_one_is_malformed_rather_than_trusted"); bad = bad + 1; }
+  if (transport__the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out().len() > 0) { core.warn("error: FAILED transport_test test_the_version_scanner_skips_a_banner_and_keeps_the_line_ending_out"); bad = bad + 1; }
+  if (transport__negotiation_takes_the_clients_preference_not_the_servers().len() > 0) { core.warn("error: FAILED transport_test test_negotiation_takes_the_clients_preference_not_the_servers"); bad = bad + 1; }
+  if (transport__no_overlap_is_an_empty_answer_rather_than_a_default().len() > 0) { core.warn("error: FAILED transport_test test_no_overlap_is_an_empty_answer_rather_than_a_default"); bad = bad + 1; }
+  if (bad > 0) {
+    core.warn("error: " + itoa(bad) + " test(s) failed, so this measured a broken package");
+    return 1;
+  }
+  return 0;
+}
