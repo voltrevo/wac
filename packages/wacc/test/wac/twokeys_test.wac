@@ -1,0 +1,105 @@
+// One file supplied under two keys is refused, rather than emitted as a module the engine rejects.
+//
+//     wac test --allow-read packages/wacc/test/wac/twokeys_test.wac
+//
+// `design/lang/0009` D8 says identity is canonical after resolution, and warns that getting it wrong
+// gives *"two incompatible copies of one struct — a program that type-checks, runs, and fails at a
+// seam whose error message names the same type twice"*. Neither compiler did that: the reference reads
+// the file twice and the program works, and wacc built a module the **engine** rejected, with the
+// checker silent beforehand — so what a user got was *"this is a compiler bug rather than a fault in
+// your program"* and no source line. That is the worst available outcome, and refusing is the point of
+// this file. `issues/lang/0163`.
+//
+// **Nothing a user can write reaches it today** — relative paths normalise, `@/` normalises, built-ins
+// are their own keys — so it was found by perturbing the resolver. A caller of the files-based API can
+// still supply the shape directly, which is what these tests do: no perturbation, and the guard is
+// exercised by the same route a mapping will reach it through once D9-D11 land.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { blockedFiles, dumpTypeErrorsFiles, emitFilesChecked } from "../../src/api.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string POINT = "export struct Point { i32 x; i32 y; i32 sum(const this) { return this.x + this.y; } }\n";
+
+/** The two keys name one file: `/src/point.wac` normalised, and a spelling that normalises to it. */
+string[] twoKeyPaths() {
+  return string[]("/src/main.wac", "/src/point.wac", "/src/./point.wac");
+}
+
+string[] twoKeySources() {
+  return string[]("import { Point } from \"./point.wac\";\n" +
+                  "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n",
+                  POINT, POINT);
+}
+
+export string test_one_file_under_two_keys_is_declined_with_a_reason() {
+  T t = T.create();
+  string why = blockedFiles(twoKeyPaths(), twoKeySources(), "/src/main.wac");
+  t.isTrue(why != "", "nothing was declined, so the emitter is free to build a module the engine " +
+                      "will reject");
+  t.isTrue(why.indexOf("two keys") >= 0 || why.indexOf("one file") >= 0,
+           "the decline does not say what is wrong: " + why);
+  t.isTrue(why.indexOf("point.wac") >= 0, "the decline does not name the file: " + why);
+  return t.report();
+}
+
+/** And no module comes out, which is the half that mattered: a bad module blames the compiler. */
+export string test_no_module_is_produced_for_two_keys() {
+  T t = T.create();
+  u8[] mod = emitFilesChecked(twoKeyPaths(), twoKeySources(), "/src/main.wac");
+  t.isTrue(mod.len() <= 8, "a " + itoa(mod.len()) + "-byte module was produced for a file supplied " +
+                           "under two keys");
+  return t.report();
+}
+
+/**
+ * The control, and it is the one that says this is not just refusing every duplicate source.
+ *
+ * Two *different* files with identical contents are an ordinary thing — an empty file, a re-exported
+ * shim — and must stay legal. Only two keys naming *one* path are this.
+ */
+export string test_two_different_files_with_the_same_contents_are_fine() {
+  T t = T.create();
+  string[] paths = string[]("/src/main.wac", "/src/point.wac", "/src/other.wac");
+  string[] sources = string[](
+    "import { Point } from \"./point.wac\";\n" +
+    "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n", POINT, POINT);
+  string why = blockedFiles(paths, sources, "/src/main.wac");
+  t.eqStr(why, "", "two distinct files with equal contents were declined");
+  i32 errs = dumpTypeErrorsFiles(paths, sources, "/src/main.wac").len();
+  t.eqI32(errs, 0, "two distinct files with equal contents were type-refused — " + itoa(errs) +
+                   " diagnostic ints");
+  u8[] mod = emitFilesChecked(paths, sources, "/src/main.wac");
+  t.isTrue(mod.len() > 8, "no module for a legal program");
+  return t.report();
+}
+
+/** And the ordinary single-key program still builds, so the guard is not refusing everything. */
+export string test_one_key_per_file_still_builds() {
+  T t = T.create();
+  string[] paths = string[]("/src/main.wac", "/src/point.wac");
+  string[] sources = string[](
+    "import { Point } from \"./point.wac\";\n" +
+    "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n", POINT);
+  t.eqStr(blockedFiles(paths, sources, "/src/main.wac"), "", "the ordinary program was declined");
+  u8[] mod = emitFilesChecked(paths, sources, "/src/main.wac");
+  t.isTrue(mod.len() > 8, "no module for the ordinary program");
+  return t.report();
+}
+
+/**
+ * The shape the issue was found with: `@/` skipping normalisation, so one side is `./src/point.wac`
+ * and the other `src/point.wac`. Written as keys directly, since no resolver perturbation is needed
+ * to hand the API two keys.
+ */
+export string test_the_perturbation_shape_is_refused_too() {
+  T t = T.create();
+  string[] paths = string[]("src/main.wac", "src/point.wac", "./src/point.wac");
+  string[] sources = string[](
+    "import { Point } from \"./point.wac\";\n" +
+    "export i32 f() { Point p = Point(3, 4); return p.sum(); }\n", POINT, POINT);
+  string why = blockedFiles(paths, sources, "src/main.wac");
+  t.isTrue(why.indexOf("two keys") >= 0, "not refused: " + why);
+  t.isTrue(emitFilesChecked(paths, sources, "src/main.wac").len() <= 8, "a module was produced");
+  return t.report();
+}
