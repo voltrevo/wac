@@ -191,7 +191,16 @@ export string test_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
   return t.report();
 }
 
-/** xorshift-free LCG, matching the host-side generator so the patterns are the same ones. */
+/**
+ * xorshift-free LCG, seeded, so the patterns is reproducible.
+ *
+ * **There is no host-side generator to match**, and this comment said there was until
+ * 2026-08-20. It was true when written: a TypeScript driver generated the same sequence so the
+ * two sides walked one corpus. `issues/system/0161` deleted that driver, and the sentence
+ * outlived what it described — thirteen copies of it did, across as many packages
+ * (`issues/system/0220`). What is left is the real property: the same seed gives the same
+ * patterns, which is what a fuzz test needs from a generator.
+ */
 struct Rng {
   i32 s;
 

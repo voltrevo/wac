@@ -7,6 +7,79 @@
 - **Kind:** task
 - **Symptom:** wrong answer
 
+## Re-measured on 2026-08-20, and four of the five figures below were wrong
+
+The table further down was produced by grepping for `struct Rng` and reading a six-line window after
+it. That counts prose as code and misses a body whose operators are spaced differently, and it did
+both. Corrected by parsing each declaration's brace-balanced body and keying on **`next`'s declared
+return type** rather than on whether `as@ u32` appears anywhere inside — which is how
+`packages/url/test/wac/fuzz_test.wac` was filed as unsigned when its `next` returns `i32` and the
+cast is in `upto`.
+
+**33 declarations, not 26** — and one of the 34 files matching `struct Rng` is a header quoting this
+issue, which is the same mistake one layer up.
+
+**25 of them are one byte-identical generator**, including the `& 0x7FFF` that makes the signed `>>`
+behave like a logical one:
+
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+
+split **13 with `u32 next` and 12 with `i32 next`** — not 13 and 5. The other 8 are genuine one-offs:
+four LCGs with different shifts, a 64-bit mix, and three with no `next` at all.
+
+## The two families disagree on 37% of draws, and that is measurable rather than arguable
+
+The split is not "whether the result is cast". It is two different `upto`:
+
+    u32 family:  return (this.next() % (n as@ u32)) as@ i32;      // unsigned remainder
+    i32 family:  i32 v = this.next() % n; return v < 0 ? v + n : v;   // signed, then corrected
+
+Both land in `[0, n)`. They do not land on the same value: for a state of `0xC6E5747A` and `n = 10`
+the first gives 0 and the second gives 4. Over 20,000 states at four moduli they differ on **37% of
+draws**. So unifying moves one side's corpus substantially — this is not a cosmetic refactor, and the
+"convert one file and check the numbers" advice below is the whole of the method.
+
+**The first attempt at establishing that was the wrong test.** Looking for a bare `next() %` found ten
+files, all of them in the u32 family and none in the i32 family, which read as "the difference has no
+instance in the tree". It has 7: the divergence is *inside* `upto`, not at its call sites. Six of the
+seven are `cov_exercise.wac` coverage drivers, whose corpora move only ratcheted numbers, and one is a
+real test — `packages/unicode/test/wac/unicode_test.wac`.
+
+## Thirteen of them claimed to match a generator that does not exist
+
+Seventeen `Rng` declarations said, in their own doc comment, "matching the host-side generator so the
+corpus is the same one". **Twelve of those packages have no host-side generator at all**:
+`issues/system/0161` deleted the TypeScript drivers and the sentence outlived what it described. A
+thirteenth, `packages/gzip/test/wac/fuzzcorpus.wac`, refers to "the host-side version" as history
+rather than asserting parity, and is left alone.
+
+The four with a real subject are all in `packages/fmt`, against
+`packages/fmt/tools/sweep.ts` — and all four are in the **u32** family, whose unsigned remainder is
+what that generator's `x >>> 0` produces. So every claim that still has something to be true of is
+true.
+
+The twelve false ones are corrected: they now say the generator is seeded and the corpus reproducible,
+which is the property a fuzz test actually needs, and say what the sentence used to claim. **That
+dissolves most of the risk in this issue**: where there is no host generator, the cast split cannot
+break parity with one, and unification only moves a corpus that is self-consistent either way.
+
+## What to do, revised
+
+Unify on the **u32** family — the one that matches `packages/fmt`'s host generator, and the one whose
+`upto` needs no sign correction. One `packages/wactest/src/rng.wac` exporting `next` and `upto`; the
+extras stay local, as free functions taking an `Rng`, because a wac struct's methods cannot be
+extended from another file. The interfaces are: 13 files want exactly `next` and `upto`, two want
+`bit`, two want `nextDouble`, one wants `pick`, and six use `next` alone.
+
+Twelve files' corpora will move. Six are coverage drivers behind a ratchet, which will report a
+different number and need the ledger re-pointed rather than re-recorded. One is
+`packages/unicode/test/wac/unicode_test.wac`. Convert one, run that package, look at the numbers,
+then sweep.
+
+## The original report follows, with its figures as filed
+
 Twenty-six `.wac` files declare their own `struct Rng`. Grouped by the body of `next()`:
 
 | files | generator |

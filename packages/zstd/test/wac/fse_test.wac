@@ -276,7 +276,16 @@ export string test_a_description_written_from_counts_reads_back_as_those_counts(
   return t.report();
 }
 
-/** xorshift32, matching the host-side generator so the corpus is reproducible. */
+/**
+ * xorshift32, seeded, so the corpus is reproducible.
+ *
+ * **There is no host-side generator to match**, and this comment said there was until
+ * 2026-08-20. It was true when written: a TypeScript driver generated the same sequence so the
+ * two sides walked one corpus. `issues/system/0161` deleted that driver, and the sentence
+ * outlived what it described — thirteen copies of it did, across as many packages
+ * (`issues/system/0220`). What is left is the real property: the same seed gives the same
+ * corpus, which is what a fuzz test needs from a generator.
+ */
 struct Rng {
   i32 x;
 
