@@ -122,3 +122,42 @@ So the harness is fine and the corpus has no negative half for the type checker.
 
 Fourteen files like the ones above, with the expected refusal recorded, would have caught all four and
 would catch the next one. That is cheap and is probably the highest-yield single addition here.
+
+## Attempted 2026-08-20: tightening `typeOfE` first, and why that is the wrong order
+
+Tried the direct thing — make `typeOfE(Binary)` answer `""` instead of guessing. It **collapsed
+self-hosting**, and the way it collapsed is the argument for doing the reporting first.
+
+The rule was calibrated against the reference in four rounds, each round finding a legitimate case
+the previous one refused:
+
+| round | refused something legal | what the reference says |
+|---|---|---|
+| 1 | `"a" + "b"` | `+` is concatenation when both sides are `string` |
+| 2 | `bytes[i] - 48` | a packed type is arithmetic; `isNumericTy` excludes `u8`/`i16`/… |
+| 3 | `n + bytes[i]` | `i32` and `u8` **agree**; agreement is by *widened* type |
+| 4 | still collapsed | unknown — and this is the point |
+
+After round 4 the reference-built compiler was a 933 KB module exporting **nothing but `$bind$*`** —
+every `check`, `build`, `compile` gone — and `packages/platform/native.ts` printed a size and exited
+0. The same defect this issue is about, at maximum scale, hiding the diagnosis of its own cause.
+
+There is no way to find round 4 from here. The compiler that would tell you which expression it
+declined is the compiler that no longer builds. Reverted; the seed is a fixed point again.
+
+**So the order is: make declines reportable, then tighten.** With a working report each tightening
+round names the expression it refused, and calibration is minutes rather than a rebuild per guess.
+
+## A second finding, from looking for why nothing was reported
+
+`declinedExport` reads `env.funcOk[at]` where `at` counts **only top-level `Func` declarations** —
+but `funcOk` slots are handed out by `addFunc` to methods as well, interleaved in declaration order
+(the `StructDecl` and `EnumDecl` arms of the same walk both call it per method). So a struct or enum
+with methods declared before a function misaligns the index, and every function after it is checked
+against the wrong slot.
+
+Both walks skip generics consistently, so that half is fine — checked, because it looked wrong first.
+
+This is not what silenced the cases in the table above: those have no struct, so `at` is 0 and aligned,
+and `declinedExport` still said nothing — meaning `funcOk` was **true** for a function that did not
+reach the module. That is a third thing to find, and it is the one the report has to expose.
