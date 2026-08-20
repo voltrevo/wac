@@ -8,7 +8,9 @@
 
 ## What is true
 
-`deno task coverage:all` runs nineteen drivers. Sorted by what each one holds you to:
+`deno task coverage:all` ran nineteen drivers when this was filed; it runs twenty-one now and the split
+has changed — see the section at the end, dated 2026-08-20. As filed, sorted by what each one holds you
+to:
 
 - **two hold a coverage floor** — a branch point nothing reaches must carry an entry saying why, and an
   entry that names a line it no longer matches, or a point it claims is unreached while something
@@ -62,3 +64,36 @@ The comparison is valid where both denominators agree, and there it found real g
 `packages/sh/src/exec.wac` the driver reaches 1080 of 1942 where the binary reaches 1113, because
 `sh`'s host-needing tests do run there. No *false* ledger entry turned up in the audit — the entries
 checked were all trap guards, correctly named.
+
+## The blocker in "Against" is gone, and the trap above was half true — 2026-08-20
+
+**The argument against floors was that a driver cannot reach what the tests reach**, with `crypto` as
+the worked example: all five `mlkem_test.wac` tests take `(Core core, Cli cli)`, `instrument` can supply
+neither, so its floor needed `MEASURED_BY_THE_BINARY` to be honest.
+
+That is no longer true and the fix was not the one this issue proposed. `wac covdump` runs the ordinary
+program path (`issues/system/0221`), so a **wac** exercise's `main` has a real `Core` and `Cli` and
+simply calls those tests. `packages/crypto/test/cov_exercise.wac` does; `mlkem.wac` reads 131 of 132 in
+the same counter array as everything else, against the 125 the binary was being asked for, and
+`MEASURED_BY_THE_BINARY` is deleted. The same sentence in `harness/wacCoverage.ts` was hiding **64 of
+`packages/crypto`'s 152 returning tests and 29 of `packages/ssh`'s 32** from their own drivers —
+`runTestExports` skips any test whose `fn.length > 0`.
+
+So the ordering this issue sets out — *give the drivers a way to see what the binary sees, then add
+floors* — is satisfied for any package whose tests are wac, without the `prog.cov` flag it proposed.
+What is left of the decision is whether the sixteen *should* hold floors, which is still not obviously
+yes and is still not mine to decide alone.
+
+**And the trap note above was true of one driver and not the other.** "The driver dedupes by source
+position, which is what 'is this branch tested' means" was true of `harness/wacCoverage.ts`, which keys
+on `(file, line, col, kind)` and unions — and false of `tools/wac/covreport.wac`, which counted raw
+points from the day it was written. Every package converted off a `cov.ts` was measured raw. It went
+unnoticed because it only shows where one source position is instantiated more than once, and it showed
+the moment `core/` moved: 848 points at **159 distinct positions**, reading 35.3% against the
+TypeScript's 100%. `Merged` in `tools/wac/covledger.wac` is the rule restated, and none of the
+twenty-one already-measured packages moved when it landed — which is what says the fix corrects `core`
+without disturbing what was already right.
+
+The counts in this issue are now **5 hold a coverage floor, 0 only check their own exemptions have not
+drifted, 16 report and cannot fail**, out of twenty-one. `ssh` is the fifth floor: `issues/system/0222`
+gave it a ratchet, which it had never had.
