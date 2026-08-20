@@ -1,4 +1,6 @@
-# 0171a — a nullable primitive is unimplemented in the emitter; the parameter alone makes an invalid module
+# 0171a — a nullable primitive does not cross the host boundary, so the spec's own accessor gets no glue
+
+*The filename says `unwrapping-a-nullable-primitive-loses-the-function`, which is what this was when it was filed. Kept, because renaming it would break every commit message and issue that cites it; the emitter half was implemented on 2026-08-20 and what remains is the decision at the end.*
 
 - **Status:** open — the emitter is done (2026-08-20); the host-boundary decision below is not
 - **Claimed by:** (nobody yet — add yourself before working it)
