@@ -441,6 +441,41 @@ whose only caller is another package is one whose own tests never see it.
 
 Grants are worth **280 points** here — 602 to 322 without them, the widest of any package so far.
 
+### `wacpkg` twelfth: 401 of 426 → **426 of 426**, and it was the reading, not the wiring
+
+**17 hold a coverage floor, 0 only check their own exemptions have not drifted, 4 report and cannot
+fail.** Empty pin and rule lists; every one of its six source files is at 100%.
+
+Unlike the ten before it, `cov_exercise.wac` already called all 45 tests. So the gaps were facts about
+the code rather than about the driver — and all twenty-five sat in three places.
+
+**`manifestWhy` was twenty-three of them**, an uncovered *entry* with its eleven rows. It turns a
+refusal code into a sentence and exists because `wacc` used to print `m.detail` alone. Its only caller
+is `packages/wacc/example/wacc.wac`.
+
+That is the **fourth** export this issue has found tested only through a consumer in another package,
+after `regex`'s two ignore-case compilers, `http`'s `Outgoing` builder and `json`'s `parseJson5`. The
+tell is uniform: it shows up as an uncovered **entry**, not an uncovered branch, and the verbose
+report says `entry` in the last column. Worth grepping for across the rest.
+
+The test is not "each code renders". A code added without a row falls through to the fallback and the
+compiler prints a plausible sentence — the wrong one, silently. So each code must render to something
+other than the fallback and different from every other, and the *count* of codes that render at all is
+asserted against the list. Canaried both ways: dropping a row fails naming code 7 and reporting
+"renders 10, names 11"; giving two codes one sentence fails naming 5 and 6.
+
+**The other two branches say in their own comments that nothing reaches them.** `lock.wac:188` carries
+"Unreachable through `plan`, and not dead… `applyPlan` takes `steps` as an argument and cannot know
+they came from `plan`" — which is a claim about that *caller*, not the function, and `applyPlan` is
+exported, so the caller that reaches it is a test. `lock.wac:362` is the byte-by-byte name comparison
+whose *continue* had never run: every set of names ever sorted here differs in the first byte, so a
+comparator that returned on the first byte whatever it held would order every fixture correctly and
+put `alpine` before `alpha`.
+
+A comment saying a branch is unreachable is worth reading closely: two of the three here named the
+caller they were unreachable *through*, which is a different claim, and both were reachable from a
+test.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,

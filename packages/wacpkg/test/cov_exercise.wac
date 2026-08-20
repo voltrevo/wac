@@ -27,7 +27,8 @@ import { test_each_code_has_the_number_it_has_always_had as manifest_test_each_c
          test_the_suffix_is_joined_to_the_subdir_and_checked_after,
          test_each_malformed_shape_gets_its_own_code,
          test_a_url_this_toolchain_cannot_fetch_is_refused_by_name,
-         test_a_mapping_of_a_reserved_name_is_refused } from "./wac/manifest_test.wac";
+         test_a_mapping_of_a_reserved_name_is_refused,
+         test_every_manifest_refusal_has_its_own_sentence } from "./wac/manifest_test.wac";
 import { test_the_search_runs_from_the_files_directory_up_to_the_boundary,
          test_a_file_outside_the_boundary_gets_no_candidates_at_all,
          test_dot_and_the_empty_string_are_one_directory,
@@ -46,7 +47,9 @@ import { test_a_mapping_whose_inputs_still_match_uses_the_locked_commit,
          test_a_lockfile_is_rewritten_to_a_canonical_form,
          test_every_character_the_writer_escapes_round_trips,
          test_a_commit_must_be_forty_lowercase_hex_digits,
-         test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_code } from "./wac/lock_test.wac";
+         test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_code,
+         test_apply_plan_refuses_steps_that_did_not_come_from_plan,
+         test_entries_sort_by_name_when_the_names_share_a_prefix } from "./wac/lock_test.wac";
 import { test_a_mapping_that_did_not_need_resolving_keeps_the_commit_it_had,
          test_a_changed_input_takes_the_new_commit_and_the_new_inputs,
          test_an_entry_whose_mapping_is_gone_does_not_survive_the_write,
@@ -320,6 +323,7 @@ export i32 main(Core core, Cli cli) {
   seen = seen + test_each_malformed_shape_gets_its_own_code().len();
   seen = seen + test_a_url_this_toolchain_cannot_fetch_is_refused_by_name().len();
   seen = seen + test_a_mapping_of_a_reserved_name_is_refused().len();
+  seen = seen + test_every_manifest_refusal_has_its_own_sentence().len();
   // root_test.wac
   seen = seen + test_the_search_runs_from_the_files_directory_up_to_the_boundary().len();
   seen = seen + test_a_file_outside_the_boundary_gets_no_candidates_at_all().len();
@@ -343,6 +347,8 @@ export i32 main(Core core, Cli cli) {
   seen = seen + test_every_character_the_writer_escapes_round_trips().len();
   seen = seen + test_a_commit_must_be_forty_lowercase_hex_digits().len();
   seen = seen + test_an_absent_lock_is_not_a_failure_and_each_shape_has_its_own_code().len();
+  seen = seen + test_apply_plan_refuses_steps_that_did_not_come_from_plan().len();
+  seen = seen + test_entries_sort_by_name_when_the_names_share_a_prefix().len();
   // update_test.wac
   seen = seen + test_a_mapping_that_did_not_need_resolving_keeps_the_commit_it_had().len();
   seen = seen + test_a_changed_input_takes_the_new_commit_and_the_new_inputs().len();

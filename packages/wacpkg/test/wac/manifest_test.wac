@@ -21,7 +21,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Manifest, Mapping, Match, Located, readManifest, matchSpecifier, locate,
          unsupportedTransport, M_OK, M_NOT_JSON5, M_NOT_OBJECT, M_IMPORTS_KIND, M_MAPPING_KIND,
          M_NO_GIT, M_NO_REF, M_SUBDIR_KIND, M_EMPTY_NAME, M_OVERLAP, M_SUBDIR_ESCAPE,
-         M_RESERVED_NAME }
+         M_RESERVED_NAME, manifestWhy }
   from "../../src/manifest.wac";
 
 Manifest of(string src) { return readManifest(src.toBytes()); }
@@ -259,5 +259,58 @@ export string test_a_mapping_of_a_reserved_name_is_refused() {
     t.isTrue(m.ok, "refused a name that is not reserved: " + good[i] +
                    (m.ok ? "" : " — code " + itoa(m.code)));
   }
+  return t.report();
+}
+
+/**
+ * Every refusal code has its own sentence, and a code with no row says so rather than lying.
+ *
+ * `manifestWhy` exists because `wacc` used to print `m.detail` alone — *`wac.json5` is not usable:
+ * std/\** — which names the mapping and not the complaint. One renderer means every reader says the
+ * same thing, and its only caller is `packages/wacc/example/wacc.wac`. So nothing in this package
+ * called it: `issues/system/0205` listed `manifest.wac:46` as an uncovered *entry* and all eleven of
+ * its rows with it.
+ *
+ * **The failure this is written for is a code added without a row.** That is silent: the new code
+ * falls to `return "it is not valid"`, the compiler prints a sentence, and the sentence is the one
+ * for every other unrecognised thing. So the check is not "each code renders" but that each renders
+ * to something *other than the fallback* and *different from every other* — which is what makes
+ * adding `M_WHATEVER()` without a row fail here rather than in somebody's terminal.
+ */
+export string test_every_manifest_refusal_has_its_own_sentence() {
+  T t = T.create();
+  i32[] codes = i32[](M_NOT_JSON5(), M_NOT_OBJECT(), M_IMPORTS_KIND(), M_MAPPING_KIND(),
+                      M_NO_GIT(), M_NO_REF(), M_SUBDIR_KIND(), M_EMPTY_NAME(), M_OVERLAP(),
+                      M_SUBDIR_ESCAPE(), M_RESERVED_NAME());
+  string fallback = manifestWhy(-1);
+  t.isTrue(fallback.len() > 0, "an unknown code renders to nothing at all");
+
+  for (i32 i = 0; i < codes.len(); i++) {
+    string why = manifestWhy(codes[i]);
+    t.isTrue(why.len() > 0, "code " + itoa(codes[i]) + " renders to nothing");
+    t.isTrue(why != fallback,
+             "code " + itoa(codes[i]) + " has no row of its own — it falls through to \"" +
+             fallback + "\"");
+    for (i32 j = 0; j < i; j++) {
+      t.isTrue(why != manifestWhy(codes[j]),
+               "codes " + itoa(codes[j]) + " and " + itoa(codes[i]) + " share a sentence: \"" +
+               why + "\"");
+    }
+  }
+
+  // **The codes are contiguous from 1, so counting is what catches the twelfth.** A new code takes
+  // the next number; if one exists that this list does not name, `manifestWhy` answers it and the
+  // count is wrong. This is the assertion that fails when someone adds a refusal and forgets both the
+  // row and this test.
+  i32 named = 0;
+  for (i32 c = 1; c < 64; c++) {
+    if (manifestWhy(c) != fallback) { named = named + 1; }
+  }
+  t.eqI32(named, codes.len(),
+          "manifestWhy renders " + itoa(named) + " codes and this test names " + itoa(codes.len()) +
+          " — a refusal has been added or removed without its row here");
+
+  // `M_OK` is not a refusal and must not have a sentence of its own.
+  t.eqStr(manifestWhy(M_OK()), fallback, "M_OK rendered as though it were a complaint");
   return t.report();
 }
