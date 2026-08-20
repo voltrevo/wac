@@ -1819,6 +1819,33 @@ Two things came out of it that were not the port:
     here — it is a rewrite of working code rather than a port of a test — but the sentence is the
     kind of comment that reads as a constraint and is a date.
 
+    **Swept 2026-08-20, and it was four sentences rather than one.** The same expired claim sat in
+    `packages/server/host/serve.ts`, `packages/tls/host/serve.ts` and `packages/tls/src/server.wac`;
+    all three are corrected, and none of the servers moved, for the reason above. Verified rather than
+    assumed: `Cli.listen`/`accept`, `Core.nowMillis`, `monotonicNanos`, `sleepMillis` and
+    `randomBytes` all exist, and **ten wac files already run accept loops** — `ssh`'s `sshd`, `tor`'s
+    `relayd`, `dird` and `socks`, `box`'s `nc`, `wactest`'s `daemon` among them.
+
+    Grepping for the shape found two more dated constraints, both load-bearing enough to be worth the
+    measurement:
+
+    - **`packages/gzip/src/tables.wac`: "wac has no top-level constants".** It has them, arrays
+      included, and they are hoisted — 200,000 reads of a 29-entry file-scope `const i32[]` measured
+      0 ms against 6 ms for 200,000 constructions of the equivalent struct. Measured *before* changing
+      anything and then nothing changed: `Tables.create()` has three call sites, one per compress or
+      decompress, so the workaround costs about thirty nanoseconds per operation and threading the
+      struct explicitly is the better shape anyway. The comment was the defect, not the code.
+    - **`packages/bytes/src/buf.wac`: "wac has no generics, so a container cannot be written once over
+      its element type".** `core/vec.wac` is `Vec<T>` and both `Vec<i32>` and `Vec<u8[]>` compile. The
+      real answer to "why is this not `Vec<u8>`" was already two lines below it — `len` is a public
+      field read once per pushed byte in gzip's inner loops, and `reserve()` checks for one byte to
+      keep `push` to a single comparison. The structure stands; its stated reason did not.
+
+    The general form is worth stating because this is now the third time today a recorded constraint
+    turned out to have expired — `packages/url`'s seed sensitivity and `packages/fmt`'s were the
+    others. **A comment explaining why something cannot be done is evidence about the day it was
+    written**, and the cheap check is to try the thing.
+
 ### `packages/platform`, swept — 2026-08-19
 
 Every file in `packages/platform/test` has now been looked at. The count went 4,799 → about 1,900 of

@@ -1,9 +1,14 @@
 // Buf — a growable byte buffer.
 //
 // Shared because `gzip` and `json` had written the same type twice. It exists as
-// a package rather than a copy per consumer for the reason the monorepo exists:
-// wac has no generics, so a container cannot be written once over its element
-// type, but it can at least be written once over `u8`.
+// a package rather than a copy per consumer for the reason the monorepo exists.
+//
+// **This said "wac has no generics" and that has expired**: `core/vec.wac` is `Vec<T>`, and both
+// `Vec<i32>` and `Vec<u8[]>` compile today. So the question "why is this not `Vec<u8>`" needs its real
+// answer, which is two lines down rather than in the type system — `len` is a public field read once
+// per pushed byte in gzip's inner loops, and `reserve()` checks for exactly one byte to keep `push` to
+// a single comparison. A generic container cannot offer either without giving every element type the
+// same shape. The structure stands; the reason for it was dated.
 //
 // Capacity doubles, so appending n bytes is amortised O(n).
 //

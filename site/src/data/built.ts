@@ -21,7 +21,7 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 131212,
+  lines: 131233,
   /** the *packages* — the number that belongs beside the package table. */
   tests: 2607,
   programs: 81,
@@ -44,13 +44,13 @@ export const TOTALS = {
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
 export const BUILT: BuiltPackage[] = [
-  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 361, tests: 40 },
+  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 366, tests: 40 },
   { name: "unicode", what: "UTF-8 as code points, simple case mapping, and whether a code point is printable.", lines: 251, tests: 13 },
   { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 50 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 368, tests: 10 },
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 12 },
   { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 25 },
-  { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2024, tests: 128 },
+  { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2036, tests: 128 },
   { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1550, tests: 26 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 496, tests: 8 },
@@ -76,7 +76,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "quic", what: "QUIC version 1 — RFC 9000 and RFC 9001 — in wac.", lines: 3259, tests: 86 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4132, tests: 58 },
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
-  { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 185 },
+  { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4207, tests: 185 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17363, tests: 313 },
   { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34768, tests: 290 },
   { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 1749, tests: 48 },

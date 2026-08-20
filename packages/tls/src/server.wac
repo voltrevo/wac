@@ -2,7 +2,11 @@
 //
 // Shaped like `packages/server`'s HTTP handler and for the same reason: everything wac
 // cannot do lives in the host, and what is left is a pure function from bytes to bytes.
-// The host owns the socket and the randomness — wasm has neither — and every decision
+// The host owns the socket and the randomness — **because this is where they were put, not because
+// wasm lacks them.** `std/platform.wac` has `Cli.listen`/`accept` and `Core.randomBytes`, and
+// `packages/ssh`'s `sshd` uses both; `issues/system/0161` flagged this sentence's twin in
+// `host/serve.ts` as "the kind of comment that reads as a constraint and is a date". Corrected rather
+// than acted on — moving a working server is not a port of a test — and every decision
 // about what those bytes mean is made here.
 //
 // ## The state is a byte string

@@ -5,7 +5,19 @@
 // values; the extra bits say where in the range. These are the range bases and
 // widths, transcribed from the RFC's tables.
 //
-// wac has no top-level constants, so they live in a struct built once per call.
+// They live in a struct built once per call, and **the reason given for that has expired.** This said
+// "wac has no top-level constants"; it has them, including arrays — `const i32[] LEN_BASE = i32[](…)`
+// at file scope compiles, and is hoisted rather than rebuilt: 200,000 reads of a 29-entry top-level
+// const measured 0 ms against 6 ms for 200,000 constructions of the equivalent struct.
+//
+// **Measured before changing anything, and then not changed.** `Tables.create()` has three call sites
+// — `gzip.wac:192` and `deflate.wac:235` and `:349` — one per compress or decompress, and the struct is
+// threaded through as a parameter after that. So the cost the workaround carries is about thirty
+// nanoseconds per gzip operation, and rewriting four tables to save it would be churn. Threading it
+// explicitly is arguably the better shape anyway: nothing here reads a table it was not handed.
+//
+// What was wrong was the *reason*, and a false constraint in a comment is worth more than the thirty
+// nanoseconds: the next person to need a table at file scope reads this and believes they cannot.
 
 export struct Tables {
   i32[] lenBase;    // 29 entries: lengths 3..258 for symbols 257..285
