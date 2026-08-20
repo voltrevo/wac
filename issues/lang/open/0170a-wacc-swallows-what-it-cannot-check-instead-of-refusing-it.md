@@ -461,3 +461,59 @@ That is one canary per bail, and it is the honest cost of this item.
 a callee that was already declined. Those are the cascade working as designed and should decline the
 *caller* through `unsupportedExpr` rather than bail; they need no canary, because the condition they test
 is one the fixpoint already computes.
+## The stronger net is in, and the question it turned on is measured — agent-a, 2026-08-20
+
+The section above left one thing undecided: *"whether `funcOk[i] == false` is routine"*, with the note
+that it costs a seed build to find out. It does, and the answer is **no**.
+
+Instrumented the emitter to count, over every declaration in a build rather than only the exports:
+
+| entry | private functions | `!funcOk` | `funcIndex < 0` |
+|---|---:|---:|---:|
+| `packages/wacc/example/wacc.wac` | 763 | 0 | 0 |
+| `packages/wacc/src/api.wac` | 656 | 0 | 0 |
+| `packages/sh/src/sh.wac` | 236 | 0 | 0 |
+| `packages/fs/src/image.wac` | 45 | 0 | 0 |
+| `packages/tor/src/consensus.wac` | 45 | 0 | 0 |
+| `tools/wac/map.wac` | 31 | 0 | 0 |
+| `packages/regex/src/compile.wac` | 21 | 0 | 0 |
+
+**1797 non-exported functions and not one of them false or index-less.** So a template takes no slot —
+which this walk's `continue` already assumed, and would have drifted `at` if wrong — and a private
+function in a linked program always reaches the module. The net is now over **every** function, and it
+fires on nothing that exists today.
+
+### The first canary did not isolate it, which is worth recording
+
+Mutating `addFunc` to `declineFor` one name made the widened net report — and the *unwidened* net
+reported too. `declineFor` writes `env.blocked`, and `buildLinked` checks `blocked` before it reaches
+`missingExport`, so the decline path caught it either way and the canary proved nothing.
+
+The isolating mutation is the one that produces the fault `missingExport` actually exists for: a
+function **absent with no decline recorded**. Skipping one name in the renumbering loop does that —
+`funcOk` stays true, `blocked` is never written:
+
+    if (env.funcs[i] == "zzDeclineMe") { continue; }   // in the renumbering, not in addFunc
+
+On the same program, `i32 zzDeclineMe(i32 a)` private and never called:
+
+    pre-widening   build EXIT=0, 1787-byte module written, function silently absent
+    widened        build EXIT=1 — "the function `zzDeclineMe` is not in the module the
+                   emitter produced, and no reason was recorded"
+
+So the widening catches a class the export net could not, the "no reason was recorded" branch is
+exercised, and the wording change for a non-exported function is too.
+
+### A cost worth warning the next person about
+
+The census reported by **failing the build with the numbers in the error string**, because the emitter
+has no print. That instrumented `wacc.wasm` is then *installed as the seed*, so every later build fails
+the same way — including `deno task seed`, which needs the seed to build its successor. Recovery is
+`deno task seed:bootstrap`. One probe of that shape is cheap; the second costs a from-reference
+rebuild. Prefer appending to a message the build already prints.
+
+### Still open
+
+Unchanged by this: the 25 expression-level bails with no recorded reason, `""` as "I don't know", and
+the `emitFiles*` family having no channel to report through — the recommendation there is still to
+leave it until something in-process actually loses an export.
