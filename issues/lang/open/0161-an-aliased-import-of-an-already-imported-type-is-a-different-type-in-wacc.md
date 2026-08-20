@@ -115,3 +115,66 @@ half now fixed is the common one.
 **Measured, since this widens what the checker rejects:** 221 of 221 cases, 53 typecheck cases, the
 generated sweep clean, specEmit 419/419 with 258 of 279 whole, and crypto, std/platform, box and wacc's
 own example all still check.
+## The mechanism, and it is worse than a type mismatch — agent-a, 2026-08-20
+
+**The plain name silently stops being declared at all.** `C.renamed` is a *function* from the
+declaring file's name to the importing file's — one entry, one answer — and `declareModule` registers
+each declaration under `c.renamed(name)`. `api.wac:1200` adds an entry only when the alias differs
+from the name, so `import { E, E as E2 }` records exactly `E → E2`, the enum is declared under `E2`,
+and **nothing is declared under `E`**. An undeclared type is `typeNone()`, and unknown means silent
+everywhere in this checker.
+
+Measured, `E` and `E2` both from one `import { E, E as E2 }`:
+
+| program | result |
+|---|---|
+| `E2 e = E2.Nope;` | refused — *no variant of that name* |
+| `E e = E.Nope;` | **accepted** |
+| `E e = E.Nope;` with the plain import *alone* | refused |
+
+So the reported symptom — an argument mismatch at the call — is downstream. The name the programmer
+wrote plainly is not a type, and every rule about it goes quiet.
+
+### It is not only types, and it was live in the tree
+
+The same registration path declares functions (`declareFunc(c.renamed(…))`), so a function imported
+plainly and aliased loses its plain name too — and a call to an unknown function is silent:
+
+| program (`export i32 add(i32 a, i32 b)` in lib.wac) | result |
+|---|---|
+| `import { add }` … `add(1)` | refused — *wrong number of arguments* |
+| `import { add, add as plus }` … `plus(1)` | refused |
+| `import { add, add as plus }` … `add(1)` | **accepted** |
+
+`packages/ssh/test/wac/probe.wac` was doing exactly that: `disconnect` and `openFailure` imported
+from `../../src/server.wac` both plainly and as `srvDisconnect`/`srvOpenFailure`, with all four names
+used. Two call sites in a green package had no arity or argument checking at all. Fixed in this commit
+by dropping the redundant plain imports — the file's own convention is the `srv*` prefix
+(`srvClose`, `srvData`, `srvEof`, `srvChanFailure`, `srvHash`), so the plain names were the anomaly.
+
+`tools/wac/importtwice_test.wac` now refuses the shape tree-wide, and it is canaried against the real
+case rather than only a synthetic one: with `probe.wac` reverted it reports both names and the file and
+line, and with the fix it is green. Two instances in 700-odd files, so the tree has no appetite for
+this and the guard costs nothing.
+
+*(The scan behind that guard first reported **138** double imports, from matching the six letters of
+`import` anywhere — inside `important`, inside strings holding programs, and inside
+`packages/wacc/example/wacc.wac` where the quote pairing then read `""` as a module path. Requiring
+the word at the start of a line with `{` after it is the whole fix. Third time this class of mistake
+has cost a wrong count today — see `issues/system/0220`.)*
+
+### What the fix needs
+
+Registering under every local name is right for functions, consts and variants — they are keyed by
+name and two entries are harmless. It is **wrong for a struct or an enum**, where two names must
+collapse to one type string or `take(E2)` still refuses an `E`. So:
+
+1. `renamed` becomes a relation — `renamedAll(n)` — and `api.wac:1200` records the identity entry too
+   when a name is imported more than once from one path. Fixes functions, consts and variants, and
+   makes `E` a declared type again so the silence ends.
+2. For types, one of the names has to be canonical and the other resolved to it *in the importing
+   file* — which needs a table that outlives `api.wac:1273`, where `renameCount` is reset before the
+   entry is checked. `typeOfTy` is the single funnel for type names, so that is one place; `is` and a
+   qualified `E2.A` want checking separately.
+
+Step 1 alone is worth doing and strictly reduces silence. Step 2 is what closes this issue.

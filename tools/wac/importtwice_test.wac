@@ -1,0 +1,195 @@
+// No file imports one name twice from the same module.
+//
+//     wac test --allow-read --allow-run tools/wac/importtwice_test.wac
+//
+// **Because wacc stops checking the name, silently.** A declaration crosses an import under one local
+// name — `renamed` is a function, not a relation — so `import { add, add as plus }` registers `add`'s
+// signature under `plus` and nothing under `add`. Calls through `add` then reach no declaration, and an
+// unknown callee is silent in this checker, so the arity and the argument types of every one of them
+// stop being checked. Measured on a two-file reduction: a wrong arity is reported through the plain
+// import alone and through the alias, and **not** through the plain name when both are imported.
+// `issues/lang/0161`.
+//
+// This was live. `packages/ssh/test/wac/probe.wac` imported `disconnect` and `openFailure` from
+// `../../src/server.wac` both plainly and as `srvDisconnect`/`srvOpenFailure`, and used all four —
+// so two call sites in a green package were unchecked. Fixed by dropping the redundant plain imports,
+// which is also what this guard asks for: one local name per imported name.
+//
+// A guard rather than a compiler fix because the fix is not small — the declaration walk would have to
+// register under every local name the import gave, and for a *type* two names must collapse to one
+// string rather than become two nominal types. That is what `issues/lang/0161` is still open for. This
+// keeps the tree out of the case until then, which the tree has no reason to be in: a name imported
+// twice under two spellings is a redundancy, not a technique.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { tracked } from "../../packages/wactest/src/repo.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** `s.indexOf(needle)` from `at` onward, as an absolute offset — there is no `indexOfFrom`. */
+i32 findFrom(string s, string needle, i32 at) {
+  if (at >= s.len()) { return -1; }
+  i32 rel = s.slice(at, s.len()).indexOf(needle);
+  return rel < 0 ? -1 : at + rel;
+}
+
+/** The text between `import {` and the matching `}`, with `from "<path>"`, for each import. */
+struct Imported {
+  string spec;
+  string name;
+  i32 line;
+}
+
+/** `n` with any ` as <alias>` removed — the name the *declaring* file uses. */
+string baseName(string n) {
+  i32 at = n.indexOf(" as ");
+  return at < 0 ? n : n.slice(0, at);
+}
+
+/** Trim ASCII spaces, tabs, newlines and carriage returns from both ends. */
+string trimmed(string s) {
+  i32 a = 0;
+  i32 b = s.len();
+  while (a < b && isBlank(s.slice(a, a + 1))) { a = a + 1; }
+  while (b > a && isBlank(s.slice(b - 1, b))) { b = b - 1; }
+  return s.slice(a, b);
+}
+
+bool isBlank(string c) { return c == " " || c == "\t" || c == "\n" || c == "\r"; }
+
+/**
+ * Every `{ … } from "…"` import in `src`, one entry per imported name.
+ *
+ * A hand-rolled scan rather than the lexer: this walks 700-odd files and only needs the names, and
+ * the shapes it has to survive are a wrapped list and a `//` comment — both of which appear in the
+ * tree. Comments are stripped first because `issues/system/0220` was mis-surveyed three times by
+ * regexes that matched inside them.
+ */
+Imported[] importsIn(string src) {
+  string s = withoutLineComments(src);
+  Imported[] out = Imported[512](fill: Imported("", "", 0));
+  i32 n = 0;
+  i32 i = 0;
+  i32 line = 1;
+  while (i < s.len()) {
+    if (s.slice(i, i + 1) == "\n") { line = line + 1; i = i + 1; continue; }
+    // **Only at the start of a line, and only with `{` right after.** The first version matched the
+    // six letters anywhere and found 138 "double imports" — inside `important`, inside a string
+    // holding a program, and inside `packages/wacc/example/wacc.wac` where the quote-pairing then
+    // read `""` as a module path. An import in wac is top-level and begins its line, which is the
+    // cheap way to say all of that. `issues/system/0220` cost three miscounts to the same mistake.
+    if (i + 8 <= s.len() && s.slice(i, i + 6) == "import" && (i == 0 || s.slice(i - 1, i) == "\n")) {
+      i32 after = i + 6;
+      while (after < s.len() && (s.slice(after, after + 1) == " " ||
+                                 s.slice(after, after + 1) == "\t")) { after = after + 1; }
+      if (after >= s.len() || s.slice(after, after + 1) != "{") { i = i + 6; continue; }
+      i32 open = after;
+      i32 close = open < 0 ? -1 : findFrom(s, "}", open);
+      i32 q1 = close < 0 ? -1 : findFrom(s, "\"", close);
+      i32 q2 = q1 < 0 ? -1 : findFrom(s, "\"", q1 + 1);
+      if (open < 0 || close < 0 || q1 < 0 || q2 < 0) { i = i + 6; continue; }
+      string spec = s.slice(q1 + 1, q2);
+      string body = s.slice(open + 1, close);
+      i32 startLine = line;
+      // Advance the line counter over what was consumed, so a later import reports its own line.
+      for (i32 k = i; k < q2; k++) { if (s.slice(k, k + 1) == "\n") { line = line + 1; } }
+      i32 from = 0;
+      for (i32 k = 0; k <= body.len(); k++) {
+        if (k == body.len() || body.slice(k, k + 1) == ",") {
+          string one = trimmed(body.slice(from, k));
+          if (one != "" && n < out.len()) {
+            out[n] = Imported(spec, one, startLine);
+            n = n + 1;
+          }
+          from = k + 1;
+        }
+      }
+      i = q2 + 1;
+      continue;
+    }
+    i = i + 1;
+  }
+  Imported[] kept = Imported[n](fill: Imported("", "", 0));
+  for (i32 k = 0; k < n; k++) { kept[k] = out[k]; }
+  return kept;
+}
+
+/** `src` with every `//` comment removed, newlines kept so line numbers survive. */
+string withoutLineComments(string src) {
+  string out = "";
+  i32 i = 0;
+  while (i < src.len()) {
+    if (i + 2 <= src.len() && src.slice(i, i + 2) == "//") {
+      while (i < src.len() && src.slice(i, i + 1) != "\n") { i = i + 1; }
+      continue;
+    }
+    out = out + src.slice(i, i + 1);
+    i = i + 1;
+  }
+  return out;
+}
+
+/** Every `<path>:<line> <name>` where one module's name is imported under two spellings. */
+string[] doubleImports(string path, string src) {
+  Imported[] all = importsIn(src);
+  string[] bad = string[16](fill: "");
+  i32 n = 0;
+  for (i32 a = 0; a < all.len(); a++) {
+    for (i32 b = a + 1; b < all.len(); b++) {
+      if (all[a].spec != all[b].spec) { continue; }
+      if (baseName(all[a].name) != baseName(all[b].name)) { continue; }
+      if (n >= bad.len()) { continue; }
+      bad[n] = path + ":" + itoa(all[b].line) + " imports `" + baseName(all[a].name) +
+               "` from \"" + all[a].spec + "\" twice — as `" + all[a].name + "` and `" +
+               all[b].name + "`";
+      n = n + 1;
+    }
+  }
+  string[] kept = string[n](fill: "");
+  for (i32 k = 0; k < n; k++) { kept[k] = bad[k]; }
+  return kept;
+}
+
+export string test_no_tracked_wac_file_imports_one_name_twice(Core core, Cli cli) {
+  T t = T.create();
+  string[] all = tracked(core, cli);
+  i32 looked = 0;
+  string found = "";
+  i32 nFound = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].len() < 5 || all[i].slice(all[i].len() - 4, all[i].len()) != ".wac") { continue; }
+    FileResult r = cli.readFile(all[i]).wait();
+    if (!r.ok) { continue; }
+    looked = looked + 1;
+    string[] bad = doubleImports(all[i], string.fromBytes(r.bytes));
+    for (i32 k = 0; k < bad.len(); k++) {
+      nFound = nFound + 1;
+      if (nFound <= 8) { found = found + (found == "" ? "" : "; ") + bad[k]; }
+    }
+  }
+  t.isTrue(looked > 300, "only " + itoa(looked) + " .wac files read — this guard is not walking the tree");
+  t.eqI32(nFound, 0, "wacc stops checking a name imported twice (issues/lang/0161): " + found);
+  return t.report();
+}
+
+/** The canary: the scan finds the shape when it is there, and is not fooled by a comment. */
+export string test_the_scan_finds_a_double_import_and_ignores_one_in_a_comment(Core core, Cli cli) {
+  T t = T.create();
+  string real = "import { add, add as plus } from \"./lib.wac\";\nexport i32 f() { return add(1); }\n";
+  t.eqI32(doubleImports("/x.wac", real).len(), 1, "the scan missed a plain double import");
+
+  string twoStatements = "import { add } from \"./lib.wac\";\nimport { add as plus } from \"./lib.wac\";\n";
+  t.eqI32(doubleImports("/x.wac", twoStatements).len(), 1,
+          "the scan missed a double import split across two statements");
+
+  string wrapped = "import { one, two,\n         add as plus, three,\n         add } from \"./lib.wac\";\n";
+  t.eqI32(doubleImports("/x.wac", wrapped).len(), 1, "the scan missed a wrapped double import");
+
+  string differentFiles = "import { add } from \"./a.wac\";\nimport { add as plus } from \"./b.wac\";\n";
+  t.eqI32(doubleImports("/x.wac", differentFiles).len(), 0,
+          "two modules each exporting `add` is not this — that is issues/lang/0128");
+
+  string inAComment = "// import { add, add as plus } from \"./lib.wac\";\nexport i32 f() { return 1; }\n";
+  t.eqI32(doubleImports("/x.wac", inAComment).len(), 0, "the scan matched inside a comment");
+  return t.report();
+}
