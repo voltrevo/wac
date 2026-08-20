@@ -535,7 +535,15 @@ for (const c of CATEGORIES) {
       : (src[p.line - 1] ?? "").includes(c.holds))
   );
   if (hit.length === 0) {
-    console.log(`\ncategory "${c.holds}" in ${c.file} matches no uncovered point — delete it or fix it`);
+    // **"no longer holds", because the phrasing is an API.** `tools/coverageAll.ts` repeats a failing
+    // task's own explanation and picks the lines by matching `no longer holds`, `is listed as
+    // unreach`, `branch point(s) uncovered` and a leading `error`. This said "matches no uncovered
+    // point", which is none of them — so a stale category exited 1 with its reason filtered out of the
+    // summary. `issues/system/0222`.
+    console.log(
+      `\n${c.file} no longer holds any uncovered point matching the category "${c.holds}" — ` +
+        `delete it or fix it`,
+    );
     stale = true;
     continue;
   }
@@ -559,9 +567,15 @@ const accounted = spokenFor.size;
 const leftover = missed.filter((p) => !spokenFor.has(`${p.file}:${p.line}`));
 const missing = leftover.length;
 if (missing > 0) {
+  // **"branch point(s) uncovered", and the wording is load-bearing twice over.** It is one of the four
+  // phrases `tools/coverageAll.ts` repeats, so saying it the other way round — "uncovered branch
+  // point(s) are not accounted for" — meant this package's *principal* failure exited 1 with nothing on
+  // screen but "(nothing matched the known failure shapes)". And line 153 of that file decides whether
+  // a package holds a coverage floor by whether its driver says this: `fs` holds the most detailed
+  // ledger here and was counted among the ones that only check their own exemptions.
   console.log(
-    `\n${missing} uncovered branch point(s) are not accounted for. Drive them, or add them to ` +
-      `NOT_COVERED with the reason — and keep "proven" honest about which of the two claims it is.`,
+    `\n${missing} reachable branch point(s) uncovered and not accounted for. Drive them, or add ` +
+      `them to NOT_COVERED with the reason — and keep "proven" honest about which claim it is.`,
   );
   // **And say which.** A count on its own sends the reader back to the raw "never executed" list
   // above, which is every uncovered point including the ones already spoken for — so the work of
