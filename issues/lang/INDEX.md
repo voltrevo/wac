@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | `return x!;` on an `i32?` — or `i64?`, `f64?`, `bool?` — loses the whole function; a nullable *reference* unwraps fine | missing feature | the build fails and names the function |
+| [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | a nullable primitive is unimplemented in the emitter — an `i32?` parameter that is never read makes a module the engine refuses | missing feature | invalid wasm |
 | [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | wacc refuses 10 of 14 ill-typed programs the reference refuses all of; in each of the 4 it accepts, the build exits 0 and the exported function is absent | bug | no error |
 | [0164a](open/0164a-wacc-never-compares-array-types-so-any-array-satisfies-any-slot.md) | any array value satisfies any slot in wacc — argument, assignment, return or field, including a slot that is not an array — so the checker is silent and the engine rejects the module | bug | invalid wasm |
 | [0163](open/0163-one-file-under-two-keys-is-silent-in-the-reference-and-an-invalid-module-in-wacc.md) | one file reached under two keys: the reference reads it twice and runs, wacc's checker stays clean and the engine rejects the module — neither is what D8 says the failure looks like | bug | invalid wasm |

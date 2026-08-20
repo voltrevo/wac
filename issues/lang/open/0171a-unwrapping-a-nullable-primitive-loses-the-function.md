@@ -1,11 +1,11 @@
-# 0171a — unwrapping a nullable *primitive* loses the function; a nullable reference is fine
+# 0171a — a nullable primitive is unimplemented in the emitter; the parameter alone makes an invalid module
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
 - **Kind:** missing feature
-- **Symptom:** the build fails and names the function
+- **Symptom:** invalid wasm, or the build fails and names the function
 
 ## Reproduction
 
@@ -65,3 +65,39 @@ So this is the read side of something already half-present rather than new machi
 Checked, so the scope is known rather than guessed: **`i64?`, `f64?` and `bool?` all fail the same
 way**, so it is every nullable primitive and not something about `i32`. `u8?` is refused outright —
 *a packed type cannot be nullable* — which is `spec/cases/0025` and correct.
+
+## Rescoped: it is not the unwrap, it is the type
+
+I filed this as an unwrap problem and then probed the neighbours. Every nullable-primitive program
+fails, and the smallest one is the worst:
+
+| program | outcome |
+|---|---|
+| `export i32 f(i32? x) { return 1; }` | **invalid module** — the parameter is never even used |
+| `export i32 f(i32? x) { return x is null ? 0 : 1; }` | the export is missing |
+| `export i32 f() { i32? x = null; return x is null ? 0 : 1; }` | the export is missing |
+| `export i32 f(i32? x) { return x!; }` | the export is missing |
+
+The reference accepts all four.
+
+The first row is the one that matters: an `i32?` **parameter**, unread, produces a module the engine
+refuses — `Compiling function #12:"$bound$0" failed`. So the type is wrong at the boundary, before any
+operation on a value of it, and the unwrap is a symptom rather than the fault.
+
+`i31ref` and boxing exist, and `x is null` *checks* fine on its own, which is what made this look
+narrow. It is not: nothing that takes or holds an `i32?` emits correctly.
+
+### A message I wrote and reverted
+
+I added a reason to the emitter's `Unwrap` bail — *an unwrap of a nullable `i32`, which is boxed and
+this emitter cannot read back out yet* — and it never fired. `typeOfE` answers `""` for a nullable
+primitive throughout, so the gate never sees a type to object to, which is also why `canEmit` approves
+these functions and the emitter then drops them.
+
+Reverted rather than left in place. It cannot fire until the type is modelled, and an unreachable
+message is a claim nothing checks — `CLAUDE.md`'s rule about keeping things applies to code I wrote
+five minutes ago as much as to anything else.
+
+**So the order for whoever takes this is: model `T?` for primitive `T` in `typeOfE` first.** Until
+then every rule that would name the problem is looking at an empty string, and the only thing standing
+between this and silence is the export-parity net.
