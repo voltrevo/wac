@@ -36,7 +36,7 @@ async function ensureOutDir(out: string): Promise<void> {
 // but the conformance suite makes them agree. The format is versioned for that reason.
 
 import { wacCompile } from "wac/wacCompile.ts";
-import { wacFiles, wacFilesWithRoots } from "../../harness/wacFiles.ts";
+import { wacFiles } from "../../harness/wacFiles.ts";
 
 /** Bumped when a field changes meaning. A runtime refuses a manifest it does not know. */
 export const MANIFEST_VERSION = 1;
@@ -171,17 +171,13 @@ function uleb(n: number): Uint8Array {
  * would leave the other implied.
  */
 export async function buildNative(entry: string, out: string, grants: Grants = {}): Promise<Manifest> {
-  // **With the project roots**, so a `@/` specifier resolves through this path as it does through
-  // `wac build`. Without them wacc gets an empty `Res` and answers "an import of a file that was not
-  // supplied" for `@/src/stats.wac` — which is what an outsider building their own project with this
-  // fallback got. GitHub issue 21, `issues/system/0228a`.
-  const { files, roots } = await wacFilesWithRoots(entry);
+  const files = await wacFiles(entry);
   // **wacc, unless asked otherwise**, the same rule and the same switch as `build.ts`: both jobs are
   // "build an application", and a manifest describing a module the reference compiled cannot
   // describe one that uses a feature only wacc has. `issues/lang/0105` — this was the last bundler
   // on the reference, and the binary embedding the pair is why it mattered.
   if (Deno.env.get("WAC_APP_FROM") !== "reference") {
-    return await buildNativeWithWacc(entry, out, grants, files, roots);
+    return await buildNativeWithWacc(entry, out, grants, files);
   }
   const r = wacCompile(files, entry, {});
   if (!r.ok) {
@@ -373,14 +369,12 @@ async function buildNativeWithWacc(
   out: string,
   grants: Grants,
   files: Map<string, string>,
-  /** The project root each path sits in, so `@/` resolves — GitHub issue 21. */
-  roots: Map<string, string>,
 ): Promise<Manifest> {
   const { waccApi, waccArtifacts } = await import("../../harness/waccBuild.ts");
   const { parseAliases, parseBindTypes, parseCallbacks, parseSigs } = await import(
     "../wacc/tools/waccBindgen.ts"
   );
-  const art = await waccArtifacts(files, entry, { roots });
+  const art = await waccArtifacts(files, entry);
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
