@@ -15,7 +15,7 @@
 // that. It existed for one reason — a u64 could not cross bindgen as itself, so the host-side version
 // sent `BigInt.asIntN(64, v)` and undid it on the way out, and the probe held the casts that made
 // that work. Here the operators are written where they are used, which is what the file was standing
-// in for. Its only caller was the test being replaced; `packages/bignum/cov.ts` instruments
+// in for. Its only caller was the test being replaced; `test/cov_exercise.wac` drives
 // `test/probe.wac`, which is a different file and stays.
 //
 // Only the *transport to the oracle* is a bit pattern now: sixteen hex digits, because the whole

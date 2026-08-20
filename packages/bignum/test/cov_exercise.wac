@@ -1,0 +1,362 @@
+// Branch coverage for bignum: the exercises, and nothing else.
+//
+//   deno task coverage:bignum
+//   deno task coverage:bignum --verbose
+//
+// ## wac decides the operands; JavaScript computes them — `issues/system/0161`
+//
+// Every other package's exercise can write its own inputs down. This one cannot: the operands that
+// reach the interesting branches are wider than `i64`. A divisor whose top limb is `0xffffffff`, a
+// dividend that is an exact multiple of it, a carry that propagates the whole length of a value — the
+// old `cov.ts` named those with JavaScript's `BigInt` because it *was* JavaScript.
+//
+// So `test/oracle.ts` is an arbitrary-precision arithmetic service and this file is its caller. The
+// division of labour is the point:
+//
+//   * **wac decides** which limb boundaries matter, which deltas, how many limbs of ones, how wide the
+//     random operands are, and what to do with each answer;
+//   * **JavaScript computes** `(1 << p) + d`, `(1 << 32L) - 1`, `q · d + delta`, and a value of a given
+//     bit width. Nothing else.
+//
+// This inverts the direction the old driver ran in, deliberately. `cov.ts` was JavaScript *driving*
+// wac — it instrumented the module, called its exports and reported. This is wac driving, calling
+// JavaScript for the one thing it cannot do.
+//
+// **And not a vendored corpus**, which was the alternative and is 20.4 KB of decimal digits for the
+// deterministic families alone. `packages/mpt/test/oracle.ts` gives the reason and it applies here
+// exactly: a fixture would move every decision about *which* operands matter out of the exercise that
+// cares and into a data file nothing derives. Change the anchor list and a fixture goes stale in
+// silence; change it here and the next run asks a different question.
+//
+// **The corpus is the same shapes, not the same digits.** The old driver's random draws interleaved the
+// bit-width choice with the value, in one JavaScript stream; reproducing that across two RNGs is not
+// possible and would not be worth it if it were. wac chooses the widths from its own generator and the
+// oracle supplies a value of each width, so what is preserved is what the old file's comments say
+// matters — limb boundaries, all-ones runs, exact multiples — rather than the particular integers.
+//
+// The `DONE <n>` line is checked by `askDeno`, so an oracle that answered half the batch cannot pass
+// for one that answered all of it. Nothing here would notice otherwise: a missing operand is a shorter
+// loop, not an error.
+
+import { T } from "../../wactest/src/assert.wac";
+import { Lines, Answers, askDeno, word } from "../../wactest/src/oracle.wac";
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr,
+         opMulSmall, opDivSmall, opRemSmall, opCmp, opCmpAbs, opBitLen, opIsZero,
+         roundTrip, acceptsDecimal, acceptsHex, toHex, fromHex, fromI64,
+         fromU64 } from "./probe.wac";
+
+import { test_toStr_returns_text, test_arithmetic_from_wac, test_signs_and_predicates,
+         test_shifts_floor_for_negatives, test_truncated_division, test_divSmall_remainder_is_a_magnitude,
+         test_bitLen_and_hex, test_formatDecimal_pads_interior_chunks } from "./wac/big_test.wac";
+
+const string ORACLE = "packages/bignum/test/operands.ts";
+
+/** xorshift32, here to choose *widths* — the values come from the oracle. */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  i32 upto(this, i32 n) {
+    i32 v = this.next() % n;
+    return v < 0 ? v + n : v;
+  }
+}
+
+/**
+ * The decimal an answer carries, or `""`.
+ *
+ * **Only a `dec` reply counts.** A `FAIL` line's second word is the op name, and taking it blindly
+ * handed `pow2` to the probe as a number — which traps inside `need`, aborting `main` and leaving the
+ * report at 123 of 230 with nothing saying why. The empty answer is the caller's problem to skip.
+ */
+string decOf(Answers a, i32 i) {
+  if (i >= a.lines.len()) { return ""; }
+  string line = a.lines[i];
+  if (line.len() < 4 || line.slice(0, 4) != "dec ") { return ""; }
+  return word(line, 1);
+}
+
+/** Both operands, both orders of sign, which is where the sign rules live. */
+i32 both(string x, string y) {
+  i32 seen = 0;
+  u8[] a = x.toBytes();
+  u8[] b = y.toBytes();
+  seen = seen + opAdd(a, b).len() + opSub(a, b).len() + opMul(a, b).len();
+  seen = seen + opCmp(a, b) + opCmpAbs(a, b);
+  if (y != "0" && y != "-0") {
+    seen = seen + opDiv(a, b).len() + opRem(a, b).len();
+  }
+  return seen;
+}
+
+/** `-x` as text, without arithmetic: the oracle's answers are never negative. */
+string neg(string x) { return x == "0" ? "0" : "-" + x; }
+
+export i32 main(Core core, Cli cli) {
+  T t = T.create();
+  i32 seen = 0;
+
+  // ── Small and signed, which needs no oracle at all ──
+  //
+  // Where the sign rules and the |a| < |b| early return live. Every value fits in an i32, so wac
+  // writes these itself.
+  for (i32 x = -40; x <= 40; x++) {
+    for (i32 y = -40; y <= 40; y++) { seen = seen + both(itoa(x), itoa(y)); }
+  }
+
+  // ── Batch one: every operand that is a fixed shape ──
+  Rng r = Rng(0x51de51de);
+  Lines b1 = Lines.create();
+  i32 nAsked = 0;
+
+  // Limb boundaries on both operands, where a carry grows a limb and a borrow sheds one.
+  i32[] powers = i32[](0, 1, 31, 32, 33, 63, 64, 65, 95, 96, 97, 128, 192);
+  i32 boundaryAt = nAsked;
+  for (i32 i = 0; i < powers.len(); i++) {
+    for (i32 d = -2; d <= 2; d++) {
+      // `2^0 - 2` is negative and the oracle rightly refuses it; not asking keeps `FAIL` meaning
+      // "the caller asked wrongly" rather than "this combination does not exist".
+      if (powers[i] == 0 && d < -1) { continue; }
+      b1.add("pow2 " + itoa(powers[i]) + " " + itoa(d));
+      nAsked = nAsked + 1;
+    }
+  }
+
+  // All-ones and all-zeros limb runs: the family that reaches the quotient-estimate clamp and the
+  // add-back. A carry that propagates the whole length of a value, and a divisor whose top limb is
+  // 0xffffffff. Random digits essentially never produce either.
+  i32[] limbCounts = i32[](1, 2, 3, 4, 8, 17);
+  i32 runsAt = nAsked;
+  for (i32 i = 0; i < limbCounts.len(); i++) {
+    b1.add("ones " + itoa(limbCounts[i]) + " 0");
+    b1.add("ones " + itoa(limbCounts[i]) + " -1");
+    b1.add("ones " + itoa(limbCounts[i]) + " 1");
+    b1.add("pow2 " + itoa(32 * limbCounts[i]) + " 0");
+    b1.add("alt " + itoa(limbCounts[i]));
+    nAsked = nAsked + 5;
+  }
+
+  // Divisors shaped to need the add-back, and the random quotients they will be multiplied by.
+  i32[] addbackLimbs = i32[](2, 3, 4);
+  string[] tops = string[]("2147483648", "4294967295");
+  string[] rests = string[]("0", "4294967295");
+  i32 divisorsAt = nAsked;
+  for (i32 i = 0; i < addbackLimbs.len(); i++) {
+    for (i32 p = 0; p < tops.len(); p++) {
+      for (i32 q = 0; q < rests.len(); q++) {
+        b1.add("word " + itoa(addbackLimbs[i]) + " " + tops[p] + " " + rests[q]);
+        nAsked = nAsked + 1;
+      }
+    }
+  }
+  i32 nDivisors = nAsked - divisorsAt;
+
+  // Quotients: six per divisor, each of a width wac chose.
+  i32 quotientsAt = nAsked;
+  i32 perDivisor = 6;
+  for (i32 i = 0; i < nDivisors * perDivisor; i++) {
+    b1.add("rand " + itoa(1 + r.upto(130)));
+    nAsked = nAsked + 1;
+  }
+
+  // Random operands with independently chosen sizes, so limb counts usually differ.
+  i32 randomAt = nAsked;
+  i32 nRandom = 200;
+  for (i32 i = 0; i < nRandom * 2; i++) {
+    b1.add("rand " + itoa(1 + r.upto(400)));
+    nAsked = nAsked + 1;
+  }
+
+  // Magnitudes for the shift, single-limb and unary families.
+  i32 magsAt = nAsked;
+  b1.add("pow2 100 0");
+  b1.add("pow2 200 -1");
+  b1.add("pow2 300 -1");
+  b1.add("pow2 100 7");
+  b1.add("ones 1 0");
+  nAsked = nAsked + 5;
+
+  Answers a1 = askDeno(t, cli, ORACLE, b1, "the operand oracle");
+  if (!a1.ok) {
+    core.warn("bignum coverage: the operand oracle did not answer — is --allow-run granted?");
+    return 0;
+  }
+
+  // ── Batch two: the exact multiples, which need batch one's answers ──
+  Lines b2 = Lines.create();
+  i32 nMul = 0;
+  for (i32 i = 0; i < nDivisors; i++) {
+    string d = decOf(a1, divisorsAt + i);
+    for (i32 k = 0; k < perDivisor; k++) {
+      string q = decOf(a1, quotientsAt + i * perDivisor + k);
+      // `-1`, `0`, `+1` around an exact multiple: the remainder-zero path and both sides of it.
+      b2.add("mul " + q + " " + d + " -1");
+      b2.add("mul " + q + " " + d + " 0");
+      b2.add("mul " + q + " " + d + " 1");
+      nMul = nMul + 3;
+    }
+  }
+  Answers a2 = askDeno(t, cli, ORACLE, b2, "the exact-multiple oracle");
+  if (!a2.ok) { return 0; }
+
+  // ── Now drive the probe with all of it ──
+  string[] boundary = string[nAsked](fill: "");
+  i32 nBoundary = 0;
+  for (i32 i = boundaryAt; i < runsAt; i++) {
+    string v = decOf(a1, i);
+    if (v != "") { boundary[nBoundary] = v; nBoundary = nBoundary + 1; }
+  }
+  for (i32 i = 0; i < nBoundary; i++) {
+    for (i32 j = 0; j < nBoundary; j++) {
+      seen = seen + both(boundary[i], boundary[j]);
+      seen = seen + both(neg(boundary[i]), boundary[j]);
+      seen = seen + both(boundary[i], neg(boundary[j]));
+      seen = seen + both(neg(boundary[i]), neg(boundary[j]));
+    }
+  }
+
+  string[] runs = string[nAsked](fill: "");
+  i32 nRuns = 0;
+  for (i32 i = runsAt; i < divisorsAt; i++) {
+    string v = decOf(a1, i);
+    if (v != "") { runs[nRuns] = v; nRuns = nRuns + 1; }
+  }
+  for (i32 i = 0; i < nRuns; i++) {
+    for (i32 j = 0; j < nRuns; j++) {
+      seen = seen + both(runs[i], runs[j]);
+      seen = seen + both(neg(runs[i]), runs[j]);
+      seen = seen + both(runs[i], neg(runs[j]));
+    }
+  }
+
+  // The exact multiples against their divisors.
+  i32 at = 0;
+  for (i32 i = 0; i < nDivisors; i++) {
+    string d = decOf(a1, divisorsAt + i);
+    for (i32 k = 0; k < perDivisor * 3; k++) {
+      string a = decOf(a2, at);
+      at = at + 1;
+      if (a == "") { continue; }
+      seen = seen + both(a, d) + both(neg(a), d);
+    }
+  }
+
+  // Random operands, with the signs wac chose.
+  for (i32 i = 0; i < nRandom; i++) {
+    string x = decOf(a1, randomAt + i * 2);
+    string y = decOf(a1, randomAt + i * 2 + 1);
+    if (x == "" || y == "") { continue; }
+    seen = seen + both(r.upto(2) == 1 ? neg(x) : x, r.upto(2) == 1 ? neg(y) : y);
+  }
+
+  // ── Shifts, single-limb paths, unary and text: fixed shapes over a few magnitudes ──
+  string[] mags = string[]("0", "1", "5", decOf(a1, magsAt + 4), decOf(a1, magsAt),
+                           decOf(a1, magsAt + 1));
+  i32[] shifts = i32[](0, 1, 31, 32, 33, 96, 200, 500, -1, -32, -70);
+  for (i32 i = 0; i < mags.len(); i++) {
+    if (mags[i] == "") { continue; }
+    string[] signed = string[](mags[i], neg(mags[i]));
+    for (i32 s = 0; s < signed.len(); s++) {
+      u8[] b = signed[s].toBytes();
+      for (i32 k = 0; k < shifts.len(); k++) {
+        seen = seen + opShl(b, shifts[k]).len() + opShr(b, shifts[k]).len();
+      }
+    }
+  }
+
+  string[] smallMags = string[]("0", "1", decOf(a1, magsAt + 3));
+  i32[] smalls = i32[](0, 1, 2, 10, 1000000000, -1, -2);
+  for (i32 i = 0; i < smallMags.len(); i++) {
+    if (smallMags[i] == "") { continue; }
+    string[] signed = string[](smallMags[i], neg(smallMags[i]));
+    for (i32 s = 0; s < signed.len(); s++) {
+      u8[] b = signed[s].toBytes();
+      for (i32 m = 0; m < smalls.len(); m++) {
+        seen = seen + opMulSmall(b, smalls[m]).len();
+        if (smalls[m] != 0) {
+          seen = seen + opDivSmall(b, smalls[m]).len() + opRemSmall(b, smalls[m]);
+        }
+      }
+    }
+  }
+
+  string[] unary = string[]("0", "1", decOf(a1, magsAt + 4), decOf(a1, magsAt + 2));
+  for (i32 i = 0; i < unary.len(); i++) {
+    if (unary[i] == "") { continue; }
+    string[] signed = string[](unary[i], neg(unary[i]));
+    for (i32 s = 0; s < signed.len(); s++) {
+      u8[] b = signed[s].toBytes();
+      seen = seen + opNeg(b).len() + opAbs(b).len() + opCopy(b).len() + opBitLen(b);
+      if (opIsZero(b)) { seen = seen + 1; }
+      seen = seen + toHex(b).len();
+    }
+  }
+
+  // Text: accepted, rejected, and both hex spellings.
+  string forty = "";
+  for (i32 i = 0; i < 40; i++) { forty = forty + "1"; }
+  string nines = "";
+  for (i32 i = 0; i < 9; i++) { nines = nines + "1"; }
+  string eighteen = "";
+  for (i32 i = 0; i < 18; i++) { eighteen = eighteen + "1"; }
+  string[] decs = string[](
+    "0", "-0", "+0", "007", "-12345", forty,
+    "", "-", "+", "abc", "1.5", "1e5", " 1", "1,000", "1x", nines + "x", eighteen + "x");
+  for (i32 i = 0; i < decs.len(); i++) {
+    if (acceptsDecimal(decs[i].toBytes())) { seen = seen + 1; }
+  }
+  string[] hexes = string[]("0", "ff", "FF", "0xff", "0XFF", "-0xff", "", "-", "0x", "g", "0xg");
+  for (i32 i = 0; i < hexes.len(); i++) {
+    if (acceptsHex(hexes[i].toBytes())) { seen = seen + 1; }
+  }
+  string twentyF = "";
+  for (i32 i = 0; i < 20; i++) { twentyF = twentyF + "f"; }
+  string[] goodHex = string[]("0", "ff", "0xFF", "-0xff", twentyF);
+  for (i32 i = 0; i < goodHex.len(); i++) { seen = seen + fromHex(goodHex[i].toBytes()).len(); }
+
+  // The integer constructors, including the most negative i64.
+  i64[] i64s = i64[](0, 1, -1, 4294967296, 9223372036854775807, -9223372036854775807 - 1);
+  for (i32 i = 0; i < i64s.len(); i++) { seen = seen + fromI64(i64s[i]).len(); }
+  u64[] u64s = u64[](0, 1, 18446744073709551615);
+  for (i32 i = 0; i < u64s.len(); i++) { seen = seen + fromU64(u64s[i]).len(); }
+
+  // The round-trip export.
+  string[] trips = string[]("0", "-1", decOf(a1, magsAt + 2));
+  for (i32 i = 0; i < trips.len(); i++) {
+    if (trips[i] != "") { seen = seen + roundTrip(trips[i].toBytes()).len(); }
+  }
+
+
+  // ── The package's own tests, which reach what the host-facing probe cannot ──
+  //
+  // `toStr` answers a `string`, so a report over the probe alone shows it dead when it is tested.
+  seen = seen + test_toStr_returns_text().len();
+  seen = seen + test_arithmetic_from_wac().len();
+  seen = seen + test_signs_and_predicates().len();
+  seen = seen + test_shifts_floor_for_negatives().len();
+  seen = seen + test_truncated_division().len();
+  seen = seen + test_divSmall_remainder_is_a_magnitude().len();
+  seen = seen + test_bitLen_and_hex().len();
+  seen = seen + test_formatDecimal_pads_interior_chunks().len();
+
+  return seen;
+}
+
+/** Division by zero traps, and the trap is the branch. */
+export i32 trap_divide_by_zero() { opDiv("1".toBytes(), "0".toBytes()); return 0; }
+export i32 trap_divide_zero_by_zero() { opDiv("0".toBytes(), "0".toBytes()); return 0; }
+export i32 trap_remainder_by_zero_small() { opRemSmall("1".toBytes(), 0); return 0; }
+
+/** The probe's own reject paths, which trap by design when handed text that is not a number. */
+export i32 trap_add_malformed_empty() { opAdd("".toBytes(), "1".toBytes()); return 0; }
+export i32 trap_add_malformed_decimal() { opAdd("1.5".toBytes(), "1".toBytes()); return 0; }
+export i32 trap_add_malformed_sign() { opAdd("-".toBytes(), "1".toBytes()); return 0; }
+export i32 trap_from_hex_malformed() { fromHex("zz".toBytes()); return 0; }
