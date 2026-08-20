@@ -36,7 +36,7 @@ async function ensureOutDir(out: string): Promise<void> {
 // but the conformance suite makes them agree. The format is versioned for that reason.
 
 import { wacCompile } from "wac/wacCompile.ts";
-import { wacFiles } from "../../harness/wacFiles.ts";
+import { wacFiles, wacFilesWithRoots } from "../../harness/wacFiles.ts";
 
 /** Bumped when a field changes meaning. A runtime refuses a manifest it does not know. */
 export const MANIFEST_VERSION = 1;
@@ -171,13 +171,17 @@ function uleb(n: number): Uint8Array {
  * would leave the other implied.
  */
 export async function buildNative(entry: string, out: string, grants: Grants = {}): Promise<Manifest> {
-  const files = await wacFiles(entry);
+  // **With the project roots**, so a `@/` specifier resolves through this path as it does through
+  // `wac build`. Without them wacc gets an empty `Res` and answers "an import of a file that was not
+  // supplied" for `@/src/stats.wac` — which is what an outsider building their own project with this
+  // fallback got. GitHub issue 21, `issues/system/0228a`.
+  const { files, roots } = await wacFilesWithRoots(entry);
   // **wacc, unless asked otherwise**, the same rule and the same switch as `build.ts`: both jobs are
   // "build an application", and a manifest describing a module the reference compiled cannot
   // describe one that uses a feature only wacc has. `issues/lang/0105` — this was the last bundler
   // on the reference, and the binary embedding the pair is why it mattered.
   if (Deno.env.get("WAC_APP_FROM") !== "reference") {
-    return await buildNativeWithWacc(entry, out, grants, files);
+    return await buildNativeWithWacc(entry, out, grants, files, roots);
   }
   const r = wacCompile(files, entry, {});
   if (!r.ok) {
@@ -360,19 +364,23 @@ async function nativeWire(
 }
 
 /** What `waccApi` builds, and therefore part of the wire cache's key. */
-const WACC_API = "packages/wacc/src/api.wac";
+// **Absolute, from this file's own location.** It is the *compiler's* source, not the caller's, so a
+// bare relative path only worked with the wac checkout as the working directory — GitHub issue 21.
+const WACC_API = new URL("../wacc/src/api.wac", import.meta.url).pathname;
 
 async function buildNativeWithWacc(
   entry: string,
   out: string,
   grants: Grants,
   files: Map<string, string>,
+  /** The project root each path sits in, so `@/` resolves — GitHub issue 21. */
+  roots: Map<string, string>,
 ): Promise<Manifest> {
   const { waccApi, waccArtifacts } = await import("../../harness/waccBuild.ts");
   const { parseAliases, parseBindTypes, parseCallbacks, parseSigs } = await import(
     "../wacc/tools/waccBindgen.ts"
   );
-  const art = await waccArtifacts(files, entry);
+  const art = await waccArtifacts(files, entry, { roots });
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
@@ -472,13 +480,32 @@ if (import.meta.main) {
   // **`--allow-run` was missing here and nowhere else**, which made `Cap::Exec` in the wasmtime host
   // unreachable: the manifest never carried `run`, `serde` defaulted it to false, and every call was
   // refused. The capability was written, compiled and never executed. `issues/system/0165`.
-  const m = await buildNative(entry, out, {
-    read: args.includes("--allow-read"),
-    write: args.includes("--allow-write"),
-    env: args.includes("--allow-env"),
-    net: args.includes("--allow-net"),
-    run: args.includes("--allow-run"),
-  });
+  // **A compiler reports; it does not throw at the user.** Every failure below used to reach the top
+  // as an uncaught exception, so a program that did not compile printed its diagnostic followed by ten
+  // frames of this repository's TypeScript — and a missing file printed nothing *but* a stack. That is
+  // what an outsider saw when the documented install had failed and they reached for this path
+  // instead. The message is the whole of what a caller can act on; the stack is available with
+  // `WAC_STACK=1` for whoever is debugging the compiler rather than their program.
+  // GitHub issue 21, `issues/system/0228a`.
+  let m;
+  try {
+    m = await buildNative(entry, out, {
+      read: args.includes("--allow-read"),
+      write: args.includes("--allow-write"),
+      env: args.includes("--allow-env"),
+      net: args.includes("--allow-net"),
+      run: args.includes("--allow-run"),
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(message);
+    if (Deno.env.get("WAC_STACK") === "1" && e instanceof Error && e.stack !== undefined) {
+      console.error(e.stack);
+    } else {
+      console.error("  (WAC_STACK=1 for the TypeScript stack, if the compiler is what you are debugging)");
+    }
+    Deno.exit(1);
+  }
   const size = (await Deno.stat(`${out}.wasm`)).size;
   console.log(`${out}.wasm  ${(size / 1024).toFixed(0)}K  ${m.callbacks.length} callback signatures`);
 }

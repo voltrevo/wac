@@ -9,9 +9,18 @@ There is one way today, and it needs a checkout of this repository, Deno, and **
 
 ```sh
 git clone <this repo> wac && cd wac
-deno task seed:bootstrap     # once, from a fresh clone: builds the compiler the binary carries
-deno task wac:install        # builds `wac` and puts it on PATH
+bash tools/seed.sh --bootstrap    # once, from a fresh clone: builds the compiler the binary carries
+deno task --no-lock wac:install   # builds `wac` and puts it on PATH
 ```
+
+**Why `bash` and `--no-lock` rather than `deno task seed:bootstrap`.** Both forms work; these two do
+not touch the network. `deno task` restores this repository's `deno.lock` before running anything, and
+that lockfile carries every npm package the whole tree uses — **twelve of them**, including Playwright,
+ethers, two versions of Binaryen and `ws` — so a fresh clone downloaded all of it before compiling a
+line. Neither of these two steps needs a single one: `tools/install.ts` has no npm in its import graph
+at all. On a slow or unreliable connection the download was what stopped the bootstrap. GitHub issue
+21; `deno task seed:bootstrap` and `deno task wac:install` are still there and still correct if you
+have the packages already.
 
 Cargo because the seed is a wasm module the `wac` binary *carries*, so building it means building the
 binary, and `native/v8` is Rust. This said "a checkout of this repository and Deno" until 2026-08-20,
@@ -27,6 +36,29 @@ a manifest, a lockfile, a source file or a build product.
 
 **There is no release, no package manager entry and no prebuilt binary.** If that matters to you,
 this is the wrong week.
+
+### Without Cargo: compiling through Deno
+
+If you have Deno and not Rust, you can compile without installing `wac` at all. The repository's
+Deno-hosted compiler takes an entry and an output stem, from any directory:
+
+```sh
+deno run --allow-read --allow-write --allow-env --allow-run \
+  --import-map <wac>/deno.json <wac>/packages/platform/native.ts \
+  main.wac --allow-read -o out
+```
+
+That writes `out.wasm`, the same artefact `wac build` writes, and honours `@/` and a `wac.json5` the
+same way. It is slower — it is the reference front end plus wacc running as wasm under Deno rather than
+a binary — and it is a developer fallback rather than the supported route, which is
+`deno task wac:install`.
+
+**It did not work from outside this repository until 2026-08-20**, which is worth saying because
+somebody hit it: the compiler's own sources were named by relative path, so it read
+`packages/wacc/src/api.wac` from *your* directory and died with a `NotFound` and ten frames of
+TypeScript; and the project root never reached wacc, so a `@/` import answered "an import of a file
+that was not supplied". Both are fixed, a failure now prints the message without the stack
+(`WAC_STACK=1` if you want it), and GitHub issue 21 is where it was reported.
 
 ## The smallest program
 

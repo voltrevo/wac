@@ -360,6 +360,43 @@ export string blockedFiles(string[] paths, string[] sources, string entry) {
 }
 
 /** `blockedFiles` with the project root each file sits in — `design/lang/0009` D7. */
+/**
+ * `buildFiles` and `blockedFiles` for a caller that has the project roots and cannot build a `Res`.
+ *
+ * `roots` is parallel to `paths` — `roots[i]` is the project root `paths[i]` sits in, or `""` — which
+ * is exactly what `Res.of` takes and what `harness/wacFiles.ts` already computes for `wacCompile`.
+ *
+ * **Why they exist.** The Deno-hosted path bound only the root-less variants, so a project root never
+ * reached wacc and `@/` could not resolve through it: an outsider building their own project with the
+ * repository's fallback got *"an import of a file that was not supplied"* for `@/src/stats.wac`, while
+ * the same project built fine with `wac build`, which passes a root. Constructing a `Res` across the
+ * bindgen boundary is not something a host caller can do; handing over two string arrays is.
+ * GitHub issue 21, `issues/system/0228a`.
+ */
+export Built buildFilesRooted(string[] paths, string[] sources, string[] roots, string base,
+                              string entry) {
+  return buildFilesIn(paths, sources, resFor(roots, base), entry);
+}
+
+export string blockedFilesRooted(string[] paths, string[] sources, string[] roots, string base,
+                                 string entry) {
+  return blockedFilesIn(paths, sources, resFor(roots, base), entry);
+}
+
+/**
+ * A `Res` with roots and a base and no mappings.
+ *
+ * **`base` is not optional here, and leaving it out is a bug that looks like a missing file.** A
+ * caller whose graph is keyed by *relative* paths gets an *absolute* project root from the walk, so
+ * `@/src/stats.wac` resolves to `/…/proj/src/stats.wac` while the graph holds `src/stats.wac` — one
+ * file under two keys, reported as "an import of a file that was not supplied". `base` is what
+ * `relativeTo` uses to bring the root back into the graph\'s own key space. `Res.of` exists for
+ * callers with no filesystem at all, and is the wrong thing to reach for here.
+ */
+Res resFor(string[] roots, string base) {
+  return Res(roots, string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), base);
+}
+
 export string blockedFilesIn(string[] paths, string[] sources, Res res, string entry) {
     return blockedLinked(paths, sources, res, entry);
 }

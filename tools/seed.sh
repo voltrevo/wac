@@ -65,6 +65,11 @@ fi
 # status `set -e` acted on and whose message nobody ever saw. A compiler toolchain that stops without
 # saying why is worse than one that fails loudly: the seed is installed by this point, so the state to
 # report is "the module is in place and the binary is not rebuilt from it".
+# **Says which stage it is in, to stderr.** This printed one line at the end and nothing while it
+# worked, so a bootstrap that takes minutes looked like a hang — which is exactly how a missing cargo
+# was read. Their own suggestion 4. stderr, so stdout stays the one parseable line it was.
+stage() { echo "seed: $*" >&2; }
+
 cargoBuild() {
   local out
   if out=$(cd native/v8 && cargo build --release 2>&1); then
@@ -152,6 +157,7 @@ payload() {   # $1 entry, $2 stem
 # artefacts the binary produced.
 if [ "$bootstrap" -eq 1 ]; then
   mkdir -p "$tmp/0"
+  stage "bootstrapping: compiling wacc with the reference compiler (Deno, the slow one, once)"
   deno run --allow-read --allow-write --allow-env --allow-run \
     packages/platform/native.ts "$ENTRY" --allow-read --allow-write --allow-env -o "$tmp/0/wacc" >/dev/null
   install_seed "$tmp/0"
@@ -214,12 +220,14 @@ buildRound() {   # $1 output dir
   exit 1
 }
 
+stage "round 1: compiling wacc with the seed we have"
 buildRound "$tmp/1"
 install_seed "$tmp/1"
 
 converged=0
 for n in $(seq 2 "$MAX_ROUNDS"); do
   mkdir -p "$tmp/$n"
+  stage "round $n of at most $MAX_ROUNDS: compiling wacc with the previous round's wacc"
   buildRound "$tmp/$n"
   if cmp -s "$tmp/$((n - 1))/wacc.wasm" "$tmp/$n/wacc.wasm"; then
     converged=$n
@@ -231,8 +239,10 @@ done
 if [ "$converged" -ne 0 ]; then
   rounds=$((converged - 1))
   mkdir -p "$tmp/p"
+  stage "fixed point reached; building the other two payloads (wac sh, wac update)"
   payload "$SH_ENTRY" sh
   payload "$UPDATE_ENTRY" update
+  stage "linking the binary (cargo build --release)"
   cargoBuild
   echo "seed: $(stat -c %s "$SEED/wacc.wasm") bytes, and it is a fixed point after $rounds round(s)"
   echo "      sh $(stat -c %s "$SEED/sh.wasm") bytes, update $(stat -c %s "$SEED/update.wasm") bytes"

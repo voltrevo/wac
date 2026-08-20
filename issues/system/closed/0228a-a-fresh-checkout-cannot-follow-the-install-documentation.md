@@ -1,7 +1,8 @@
 # 0228a — a fresh checkout cannot follow the install documentation to the end
 
-- **Status:** open — the cargo half is fixed (2026-08-20); four items remain
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Closed by:** agent-a, 2026-08-20
 - **Reported by:** voltrevo, as GitHub issue 21; transcribed and verified by agent-a
 - **Date:** 2026-08-20
 - **Kind:** bug
@@ -101,3 +102,90 @@ fix: an optional dependency that is resolved unconditionally is not optional.
 
 4 is not filed as an item above because it is a judgement about output rather than a defect: a
 bootstrap that says which of its stages it is in would have made items 2 and 3 self-describing.
+
+## All seven fixed — agent-a, 2026-08-20
+
+Each verified from an external project in a directory outside this repository, with a `wac.json5`, a
+`@/src/stats.wac` import, and a `main.wac` whose `f()` answers 4. Both compilers now build it and both
+answer 4.
+
+### 3. The npm prefetch — it is `deno.lock`, and it is twelve packages
+
+Reproduced with a fresh `DENO_DIR`: running **any** `deno task` — even `map --check`, which only runs
+the binary — fetches **12 npm packages**: `binaryen`, `ethers`, `playwright`, `json5`, `@types`,
+`aes-js`, `@noble`, `@adraffy` and more. `deno task` restores the root `deno.lock` before running
+anything, and that lockfile carries every npm dependency in the tree — including *two* Binaryen
+versions, which is why the report says "Binaryen versions" in the plural.
+
+Neither documented step needs any of it: `tools/install.ts` has **zero** npm in its import graph and
+type-checks with an empty cache. `deno task --no-lock` fetches nothing and still works; `bash
+tools/seed.sh --bootstrap` never involves Deno's resolver at all. `docs/your-own-project.md` documents
+both forms and says why. The lockfile itself is left alone — pruning it is a separate decision, and the
+tasks are correct as they stand for anyone with a warm cache.
+
+### 4. The working-directory assumption — four literals
+
+`harness/wacBind.ts` and `harness/waccBuild.ts` named the *compiler's own* sources by relative path —
+`packages/wacc/src/api.wac`, `packages/wacc/src`, `packages/wacc/tools` — and `packages/platform/
+native.ts` had a fourth as a constant. `harness/programs.ts` already exports a `ROOT` derived from
+`import.meta.url`; all four use it now, and the constant is a `new URL(…, import.meta.url)`.
+
+### 5. `@/` from an external project — the root never reached wacc
+
+`waccBuild.ts` bound only the **root-less** API variants (`buildFiles`, `blockedFiles`), so wacc got an
+empty `Res` and could not resolve `@/`. `wac build` passes a root, which is why the binary was fine.
+
+Fixed by adding `buildFilesRooted`/`blockedFilesRooted` to `api.wac` — thin wrappers over the existing
+`In` variants, taking two string arrays rather than a `Res`, because a host caller cannot construct one
+across bindgen — and threading the roots `wacFilesWithRoots` already computes through `waccArtifacts`
+into both builders.
+
+**`Res.of(roots)` was not enough, and the reason is worth keeping.** With relative graph keys and an
+absolute project root, `@/src/stats.wac` resolves to `/…/proj/src/stats.wac` while the graph holds
+`src/stats.wac` — *one file under two keys*, reported as "an import of a file that was not supplied".
+`Res.base` exists for exactly that ("the directory every relative key in this graph is measured from"),
+so the wrappers take a base and the harness passes `Deno.cwd()`.
+
+*A warm cache nearly hid this.* The non-`--optimize` build passed while `--optimize` failed, which
+looks like a binaryen problem and is not: `optimize` is part of the artefact cache key, so the
+optimising build was the first one that actually compiled. Cold-cache runs of both were what settled it.
+
+### 6. TypeScript stacks — a compiler reports, it does not throw
+
+`native.ts`'s entry now catches, prints the message, and exits 1. `WAC_STACK=1` restores the stack for
+somebody debugging the compiler rather than their program. Before: a missing file printed *nothing but*
+a ten-frame stack.
+
+### 7. Binaryen fetched without `--optimize` — a statically analysable dynamic import
+
+`await import("npm:binaryen@131.0.0")` is dynamic, but Deno adds a statically analysable dynamic import
+to the module graph and loads it up front — so every build of every target downloaded a wasm optimiser
+whether or not it was asked for. Confirmed with a fresh `DENO_DIR` **and** `--no-lock`, so the lockfile
+was not the cause. The specifier is assembled from a `BINARYEN_VERSION` constant now, which Deno cannot
+resolve ahead of the branch.
+
+Measured, cold cache, `--target deno`:
+
+    without --optimize    npm fetched: @esbuild            (was: @esbuild binaryen)
+    with --optimize       npm fetched: @esbuild binaryen   111K, wasm-opt — still works
+
+### Their suggestion 4: progress output
+
+`tools/seed.sh` says which stage it is in, on stderr so stdout stays the one parseable line:
+
+    seed: round 1: compiling wacc with the seed we have
+    seed: round 2 of at most 4: compiling wacc with the previous round's wacc
+    seed: fixed point reached; building the other two payloads (wac sh, wac update)
+    seed: linking the binary (cargo build --release)
+
+### Their suggestion 5: a documented Deno-only fallback
+
+Now that items 4, 5 and 6 are fixed it is a real option, and `docs/your-own-project.md` has it — with
+the caveat that it is a developer fallback rather than the supported route.
+
+### One caution for whoever tests installers
+
+`deno task wac:install` edits `~/.bashrc`, `~/.zshrc` and `~/.profile` **even when `WAC_HOME` points at
+a temporary directory**. Verifying it end-to-end left three marked lines pointing at a temp path that
+was about to be deleted; `wac:uninstall` with the same `WAC_HOME` removes exactly those three. Worth a
+thought about whether a `WAC_HOME` outside `$HOME` should touch profiles at all.

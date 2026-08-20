@@ -10,6 +10,7 @@
 // `wacBind` with `WAC_BIND_FROM=reference`.
 
 import { wacBind } from "./wacBind.ts";
+import { ROOT } from "./programs.ts";
 import { cached as cacheFile, compilerKeyParts, contentKey, filesParts } from "./buildCache.ts";
 import {
   generate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, unsupported,
@@ -20,6 +21,21 @@ type WaccApi = {
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
   emitFilesCovered: (paths: string[], sources: string[], entry: string) => Uint8Array;
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
+  /** With the project root of each path, so `@/` resolves — GitHub issue 21. */
+  buildFilesRooted: (
+    paths: string[],
+    sources: string[],
+    roots: string[],
+    base: string,
+    entry: string,
+  ) => { wasm: Uint8Array; described: string };
+  blockedFilesRooted: (
+    paths: string[],
+    sources: string[],
+    roots: string[],
+    base: string,
+    entry: string,
+  ) => string;
   /** What the checker says, which a caller wants before it asks what the emitter declined. */
   diagnoseFiles: (paths: string[], sources: string[], entry: string) => string;
   /** The same for every file in the graph, each checked as an entry — `issues/lang/0118`. */
@@ -56,7 +72,7 @@ export async function waccApi(): Promise<WaccApi> {
       // `WAC_BIND_FROM=reference` set for the duration of this build was read by every other bind
       // running at the same time — which compiled a package with the seed and refused a wacc-only
       // feature nobody had opted out of. `harness/wacBind.ts`'s `bindFrom` carries the whole story.
-      cached = (await wacBind("packages/wacc/src/api.wac", {
+      cached = (await wacBind(`${ROOT}/packages/wacc/src/api.wac`, {
         asTool: true,
         from: "reference",
         wasmFrom: "reference",
@@ -130,7 +146,12 @@ export type WaccArtifacts = {
 export async function waccArtifacts(
   files: Map<string, string>,
   entry: string,
-  opts: { coverage?: boolean; optimize?: (wasm: Uint8Array) => Promise<Uint8Array> } = {},
+  opts: {
+    coverage?: boolean;
+    optimize?: (wasm: Uint8Array) => Promise<Uint8Array>;
+    /** The project root each path sits in — without it `@/` cannot resolve. GitHub issue 21. */
+    roots?: Map<string, string>;
+  } = {},
 ): Promise<WaccArtifacts> {
   const cacheKey = await compileKey(files, entry, opts.coverage === true, opts.optimize !== undefined);
   if (cacheKey !== null) {
@@ -212,11 +233,25 @@ async function writeCompiled(key: string, a: WaccArtifacts): Promise<void> {
 async function compileArtifacts(
   files: Map<string, string>,
   entry: string,
-  opts: { coverage?: boolean; optimize?: (wasm: Uint8Array) => Promise<Uint8Array> } = {},
+  opts: {
+    coverage?: boolean;
+    optimize?: (wasm: Uint8Array) => Promise<Uint8Array>;
+    /**
+     * The project root each path sits in, keyed by path — `wacFilesWithRoots` computes it.
+     *
+     * Without it a `@/` specifier cannot resolve through this path: the root-less API variants build
+     * an empty `Res`, and an outsider compiling their own project got "an import of a file that was
+     * not supplied" where `wac build` compiled it. GitHub issue 21.
+     */
+    roots?: Map<string, string>;
+  } = {},
 ): Promise<WaccArtifacts> {
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
+  // Parallel to `paths`, which is what `Res.of` wants; `""` for a file with no project above it.
+  const roots = paths.map((p) => opts.roots?.get(p) ?? "");
+  const rooted = roots.some((r) => r !== "");
 
   // **The checker first.** This asked only what the *emitter* declined, so a program with type
   // errors was built and run as long as the emitter could guess its way through: an example here
@@ -246,7 +281,11 @@ async function compileArtifacts(
   // separately paid for two. `buildFiles` does both from one. A coverage build still takes the old
   // pair: it needs `emitFilesCovered`, whose front carries different flags, and it is rare enough
   // that a second front costs nobody anything. `issues/lang/0129`.
-  const built = opts.coverage ? null : api.buildFiles(paths, sources, entry);
+  const built = opts.coverage
+    ? null
+    : rooted
+    ? api.buildFilesRooted(paths, sources, roots, Deno.cwd(), entry)
+    : api.buildFiles(paths, sources, entry);
 
   const raw = built === null
     ? api.emitFilesCovered(paths, sources, entry)
