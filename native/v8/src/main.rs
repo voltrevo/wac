@@ -2936,10 +2936,16 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     };
     // `Cli` is built whether or not `main` takes it: a program that asks for one capability from it
     // and never touches the rest should run, and the ones this host cannot answer are named on exit.
-    let cli = match build_struct(scope, exports, m, "Cli", &mut caps, &mut names, &mut unsupported) {
-        Ok(v) => Some(v),
-        Err(_) => None,
-    };
+    // **The reason is kept, not discarded.** Tolerating a `Cli` this host cannot finish is deliberate —
+    // see above — but `Err(_) => None` threw away a sentence that already named the fault, so a program
+    // whose `main` *does* take a `Cli` was told "the manifest describes none" when the manifest
+    // described one perfectly well and a single funcref field in it had no dispatcher. That sent readers
+    // looking for a missing struct. `issues/lang/0162b`.
+    let (cli, cli_err) =
+        match build_struct(scope, exports, m, "Cli", &mut caps, &mut names, &mut unsupported) {
+            Ok(v) => (Some(v), None),
+            Err(e) => (None, Some(e)),
+        };
 
     // **The resolver trio, registered before the program runs.** A `Pending<T>` carries three
     // funcrefs and the host has to have slots for them before it can hand one over — and their
@@ -3101,7 +3107,10 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         [a, b] if a == "Core" && b == "Cli" => match cli {
             Some(c) => vec![core, c],
             None => {
-                eprintln!("wac: main wants a Cli and the manifest describes none");
+                match &cli_err {
+                    Some(e) => eprintln!("wac: main wants a Cli and this host could not build one: {e}"),
+                    None => eprintln!("wac: main wants a Cli and the manifest describes none"),
+                }
                 return 1;
             }
         },

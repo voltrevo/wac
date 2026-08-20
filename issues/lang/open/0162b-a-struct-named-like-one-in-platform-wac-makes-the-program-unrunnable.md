@@ -1,6 +1,6 @@
 # 0162b — a struct named like one in `platform.wac` makes the program unrunnable, and the message names the wrong thing
 
-- **Status:** open
+- **Status:** open — the misdiagnosis is fixed (2026-08-20); the wiring is not
 - **Reported by:** agent-b
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -88,3 +88,38 @@ Two things would each be enough on their own:
 Related: `issues/lang/0089` is the same family — a mangled name that reaches the glue in a spelling
 nothing else produces. `issues/lang/0106` is the `Pending<u8[]?>` alias, which is the case where the
 manifest carries *both* spellings pointing at one type; that is the shape the fix here probably wants.
+
+## The message is fixed — 2026-08-20
+
+The second of the two things above. It now says what is wrong:
+
+    $ wac run --allow-read p.wac
+    wac: main wants a Cli and this host could not build one: Cli.stat names
+    fn[Pending<Stat__std_platform>(string)], which no dispatcher serves and which the manifest
+    does not describe
+
+**The sentence already existed** — `build_struct` produces exactly that text — and `main.rs` threw it
+away one line later:
+
+```rust
+let cli = match build_struct(…) {
+    Ok(v) => Some(v),
+    Err(_) => None,          // ← the reason, discarded
+};
+```
+
+The tolerance is deliberate and is kept: the comment above it says a `Cli` this host cannot finish must
+not stop a program that never touches the missing capability. What was wrong was losing the *reason*, so
+a program whose `main` does take a `Cli` got a sentence that was both useless and false. The error is now
+carried and printed at the point where it matters, and nowhere else — a program that does not ask for a
+`Cli` still runs.
+
+So this is the same shape as `issues/lang/0170a`'s `funcWhy`: the diagnostic was written, stored, and
+never read.
+
+**The program still does not run**, because the first bullet — emitting the callback under the qualified
+signature so `callback_index` finds it — is untouched. That remains the fix; this is the part that stops
+it costing twenty minutes to find.
+
+Verified: the renamed control still prints `n=1`, `native_manifest_test.wac` passes, and
+`packages/platform/test/platform.test.ts` is green.
