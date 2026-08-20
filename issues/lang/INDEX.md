@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0173a](open/0173a-a-signature-mentioning-an-unsubstituted-type-parameter-is-registered-as-a-type.md) | a generic method's signature is registered with its type parameter unsubstituted — harmless, and it blocks refusing unwritable types | cleanliness | none visible |
 | [0172a](open/0172a-three-spec-behaviours-wacc-declines-with-reproductions.md) | a generic struct with a base, an enum method naming a type late, and `is` against a non-ancestor — four minimised reproductions | missing feature | check clean, build names the function |
 | [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | a nullable primitive is unimplemented in the emitter — an `i32?` parameter that is never read makes a module the engine refuses | missing feature | invalid wasm |
 | [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | wacc refuses 10 of 14 ill-typed programs the reference refuses all of; in each of the 4 it accepts, the build exits 0 and the exported function is absent | bug | no error |
@@ -39,7 +40,7 @@ has been fixed and why.
 
 ## Closed
 
-173 issues, 142 closed.
+174 issues, 142 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

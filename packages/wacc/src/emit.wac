@@ -173,6 +173,31 @@ i32 valType(string t) {
  * rather than refused. This is the list of what genuinely belongs in that fallthrough: the i32 family.
  * Everything else reaching it is a bug, and `writeValType` says so instead of guessing.
  */
+/**
+ * Whether a type name is an **unsubstituted type parameter** — a bare identifier naming no declared
+ * type.
+ *
+ * The argument that makes this sound: the checker has already accepted the program, so a bare name that
+ * resolves to no struct, enum or primitive cannot be a misspelling. In a program that type-checks it can
+ * only be a template's own parameter, and those reach here from the signature-table entry of a generic
+ * **method** that nobody calls — `Box<U> map<U>(…)` declared and never called registers a signature
+ * mentioning `U`.
+ *
+ * Brackets, parens, `<`, `,` and `?` disqualify: those are composed types, whose parts are resolved
+ * separately and whose failure to resolve is a real one.
+ */
+bool isUnresolvedBareName(Env env, string t) {
+  if (t == "" || t == "void" || t == "string") { return false; }
+  u8[] b = t.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];   // a packed element reads as i32 — spec/cases/0210
+    if (c == 91 || c == 93 || c == 60 || c == 62 || c == 40 || c == 41 || c == 44 || c == 63) {
+      return false;
+    }
+  }
+  return !env.isStructName(t) && !env.isEnumName(t) && !isWritableValType(t);
+}
+
 bool isWritableValType(string t) {
   return t == "i32" || t == "u32" || t == "u8" || t == "u16" || t == "bool"
       || t == "i64" || t == "u64" || t == "f32" || t == "f64"
@@ -257,6 +282,19 @@ void writeValType(B out, Env env, string t) {
   if (isBoxedPrimName(t)) {
     out.byte(99);
     out.i32leb(env.boxType(boxedPrimInner(t)));
+    return;
+  }
+  // **A template's own parameter is written as an `i32` and not refused.** It reaches here from the
+  // signature-table entry of a generic *method* nobody calls — `Box<U> map<U>(…)` declared and never
+  // called — and nothing can reference that entry, so the byte is arbitrary and the program is valid.
+  // Declining it made `Box<U> map<U>` fail to build merely by being *declared*, which the spec allows
+  // and `packages/wacc/test/wac/lambda_test.wac` pins.
+  //
+  // The real defect is that such a signature is registered at all: a type mentioning an unsubstituted
+  // parameter is not a type. Filed rather than fixed here, because removing the entry moves every index
+  // after it. See `issues/lang/0173a`.
+  if (isUnresolvedBareName(env, t)) {
+    out.byte(127);
     return;
   }
   if (!isWritableValType(t)) {
