@@ -1572,9 +1572,13 @@ Cli" while describing one. That cost about twenty minutes, and the property is a
 `packages/platform/test/wac/native_manifest_test.wac` — which has no case with a colliding name.
 `.test.ts` as of 2026-08-19 — takes these two.
 
-**`tor/ctor_live.test.ts` is not blocked, it is unverifiable here**: there is no C tor on this machine,
-so a port could only be shown to take its skip path. Worth doing by someone who can run it, and not
-worth shipping blind.
+**`tor/ctor_live.test.ts` was recorded here as unverifiable — "there is no C tor on this machine, so a
+port could only be shown to take its skip path" — and that was wrong on the day it was written.** There
+is one, at `$HOME/tor-build/torproject-tor-c8d2b17/src/app/tor`, dated 3 August. It moved on 2026-08-20
+to `test/wac/ctor_live_test.wac` and was verified against it: the TypeScript passes in 15s, the wac in
+28s, and both assertions were canaried — a bootstrap stage tor never logs fails, and so does a bogus
+relay marker, which is the load-bearing one. The lesson is the cheaper of the two: **the claim was about
+this machine and nobody looked at this machine.**
 
 **The `packages/wacc` remainder — and the number I first gave for it was wrong.** I sorted these by
 grepping for `wacCompile|wacLex|wacParse|reference` and called seventeen of them reference-oracle

@@ -554,8 +554,14 @@ bool markerCandidate(string f) {
  * That is what the pattern said, and it is faster over seven hundred files than compiling one.
  */
 string[] rootedPaths(string text) {
+  // **`core/` was missing until 2026-08-20**, and it is the same omission `LANE_ROOTS` in
+  // `harness/testLane.ts` had: `core/` became a source tree with tests of its own in
+  // `design/lang/0009` step 3 and is deliberately not under `packages/`, so every list of the
+  // repository's roots had to learn about it separately and this one did not. A backticked `core/…`
+  // path had therefore never been checked: `core/`'s own coverage driver was deleted with four live
+  // references to it still in the tree, and this test stayed green until `core/` was added here.
   string[] roots = string[]("packages/", "tools/", "harness/", "compiler/", "spec/", "design/",
-                            "issues/", "native/", "site/");
+                            "issues/", "native/", "site/", "core/", "docs/");
   string[] out = string[512](fill: "");
   i32 n = 0;
   u8[] b = text.toBytes();

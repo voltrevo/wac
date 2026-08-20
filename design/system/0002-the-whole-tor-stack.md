@@ -2163,7 +2163,7 @@ express that at any granularity. The second does not follow from it, and nobody 
 A C tor never needed to live inside the capability world. It needs to be **a peer on a socket**. The
 suite is TypeScript, `tools/runTests.ts` already gives every test subprocess `--allow-run` and
 `--allow-net`, and `network_tor_test.wac` was already shelling out — to run the launcher. So
-`test/ctor_live.test.ts` starts a real tor beside the wac network and requires it to bootstrap through
+`test/wac/ctor_live_test.wac` starts a real tor beside the wac network and requires it to bootstrap through
 it. No platform change was needed. What needs one is `network.wac` *owning* a C tor, which is a much
 weaker claim than the one being made.
 
@@ -2236,7 +2236,7 @@ in CertificateVerify and `relayd` generating an RSA link certificate instead of 
 
 which is what a real relay presents, where the same command said `ED25519` two slots ago. C tor still
 bootstraps through it and no longer logs `expecting an rsa key` or `Unhandled OpenSSL errors` — both
-now assertions in `ctor_live.test.ts`, on strings that were in its log before the change and are not
+now assertions in `ctor_live_test.wac`, on strings that were in its log before the change and are not
 in it after.
 
 The key is **separate from the identity and short-lived**, as tor's link key is. Reusing the identity

@@ -22,7 +22,7 @@ difference is the whole point:
 | --- | --- |
 | **pinned** | pure functions against bytes C tor wrote, or against C tor's own parser called directly. Committed vectors, so the suite checks it on every run with no tor present. |
 | **live** | a C tor process was on the other side of a socket and the thing worked. |
-| **(suite)** | …and something re-runs it: `test/ctor_live.test.ts` starts a real C tor beside the wac network on every run, and `packages/tls`'s two interop files run OpenSSL and rustls. Rot here goes red. |
+| **(suite)** | …and something re-runs it: `test/wac/ctor_live_test.wac` starts a real C tor beside the wac network on every run, and `packages/tls`'s two interop files run OpenSSL and rustls. Rot here goes red. |
 | **(by hand)** | …and nothing re-runs it. Witnessed on the date at the top, and able to rot silently — which is what *The limit that remains* is about. |
 | **ours only** | our code on both sides. Real evidence that the pieces compose; no evidence that either agrees with tor. Recorded as such rather than counted as green. |
 | **—** | not done. |
@@ -104,7 +104,7 @@ capability for running an arbitrary binary. That is why a live row can rot witho
 red, and it was true of **every** one of them until 2026-08-07.
 
 It is true of **8 of the 15 live cells** now, and the matrix says which each one is: a cell reads
-`(suite)` when something re-runs it — `ctor_live.test.ts` for the tor rows, `packages/tls`'s two
+`(suite)` when something re-runs it — `ctor_live_test.wac` for the tor rows, `packages/tls`'s two
 interop files for the TLS ones — and `(by hand)` when nothing does. The eight are the six
 onion-service cells and our client's two directions against C tor relays. The column said `live`
 throughout until 2026-08-11, so the distinction this table exists to keep lived only in the
@@ -116,7 +116,7 @@ an onion service, a client, a descriptor published and a page fetched through a 
 exercises our own side continuously, which narrows the rot to one direction: a row can only go stale
 by **tor no longer agreeing with us**.
 
-`test/ctor_live.test.ts` watches that direction, for the rows a bootstrapping client touches. A real C
+`test/wac/ctor_live_test.wac` watches that direction, for the rows a bootstrapping client touches. A real C
 tor is started beside the wac network and has to reach `Bootstrapped 100%` through it — consensus,
 authority certificates, relay descriptors, a circuit. It never needed the launcher to own it: a C tor
 is a peer on a socket, the suite is TypeScript, and its subprocesses already have `--allow-run`.
