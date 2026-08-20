@@ -36,8 +36,40 @@ directory:
 | where | lines | what it is |
 |---|---|---|
 | `compiler` | 17,995 in 17 | **the reference compiler is TypeScript**, and these test it. `packages/wacc` is the wac port measured against it, so translating these would delete the differential — the same argument as `jsxBoundary`, at the scale of the whole directory. `CONTRIBUTING.md` owns the discipline |
-| `tools` | 3,329 in 21 | mostly TypeScript tools testing themselves — `mutate`, `deadexports`, `docSignatures`, `install`, `lane`, `suiteGate`. The wac-side ones are already `tools/wac/*_test.wac`, nineteen files |
+| `tools` | 3,329 in 21 | mostly TypeScript tools testing themselves — `mutate`, `deadexports`, `docSignatures`, `install`, `lane`, `suiteGate`. The wac-side ones are already `tools/wac/*_test.wac`, twenty-one files |
 | `harness` | 1,603 in 14 | the harness is the TypeScript that runs the suite; these test it |
+
+### `tools/`, swept on 2026-08-20
+
+Two moved — `duplicatedLine` and `wacProbesReached`, both repo-wide text guards whose subject is the
+repository rather than TypeScript. Two more were looked at and **stay for reasons that are not "the
+subject is TypeScript"**, which is worth writing down because that is the interesting case:
+
+- **`seedFresh.test.ts` (87) stays because of *when* it runs.** `tools/wac/*` is not in the wac lane —
+  `LANE_ROOTS` is `packages` and `core` — so those files run only in `deno task docs`, which
+  `tools/push.sh` runs *after* the suite and does not reach when the suite is red. A stale seed makes
+  the suite fail in ways that say nothing about a seed, and this check's whole value is being the
+  sentence that explains it. Moving it would delay the explanation past the failure it explains. The
+  port itself is easy: `packages/wactest/src/built.wac`'s `newestInClosure` is `wacFiles` already.
+- **`discovery.test.ts` (85) stays because its subject is `deno test`'s own collection rule** — which
+  files the runner will import and therefore execute, including the bare `test.ts` that cost a host
+  reboot. Its second case exists to guard the first against Deno changing that rule. A wac test could
+  walk the same files and would be asserting a claim about a runner it does not use.
+
+Two more are convertible and were **not** done in the sweep, because each has a decision in it rather
+than a translation:
+
+- **`docSignatures.test.ts` (377)** parses the signatures it checks with `wac/wacLex.ts` and
+  `wac/wacParse.ts` — the *reference* compiler. A wac port would use `packages/wacc`'s parser instead,
+  which is not a downgrade and is not the same claim: it would hold READMEs to the parser the binary
+  actually compiles with rather than to the reference. That is arguably the better check and it is a
+  change to what the check means, so it wants doing on purpose.
+- **`designClaims.test.ts` (171)** reads `packages/sh/test/corpus.ts` for the corpus size, and that
+  package belongs to another agent and has *two* corpus representations — the TypeScript one and
+  `test/wac/corpus.wac`. Porting means picking which is authoritative for a number four documents
+  quote, which is their call rather than mine.
+
+The rest test a TypeScript tool, which is the ordinary case.
 
 None of that is the same kind of remainder as `packages/`. It is the JavaScript half of a repository
 whose point is a language that compiles to wasm and a host that runs it in both worlds — `CLAUDE.md`'s
