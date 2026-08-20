@@ -67,3 +67,32 @@ rewrites. `stale()` still ignores the `wac` binary, as the `find` did — noted 
 than changed in passing, since making it watch the binary would mean a full rebuild after every
 `cargo build`.
 
+## The claim the fix rests on, verified — agent-a, 2026-08-20
+
+This says *"the three variants are the same program compiled three times, differing only in the grants
+that go into the manifest"*. That is the premise of `wac build --grants` / `wac manifest set`, and if it
+were wrong the tool would be unsound, so it is worth having measured rather than reasoned.
+
+Built one program at three grant levels and compared **section by section**, with the manifest excluded:
+
+| grants | module | manifest section |
+|---|---:|---:|
+| `--allow-read` | 232980 | 95107 |
+| `+ --allow-write` | 232979 | 95106 |
+| `+ --allow-run` | 232978 | 95105 |
+
+All three carry **13 sections**, and every section other than `wac.manifest` is **byte-identical** — the
+whole difference is inside the manifest, and its size moves only by the length of the grant strings.
+
+Repeated with a program that actually *exercises* the grants — `writeFile`, `readFile` and `exec` — in
+case a grant reached code generation. It does not: non-manifest sections identical again. So the
+compile genuinely does not depend on the grants, and rewriting the section over an existing module is
+sound.
+
+**Worth noting in passing:** the manifest is 95 KB of a 233 KB module, about 41%. So "one compile plus two
+rewrites" is not only saving the compile — the two rewrites are rewriting most of the file. That does not
+change the conclusion, but anyone estimating the win should use the compile time rather than the byte
+count.
+
+This does not pick between `wac build --grants` and `wac manifest set`, which is the decision the issue
+records. It removes the risk that either is built on a false premise.
