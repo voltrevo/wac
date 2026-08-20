@@ -23,8 +23,9 @@
 // hands them over for checking, **one process per test** rather than one host call per day. Same
 // oracle, and the three-hundred-thousand-day sweep costs one spawn.
 //
-// `test/probe.wac` also stays, for `packages/datetime/cov.ts`, but nothing here goes through it — the
-// real signatures are in reach, so `Parsed` arrives as a struct rather than as three separate calls.
+// `test/probe.wac` also stays, for `packages/datetime/test/cov_exercise.wac`, but nothing here goes
+// through it — the real signatures are in reach, so `Parsed` arrives as a struct rather than as three
+// separate calls.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 

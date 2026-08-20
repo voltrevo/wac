@@ -1,0 +1,129 @@
+// Branch coverage for unicode: the exercises, and nothing else.
+//
+//   deno task coverage:unicode
+//   deno task coverage:unicode --verbose
+//
+// Every code point, which is also what the tests do — there is no smaller workload that reaches both
+// ends of a binary search over 1,482 entries, and no reason to use one.
+//
+// ## What this file is, after 2026-08-20 — `issues/system/0161`
+//
+// It was the package's `cov.ts`, which was these exercises plus a copy of the reporting.
+// `tools/wac/covreport.wac` is the reporting now, shared, so what is left here is the part that is
+// actually about unicode. It is a program rather than a caller: `covreport` builds *this* with
+// `--coverage` and runs its `main`, so the exercises are inside the instrumented module.
+//
+// **It lives under `test/` on purpose.** `covreport` skips any file with `/test/` in its path, which
+// is the rule `harness/wacCoverage.ts` had and the reason `test/probe.wac` was never counted — so a
+// driver's own branches cannot appear in unicode's number.
+//
+// Everything is accumulated into `seen` and returned, so that nothing here can be dropped as a call
+// whose result is unused — an exercise that is optimised away measures nothing and says 100%.
+
+import { mapLower, mapUpper, mapFold, printable, decodeCode, decodeSize, valid, scalarCount,
+         encodeOne, lower, upper, casefold, equalFold } from "./probe.wac";
+
+/**
+ * xorshift32, the same one `test/wac/unicode_test.wac` carries and the same one `cov.ts` had in
+ * TypeScript — so the random corpus below is byte for byte the corpus this package's coverage has
+ * always been measured against.
+ *
+ * `(x >> 17) & 0x7FFF` is `x >>> 17` on a signed 32-bit value: an arithmetic shift, then the sign
+ * extension masked off. There are two dozen copies of this struct in the tree and they have drifted
+ * into five variants — `issues/system/0220`.
+ */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  i32 upto(this, i32 n) {
+    i32 v = this.next() % n;
+    return v < 0 ? v + n : v;
+  }
+}
+
+/** Valid text of every encoded length, and the mapping paths over it. */
+string[] good() {
+  return string[](
+    "", "a", "A", "abc", "ABC", "café", "CAFÉ", "日本語", "😀", "straße", "STRASSE",
+    "ΣΊΣΥΦΟΣ", "σίσυφος", "ς", "σ", "K", "k", "ﬁ", "İ", "ı");
+}
+
+/** Every way a sequence can be malformed, which is most of the decoder. */
+u8[][] malformed() {
+  return u8[][](
+    u8[](0x80), u8[](0xbf), u8[](0xc0, 0x80), u8[](0xc1, 0xbf), u8[](0xe0, 0x80, 0x80),
+    u8[](0xe0, 0x9f, 0xbf), u8[](0xf0, 0x80, 0x80, 0x80), u8[](0xf0, 0x8f, 0xbf, 0xbf),
+    u8[](0xed, 0xa0, 0x80), u8[](0xed, 0xbf, 0xbf), u8[](0xf4, 0x90, 0x80, 0x80),
+    u8[](0xf5, 0x80, 0x80, 0x80), u8[](0xfe), u8[](0xff),
+    u8[](0xc2), u8[](0xe0, 0xa0), u8[](0xf0, 0x9f, 0x98), u8[](0xc2, 0x41),
+    u8[](0xe0, 0xa0, 0x41), u8[](0x61, 0x80, 0x62), u8[]());
+}
+
+export i32 main() {
+  i32 seen = 0;
+
+  // The whole space, thinned only where the branches cannot differ. The ends matter most: a binary
+  // search is wrong at the first and last entry or nowhere.
+  for (i32 cp = 0; cp <= 0x10ffff; cp = cp + 7) {
+    if (cp >= 0xd800 && cp <= 0xdfff) { continue; }
+    seen = seen + mapLower(cp) + mapUpper(cp) + mapFold(cp) + encodeOne(cp).len();
+    // A different search from the other three — over ranges rather than pairs, so it has an `and-rhs`
+    // the pair lookup does not, and a "before the first range" answer that only a negative reaches.
+    if (printable(cp)) { seen = seen + 1; }
+  }
+  if (printable(-1)) { seen = seen + 1; }
+
+  i32[] edges = i32[](0, 1, 0x41, 0x5a, 0x61, 0x7a, 0x7f, 0x80, 0xdf, 0x130, 0x131, 0x212a,
+                      0x3c2, 0x3c3, 0x3a3, 0x7ff, 0x800, 0xffff, 0x10000, 0x10ffff, -1, 0x110000);
+  for (i32 i = 0; i < edges.len(); i++) {
+    i32 cp = edges[i];
+    seen = seen + mapLower(cp) + mapUpper(cp) + mapFold(cp) + encodeOne(cp).len();
+  }
+
+  string[] ok = good();
+  u8[] zzz = "zzz".toBytes();
+  for (i32 i = 0; i < ok.len(); i++) {
+    u8[] b = ok[i].toBytes();
+    seen = seen + lower(b).len() + upper(b).len() + casefold(b).len();
+    if (valid(b)) { seen = seen + 1; }
+    seen = seen + scalarCount(b) + decodeCode(b, 0) + decodeSize(b, 0);
+    // Against this package's own uppercasing rather than the host's `toUpperCase`, which is where
+    // the TypeScript got the second operand — the same shapes, and one fewer implementation to be
+    // right about.
+    if (equalFold(b, upper(b))) { seen = seen + 1; }
+    if (equalFold(b, zzz)) { seen = seen + 1; }
+  }
+
+  u8[][] bad = malformed();
+  u8[] a1 = "a".toBytes();
+  for (i32 i = 0; i < bad.len(); i++) {
+    u8[] b = bad[i];
+    if (valid(b)) { seen = seen + 1; }
+    seen = seen + scalarCount(b) + decodeCode(b, 0) + decodeSize(b, 0);
+    seen = seen + lower(b).len() + upper(b).len() + casefold(b).len();
+    if (equalFold(b, b)) { seen = seen + 1; }
+    if (equalFold(b, a1)) { seen = seen + 1; }
+    if (equalFold(a1, b)) { seen = seen + 1; }
+  }
+
+  // Random bytes, since that is what a decoder is actually given.
+  Rng r = Rng(0x0badc0de);
+  u8[] test = "test".toBytes();
+  for (i32 t = 0; t < 4000; t++) {
+    i32 n = r.upto(12);
+    u8[] b = u8[n]();
+    for (i32 i = 0; i < n; i++) { b[i] = r.next() & 0xff; }
+    if (valid(b)) { seen = seen + 1; }
+    seen = seen + lower(b).len();
+    if (equalFold(b, test)) { seen = seen + 1; }
+  }
+
+  return seen;
+}

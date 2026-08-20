@@ -138,6 +138,18 @@ void sortMissed(string[] a, i32 n) {
   }
 }
 
+/** A path as one directory name: everything that is not a letter, a digit or `-` becomes `-`. */
+string slug(string path) {
+  string out = "";
+  for (i32 i = 0; i < path.len(); i++) {
+    string c = path.slice(i, i + 1);
+    bool plain = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") ||
+                 c == "-";
+    out = out + (plain ? c : "-");
+  }
+  return out;
+}
+
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   if (argc < 2) {
@@ -151,7 +163,18 @@ export i32 main(Core core, Cli cli) {
     if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
   }
 
-  string dir = cli.cwd().wait() + "/.cache/covreport";
+  // **A directory per exercise, because `deno task coverage:all` runs four of these at once.**
+  //
+  // This was `.cache/covreport` for everyone, wiped with `remove(dir, true)` on the way in. That was
+  // invisible while codec was the only caller and became a failure the moment there was a second:
+  // one run deletes the directory another is building into, and the loser reports *no coverage table
+  // beside the module* — a message about its own output, naming nothing about the race. It surfaced
+  // as `coverage:all` reporting one package's exit 1 while that package passed when run alone, which
+  // is the shape a shared output path always makes.
+  //
+  // Named from the entry rather than a pid, so a re-run of one package reuses its own directory and
+  // two packages can never share one.
+  string dir = cli.cwd().wait() + "/.cache/covreport/" + slug(entry);
   cli.remove(dir, true).wait();
   cli.mkdir(dir, true).wait();
   string stem = dir + "/prog";

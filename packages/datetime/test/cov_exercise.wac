@@ -1,0 +1,148 @@
+// Branch coverage for datetime: the exercises, and nothing else.
+//
+//   deno task coverage:datetime
+//   deno task coverage:datetime --verbose
+//
+// The same exercises the tests run: four centuries of days, the far-out years, the malformed
+// timestamps — which are the only things that reach the rejection paths — and a spread of instants
+// either side of the epoch, which is where the floor-division cases are.
+//
+// **That sentence was not true when it was checked.** This driver and the tests had drifted apart in
+// both directions: the tests reached `padYear`'s expanded form and this did not, and neither of them
+// ever called `parseOffsetKnown`. The README said 100% and the tool said 92. Two exercises of the same
+// code will drift unless something compares them, and nothing does — so when you add a case to one,
+// add it here too, and read the branch report rather than trusting this comment.
+//
+// ## What this file is, after 2026-08-20 — `issues/system/0161`
+//
+// It was the package's `cov.ts`, which was these exercises plus a copy of the reporting.
+// `tools/wac/covreport.wac` is the reporting now, shared, so what is left here is the part that is
+// actually about datetime. `covreport` builds *this* with `--coverage` and runs its `main`, and skips
+// any file with `/test/` in its path, so a driver's own branches cannot appear in the number.
+
+import { toDays, fromDaysYear, fromDaysMonth, fromDaysDay, dayOfWeek, leap, monthLength,
+         validDate, yearDay, accepts, parseMillis, parseOffset, parseOffsetKnown,
+         formatMillis } from "./probe.wac";
+
+/**
+ * xorshift32 with the seed the TypeScript used, so the random spread is the same corpus.
+ *
+ * `upto` rather than a bare `%`: the JavaScript did `x >>>= 0` before taking a remainder, so its
+ * draws were never negative, and a signed `%` here would sample a different half of the space.
+ * There are two dozen copies of this struct in the tree — `issues/system/0220`.
+ */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  i32 upto(this, i32 n) {
+    i32 v = this.next() % n;
+    return v < 0 ? v + n : v;
+  }
+}
+
+/** Every well-formed and malformed timestamp the tests parse. */
+string[] stamps() {
+  return string[](
+    "1970-01-01T00:00:00Z", "1970-01-01T00:00:00.000Z", "2020-02-29T12:34:56Z",
+    "2000-01-01T00:00:00+00:00", "2020-06-15T10:00:00+05:30", "2020-06-15T10:00:00-08:00",
+    "2020-06-15T10:00:00.5Z", "2020-06-15T10:00:00.123456789Z", "2020-06-15t10:00:00z",
+    "2020-06-15 10:00:00Z", "2020-01-01T00:00:00+23:59", "2020-01-01T00:00:00-23:59",
+    "", "2020", "2020-01", "2020-01-01", "2020-01-01T00:00", "2020-01-01T00:00:00",
+    "2020-1-01T00:00:00Z", "2020-01-1T00:00:00Z", "20-01-01T00:00:00Z",
+    "2020/01/01T00:00:00Z", "2020-01-01X00:00:00Z", "2020-01-01T00-00-00Z",
+    "2020-13-01T00:00:00Z", "2020-00-01T00:00:00Z", "2020-01-32T00:00:00Z",
+    "2020-02-30T00:00:00Z", "2019-02-29T00:00:00Z", "2020-01-01T24:00:00Z",
+    "2020-01-01T00:60:00Z", "2016-12-31T23:59:60Z", "2020-01-01T00:00:00+5:30",
+    "2020-01-01T00:00:00+0530", "2020-01-01T00:00:00+24:00", "2020-01-01T00:00:00+00:60",
+    "2020-01-01T00:00:00.Z", "2020-01-01T00:00:00Z ", " 2020-01-01T00:00:00Z",
+    "2020-01-01T00:00:00Zx", "2020-01-01T00:00:00.5", "2020-01-01T00:00:00.5+",
+    "2020-01-01T00:00:00!00:00", "202x-01-01T00:00:00Z",
+    "2020-0x-01T00:00:00Z", "2020-01-0xT00:00:00Z", "2020-01-01T00:0x:00Z",
+    "2020-01-01T00:00:0xZ", "2020-01-01T00:00:00+00:0x", "2020-01-01T00:00:00+0x:00");
+}
+
+export i32 main() {
+  i32 seen = 0;
+
+  // Every day across four centuries, thinned: the branches repeat, the years do not.
+  i64[] far = i64[](-800000, -719469, -719468, -1000000, 1000000);
+  for (i32 i = 0; i < far.len(); i++) {
+    i64 n = far[i];
+    seen = seen + fromDaysYear(n) + fromDaysMonth(n) + fromDaysDay(n) + dayOfWeek(n);
+  }
+  for (i32 dayNum = -135140; dayNum < 157000; dayNum = dayNum + 7) {
+    i64 n = dayNum as i64;
+    seen = seen + fromDaysYear(n) + fromDaysMonth(n) + fromDaysDay(n) + dayOfWeek(n);
+  }
+
+  i32[] years = i32[](-271820, -100000, -4713, -1, 0, 1, 100, 1969, 1970, 1971, 2100, 275759);
+  i32[] months = i32[](1, 2, 3, 12);
+  i32[] days = i32[](1, 28, 31);
+  for (i32 a = 0; a < years.len(); a++) {
+    for (i32 b = 0; b < months.len(); b++) {
+      for (i32 c = 0; c < days.len(); c++) {
+        seen = seen + (toDays(years[a], months[b], days[c]) as~ i32);
+        if (validDate(years[a], months[b], days[c])) { seen = seen + 1; }
+        seen = seen + yearDay(years[a], months[b], 1);
+      }
+    }
+  }
+  for (i32 y = 1890; y <= 2110; y++) {
+    if (leap(y)) { seen = seen + 1; }
+    for (i32 mo = 1; mo <= 12; mo++) { seen = seen + monthLength(y, mo); }
+  }
+
+  // The dates that are well-formed as text and not as dates.
+  i32[] badY = i32[](2020, 2020, 2020, 2020, 2020, 2019, 2020, 2020);
+  i32[] badM = i32[](   0,   13,    1,    1,    2,    2,    4,    2);
+  i32[] badD = i32[](   1,    1,    0,   32,   30,   29,   31,   29);
+  for (i32 i = 0; i < badY.len(); i++) {
+    if (validDate(badY[i], badM[i], badD[i])) { seen = seen + 1; }
+  }
+
+  for (i32 h = -48; h <= 48; h++) { seen = seen + formatMillis((h as i64) * 3600000).len(); }
+  i64[] edges = i64[](0, 1, -1, 999, 1000, -1000, -999);
+  for (i32 i = 0; i < edges.len(); i++) { seen = seen + formatMillis(edges[i]).len(); }
+
+  Rng r = Rng(0x1f2e3d4c);
+  for (i32 i = 0; i < 5000; i++) {
+    i64 ms = (r.upto(4000000) as i64) * 100000 - 200000000000;
+    u8[] text = formatMillis(ms);
+    if (accepts(text)) { seen = seen + 1; }
+    seen = seen + (parseMillis(text) as~ i32);
+  }
+
+  string[] ss = stamps();
+  for (i32 i = 0; i < ss.len(); i++) {
+    u8[] b = ss[i].toBytes();
+    if (accepts(b)) { seen = seen + 1; }
+    seen = seen + (parseMillis(b) as~ i32) + parseOffset(b) + parseOffsetKnown(b);
+  }
+
+  // `-00:00` against the other two spellings of zero — the branch `offsetKnown` exists for, which
+  // nothing here reached until the drift above was found.
+  string[] zeros = string[]("2020-06-15T10:00:00-00:00", "2020-06-15T10:00:00+00:00",
+                            "2020-06-15T10:00:00Z");
+  for (i32 i = 0; i < zeros.len(); i++) { seen = seen + parseOffsetKnown(zeros[i].toBytes()); }
+
+  // Years outside 0000..9999, where `padYear` writes a sign and six digits. The spread above covers
+  // about 1963 to 1976 and cannot reach it.
+  i64[] wide = i64[](
+    253402300800000,   // +010000-01-01, the first year needing the expanded form
+    253402300799999,   // and the last that does not
+    -62167219200000,   // 0000-01-01
+    -62167219200001,   // -000001-12-31
+    8640000000000000,  // +275760-09-13, the largest instant Date supports
+    -8640000000000000  // -271821-04-20, the smallest
+  );
+  for (i32 i = 0; i < wide.len(); i++) { seen = seen + formatMillis(wide[i]).len(); }
+
+  return seen;
+}
