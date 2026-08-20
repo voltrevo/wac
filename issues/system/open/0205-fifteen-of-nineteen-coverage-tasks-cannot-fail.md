@@ -141,6 +141,38 @@ What it recovered, and what it did not:
 read what is left.** Doing it the other way round would have written three pins here, one of them
 claiming a security-relevant check was untested when it was unreachable.
 
+### `bytes` fourth, and the trap tests are the trap in this work
+
+**9 hold a coverage floor, 0 only check their own exemptions have not drifted, 12 report and cannot
+fail.**
+
+Six of its seven uncovered points were one function — `slice.wac`'s `equal`, whose **entry** was
+uncovered. It had **no test at all**, in its own package, while `packages/ssz`, `packages/ens` and
+`packages/tls` all import from that file. One is written now, pinning among other things the
+"empty equals empty" its doc comment argues for.
+
+And **none of this package's 39 tests takes a capability**, so its exercise could have called them
+since the day it was written. `0221` removed the blocker for packages whose tests need one; this was
+never in that set. It was simply never wired — which is the more common case, and worth knowing before
+attributing the other thirteen to `0221`.
+
+**The mistake to avoid, because it looks exactly like success.** Wiring all 39 into `main` changed the
+number *not at all* — 73 of 80 before and after, no failure printed. Twelve of `bounds_test.wac`'s
+seventeen tests **expect a trap**, and a trap in `main` ends the run: the third call killed the process
+after the probes had already covered their 73. A report identical to the one before the change reads as
+"the wiring did nothing" and meant "the wiring stopped the run".
+
+So the wiring is a split: the tests that return are called from `main`, and the ones that trap go into
+a `trapCase(i32)` sweep named in `cases()`, which `covdump` calls one at a time with the trap caught.
+**Every package left here will need that split**, and the tell is `test_traps_` in the name — `crypto`
+already does it as `trapCase:130`.
+
+79 of 80, with one pin: `buf.wac`'s clamp of the capacity doubling at `i32.MAX`. `proven: false`, not
+`true` — reaching it needs a real two-gigabyte allocation on every `coverage:all`, which is a line
+whose *input* costs too much, not a line no input reaches. Calling it unreachable would be a false
+claim about the code: the clamp is the only thing between `cap * 2` overflowing and
+`u8[cap as! i32]()` being handed the result.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
