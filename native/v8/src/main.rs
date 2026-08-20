@@ -2091,10 +2091,51 @@ fn main() {
     // compiler's. `issues/system/0161`.
     if SEED.is_some() {
         start_v8();
-        std::process::exit(run_seed(&args[1..]));
+        let code = run_seed(&args[1..]);
+        // **A successful `build` has to have written a module the engine accepts.**
+        //
+        // `wac run` and `wac test` load what they compiled, so a broken module fails there on its
+        // own. `wac build` is the command whose whole output is the artefact, and it had no such
+        // check: an ill-typed program wacc's checker has no rule for could be emitted *wrongly* —
+        // the function present and the types not agreeing — and the build printed a size and exited
+        // 0 over a file the engine refuses to load. `issues/lang/0170a`.
+        //
+        // `validate_command` is the same validator `wac validate` is, called rather than copied, so
+        // there is one answer to "would this load".
+        if code == 0 && stem == "build" {
+            if let Some(out) = built_module_path(&args[1..]) {
+                if std::path::Path::new(&out).is_file() && validate_modules(&[out.clone()], true) != 0 {
+                    eprintln!(
+                        "wac: the build wrote {out} and the engine will not load it, so the \
+                         compiler emitted something invalid rather than refusing the program"
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+        std::process::exit(code);
     }
     eprintln!("wac: {stem} is not a command, and this build has no compiler in it");
     std::process::exit(2);
+}
+
+/// Where a `build` put its module, so the host can check what the compiler claimed to write.
+///
+/// `-o <stem>` gives `<stem>.wasm`; with no `-o` the compiler writes beside the entry, so
+/// `src/main.wac` gives `src/main.wasm`. `None` when neither can be worked out, which is not an
+/// error — it means there is nothing to check rather than that the check failed.
+fn built_module_path(args: &[String]) -> Option<String> {
+    let mut it = args.iter().skip(1);
+    let mut entry: Option<&String> = None;
+    while let Some(a) = it.next() {
+        if a == "-o" {
+            return it.next().map(|s| format!("{s}.wasm"));
+        }
+        if entry.is_none() && a.ends_with(".wac") {
+            entry = Some(a);
+        }
+    }
+    entry.map(|e| format!("{}.wasm", &e[..e.len() - 4]))
 }
 
 /// What to call once the module is instantiated and its world is built.
@@ -2180,6 +2221,15 @@ struct AsChild {
 /// is indistinguishable from one where nothing was wrong. The last line says how many were looked at
 /// so a caller can check it against what it asked for.
 fn validate_command(paths: &[String]) -> i32 {
+    validate_modules(paths, false)
+}
+
+/// The same, with the per-module and summary lines optional.
+///
+/// `wac build` calls this on what it just wrote, where a clean result has nothing to say — a build
+/// that printed `1 module(s): 0 rejected` after every success would be reporting its own plumbing.
+/// A *rejected* module still names itself, because that line is the diagnosis.
+fn validate_modules(paths: &[String], quiet: bool) -> i32 {
     if paths.is_empty() {
         eprintln!("usage: wac validate <module.wasm> […]");
         return 2;
@@ -2194,7 +2244,7 @@ fn validate_command(paths: &[String]) -> i32 {
     for p in paths {
         match std::fs::read(p) {
             Err(e) => {
-                println!("unreadable {p} — {e}");
+                if !quiet { println!("unreadable {p} — {e}"); }
                 bad += 1;
             }
             Ok(bytes) => {
@@ -2214,7 +2264,7 @@ fn validate_command(paths: &[String]) -> i32 {
             }
         }
     }
-    println!("{} module(s): {bad} rejected", paths.len());
+    if !quiet { println!("{} module(s): {bad} rejected", paths.len()); }
     if bad > 0 { 1 } else { 0 }
 }
 

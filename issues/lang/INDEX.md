@@ -5,13 +5,14 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0165](open/0165-a-field-called-as-a-method-drops-the-function-from-the-module.md) | `p.foo()` where `foo` is a *field* passes both front ends with no diagnostic and the enclosing function is then absent from the module — `wac build` exits 0 and `main` is gone; a field that does not exist at all is caught, so this is the callable check missing, not a lookup | bug | invalid wasm |
+| [0172a](open/0172a-three-spec-behaviours-wacc-declines-with-reproductions.md) | a generic struct with a base, an enum method naming a type late, and `is` against a non-ancestor — four minimised reproductions | missing feature | check clean, build names the function |
+| [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | a nullable primitive is unimplemented in the emitter — an `i32?` parameter that is never read makes a module the engine refuses | missing feature | invalid wasm |
+| [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | wacc refuses 10 of 14 ill-typed programs the reference refuses all of; in each of the 4 it accepts, the build exits 0 and the exported function is absent | bug | no error |
 | [0164a](open/0164a-wacc-never-compares-array-types-so-any-array-satisfies-any-slot.md) | any array value satisfies any slot in wacc — argument, assignment, return or field, including a slot that is not an array — so the checker is silent and the engine rejects the module | bug | invalid wasm |
 | [0163](open/0163-one-file-under-two-keys-is-silent-in-the-reference-and-an-invalid-module-in-wacc.md) | one file reached under two keys: the reference reads it twice and runs, wacc's checker stays clean and the engine rejects the module — neither is what D8 says the failure looks like | bug | invalid wasm |
 | [0162b](open/0162b-a-struct-named-like-one-in-platform-wac-makes-the-program-unrunnable.md) | a program declaring `struct Stat` — or `Change`, `Exec`, `Read`, any name `platform.wac` uses — compiles cleanly and will not start: the linker qualifies the platform one, `Cli.stat`'s funcref signature carries the qualified spelling, no dispatcher is emitted under it, and the host says "the manifest describes no Cli" when it describes one | bug | wrong answer |
 | [0161](open/0161-an-aliased-import-of-an-already-imported-type-is-a-different-type-in-wacc.md) | `import { E as E2 }` beside `import { E }` makes two nominal types out of one declaration, so passing one where the other is wanted is a mismatch — wacc only, the reference accepts it | bug | compile error |
 | [0160](open/0160-a-lambda-capturing-a-parameter-loses-it-to-a-top-level-function-of-the-same-name.md) | a lambda's captured parameter resolves to a same-named top-level function instead — so any file importing `platform.wac` and declaring `f` builds an invalid module | bug | invalid wasm |
-| [0159](open/0159-arithmetic-on-a-string-operand-silently-deletes-the-function.md) | `s[0] - '0'` is `string - string`; both compilers exit 0 and silently drop the enclosing function from the module and the manifest | diagnostic | invalid wasm |
 | [0158](open/0158-the-checker-is-superlinear-in-one-files-import-count.md) | one file importing 600 others type-checks in 19.7s where the emitter takes 86ms — the cost is import edges in a single file, not files (1200 files with 10 imports: 8ms) | performance | no error |
 | [0157](open/0157-an-import-of-a-file-nobody-supplied-is-caught-by-the-emitter-not-the-checker.md) | importing a file nobody supplied is refused by the emitter with no position and no name, and the checker — even given the whole file map — reports nothing | diagnostic | no error |
 | [0156](open/0156-the-specs-parse-messages-match-neither-compiler.md) | the spec quotes `expected ';'` as a parse message, wacc says `unexpected token` with it in the annotation, the reference says a third thing — and the differentials compare positions, not text | diagnostic | wrong answer |
@@ -38,7 +39,7 @@ has been fixed and why.
 
 ## Closed
 
-170 issues, 140 closed.
+173 issues, 142 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

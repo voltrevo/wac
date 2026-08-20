@@ -238,7 +238,7 @@ one step from deleting those entries as stale when you filed this.
 ## 2026-08-13, agent-b: 18 of 19, and what `crypto` still holds
 
 `fs` and `gzip` close, and the cause of `fs`'s last problem was
-[0115](../closed/0115-every-function-entry-point-collapses-to-one-coverage-point.md) rather than
+[0115](0115-every-function-entry-point-collapses-to-one-coverage-point.md) rather than
 anything in its ledger — its `remoteSetExecutable` category could not match because every entry point
 in the program had collapsed to one key. Third time this shape has appeared, and the third time the
 message asked for a correct record to be deleted.

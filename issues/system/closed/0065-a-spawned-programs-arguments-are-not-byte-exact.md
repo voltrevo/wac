@@ -53,14 +53,14 @@ A NUL *separator* is safe to keep: an argument cannot contain one on any operati
 The bug is entirely the decode.
 
 Same shape as the fault-category work in
-[0062](../closed/0062-a-read-failure-has-no-fault-category-so-nine-programs-print-the-hosts-wording.md):
+[0062](0062-a-read-failure-has-no-fault-category-so-nine-programs-print-the-hosts-wording.md):
 both ends were fine and the host's hop was where the information went missing.
 
 ## It is not the wire format, 2026-08-05 (agent-a)
 
 The notes above blamed `children.ts`'s `TextDecoder`. That is one of three lossy hops, and fixing it
 alone would change nothing. Measured while closing
-[0066](../closed/0066-a-spawned-child-does-not-get-what-the-shell-has-left-of-its-input.md):
+[0066](0066-a-spawned-child-does-not-get-what-the-shell-has-left-of-its-input.md):
 
 1. **wac to JS**, in the compiler's own glue. `wacBindgen.ts` emits
    `_stringFromWasm`, which is `new TextDecoder().decode(bytes)` — so a wac string containing
@@ -148,7 +148,7 @@ not be involved, the signature was the flaw — so `arg`, `env` and the argv of 
 carry `u8[]` end to end, and the spawn wire format carries a count and length-prefixed arguments
 instead of one NUL-joined blob of text. Names and arguments are bytes; messages and source are text.
 
-That unblocked [0061](../closed/0061-sh-applets-return-all-their-output-at-once-so-a-large-stage-dies.md):
+That unblocked [0061](0061-sh-applets-return-all-their-output-at-once-so-a-large-stage-dies.md):
 `cat $(printf '\xff\xfe')` names the file it was given, and the shell spawns its own programs now.
 
 **What is left is paths**, which is the larger half. `readFile`, `writeFile`, `stat`, `readDir`,

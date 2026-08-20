@@ -1941,8 +1941,11 @@ export string test_rung3_override_increments_construction_arity_and_default_valu
     "struct P { i32 v; } export void f() { P p = P(); }",
     "struct Node { i32 v; Node? next; } export void f() { Node n = Node(); }",
     "enum E { A, B } export i32 f() { E[] a = E[2](fill: E.A); return a.len(); }",
-    // Reading a string index is ordinary; only writing is refused.
-    "export i32 ok() { string s = \"hi\"; return s[0]; }",
+    // Reading a string index is ordinary; only writing is refused. **And it reads as a `string`** —
+    // `spec/spec/strings.md` §Indexing: "returns it as a single-character string". This entry
+    // returned it from an `i32` function and sat in the *accepted* list, which is a claim the
+    // reference contradicts — it answers *return: expected i32, found string*. `issues/lang/0159`.
+    "export string ok() { string s = \"hi\"; return s[0]; }",
     // Upcasting is silent, and a checked downcast is what `as!` is for.
     "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
     "export void ok(Circle c) { Shape s = c as Shape; }",
@@ -2152,7 +2155,9 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     // be i32, got u32"*, and a quiet entry is a claim about the reference that nothing verified.
     "export i32 ok(i32[] a) { return a[0]; }",
     "export i32 ok(i32[] a, i32 i) { return a[i]; }",
-    "export i32 ok(string s) { return s[0]; }",
+    // A string index is a one-character `string`, not an `i32` — the same mistake the note above
+    // warns about, in the entry two lines below it. `issues/lang/0159`.
+    "export string ok(string s) { return s[0]; }",
     // The operators, given what they want.
     "export i32 ok(i32 a, i32 b) { return a & b; }",
     "export i64 ok(i64 a, i32 b) { return a << b; }",

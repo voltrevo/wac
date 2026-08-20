@@ -22,7 +22,7 @@ That is not a library that happens to have a host. It is a platform: it juggles 
 messaging and binds external capabilities, and everything else here is built *on* it — `box`, `fs`,
 `sh`, `ssh` and `tor` all import it, and nothing it depends on runs the other way.
 
-The second reason is [0087](../closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md). The
+The second reason is [0087](0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md). The
 native runtime is a fourth host in **Rust**, and 0087 already records the operator's discomfort:
 "'no dependencies, everything in `src/`' is a stated property of this repo that '…and some Rust'
 muddies." A repo whose subject is the capability layer has an obvious place for a second
@@ -111,6 +111,6 @@ reason to move it.
 - [0129](../open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md)'s 149 KB host
   bundle is an internal number rather than a product surface. Still worth reducing, no longer worth
   reducing *for somebody else*.
-- [0087](../closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md)'s discomfort —
+- [0087](0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md)'s discomfort —
   `native/`'s Rust in a repo whose stated property is "everything in `src/`" — has no repo split to
   resolve it, so it is a thing the root README explains and keeps explaining.

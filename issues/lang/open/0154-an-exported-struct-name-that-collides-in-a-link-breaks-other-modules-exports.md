@@ -203,3 +203,22 @@ it passes when run alone. It took a stash-and-compare to find, and the first two
 
 A collision that cannot be linked should be a diagnostic naming both declarations. A module whose
 manifest lists exports it does not have should be impossible to emit.
+
+## 2026-08-20: the symptom is caught now, the cause is not fixed
+
+`wac build` validates the module it wrote (`issues/lang/0170a`), so this no longer reports success:
+
+    $ wac build main.wac -o m        # two files each exporting a `Dup`, both referenced
+    m.wasm: 4522 bytes from 4 file(s)
+    rejected m.wasm
+    wac: the build wrote m.wasm and the engine will not load it, so the compiler emitted
+         something invalid rather than refusing the program
+
+Exit 1 where it used to be 0. **That is a net, not a fix**: the collision still happens and the
+emitter still produces a module for it — the build now refuses to pretend that module is usable. What
+this issue asks for is a diagnostic naming the two declarations, at the collision, instead of a
+validator noticing the wreckage afterwards.
+
+Worth knowing which shapes reach it, because two of the three do not any more. Two exported structs of
+one name in a link, *unreferenced*, build fine. Referencing one of them builds fine. It takes **two
+files each importing a different `Dup`** — the third case above — to produce the invalid module.

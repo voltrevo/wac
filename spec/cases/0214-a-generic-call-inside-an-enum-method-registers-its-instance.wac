@@ -1,0 +1,15 @@
+// expect: answers f = 4
+// why: the type arguments of a generic *call* are inferred from its arguments, so only a walk with
+//      locals in scope discovers the instance. An enum method has locals like any other body — the
+//      identical call from a plain function has always built, which is what isolates the enum method
+//      as the cause. The match arm feeds the local so the argument cannot be a constant.
+// from: issues/lang/0172a
+T pick<T>(T a, T b) { return a; }
+enum E {
+  A(i32 v), B,
+  i32 sum(const this) {
+    i32 x = match (this) { case A(v): v, case B: 0 };
+    return pick(x, 9);
+  }
+}
+export i32 f() { return E.A(4).sum(); }

@@ -1,0 +1,4 @@
+// expect: refused
+// why: a literal branch takes the other's type only when it can, and `1` cannot be a string
+// from: issues/lang/0170a
+export string main(bool b, string s) { return b ? s : 1; }
