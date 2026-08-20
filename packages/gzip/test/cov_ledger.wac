@@ -1,0 +1,131 @@
+// gzip's coverage, and the argument for the three points nothing reaches.
+//
+//   deno task coverage:gzip
+//   deno task coverage:gzip --verbose
+//
+// **Named rather than tolerated as a percentage below 100.** A report that sits at 99.3% for ever
+// teaches everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one
+// that was always there. So this is a two-way ratchet: anything not listed here is expected to be
+// covered and the run fails if it is not — and anything listed that *does* get covered fails too, since
+// the reason has stopped holding. The machinery is `tools/wac/covledger.wac`, shared;
+// `issues/system/0222` is why it is shared and this is the first package to use it.
+//
+// ## The pins are prose about this package, and that is why they live here
+//
+// A snippet as well as a line, because keying an exclusion on a line number alone is fragile in the
+// obvious way: adding a comment above it silently moves the exclusion onto whatever now sits at that
+// line. This list started out pointing at line 306 and the comment explaining why moved the code to
+// 322, which is exactly the mistake worth catching automatically rather than remembering.
+//
+// ## `cov.ts` until 2026-08-20 — `issues/system/0161`
+//
+// The exercises are in `cov_exercise.wac` beside this, unchanged in what they drive: 452 instrumented
+// points and 449 of them covered, the same numbers the TypeScript reported, with the same three left.
+// The export list below is the part with a decision in it — see that file's header on why a trap has to
+// be an export — and it is **data here rather than a command line**, so a name that stops being an
+// export is a compile error in this file instead of a warning nobody reads.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/gzip/test/cov_exercise.wac";
+const string PREFIX = "packages/gzip/src/";
+
+/**
+ * Branch points that cannot be reached, with the reason.
+ *
+ * Each is a guard that is dead *given this package's callers* and correct on its own terms. That
+ * distinction is the whole content of the list: a guard kept because the code around it might change
+ * is not the same as a guard nobody needs.
+ */
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/gzip/src/inflate.wac", 136, "while (left > 0 && this.bitCount >= 8) {",
+        "copyBytes is only ever called straight after alignByte and two readBits(16). alignByte " +
+        "leaves a multiple of 8 bits, fill only ever adds whole bytes, and skip removes exactly 16 " +
+        "— so the bit buffer is empty by the time this runs, and this loop drains nothing. Kept " +
+        "because it is what makes copyBytes correct on its own terms rather than by the habits of " +
+        "its one caller: a second caller that aligned differently would otherwise read the payload " +
+        "from the wrong offset, silently."),
+    Pin("packages/gzip/src/inflate.wac", 583, "if (di >= 30) { trap; }",
+        "Both distance decoders are built with at most 30 symbols — the fixed one with exactly 30, " +
+        "the dynamic one with hdist, already bounded at 30 — so decode cannot return 30. A stream " +
+        "using distance code 30 or 31 traps inside decode for want of a matching code, which " +
+        "`trap_a_distance_code_the_fixed_table_does_not_define` in cov_exercise.wac shows. Kept as " +
+        "defence: it stops being dead if the fixed distance table is widened to the 32 patterns 5 " +
+        "bits allow."),
+    Pin("packages/gzip/src/gzip.wac", 276, "if (w.out.len > 0) { write(w.out.take()); }",
+        "The `else` — a completed block that left the writer with no whole byte to hand on. A block " +
+        "cannot be that small: deflate's header is three bits and the smallest thing that can " +
+        "follow is a fixed-Huffman end-of-block symbol at seven, so ten bits at minimum, and the " +
+        "writer holds fewer than eight pending before it starts. Ten bits past a sub-byte remainder " +
+        "always completes a byte. A stored block is byte-aligned with a four-byte LEN/NLEN, and a " +
+        "dynamic one carries a code-length table before any of that, so both are further from the " +
+        "boundary still. The guard stays because it is a statement about `take()` rather than about " +
+        "deflate — a caller that flushed twice in one iteration would need it — and because writing " +
+        "an empty chunk is a thing to avoid rather than to rely on. issues/lang/0112."));
+}
+
+/**
+ * Every export `covdump` must call after `main`, because each one traps.
+ *
+ * One per refusal: the name says which rule the stream breaks, and a trap ends the call so two cannot
+ * share one. Ordered as `cov_exercise.wac` declares them — the container, then DEFLATE's structure,
+ * then the same rules again down the streaming path, which is a different set of branches.
+ */
+string[] refusals() {
+  return string[](
+    "trap_the_magic_is_wrong",
+    "trap_the_compression_method_is_not_deflate",
+    "trap_a_buffer_too_short_to_be_a_member",
+    "trap_a_header_field_runs_off_the_end",
+    "trap_the_crc_does_not_match",
+    "trap_the_isize_does_not_match",
+    "trap_a_size_hint_beyond_what_is_sane",
+    "trap_reading_past_the_end_of_a_fixed_block",
+    "trap_a_fixed_block_with_no_end_of_block_symbol",
+    "trap_a_stored_length_and_its_complement_disagree",
+    "trap_a_stored_length_past_the_end_of_the_input",
+    "trap_a_stored_block_with_no_length_at_all",
+    "trap_the_reserved_block_type",
+    "trap_a_distance_before_the_start_of_the_output",
+    "trap_a_distance_before_the_start_with_more_output_behind_it",
+    "trap_a_length_symbol_the_format_reserves",
+    "trap_the_other_reserved_length_symbol",
+    "trap_a_distance_code_the_fixed_table_does_not_define",
+    "trap_the_last_distance_code_the_fixed_table_does_not_define",
+    "trap_more_literal_lengths_than_the_format_defines",
+    "trap_more_distance_lengths_than_the_format_defines",
+    "trap_a_repeat_with_nothing_to_repeat",
+    "trap_a_repeat_that_overruns_the_length_table",
+    "trap_a_short_zero_run_that_overruns_the_length_table",
+    "trap_a_long_zero_run_that_overruns_the_length_table",
+    "trap_the_streamed_magic_is_wrong",
+    "trap_the_streamed_compression_method_is_not_deflate",
+    "trap_the_streamed_crc_does_not_match",
+    "trap_the_streamed_isize_does_not_match",
+    "trap_a_source_that_ends_mid_member",
+    "trap_a_source_that_fails_mid_member",
+    "trap_a_source_that_ends_inside_the_header",
+    "trap_a_source_that_fails_inside_the_header",
+    "trap_a_stored_member_cut_mid_copy",
+    "trap_a_stored_member_whose_source_fails_mid_copy",
+    "trap_a_stored_member_cut_just_before_its_trailer");
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No grants: the exercise reads no files and spawns nothing, so it is compiled with nothing. A
+  // driver given capabilities it does not need is a driver whose exercises could quietly start using
+  // them.
+  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), refusals());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins()) ? 1 : 0;
+}

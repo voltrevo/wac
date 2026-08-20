@@ -217,7 +217,7 @@ export const KNOWN_SURVIVORS: KnownSurvivor[] = [
       "`di >= 30` for reserved distance symbols. Unreachable rather than redundant: both " +
       "distance decoders are built with at most 30 symbols, so `decode` cannot return 30 " +
       "and a stream using distance code 30 or 31 dies inside `decode` for want of a " +
-      "matching code. packages/gzip/cov.ts carries the same fact as an UNREACHABLE entry, " +
+      "matching code. packages/gzip/test/cov_ledger.wac carries the same fact as a pin, " +
       "with the reason the check is kept. No test can kill this one.",
   },
   {

@@ -195,9 +195,10 @@ and each is now written where the next person to touch that code will read it.
 the bootstrap. `harness/wac/hostless.test.ts` is the alternative-host check and is the point rather
 than a leftover. `packages/stream/test/stream.test.ts` tests the host bridge. `site/tools/syncMap.ts`
 writes a TypeScript artefact in an npm subtree. Each package's `cov.ts` is a TypeScript instrument
-and is its own tier — which is why `packages/gzip/test/fuzz/corpus.ts` and
-`packages/gzip/test/streams.ts` still exist beside their wac ports, and why those two now exist
-twice with nothing comparing them.
+and is its own tier — which is why `packages/gzip/test/fuzz/corpus.ts` still exists beside its wac
+port, and so exists twice with nothing comparing the two. Its sibling `test/streams.ts` went with
+gzip's `cov.ts` on 2026-08-20, which is what that tier moving looks like: the duplicate goes when the
+last TypeScript reader of it does.
 
 ## The surface
 
@@ -1522,9 +1523,9 @@ reason `ctcompare` had to be a command was the *size* of a trace, and that reaso
   - Each package's exercises become a wac program whose `main` calls the probe's exports — the same
     shape the trace drivers took. That part is mechanical.
   - **The ledgers are not.** `packages/crypto/cov.ts` is 1,100 lines and most of it is a reasoned list
-    of points that *cannot* be reached and why, one entry at a time; `packages/gzip/cov.ts` has its
-    own. That is content, not boilerplate, and it has to move with the exercises rather than be
-    regenerated.
+    of points that *cannot* be reached and why, one entry at a time; gzip's had its own, now
+    `packages/gzip/test/cov_ledger.wac`. That is content, not boilerplate, and it has to move with
+    the exercises rather than be regenerated.
   - `tools/coverageAll.ts` greps the output for `branch point(s) uncovered`, `no longer holds` and
     `is listed as unreached but was covered`, so the phrasing is a contract between twenty producers
     and one consumer.

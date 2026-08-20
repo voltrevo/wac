@@ -1,0 +1,648 @@
+// Branch coverage for gzip: the shapes, run natively.
+//
+//   deno task coverage:gzip
+//
+// This was gzip's `cov.ts` until 2026-08-20 — `issues/system/0161`, `issues/system/0222`. The exercises
+// are carried over; what left is the reporting, which `tools/wac/covledger.wac` does for every package,
+// and the ledger, which is `packages/gzip/test/cov_ledger.wac` beside this file.
+//
+// ## Three entry points became one module
+//
+// The TypeScript instrumented `gzip.wac`, `inflate.wac` and `crc32.wac` separately and merged the
+// three counter arrays per `(file, line, col, kind)`, because a JavaScript host reaches a wac module
+// through bindgen and bindgen builds one module per entry. A wac exercise imports all four — including
+// `deflate.wac`, which only `inflateAt` needs — so there is one module, one counter array, and the
+// union is what the array already is. Nothing to merge and nothing to get wrong.
+//
+// ## What is in `main` and what is an export
+//
+// **A trap ends the call.** `wac covdump` calls `main` and then each export named on its command line,
+// with the trap caught around each, so a malformed stream has to be its own export — the same shape
+// `test/wac/inflateadversarial_test.wac` uses and for the same reason. Everything that returns is in
+// `main`, where it costs one call rather than one process.
+//
+// That is a real bound on this file and the reason it is not a transcription. The TypeScript wrapped
+// about 2,500 calls in `ignoringTraps`, most of them a sweep — every byte of a valid stream flipped,
+// every truncation of it — and 2,500 exports is not a file anybody reads. So the sweeps are *sampled
+// at the boundaries that separate one check from the next* rather than swept: the magic, the method,
+// the flags, the first deflate byte, the interior, the CRC, the ISIZE, and the same for truncation.
+// A sweep's value here was never its density — it was that somewhere in it lay one of those — and
+// `test/wac/fuzzcorruption_test.wac` still runs the dense version as a *test*, where a trap is a
+// process's exit status and 2,700 of them cost 21s.
+
+import { gzipStored, gzipFixed, gzipDynamic, gzipBest, gzipStream } from "../src/gzip.wac";
+import { inflate, inflateAt, gunzipBytes, gunzipStream, Inflation } from "../src/inflate.wac";
+import { crc32, crc32Bitwise } from "../src/crc32.wac";
+import { deflateDynamic } from "../src/deflate.wac";
+import { Bits, ClOp, fixedBlock, storedBlock, dynamicHeader, fillZeros, then, one }
+  from "./wac/streams.wac";
+import { Case, buildCorpus } from "./wac/fuzzcorpus.wac";
+import { Read } from "core";
+
+// ── The plumbing the streaming entry points need ──────────────────────────────
+
+/**
+ * A queue of chunks, handed over one `Read` at a time, that can also **fail** rather than end.
+ *
+ * Five of this package's uncovered branches were one thing: the `Failed(why)` arm of every read and
+ * the `broken` flag it sets. A source that only ever says `End` cannot reach any of them, and the
+ * distinction they carry is the one that matters most — "this is your data compressed" against "this
+ * is the *first part* of your data compressed", which is a wrong answer that looks like a right one.
+ */
+struct Source {
+  u8[][] chunks;
+  i32 at;
+  bool fails;
+
+  Read read(this) {
+    if (this.at < this.chunks.len()) {
+      u8[] c = this.chunks[this.at];
+      this.at = this.at + 1;
+      return Read.Data(c);
+    }
+    return this.fails ? Read.Failed("the disk gave out") : Read.End();
+  }
+}
+
+/** A sink that counts and may refuse. The bytes are dropped: the window has to stay bounded either way. */
+struct Sink {
+  i32 calls;
+  i32 bytes;
+  bool accepts;
+
+  bool write(this, u8[] b) {
+    this.calls = this.calls + 1;
+    this.bytes = this.bytes + b.len();
+    return this.accepts;
+  }
+}
+
+/** `data` cut into `chunk`-byte pieces, the last one short. An empty input is no pieces. */
+u8[][] cutInto(u8[] data, i32 chunk) {
+  i32 n = (data.len() + chunk - 1) / chunk;
+  u8[][] out = u8[][n](fill: u8[0]());
+  for (i32 i = 0; i < n; i++) {
+    i32 from = i * chunk;
+    i32 to = from + chunk < data.len() ? from + chunk : data.len();
+    u8[] piece = u8[to - from]();
+    for (i32 k = 0; k < piece.len(); k++) { piece[k] = data[from + k]; }
+    out[i] = piece;
+  }
+  return out;
+}
+
+u8[] head(u8[] b, i32 n) {
+  i32 to = n < b.len() ? n : b.len();
+  u8[] out = u8[to]();
+  for (i32 i = 0; i < to; i++) { out[i] = b[i]; }
+  return out;
+}
+
+/** `b` with the byte at `at` inverted. Out of range is `b` unchanged, so a caller cannot mis-index quietly. */
+u8[] flipped(u8[] b, i32 at) {
+  u8[] out = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
+  if (at >= 0 && at < out.len()) { out[at] = out[at] ^ 0xFF; }
+  return out;
+}
+
+u8[] joinBytes(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+u8[] repeat(string s, i32 times) {
+  u8[] one = s.toBytes();
+  u8[] out = u8[one.len() * times]();
+  for (i32 i = 0; i < times; i++) {
+    for (i32 k = 0; k < one.len(); k++) { out[i * one.len() + k] = one[k]; }
+  }
+  return out;
+}
+
+u8[] filledWith(i32 n, i32 byte) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = byte; }
+  return out;
+}
+
+/** Decompress `gz` arriving `chunk` bytes at a time, optionally into a refusing sink or from a failing source. */
+i32 stream(u8[] gz, i32 chunk, bool accepts, bool fails) {
+  Source src = Source(cutInto(gz, chunk), 0, fails);
+  Sink sink = Sink(0, 0, accepts);
+  return gunzipStream(src.read, sink.write);
+}
+
+/** Compress `data` arriving `chunk` bytes at a time. */
+i32 compressStream(u8[] data, i32 chunk, bool fails) {
+  Source src = Source(cutInto(data, chunk), 0, fails);
+  Sink sink = Sink(0, 0, true);
+  return gzipStream(src.read, sink.write);
+}
+
+// ── The streams the trapping exports below need ───────────────────────────────
+//
+// Built by a function rather than held in a global, because each export runs in the same instance as
+// `main` and a global built at module scope would be built whether or not anything used it.
+
+/** A valid member with enough body to have an interior worth corrupting. */
+u8[] validMember() { return gzipBest(repeat("coverage of error paths ", 20)); }
+
+/** A valid *stored* member, whose failures are in the bulk copy rather than in a Huffman decode. */
+u8[] validStored() { return gzipStored(repeat("stored and cut short ", 400)); }
+
+i32[] clOf(i32[] syms, i32[] lens) {
+  i32[] out = i32[19]();
+  for (i32 i = 0; i < syms.len(); i++) { out[syms[i]] = lens[i]; }
+  return out;
+}
+
+i32[] clRepeat() { return clOf(i32[](16, 0), i32[](1, 1)); }
+i32[] clFull() { return clOf(i32[](18, 0, 1, 16), i32[](2, 2, 2, 2)); }
+i32[] clRuns() { return clOf(i32[](0, 18, 17), i32[](1, 2, 2)); }
+
+ClOp[] noOps() { return ClOp[0](fill: ClOp(0, 0)); }
+
+// ── main: everything that returns ─────────────────────────────────────────────
+
+export i32 main() {
+  // ## The compressor
+  //
+  // The fuzz corpus is the broadest set of shapes available, and reusing it means this measures
+  // roughly what the suite measures.
+  Case[] corpus = buildCorpus(120, 20260731);
+  for (i32 i = 0; i < corpus.len(); i++) {
+    u8[] d = corpus[i].data;
+    gzipStored(d);
+    gzipFixed(d);
+    gzipDynamic(d);
+    gzipBest(d);
+  }
+  // Plus the boundary lengths the corpus does not guarantee: the empty input, a match longer than the
+  // maximum, and the 65535-byte stored-block limit either side.
+  i32[] lengths = i32[](0, 1, 2, 3, 258, 65535, 65536, 131071);
+  for (i32 i = 0; i < lengths.len(); i++) {
+    u8[] runs = filledWith(lengths[i], 0x61);
+    gzipBest(runs);
+    gzipDynamic(runs);
+    gzipStored(runs);
+  }
+  // Incompressible input **above** `smallInput()`, which nothing above produces: the corpus and the
+  // runs both compress, so `gzipBest`'s large path had only ever seen dynamic win outright. This is
+  // the other side of that comparison — dynamic fails to shrink anything and stored is worse still,
+  // so the dynamic container is kept. Same input as `test/wac/gzipbest_test.wac`, which asserts why.
+  u8[] noisy5k = u8[5000]();
+  i32 s = 3;
+  for (i32 i = 0; i < noisy5k.len(); i++) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    noisy5k[i] = ((s >> 16) & 255) % 246;
+  }
+  gzipBest(noisy5k);
+  gzipDynamic(noisy5k);
+  gzipStored(noisy5k);
+
+  // ## The decompressor
+  //
+  // Round trips through all three block types, so stored, fixed and dynamic all appear.
+  Case[] smaller = buildCorpus(60, 20260731);
+  for (i32 i = 0; i < smaller.len(); i++) {
+    u8[] d = smaller[i].data;
+    gunzipBytes(gzipBest(d));
+    gunzipBytes(gzipStored(d));
+    gunzipBytes(gzipFixed(d));
+  }
+
+  // **`inflateAt`, whose answer is an offset rather than bytes**: a caller inflates one deflate
+  // stream out of a buffer holding several and needs to know where the next one starts.
+  // `packages/git`'s pack reader is that caller — a pack is a run of deflate streams with no lengths.
+  // Asserted rather than merely called, because inflating the *second* stream at a wrong end offset
+  // would fail rather than quietly return the wrong bytes, so the offset needs its own check.
+  //
+  // `deflateDynamic` rather than `gzipDynamic`: what `inflateAt` reads is a bare deflate stream with
+  // no gzip header or trailer around it, which is what a pack holds.
+  u8[] one1 = deflateDynamic("the first stream".toBytes());
+  u8[] two = deflateDynamic("and the second, which is longer than the first".toBytes());
+  u8[] both = joinBytes(one1, two);
+  Inflation first = inflateAt(both, 0);
+  Inflation second = inflateAt(both, first.end);
+  if (first.end != one1.len()) { trap; }
+  if (string.fromBytes(first.bytes) != "the first stream") { trap; }
+  if (string.fromBytes(second.bytes) != "and the second, which is longer than the first") { trap; }
+
+  // **A bare deflate stream large enough to grow the window.** `inflate` knows no output length — a
+  // raw stream has no ISIZE — so it asks for a zero size hint and the window starts empty and grows.
+  // Every other decode here goes through `gunzipBytes`, which reads the trailer and allocates once at
+  // the right size, so `push`'s grow and `pushMatch`'s grow *loop* had never run. The loop needs a
+  // single match longer than the remaining capacity, which is why this is repetitive rather than noise.
+  inflate(deflateDynamic(repeat("a window that has to grow to hold this. ", 900)));
+  inflate(deflateDynamic(repeat("short", 3)));
+
+  // The legal boundary of the distance check: a distance equal to the output length must decode.
+  inflate(fixedBlock().literal(0x41).litLenSymbol(257).code(0, 5).litLenSymbol(256).done());
+  // A valid stored block, LEN/NLEN agreeing, two bytes of payload.
+  inflate(joinBytes(storedBlock().done(), u8[](0x02, 0x00, 0xFD, 0xFF, 0x41, 0x42)));
+
+  // A valid dynamic block, and the largest legal HLIT/HDIST pair. Both need a code-length table that
+  // spends symbol 18's zero runs to reach 257 and 286 lengths without transmitting them all.
+  Bits valid = dynamicHeader(257, 1, clFull(),
+    then(then(then(fillZeros(65), one(1, 0)), then(fillZeros(190), one(1, 0))), one(1, 0)), 19, true);
+  valid.code(0, 1).code(1, 1);
+  inflate(valid.done());
+
+  Bits widest = dynamicHeader(286, 30, clFull(),
+    then(then(then(fillZeros(65), one(1, 0)), then(fillZeros(190), one(1, 0))),
+         then(then(fillZeros(29), one(1, 0)), fillZeros(29))), 19, true);
+  widest.code(0, 1).code(1, 1);
+  inflate(widest.done());
+
+  // ## The gzip header's optional fields
+  //
+  // Hand-built rather than produced, because no encoder here emits FEXTRA or FCOMMENT. Each is a skip
+  // the parser performs between the fixed ten bytes and the deflate data.
+  u8[] payload = repeat("optional header fields\n", 8);
+  u8[] base = gzipBest(payload);
+  u8[] name = joinBytes("archive.tar".toBytes(), u8[](0));
+  u8[] comment = joinBytes("a comment".toBytes(), u8[](0));
+  u8[] extra = u8[](4, 0, 65, 66, 67, 68);
+  gunzipBytes(withFields(base, 8, name));
+  gunzipBytes(withFields(base, 16, comment));
+  gunzipBytes(withFields(base, 4, extra));
+  gunzipBytes(withFields(base, 2, u8[](0x12, 0x34)));
+  gunzipBytes(withFields(base, 8 | 16, joinBytes(name, comment)));
+  gunzipBytes(withFields(base, 4 | 8 | 16 | 2,
+    joinBytes(joinBytes(joinBytes(extra, name), comment), u8[](0x12, 0x34))));
+  gunzipBytes(withFields(base, 8, u8[](0)));       // an empty name: the NUL is the first byte
+  gunzipBytes(withFields(base, 4, u8[](0, 0)));    // an empty extra: XLEN is zero
+
+  // ## crc32 on its own
+  //
+  // `crc32Bitwise` is the reference the table version is checked against, so the pipeline never calls
+  // it. Driven here so the ratchet does not report a tested function as dead — and compared, because
+  // calling both and not looking is how a driver reports coverage of an answer nobody checked.
+  i32[] sizes = i32[](0, 1, 2, 255, 256, 4096);
+  for (i32 i = 0; i < sizes.len(); i++) {
+    u8[] d = u8[sizes[i]]();
+    for (i32 k = 0; k < d.len(); k++) { d[k] = (k * 37 + sizes[i]) & 0xFF; }
+    if (crc32(d) != crc32Bitwise(d)) { trap; }
+  }
+
+  // ## The streaming decoder
+  //
+  // `gunzipStream` shares `inflateInto` with `gunzipBytes`, so the format work above already covers
+  // most of what it runs. What is left is the parts that only exist because the input arrives in
+  // pieces: the reader's pull, the header read forward instead of indexed, the sliding window, and the
+  // trailer checked at the end rather than the start.
+  //
+  // Chunk size is the axis that matters. One byte at a time makes the reader exhaust its buffer on
+  // nearly every call; a single huge chunk never exhausts it at all.
+  Case[] streamed = buildCorpus(12, 20260801);
+  i32[] chunks = i32[](1, 7, 4096, 1 << 20);
+  for (i32 i = 0; i < streamed.len(); i++) {
+    u8[] d = streamed[i].data;
+    for (i32 c = 0; c < chunks.len(); c++) {
+      stream(gzipBest(d), chunks[c], true, false);
+      stream(gzipStored(d), chunks[c], true, false);
+      stream(gzipFixed(d), chunks[c], true, false);
+    }
+  }
+  // An empty member, which is the only way the window is asked to hand over nothing.
+  stream(gzipBest(u8[0]()), 1 << 20, true, false);
+  stream(gzipStored(u8[0]()), 1 << 20, true, false);
+  stream(gzipFixed(u8[0]()), 1 << 20, true, false);
+
+  // Past the 128 KiB flush, in both directions: repetitive input keeps the window busy with
+  // back-references that reach across a hand-over, and incompressible input walks the stored path over
+  // more than one window.
+  u8[] repetitive = repeat("windows slide and matches reach back. ", 6000);
+  stream(gzipBest(repetitive), 512, true, false);
+  stream(gzipBest(repetitive), 1 << 20, true, false);
+  u8[] patterned = u8[200000]();
+  for (i32 i = 0; i < patterned.len(); i++) { patterned[i] = (i * 2654435761) & 0xFF; }
+  stream(gzipStored(patterned), 999, true, false);
+  stream(gzipStored(patterned), 1 << 20, true, false);
+  // The same length again but Huffman-coded, so it arrives as literals rather than as a bulk copy.
+  // That is the only way the window's per-byte flush check is the one that fires: a match crossing the
+  // limit is handled before the copy starts, not during it.
+  //
+  // Genuinely random rather than a multiplicative pattern — `(i * k) & 0xFF` repeats every 256 bytes,
+  // so it codes as matches and crosses the limit inside one, which is the other branch entirely.
+  u8[] noise = u8[200000]();
+  i32 ns = 0x1a2b3c4d;
+  for (i32 i = 0; i < noise.len(); i++) {
+    ns = ns ^ (ns << 13);
+    ns = ns ^ ((ns >> 17) & 0x7FFF);
+    ns = ns ^ (ns << 5);
+    noise[i] = ns & 0xFF;
+  }
+  stream(gzipDynamic(noise), 999, true, false);
+  stream(gzipDynamic(noise), 1 << 20, true, false);
+
+  // Small members, so the output window is allocated below its floor and handed over in one piece.
+  stream(gzipStored(u8[0]()), 1, true, false);
+  stream(gzipStored("x".toBytes()), 1, true, false);
+  stream(gzipStored("x".toBytes()), 1 << 20, true, false);
+  stream(gzipStored("a short one".toBytes()), 1, true, false);
+  stream(gzipStored("a short one".toBytes()), 1 << 20, true, false);
+  gunzipBytes(gzipStored(u8[0]()));
+  gunzipBytes(gzipStored("x".toBytes()));
+  gunzipBytes(gzipStored("a short one".toBytes()));
+
+  // A sink that refuses. The bytes are dropped either way, so this is about the refusal path.
+  stream(gzipBest(repetitive), 1 << 20, false, false);
+
+  // Every optional header field again, down the streaming parser, which reads them forward one byte at
+  // a time rather than by index.
+  u8[] small = "header flags".toBytes();
+  streamFields(small, 4, u8[](3, 0, 1, 2, 3));
+  streamFields(small, 8, u8[](0x61, 0x62, 0));
+  streamFields(small, 16, u8[](0x68, 0x69, 0));
+  streamFields(small, 2, u8[](0xAB, 0xCD));
+  streamFields(small, 4 | 8 | 16 | 2, u8[](1, 0, 9, 0x61, 0, 0x62, 0, 0xAB, 0xCD));
+
+  // ## A source that fails *after* a complete member
+  //
+  // The other moment: a read that fails once the member is done does not trap, and only the return
+  // code says so. The mid-member half is `trap_a_source_that_fails_mid_member` below.
+  u8[] answered = gzipBest(repeat("a source that stops answering\n", 400));
+  stream(answered, 1, true, true);
+  stream(answered, 64, true, true);
+  stream(answered, 4096, true, true);
+
+  // ## The streaming compressor
+  //
+  // `gzipStream` shares its matcher and its block writer with the whole-input compressors, so what is
+  // left is the streaming frame: the fill loop, the chunk cap, the history carried between blocks, and
+  // the per-block choice between dynamic and stored.
+  Case[] fed = buildCorpus(10, 20260802);
+  for (i32 i = 0; i < fed.len(); i++) {
+    compressStream(fed[i].data, 1, false);
+    compressStream(fed[i].data, 4096, false);
+    compressStream(fed[i].data, 1 << 20, false);
+  }
+  compressStream(filledWith(5000, 0x78), 1, true);
+  compressStream(filledWith(5000, 0x78), 4096, true);
+  compressStream(u8[0](), 1, true);
+  // The empty input, which still has to emit a final block.
+  compressStream(u8[0](), 1 << 20, false);
+  // More than one block, so history is carried and the chunk cap is reached — and a feed larger than a
+  // chunk, so the fill overshoots and leaves a remainder behind.
+  u8[] manyBlocks = repeat("blocks and blocks and blocks. ", 20000);
+  compressStream(manyBlocks, 4096, false);
+  compressStream(manyBlocks, 1 << 16, false);
+  compressStream(manyBlocks, 1 << 19, false);
+  // Incompressible, so the per-block comparison picks stored — including a length that needs more than
+  // one 64 KiB piece within a single block.
+  u8[] random = u8[300000]();
+  for (i32 i = 0; i < random.len(); i++) { random[i] = ((i * 2654435761) >> 13) & 0xFF; }
+  compressStream(random, 1 << 16, false);
+  compressStream(random, 1 << 20, false);
+
+  return 0;
+}
+
+/** `base` with `flg` set and `fields` spliced in after the fixed ten bytes. */
+u8[] withFields(u8[] base, i32 flg, u8[] fields) {
+  u8[] tail = u8[base.len() - 10]();
+  for (i32 i = 0; i < tail.len(); i++) { tail[i] = base[10 + i]; }
+  u8[] header = u8[10]();
+  for (i32 i = 0; i < 10; i++) { header[i] = base[i]; }
+  header[3] = flg;
+  return joinBytes(joinBytes(header, fields), tail);
+}
+
+/** A member with `flg` and `extras` where the produced header's fields would be, streamed two ways. */
+void streamFields(u8[] body, i32 flg, u8[] extras) {
+  u8[] plain = gzipBest(body);
+  u8[] tail = u8[plain.len() - 10]();
+  for (i32 i = 0; i < tail.len(); i++) { tail[i] = plain[10 + i]; }
+  u8[] built = joinBytes(joinBytes(u8[](0x1F, 0x8B, 8, flg, 0, 0, 0, 0, 0, 3), extras), tail);
+  stream(built, 1, true, false);
+  stream(built, 1 << 20, true, false);
+}
+
+// ── The refusals, one export each ─────────────────────────────────────────────
+//
+// Each of these is a *different* malformation reaching a *different* check, which is what makes one
+// export apiece the right shape rather than a tax: the name says which rule the stream breaks, and
+// `wac covdump` catches the trap and goes on to the next. Grouped by the layer that refuses.
+
+/** The gzip container, read from a buffer. */
+export void trap_the_magic_is_wrong() { gunzipBytes(flipped(validMember(), 0)); }
+
+export void trap_the_compression_method_is_not_deflate() {
+  u8[] bad = validMember();
+  bad[2] = 9;
+  gunzipBytes(bad);
+}
+
+export void trap_a_buffer_too_short_to_be_a_member() { gunzipBytes(head(validMember(), 17)); }
+
+/**
+ * A name with no terminator: the header skip's *length* bound rather than its NUL bound.
+ *
+ * FNAME set and every remaining byte a letter, so the scan for the NUL walks to the end of the buffer
+ * — which is the bound that stops it being an unbounded read of whatever follows.
+ */
+export void trap_a_header_field_runs_off_the_end() {
+  u8[] base = validMember();
+  u8[] h = u8[10]();
+  for (i32 i = 0; i < 10; i++) { h[i] = base[i]; }
+  h[3] = 8;
+  gunzipBytes(joinBytes(h, "no-terminator-anywhere-in-this-name-at-all".toBytes()));
+}
+
+export void trap_the_crc_does_not_match() {
+  u8[] m = validMember();
+  gunzipBytes(flipped(m, m.len() - 8));
+}
+
+export void trap_the_isize_does_not_match() {
+  u8[] m = validMember();
+  gunzipBytes(flipped(m, m.len() - 4));
+}
+
+/**
+ * An ISIZE too large to be a size hint.
+ *
+ * The trailer's ISIZE is handed to the decoder as the expected output length so the buffer can be
+ * allocated once. A corrupt one is not a reason to refuse *yet* — the decode is what decides — so the
+ * hint is discarded and the stream decodes into a growing window, and it is the ISIZE check at the end
+ * that refuses. Two branches on one stream, and the order matters: clamping the hint is what stops a
+ * four-byte field asking for a two-gigabyte allocation.
+ */
+export void trap_a_size_hint_beyond_what_is_sane() {
+  u8[] m = validMember();
+  m[m.len() - 1] = 0x7F;
+  m[m.len() - 2] = 0xFF;
+  m[m.len() - 3] = 0xFF;
+  m[m.len() - 4] = 0xFF;
+  gunzipBytes(m);
+}
+
+/** DEFLATE's own structure, in a bare stream with no container around it. */
+export void trap_reading_past_the_end_of_a_fixed_block() {
+  u8[] whole = fixedBlock().literal(0x41).literal(0x42).litLenSymbol(256).done();
+  inflate(head(whole, 1));
+}
+
+export void trap_a_fixed_block_with_no_end_of_block_symbol() {
+  Bits b = fixedBlock();
+  for (i32 i = 0; i < 100; i++) { b.literal(0x41); }
+  inflate(b.done());
+}
+
+/**
+ * LEN=1, NLEN=0 — which is not LEN's complement, and the check the format builds in.
+ *
+ * **The first attempt here was `FF 00 00 FF`**, carried over from the TypeScript, where it is the
+ * *next* case along: 0x00FF and 0xFF00 are a correct complement pair, so that stream is refused for
+ * running past the end of the input and this branch stayed uncovered while an export named for it
+ * passed. Coverage is what said so — a refusal test cannot tell which check refused it.
+ */
+export void trap_a_stored_length_and_its_complement_disagree() {
+  inflate(joinBytes(storedBlock().done(), u8[](0x01, 0x00, 0x00, 0x00, 0x41)));
+}
+
+/** A correct complement whose length reaches past the last byte there is. */
+export void trap_a_stored_length_past_the_end_of_the_input() {
+  inflate(joinBytes(storedBlock().done(), u8[](0xFF, 0x00, 0x00, 0xFF, 0x41)));
+}
+
+export void trap_a_stored_block_with_no_length_at_all() { inflate(storedBlock().done()); }
+
+/** BTYPE=3, which the format reserves and no encoder emits. */
+export void trap_the_reserved_block_type() {
+  inflate(Bits.create().bits(1, 1).bits(3, 2).done());
+}
+
+export void trap_a_distance_before_the_start_of_the_output() {
+  inflate(fixedBlock().literal(0x41).litLenSymbol(257).code(4, 5).bits(0, 1).done());
+}
+
+export void trap_a_distance_before_the_start_with_more_output_behind_it() {
+  inflate(fixedBlock().literal(0x41).literal(0x42).litLenSymbol(257).code(2, 5).done());
+}
+
+export void trap_a_length_symbol_the_format_reserves() {
+  inflate(fixedBlock().literal(0x41).litLenSymbol(286).done());
+}
+
+export void trap_the_other_reserved_length_symbol() {
+  inflate(fixedBlock().literal(0x41).litLenSymbol(287).done());
+}
+
+/**
+ * Distance codes 30 and 31.
+ *
+ * These are the 5-bit patterns the fixed distance table does not define, so they trap inside the
+ * decode for want of a matching code rather than against the explicit `di >= 30` bound — which is why
+ * that bound is one of the three entries in `cov_ledger.wac` rather than something a stream can reach.
+ */
+export void trap_a_distance_code_the_fixed_table_does_not_define() {
+  inflate(fixedBlock().literal(0x41).litLenSymbol(257).code(30, 5).done());
+}
+
+export void trap_the_last_distance_code_the_fixed_table_does_not_define() {
+  inflate(fixedBlock().literal(0x41).litLenSymbol(257).code(31, 5).done());
+}
+
+/** Dynamic headers: the counts, and the code-length table's own encoding. */
+export void trap_more_literal_lengths_than_the_format_defines() {
+  inflate(dynamicHeader(288, 1, clRepeat(), noOps(), 19, true).done());
+}
+
+export void trap_more_distance_lengths_than_the_format_defines() {
+  inflate(dynamicHeader(257, 32, clRepeat(), noOps(), 19, true).done());
+}
+
+export void trap_a_repeat_with_nothing_to_repeat() {
+  inflate(dynamicHeader(257, 1, clRepeat(), one(16, 0), 19, true).done());
+}
+
+export void trap_a_repeat_that_overruns_the_length_table() {
+  inflate(dynamicHeader(257, 1, clFull(),
+    then(then(fillZeros(255), one(1, 0)), one(16, 1)), 19, true).done());
+}
+
+export void trap_a_short_zero_run_that_overruns_the_length_table() {
+  inflate(dynamicHeader(257, 1, clRuns(), then(fillZeros(256), one(17, 0)), 19, true).done());
+}
+
+export void trap_a_long_zero_run_that_overruns_the_length_table() {
+  inflate(dynamicHeader(257, 1, clRuns(), then(fillZeros(250), one(18, 0)), 19, true).done());
+}
+
+// ── The streaming decoder's refusals ──────────────────────────────────────────
+//
+// The same rules again, read forward from a source rather than indexed out of a buffer, which is a
+// different set of branches: the magic is three `readByte` calls instead of two array reads, and the
+// trailer is checked after the fact rather than located from the end.
+
+export void trap_the_streamed_magic_is_wrong() {
+  stream(flipped(validMember(), 0), 1 << 20, true, false);
+}
+
+export void trap_the_streamed_compression_method_is_not_deflate() {
+  u8[] bad = validMember();
+  bad[2] = 9;
+  stream(bad, 1 << 20, true, false);
+}
+
+export void trap_the_streamed_crc_does_not_match() {
+  u8[] m = validMember();
+  stream(flipped(m, m.len() - 8), 1 << 20, true, false);
+}
+
+export void trap_the_streamed_isize_does_not_match() {
+  u8[] m = validMember();
+  stream(flipped(m, m.len() - 4), 1 << 20, true, false);
+}
+
+/**
+ * A source that stops mid-member, and one that **fails** mid-member.
+ *
+ * The pair is the point. Both stop the decode; which one it was is the whole of `broken`, and a driver
+ * that only ever says `End` cannot tell them apart — "this is your data compressed" against "this is
+ * the *first part* of your data compressed", which is a wrong answer that looks like a right one.
+ */
+export void trap_a_source_that_ends_mid_member() {
+  u8[] m = validMember();
+  stream(head(m, m.len() - 40), 64, true, false);
+}
+
+export void trap_a_source_that_fails_mid_member() {
+  u8[] m = validMember();
+  stream(head(m, m.len() - 40), 64, true, true);
+}
+
+export void trap_a_source_that_ends_inside_the_header() {
+  stream(head(validMember(), 6), 1, true, false);
+}
+
+export void trap_a_source_that_fails_inside_the_header() {
+  stream(head(validMember(), 6), 1, true, true);
+}
+
+/**
+ * A **stored** member cut mid-block, which is a different copy loop from the Huffman one.
+ *
+ * The bytes are copied straight out of the reader's buffer, so it is the reader's own refill that
+ * fails — `copyBytes` asking `fill` for more and being told the source is spent, rather than a symbol
+ * decode running out of bits.
+ */
+export void trap_a_stored_member_cut_mid_copy() {
+  u8[] m = validStored();
+  stream(head(m, 200), 64, true, false);
+}
+
+export void trap_a_stored_member_whose_source_fails_mid_copy() {
+  u8[] m = validStored();
+  stream(head(m, 200), 64, true, true);
+}
+
+export void trap_a_stored_member_cut_just_before_its_trailer() {
+  u8[] m = validStored();
+  stream(head(m, m.len() - 20), 4096, true, false);
+}

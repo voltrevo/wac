@@ -1,7 +1,7 @@
 # 0222 — the last five coverage drivers are exemption ratchets, and the ratchet is written four times
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-20
 - **Kind:** task
@@ -55,7 +55,7 @@ call it and it produces the missed points. The ledger is the same story one laye
 ## Both open questions have an answer already written in the tree — 2026-08-20
 
 I filed this saying two things had to be settled. Reading the five ledgers rather than counting them,
-both are already decided somewhere, and the strongest statement is `packages/gzip/cov.ts`'s:
+both are already decided somewhere, and the strongest statement is gzip's `cov.ts`'s:
 
 > Named rather than tolerated as a percentage below 100: a report that sits at 99.6% forever teaches
 > everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one that
@@ -91,6 +91,48 @@ deliberately.
 Suggested order: extract the library, port **`gzip`** first because its ledger is three pins and its
 contract is the one being generalised, and let the remaining four follow the template. `ssh` last,
 since it has never had a ratchet and is the one most likely to go red.
+
+## Done: the library, and `gzip` on it — 2026-08-20
+
+`tools/wac/covledger.wac` holds `Point`, `Pin`, `uncoveredLines`, `ratchet`, and — because a ledger
+needs the numbers as well as a verdict over them — `measure` and `report`, both lifted out of
+`covreport.wac`'s `main`. That file is 400 lines to 90 and its output on `packages/codec` is
+byte-identical.
+
+`packages/gzip` is the first package on it: **449 of 452 points, the same three left, the same figures
+the TypeScript reported**, in a 5.4s run. `packages/gzip/cov.ts` and `packages/gzip/test/streams.ts`
+are deleted — the second because gzip's `cov.ts` was the last thing importing it, so the stream builder
+exists once again instead of twice with nothing comparing the two.
+
+Three things the port turned up that the remaining four will hit:
+
+1. **A trap has to be an export, and that is a real bound.** The TypeScript wrapped about 2,500 calls
+   in `ignoringTraps`, mostly sweeps — every byte of a valid stream flipped, every truncation of it.
+   `wac covdump` catches one trap per named export, so 2,500 exports would be the transcription and is
+   not a file anybody reads. The sweeps are *sampled at the boundaries between checks* instead: 36
+   exports, one per refusal, each named for the rule its stream breaks. That reaches every point the
+   sweep reached, because a sweep's value was never its density.
+2. **Coverage caught a mislabelled export.** `trap_a_stored_length_and_its_complement_disagree` was
+   carried over as `FF 00 00 FF` — which is a *correct* complement pair (0x00FF and 0xFF00), so it was
+   refused for running past the end of the input and the complement check stayed uncovered while an
+   export named for it passed. A refusal test cannot tell which check refused it; the counter can.
+3. **`tools/coverageAll.ts` classified every wac driver as "reports and cannot fail"**, on the
+   grounds that a coverage floor had no wac spelling. It has one now, so the classifier reads the
+   `ratchet(` call — and gzip is counted among the floors rather than among the seventeen that exit 0
+   whatever they measured.
+
+**And a second instance of the bug that prompted this issue.** `covreport` prefixed its own failures
+with `covreport: `, which matches none of the four phrases `coverageAll.ts` greps for — so an exercise
+that did not build, or a table and a dump that did not describe the same module, exited 1 with its
+reason filtered out and only "(nothing matched the known failure shapes)" on screen. `measure` says
+`error:` now.
+
+`tools/wac/covledger_test.wac` is the test none of the four ratchets had: six cases over synthetic
+points driving all three failure modes plus the unreadable-file case.
+
+Left: `fs` (33 pins, and category rules that are a *softening* of the contract — decide whether they
+survive as sugar), `crypto` (28), `zstd` (8), and `ssh`, which has never ratcheted and is therefore the
+one most likely to go red.
 
 ## Notes
 
