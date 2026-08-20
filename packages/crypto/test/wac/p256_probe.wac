@@ -33,13 +33,37 @@ export u8[] order384() { return p384Order(); }
 import { p256VerifyDigest } from "../../src/p256.wac";
 export bool verifyDigest(u8[] pub, u8[] d, u8[] sig) { return p256VerifyDigest(pub, d, sig); }
 
-// **A big-endian comparison looks past the first byte**, which is the half of `cmpBE` that random
-// keys drive only by chance: two values differ in their leading byte almost always, so the loop's
-// *continue* side was covered on some runs and not others and the coverage ledger flickered with it.
-// Driven here on purpose — a scalar sharing a leading byte with the group order is exactly the case
-// a bounds check against `n` has to get right, and getting it wrong accepts a key at or above the
-// order. `issues/lang/0112`.
+// **A big-endian comparison looks past the first byte.** `cmpBE` had an early return until
+// 2026-08-20, so the loop's *continue* side was covered only when two values happened to share a
+// leading byte and the coverage ledger flickered with it. It reads every byte now — the early return
+// made how many bytes it read a function of a private key or a nonce (`issues/system/0224`) — so
+// there is no branch here to cover, and these three exist for the answers rather than the paths.
+//
+// They are worth more than before, not less. A branchless three-way comparison is built from masks
+// that carry the lower bytes' verdict forward, and the way to get that wrong is to have it right for
+// the common case and wrong when the leading bytes are equal — which is exactly a scalar at or above
+// the group order, the input a bounds check exists for. `issues/lang/0112`.
 import { cmpBE } from "../../src/weierstrass.wac";
+import { ScOrder, scOrder, scnFromBytes, scnToBytes, scnMont, scnEnter, scnLeave, scnReduce }
+  from "../../src/scalarn.wac";
+
+/**
+ * One multiplication modulo the group order, with `b` the secret.
+ *
+ * **The cheap subject for the constant-time test.** `scMul` is the routine `issues/system/0224` was
+ * about, and the only public paths to it are `ecdsaSign` and `ecdsaVerify` — 93 million traced events
+ * for a signature, where one `scMul` is about fifty thousand. A journal that holds a signature is
+ * more than a gigabyte, so pinning the *routine* is what makes the regression affordable to guard.
+ *
+ * `b` is the operand whose bits drive the loop, which is the private key at `scMul(c, r, priv)` and
+ * the nonce inside `scInvert`. `a` is fixed here because it does not select anything.
+ */
+export u8[] scalarMulOrder(u8[] b) {
+  ScOrder o = scOrder(p256Order());
+  i64[] x = scnEnter(o, scnReduce(o, scnFromBytes(u8[32](fill: 3))));
+  i64[] y = scnEnter(o, scnReduce(o, scnFromBytes(b)));
+  return scnToBytes(scnLeave(o, scnMont(o, x, y)));
+}
 
 export i32 compareSharingAPrefix() {
   u8[] a = u8[4]();

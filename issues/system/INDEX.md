@@ -5,7 +5,6 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0223](open/0223-the-field-reduction-branches-on-limb-values-so-p-256-and-p-384-still-leak.md) | `reduceWide` in `fieldp.wac` skips a limb when it is zero and folds a carry a value-dependent number of times, so P-256 and P-384 still leak the scalar — it was behind the ladder that `issues/system/0210` fixed, and `ctcompare` only reports the first divergence | bug | no error |
 | [0220](open/0220-twenty-six-copies-of-struct-rng-in-five-variants.md) | twenty-six `.wac` files declare their own `struct Rng` in five variants; eighteen are one xorshift32 split by whether the result is cast, which changes what `next() % n` samples, and several claim to match a host-side generator that nothing checks | task | wrong answer |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
@@ -69,7 +68,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-231 issues, 174 closed.
+232 issues, 176 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

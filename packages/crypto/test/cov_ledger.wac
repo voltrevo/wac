@@ -3,13 +3,13 @@
 //   deno task coverage:crypto
 //   deno task coverage:crypto --verbose
 //
-// **Named rather than tolerated as a percentage below 100.** A report that sits at 97.2% for ever
+// **Named rather than tolerated as a percentage below 100.** A report that sits at 97.3% for ever
 // teaches everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one
 // that was always there. So this is a two-way ratchet over `tools/wac/covledger.wac`: anything not
 // listed here is expected to be covered and the run fails if it is not — and anything listed that *does*
 // get covered fails too, since the reason has stopped holding. `issues/system/0222`.
 //
-// ## 1140 of 1173, against the TypeScript's 974 of 1053
+// ## 1135 of 1166, against the TypeScript's 974 of 1053
 //
 // More points seen *and* fewer missed, and the reason is one thing: `harness/wacCoverage.ts` could not
 // call a test that takes an argument. `runTestExports` skips any whose `fn.length > 0`, because
@@ -108,6 +108,19 @@ Pin[] pins() {
         "prime for a P-521 element."),
     Pin("packages/crypto/src/fieldp.wac", 66, "if (n != 12) { trap; }", true,
         "foldVector's copy of that same guard."),
+    Pin("packages/crypto/src/fieldp.wac", 327, "if (k != 0) { trap; }", true,
+        "**The bound `FOLD_ROUNDS` asserts, and the assertion is the reason it is here.** " +
+        "`reduceWide` folds the leftover carry a fixed four times rather than `while (k != 0)`, " +
+        "because the old loop's trip count was a function of the operands and therefore of the " +
+        "secret scalar — `issues/system/0223`. Four is not tight: the argument in that function's " +
+        "header allows three and this corpus needs two, so nothing reaches this side and nothing " +
+        "should.\n" +
+        "         Which is exactly the entry that deserves suspicion, so it was checked rather " +
+        "than argued: `FOLD_ROUNDS` at 1 traps `nistcurve_test.wac` immediately and at 2 the " +
+        "whole file passes. The guard is live code with a margin in front of it, not a branch " +
+        "wacc could have deleted. It cannot be driven from a test because `FOLD_ROUNDS` is a " +
+        "constant and a test cannot vary one — the canary is an experiment on the source, and if " +
+        "this ever goes green the reduction is wrong, not better covered."),
     Pin("packages/crypto/src/keccak.wac", 61, "n == 0 ? x", true,
         "**No call site passes zero, and the set is closed.** `rotl` is private to this file, " +
         "so its arguments are enumerable: every one is a literal — 1 in the θ step, and 6, 8, " +
@@ -136,37 +149,51 @@ Pin[] pins() {
         "The signing side of the same arithmetic — see the entry for `rsa.wac:272`. Both are " +
         "the `else`: the mask *is* applied on every key anyone uses, and the branch that " +
         "skips it needs a modulus of 8k+1 bits."),
-    Pin("packages/crypto/src/weierstrass.wac", 289, "if (e[at] >= 2)", false,
-        "The borrow side of the odd-scalar adjustment: it runs when a digit is below two and " +
-        "the subtraction has to borrow from the next. Reachable with the right scalar and not " +
-        "driven by the vectors here, which are real keys and signatures. Same status as " +
-        "`ed25519.wac:327` — a test to write."),
-    Pin("packages/crypto/src/weierstrass.wac", 308, "while (cmpBE(out, c.order) >= 0)", false,
-        "scReduce's conditional subtraction, for a value at or above n. n is within 2^-32 of " +
-        "2^256, so a uniformly random 32-byte value — a SHA-256 digest, or a point's " +
-        "x-coordinate — lands above it about once in four billion times. Not reachable by " +
-        "choosing inputs; reachable in the field, eventually, by somebody."),
-    Pin("packages/crypto/src/weierstrass.wac", 310, "for (i32 i = len - 1; i >= 0; i--)", false,
-        "The subtraction inside that same loop."),
-    Pin("packages/crypto/src/weierstrass.wac", 312, "borrow = d < 0 ? 1 : 0;", false,
-        "The borrow inside that same loop."),
-    Pin("packages/crypto/src/weierstrass.wac", 340, "if (jacIsInfinity(shared)) { trap; }", true,
+    Pin("packages/crypto/src/weierstrass.wac", 294, "if (jacIsInfinity(shared)) { trap; }", true,
         "An ECDH result at infinity. P-256 has prime order, so the only point of small order " +
         "is the identity itself, and p256Decode rejects anything not on the curve — so a " +
         "validated peer point times a scalar in [1, n) cannot be the identity. Kept because " +
         "that argument depends on the validation above it staying correct."),
-    Pin("packages/crypto/src/weierstrass.wac", 394, "if (jacIsInfinity(point)) { return false; }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 352, "if (jacIsInfinity(point)) { return false; }", false,
         "u1*G + u2*Q landing on the identity during verification. Constructible by an " +
         "attacker choosing r and s together, which is exactly why the check is here; not " +
         "constructible by accident, which is why no test drives it."),
-    Pin("packages/crypto/src/weierstrass.wac", 416, "if (jacIsInfinity(point)) { return u8[0](); }", true,
+    Pin("packages/crypto/src/weierstrass.wac", 375, "if (jacIsInfinity(point)) { return u8[0](); }", true,
         "k*G at infinity during signing, which needs k = 0 mod n — already rejected above. " +
         "FIPS 186-4 specifies the retry anyway."),
-    Pin("packages/crypto/src/weierstrass.wac", 421, "if (isZeroBE(r)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 381, "if (scnIsZero(rN)) { return u8[0](); }", false,
         "r = 0 during signing. FIPS 186-4 requires the retry; the probability is about 2^-256 " +
         "and no test can produce it without solving for k."),
-    Pin("packages/crypto/src/weierstrass.wac", 425, "if (isZeroBE(s)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 392, "if (scnIsZero(sN)) { return u8[0](); }", false,
         "s = 0 during signing. As above."),
+    Pin("packages/crypto/src/scalarn.wac", 79, "if (be.len() % 4 != 0) { trap; }", true,
+        "`scnFromBytes` given a byte count that is not a whole number of 32-bit limbs. Every " +
+        "caller passes `Curve.order`'s length or a value derived from it, and both curve orders " +
+        "are a whole number of bytes *and* of words — 32 and 48. `fieldp.wac`'s `fpFromBytes` " +
+        "carries the same guard for the same reason and is pinned the same way. It stays because " +
+        "the alternative to trapping is a limb count rounded down and a value silently missing " +
+        "its top bytes."),
+    Pin("packages/crypto/src/scalarn.wac", 184, "if (a.len() != len || b.len() != len) { trap; }", true,
+        "`scnMont` given operands of the wrong width. The two operands and the modulus all come " +
+        "from one `ScOrder` in every call site, so the widths agree by construction — and " +
+        "`fpMul` has the identical guard. What it prevents is worse than a wrong answer: the " +
+        "inner loops are bounded by `len` from the modulus, so a short operand would be read " +
+        "past its end."),
+    Pin("packages/crypto/src/scalarn.wac", 297, "if ((n0 & 1) == 0) { trap; }", true,
+        "Newton's iteration for `-n^-1 mod 2^32` needs an odd modulus, and both group orders " +
+        "are prime. **Unreachable through any input this repository has**, and kept because the " +
+        "iteration does not fail on an even `n0` — it converges to something, and the check " +
+        "below is what notices. Nothing constructs an `ScOrder` from anything but a curve's " +
+        "order; the day something does, this is the sentence that explains the trap."),
+    Pin("packages/crypto/src/scalarn.wac", 300, "if (((n0 * x) & LOW32) != 1) { trap; }", true,
+        "**The assertion on the derived constant, which is the point of deriving it.** Five " +
+        "Newton steps are exact for a 32-bit word, so this cannot fire — and a wrong `ninv` is " +
+        "the failure this file's header is about: `scnMont` would fail to clear the bottom limb, " +
+        "the shift would carry rubbish down, and the output would be a plausible number that is " +
+        "not the product. Checked where it is computed rather than trusted, because there is no " +
+        "later point at which the mistake looks like a mistake.\n" +
+        "         It is not dead code, and that was measured rather than argued: four Newton " +
+        "steps instead of five makes `test/wac/scalarn_test.wac` trap immediately."),
     Pin("packages/crypto/src/bcryptpbkdf.wac", 134, "if (dest >= origKeylen) { break; }", false,
         "The striped write's bound: it fires when a destination lands past the end of the " +
         "key, which needs a stride and a block count that overrun together. Seven key lengths " +

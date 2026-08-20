@@ -1,0 +1,320 @@
+// Arithmetic modulo a NIST curve's group order, in Montgomery form.
+//
+// The *other* field. `fieldp.wac` does the coordinates — modulo p, a Solinas prime whose
+// reduction is limb shuffles and additions. This does the scalars — modulo n, the order of
+// the group, which has no such structure: it is not a sum of a few powers of two, so
+// reduction needs a real multiply. Two files, because the two moduli are different shapes,
+// which is the same reason `packages/bls/src/fp.wac` is not this file either.
+//
+// ## Why this exists at all — `issues/system/0224`
+//
+// It replaces four functions that lived in `weierstrass.wac` and worked on `u8[]` big-endian
+// bytes: `scAdd`, `scMul`, `scInvert` and `scReduce`. `scMul` was double-and-add over the
+// *bits* of its operand — 256 rounds of a 32-byte add, about three million byte operations
+// per signature once `scInvert` ran it 384 times. Two things were wrong with that:
+//
+//   - it added only when the bit was set, which is `issues/system/0210`'s defect in this
+//     field. `ecdsaSign` passes the private key in that operand and the nonce in it again
+//     through `scInvert`, so a signature leaked both;
+//   - it was eleven of a signature's thirteen milliseconds, which is most of the factor of
+//     five over ed25519 that `issues/system/0209` was opened about.
+//
+// The branch half was fixed first, on bytes, and cost 1.86× because always-adding doubles
+// the work. This is the half that pays it back: 32-bit limbs and a schoolbook multiply
+// instead of bytes and a bit-serial one.
+//
+// ## Montgomery form, and what it costs to get in and out
+//
+// A value is held as `a·R mod n` with `R = 2^(32·len)`. `scnMont(x, y)` computes
+// `x·y·R⁻¹ mod n`, so two values already in the form multiply back into it with no division
+// anywhere — which is the whole trick, because n has no shape to exploit.
+//
+// **The form must not escape.** `scnEnter` multiplies by `R² mod n` to get in and `scnLeave`
+// by 1 to get out, and every export below says which side of that line its arguments are on.
+// Getting it wrong produces an implementation that is self-consistent and disagrees with
+// every test vector — `packages/bls/src/fp.wac` says the same thing about the same trick.
+//
+// ## Both constants are derived, not transcribed
+//
+// `fieldp.wac`'s header explains why: transcribing a table from a standard is how you get an
+// implementation that is wrong for every input, and reversing a word order while you do it is
+// how you get one that is wrong for most of them. So neither constant here is written down.
+//
+//   - **`ninv`**, `-n⁻¹ mod 2^32`, by five Newton steps on `x ← x·(2 − n₀·x)`. Each step
+//     doubles the number of correct low bits, from 1 to 32, and the result is *checked*
+//     against `n₀·x ≡ 1` before being returned;
+//   - **`r2`**, `R² mod n`, by `32·len` modular doublings starting from `R mod n` — which is
+//     `R − n`, and therefore one wrapped subtraction, because both curve orders are above
+//     `R/2`. That is 256 doublings for P-256 and 384 for P-384, about eight thousand
+//     operations, against roughly fifty thousand limb products for the inversion it enables.
+//     Sixteen per cent, paid once per signature. Caching it on `Curve` would remove it and
+//     would mean a constant that outlives the modulus it was derived from.
+//
+// ## Constant time
+//
+// Every loop below has a trip count fixed by `len`, and every conditional subtraction is done
+// either way with the answer chosen by a mask. The one branch on data is in `scnInvert`, over
+// the bits of the exponent — which is `n − 2`, a published constant, and is noted there.
+
+/** 32 ones, as the mask that keeps a limb. Written in decimal for `fieldp.wac`'s reason. */
+const i64 LOW32 = 4294967295;
+
+/**
+ * A group order and the two values derived from it.
+ *
+ * Built by `scOrder` from the big-endian bytes `Curve.order` carries. Nothing else should
+ * construct one, because the fields are only consistent together.
+ */
+export struct ScOrder {
+  /** n, as 32-bit limbs least significant first. */
+  i64[] n;
+  /** `-n⁻¹ mod 2^32`, so that `m = t[0]·ninv mod 2^32` makes `t + m·n` end in a zero limb. */
+  i64 ninv;
+  /** `R² mod n`, for entering Montgomery form. */
+  i64[] r2;
+}
+
+/** Big-endian bytes to 32-bit limbs, least significant first. The length must be a multiple of 4. */
+export i64[] scnFromBytes(u8[] be) {
+  if (be.len() % 4 != 0) { trap; }
+  i32 len = be.len() / 4;
+  i64[] h = i64[len]();
+  for (i32 i = 0; i < len; i++) {
+    i64 v = 0;
+    for (i32 b = 0; b < 4; b++) { v = (v << 8) | (be[i * 4 + b] as i64); }
+    h[len - 1 - i] = v;
+  }
+  return h;
+}
+
+/** Limbs back to big-endian bytes, `4·len` of them. */
+export u8[] scnToBytes(i64[] a) {
+  i32 len = a.len();
+  u8[] out = u8[4 * len]();
+  for (i32 i = 0; i < len; i++) {
+    i64 v = a[len - 1 - i];
+    for (i32 b = 0; b < 4; b++) {
+      out[i * 4 + b] = ((v >> (((3 - b) * 8) as i64)) & 255) as! i32;
+    }
+  }
+  return out;
+}
+
+/** `out = a - b`, wrapping. Returns the borrow out, which is 1 exactly when a < b. */
+i64 subLimbs(i64[] out, i64[] a, i64[] b) {
+  i64 borrow = 0;
+  for (i32 i = 0; i < a.len(); i++) {
+    i64 d = a[i] - b[i] - borrow;
+    borrow = (d >> (63 as i64)) & 1;
+    out[i] = d & LOW32;
+  }
+  return borrow;
+}
+
+/** `out = a + b`, wrapping. Returns the carry out of the top limb. */
+i64 addLimbs(i64[] out, i64[] a, i64[] b) {
+  i64 carry = 0;
+  for (i32 i = 0; i < a.len(); i++) {
+    i64 s = a[i] + b[i] + carry;
+    out[i] = s & LOW32;
+    carry = s >> (32 as i64);
+  }
+  return carry;
+}
+
+/** `h = pick ? t : h`, limb by limb and with no branch. `pick` must be 0 or 1. */
+void selectLimbs(i64[] h, i64[] t, i64 pick) {
+  i64 mask = 0 - pick;
+  for (i32 i = 0; i < h.len(); i++) { h[i] = h[i] ^ (mask & (h[i] ^ t[i])); }
+}
+
+/** `R mod n`, which is `R - n` because both curve orders are above `R/2`. One in Montgomery form. */
+export i64[] scnOne(ScOrder o) {
+  i32 len = o.n.len();
+  i64[] zero = i64[len]();
+  i64[] h = i64[len]();
+  subLimbs(h, zero, o.n);
+  return h;
+}
+
+/** Plain 1 — the multiplier that takes a value *out* of Montgomery form. */
+i64[] plainOne(i32 len) {
+  i64[] h = i64[len]();
+  h[0] = 1;
+  return h;
+}
+
+/**
+ * `(a + b) mod n`, on values already below n, with the reduction done either way.
+ *
+ * Keep the subtraction when the addition carried out — the true sum is then at least R, which
+ * is above n — or when the subtraction did not borrow, meaning the sum was at or above n
+ * already. One subtraction is the whole reduction because both operands are below n.
+ */
+export i64[] scnAdd(ScOrder o, i64[] a, i64[] b) {
+  i32 len = o.n.len();
+  i64[] h = i64[len]();
+  i64 carry = addLimbs(h, a, b);
+  i64[] t = i64[len]();
+  i64 borrow = subLimbs(t, h, o.n);
+  selectLimbs(h, t, carry | (1 - borrow));
+  return h;
+}
+
+/**
+ * `a·b·R⁻¹ mod n` — the Montgomery product, coarsely integrated operand scanning.
+ *
+ * One pass per limb of `b`: accumulate `a·b[i]` into the running total, then immediately fold
+ * in the multiple of n that clears the bottom limb and shift down by one. `len` passes of
+ * `2·len` products, so 128 of them for P-256 and 288 for P-384.
+ *
+ * **Every product is 32×32 and every accumulation fits 64 unsigned bits**, which is what makes
+ * this the right algorithm rather than folding `R − n` the way `fieldp.wac` folds its prime.
+ * That was tried: the fold's carry lands one limb above where the next operand is read, so the
+ * operand reaches 2^33 and `f[k]·v` needs 65 bits. Here `t[j] + a[j]·b[i] + carry` is at most
+ * `(2^32−1) + (2^32−1)² + (2^32−1)`, which is exactly `2^64 − 1`.
+ *
+ * The products wrap a signed `i64` and that is deliberate, for `fpMul`'s reason: the true value
+ * fits 64 *unsigned* bits, so `& LOW32` is the low word whatever the sign, and masking the
+ * arithmetic shift recovers the high word. Drop either mask and it is wrong only for the
+ * operands whose top bit happens to be set.
+ */
+export i64[] scnMont(ScOrder o, i64[] a, i64[] b) {
+  i32 len = o.n.len();
+  if (a.len() != len || b.len() != len) { trap; }
+  i64[] t = i64[len + 2]();
+  for (i32 i = 0; i < len; i++) {
+    i64 carry = 0;
+    for (i32 j = 0; j < len; j++) {
+      i64 x = t[j] + a[j] * b[i] + carry;
+      t[j] = x & LOW32;
+      carry = (x >> (32 as i64)) & LOW32;
+    }
+    i64 x = t[len] + carry;
+    t[len] = x & LOW32;
+    t[len + 1] = (x >> (32 as i64)) & LOW32;
+
+    i64 m = (t[0] * o.ninv) & LOW32;
+    carry = 0;
+    x = t[0] + m * o.n[0];
+    carry = (x >> (32 as i64)) & LOW32;
+    for (i32 j = 1; j < len; j++) {
+      x = t[j] + m * o.n[j] + carry;
+      t[j - 1] = x & LOW32;
+      carry = (x >> (32 as i64)) & LOW32;
+    }
+    x = t[len] + carry;
+    t[len - 1] = x & LOW32;
+    t[len] = t[len + 1] + ((x >> (32 as i64)) & LOW32);
+  }
+
+  // The result is below 2n and may need the whole of the extra limb: `t[len]` is 0 or 1, and a
+  // 1 means the value is at least R, which is above n. So subtract when that bit is set or when
+  // the subtraction does not borrow — the same condition `scnAdd` uses, for the same reason.
+  i64[] h = i64[len]();
+  for (i32 i = 0; i < len; i++) { h[i] = t[i]; }
+  i64[] s = i64[len]();
+  i64 borrow = subLimbs(s, h, o.n);
+  selectLimbs(h, s, t[len] | (1 - borrow));
+  return h;
+}
+
+/** Into Montgomery form: `a·R mod n`, from a plain value below n. */
+export i64[] scnEnter(ScOrder o, i64[] a) { return scnMont(o, a, o.r2); }
+
+/** Out of Montgomery form, to a plain value below n. */
+export i64[] scnLeave(ScOrder o, i64[] a) { return scnMont(o, a, plainOne(o.n.len())); }
+
+/**
+ * `1/a mod n` for a Montgomery-form `a`, answering in Montgomery form. By Fermat: n is prime,
+ * so `a^(n−2)` is the inverse.
+ *
+ * **The one branch on data in this file, and the data is public.** The exponent is `n − 2` —
+ * the published group order with two taken off its bottom limb, which needs no borrow because
+ * both orders end odd and above 2. Two runs with different secrets take the same path through
+ * it, so it is not a side channel; making it a select would double the multiplications to buy
+ * nothing.
+ *
+ * Square-and-multiply rather than an addition chain, for `fpInvert`'s reason: an inversion
+ * happens twice per signature and the multiplications an optimal chain would save are not worth
+ * the transcription risk of writing one.
+ */
+export i64[] scnInvert(ScOrder o, i64[] a) {
+  i32 len = o.n.len();
+  i64[] e = i64[len]();
+  for (i32 i = 0; i < len; i++) { e[i] = o.n[i]; }
+  e[0] = e[0] - 2;
+  i64[] result = scnOne(o);
+  i64[] base = i64[len]();
+  for (i32 i = 0; i < len; i++) { base[i] = a[i]; }
+  for (i32 limb = 0; limb < len; limb++) {
+    for (i32 bit = 0; bit < 32; bit++) {
+      if (((e[limb] >> (bit as i64)) & 1) != 0) { result = scnMont(o, result, base); }
+      base = scnMont(o, base, base);
+    }
+  }
+  return result;
+}
+
+/**
+ * Reduce a plain value of exactly `len` limbs mod n, by one conditional subtraction.
+ *
+ * One is enough because both orders are above `R/2`, so any value below R is below 2n. This is
+ * what a signature's `r` and the digest scalar need: they arrive as `4·len` bytes that are not
+ * guaranteed below n.
+ */
+export i64[] scnReduce(ScOrder o, i64[] a) {
+  i32 len = o.n.len();
+  i64[] h = i64[len]();
+  for (i32 i = 0; i < len; i++) { h[i] = a[i]; }
+  i64[] t = i64[len]();
+  i64 borrow = subLimbs(t, h, o.n);
+  selectLimbs(h, t, 1 - borrow);
+  return h;
+}
+
+/** Whether every limb is zero, reading all of them. */
+export bool scnIsZero(i64[] a) {
+  i64 acc = 0;
+  for (i32 i = 0; i < a.len(); i++) { acc = acc | a[i]; }
+  return acc == 0;
+}
+
+/**
+ * `-n⁻¹ mod 2^32`, by Newton's iteration on `x ← x·(2 − n₀·x)`.
+ *
+ * Each step doubles the number of correct low bits — 1, 2, 4, 8, 16, 32 — so five steps from
+ * `x = 1` are exact for a 32-bit word, and the loop is `n₀` odd's whole requirement. Both curve
+ * orders end odd, being primes.
+ *
+ * **The result is checked rather than trusted.** A wrong `ninv` does not produce a wrong answer
+ * in an obvious way: `scnMont` would fail to clear the bottom limb, the shift would carry
+ * rubbish down, and the output would be a plausible value that is not the product. That is the
+ * failure mode this whole file's header is about, so the invariant is asserted where it is
+ * derived.
+ */
+i64 ninvOf(i64 n0) {
+  if ((n0 & 1) == 0) { trap; }
+  i64 x = 1;
+  for (i32 i = 0; i < 5; i++) { x = (x * (2 - n0 * x)) & LOW32; }
+  if (((n0 * x) & LOW32) != 1) { trap; }
+  return (0 - x) & LOW32;
+}
+
+/**
+ * The order and its derived constants, from the big-endian bytes `Curve.order` holds.
+ *
+ * `r2` is `R² mod n` by `32·len` modular doublings from `R mod n`, which is `R − n`. Doubling
+ * rather than a written-down constant, and rather than a division: the arithmetic that would
+ * compute it directly is the arithmetic this is being built to provide.
+ */
+export ScOrder scOrder(u8[] orderBE) {
+  i64[] n = scnFromBytes(orderBE);
+  i32 len = n.len();
+  i64 ninv = ninvOf(n[0]);
+  // Placeholder r2, so `scnAdd` below has an order to work with. Only `n` is read by it.
+  ScOrder partial = ScOrder(n, ninv, i64[len]());
+  i64[] x = scnOne(partial);                 // R mod n
+  for (i32 i = 0; i < 32 * len; i++) { x = scnAdd(partial, x, x); }
+  return ScOrder(n, ninv, x);
+}

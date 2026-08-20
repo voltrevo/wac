@@ -1,0 +1,191 @@
+// Arithmetic modulo the group order, against long division.
+//
+// `packages/crypto/src/scalarn.wac` is Montgomery multiplication: two derived constants, a
+// coarsely-integrated multiply, and a form that values enter and leave. Every one of those is a place
+// where an implementation can be self-consistent and wrong — a wrong `ninv` fails to clear the bottom
+// limb and shifts rubbish down, and a value that never left the form is a plausible number that is not
+// the answer.
+//
+// ## The oracle is `packages/bignum`, and it is a different algorithm in a different package
+//
+// `mul` is schoolbook and `divmod` is long division, so `divmod(mul(a, b), n).r` is `(a·b) mod n`
+// computed with no Montgomery form, no derived constant and no fixed limb count. That matters more
+// than usual here: the byte-wise implementation this replaces would have been the obvious comparison
+// and is being deleted, so a differential against it would have made the retiree an oracle — which is
+// the arrangement rather than evidence about it, and `CLAUDE.md` says so. `bignum` stays.
+//
+// The bytes-to-`Big` bridge is `rsa.wac`'s, which is the repository's only one. Importing RSA into a
+// scalar test is an odd-looking edge and is still better than a second copy of a conversion that has to
+// agree with `bignum`'s normalisation.
+//
+// ## Inputs from SHA-256 rather than a generator
+//
+// Twenty-six `.wac` files declare their own `struct Rng` in five variants (`issues/system/0220`), and
+// this file does not need a twenty-seventh. `sha256` of a counter is deterministic, is already
+// imported by half this package, and gives 32 bytes at a time — two of them for P-384's 48.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Big, DivMod, add, mul, divmod } from "../../../bignum/src/big.wac";
+import { fromBytes, toBytes } from "../../src/rsa.wac";
+import { sha256 } from "../../src/sha256.wac";
+import { p256Order } from "../../src/p256.wac";
+import { p384Order } from "../../src/p384.wac";
+import {
+  ScOrder, scOrder, scnFromBytes, scnToBytes, scnAdd, scnMont, scnEnter, scnLeave,
+  scnInvert, scnReduce, scnOne, scnIsZero,
+} from "../../src/scalarn.wac";
+
+/** The `i`th test value, `len` bytes. */
+u8[] sample(i32 i, i32 len) {
+  u8[] seed = u8[4]();
+  seed[0] = (i >> 24) & 255;
+  seed[1] = (i >> 16) & 255;
+  seed[2] = (i >> 8) & 255;
+  seed[3] = i & 255;
+  u8[] a = sha256(seed);
+  if (len <= 32) {
+    u8[] out = u8[len]();
+    for (i32 k = 0; k < len; k++) { out[k] = a[k]; }
+    return out;
+  }
+  u8[] b = sha256(a);
+  u8[] out = u8[len]();
+  for (i32 k = 0; k < 32; k++) { out[k] = a[k]; }
+  for (i32 k = 32; k < len; k++) { out[k] = b[k - 32]; }
+  return out;
+}
+
+/** `(a·b) mod n`, by schoolbook multiply and long division. Nothing Montgomery about it. */
+u8[] mulModByDivision(u8[] a, u8[] b, u8[] n) {
+  DivMod d = divmod(mul(fromBytes(a), fromBytes(b)), fromBytes(n));
+  return toBytes(d.r, n.len());
+}
+
+/** The subject: enter the form, multiply, leave it. */
+u8[] mulModByMontgomery(ScOrder o, u8[] a, u8[] b) {
+  i64[] am = scnEnter(o, scnReduce(o, scnFromBytes(a)));
+  i64[] bm = scnEnter(o, scnReduce(o, scnFromBytes(b)));
+  return scnToBytes(scnLeave(o, scnMont(o, am, bm)));
+}
+
+void compareMultiplies(T t, string curve, u8[] orderBE) {
+  ScOrder o = scOrder(orderBE);
+  i32 len = orderBE.len();
+  for (i32 i = 0; i < 24; i++) {
+    u8[] a = sample(2 * i, len);
+    u8[] b = sample(2 * i + 1, len);
+    // Both sides reduce first, so the comparison is of the multiply rather than of the reduction.
+    u8[] ar = scnToBytes(scnReduce(o, scnFromBytes(a)));
+    u8[] br = scnToBytes(scnReduce(o, scnFromBytes(b)));
+    t.eqBytes(mulModByMontgomery(o, ar, br), mulModByDivision(ar, br, orderBE),
+              curve + " #" + itoa(i) + ": " + hex(ar) + " * " + hex(br));
+  }
+}
+
+export string test_the_montgomery_product_agrees_with_long_division(Core core, Cli cli) {
+  T t = T.create();
+  compareMultiplies(t, "P-256", p256Order());
+  compareMultiplies(t, "P-384", p384Order());
+  return t.report();
+}
+
+void compareEdges(T t, string curve, u8[] orderBE) {
+  ScOrder o = scOrder(orderBE);
+  i32 len = orderBE.len();
+  // The values a random sample will not produce: zero, one, n-1, and n-1 squared.
+  u8[] zero = u8[len]();
+  u8[] one = u8[len]();
+  one[len - 1] = 1;
+  // n itself must reduce to zero, which is the one input `scnReduce`'s single conditional
+  // subtraction is exactly on the boundary of.
+  t.isTrue(scnIsZero(scnReduce(o, scnFromBytes(orderBE))), curve + ": n did not reduce to zero");
+
+  i64[] top = scnFromBytes(orderBE);
+  i64[] minusOne = i64[len / 4]();
+  for (i32 i = 0; i < minusOne.len(); i++) { minusOne[i] = top[i]; }
+  minusOne[0] = minusOne[0] - 1;                                    // n - 1, which is below n
+  u8[] nm1 = scnToBytes(minusOne);
+
+  string[] names = string[]("0*0", "0*1", "1*1", "1*(n-1)", "(n-1)*(n-1)");
+  u8[][] lhs = u8[][](zero, zero, one, one, nm1);
+  u8[][] rhs = u8[][](zero, one, one, nm1, nm1);
+  for (i32 i = 0; i < names.len(); i++) {
+    t.eqBytes(mulModByMontgomery(o, lhs[i], rhs[i]), mulModByDivision(lhs[i], rhs[i], orderBE),
+              curve + " " + names[i]);
+  }
+}
+
+export string test_the_product_is_right_at_zero_one_and_n_minus_one(Core core, Cli cli) {
+  T t = T.create();
+  compareEdges(t, "P-256", p256Order());
+  compareEdges(t, "P-384", p384Order());
+  return t.report();
+}
+
+void checkRoundTrip(T t, string curve, u8[] orderBE) {
+  ScOrder o = scOrder(orderBE);
+  i32 len = orderBE.len();
+  for (i32 i = 0; i < 8; i++) {
+    u8[] a = scnToBytes(scnReduce(o, scnFromBytes(sample(100 + i, len))));
+    u8[] back = scnToBytes(scnLeave(o, scnEnter(o, scnFromBytes(a))));
+    t.eqBytes(back, a, curve + " #" + itoa(i) + ": entering and leaving the form changed it");
+  }
+  // And `scnOne` is 1 in the form: leaving it must give plain 1.
+  u8[] one = u8[len]();
+  one[len - 1] = 1;
+  t.eqBytes(scnToBytes(scnLeave(o, scnOne(o))), one, curve + ": scnOne is not one");
+}
+
+export string test_a_value_survives_entering_and_leaving_the_form(Core core, Cli cli) {
+  T t = T.create();
+  checkRoundTrip(t, "P-256", p256Order());
+  checkRoundTrip(t, "P-384", p384Order());
+  return t.report();
+}
+
+void checkInverses(T t, string curve, u8[] orderBE) {
+  ScOrder o = scOrder(orderBE);
+  i32 len = orderBE.len();
+  u8[] one = u8[len]();
+  one[len - 1] = 1;
+  for (i32 i = 0; i < 4; i++) {
+    i64[] a = scnReduce(o, scnFromBytes(sample(200 + i, len)));
+    if (scnIsZero(a)) { continue; }
+    i64[] am = scnEnter(o, a);
+    i64[] inv = scnInvert(o, am);
+    t.eqBytes(scnToBytes(scnLeave(o, scnMont(o, am, inv))), one,
+              curve + " #" + itoa(i) + ": a * (1/a) is not 1");
+  }
+}
+
+export string test_an_inverse_multiplies_back_to_one(Core core, Cli cli) {
+  T t = T.create();
+  checkInverses(t, "P-256", p256Order());
+  checkInverses(t, "P-384", p384Order());
+  return t.report();
+}
+
+void checkAdds(T t, string curve, u8[] orderBE) {
+  ScOrder o = scOrder(orderBE);
+  i32 len = orderBE.len();
+  Big n = fromBytes(orderBE);
+  for (i32 i = 0; i < 12; i++) {
+    i64[] a = scnReduce(o, scnFromBytes(sample(300 + 2 * i, len)));
+    i64[] b = scnReduce(o, scnFromBytes(sample(300 + 2 * i + 1, len)));
+    u8[] got = scnToBytes(scnAdd(o, a, b));
+    // `bignum`'s own add, then one division: a sum of two values below n is below 2n.
+    Big sum = add(fromBytes(scnToBytes(a)), fromBytes(scnToBytes(b)));
+    t.eqBytes(got, toBytes(divmod(sum, n).r, len),
+              curve + " #" + itoa(i) + ": " + hex(scnToBytes(a)) + " + " + hex(scnToBytes(b)));
+  }
+}
+
+export string test_addition_agrees_with_long_division(Core core, Cli cli) {
+  T t = T.create();
+  checkAdds(t, "P-256", p256Order());
+  checkAdds(t, "P-384", p384Order());
+  return t.report();
+}
