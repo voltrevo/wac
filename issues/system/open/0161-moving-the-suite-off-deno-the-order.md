@@ -37,7 +37,7 @@ directory:
 |---|---|---|
 | `compiler` | 17,995 in 17 | **the reference compiler is TypeScript**, and these test it. `packages/wacc` is the wac port measured against it, so translating these would delete the differential — the same argument as `jsxBoundary`, at the scale of the whole directory. `CONTRIBUTING.md` owns the discipline |
 | `tools` | 3,329 in 21 | mostly TypeScript tools testing themselves — `mutate`, `deadexports`, `docSignatures`, `install`, `lane`, `suiteGate`. The wac-side ones are already `tools/wac/*_test.wac`, twenty-one files |
-| `harness` | 1,603 in 14 | the harness is the TypeScript that runs the suite; these test it |
+| `harness` | 1,603 in 14 | the harness is the TypeScript that runs the suite; these test it. Swept 2026-08-20 — twelve are its own machinery (the pool, the deadline, the port allocator, the reaper, the build cache, the graph memo, the two runners' attribution). The other two are load-bearing in their own right and named below |
 
 ### `tools/`, swept on 2026-08-20
 
@@ -70,6 +70,16 @@ than a translation:
   quote, which is their call rather than mine.
 
 The rest test a TypeScript tool, which is the ordinary case.
+
+Two in `harness/` are worth naming rather than counting:
+
+- **`harness/wac/hostless.test.ts` is the alternative-host check and is the point rather than a
+  leftover.** It runs every wac test that needs nothing from the host under Deno *as well*, which is
+  `CLAUDE.md`'s "the browser is not scaffolding — kernel+wasmtime AND Deno/Node/browser, both". A wac
+  suite that only ever ran under the wac binary would stop noticing the day the two disagreed.
+- **`harness/covTableParity.test.ts` compares the two compilers' coverage tables** point kind by point
+  kind. The reference is half of that differential, so translating it deletes the comparison — the same
+  argument `jsxBoundary.test.ts` turns on.
 
 None of that is the same kind of remainder as `packages/`. It is the JavaScript half of a repository
 whose point is a language that compiles to wasm and a host that runs it in both worlds — `CLAUDE.md`'s
