@@ -1,5 +1,7 @@
 // `wac app` — a program that runs by being run, and calls out to the `wac` on the machine.
 //
+// `[§wac-cli-app-4mt8qzv]` `[§wac-cli-app-grants-8xr2knw]` `[§wac-cli-app-skew-3vq9mkt]`
+//
 // The artefact is a shell preamble with a wasm module glued to the end: `./thing` execs
 // `wac app-run "$0"`, which finds the module inside the file it was pointed at. So it is one file,
 // it is executable, it survives an `scp`, and it is a few hundred KB rather than the 67 MB a
