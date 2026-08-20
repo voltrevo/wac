@@ -85,6 +85,13 @@ Case[] cases() {
          "poly1305($KEY, " + block16() + ")", 32, all4()),
     // Two scalars only: 1.8M events per run, and the point is made without four of them.
     Case("x25519Base", "packages/crypto/src/x25519.wac", "x25519Base($KEY)", 32, i32[](0, 1)),
+    // **The signing row `x25519Base` was standing in for and could not stand in for.** A ladder
+    // being uniform is a result about a ladder; signing is a different scalar, a different reduction
+    // and a different secret, and `ed25519Sign` parted at `ed25519.wac:334` — `scReduce`'s compare —
+    // for as long as this table had a key-exchange row and no signing one. `issues/system/0225`, and
+    // the same omission as `p256Sign`'s in `issues/system/0224`.
+    Case("ed25519Sign", "packages/crypto/src/ed25519.wac",
+         "ed25519Sign($KEY, " + block16() + ")", 32, i32[](0, 1)),
     Case("ghash", "packages/crypto/src/ghash.wac", "ghash($KEY, " + block16() + ")", 16, all4()),
     Case("aesExpandKey", "packages/crypto/src/aes.wac", "aesExpandKey($KEY)", 16, all4()),
     Case("aesEncrypt", "packages/crypto/src/aes.wac",
@@ -111,6 +118,21 @@ Case[] cases() {
     // Included even though the answer is known in advance — bcrypt indexes its S-boxes with state
     // derived from the password, by design — because "we did not measure it" and "it is fine" look
     // identical in a table that omits the row.
+    // **ML-KEM had no row at all**, which is how `mod`'s ternary on a coefficient sat on the
+    // decapsulation path unmeasured. `issues/system/0226`.
+    //
+    // This is the secret-dependence half, and **getting the differential's scope right took three
+    // attempts** — the probe's header has all three. Twice it reported a divergence at
+    // `mlkem.wac:201` that is not a side channel: the rejection-sampling loop's trip count depends
+    // on ρ, and ρ is published inside the encapsulation key, so any two *keys* are two different
+    // public keys. A decapsulation key determines its own, so what varies here is the secret vector
+    // inside one fixed keypair.
+    //
+    // The half that matters more is whether an *invalid* ciphertext behaves differently from a valid
+    // one — a `Case` here is one `$KEY` and a fixed public input, so it varies the secret and cannot
+    // ask that. `test/wac/constanttime_test.wac` asks it.
+    Case("kemDecapsSecret", "packages/crypto/test/wac/mlkem_probe.wac", "kemDecapsSecret($KEY)", 64,
+         i32[](0, 1)),
     Case("bcryptPbkdf", "packages/crypto/src/bcryptpbkdf.wac",
          "bcryptPbkdf($KEY, " + block16() + ", 32, 1)", 16, i32[](0, 1)));
 }

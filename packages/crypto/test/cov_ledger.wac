@@ -9,7 +9,7 @@
 // listed here is expected to be covered and the run fails if it is not — and anything listed that *does*
 // get covered fails too, since the reason has stopped holding. `issues/system/0222`.
 //
-// ## 1135 of 1166, against the TypeScript's 974 of 1053
+// ## 1123 of 1154, against the TypeScript's 974 of 1053
 //
 // More points seen *and* fewer missed, and the reason is one thing: `harness/wacCoverage.ts` could not
 // call a test that takes an argument. `runTestExports` skips any whose `fn.length > 0`, because
@@ -77,7 +77,7 @@ string[] cases() { return string[]("trapCase:130", "trapProbe:35"); }
 /** Points nothing here reaches, each with the argument for it. */
 Pin[] pins() {
   return Pin[](
-    Pin("packages/crypto/src/ed25519.wac", 326, "if (byteShift + i < 64)", true,
+    Pin("packages/crypto/src/ed25519.wac", 339, "if (byteShift + i < 64)", true,
         "The bound holds by construction: this shifts a 32-byte value left within a 64-byte " +
         "buffer, and `byteShift` is derived from the same bit count that sizes the loop. The " +
         "guard is what makes the shift correct *as written* rather than by the caller's " +
@@ -204,7 +204,7 @@ Pin[] pins() {
         "The anti-hang guard the comment beside it describes, and it only fires once the " +
         "write above has placed nothing — which is the same arrangement as the entry for line " +
         "134. The two go together and will go together."),
-    Pin("packages/crypto/src/mlkem.wac", 174, "if (at + 3 > stream.len()) { trap; }", true,
+    Pin("packages/crypto/src/mlkem.wac", 194, "if (at + 3 > stream.len()) { trap; }", true,
         "Rejection sampling reading past its XOF stream. The stream is squeezed to a length " +
         "chosen for the worst case — three bytes per pair of candidates, with room for the " +
         "rejections — so `sampleNTT` cannot run out. Kept because the bound is what makes the " +
