@@ -53,23 +53,30 @@ freeDenoCache() {
 #
 # This decides nothing about policy — 0213a's options are somebody else's call and its own note says so.
 # It makes the starvation say its own name.
-starveKey() {
-  local oldest
+# **Computed once, before anything moves it.** The key is derived from `origin/master..HEAD`, and a
+# successful push updates the local `origin/master` ref — so recomputing it afterwards asks about an empty
+# range and answers nothing. The first version did exactly that and left the file behind on a run that
+# landed, so the next run would have opened with a stale banner about a batch that was already in.
+STARVE_FILE=""
+starveInit() {
+  local oldest who
   oldest=$(git rev-list origin/master..HEAD 2>/dev/null | tail -1)
-  [ -z "$oldest" ] && return 1
-  local who=${PWD}
-  who=$(printf '%s' "$who" | sed -n 's;.*/\(agent-[a-z0-9]*\)/.*;\1;p')
+  [ -z "$oldest" ] && return 0
+  who=$(printf '%s' "$PWD" | sed -n 's;.*/\(agent-[a-z0-9]*\)/.*;\1;p')
   [ -z "$who" ] && who=unknown
-  printf '/tmp/wac-starve-%s-%s' "$who" "${oldest:0:12}"
+  STARVE_FILE="/tmp/wac-starve-${who}-${oldest:0:12}"
 }
-starveCount() { local f; f=$(starveKey) || { echo 0; return; }; cat "$f" 2>/dev/null || echo 0; }
+starveCount() {
+  [ -z "$STARVE_FILE" ] && { echo 0; return; }
+  cat "$STARVE_FILE" 2>/dev/null || echo 0
+}
 starveBump() {
-  local f n
-  f=$(starveKey) || return 0
-  n=$(cat "$f" 2>/dev/null || echo 0)
-  echo $((n + 1)) > "$f"
+  [ -z "$STARVE_FILE" ] && return 0
+  echo $(($(starveCount) + 1)) > "$STARVE_FILE"
 }
-starveClear() { local f; f=$(starveKey) || return 0; rm -f "$f"; }
+starveClear() { [ -n "$STARVE_FILE" ] && rm -f "$STARVE_FILE"; return 0; }
+
+starveInit
 
 starved=$(starveCount)
 if [ "${starved:-0}" -gt 0 ]; then
