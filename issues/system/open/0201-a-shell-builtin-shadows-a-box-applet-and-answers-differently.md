@@ -59,3 +59,33 @@ The first is cleaner and the second is smaller. Filed rather than picked, becaus
 Found while moving the operand sweep to a pure-wac in-process replay (`issues/system/0193`). The replay
 names the two cases and skips them, pointing here; when this is fixed the skip list empties and the
 replay's count assertion fails until it is raised.
+
+## Measured: only two of the four shadowed names diverge — agent-a, 2026-08-20
+
+The issue says *"`ls` is in the same list and is worth checking for the same reason"*. Checked, and the
+answer narrows the decision rather than widening it.
+
+Cross-referencing `builtinNames()` (25 names) against `packages/box/src/applets/` (62) gives **four**
+names that are both a shell builtin and an applet: `echo`, `ls`, `mkdir`, `rm`. Each compared three ways
+— GNU, the applet through `box`, and the builtin through the shell:
+
+| command | GNU | box applet | shell builtin |
+|---|---|---|---|
+| `mkdir` (no operand) | `missing operand` + `Try … --help` | **same** | one line — **diverges** |
+| `rm` (no operand) | `missing operand` + `Try … --help` | **same** | one line — **diverges** |
+| `ls /nope-xyz` | `ls: cannot access '/nope-xyz': No such file or directory` | same | **same** |
+| `echo --bad` | `--bad` | `--bad` | `--bad` |
+
+So `ls` and `echo` agree everywhere, and the divergence is exactly the two already reported — both on the
+missing-operand path, which is the path `lib/operands.wac` exists to standardise and which the builtins do
+not go through.
+
+**What that does to the decision.** Option two — keep the builtins and make them say what their applets
+say — is smaller than it looked: it is two error paths, not four commands, and the sentence to copy is
+already written in `missingOperand`. Option one is unchanged. This does not pick between them; it removes
+the unknown that made the second look open-ended.
+
+The three-way comparison is worth having as a test whichever way it goes, since nothing currently compares
+*the shell's* answer against GNU for a shadowed name — which is why this was invisible. Not added here: it
+would assert the divergence, and the replay in `issues/system/0193` already names and skips these two
+cases, so the tripwire exists.
