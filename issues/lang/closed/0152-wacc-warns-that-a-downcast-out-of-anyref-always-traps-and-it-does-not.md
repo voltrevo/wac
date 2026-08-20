@@ -1,6 +1,7 @@
 # 0152 — wacc warns that a downcast out of `anyref` always traps, and it does not
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-17
@@ -97,3 +98,38 @@ Two smaller things noticed beside it, neither filed separately:
 - The byte-for-byte generator differential and the emit sweep evidently carry no program that
   downcasts out of `anyref`, or this would have shown as a diagnostic mismatch long ago. That is a
   corpus gap rather than a second bug, but it is the reason a divergence this plain survived.
+
+## Fixed — 2026-08-20
+
+`shareAncestor` walks the struct parent chain, and **nothing declares `anyref` as a parent** — so the
+walk ran off the end and answered "no common ancestor" for a cast that always succeeds. Two lines,
+using the condition `assignable` already applies to an `anyref` slot:
+
+```wac
+if (ac == "anyref") { return bc == "i31ref" || isReferenceType(c, bc); }
+if (bc == "anyref") { return ac == "i31ref" || isReferenceType(c, ac); }
+```
+
+`i31ref` is named separately for the reason `assignable` names it separately: an integer packed into a
+reference is a reference, and that is the whole point of the type.
+
+**wacc and the reference now agree on all three shapes**, which is what makes this a closed divergence
+rather than a quietened warning:
+
+| program | wacc | reference |
+|---|---|---|
+| `anyref as! S` — the report | no warning | no warning |
+| `A as! B`, unrelated structs | warns | warns |
+| `anyref as! i31ref` — `casts.md`'s own spelling | no warning | no warning |
+
+And `anyref as! i32` is still `wrong cast operator for these types`: a **primitive** shares nothing with
+`anyref`, so the fix does not reach it.
+
+Pinned in `packages/wacc/test/wac/warnings_test.wac`, beside the rule it belongs to, because that file
+exists for exactly this — *"the direction that matters is the false alarm"*. Not in `spec/cases`, whose
+expectations cannot express "does not warn". **Canaried by reverting the two lines:** the test fails with
+`warned on a downcast out of anyref, which succeeds`, and the unrelated-structs case in the same test
+keeps passing — so the rule was fixed rather than lost.
+
+Measured: 221 of 221 cases, 53 typecheck cases, the generated sweep clean, specEmit 419/419, and
+std/platform, box and wacc's own example all still check.

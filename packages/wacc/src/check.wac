@@ -5368,6 +5368,16 @@ bool isCastRef(C c, string t) {
 bool shareAncestor(C c, string a, string b) {
   string ac = withoutNull(a) == "" ? a : withoutNull(a);
   string bc = withoutNull(b) == "" ? b : withoutNull(b);
+  // **`anyref` is the top of the reference hierarchy**, so it shares an ancestor with every reference
+  // and a cast to or from it is the documented way down: `spec/spec/casts.md` gives
+  // `i31ref x = val as! i31ref;` in as many words. Walking the struct parent chain never reaches
+  // `anyref` — nothing declares it as a parent — so this answered "no common ancestor" and warned that
+  // a cast which succeeds always traps (`issues/lang/0152`). The reference does not warn.
+  //
+  // The condition is the one `assignable` already uses for an `anyref` slot, deliberately: `i31ref` or
+  // a reference. A **primitive** shares nothing with `anyref`, so `anyref as! i32` keeps its complaint.
+  if (ac == "anyref") { return bc == "i31ref" || isReferenceType(c, bc); }
+  if (bc == "anyref") { return ac == "i31ref" || isReferenceType(c, ac); }
   // **Two variants of one enum are siblings**, in exactly the sense two structs with one parent are:
   // `y ? E.A(3) : E.B(4)` is an `E`, and each branch has its own variant's type. The parent chain
   // cannot say so — a variant is registered as a struct with no parent — so the enum that owns them
