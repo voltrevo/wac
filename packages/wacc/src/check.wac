@@ -2770,6 +2770,12 @@ export string typeOfExpr(C c, Expr e) {
     }
     case Index(arr, index): {
       string a = typeOfExpr(c, arr);
+      // **`s[i]` is a one-character string**, not a byte and not unknown — `spec/spec/strings.md`
+      // §Indexing. The emitter's twin has said so for a while, in the same words; this side answered
+      // `typeNone()` because a string is not an array name, and everything downstream that needed the
+      // type went quiet with it. `s[0] - 1` is `string - i32` and was accepted, and `i32 n = s[0];`
+      // was accepted, while the *same rules* refuse `s - 1` and `i32 n = s;`. `issues/lang/0159`.
+      if (a == "string") { return "string"; }
       if (!isArrayName(a)) { return typeNone(); }
       string elem = dropLast(a, 2);
       // Reading a packed element **widens**: `bytes[i]` from a `u8[]` is an i32-shaped value, which

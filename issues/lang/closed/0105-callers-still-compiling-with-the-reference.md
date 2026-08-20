@@ -290,7 +290,7 @@ it: **the reference is also the only implementation of wapy.**
 Everything in the table above is now either done or deliberate:
 
 - **the ledgers** that were "waiting on ledgers nobody here should rewrite" closed under
-  [0112](../closed/0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md) —
+  [0112](0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md) —
   `coverage:all` is 19 of 19 under wacc, three runs running.
 - **`tools/fuzzBoundary.ts`, `packages/zstd/bench/corpus.ts`, `packages/wacc/tools/specCases.ts`**
   keep the reference on purpose, each for a reason written beside it.

@@ -21,7 +21,7 @@ $ LC_ALL=C.UTF-8 wc -w < f         2      <- the ambient environment, and what b
 
 `packages/box/test/corpus.test.ts` runs every script twice — once through bash, once through a
 shell built from the applets — with `env: { LC_ALL: "C", … }, clearEnv: true`. Since
-[0143](../closed/0143-box-wc-counts-words-by-ascii-whitespace-only.md), `box`'s `wc -w` splits
+[0143](0143-box-wc-counts-words-by-ascii-whitespace-only.md), `box`'s `wc -w` splits
 words and judges printability by **code point**, which matches `wc(1)` under this machine's ambient
 `C.UTF-8` and not under the pinned `C`. So a corpus script that feeds a non-ASCII byte to `wc`
 disagrees on the locale rather than on the shell.

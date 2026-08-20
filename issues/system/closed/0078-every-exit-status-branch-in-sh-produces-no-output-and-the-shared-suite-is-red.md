@@ -63,7 +63,7 @@ commit, so the suite grew at the same time; whether that matters is for whoever 
 Not a stale wac compiler. That was the first hypothesis, since a stale one makes other agents'
 packages look broken — the count is identical at 21 commits behind and freshly pulled.
 
-Probably related to [0076](../closed/0076-an-app-worker-runs-main-once-so-a-test-pays-a-fresh-one-per-case.md),
+Probably related to [0076](0076-an-app-worker-runs-main-once-so-a-test-pays-a-fresh-one-per-case.md),
 which is about the same worker path, though that one is a performance report and this is a wrong
 answer.
 

@@ -50,7 +50,7 @@ only rather than emit, run it as a separate task the push gate calls rather than
 
 ## Notes
 
-Not the same as [0076](../closed/0076-an-app-worker-runs-main-once-so-a-test-pays-a-fresh-one-per-case.md),
+Not the same as [0076](0076-an-app-worker-runs-main-once-so-a-test-pays-a-fresh-one-per-case.md),
 which is about the cost of running a program a test already builds. This is about programs no test
 builds at all.
 

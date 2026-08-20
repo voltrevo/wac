@@ -1,7 +1,7 @@
 # 0159 — arithmetic on a string operand silently deletes the function that contains it
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — the checker knows a string index is a string, so the rules it already had now fire
+- **Fixed in:** the commit this line arrived in
 - **Reported by:** agent-b
 - **Date:** 2026-08-19
 - **Kind:** diagnostic
@@ -85,6 +85,40 @@ to resolve to nothing and emit nothing for the operand, which is exactly what a 
 value short looks like. If that is right, the fix is a diagnostic at resolution and the emit paths need
 no change.
 
-Related but not the same: [0155](0155-a-build-that-emitted-no-code-reports-success.md) is a build that
-emitted *nothing* reporting success; this one emits almost everything. [0154](0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md)
+Related but not the same: [0155](../open/0155-a-build-that-emitted-no-code-reports-success.md) is a build that
+emitted *nothing* reporting success; this one emits almost everything. [0154](../open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md)
 shares the symptom of a manifest disagreeing with the module, from a different cause.
+
+## Fixed, and the fix is one line
+
+The rules were already there. `typeOfExpr`'s `Index` arm answered `typeNone()` for anything that is
+not an *array*, so `s[0]` had no type and every rule that needed one went quiet:
+
+    i32 n = s;      →  error: initialiser does not match the declared type   ← the rule exists
+    i32 n = s[0];   →  1 file(s), no diagnostics                             ← it could not see it
+
+`spec/spec/strings.md` §Indexing: *"`s[i]` decodes the UTF-8 codepoint starting at byte index `i` and
+returns it as a single-character string"*. The emitter's twin has said so for a while, in the same
+words. Adding the case to the checker refuses both this issue and `i32 n = s[0];` with the existing
+messages:
+
+    return s[0] - 1;   error: this operator does not take an operand of that kind
+    i32 n = s[0];      error: initialiser does not match the declared type
+
+`spec/cases/0206-arithmetic-on-a-string-index.wac` and
+`spec/cases/0207-a-string-index-into-an-i32-local.wac` are the cases, in the corpus both compilers read — **209 of 209 met by
+wacc**, and the reference's harness passes.
+
+### It broke two test fixtures, and they were wrong
+
+`typecheck_test.wac` listed `export i32 ok(string s) { return s[0]; }` and `export i32 ok() { string
+s = "hi"; return s[0]; }` among the *accepted* programs. Both are type errors — the reference answers
+*return: expected i32, found string*. The entries conflated "indexing a string is ordinary" (true,
+and what their comments meant) with "the result is an `i32`" (not true).
+
+The comment two lines above the second one is about exactly this: *"a quiet entry is a claim about
+the reference that nothing verified."* It had been verified for the `u32` index beside it and not for
+this. Both now return `string`, which keeps what the fixtures were for.
+
+Seventeen packages check clean, so nothing legitimate was refused — `box` at 172 files among them,
+and string indexing is everywhere in this repository.
