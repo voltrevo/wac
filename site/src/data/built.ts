@@ -21,25 +21,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 130886,
+  lines: 130931,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2556,
+  tests: 2562,
   programs: 81,
   pages: 11,
   /**
-   * The whole repository: the packages (2556), and the compiler, harness and tooling
+   * The whole repository: the packages (2562), and the compiler, harness and tooling
    * around them (1374).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3930,
+  testsAll: 3936,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 487,
+  wacTests: 489,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -62,7 +62,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4305, tests: 222 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1071, tests: 27 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 10 },
-  { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3283, tests: 42 },
+  { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3286, tests: 42 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
   { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7507, tests: 32 },
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4062, tests: 40 },
@@ -80,6 +80,6 @@ export const BUILT: BuiltPackage[] = [
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17363, tests: 313 },
   { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34537, tests: 267 },
   { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 1749, tests: 45 },
-  { name: "wactest", what: "Assertions for tests written in wac.", lines: 2061, tests: 28 },
+  { name: "wactest", what: "Assertions for tests written in wac.", lines: 2103, tests: 34 },
   { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3711, tests: 73 },
 ];

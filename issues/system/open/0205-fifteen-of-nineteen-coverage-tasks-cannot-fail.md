@@ -51,6 +51,44 @@ So the order that makes sense is: **give the drivers a way to see what the binar
 it then deletes; a flag that wrote it out would let a driver union the binary's measurement with its own.
 `0200` records that.
 
+## The first floor added, and there is no blocker left for the other fourteen — 2026-08-20
+
+`packages/datetime/test/cov_ledger.wac`, and the split reads **6 hold a coverage floor, 0 only check
+their own exemptions have not drifted, 15 report and cannot fail.**
+
+**The "Against" argument no longer applies to any of them.** It was that a floor is only honest where
+the driver can reach what the tests reach — and the check that matters is not whether a package's tests
+need a host, it is whether its *exercise* is wac. `wac covdump` runs the ordinary program path
+(`issues/system/0221`), so a wac exercise's `main` has a real `Core` and `Cli`.
+
+Counted: **all fourteen remaining report-only packages already have a `test/cov_exercise.wac`** —
+`bignum`, `bytes`, `codec`, `fmt`, `http`, `json`, `raster`, `regex`, `server`, `stream`, `unicode`,
+`url`, `wacpkg`, and `datetime` which now has the ledger. Not one is blocked. There is no
+`test/cov.ts` left in `packages/` at all.
+
+`datetime` went first because it reads **123 of 123**, so both lists in its ledger are empty — which is
+the strongest form of this ratchet rather than a placeholder: every branch point is expected to be
+covered, and the first one that is not fails by name. It also means the first floor needed no arguments
+to be written, so what is being tested here is the machinery and not somebody's prose.
+
+**Both directions canaried**, because with empty lists it would be easy to ship something that cannot
+fail:
+
+| perturbation | what it says |
+|---|---|
+| pin a line that *is* covered | `civil.wac:1 is listed as unreached but was covered. That reason no longer holds — drop the entry.` |
+| gut the exercise's `main` | `123 / 0 / 0.0%`, and `59 reachable branch point(s) uncovered` |
+
+And one attempt that was **not** a valid canary, which is worth recording: deleting the exercise's
+far-date loop left coverage at 123 of 123, because the day-by-day loop below it already reaches those
+branches. A perturbation that removes redundant work proves nothing, and it looked like a passing
+canary for a moment.
+
+The ordering for the rest is by how much argument each needs, which is how many points are uncovered:
+`codec` 186/190, `unicode` 105/108, `bytes` 73/80, `stream` 28/32, `regex` 573/649. A package at 88%
+wants seventy-six arguments, and writing seventy-six is how a ledger becomes a list nobody reads — so
+the low ones first, and the high ones may want their coverage raised before their floor is set.
+
 ## One trap for whoever does this, measured
 
 **Do not compare the two instruments on generic code.** `packages/std/src/map.wac` reads `56/56` from its
