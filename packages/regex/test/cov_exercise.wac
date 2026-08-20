@@ -1,0 +1,193 @@
+// Branch coverage for regex: the exercises, and nothing else.
+//
+//   deno task coverage:regex
+//   deno task coverage:regex --verbose
+//
+// The same patterns the tests use, plus the generator, because the compiler's interesting branches are
+// the quantifier shapes and the machine's are the opcodes — and only a wide pattern set reaches both.
+//
+// ## What this file is, after 2026-08-20 — `issues/system/0161`
+//
+// It was the package's `cov.ts`, which was these exercises plus a copy of the reporting.
+// `tools/wac/covreport.wac` is the reporting now, shared, so what is left here is the part that is
+// actually about regex. `covreport` builds *this* with `--coverage` and runs its `main`, and skips any
+// file with `/test/` in its path, so a driver's own branches cannot appear in the number.
+
+import { exec, accepts, execBasic, execExtended, basicAsExtended, whyBasic,
+         whyExtended } from "./probe.wac";
+
+/**
+ * xorshift32 with the seed the TypeScript used.
+ *
+ * `upto` rather than a bare `%` because the JavaScript took its remainder after `x >>>= 0`, so its
+ * draws were never negative. Two dozen copies of this struct exist — `issues/system/0220`.
+ */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  i32 upto(this, i32 n) {
+    i32 v = this.next() % n;
+    return v < 0 ? v + n : v;
+  }
+}
+
+string[] subjects() {
+  return string[](
+    "", "a", "b", "ab", "ba", "aa", "abc", "abcabc", "aaa", "aaaa", "xay", "xaby",
+    "a b", "  ", "a1b2", "123", "abc123", "_x_", "A", "aA", "\n", "a\nb", "-", "]", "[",
+    "aaaaaaaaaa", "abababab", "cba", "cab", "xyz");
+}
+
+string[] patterns() {
+  return string[](
+    "a", "abc", "", ".", "..", "a.c", ".*", "^a", "a$", "^a$", "^$", "^", "$", "^abc$",
+    "[abc]", "[^abc]", "[a-c]", "[^a-c]", "[a-cx-z]", "[-a]", "[a-]", "[]]", "[^]]", "[]",
+    "[0-9]", "[a-zA-Z]", "[\\n]", "[\\t]", "[.]", "[*]", "[a\\-c]", "[abc]+", "[^a]*",
+    "\\d", "\\D", "\\w", "\\W", "\\s", "\\S", "\\d+", "[\\d]", "[\\w]", "[\\da-f]",
+    "a*", "a+", "a?", "ab*", "a*b", ".*b", "a{2}", "a{2,}", "a{2,3}", "a{0,2}", "a{0}", "a{1}",
+    "(ab){2}", "(a|b){2,3}", "a*?", "a+?", "a??", "a{2,3}?", "a{0,2}?", "a{2,}?", "(ab)+?",
+    "(a)", "(a)(b)", "(a|b)", "a|b", "a|b|c", "(a|ab)c", "|a", "a|", "(?:a)", "((a))",
+    "(a)|(b)", "(a*)", "(a|b)*", "((a)|(b))c", "\\ba", "a\\b", "\\Ba", "\\b", "\\B",
+    "(a*)*", "(a*)+", "()*", "(){2,}", "(a?)*", "(a?)+", "()+", "(|a)+", "(a|)+b",
+    "\\.", "\\*", "\\\\", "\\n", "\\t", "\\0", "\\f", "\\v", "\\r",
+    "(?:(a)|b){2}", "(?:(a)|.*){2,}", "(a)(b)?", "\\d*\\d*?", "a(\\b|(a)?|b*){2}",
+    // **More than eight character classes in one pattern**, which is the only thing that grows
+    // the class table a second time: `newClass` starts at 8, and growing 8 to 16 is the one
+    // path that takes `classStart.len() * 2` and copies existing entries. The TypeScript
+    // reached it by luck out of 3,000 generated patterns and this port did not — two branches,
+    // found by diffing the uncovered lists. Written down rather than left to the generator,
+    // because a branch reached by chance is one a reordered corpus loses again.
+    "[ab][cd][ef][gh][ij][kl][mn][op][qr]");
+}
+
+/** Patterns the compiler must refuse, which is the only way to reach the failure paths. */
+string[] refused() {
+  return string[](
+    "(?=a)", "(?!a)", "(?<=a)", "(?<name>a)", "\\1", "(a)\\1", "*a", "+a", "?a", "(a", "a)",
+    "[a", "[z-a]", "a{2,1}", "\\", "[\\D]", "[\\W]", "[\\S]", "^?", "$*", "\\b+", "[\\",
+    // `"a{" + "9".repeat(4) + "}"` — a repeat count too large to be one.
+    "a{9999}", "(a){500}{500}");
+}
+
+string[] atoms() {
+  return string[](
+    "a", "b", "c", ".", "\\d", "\\w", "\\s", "[ab]", "[^a]", "[a-c]", "x", "1", "_",
+    "(a)", "(a|b)", "(?:ab)", "\\.", "^", "$", "\\b");
+}
+
+string[] quants() {
+  return string[]("", "", "", "*", "+", "?", "*?", "+?", "??", "{2}", "{1,2}", "{0,2}", "{2,}");
+}
+
+/**
+ * One generated piece, and **the order of the draws is the specification**.
+ *
+ * The JavaScript was `if (depth > 0 && next() % 4 === 0)`, which short-circuits: at depth 0 no number
+ * is drawn at all. Getting that wrong does not fail anything loudly — it produces a different corpus
+ * that still exercises the engine — so the coverage figure is the only thing that would notice, which
+ * is why the shape is copied rather than tidied.
+ */
+string piece(Rng r, string[] ats, string[] qs, i32 depth) {
+  if (depth > 0 && r.upto(4) == 0) {
+    i32 branches = 1 + r.upto(3);
+    string inner = "";
+    for (i32 k = 0; k < branches; k++) {
+      if (k > 0) { inner = inner + "|"; }
+      i32 n = 1 + r.upto(2);
+      for (i32 j = 0; j < n; j++) { inner = inner + piece(r, ats, qs, depth - 1); }
+    }
+    string open = r.upto(2) == 0 ? "(" : "(?:";
+    return open + inner + ")" + qs[r.upto(qs.len())];
+  }
+  return ats[r.upto(ats.len())] + qs[r.upto(qs.len())];
+}
+
+export i32 main() {
+  i32 seen = 0;
+
+  string[] subs = subjects();
+  string[] pats = patterns();
+  for (i32 i = 0; i < pats.len(); i++) {
+    u8[] p = pats[i].toBytes();
+    for (i32 j = 0; j < subs.len(); j++) {
+      seen = seen + exec(p, subs[j].toBytes(), 0).len();
+    }
+  }
+
+  string[] bad = refused();
+  for (i32 i = 0; i < bad.len(); i++) {
+    if (accepts(bad[i].toBytes())) { seen = seen + 1; }
+  }
+
+  // The fuzzer's generator, kept in step with `test/fuzz` by hand. The hand-written list above covers
+  // the constructs; this covers their combinations, which is where the quantifier wrapping and the
+  // jump fixups meet.
+  string[] ats = atoms();
+  string[] qs = quants();
+  Rng r = Rng(0x0badc0de);
+  for (i32 i = 0; i < 3000; i++) {
+    string pattern = "";
+    i32 parts = 1 + r.upto(3);
+    for (i32 k = 0; k < parts; k++) {
+      pattern = pattern + piece(r, ats, qs, 2);
+      if (r.upto(6) == 0) { pattern = pattern + "|"; }
+    }
+    seen = seen + exec(pattern.toBytes(), subs[r.upto(subs.len())].toBytes(), 0).len();
+  }
+
+  // A pattern that exhausts the step budget, which is its own return value. Forty `a`s.
+  string forty = "";
+  for (i32 i = 0; i < 40; i++) { forty = forty + "a"; }
+  seen = seen + exec("(a|a|aa)+b".toBytes(), forty.toBytes(), 0).len();
+
+  // ── The POSIX dialects, over the patterns their own tests use ──
+  //
+  // The same set as `test/basic.test.ts`, which is the file that judges these against `/bin/grep`.
+  // Both entry points get every pattern because a bracket expression means the same thing in both
+  // dialects and the *operators* are what differ, so running one and not the other would leave half
+  // of `basic.wac`'s translation table unreached.
+  string[] dp = string[](
+    // The six characters whose spelling is inverted between the dialects, both ways round.
+    "a|b", "a\\|b", "a+", "a\\+", "a?", "a\\?", "a{2}", "a\\{2\\}",
+    "(a)", "\\(a\\)", "\\(ab\\)*", "a*", "*a", "^*a", "\\(*a\\)",
+    "a.b", "a\\.b", "^ab", "ab$", "^ab$", "[ab]", "[|]", "[+?{}()]", "[^ab]",
+    "[]a]", "[^]a]", "a\\{2,3\\}", "\\(a\\|b\\)c", "x\\|", "\\(\\)",
+    "a\\\\b", "\\.", "\\*", "^", "$", "", "ab*c", "a\\|b\\|c",
+    // Bracket expressions, which are `posix.wac`'s half and are the same in both dialects.
+    "[[:alpha:]]", "[[:alnum:]]", "[[:digit:]]", "[[:upper:]]", "[[:lower:]]", "[[:space:]]",
+    "[[:blank:]]", "[[:cntrl:]]", "[[:print:]]", "[[:graph:]]", "[[:punct:]]", "[[:xdigit:]]",
+    "[^[:digit:]]", "[[:alpha:][:digit:]]", "[[:digit:]abc]", "[a-c[:space:]]",
+    "[]]", "[a-]", "[-a]", "[.a.]", "[=a=]", "[[:foo:]]", "[[:alpha:]", "[a",
+    // GNU's backslash anchors, which are the only thing the engine itself learnt.
+    "\\<a", "a\\>", "\\<abc\\>", "\\`a", "a\\'", "\\`abc\\'", "\\<", "\\>", "x\\<y");
+  string[] ds = string[](
+    "", "a", "b", "ab", "abc", "a|b", "a+b", "a?b", "a{2}", "aa", "aab",
+    "(a)", "*a", "a.b", "axb", "a\\b", "abab", "ac", "]a", "aaa", "A", "1", " ", "\t",
+    "a b", "-a-", "_a", "x<y", "x`y", "a'");
+  for (i32 i = 0; i < dp.len(); i++) {
+    u8[] pb = dp[i].toBytes();
+    // What a basic pattern translates to, which is the table `basic.wac` is.
+    seen = seen + basicAsExtended(pb).len();
+    for (i32 j = 0; j < ds.len(); j++) {
+      u8[] sb = ds[j].toBytes();
+      seen = seen + execBasic(pb, sb, 0).len() + execExtended(pb, sb, 0).len();
+    }
+  }
+
+  // The refusal paths, which are where a dialect says whose problem a pattern is.
+  string[] why = string[]("\\(a", "a\\)", "[a", "[z-a]", "a\\{2,1\\}", "\\", "(?=a)", "\\1",
+                          "[[:foo:]]");
+  for (i32 i = 0; i < why.len(); i++) {
+    u8[] pb = why[i].toBytes();
+    seen = seen + whyBasic(pb).len() + whyExtended(pb).len();
+  }
+
+  return seen;
+}

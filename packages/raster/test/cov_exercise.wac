@@ -1,0 +1,163 @@
+// Branch coverage for raster: the exercises, and nothing else.
+//
+//   deno task coverage:raster
+//   deno task coverage:raster --verbose
+//
+// The same exercises the tests run, plus the ones a test asserts about but does not vary: every
+// clipping edge, both glyph widths, a glyph the font does not have, and a damage rectangle that is
+// widened rather than set.
+//
+// **The clipping branches are the ones worth reaching deliberately.** Each of `fill`'s four bounds is
+// its own comparison, and a suite that only ever draws inside the surface leaves all four on one side
+// — which is exactly the arrangement that passes until somebody drags a window off the edge.
+//
+// ## What this file is, after 2026-08-20 — `issues/system/0161`
+//
+// It was the package's `cov.ts`, which was these exercises plus a copy of the reporting.
+// `tools/wac/covreport.wac` is the reporting now, shared. `covreport` builds *this* with `--coverage`
+// and runs its `main`, and skips any file with `/test/` in its path — which is also why the scenes
+// file it calls into has never been counted.
+//
+// **The text inputs are written as codepoints rather than as strings.** The TypeScript spelled them
+// `"abc⌚"` and mapped `codePointAt`; here the arrays are literal, which says what a wide glyph is
+// without a decoder in the middle of a coverage driver.
+
+import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFill, freshIsClean,
+         clippedAt, textEnd, inkOf, strideOf, damageOfTwo, undamageClears, negativeIsEmpty,
+         atOutside, rectDegenerate, glyphOffscreen, damagedShape, regionFirst, cleanHasNoPixels,
+         hitAt, partOf, partNone, partBody, partBar, partClose, raiseThenHit, gridRow, gridCursor,
+         gridScrolled, gridEmpty, gridWideTail, gridInk, caretInk, deskPress, deskDrag,
+         deskCloseDuringDrag, deskTyped, deskDrawn } from "./wac/scenes.wac";
+
+export i32 main() {
+  i32 seen = 0;
+
+  seen = seen + glyphs() + cellW() + cellH();
+  if (freshIsClean(16, 16)) { seen = seen + 1; }
+
+  // A window, which is fill, rect, text and damage together.
+  seen = seen + window(96, 48).len() + windowDamage(96, 48).len();
+
+  // **Each edge on its own**, so no single call can leave a bound untested: off the left, the top,
+  // the right, the bottom, entirely outside in both directions, and a zero-sized rectangle.
+  i32[] fx = i32[](-8,  4, 60,  4, -40, 200, 4, 4,  -4);
+  i32[] fy = i32[]( 4, -8,  4, 28, -40, 200, 4, 4,  -4);
+  i32[] fw = i32[](16,  8, 16,  8,   8,   8, 0, 8, 200);
+  i32[] fh = i32[]( 8, 16,  8, 16,   8,   8, 8, 0, 200);
+  for (i32 i = 0; i < fx.len(); i++) {
+    seen = seen + damageOfFill(64, 32, fx[i], fy[i], fw[i], fh[i]).len();
+  }
+  seen = seen + clippedAt(64, 32, 0, 0) + clippedAt(64, 32, 63, 31);
+
+  // A surface with no pixels at all, which is the degenerate case a window manager reaches when a
+  // window is collapsed rather than an error.
+  seen = seen + damageOfFill(0, 0, 0, 0, 4, 4).len();
+  if (freshIsClean(0, 0)) { seen = seen + 1; }
+
+  // Both glyph widths, a missing glyph, and a row that is entirely blank — the `bits == 0`
+  // short-circuit in the blit, reached by the space character rather than by anything drawn.
+  i32[] cps = i32[](0x41, 0x231A, 0xE000, 0x20, 0x2500, 0x2588);
+  i32[] rows = i32[](0, 8, 15, -1, 16);
+  for (i32 i = 0; i < cps.len(); i++) {
+    seen = seen + widthOf(cps[i]) + inkOf(cps[i]);
+    for (i32 j = 0; j < rows.len(); j++) { seen = seen + rowOf(cps[i], rows[j]); }
+  }
+
+  // Text: empty, one glyph, a mixed-width line, and one starting off the left edge so the per-glyph
+  // clip runs as well as the per-rectangle one.
+  seen = seen + textEnd(i32[0](), 0);
+  seen = seen + textEnd(i32[](0x41), 0);
+  seen = seen + textEnd(i32[](0x41, 0x231A, 0x20, 0x2500), 4);
+  seen = seen + textEnd(i32[](0x41, 0x41), -12);
+
+  // The paths a test asserts about but does not vary: the damage rectangle widening in each of its
+  // four directions, a surface with no area, `at` outside it, a frame with no area, and a glyph whose
+  // every row is clipped away.
+  seen = seen + strideOf() + negativeIsEmpty() + glyphOffscreen();
+  if (undamageClears()) { seen = seen + 1; }
+  if (rectDegenerate()) { seen = seen + 1; }
+  i32[] ax = i32[](20,  4, 20,  4);
+  i32[] ay = i32[](20,  4,  4, 20);
+  i32[] bx = i32[]( 4, 40,  4, 40);
+  i32[] by = i32[]( 4, 24, 24,  4);
+  for (i32 i = 0; i < ax.len(); i++) {
+    seen = seen + damageOfTwo(ax[i], ay[i], bx[i], by[i]).len();
+  }
+  i32[] ox = i32[](-1, 0, 8, 0, 3);
+  i32[] oy = i32[](0, -1, 0, 8, 3);
+  for (i32 i = 0; i < ox.len(); i++) { seen = seen + atOutside(ox[i], oy[i]); }
+
+  // The damage payload — `drawPixelsIn`'s arguments — including the clipped case and the empty one.
+  seen = seen + damagedShape(10, 5, 3, 2).len() + damagedShape(-4, -4, 8, 8).len();
+  seen = seen + regionFirst(4, 4) + regionFirst(0, 0) + regionFirst(-8, -8) + regionFirst(100, 100);
+  seen = seen + cleanHasNoPixels();
+
+  // Hit-testing: overlap, both edges, an empty desktop, every part, and a raise at each end.
+  i32[] stack = i32[](0, 0, 100, 100, 50, 50, 100, 100);
+  i32[] hx = i32[](10, 140, 60, 200, 0, 99, 100);
+  i32[] hy = i32[](10, 140, 60, 200, 0, 99, 100);
+  for (i32 i = 0; i < hx.len(); i++) { seen = seen + hitAt(stack, hx[i], hy[i]); }
+  seen = seen + hitAt(i32[0](), 5, 5);
+  seen = seen + partNone() + partBody() + partBar() + partClose();
+  i32[] px = i32[](5, 20, 20, 105, 93, 105);
+  i32[] py = i32[](5, 15, 30,  15, 15,  30);
+  for (i32 i = 0; i < px.len(); i++) {
+    seen = seen + partOf(10, 10, 100, 80, 20, 16, px[i], py[i]);
+  }
+  seen = seen + partOf(0, 0, 60, 10, 20, 16, 5, 5);   // shorter than its bar
+  seen = seen + partOf(0, 0, 60, 40, 20, 0, 59, 5);   // no close button
+  i32[] raises = i32[](0, 1, 5, -1);
+  for (i32 i = 0; i < raises.len(); i++) {
+    seen = seen + raiseThenHit(stack, raises[i], 60, 60).len();
+  }
+
+  // The grid: wrapping, both control characters, a wide glyph at the edge, scrolling with the
+  // scrollback full, empty and none, and the caret on an empty cell and over a character.
+  seen = seen + gridEmpty() + gridWideTail();
+  i32[] gc = i32[](6, 6, 6, 4, 4, 1, 4, 4);
+  i32[] gr = i32[](3, 3, 3, 3, 2, 1, 3, 3);
+  i32[][] gt = i32[][](
+    i32[]('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'),   // wraps
+    i32[]('a', 'b', '\n', 'c', 'd'),                 // newline
+    i32[]('a', 'b', 'c', '\r', 'X'),                 // carriage return
+    i32[]('a', 'b', 'c', 0x231A),                    // a wide glyph at the edge
+    i32[]('a', '\n', 'b', '\n', 'c'),                // more lines than rows
+    i32[]('a', 'b', 'c'),                            // one column
+    i32[0](),                                        // nothing at all
+    // **A codepoint the font has not got, inside a grid.** `put` widths it through
+    // `idx < 0 ? 1 : …`, and every other input here is a glyph that exists — so the missing-glyph
+    // side of that ternary was the one branch this port did not reach, found by diffing the
+    // uncovered lists against the TypeScript's. `0xE000` is the same private-use codepoint
+    // `widthOf` and `inkOf` are given above.
+    i32[]('a', 0xE000, 'b'));
+  for (i32 i = 0; i < gc.len(); i++) {
+    seen = seen + gridRow(gc[i], gr[i], gt[i], 0).len();
+    seen = seen + gridRow(gc[i], gr[i], gt[i], 1).len();
+    seen = seen + gridCursor(gc[i], gr[i], gt[i]).len();
+  }
+  i32[] abcd = i32[]('a', '\n', 'b', '\n', 'c', '\n', 'd');
+  i32[] maxes = i32[](0, 1, 8);
+  for (i32 i = 0; i < maxes.len(); i++) {
+    seen = seen + gridScrolled(4, 2, maxes[i], abcd, 0).len();
+  }
+  // A line nobody kept.
+  seen = seen + gridScrolled(4, 2, 8, i32[]('a', '\n', 'b', '\n', 'c'), 5).len();
+  seen = seen + gridInk(4, 1, i32[](0x231A)) + gridInk(4, 1, i32[]('A')) + gridInk(4, 1, i32[0]());
+  seen = seen + caretInk(4, 1, i32[0]()) + caretInk(4, 1, i32[]('A', 'B', '\r'));
+  seen = seen + caretInk(2, 1, i32[]('a', 'b'));     // the caret past the last column
+
+  // The desk: a press on each part and on the desktop, a drag with release, a close during a drag,
+  // typing into the focused window, and a full draw.
+  i32[] dx = i32[](15, 45, 300, 45, 100, 91, 15);
+  i32[] dy = i32[](40, 60, 300, 35,  35, 35, 15);
+  for (i32 i = 0; i < dx.len(); i++) { seen = seen + deskPress(dx[i], dy[i]).len(); }
+  seen = seen + deskDrag(45, 35, 200, 150).len();
+  seen = seen + deskDrag(300, 300, 200, 150).len();   // a drag that never took hold
+  seen = seen + deskCloseDuringDrag();
+  seen = seen + deskTyped(i32[]('h', 'i'), 0, 0);
+  seen = seen + deskTyped(i32[]('1', '2', '3', '4', '5', '6', '7', '8', '9'), 0, 1);
+  seen = seen + deskDrawn(200, 150).len();
+  seen = seen + deskDrawn(20, 20).len();              // smaller than the windows, so everything clips
+
+  return seen;
+}
