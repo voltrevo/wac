@@ -1,0 +1,314 @@
+// Branch coverage for http: the exercises, and nothing else.
+//
+//   deno task coverage:http
+//   deno task coverage:http --verbose
+//
+// The same corpus the tests use — well-formed messages, every prefix of one, the framing ambiguities,
+// and the mutation generator — because the rejection paths are most of this parser and only malformed
+// input reaches them.
+//
+// ## Three entry points in one program — `issues/system/0161`
+//
+// It was the package's `cov.ts`, which instrumented three modules and joined their counters.
+// `covreport` builds *one* program, so all three are imported here instead: the server-side parser,
+// the client's response parser and request writer, and — third — `packages/server`'s own probe,
+// because **the response *writer* is only reachable through a server**. Server's own coverage run
+// filters to `packages/server/` and would show `response.wac` as dead; this one filters to
+// `packages/http/` and sees it. Every point outside that prefix is excluded, so pulling another
+// package's probe in costs compile time and nothing else.
+//
+// Both probes export `parse`, hence the aliases.
+
+import { parse as parseRequest } from "./probe.wac";
+import { parse as parseResponse, buildRequest } from "./client_probe.wac";
+import { handle as serve } from "../../server/test/probe.wac";
+
+const i32 MAX_BODY = 1048576;
+/** 2020-06-15T00:00:00Z, the clock `packages/server`'s probe is pinned to. */
+const i64 NOW = 1592179200000;
+
+/**
+ * `charCodeAt(i) & 0xff` — **latin-1, not UTF-8**, which is what the TypeScript's `wire` did.
+ *
+ * It matters: the corpus below names bytes like `\x80` and `\xff` inside otherwise-ASCII messages, and
+ * `toBytes()` would encode those as two bytes each. A parser handed two bytes where the test means one
+ * is being asked a different question — and one it would probably answer the same way, which is what
+ * makes it worth being exact about rather than checking afterwards.
+ */
+u8[] wire(string s) {
+  u8[] u = s.toBytes();
+  u8[] out = u8[u.len()]();
+  i32 n = 0;
+  i32 i = 0;
+  while (i < u.len()) {
+    i32 b = u[i];
+    i32 cp = b;
+    i32 size = 1;
+    if (b >= 0xF0) { size = 4; cp = b & 0x07; }
+    else if (b >= 0xE0) { size = 3; cp = b & 0x0F; }
+    else if (b >= 0xC0) { size = 2; cp = b & 0x1F; }
+    for (i32 k = 1; k < size && i + k < u.len(); k++) { cp = (cp << 6) | (u[i + k] & 0x3F); }
+    out[n] = cp & 0xFF;
+    n = n + 1;
+    i = i + size;
+  }
+  u8[] r = u8[n]();
+  for (i32 k = 0; k < n; k++) { r[k] = out[k]; }
+  return r;
+}
+
+/** One control byte, as a string, so a message can name it without a raw byte in the source. */
+string ctl(i32 c) { return string.fromCodepoint(c); }
+
+/**
+ * xorshift32 with the TypeScript's seed, and `upto` because its draws were unsigned.
+ * `issues/system/0220` is the two dozen copies of this.
+ */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  i32 upto(this, i32 n) {
+    i32 v = this.next() % n;
+    return v < 0 ? v + n : v;
+  }
+}
+
+string[] cases() {
+  string SOH = ctl(1);
+  string HIGH = ctl(0x80);
+  return string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /path/to?x=1&y=2 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    "OPTIONS * HTTP/1.1\r\nHost: a\r\n\r\n",
+    "CONNECT example.com:443 HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET http://example.com/p HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1.0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
+    "GET / HTTP/1.1\r\nHost:a\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost:   a   \r\n\r\n",
+    "GET / HTTP/1.1\r\nX-Empty:\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1.1\r\nX-Tab:\tv\there\r\nHost: a\r\n\r\n",
+    "\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    // chunked, in every shape the decoder has a branch for
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nA\r\n0123456789\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\ntransfer-encoding: CHUNKED\r\n\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=1\r\nhello\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trailer: v\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n X: v\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX v\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n:v\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX: " + SOH + "\r\n\r\n",
+    // the framing refusals
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: +5\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: \r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: gzip\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 99999999\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nX: 1\r\n 2\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost : a\r\n\r\n",
+    // malformed request lines
+    "\r\n\r\n", "GET\r\n\r\n", "GET /\r\n\r\n", "GET / HTTP/1.1x\r\n\r\n", "GET / HTTP/2.0\r\n\r\n",
+    "GET / HTTP/1\r\n\r\n", "GET / http/1.1\r\n\r\n", " GET / HTTP/1.1\r\n\r\n",
+    "GET  / HTTP/1.1\r\n\r\n", "GE T / HTTP/1.1\r\n\r\n", "GET x HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /a" + SOH + "b HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /" + HIGH + " HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1.1\r\n: v\r\n\r\n", "GET / HTTP/1.1\r\nX Y: v\r\n\r\n",
+    "GET / HTTP/1.1\r\nNoColon\r\n\r\n", "GET / HTTP/1.1\r\nX: " + HIGH + "\r\n\r\n",
+    "GET / HTTP/1.1\r\nX: " + SOH + "\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\nGET /2 HTTP/1.1\r\n\r\n",
+    // malformed chunked
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nz\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5 \r\nhello\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloX0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nffffffff\r\n\r\n");
+}
+
+/** The response corpus, with the request method each one is an answer to. */
+string[] responses() {
+  string SOH = ctl(1);
+  return string[](
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nContent-Length:5\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nContent-Length:   5   \r\n\r\nhello",
+    "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nhi",
+    "HTTP/1.1 200\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 999 Weird\r\nContent-Length: 0\r\n\r\n",
+    // bodyless by rule
+    "HTTP/1.1 204 No Content\r\nContent-Length: 99\r\n\r\n",
+    "HTTP/1.1 304 Not Modified\r\n\r\n",
+    "HTTP/1.1 100 Continue\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n",
+    "HTTP/1.1 200 Connected\r\n\r\n",
+    // chunked
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;x=1\r\nhello\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-T: v\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nz\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloX0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n X: v\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX v\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX: " + SOH + "\r\n\r\n",
+    // close-delimited, including a non-chunked coding
+    "HTTP/1.1 200 OK\r\n\r\nuntil close",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nbytes",
+    // refusals
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nX: 1\r\n 2\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nX : 1\r\n\r\n",
+    "HTTP/1.1 200 OK\r\n: 1\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nX: " + SOH + "\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nContent-Length: 99999999\r\n\r\n",
+    // malformed status lines
+    "HTTP/1.1\r\n\r\n",
+    "HTTP/1.1 \r\n\r\n",
+    "HTTP/1.1 xyz OK\r\n\r\n",
+    "HTTP/1.1 20 OK\r\n\r\n",
+    "HTTP/2.0 200 OK\r\n\r\n",
+    "HTTP/1.1200 OK\r\n\r\n",
+    "HTTP/1.x 200 OK\r\n\r\n",
+    "hello\r\n\r\n",
+    "HTTP/1.1 200 OK" + SOH + "\r\n\r\n");
+}
+
+/** The method each response above is an answer to — three are not `GET` and that is the point. */
+string[] responseMethods() {
+  return string[](
+    "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET",
+    "GET", "GET", "GET", "HEAD", "CONNECT",
+    "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET",
+    "GET", "GET",
+    "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET",
+    "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET", "GET");
+}
+
+export i32 main() {
+  i32 seen = 0;
+
+  string[] cs = cases();
+  for (i32 i = 0; i < cs.len(); i++) { seen = seen + parseRequest(wire(cs[i]), MAX_BODY).len(); }
+
+  // Every prefix of a few messages, which is what reaches the `Incomplete` returns.
+  string[] fulls = string[](
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX: v\r\n\r\n");
+  for (i32 f = 0; f < fulls.len(); f++) {
+    for (i32 n = 0; n <= fulls[f].len(); n++) {
+      seen = seen + parseRequest(wire(fulls[f].slice(0, n)), MAX_BODY).len();
+    }
+  }
+
+  // A small body cap, so the too-large paths are reached rather than only described.
+  seen = seen + parseRequest(wire("POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n"), 8).len();
+  seen = seen + parseRequest(
+    wire("POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n64\r\n"), 8).len();
+
+  // ── The mutation generator, kept in step with `test/fuzz.test.ts` by hand ──
+  //
+  // **The draw order is the specification.** Each `kind` branch draws a different number of values,
+  // and two of them are guarded on the buffer still having bytes — so a buffer emptied by an earlier
+  // edit changes how many numbers the *next* edit consumes. Restructuring this into something tidier
+  // silently produces a different corpus, and nothing but the coverage figure would say so.
+  string[] seeds = string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    "GET /a?b=c HTTP/1.1\r\nHost: a\r\nAccept: */*\r\nCookie: k=v\r\n\r\n");
+  i32[] interesting = i32[](13, 10, 0x20, 9, 0, 0x3a, 0x2c, 0x3b, 0x7f, 0x80, 0xff, 0x2e, 0x2d);
+  Rng r = Rng(0x1234abcd);
+  for (i32 i = 0; i < 3000; i++) {
+    u8[] seed = wire(seeds[r.upto(seeds.len())]);
+    // Room for the seed plus one byte per insert, which is all an edit can add.
+    u8[] buf = u8[seed.len() + 8]();
+    i32 len = seed.len();
+    for (i32 k = 0; k < len; k++) { buf[k] = seed[k]; }
+
+    i32 edits = 1 + r.upto(3);
+    for (i32 e = 0; e < edits; e++) {
+      i32 kind = r.upto(4);
+      if (kind == 0) {
+        i32 at = r.upto(len + 1);
+        i32 v = interesting[r.upto(interesting.len())];
+        for (i32 k = len; k > at; k--) { buf[k] = buf[k - 1]; }
+        buf[at] = v;
+        len = len + 1;
+      } else if (kind == 1 && len > 0) {
+        i32 at = r.upto(len);
+        for (i32 k = at; k + 1 < len; k++) { buf[k] = buf[k + 1]; }
+        len = len - 1;
+      } else if (kind == 2 && len > 0) {
+        i32 at = r.upto(len);
+        buf[at] = interesting[r.upto(interesting.len())];
+      } else {
+        len = r.upto(len + 1);
+      }
+    }
+    u8[] input = u8[len]();
+    for (i32 k = 0; k < len; k++) { input[k] = buf[k]; }
+    seen = seen + parseRequest(input, MAX_BODY).len();
+  }
+
+  // ── The client half: response parsing and request writing ──
+  string[] rs = responses();
+  string[] ms = responseMethods();
+  for (i32 i = 0; i < rs.len(); i++) {
+    seen = seen + parseResponse(wire(rs[i]), ms[i].toBytes(), true, MAX_BODY).len();
+  }
+
+  // Every prefix, which is what reaches the Incomplete returns on the response side. `eof` is false
+  // here: a short read is only incomplete while the connection might still say more.
+  string[] rfulls = string[](
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nX: v\r\n\r\n");
+  for (i32 f = 0; f < rfulls.len(); f++) {
+    for (i32 n = 0; n <= rfulls[f].len(); n++) {
+      seen = seen + parseResponse(wire(rfulls[f].slice(0, n)), "GET".toBytes(), false, MAX_BODY).len();
+    }
+  }
+
+  // The request writer, in each of its shapes. `NUL` separates one header from the next.
+  string NUL = ctl(0);
+  string[] bm = string[]("GET", "GET", "POST", "PUT", "DELETE");
+  string[] bt = string[]("/", "/", "/x", "/a?b=c", "/x");
+  string[] bh = string[]("", "", "Accept" + NUL + "*/*", "A" + NUL + "1" + NUL + "B" + NUL + "2", "");
+  string[] bb = string[]("", "", "hello", "{\"a\":1}", "");
+  bool[] bk = bool[](true, false, true, false, true);
+  for (i32 i = 0; i < bm.len(); i++) {
+    seen = seen + buildRequest(bm[i].toBytes(), bt[i].toBytes(), "example.com".toBytes(),
+                               wire(bh[i]), bb[i].toBytes(), bk[i]).len();
+  }
+
+  // ── The response *writer*, which is only reachable through a server ──
+  string[] served = string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n",
+    "DELETE / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1.0\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n",
+    "GET / HTTP/2.0\r\n\r\n",
+    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 99999999\r\n\r\n",
+    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}");
+  for (i32 i = 0; i < served.len(); i++) { seen = seen + serve(wire(served[i]), NOW).len(); }
+
+  return seen;
+}

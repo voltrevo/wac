@@ -1,0 +1,127 @@
+// Branch coverage for fmt: the exercises, and nothing else.
+//
+//   deno task coverage:fmt
+//   deno task coverage:fmt --verbose
+//
+// Formatting and parsing are driven from one entry point and the bignum only through them. The
+// exercises are chosen to hit the paths the committed tests hit — random bit patterns across the whole
+// f64 range, decimals spanning the exponent range, and the boundary values — because coverage against
+// a different workload measures that workload.
+//
+// ## The second entry point is gone, and porting to wac is why — `issues/system/0161`
+//
+// The `cov.ts` this replaces instrumented `test/wac/ftoa_test.wac` as well, and said why: *"`ftoa`,
+// `ftoa32` and `writeF32` return a `string` or write into a Buf, so they are called from wac rather
+// than from here — a report over this file alone shows them dead when they are covered."* That was a
+// fact about the *host*, not about fmt: a `string` and a `Buf` are opaque across the bridge, so the
+// TypeScript could only reach those three by running a wac test that happened to call them.
+//
+// This file is wac, so it calls them. One entry point, no test exports, and no capabilities — which
+// also matters because `covdump` instantiates with no imports at all, so an exercise that declared a
+// `Cli` could not run here whatever grants it was built with.
+
+import { fmtF64, fmtF32, parseF64, parseF32, itoaOf } from "./probe.wac";
+import { ftoa, ftoa32, writeF32 } from "../src/ftoa.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { itoa } from "../src/itoa.wac";
+
+/** Finite, read off the exponent field, so no infinity literal is needed to ask. */
+bool finite(f64 x) {
+  u64 b = f64.toBits(x);
+  return ((b >> 52) & 0x7FF) != 0x7FF;
+}
+
+/**
+ * xorshift32 with the TypeScript's seed. Two draws make one f64, high word first, which is what
+ * `DataView.setUint32(0, …)` then `setUint32(4, …)` laid down.
+ */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+}
+
+/** The two words as one u64, big-endian, the way the DataView wrote them. */
+f64 doubleOf(i32 hi, i32 lo) {
+  u64 h = (hi as~ u32) as u64;
+  u64 l = (lo as~ u32) as u64;
+  return f64.fromBits((h << 32) | l);
+}
+
+export i32 main() {
+  i32 seen = 0;
+
+  // Random bit patterns, which is the only way to reach subnormals and huge exponents.
+  Rng r = Rng(0x2545f491);
+  for (i32 i = 0; i < 60000; i++) {
+    f64 x = doubleOf(r.next(), r.next());
+    seen = seen + fmtF64(x).len();
+    // Round-tripped through *our* shortest form rather than the host's `String(x)`, which is the
+    // same text whenever this package is right and is the only text available here.
+    if (finite(x)) { seen = seen + (parseF64(fmtF64(x)) == x ? 1 : 0); }
+    seen = seen + fmtF32(f32.fromBits(r.next() as~ u32)).len();
+  }
+
+  // The values that pick out particular branches rather than a random sample.
+  f64[] picks = f64[](
+    0.0, -0.0, 1.0, -1.0, 0.1, 0.5, 1.5, -2.25, 1e20, 1e21, 1e-6, 1e-7, 1e23,
+    5e-324, 2.2250738585072014e-308, 1.7976931348623157e308,
+    9007199254740991.0, 9007199254740993.0, 8324640000000.0, 887976063517795.2,
+    f64.fromBits(0x7FF8000000000000),   // NaN
+    f64.fromBits(0x7FF0000000000000),   // Infinity
+    f64.fromBits(0xFFF0000000000000));  // -Infinity
+  for (i32 i = 0; i < picks.len(); i++) {
+    seen = seen + fmtF64(picks[i]).len() + fmtF32(picks[i] as~ f32).len();
+    // **The three the host could not reach**: a `string` out, and a `Buf` written into.
+    seen = seen + ftoa(picks[i]).len() + ftoa32(picks[i] as~ f32).len();
+    Buf b = Buf.create();
+    writeF32(b, picks[i] as~ f32);
+    seen = seen + b.take().len();
+  }
+
+  // Neighbours of round decimals, which is where a rounded-up 9 lives. Random bit patterns never
+  // reach the carry path: 60,000 of them leave it untouched, because a value whose shortest form
+  // needs a carry sits immediately below a round decimal and that is a vanishing fraction of the
+  // space. The decimal is built as text and parsed, which is what `Number(`${d}e${k}`)` was.
+  for (i32 k = -320; k <= 300; k++) {
+    for (i32 d = 1; d <= 99; d++) {
+      f64 target = parseF64((itoa(d) + "e" + itoa(k)).toBytes());
+      if (!finite(target) || target == 0.0) { continue; }
+      u64 base = f64.toBits(target);
+      for (i32 step = -2; step <= 2; step++) {
+        f64 x = f64.fromBits(base + ((step as i64) as~ u64));
+        if (finite(x)) { seen = seen + fmtF64(x).len() + ftoa(x).len(); }
+      }
+    }
+  }
+
+  // Parsing: the fast path, Clinger's extension, and the exact fallback.
+  string nines = "";
+  for (i32 i = 0; i < 900; i++) { nines = nines + "9"; }
+  string zeros = "";
+  for (i32 i = 0; i < 320; i++) { zeros = zeros + "0"; }
+  string[] texts = string[](
+    "0", "-0", "1", "1.5", "0.1", "1e5", "1e22", "1e23", "1e30", "1e37", "1e38",
+    "1e308", "1e309", "-1e309", "1e-308", "1e-400", "5e-324", "4.9e-324",
+    "9007199254740993", "123456789012345678901234567890",
+    "0.1234567890123456789012345", "2.2250738585072011e-308",
+    "1.00000000000000000000001e300",
+    // 900 significant digits, which is where the sticky flag and the digit cap live.
+    "1." + nines + "e10",
+    "0." + zeros + "1234567890");
+  for (i32 i = 0; i < texts.len(); i++) {
+    u8[] b = texts[i].toBytes();
+    seen = seen + (parseF64(b) == 0.0 ? 1 : 0) + (parseF32(b) == 0.0 as~ f32 ? 1 : 0);
+  }
+
+  // itoa, including the value whose negation overflows.
+  i32[] ns = i32[](0, 1, -1, 9, 10, 99, 100, 2147483647, -2147483647 - 1, -12345);
+  for (i32 i = 0; i < ns.len(); i++) { seen = seen + itoaOf(ns[i]).len(); }
+
+  return seen;
+}

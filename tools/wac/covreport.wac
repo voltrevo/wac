@@ -79,6 +79,44 @@ i32 numberOf(string s) {
   return v;
 }
 
+/**
+ * Whether every byte is a digit, so a row can be told from a heading.
+ *
+ * Separate from the value because a *count* may legitimately be negative and 0 is a meaningful
+ * answer — "never reached" — so a parser that returned 0 for "not a number" would report a covered
+ * branch as dead.
+ */
+bool isDigits(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return false; }
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] < 48 || b[i] > 57) { return false; } }
+  return true;
+}
+
+/** Whether `s` is a counter: digits, or a `-` and then digits. */
+bool isCount(string s) {
+  return s.len() > 1 && s.slice(0, 1) == "-" ? isDigits(s.slice(1, s.len())) : isDigits(s);
+}
+
+/**
+ * A counter, **which may be negative**.
+ *
+ * The counters are `i32` and an exercise that runs one branch two billion times wraps it. `fmt`'s
+ * does — 44 of its 518 — and `numberOf` above is written for *indices*, so it refuses a sign and a
+ * wrapped count read as an unparseable row. The walk then stopped at the first one and the dump "had"
+ * 474 counters against a 518-row table, reported as the two files not describing the same module: a
+ * message about the artefacts rather than about arithmetic, and the wrong place to look entirely.
+ *
+ * Only zero-or-not is ever asked of a counter, so a wrapped one is as good as any other non-zero.
+ * **The exception cannot be fixed here**: a counter that wraps to *exactly* zero reads as never
+ * reached, and no parser can tell that from a branch nothing ran. That needs a saturating counter in
+ * the instrumentation.
+ */
+i32 signedOf(string s) {
+  if (s.len() > 1 && s.slice(0, 1) == "-") { return -numberOf(s.slice(1, s.len())); }
+  return numberOf(s);
+}
+
 bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
 bool endsWith(string s, string p) {
   return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p;
@@ -203,13 +241,13 @@ export i32 main(Core core, Cli cli) {
   i32 nCounts = 0;
   for (i32 i = 0; i < dumpRows.len(); i++) {
     string[] f = fields(dumpRows[i], 2);
-    if (numberOf(f[0]) == nCounts && numberOf(f[1]) >= 0) { nCounts = nCounts + 1; }
+    if (numberOf(f[0]) == nCounts && isCount(f[1])) { nCounts = nCounts + 1; }
   }
   i32[] counts = i32[nCounts > 0 ? nCounts : 1]();
   i32 at = 0;
   for (i32 i = 0; i < dumpRows.len() && at < nCounts; i++) {
     string[] f = fields(dumpRows[i], 2);
-    if (numberOf(f[0]) == at) { counts[at] = numberOf(f[1]); at = at + 1; }
+    if (numberOf(f[0]) == at) { counts[at] = signedOf(f[1]); at = at + 1; }
   }
 
   // `index\tline\tcol\tkind\tfile` per counter, in counter order.
@@ -259,7 +297,9 @@ export i32 main(Core core, Cli cli) {
     if (slot < 0) { slot = nFiles; files[slot] = p.file; nFiles = nFiles + 1; }
     fileN[slot] = fileN[slot] + 1;
     total = total + 1;
-    if (counts[p.index] > 0) { fileC[slot] = fileC[slot] + 1; covered = covered + 1; }
+    // `!= 0`, not `> 0`: a counter that wrapped past two billion is negative and was very much
+    // reached. See `signedOf`.
+    if (counts[p.index] != 0) { fileC[slot] = fileC[slot] + 1; covered = covered + 1; }
   }
 
   core.log("| file | points | covered | % |");
@@ -292,7 +332,7 @@ export i32 main(Core core, Cli cli) {
     i32 m = 0;
     for (i32 i = 0; i < nPoints; i++) {
       Point p = points[i];
-      if (!startsWith(p.file, prefix) || isTest(p.file) || counts[p.index] > 0) { continue; }
+      if (!startsWith(p.file, prefix) || isTest(p.file) || counts[p.index] != 0) { continue; }
       // Padded so the sort is by line *number* rather than by its spelling — `:9:` after `:10:` is
       // what an unpadded string sort gives, and a reader takes that for a missing entry.
       string ln = itoa(p.line);
