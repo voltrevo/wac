@@ -779,8 +779,15 @@ export i32 funcrefUses() {
 // A BOUND reference — `c.inc`, the method with that receiver already in it — is
 // an `fn[void()]` in wacc, `[§wacc-fnref-bound]`. It is not a closure: it
 // captures a receiver and nothing else, and `fn[...]` values still do not
-// capture locals. This file is compiled by the SEED, which does not have it, so
-// the line below stays commented — see spec/spec/funcrefs.md.
+// capture locals.
+//
+// **wacc has it; the line below stays commented because the REFERENCE does not.**
+// This said "the SEED, which does not have it", and the seed is wacc: `wac run`
+// on `fn[i32()] r = s.next; r()` answers today. What compiles this file twice is
+// `compiler/wacSpec.test.ts`, with the reference, which refuses it as `cannot use
+// method 'inc' as a value` — so a tour that used it would stop compiling for the
+// oracle rather than for wacc. Use it in your own code; it works.
+// See spec/spec/funcrefs.md.
 struct Counter {
   i32 count;
   Counter create(i32 initial) { return Counter(initial); }
