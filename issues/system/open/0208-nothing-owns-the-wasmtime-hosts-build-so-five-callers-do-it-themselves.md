@@ -20,7 +20,7 @@ is older than its sources, and `CLAUDE.md` tells you to run the task after touch
 | `packages/platform/test/wac/native_shell_test.wac` | another — its lane note says *"and it builds the Rust host"* |
 | `packages/platform/test/wac/native_examples_test.wac` | another, from 2026-08-19 |
 | `tools/corpusHosts.ts` | another |
-| `tools/runCli.test.ts` | probes `cargo --version` instead |
+| `tools/wac/runcli_test.wac` | probes `cargo --version` instead |
 
 Nine files run `target/release/wacland`; the other four assume it is there.
 

@@ -2855,7 +2855,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // `Core` in its manifest because it asked for none, and this refused it with *no struct Core in the
     // manifest* — the host's own bookkeeping, about the smallest program that demonstrates the
     // language's central claim. Whether `main` wants a world is knowable here and is asked for below;
-    // an undefined placeholder is never passed to a `main` that named one. `tools/runCli.test.ts`.
+    // an undefined placeholder is never passed to a `main` that named one. `tools/wac/runcli_test.wac`.
     //
     // **And a module with no `main` at all**, which `is_some_and` answered `false` for — so the
     // named-export path below (`wac run math.wac gcd 48 18`) was refused before it was reached,

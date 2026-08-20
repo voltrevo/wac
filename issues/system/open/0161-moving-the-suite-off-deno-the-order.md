@@ -1371,8 +1371,14 @@ Where the four remaining siblings stand, so nobody re-derives it:
 - **`jsxBoundary.test.ts` stays.** A JSX tree built in wac is walked by a renderer *written in
   JavaScript*, using glue generated from the module's own metadata — two pieces of code that share
   nothing but the compiler, agreeing on a value. The JavaScript is half the differential, so
-  translating it would delete the claim. Same category as `trapMessage`'s built-app case and
-  `packages/stream`.
+  translating it would delete the claim. Same category as `packages/stream`.
+
+  > `trapMessage`'s built-app case was in this list too and **should not have been** — it moved on
+  > 2026-08-20. The distinction the entries above turn on is whether the JavaScript is *half the
+  > differential*: `jsxBoundary` compares a JS renderer's walk against the wac tree, so translating the
+  > renderer deletes the comparison. `trapMessage`'s case compares a built app's output against a
+  > string, and the app stays JavaScript either way — only the two calls that build it and run it
+  > moved, which `spawn_test.wac`, `arrival_test.wac` and three others already make.
 - **`jsBindgen.test.ts`** was already rejected earlier for the same kind of reason — JS glue as the
   subject.
 - **`manifest.test.ts` was rejected with it and should not have been**, and it moved on 2026-08-19.
@@ -1616,7 +1622,7 @@ move: their subject is the TypeScript beside them. Four more were opened and thr
 | `inside` (94) | **moved**, whole. `native_examples_test.wac` already runs this example on both hosts, but what it checks is that the hosts *agree* — which two hosts that had both lost the child's standard error would also do. The port pins the transcript itself and the parent's own streams staying empty. |
 | `pipeline` (114) | **half.** The stdin→child→child→stdout test moved. The socket one cannot: the client must signal EOF and then read the reply, and wac has `closeSocket` and no half-close. Filed as `issues/system/0215`, whose argument is already written one capability over — `closeFeed`'s doc comment makes exactly this case for a child's stdin, with `wc` as the example. |
 | `aliasing` (161) | **stays**, and says so itself: it drives the world's handlers directly because a first attempt through a wac program *passed with the bug deliberately put back*. Nothing about running a wac program makes two reads pending simultaneously, which is what the race needs. |
-| `trapMessage` (72) | **stays**, already argued in its own header: three of its four cases moved in August, and the one left is the JavaScript route — `bindgen`'s `$trapped` guard and `host/entry.ts`, both TypeScript. |
+| `trapMessage` (72) | **moved, whole**, 2026-08-20. The reason recorded for keeping it — the JavaScript route through `bindgen`'s `$trapped` guard and `host/entry.ts` — is a fact about the *subject*, which stays TypeScript and is asserted against unchanged. What moved is `builtByDeno` plus an `exec`. |
 | `timeout` (209) | **mixed, and mostly stays.** Two end-to-end tests build `patience.wac` and run it; three drive `newBridge`/`submit`/`waitAny`/`collect` and assert on slot statuses in the control block, which is `host/layout.ts` and `host/call.ts`. Splitting it buys ~55 lines. |
 | `platform.test.ts` (554) | **done — thirteen of seventeen moved**, into `world_test.wac` (the application and `wc`, a withheld capability, a missing file, stdin, env unset-vs-empty, the hexdump filter, `stat`/`readDir` gating), `runtimes_test.wac` (the built executable's shebang and execute bit, three runs, Deno against Node, the whole-filesystem transcript, the ungranted `stat`) and `chunking_test.wac` (a megabyte in both directions through `box`). The four that stay have no wac in them at all: a `Worker` posting to a `SharedArrayBuffer` and `serveHostCalls` answering, which is `host/layout.ts` and `host/call.ts`. Two translation slips the canaries did not catch and the first run did: the example prints a fourth field (the filename), and `splitLines` does not leave JavaScript's empty element after a trailing newline — so `split("\n").length == 2` had to become the two facts it stands for. The `wc` counts are now checked against **coreutils** rather than against arithmetic the test did itself. |
 | `app` (105) | **moved.** The launcher is started through `daemon.wac` — whose `stop` is `kill` with no signal, which is SIGTERM, the signal the launcher has to forward and the whole subject. The `app.ts` exclusion that the TypeScript header calls "the whole helper" is now an *assertion* as well as a filter: no matched process may name a path in this repository, because the built artifact is a self-contained file elsewhere. Removing the filter makes that assertion fire, which the filter alone could not demonstrate. |
@@ -1662,7 +1668,7 @@ not mine:
 | `aliasing` (161) | the obvious port was tried and **passed with the bug reinstated**; nothing about running a wac program makes two reads pending at once |
 | `listen` (167) | drives the handler table because the address crossing is what is checked; "a wac client would prove the same thing twice" |
 | `datagram` (138) | `test/wac/echod_test.wac` is already its program-side half, and says so; this one is the host handlers |
-| `trapMessage` (72) | three of four moved in August; the one left is the JavaScript glue route |
+| ~~`trapMessage`~~ (72) | moved whole on 2026-08-20; the glue route is the subject, not the harness |
 | `spawn` (115) | seven moved; the three left hand `spawnChild` a `WorkerLike` this file makes up |
 
 **Stays because the subject is TypeScript** — `marshal`, `browser`, `browser_live`, `fuzz`, the four
