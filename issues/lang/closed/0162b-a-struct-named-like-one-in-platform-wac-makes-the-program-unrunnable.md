@@ -1,6 +1,7 @@
 # 0162b — a struct named like one in `platform.wac` makes the program unrunnable, and the message names the wrong thing
 
-- **Status:** open — the misdiagnosis is fixed (2026-08-20); the wiring is not
+- **Status:** closed
+- **Fixed in:** the message and the wiring, both this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -123,3 +124,35 @@ it costing twenty minutes to find.
 
 Verified: the renamed control still prints `n=1`, `native_manifest_test.wac` passes, and
 `packages/platform/test/platform.test.ts` is green.
+
+## The wiring is fixed too — and it was not what this issue said
+
+The issue reads: *"no callback is emitted under that signature"*, which suggested the callback was
+**unqualified** while the field was qualified. Reading the manifest out of the module says otherwise:
+
+    field:    fn[Pending<Stat__std_platform>(string)]
+    callback: fn[Pending<Stat@1>(string)]
+
+Both are qualified. They use **two different qualification schemes** for one type — the field goes
+through `metaTypeSpelling`, which turns a linker key into `Stat__std_platform`, and the callback carried
+the raw key `Stat@1`. `callback_index` matches by string, so it found nothing.
+
+`@N` is an internal linker key and had no business in a manifest a host reads. One call:
+
+```wac
+out = out + line + "\t" + metaTypeSpelling(env, cb) + "\n";   // was: + cb +
+```
+
+The program now prints `n=1`. Canaried by reverting that call — the new test fails with *"a struct named
+like one in platform.wac stopped the program"*.
+
+**And the case the issue withheld is now in.** It said *"one more case would have caught this — and the
+case is not added here, because a red test in the tree is worse than a note in an issue while this is
+open"*. That was the right call and the ordering it implies is fix first, case second:
+`native_manifest_test.wac` now builds and **runs** a program declaring `struct Stat`, asserting the
+output rather than the manifest — the manifest agreeing with itself is what the older test in that file
+is for.
+
+Verified: `packages/platform/test/wac/` 34 of 34 files (with `--allow-net`, which the socket tests need
+and I forgot the first time), `packages/box/test/wac/` 17 of 17, bindgen and jsBindgen 12 of 12, specEmit
+419/419, 221 of 221 cases, and `wacc/example/wacc.wac` still compiles a program through itself.

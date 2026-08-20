@@ -3075,7 +3075,12 @@ string bindTypesOf(Front f) {
       if (i > 0) { line = line + ","; }
       line = line + sigParamAt(cb, i);
     }
-    out = out + line + "\t" + cb + "\n";
+    // **The same spelling a struct field uses**, which is what the host looks this up by. A funcref
+    // field's type goes through `metaTypeSpelling`, so a name two files declare arrives as
+    // `Stat__std_platform`; this cell was the raw linker key and arrived as `Stat@1`. Two spellings of
+    // one type, and `callback_index` matches by string — so the field found no dispatcher and the host
+    // reported the *struct* as absent. `issues/lang/0162b`.
+    out = out + line + "\t" + metaTypeSpelling(env, cb) + "\n";
   }
   for (i32 i = 0; i < n; i++) {
     string name = bindStructs[i];
