@@ -556,8 +556,10 @@ shadows it, and arms whose values agree. The exhaustiveness half had been blocke
 enum a variant belongs to — the comment saying so is still in the history — and that stopped being
 true the day imported names started entering under the importer's own name for them.
 
-One illegal program is still accepted and no legal one is refused; the one left is named in
-`specsingle_test.wac`, and it is a multi-file case the recorder kept one file of.
+**No illegal program is accepted and no legal one is refused.** The one that was left — a multi-file
+case the recorder kept one file of, so what reached the test was an import of a file nobody supplied —
+closed on 2026-08-20 with `issues/lang/0157`: the checker now reports that at the import's own token
+rather than leaving it to the linker to infer from a sentinel with no position and no file name.
 
 That is a change of aim, not of method. A disagreement with the reference is now a question —
 *which of us is right?* — rather than a defect report against this checker, and a program wacc
@@ -568,12 +570,28 @@ they find real rules cheaply. What they no longer are is a definition of correct
 
 | oracle | input | what it asserts |
 |---|---|---|
-| `test/wac/specsingle_test.wac` | the 671 one-file programs the suite **runs** | **the contract** — 303 of 304 illegal refused, 367 of 367 legal silent, the one left named |
+| `test/wac/specsingle_test.wac` | the 671 one-file programs the suite **runs** | **the contract** — **317 of 317** illegal refused, 371 of 371 legal silent, and the ledger of known misses is empty |
 | `test/wac/specmulti_test.wac` | the spec's programs that take more than one file | **the contract** — all 15 illegal refused, all 42 legal silent |
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; **100%** recall (9,120 of 9,127), held by a 97% floor |
 | `checkSweep.test.ts` | the emitter's **4,148** valid programs of 4,501 | no false alarm, and guarded against an empty run and a narrowed corpus |
 | `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; **99%** recall (989 of 993), held by a 92% floor |
-| `test/wac/corpuscheck_test.wac` | the repository's own **541** files, imports in scope | no false alarm |
+| `test/wac/corpuscheck_test.wac` | the repository's own **975** files, imports in scope | no false alarm |
+
+That figure was **541** and the walk behind it read three fixed directories per package one level
+deep — `src`, `test/wac`, `bench`. It reached 741 of the 943 `.wac` files under `packages/` and none
+of `tools/`, and the part that mattered was not the count: **64 import edges pointed at files the
+corpus does not supply** — `packages/box/src/applets/*` in a nested directory, `bignum`'s
+`test/probe.wac` beside `test/wac` rather than in it, `tools/wac/covledger.wac` outside the tree
+walked at all. Those imports contributed no declarations, every name from them was unknown, and
+unknown is silent — so "imports in scope" was false for those files and the row said no false alarm
+about checks that were partly blind. The walk is recursive now and covers `tools/` too.
+
+It surfaced from `issues/lang/0157`: with the checker refusing an import naming a file nobody
+supplied, a corpus that does not supply one says so — 64 diagnostics, all true. That half of 0157 was
+then reverted, because resolving a specifier in the files-based checker needs a resolution context it
+does not carry, so this row no longer *depends* on the rule. The walk fix outlives it: an extractor
+bounds the invariant it feeds, and the bound is invisible from inside until something refuses to be
+silent.
 | `corpusMutate.test.ts` | those files, broken 23 ways | no contradiction where the reference says one thing; **100%** recall (223 of 223), held by a 97% floor |
 
 **The rules that need two files now have an oracle, and it is the honest one.** Export visibility,

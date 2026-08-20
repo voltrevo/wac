@@ -119,6 +119,7 @@ export string checkMessage(i32 code) {
   if (code == 53) { return "a generic that instantiates itself for ever"; }
   if (code == 54) { return "an enum method cannot be named after one of its variants"; }
   if (code == 55) { return "this name is already imported or declared in this file"; }
+  if (code == 77) { return "no file was supplied at that path"; }
   if (code == 56) { return "that file does not export this name"; }
   if (code == 57) { return "undefined type"; }
   if (code == 58) { return "match does not cover every variant"; }
@@ -170,6 +171,7 @@ export string hintFor(i32 code) {
   if (code == 46) { return "the cast can be removed"; }
   if (code == 50) { return "use `f64` if the value does not fit an `f32`"; }
   if (code == 55) { return "rename one of them with `as`"; }
+  if (code == 77) { return "supply the file, or check the path — `core` and `std` are the only trees that need none"; }
   if (code == 56) { return "import it from the file that declares it — importing does not re-export"; }
   if (code == 57) { return "import the type, or check the spelling"; }
   if (code == 58) { return "add the missing arms, or an `else`"; }
