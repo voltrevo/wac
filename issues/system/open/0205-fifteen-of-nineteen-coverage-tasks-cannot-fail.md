@@ -173,6 +173,32 @@ whose *input* costs too much, not a line no input reaches. Calling it unreachabl
 claim about the code: the clamp is the only thing between `cap * 2` overflowing and
 `u8[cap as! i32]()` being handed the result.
 
+### `stream` fifth, and it is the one package that cannot be rewired
+
+**10 hold a coverage floor, 0 only check their own exemptions have not drifted, 11 report and cannot
+fail.** 32 of 32, with both lists empty.
+
+`packages/stream` has **no wac tests at all** — its subject is `host/bridge.ts`, a WHATWG
+`TransformStream`, which `issues/system/0161` records as staying TypeScript for that reason. So the
+"rewire the exercise to call the tests" step does not apply, and reading the exercise's gaps was the
+only way to find anything.
+
+It found something. All four uncovered points were two pairs of one thing: `case Failed(why)` in both
+`passthrough` and `upperCase`, and the `broke ? -2 : total` each returns because of it. `Read` has
+three variants and the exercise's `Feeder` only ever answered two — so **the failure path of both
+transforms was measured by nothing**, and what those points defend is what `transform.wac`'s comment
+says: "a broken input is its own answer, not a smaller total". A caller that could not tell -2 from a
+short count would treat a failed read as a successful short one.
+
+Closed rather than pinned: `Feeder` gained a `feedFailing`, and the exercise fails on the first read
+and on two later ones — later matters, because by then bytes have been written and `upperCase` is
+holding a partial scalar. Canaried by removing the failing reads again: 28 of 32, four uncovered.
+
+**The general shape, after five packages**: an uncovered point in one of these drivers is more often a
+hole in the driver than a fact about the code. Five for five so far — a function nobody called
+(`codec`, `bytes`), a code point the loop skipped (`unicode`), a variant nobody produced (`stream`) —
+and only four genuine exemptions among them.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,

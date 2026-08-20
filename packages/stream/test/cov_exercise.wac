@@ -42,17 +42,39 @@ struct Feeder {
   i32 at;
   i32 step;
   bool accept;
+  /**
+   * Reads to answer before failing, or -1 never to fail.
+   *
+   * **`Read.Failed` was the one variant this driver never produced**, and it left four points
+   * uncovered: `case Failed(why)` in both `passthrough` and `upperCase`, and the `broke ? -2` each
+   * returns because of it. Not an unreachable branch — a driver that only ever answered `Data` and
+   * `End`, so the failure path of a transform was measured by nothing. `issues/system/0205`.
+   *
+   * The distinction those four points defend is in `transform.wac`'s own comment: "a broken input is
+   * its own answer, not a smaller total". A caller that could not tell -2 from a short count would
+   * treat a failed read as a successful short one.
+   */
+  i32 failAfter;
 
-  Feeder create() { return Feeder(u8[0](), 0, 1, true); }
+  Feeder create() { return Feeder(u8[0](), 0, 1, true, 0 - 1); }
 
   void feed(this, u8[] bytes, i32 size, bool accepting) {
     this.src = bytes;
     this.at = 0;
     this.step = size;
     this.accept = accepting;
+    this.failAfter = 0 - 1;
+  }
+
+  /** The same, but the `n`th read answers `Failed` instead. */
+  void feedFailing(this, u8[] bytes, i32 size, i32 after) {
+    this.feed(bytes, size, true);
+    this.failAfter = after;
   }
 
   Read read(this) {
+    if (this.failAfter == 0) { this.failAfter = 0 - 1; return Read.Failed("the driver said so"); }
+    if (this.failAfter > 0) { this.failAfter = this.failAfter - 1; }
     i32 left = this.src.len() - this.at;
     i32 n = this.step < left ? this.step : left;
     if (n <= 0) { return Read.End; }
@@ -133,6 +155,22 @@ export i32 main() {
   seen = seen + upperCase(read, write);
   f.feed(bulk, 4096, true);
   seen = seen + passthrough(read, write);
+
+
+  // **A read that fails, which nothing here produced before.** Both transforms have a `Failed` arm and
+  // both answer -2 rather than a count, and that distinction is what `transform.wac`'s comment is
+  // about: "a broken input is its own answer, not a smaller total". Failing on the first read and on a
+  // later one, because the later one has bytes already written and a held fragment in `upperCase`.
+  // Literal escapes are not this language's spelling — the file uses `string.fromCodepoint`.
+  string sample = "hello caf" + string.fromCodepoint(0xe9) + " " +
+                  string.fromCodepoint(0x4e16) + " " + string.fromCodepoint(0x1f600) + " world";
+  i32[] fails = i32[](0, 1, 3);
+  for (i32 i = 0; i < fails.len(); i++) {
+    f.feedFailing(sample.toBytes(), 4, fails[i]);
+    seen = seen + passthrough(read, write);
+    f.feedFailing(sample.toBytes(), 4, fails[i]);
+    seen = seen + upperCase(read, write);
+  }
 
   return seen;
 }

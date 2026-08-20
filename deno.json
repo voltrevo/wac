@@ -41,7 +41,7 @@
     "coverage:regex": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/regex/test/cov_exercise.wac packages/regex/",
     "coverage:raster": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/raster/test/cov_exercise.wac packages/raster/",
     "coverage:server": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/server/test/cov_exercise.wac packages/server/",
-    "coverage:stream": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/stream/test/cov_exercise.wac packages/stream/",
+    "coverage:stream": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/stream/test/cov_ledger.wac",
     "coverage:zstd": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/zstd/test/cov_ledger.wac",
     "coverage:ssh": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/ssh/test/cov_ledger.wac",
     "coverage:sh": "deno run -A packages/sh/cov.ts",
