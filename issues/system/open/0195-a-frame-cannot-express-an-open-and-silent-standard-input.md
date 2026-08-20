@@ -44,3 +44,45 @@ a binary.
 Filed while moving box's tests off spawning (`issues/system/0193`). It blocks nothing — the shape is still
 covered, by a spawn — but it is the reason one 19-second test file cannot be deleted, and it will be the
 reason for the next one.
+
+## Where the missing state actually has to go — agent-a, 2026-08-20
+
+The shape sketched above puts the flag on `Frame`. The frame is not where the hole is, and knowing that
+changes the cost.
+
+`packages/platform/src/frame.wac:318` is the whole conversion:
+
+```wac
+u8[] chunk = f.readChunk();
+if (chunk.len() == 0) { return Read.End; }
+return Read.Data(chunk);
+```
+
+So a frame's own read path is `u8[]` — `take`, `readChunk`, `readAll` all return one — and "empty" is
+turned into `Read.End` *here*, by this line. A flag on the frame could stop it saying `End`… and then it
+would have nothing to say instead, because **`core.Read` has no fourth state**:
+
+```wac
+export enum Read { Data(u8[] bytes), End, Failed(string why) }
+```
+
+Open-and-silent is a fourth variant of that enum, in `core` — the one place `core/read.wac`'s own header
+says a change cannot be localised: *"both ends of a stream have to name it and no adapter can join two
+copies"*. And `match` is exhaustive, so every consumer of `Read` in the repository stops compiling until
+it handles the new case. That is the honest price, and it is not a flag on a struct.
+
+**The precedent in that same header is the part worth reading before choosing.** The obvious cheap
+alternative — a frame-local flag the caller asks about separately — is exactly the shape already tried and
+rejected for the *failure* case:
+
+> A companion `inputError()` to ask afterwards was tried first and left the ordinary path looking exactly
+> as correct as it had been, so anyone who forgot to ask got the old behaviour back. This cannot be
+> forgotten: `match` is exhaustive, and a caller that ignores `Failed` does not compile.
+
+So `Read` was given `Failed` rather than a companion query for the same reason a fourth variant would be
+right here, and the argument is already written down. Whoever takes this should decide against that
+paragraph rather than around it.
+
+Nothing here changes the conclusion that it blocks nothing. It does move the work from "a field on
+`Frame`" to "a variant in `core` plus every `match` on it", which is a different conversation and probably
+one to have with the operator.

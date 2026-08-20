@@ -4154,6 +4154,46 @@ fn table() -> Option<Arc<Tickets>> {
 }
 
 /// A funcref the guest called: `wac.cb<j>(slot, …)`.
+/// A path as a pushed child means it — joined onto the frame's `cwd`.
+///
+/// **The native host was not doing this and the Deno host was**, so the same program answered
+/// differently depending on which ran it: `packages/platform/example/inside.wac` writes `note.txt` into
+/// the directory it is given, pushes a child with that directory as its `cwd`, and the child opens
+/// `note.txt` by name — which resolved against the *process* directory here and found nothing.
+/// `issues/system/0199`.
+///
+/// `Cap::Cwd` already answered from the frame, so the program was told where it was and then had its
+/// paths resolved somewhere else. That is the worst arrangement of the two halves.
+///
+/// Semantics copied from `packages/platform/host/child.ts`'s `joinPath`, deliberately including what it
+/// does *not* do: `.` and `..` are left alone, because every host below understands them and
+/// reimplementing them here would be a second opinion about what a path means.
+///
+/// **The frame's `cwd` only, not `cwd_override`.** The Deno host's `P` also folds in the world's own
+/// `opts.cwd`, so the two still differ about *that* — but applying it here broke
+/// `packages/platform/test/wac/v8host_test.wac`'s image differential, where a spawned `imaged` child
+/// stopped being able to read the image its parent served. Measured by isolating the two halves: with
+/// the frame alone the lane is 34 of 34, and with the override folded in it is 33. So the spawned-child
+/// case is a separate question from this issue's, and closing one blind broke something real.
+fn framed_path(path: &str) -> String {
+    let base = HOST.with(|h| {
+        let b = h.borrow();
+        let s = b.as_ref()?;
+        s.frames.last().map(|f| f.cwd.clone())
+    });
+    let cwd = match base {
+        Some(d) if !d.is_empty() => d,
+        _ => return path.to_string(),
+    };
+    if path.starts_with('/') {
+        return path.to_string();
+    }
+    if path.is_empty() {
+        return cwd;
+    }
+    if cwd.ends_with('/') { format!("{cwd}{path}") } else { format!("{cwd}/{path}") }
+}
+
 fn dispatch(
     scope: &mut v8::PinScope,
     args: v8::FunctionCallbackArguments,
@@ -4221,7 +4261,7 @@ fn dispatch(
             rv.set_bool(emit_bytes(&bytes, cap == Cap::WriteErr));
         }
         Cap::ReadFile => {
-            let path = read_string(scope, args.get(1));
+            let path = framed_path(&read_string(scope, args.get(1)));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
             // **Denied, not absent.** A program built without `--allow-read` learns that reading is
             // refused *to it*, with a fault kept separate from the operating system's own, so a
@@ -5070,7 +5110,7 @@ fn dispatch(
             rv.set_undefined();
         }
         Cap::ReadDir => {
-            let path = read_string(scope, args.get(1));
+            let path = framed_path(&read_string(scope, args.get(1)));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
             if !granted {
                 // **Absent, not refused**, matching `readFile`'s neighbour only in shape: a
@@ -5159,14 +5199,14 @@ fn dispatch(
             // what is on disk. Each answers a `Change`, and a refusal is `FAULT_NOT_GRANTED` rather
             // than the operating system's `FAULT_DENIED` — this build cannot, as against this file
             // will not.
-            let a = read_string(scope, args.get(1));
+            let a = framed_path(&read_string(scope, args.get(1)));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.write));
             let answer = if !granted {
                 Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
             } else {
                 let r = match cap {
                     Cap::Rename => {
-                        let to = read_string(scope, args.get(2));
+                        let to = framed_path(&read_string(scope, args.get(2)));
                         std::fs::rename(&a, &to)
                     }
                     Cap::Remove => {
@@ -5208,7 +5248,7 @@ fn dispatch(
             }
         }
         Cap::WriteFile => {
-            let path = read_string(scope, args.get(1));
+            let path = framed_path(&read_string(scope, args.get(1)));
             let data = read_bytes(scope, args.get(2));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.write));
             let answer = if !granted {
@@ -5228,7 +5268,7 @@ fn dispatch(
             // **`stat` follows a link and `linkStat` does not**, which is the whole difference
             // between "what does this name lead to" and "what is this name" — `find` wants the
             // first and `tar` the second.
-            let path = read_string(scope, args.get(1));
+            let path = framed_path(&read_string(scope, args.get(1)));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
             let answer = if !granted {
                 Answer::Stat(Box::new(StatAnswer { fault: FAULT_NOT_GRANTED, ..Default::default() }))
@@ -5275,7 +5315,7 @@ fn dispatch(
             // program might read from, which is the order `native/src` had to fix: a `cat f` that
             // had opened the file went on reading the queue it was spawned with, printed nothing,
             // and exited 0.
-            let path = read_string(scope, args.get(1));
+            let path = framed_path(&read_string(scope, args.get(1)));
             // **`openInput("")` is standard input**, which is what `packages/box` means by `-` and by
             // an absent operand — `grep h` with nothing to read from a file says it this way. Taken
             // as a path it is a file that does not exist, and `grep: : No such file or directory` is
@@ -5409,7 +5449,7 @@ fn dispatch(
         Cap::OpenOutput => {
             // **Redirect this program's standard output to a file**, which is what `Cli.write` then
             // reaches. An empty path means "back to the real one", the same as `native/src`.
-            let path = read_string(scope, args.get(1));
+            let path = framed_path(&read_string(scope, args.get(1)));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.write));
             let answer = if path.is_empty() {
                 HOST.with(|h| {

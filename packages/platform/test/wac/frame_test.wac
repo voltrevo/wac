@@ -100,3 +100,49 @@ export string test_a_substitute_capability_does_not_let_the_child_reach_the_real
   t.isTrue(!contains(value.out, "PARENT"), "the child read the real standard input: " + value.out);
   return t.report();
 }
+
+/**
+ * The same differential, **run by the binary** — which is the host most things now use.
+ *
+ * The tests above build each example into a Deno app and run that, which is what the TypeScript did.
+ * That makes the comparison blind to a divergence in the *other* host: `issues/system/0199` was
+ * invisible for as long as both halves were served by the same one. On the binary the host frame
+ * ignored a pushed child's `cwd`, so the child opened `note.txt` against the process directory and
+ * found nothing, while the substitute frame — built from lambdas in wac — resolved it correctly. The
+ * property this file exists for, *a child cannot tell which of the two frames ran it*, was false there.
+ *
+ * A directory each, for the reason `run` above gives: the child writes a file by a relative name.
+ */
+Said runOnBinary(Cli cli, string name, string entry) {
+  string dir = root(cli) + "/.cache/framebin-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
+    string[]("run", "--allow-read", "--allow-write", entry, "--", dir), u8[0]()).wait();
+  Said said = Said(string.fromBytes(r.stdout), string.fromBytes(r.stderr), r.status,
+                   r.ran(), r.error);
+  cli.remove(dir, true).wait();
+  return said;
+}
+
+export string test_the_two_frames_agree_on_the_binary_as_well(Core core, Cli cli) {
+  T t = T.create();
+  Said host = runOnBinary(cli, "host", HOST);
+  Said value = runOnBinary(cli, "value", VALUE);
+  t.isTrue(host.ran, "the host-frame program ran — " + host.error);
+  t.isTrue(value.ran, "the substitute-frame program ran — " + value.error);
+  if (!host.ran || !value.ran) { return t.report(); }
+
+  // Sanity before the comparison, as above: two programs that both failed agree perfectly. The child
+  // reading the file by a relative name is the whole point, so its line has to be there.
+  t.eqI32(host.status, 0, host.err);
+  t.isTrue(contains(host.out, "FROM THE FILE"),
+           "the child did not read the file the parent left it — the frame's cwd was ignored: " +
+           host.out);
+
+  t.eqStr(value.out, host.out, "the two frames told different stories on the binary");
+  t.eqStr(value.err, host.err, "and on the other stream");
+  t.eqI32(value.status, host.status, "and exited differently");
+  return t.report();
+}
+
