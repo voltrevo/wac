@@ -6,8 +6,21 @@
 // is the shared half, so each package can supply only its own half.
 //
 // A package adds `cov.ts` that instruments its entry points, runs whatever exercises
-// them, and calls `report`. See `core/cov.ts`, which is the last caller: every package driver moved to
-// `tools/wac/covledger.wac` in `issues/system/0222`.
+// them, and calls `report`.
+//
+// **`packages/sh/cov.ts` is the only caller left.** Every other driver moved to
+// `tools/wac/covledger.wac` — the five ratchets in `issues/system/0222` and `core/`'s own driver on
+// 2026-08-20, now `core/test/cov_exercise.wac` — so this file goes when that one does. Two things it did that the wac side does
+// differently are worth knowing before it is deleted:
+//
+//   - **`runTestExports` skips any test taking an argument** (`fn.length > 0`), because `instrument`
+//     cannot supply a capability. That silently hid 64 of `packages/crypto`'s 152 returning tests and
+//     29 of `packages/ssh`'s 32 from their own coverage drivers. `wac covdump` runs the ordinary
+//     program path, so a wac exercise's `main` has a real `Core` and `Cli` and just calls them;
+//   - **`report` keys on `(file, line, col, kind)` and unions the coverage**, which merges a generic's
+//     instantiations. `covreport.wac` counted them raw until 2026-08-20, when `core/` — 848 points at
+//     159 distinct positions — read 35.3% against this file's 100%. `Merged` in
+//     `tools/wac/covledger.wac` is that rule, restated.
 //
 // **Twelve packages no longer have one** — `issues/system/0161`. Their exercises are wac now, a
 // program whose `main` runs the shapes, with `tools/wac/covreport.wac` as the shared half instead of

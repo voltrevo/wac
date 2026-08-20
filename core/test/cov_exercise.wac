@@ -1,0 +1,105 @@
+// Branch coverage for the built-in tree: its own tests, called.
+//
+//   deno task coverage:core
+//   deno task coverage:core --verbose
+//
+// **It exists because a move would otherwise have turned coverage off.** `option.wac` and `result.wac`
+// came from `packages/std`, where `coverage:std` measured them; they are `core/`'s now, and the report
+// filters by prefix, so without this the two files would be measured by nothing and `coverage:std`
+// would read a *higher* number for having lost them.
+//
+// The workload is the tree's own tests. There is no second workload as there is in the larger packages,
+// because `core` is small enough that a hand-written exercise beside the tests would be the tests again,
+// spelled differently.
+//
+// ## `cov.ts` beside `core/README.md` until 2026-08-20 — `issues/system/0161`
+//
+// It was the last caller of `harness/wacCoverage.ts`, which is deleted with it. Nothing here needed a
+// JavaScript host: `instrument` existed to reach a wac module's exports from TypeScript, and a wac
+// exercise reaches them by importing them.
+//
+// **`traps_test.wac` is a sweep, and that is the same distinction the TypeScript drew.** A
+// `test_traps_*` export is *expected* to trap, so its failure is not a failure — the old file could not
+// send those through `runTestExports`, which reports one, and looped over them with its own `try`
+// instead. `covdump` catches one trap per call, and `name:<n>` makes eleven of them one export name
+// (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`).
+
+import { Core } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { test_option_basics as option__option_basics, test_option_holds_any_type as option__option_holds_any_type, test_option_match_is_exhaustive as option__option_match_is_exhaustive, test_map_option as option__map_option, test_result_basics as option__result_basics, test_result_error_type_varies as option__result_error_type_varies }
+  from "./option_test.wac";
+import { test_i32_hash_is_injective_over_a_sample as hash__i32_hash_is_injective_over_a_sample, test_aligned_keys_spread_across_buckets as hash__aligned_keys_spread_across_buckets, test_i32_hash_avalanches as hash__i32_hash_avalanches, test_i64_hash_is_injective_and_spreads as hash__i64_hash_is_injective_and_spreads, test_byte_hash_separates_near_neighbours as hash__byte_hash_separates_near_neighbours }
+  from "./hash_test.wac";
+import { test_basics as map__basics, test_growth_keeps_every_entry as map__growth_keeps_every_entry, test_load_factor_bounds_the_table as map__load_factor_bounds_the_table, test_collisions as map__collisions, test_remove as map__remove, test_remove_keeps_probe_runs_contiguous as map__remove_keeps_probe_runs_contiguous, test_fill_and_empty_repeatedly as map__fill_and_empty_repeatedly, test_clear as map__clear, test_keys_and_values as map__keys_and_values, test_hash_bytes_and_string_agree as map__hash_bytes_and_string_agree, test_bytes_keyed_map as map__bytes_keyed_map, test_key_types as map__key_types, test_with_capacity as map__with_capacity, test_differential_good_hash as map__differential_good_hash, test_differential_all_collide as map__differential_all_collide, test_differential_weak_hash as map__differential_weak_hash }
+  from "./map_test.wac";
+import { test_growth_from_empty as vec__growth_from_empty, test_every_element_survives_growth as vec__every_element_survives_growth, test_index_bounds as vec__index_bounds, test_pop_and_ends as vec__pop_and_ends, test_remove_insert_and_swap as vec__remove_insert_and_swap, test_insert_at_capacity_boundary as vec__insert_at_capacity_boundary, test_clear_and_reuse as vec__clear_and_reuse, test_to_array_and_from_array as vec__to_array_and_from_array, test_extend as vec__extend, test_extend_with_itself as vec__extend_with_itself, test_element_types as vec__element_types, test_with_capacity as vec__with_capacity }
+  from "./vec_test.wac";
+import { test_traps_getting_past_the_end as traps__traps_getting_past_the_end, test_traps_getting_a_negative_index as traps__traps_getting_a_negative_index, test_traps_getting_at_capacity_not_length as traps__traps_getting_at_capacity_not_length, test_traps_setting_past_the_end as traps__traps_setting_past_the_end, test_traps_removing_past_the_end as traps__traps_removing_past_the_end, test_traps_swap_removing_past_the_end as traps__traps_swap_removing_past_the_end, test_traps_inserting_past_the_end as traps__traps_inserting_past_the_end, test_traps_on_a_negative_capacity as traps__traps_on_a_negative_capacity, test_traps_unwrapping_a_none as traps__traps_unwrapping_a_none, test_traps_unwrapping_an_err as traps__traps_unwrapping_an_err, test_the_in_range_operations_return_rather_than_trapping as traps__the_in_range_operations_return_rather_than_trapping }
+  from "./traps_test.wac";
+
+/** The four returning test files. A test that fails here measured a broken tree.
+ *
+ * Named rather than counted: "a test failed" sent the reader to thirty-nine candidates.
+ */
+export i32 main(Core core) {
+  i32 bad = 0;
+  if (option__option_basics().len() > 0) { core.warn("error: FAILED option_test test_option_basics"); bad = bad + 1; }
+  if (option__option_holds_any_type().len() > 0) { core.warn("error: FAILED option_test test_option_holds_any_type"); bad = bad + 1; }
+  if (option__option_match_is_exhaustive().len() > 0) { core.warn("error: FAILED option_test test_option_match_is_exhaustive"); bad = bad + 1; }
+  if (option__map_option().len() > 0) { core.warn("error: FAILED option_test test_map_option"); bad = bad + 1; }
+  if (option__result_basics().len() > 0) { core.warn("error: FAILED option_test test_result_basics"); bad = bad + 1; }
+  if (option__result_error_type_varies().len() > 0) { core.warn("error: FAILED option_test test_result_error_type_varies"); bad = bad + 1; }
+  if (hash__i32_hash_is_injective_over_a_sample().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_is_injective_over_a_sample"); bad = bad + 1; }
+  if (hash__aligned_keys_spread_across_buckets().len() > 0) { core.warn("error: FAILED hash_test test_aligned_keys_spread_across_buckets"); bad = bad + 1; }
+  if (hash__i32_hash_avalanches().len() > 0) { core.warn("error: FAILED hash_test test_i32_hash_avalanches"); bad = bad + 1; }
+  if (hash__i64_hash_is_injective_and_spreads().len() > 0) { core.warn("error: FAILED hash_test test_i64_hash_is_injective_and_spreads"); bad = bad + 1; }
+  if (hash__byte_hash_separates_near_neighbours().len() > 0) { core.warn("error: FAILED hash_test test_byte_hash_separates_near_neighbours"); bad = bad + 1; }
+  if (map__basics().len() > 0) { core.warn("error: FAILED map_test test_basics"); bad = bad + 1; }
+  if (map__growth_keeps_every_entry().len() > 0) { core.warn("error: FAILED map_test test_growth_keeps_every_entry"); bad = bad + 1; }
+  if (map__load_factor_bounds_the_table().len() > 0) { core.warn("error: FAILED map_test test_load_factor_bounds_the_table"); bad = bad + 1; }
+  if (map__collisions().len() > 0) { core.warn("error: FAILED map_test test_collisions"); bad = bad + 1; }
+  if (map__remove().len() > 0) { core.warn("error: FAILED map_test test_remove"); bad = bad + 1; }
+  if (map__remove_keeps_probe_runs_contiguous().len() > 0) { core.warn("error: FAILED map_test test_remove_keeps_probe_runs_contiguous"); bad = bad + 1; }
+  if (map__fill_and_empty_repeatedly().len() > 0) { core.warn("error: FAILED map_test test_fill_and_empty_repeatedly"); bad = bad + 1; }
+  if (map__clear().len() > 0) { core.warn("error: FAILED map_test test_clear"); bad = bad + 1; }
+  if (map__keys_and_values().len() > 0) { core.warn("error: FAILED map_test test_keys_and_values"); bad = bad + 1; }
+  if (map__hash_bytes_and_string_agree().len() > 0) { core.warn("error: FAILED map_test test_hash_bytes_and_string_agree"); bad = bad + 1; }
+  if (map__bytes_keyed_map().len() > 0) { core.warn("error: FAILED map_test test_bytes_keyed_map"); bad = bad + 1; }
+  if (map__key_types().len() > 0) { core.warn("error: FAILED map_test test_key_types"); bad = bad + 1; }
+  if (map__with_capacity().len() > 0) { core.warn("error: FAILED map_test test_with_capacity"); bad = bad + 1; }
+  if (map__differential_good_hash().len() > 0) { core.warn("error: FAILED map_test test_differential_good_hash"); bad = bad + 1; }
+  if (map__differential_all_collide().len() > 0) { core.warn("error: FAILED map_test test_differential_all_collide"); bad = bad + 1; }
+  if (map__differential_weak_hash().len() > 0) { core.warn("error: FAILED map_test test_differential_weak_hash"); bad = bad + 1; }
+  if (vec__growth_from_empty().len() > 0) { core.warn("error: FAILED vec_test test_growth_from_empty"); bad = bad + 1; }
+  if (vec__every_element_survives_growth().len() > 0) { core.warn("error: FAILED vec_test test_every_element_survives_growth"); bad = bad + 1; }
+  if (vec__index_bounds().len() > 0) { core.warn("error: FAILED vec_test test_index_bounds"); bad = bad + 1; }
+  if (vec__pop_and_ends().len() > 0) { core.warn("error: FAILED vec_test test_pop_and_ends"); bad = bad + 1; }
+  if (vec__remove_insert_and_swap().len() > 0) { core.warn("error: FAILED vec_test test_remove_insert_and_swap"); bad = bad + 1; }
+  if (vec__insert_at_capacity_boundary().len() > 0) { core.warn("error: FAILED vec_test test_insert_at_capacity_boundary"); bad = bad + 1; }
+  if (vec__clear_and_reuse().len() > 0) { core.warn("error: FAILED vec_test test_clear_and_reuse"); bad = bad + 1; }
+  if (vec__to_array_and_from_array().len() > 0) { core.warn("error: FAILED vec_test test_to_array_and_from_array"); bad = bad + 1; }
+  if (vec__extend().len() > 0) { core.warn("error: FAILED vec_test test_extend"); bad = bad + 1; }
+  if (vec__extend_with_itself().len() > 0) { core.warn("error: FAILED vec_test test_extend_with_itself"); bad = bad + 1; }
+  if (vec__element_types().len() > 0) { core.warn("error: FAILED vec_test test_element_types"); bad = bad + 1; }
+  if (vec__with_capacity().len() > 0) { core.warn("error: FAILED vec_test test_with_capacity"); bad = bad + 1; }
+  if (bad > 0) {
+    core.warn("error: " + itoa(bad) + " test(s) failed, so this measured a broken tree");
+    return 1;
+  }
+  return 0;
+}
+
+/** The eleven guards that trap on purpose, one call each with the trap caught. */
+export void trapCase(i32 i) {
+  if (i == 0) { traps__traps_getting_past_the_end(); return; }
+  if (i == 1) { traps__traps_getting_a_negative_index(); return; }
+  if (i == 2) { traps__traps_getting_at_capacity_not_length(); return; }
+  if (i == 3) { traps__traps_setting_past_the_end(); return; }
+  if (i == 4) { traps__traps_removing_past_the_end(); return; }
+  if (i == 5) { traps__traps_swap_removing_past_the_end(); return; }
+  if (i == 6) { traps__traps_inserting_past_the_end(); return; }
+  if (i == 7) { traps__traps_on_a_negative_capacity(); return; }
+  if (i == 8) { traps__traps_unwrapping_a_none(); return; }
+  if (i == 9) { traps__traps_unwrapping_an_err(); return; }
+  if (i == 10) { traps__the_in_range_operations_return_rather_than_trapping(); return; }
+}

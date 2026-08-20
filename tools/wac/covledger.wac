@@ -394,32 +394,35 @@ void sortMissed(string[] a, i32 n) {
  * `verbose` prints every missed point rather than the first twenty.
  */
 export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string prefix, bool verbose) {
-  // Per file, and the skipped ones named.
-  string[] files = string[nPoints](fill: "");
-  i32[] fileN = i32[nPoints]();
-  i32[] fileC = i32[nPoints]();
+  // **Merged by source position, so a generic's instantiations are one line each.** See `Merged`.
+  Merged[] merged = mergeRoom(nPoints);
+  i32 nMerged = mergePoints(points, nPoints, counts, prefix, merged);
+
+  // Per file, and the skipped ones named. The skip list walks the raw points, because a test file that
+  // contributes nothing but duplicates still has to be named.
+  string[] files = string[nMerged > 0 ? nMerged : 1](fill: "");
+  i32[] fileN = i32[nMerged > 0 ? nMerged : 1]();
+  i32[] fileC = i32[nMerged > 0 ? nMerged : 1]();
   i32 nFiles = 0;
-  string[] skipped = string[nPoints](fill: "");
+  string[] skipped = string[nPoints > 0 ? nPoints : 1](fill: "");
   i32 nSkipped = 0;
   i32 total = 0;
   i32 covered = 0;
   for (i32 i = 0; i < nPoints; i++) {
     Point p = points[i];
-    if (!startsWith(p.file, prefix)) { continue; }
-    if (isTest(p.file)) {
-      bool seen = false;
-      for (i32 k = 0; k < nSkipped; k++) { if (skipped[k] == p.file) { seen = true; } }
-      if (!seen) { skipped[nSkipped] = p.file; nSkipped = nSkipped + 1; }
-      continue;
-    }
+    if (!startsWith(p.file, prefix) || !isTest(p.file)) { continue; }
+    bool seen = false;
+    for (i32 k = 0; k < nSkipped; k++) { if (skipped[k] == p.file) { seen = true; } }
+    if (!seen) { skipped[nSkipped] = p.file; nSkipped = nSkipped + 1; }
+  }
+  for (i32 i = 0; i < nMerged; i++) {
+    Merged p = merged[i];
     i32 slot = -1;
     for (i32 k = 0; k < nFiles && slot < 0; k++) { if (files[k] == p.file) { slot = k; } }
     if (slot < 0) { slot = nFiles; files[slot] = p.file; nFiles = nFiles + 1; }
     fileN[slot] = fileN[slot] + 1;
     total = total + 1;
-    // `!= 0`, not `> 0`: a counter that wrapped past two billion is negative and was very much
-    // reached. See `signedOf`.
-    if (counts[p.index] != 0) { fileC[slot] = fileC[slot] + 1; covered = covered + 1; }
+    if (p.hit) { fileC[slot] = fileC[slot] + 1; covered = covered + 1; }
   }
 
   core.log("| file | points | covered | % |");
@@ -450,9 +453,9 @@ export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string 
     // Sorted by file then line, which is the order somebody reads them in.
     string[] missed = string[nMissed](fill: "");
     i32 m = 0;
-    for (i32 i = 0; i < nPoints; i++) {
-      Point p = points[i];
-      if (!startsWith(p.file, prefix) || isTest(p.file) || counts[p.index] != 0) { continue; }
+    for (i32 i = 0; i < nMerged; i++) {
+      Merged p = merged[i];
+      if (p.hit) { continue; }
       // Padded so the sort is by line *number* rather than by its spelling — `:9:` after `:10:` is
       // what an unpadded string sort gives, and a reader takes that for a missing entry.
       string ln = itoa(p.line);
@@ -475,17 +478,94 @@ export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string 
 }
 
 /**
+ * One source position, and whether **any** instantiation of it ran.
+ *
+ * A generic emits a copy of every point in its body per instantiation, so `Option<T>` used seven ways
+ * is seven copies of the same lines with seven counters. What a reader wants to know about
+ * `option.wac:20` is whether that branch was taken, not whether it was taken in all seven — so the
+ * copies merge and the coverage is a union.
+ *
+ * **This was got wrong from the day `covreport.wac` was written**, and `core/` is where it showed:
+ * `core/test/cov_exercise.wac` emits 848 points under `core/` at 159 distinct positions, and counting
+ * them raw read 35.3% where `harness/wacCoverage.ts` — which keyed on `(file, line, col, kind)` and
+ * unioned — read 100%. Every package converted before then was measured raw; the ones with no repeated
+ * instantiation are unaffected, which is why nothing caught it until a tree that is nothing but
+ * generics arrived.
+ */
+export struct Merged {
+  string file;
+  i32 line;
+  i32 col;
+  string kind;
+  bool hit;
+}
+
+/**
+ * The points under `prefix` that are not in tests, merged by source position.
+ *
+ * `out` is filled and the count returned, since wac has no growable array here and the caller wants
+ * both.
+ *
+ * **Bucketed by line, which is not a premature optimisation.** The first version scanned the whole
+ * merged list per point, and `deno task coverage:all` went from 44s to 75s on 21 packages — a cost paid
+ * on every push. Two points can only merge if they are on the same line, so a chain per line turns the
+ * scan into a walk over the handful of distinct positions on that one line. No hash and nothing to get
+ * wrong: the bucket key *is* the line number.
+ */
+export i32 mergePoints(Point[] points, i32 nPoints, i32[] counts, string prefix, Merged[] out) {
+  i32 maxLine = 0;
+  for (i32 i = 0; i < nPoints; i++) {
+    if (points[i].line > maxLine) { maxLine = points[i].line; }
+  }
+  i32[] head = i32[maxLine + 2]();
+  for (i32 i = 0; i < head.len(); i++) { head[i] = -1; }
+  i32[] next = i32[nPoints > 0 ? nPoints : 1]();
+
+  i32 n = 0;
+  for (i32 i = 0; i < nPoints; i++) {
+    Point p = points[i];
+    if (!startsWith(p.file, prefix) || isTest(p.file)) { continue; }
+    // `!= 0`, not `> 0`: a counter that wrapped past two billion is negative and was very much
+    // reached. See `signedOf`.
+    bool ran = p.index < counts.len() && counts[p.index] != 0;
+    i32 at = -1;
+    i32 line = p.line >= 0 && p.line <= maxLine ? p.line : 0;
+    for (i32 k = head[line]; k >= 0 && at < 0; k = next[k]) {
+      Merged m = out[k];
+      if (m.col == p.col && m.line == p.line && m.file == p.file && m.kind == p.kind) { at = k; }
+    }
+    if (at >= 0) {
+      if (ran) { out[at].hit = true; }
+      continue;
+    }
+    if (n < out.len()) {
+      out[n] = Merged(p.file, p.line, p.col, p.kind, ran);
+      next[n] = head[line];
+      head[line] = n;
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
+/** Room for a merge of `nPoints`, which cannot need more entries than there are points. */
+export Merged[] mergeRoom(i32 nPoints) {
+  return Merged[nPoints > 0 ? nPoints : 1](fill: Merged("", 0, 0, "", false));
+}
+
+/**
  * Every `file:line` under `prefix` with at least one point that never ran, as a sorted list.
  *
  * `n` is how many entries of the returned array are real, since wac has no growable array here and the
  * caller wants both.
  */
 export i32 uncoveredLines(Point[] points, i32 nPoints, i32[] counts, string prefix, string[] out) {
+  Merged[] merged = mergeRoom(nPoints);
+  i32 nMerged = mergePoints(points, nPoints, counts, prefix, merged);
   i32 n = 0;
-  for (i32 i = 0; i < nPoints; i++) {
-    Point p = points[i];
-    if (!startsWith(p.file, prefix) || isTest(p.file)) { continue; }
-    if (p.index < counts.len() && counts[p.index] != 0) { continue; }
+  for (i32 i = 0; i < nMerged; i++) {
+    Merged p = merged[i];
+    if (p.hit) { continue; }
     string where = p.file + ":" + itoa(p.line);
     bool have = false;
     for (i32 k = 0; k < n; k++) { if (out[k] == where) { have = true; } }
