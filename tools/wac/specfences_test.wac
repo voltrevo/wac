@@ -1,0 +1,150 @@
+// Every wac program the spec *shows* is one this compiler can build.
+//
+//     wac test --allow-read --allow-write --allow-run tools/
+//
+// `spec/spec/*.md` is prose with code in it, and the code is the part a reader copies. One of those
+// fences was a program wacc could not compile for as long as the feature behind it was unimplemented:
+// `types.md`'s `export i32 read(i32? x) { return x is null ? -1 : x!; }`, given two lines below prose
+// saying *"reading one needs an accessor written in wac"* — so the documented way to use a feature was
+// the thing that did not work. Nothing noticed, because nothing compiled the fences
+// (`issues/lang/0171a`).
+//
+// ## The invariant, and why it needs no fragment detection
+//
+// **A fence `wac check` accepts must also `wac build`.** That is the gate-and-doer agreement — the
+// checker approving a program the emitter then drops is the whole subject of `issues/lang/0170a` — and
+// it makes the hard part free: a *fragment* does not check clean, because the declarations it refers to
+// live elsewhere in its document. So `wac check` is the filter, and there is no need to guess which
+// fences are whole programs. 62 of the 169 candidates are fragments and counter-examples, and they are
+// skipped by failing the check rather than by a heuristic.
+//
+// Deliberately **not** asserting that a fence which fails to check is wrong. `casts.md` shows
+// `s as! i32` and `control.md` shows a `needsReturn` that does not return, each carrying its own
+// `// error:` comment — a document's rejected examples are as load-bearing as its accepted ones.
+// `compiler/wacSpec.test.ts` already holds those to being errors, with the reference. This is the other
+// direction, and with wacc.
+//
+// ## What the count is for
+//
+// A regex that stopped matching would report every fence as clean and pass. So the number of fences
+// that check clean is asserted as a floor: an extraction that collapses fails instead of congratulating
+// itself. It was 107 when this was written, of 169 candidates.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { nonEmptyLines } from "../../packages/wactest/src/repo.wac";
+import { Core, Cli, Exec, FileResult, Change } from "std/platform.wac";
+
+string read(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+/** Balanced braces: an unbalanced fence is a fragment however it checks. */
+bool balanced(string s) {
+  i32 d = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (c == "{") { d = d + 1; }
+    if (c == "}") { d = d - 1; }
+  }
+  return d == 0;
+}
+
+/**
+ * Fill `out` with every ```wac fence in `text` that could be a whole program, and answer how many.
+ *
+ * A count rather than a right-sized array, because neither `string[].slice` nor `string.split` exists —
+ * checked against `spec/spec/strings.md` rather than assumed, after reaching for both.
+ */
+i32 fencesOf(string text, string[] out) {
+  i32 n = 0;
+  string rest = text;
+  while (true) {
+    i32 open = rest.indexOf("```wac\n");
+    if (open < 0) { break; }
+    string after = rest.slice(open + 7, rest.len());
+    i32 close = after.indexOf("```");
+    if (close < 0) { break; }
+    string body = after.slice(0, close);
+    rest = after.slice(close + 3, after.len());
+    // Needs an `export` to be worth building at all — a fence with none produces an empty module and
+    // says nothing about the emitter.
+    if (body.indexOf("export ") < 0) { continue; }
+    if (!balanced(body)) { continue; }
+    if (n >= out.len()) { continue; }
+    out[n] = body;
+    n = n + 1;
+  }
+  return n;
+}
+
+export string test_every_spec_fence_that_checks_clean_also_builds(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "specfences");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  Exec ls = cli.exec("git", string[]("ls-files", "spec/spec"), u8[0]()).wait();
+  t.isTrue(ls.ran() && ls.status == 0, "git ls-files spec/spec failed");
+  if (!ls.ran() || ls.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string[] docs = nonEmptyLines(string.fromBytes(ls.stdout));
+  i32 candidates = 0;
+  i32 clean = 0;
+  string[] broke = string[16](fill: "");
+  i32 nBroke = 0;
+  i32 nShown = 0;
+
+  for (i32 d = 0; d < docs.len(); d++) {
+    string doc = docs[d];
+    if (doc.len() < 4) { continue; }
+    if (doc.slice(doc.len() - 3, doc.len()) != ".md") { continue; }
+    string[] fences = string[64](fill: "");
+    i32 nf = fencesOf(read(cli, doc), fences);
+    for (i32 f = 0; f < nf; f++) {
+      candidates = candidates + 1;
+      string path = dir + "/" + itoa(d) + "_" + itoa(f) + ".wac";
+      if (!cli.writeFile(path, fences[f].toBytes()).wait().ok()) { continue; }
+      Exec chk = cli.exec(binaryPath(cli), string[]("check", path), u8[0]()).wait();
+      if (!chk.ran() || chk.status != 0) { continue; }   // a fragment, or a deliberate counter-example
+      clean = clean + 1;
+      Exec bld = cli.exec(binaryPath(cli),
+                          string[]("build", path, "-o", path + ".out"), u8[0]()).wait();
+      if (bld.ran() && bld.status == 0) { continue; }
+      // **The count and the sample are separate.** They were one, so `nBroke` stopped rising with the
+      // array and the message said "16 spec fence(s)" when the canary had broken all 107 — a bounded
+      // report is fine, a bounded *count* is a wrong number in a diagnostic.
+      nBroke = nBroke + 1;
+      if (nShown < broke.len()) {
+        broke[nShown] = doc + " fence " + itoa(f) + ": " +
+                        (bld.ran() ? string.fromBytes(bld.stderr) : bld.error);
+        nShown = nShown + 1;
+      }
+    }
+  }
+
+  core.log("    spec fences: " + itoa(clean) + " of " + itoa(candidates) +
+           " check clean, and all of those build");
+
+  // The canary: an extractor that stopped matching would find nothing and report success.
+  t.isTrue(candidates >= 150,
+           "only " + itoa(candidates) + " fences were extracted, was 169 — the fence syntax or the " +
+           "layout of spec/spec has changed and this is measuring a fraction of it");
+  t.isTrue(clean >= 100,
+           "only " + itoa(clean) + " fences check clean, was 107 — either the checker got stricter " +
+           "about the spec's own examples, or the extraction broke");
+
+  string said = "";
+  for (i32 i = 0; i < nShown; i++) { said = said + "\n  " + broke[i]; }
+  if (nBroke > nShown) { said = said + "\n  … and " + itoa(nBroke - nShown) + " more"; }
+  t.eqI32(nBroke, 0,
+          itoa(nBroke) + " spec fence(s) the checker accepts cannot be built — the spec shows a " +
+          "program this compiler cannot compile:" + said);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
