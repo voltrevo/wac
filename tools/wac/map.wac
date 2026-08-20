@@ -153,8 +153,15 @@ string replaceAll(string s, string from, string to) {
  *
  * The three spellings that register a test in the file they are written in. `wacTestRun` is the
  * fourth and is deliberately absent: it registers one per `export string test*` in a **wac** file,
- * and those are counted from the wac. Counted from a shared list in the TypeScript for the reason
- * that a spelling added to one and not the other lost 28 tests from this column once.
+ * and those are counted from the wac.
+ *
+ * **They are literals here, and the comment used to say they were "counted from a shared list in the
+ * TypeScript".** They never were — `harness/testRegistrars.ts` is that list and it says "every
+ * spelling that registers a Deno test, in one place", which is also not true while these three sit
+ * here. There is no mechanism for a wac file and a TypeScript file to share a list of strings, so
+ * what keeps them the same is `tools/wac/map_test.wac`, which reads both and compares. That is the
+ * check the incident asks for: a spelling added to one and not the other lost 28 tests from this
+ * column once, and neither file noticed.
  */
 i32 countTestsDeclaredHere(string src) {
   return occurrences(src, "Deno.test(") + occurrences(src, "testBounded(") +
