@@ -1,6 +1,6 @@
 # 0172a — three spec behaviours wacc declines: a generic struct with a base, an enum method naming a type late, and `is` against a non-ancestor
 
-- **Status:** open — 3 and 3b fixed 2026-08-20; 1 and 2 remain
+- **Status:** open — 2, 3 and 3b fixed 2026-08-20; only 1 remains
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
@@ -100,6 +100,22 @@ constraint with no sweep covering it.
 
 Narrowing worth having: the array is what does it. An enum method that only reads `this` is fine, and
 `issues/lang/closed/0028-methods-on-enums.md` is the feature itself, which works.
+
+### Fixed — 2026-08-20
+
+One arm. The declaration walk that registers every type a body can name had `case Func` and
+`case StructDecl` and an `else: { }` that swallowed `EnumDecl` — so an enum method's body was never
+walked, and a type it was the first to name was first named while emitting.
+
+**This is the third time today the same omission has appeared in this file.** `declinedExport` had no
+`EnumDecl` arm, which made it index another function's slot (`issues/lang/0170a`); the array walk beside
+this one has an `EnumDecl` arm that registers variant *field* types and not method bodies. The shape to
+distrust is `case Func` … `case StructDecl` … `else: { }`: enums have methods, so a walk that wants
+bodies wants theirs. Worth a sweep of the remaining declaration walks in `emit.wac` for the same gap.
+
+`spec/cases/0213` answers 10 — the match arm and both array reads contribute, so a wrong layout does not
+pass as 10. 215 of 215 cases met, seed a fixed point, and the ledger went from eight entries to seven:
+251 of 279 emitted whole (was 250) and **390 answers agreeing (was 389)**.
 
 ## 3. `is` against a type that shares no ancestor — `§wac-is-undefined-type-6qbn3wr`
 

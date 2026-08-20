@@ -213,7 +213,9 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
     "untagged",                         // "untyped name" — also a nullable primitive
     // Two gaps of their own, each reason the emitter's own sentence — `issues/lang/0172a`:
     "wac-generic-struct-9tkq4wm",       // "a construction of Parented<i32> with 2 of 1 fields"
-    "enum-methods-6vkq2wn",             // "a type this emitter names only while emitting"
+    // `enum-methods-6vkq2wn` left on 2026-08-20: the declaration walk that registers the types a body
+    // names had `case Func` and `case StructDecl` and an `else: { }` that swallowed `EnumDecl`, so a
+    // type first named inside an enum method was first named while emitting.
     // Removed 2026-08-20, and this check is what said to: `wac-is-undefined-type-6qbn3wr` and
     // `wac-type-name-scope-8vqk3mn` emit now. `p is Q` between unrelated structs is a constant rather
     // than a refusal, and an upper-case local on the right of `is` is an identity test. The list going

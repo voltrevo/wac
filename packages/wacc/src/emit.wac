@@ -10743,6 +10743,21 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
         }
       }
+      // **An enum's methods are bodies too**, and this walk had only `Func` and `StructDecl` — so a
+      // type first named inside an enum method was first named *while emitting*, which is a decline
+      // in those words (`issues/lang/0172a`). `Q[] qs = Q[2](fill: Q(helper()));` in an enum method
+      // was enough; the array is what does it, not the enum.
+      //
+      // This is the third `EnumDecl` arm missing from a declaration walk in this file today — after
+      // `declinedExport`'s, which made it read another function's slot (`issues/lang/0170a`). The
+      // shape to distrust is `case Func` and `case StructDecl` followed by `else: { }`: enums have
+      // methods, so a walk that wants bodies wants theirs.
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) {
+          collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
+        }
+      }
       else: { }
     }
   }
