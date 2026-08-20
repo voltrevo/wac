@@ -1,0 +1,513 @@
+// The exemption ratchet: which uncovered points are accounted for, and whether the account still holds.
+//
+// A coverage report that sits at 99.6% for ever teaches everyone to ignore the last line, and then a
+// genuinely new gap arrives and looks like the one that was always there. So a package with unreachable
+// code names each point and says why, and this checks the naming — in **both** directions, which is the
+// contract `packages/gzip/test/cov_ledger.wac` carries and the one generalised here — stated first in
+// that package's `cov.ts`, which this replaced:
+//
+//   > Anything not listed here is expected to be covered and the run fails if it is not — and anything
+//   > listed that *does* get covered fails too, since the reason has stopped holding.
+//
+// Three ways a ledger can be wrong, and all three are failures:
+//
+//   1. **the pin drifted** — the line no longer holds the snippet it was pinned by. Keying an exclusion
+//      on a line number alone is fragile in the obvious way: adding a comment above it silently moves
+//      the exclusion onto whatever now sits at that line. gzip's list started out pointing at line 306
+//      and the comment explaining why moved the code to 322;
+//   2. **the reason stopped holding** — the point is pinned and is now covered, so the argument for
+//      excluding it is wrong and the entry has to go;
+//   3. **something new is uncovered** — a point nothing reaches with nothing said about it.
+//
+// ## The phrasing is an API — `issues/system/0222`
+//
+// `tools/coverageAll.ts` repeats each failing task's own explanation, and selects the lines to repeat by
+// matching `no longer holds`, `is listed as unreach`, `branch point(s) uncovered` and a leading `error`.
+// Those exact strings are what this emits. They are not decoration: gzip's `cov.ts` said
+// "unreachable" where `packages/crypto/cov.ts` said "unreached", and a stale gzip entry therefore exited
+// 1 with its only explanation filtered out of the summary — a reason with its subject removed.
+//
+// ## A line, not a point
+//
+// A pin names a `file:line`, and a line is *uncovered* when **any** point on it never ran. That is
+// coarser than the counters and deliberately so: a reader writing down why something is unreachable is
+// reasoning about a statement, not about which of the three branch points the emitter put on it. The
+// cost is that a line carrying both a covered and an uncovered point reads as uncovered, which is the
+// safe direction — it asks for an entry rather than hiding one.
+
+import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { contains, startsWith, endsWith, trimmed } from "../../packages/wactest/src/strings.wac";
+
+/** One instrumented point: where it is and what kind. */
+export struct Point {
+  i32 index;
+  string file;
+  i32 line;
+  i32 col;
+  string kind;
+}
+
+/**
+ * One accounted-for point, and the argument for it.
+ *
+ * `snippet` is checked against the source at `line` — see failure 1 above. `why` is printed on a good
+ * run as well as a bad one, because a ledger nobody reads is a ledger nobody maintains.
+ */
+export struct Pin {
+  string file;
+  i32 line;
+  string snippet;
+  string why;
+}
+
+/**
+ * `s` cut at every newline, **keeping the empty ones**.
+ *
+ * Not `splitLines` from `packages/wactest/src/strings.wac`, which drops them — that is right for a
+ * test reading a program's output and wrong here, where the index into this array *is* a line number.
+ * A file with one blank line in it would report every pin after that line as drifted, and the drift
+ * message would name the line above the real one, which is the most confusing available answer.
+ */
+export string[] linesOf(string s) {
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  string cur = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    if (s.slice(i, i + 1) == "\n") { out[at] = cur; at = at + 1; cur = ""; }
+    else { cur = cur + s.slice(i, i + 1); }
+  }
+  out[at] = cur;
+  return out;
+}
+
+/** `harness/wacCoverage.ts`'s rule, kept exactly: a test's own branches are not the package's. */
+export bool isTest(string file) {
+  return contains(file, "/test/") || endsWith(file, "_test.wac");
+}
+
+export void sortStrings(string[] a, i32 n) {
+  for (i32 i = 1; i < n; i++) {
+    string v = a[i];
+    i32 j = i - 1;
+    while (j >= 0 && a[j] > v) { a[j + 1] = a[j]; j = j - 1; }
+    a[j + 1] = v;
+  }
+}
+
+// ## Measuring — build, run, join
+//
+// Everything from here down was inside `covreport.wac`'s `main`, which made it reachable only by
+// spawning that program and reading its table back as text. A ledger wants the same numbers and a
+// different verdict over them, so it is a function.
+
+export string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** The tab-separated fields of a row, padded to `want`. */
+export string[] fields(string row, i32 want) {
+  string[] out = string[want](fill: "");
+  i32 n = 0;
+  string cur = "";
+  for (i32 i = 0; i <= row.len(); i++) {
+    string c = i < row.len() ? row.slice(i, i + 1) : "\t";
+    if (c == "\t") { if (n < want) { out[n] = cur; n = n + 1; } cur = ""; }
+    else { cur = cur + c; }
+  }
+  return out;
+}
+
+export i32 numberOf(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return -1; }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < 48 || b[i] > 57) { return -1; }
+    v = v * 10 + (b[i] - 48);
+  }
+  return v;
+}
+
+/**
+ * Whether every byte is a digit, so a row can be told from a heading.
+ *
+ * Separate from the value because a *count* may legitimately be negative and 0 is a meaningful
+ * answer — "never reached" — so a parser that returned 0 for "not a number" would report a covered
+ * branch as dead.
+ */
+bool isDigits(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return false; }
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] < 48 || b[i] > 57) { return false; } }
+  return true;
+}
+
+/** Whether `s` is a counter: digits, or a `-` and then digits. */
+bool isCount(string s) {
+  return s.len() > 1 && s.slice(0, 1) == "-" ? isDigits(s.slice(1, s.len())) : isDigits(s);
+}
+
+/**
+ * A counter, **which may be negative**.
+ *
+ * The counters are `i32` and an exercise that runs one branch two billion times wraps it. `fmt`'s
+ * does — 44 of its 518 — and `numberOf` above is written for *indices*, so it refuses a sign and a
+ * wrapped count read as an unparseable row. The walk then stopped at the first one and the dump "had"
+ * 474 counters against a 518-row table, reported as the two files not describing the same module: a
+ * message about the artefacts rather than about arithmetic, and the wrong place to look entirely.
+ *
+ * Only zero-or-not is ever asked of a counter, so a wrapped one is as good as any other non-zero.
+ * **The exception cannot be fixed here**: a counter that wraps to *exactly* zero reads as never
+ * reached, and no parser can tell that from a branch nothing ran. That needs a saturating counter in
+ * the instrumentation.
+ */
+i32 signedOf(string s) {
+  if (s.len() > 1 && s.slice(0, 1) == "-") { return -numberOf(s.slice(1, s.len())); }
+  return numberOf(s);
+}
+
+/** A path as one directory name: everything that is not a letter, a digit or `-` becomes `-`. */
+export string slug(string path) {
+  string out = "";
+  for (i32 i = 0; i < path.len(); i++) {
+    string c = path.slice(i, i + 1);
+    bool plain = (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") ||
+                 c == "-";
+    out = out + (plain ? c : "-");
+  }
+  return out;
+}
+
+/**
+ * One coverage measurement: the table and the counters, agreed to describe the same module.
+ *
+ * `nPoints` is 0 when the measurement failed, and `measure` has already said why.
+ */
+export struct Measured {
+  Point[] points;
+  i32 nPoints;
+  i32[] counts;
+}
+
+/**
+ * Build `entry` with coverage, run it, and join the counters against the table.
+ *
+ * `grants` are what the *exercise* is compiled with — not a widening of what the caller may do, so an
+ * exercise that reads a corpus says so and one that does not cannot. `exports` are called after `main`
+ * with a trap caught around each, which is how a package's trapping branches are reached at all
+ * (`issues/system/0221`).
+ */
+export Measured measure(Core core, Cli cli, string entry, string[] grants, string[] exports) {
+  Measured none = Measured(Point[1](fill: Point(0, "", 0, 0, "")), 0, i32[1]());
+
+  // **A directory per exercise, because `deno task coverage:all` runs four of these at once.**
+  //
+  // This was `.cache/covreport` for everyone, wiped on the way in. That was invisible while codec was
+  // the only caller and became a failure the moment there was a second: one run deletes the directory
+  // another is building into, and the loser reports *no coverage table beside the module* — a message
+  // about its own output, naming nothing about the race. Named from the entry rather than a pid, so a
+  // re-run of one package reuses its own directory and two packages can never share one.
+  string dir = cli.cwd().wait() + "/.cache/covreport/" + slug(entry);
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string stem = dir + "/prog";
+
+  string[] build = string[6 + grants.len()](fill: "");
+  build[0] = "build";
+  build[1] = entry;
+  build[2] = "--coverage";
+  for (i32 i = 0; i < grants.len(); i++) { build[3 + i] = grants[i]; }
+  build[3 + grants.len()] = "-o";
+  build[4 + grants.len()] = stem;
+  build[5 + grants.len()] = "--quiet";
+  Exec built = cli.exec(binary(cli), build, u8[0]()).wait();
+  if (!built.ran() || built.status != 0) {
+    core.warn("error: " + entry + " did not build — " + built.error +
+              string.fromBytes(built.stderr));
+    cli.remove(dir, true).wait();
+    return none;
+  }
+
+  FileResult table = cli.readFile(stem + ".cov").wait();
+  if (!table.ok) {
+    core.warn("error: no coverage table beside the module — " + table.error);
+    cli.remove(dir, true).wait();
+    return none;
+  }
+  string[] dump = string[2 + exports.len()](fill: "");
+  dump[0] = "covdump";
+  dump[1] = stem + ".wasm";
+  for (i32 i = 0; i < exports.len(); i++) { dump[2 + i] = exports[i]; }
+  Exec dumped = cli.exec(binary(cli), dump, u8[0]()).wait();
+  if (!dumped.ran() || dumped.status != 0) {
+    core.warn("error: covdump — " + dumped.error + string.fromBytes(dumped.stderr));
+    cli.remove(dir, true).wait();
+    return none;
+  }
+  // **What covdump said even when it succeeded**, because the thing it says on a *good* run is that
+  // one of the export names is not an export — and that reads from the outside as a package whose
+  // trapping branches simply are not covered, which is the same number a real gap gives. A mistyped
+  // name was silent until this line: `zzz_not_an_export` produced a clean report four branches short.
+  string said = string.fromBytes(dumped.stderr);
+  if (said.len() > 0) { core.warn(said); }
+
+  // `<index>\t<count>` per counter, then a line saying how many. Anything else is not a dump.
+  string[] dumpRows = linesOf(string.fromBytes(dumped.stdout));
+  i32 nCounts = 0;
+  for (i32 i = 0; i < dumpRows.len(); i++) {
+    string[] f = fields(dumpRows[i], 2);
+    if (numberOf(f[0]) == nCounts && isCount(f[1])) { nCounts = nCounts + 1; }
+  }
+  i32[] counts = i32[nCounts > 0 ? nCounts : 1]();
+  i32 at = 0;
+  for (i32 i = 0; i < dumpRows.len() && at < nCounts; i++) {
+    string[] f = fields(dumpRows[i], 2);
+    if (numberOf(f[0]) == at) { counts[at] = signedOf(f[1]); at = at + 1; }
+  }
+
+  // `index\tline\tcol\tkind\tfile` per counter, in counter order.
+  string[] rows = linesOf(string.fromBytes(table.bytes));
+  Point[] points = Point[rows.len()](fill: Point(0, "", 0, 0, ""));
+  i32 nPoints = 0;
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (rows[i].len() == 0) { continue; }
+    string[] f = fields(rows[i], 5);
+    i32 idx = numberOf(f[0]);
+    if (idx < 0) { continue; }
+    points[nPoints] = Point(idx, f[4], numberOf(f[1]), numberOf(f[2]), f[3]);
+    nPoints = nPoints + 1;
+  }
+  cli.remove(dir, true).wait();
+
+  // **Asserted, not assumed.** A table and a dump of different lengths is a module and a table that do
+  // not describe each other, and every count read past the end would be a point reported as missed.
+  if (nPoints != nCounts) {
+    core.warn("error: the table has " + itoa(nPoints) + " points and the dump " + itoa(nCounts) +
+              " counters; they do not describe the same module");
+    return none;
+  }
+  if (nPoints == 0) {
+    core.warn("error: no instrumented points at all — was " + entry + " built with coverage?");
+    return none;
+  }
+  return Measured(points, nPoints, counts);
+}
+
+// ## Reporting — the table, and what was missed
+//
+// Twelve packages call this through `covreport.wac` and want nothing else. A *ledger* wants the same
+// table printed and then a verdict over the same measurement, which is why this is a function and not
+// a second program: two measurements of one package are two runs that can disagree.
+
+/** A one-decimal percentage, since the table has always printed one. */
+string pct(i32 c, i32 n) {
+  if (n == 0) { return "100.0"; }
+  i32 tenths = (c * 1000 + n / 2) / n;
+  return itoa(tenths / 10) + "." + itoa(tenths % 10);
+}
+
+/** A missed row's sort key: the file and the line, and nothing after them. */
+string fileAndLine(string row) {
+  i32 tabs = 0;
+  for (i32 i = 0; i < row.len(); i++) {
+    if (row.slice(i, i + 1) == "\t") {
+      tabs = tabs + 1;
+      if (tabs == 2) { return row.slice(0, i); }
+    }
+  }
+  return row;
+}
+
+/**
+ * By file then line, and **stable**, which is not decoration.
+ *
+ * Two points can share a file, a line and a column — `hex.wac:75:3` is a `then` and an `else` — and
+ * their order is then whichever the emitter numbered first. Sorting the whole row instead puts `else`
+ * before `then` alphabetically, which is a different answer to the same question and a needless
+ * difference from the report this replaces. `>` rather than `>=` is what keeps equal keys in place.
+ */
+void sortMissed(string[] a, i32 n) {
+  for (i32 i = 1; i < n; i++) {
+    string v = a[i];
+    string k = fileAndLine(v);
+    i32 j = i - 1;
+    while (j >= 0 && fileAndLine(a[j]) > k) { a[j + 1] = a[j]; j = j - 1; }
+    a[j + 1] = v;
+  }
+}
+
+/**
+ * The per-file table, the test files not counted, and the points nothing reached.
+ *
+ * `verbose` prints every missed point rather than the first twenty.
+ */
+export void report(Core core, Point[] points, i32 nPoints, i32[] counts, string prefix, bool verbose) {
+  // Per file, and the skipped ones named.
+  string[] files = string[nPoints](fill: "");
+  i32[] fileN = i32[nPoints]();
+  i32[] fileC = i32[nPoints]();
+  i32 nFiles = 0;
+  string[] skipped = string[nPoints](fill: "");
+  i32 nSkipped = 0;
+  i32 total = 0;
+  i32 covered = 0;
+  for (i32 i = 0; i < nPoints; i++) {
+    Point p = points[i];
+    if (!startsWith(p.file, prefix)) { continue; }
+    if (isTest(p.file)) {
+      bool seen = false;
+      for (i32 k = 0; k < nSkipped; k++) { if (skipped[k] == p.file) { seen = true; } }
+      if (!seen) { skipped[nSkipped] = p.file; nSkipped = nSkipped + 1; }
+      continue;
+    }
+    i32 slot = -1;
+    for (i32 k = 0; k < nFiles && slot < 0; k++) { if (files[k] == p.file) { slot = k; } }
+    if (slot < 0) { slot = nFiles; files[slot] = p.file; nFiles = nFiles + 1; }
+    fileN[slot] = fileN[slot] + 1;
+    total = total + 1;
+    // `!= 0`, not `> 0`: a counter that wrapped past two billion is negative and was very much
+    // reached. See `signedOf`.
+    if (counts[p.index] != 0) { fileC[slot] = fileC[slot] + 1; covered = covered + 1; }
+  }
+
+  core.log("| file | points | covered | % |");
+  core.log("|---|---:|---:|---:|");
+  string[] order = string[nFiles](fill: "");
+  for (i32 i = 0; i < nFiles; i++) { order[i] = files[i]; }
+  sortStrings(order, nFiles);
+  for (i32 i = 0; i < nFiles; i++) {
+    for (i32 k = 0; k < nFiles; k++) {
+      if (files[k] != order[i]) { continue; }
+      core.log("| " + files[k] + " | " + itoa(fileN[k]) + " | " + itoa(fileC[k]) + " | " +
+               pct(fileC[k], fileN[k]) + " |");
+    }
+  }
+  core.log("| **" + prefix + "** | **" + itoa(total) + "** | **" + itoa(covered) + "** | **" +
+           pct(covered, total) + "** |");
+
+  if (nSkipped > 0) {
+    sortStrings(skipped, nSkipped);
+    string names = "";
+    for (i32 i = 0; i < nSkipped; i++) { names = names + (i > 0 ? ", " : "") + skipped[i]; }
+    core.log("");
+    core.log(itoa(nSkipped) + " test file(s) not counted: " + names);
+  }
+
+  i32 nMissed = total - covered;
+  if (nMissed > 0) {
+    // Sorted by file then line, which is the order somebody reads them in.
+    string[] missed = string[nMissed](fill: "");
+    i32 m = 0;
+    for (i32 i = 0; i < nPoints; i++) {
+      Point p = points[i];
+      if (!startsWith(p.file, prefix) || isTest(p.file) || counts[p.index] != 0) { continue; }
+      // Padded so the sort is by line *number* rather than by its spelling — `:9:` after `:10:` is
+      // what an unpadded string sort gives, and a reader takes that for a missing entry.
+      string ln = itoa(p.line);
+      while (ln.len() < 6) { ln = "0" + ln; }
+      missed[m] = p.file + "\t" + ln + "\t" + itoa(p.col) + "\t" + p.kind;
+      m = m + 1;
+    }
+    sortMissed(missed, m);
+    core.log("");
+    core.log(itoa(m) + " branch points never executed:");
+    i32 show = verbose ? m : (m < 20 ? m : 20);
+    for (i32 i = 0; i < show; i++) {
+      string[] f = fields(missed[i], 4);
+      core.log("  " + f[0] + ":" + itoa(numberOf(f[1])) + ":" + f[2] + "  " + f[3]);
+    }
+    if (show < m) {
+      core.log("  ... and " + itoa(m - show) + " more (--verbose for all)");
+    }
+  }
+}
+
+/**
+ * Every `file:line` under `prefix` with at least one point that never ran, as a sorted list.
+ *
+ * `n` is how many entries of the returned array are real, since wac has no growable array here and the
+ * caller wants both.
+ */
+export i32 uncoveredLines(Point[] points, i32 nPoints, i32[] counts, string prefix, string[] out) {
+  i32 n = 0;
+  for (i32 i = 0; i < nPoints; i++) {
+    Point p = points[i];
+    if (!startsWith(p.file, prefix) || isTest(p.file)) { continue; }
+    if (p.index < counts.len() && counts[p.index] != 0) { continue; }
+    string where = p.file + ":" + itoa(p.line);
+    bool have = false;
+    for (i32 k = 0; k < n; k++) { if (out[k] == where) { have = true; } }
+    if (!have && n < out.len()) { out[n] = where; n = n + 1; }
+  }
+  sortStrings(out, n);
+  return n;
+}
+
+/**
+ * Check a ledger against a measurement and say what is wrong. `true` when the run should fail.
+ *
+ * Everything printed here is read by a person and by `tools/coverageAll.ts`, in that order.
+ */
+export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] counts, string prefix,
+                    Pin[] pins) {
+  bool failed = false;
+  string[] uncovered = string[nPoints > 0 ? nPoints : 1](fill: "");
+  i32 nUncovered = uncoveredLines(points, nPoints, counts, prefix, uncovered);
+
+  for (i32 i = 0; i < pins.len(); i++) {
+    Pin u = pins[i];
+    string where = u.file + ":" + itoa(u.line);
+    FileResult src = cli.readFile(u.file).wait();
+    string at = "";
+    if (src.ok) {
+      string[] ls = linesOf(string.fromBytes(src.bytes));
+      if (u.line >= 1 && u.line <= ls.len()) { at = ls[u.line - 1]; }
+    } else {
+      core.log("");
+      core.log("error: " + u.file + " cannot be read — " + src.error);
+      failed = true;
+      continue;
+    }
+
+    bool listed = false;
+    for (i32 k = 0; k < nUncovered; k++) { if (uncovered[k] == where) { listed = true; } }
+
+    if (!contains(at, u.snippet)) {
+      core.log("");
+      core.log(where + " no longer holds \"" + u.snippet + "\" — it holds:");
+      core.log("  " + trimmed(at));
+      core.log("  The entry has drifted onto the wrong line; fix the line number.");
+      failed = true;
+    } else if (!listed) {
+      core.log("");
+      core.log(where + " is listed as unreached but was covered. The reason given was:");
+      core.log("  " + u.why);
+      core.log("  That reason no longer holds — drop the entry.");
+      failed = true;
+    } else {
+      core.log("");
+      core.log("excluded as unreachable: " + where + "  " + u.snippet);
+      core.log("  " + u.why);
+    }
+  }
+
+  // What is uncovered and unspoken for. Named rather than counted, because a count is a number
+  // somebody learns to ignore and a list is a thing to go and look at.
+  string[] unexpected = string[nUncovered > 0 ? nUncovered : 1](fill: "");
+  i32 nUnexpected = 0;
+  for (i32 i = 0; i < nUncovered; i++) {
+    bool pinned = false;
+    for (i32 k = 0; k < pins.len(); k++) {
+      if (pins[k].file + ":" + itoa(pins[k].line) == uncovered[i]) { pinned = true; }
+    }
+    if (!pinned) { unexpected[nUnexpected] = uncovered[i]; nUnexpected = nUnexpected + 1; }
+  }
+  if (nUnexpected > 0) {
+    core.log("");
+    core.log(itoa(nUnexpected) + " reachable branch point(s) uncovered:");
+    for (i32 i = 0; i < nUnexpected; i++) { core.log("  " + unexpected[i]); }
+    failed = true;
+  }
+  return failed;
+}

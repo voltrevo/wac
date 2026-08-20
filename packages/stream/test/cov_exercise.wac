@@ -1,0 +1,138 @@
+// Branch coverage for stream: the exercises, and nothing else.
+//
+//   deno task coverage:stream
+//   deno task coverage:stream --verbose
+//
+// No worker here. The wac side does not know whether its `read` blocks, so the branches are all
+// reachable by driving the same exports with synchronous callbacks — which is also `runWhole`. What
+// the worker adds is *when* the bytes arrive, and that is the tests' job, not coverage's.
+//
+// The interesting axis is therefore chunking: the held-partial-scalar paths in `upperCase` are only
+// entered when a read returns a fragment of a sequence, so every input is driven at several chunk
+// sizes, including one byte at a time.
+//
+// ## Bound method references are what make this a wac file at all — `issues/system/0161`
+//
+// `passthrough` and `upperCase` take `fn[Read()]` and `fn[bool(u8[])]`, and a driver has to supply a
+// pair that shares mutable state — where the reader has got to, how big a chunk is, whether the sink
+// is accepting. `Feeder` below is that state and `f.read` / `f.write` are **bound references**: the
+// receiver is in the value and nothing else is captured.
+//
+// The `cov.ts` this replaces needed one reader and one writer for the whole run, and said why: *"bindgen
+// keeps 16 slots per callback signature and never frees one, so fresh closures run out almost
+// immediately."* That is a property of the *bridge*. Nothing crosses a bridge here — caller and callee
+// are the same module — so a fresh pair per drive would be fine. One `Feeder` is kept anyway, because
+// resetting three fields is clearer than trusting that.
+//
+// `spec/tour.wac` said bound references were unavailable, naming the seed; the seed is wacc and has
+// them. Corrected on 2026-08-20 while writing this file.
+
+import { Read } from "core";
+import { passthrough, upperCase } from "../src/transform.wac";
+
+/**
+ * The chunking source and the sink, as one receiver.
+ *
+ * `step` is how many bytes a read hands over, so `1` exercises the held-fragment path at every
+ * position and a size past the end is the whole-input-in-one-read case. `accept` false is the other
+ * way a transform can stop early: a sink that refuses.
+ */
+struct Feeder {
+  u8[] src;
+  i32 at;
+  i32 step;
+  bool accept;
+
+  Feeder create() { return Feeder(u8[0](), 0, 1, true); }
+
+  void feed(this, u8[] bytes, i32 size, bool accepting) {
+    this.src = bytes;
+    this.at = 0;
+    this.step = size;
+    this.accept = accepting;
+  }
+
+  Read read(this) {
+    i32 left = this.src.len() - this.at;
+    i32 n = this.step < left ? this.step : left;
+    if (n <= 0) { return Read.End; }
+    u8[] chunk = u8[n]();
+    for (i32 i = 0; i < n; i++) { chunk[i] = this.src[this.at + i]; }
+    this.at = this.at + n;
+    return Read.Data(chunk);
+  }
+
+  bool write(this, u8[] bytes) { return this.accept; }
+}
+
+/** Every encoded length adjacent to every other, so a cut can fall between any two widths. */
+string[] texts() {
+  return string[](
+    "", "a", "abc", "ABC", "hello world",
+    "café", "日本語", "😀😁", "ΣΊΣΥΦΟΣ", "σίσυφος",
+    "straße", "İstanbul", string.fromCodepoint(0x10ffff),
+    "a" + string.fromCodepoint(0x80) + string.fromCodepoint(0x800) +
+      string.fromCodepoint(0x10000) + "a",
+    string.fromCodepoint(0x10000) + string.fromCodepoint(0x800) +
+      string.fromCodepoint(0x80) + "a");
+}
+
+/** Malformed input: the rejection paths, and a truncation held at end of input. */
+u8[][] malformed() {
+  return u8[][](
+    u8[](0xff), u8[](0xfe), u8[](0x80), u8[](0xbf), u8[](0xc0, 0x80), u8[](0xc2),
+    u8[](0xe0, 0xa0), u8[](0xf0, 0x9f, 0x98), u8[](0xed, 0xa0, 0x80),
+    u8[](0xf5, 0x80, 0x80, 0x80), u8[](0x61, 0xff, 0x62), u8[](0xf0, 0x9f),
+    u8[](0x41, 0xc2), u8[](0xe0, 0x80, 0x80));
+}
+
+export i32 main() {
+  i32 seen = 0;
+  Feeder f = Feeder.create();
+  fn[Read()] read = f.read;
+  fn[bool(u8[])] write = f.write;
+
+  // 1 exercises the held-fragment path at every position; a size past the end is the
+  // whole-input-in-one-read case; the middle sizes land inside sequences of each width.
+  i32[] sizes = i32[](1, 2, 3, 4, 5, 7, 64, 1048576);
+  string[] ts = texts();
+  for (i32 i = 0; i < ts.len(); i++) {
+    u8[] bytes = ts[i].toBytes();
+    for (i32 s = 0; s < sizes.len(); s++) {
+      f.feed(bytes, sizes[s], true);
+      seen = seen + passthrough(read, write);
+      f.feed(bytes, sizes[s], true);
+      seen = seen + upperCase(read, write);
+    }
+  }
+
+  u8[][] bad = malformed();
+  i32[] small = i32[](1, 2, 1048576);
+  for (i32 i = 0; i < bad.len(); i++) {
+    for (i32 s = 0; s < small.len(); s++) {
+      f.feed(bad[i], small[s], true);
+      seen = seen + passthrough(read, write);
+      f.feed(bad[i], small[s], true);
+      seen = seen + upperCase(read, write);
+    }
+  }
+
+  // A write sink that refuses, which is the other way a transform can stop early.
+  u8[] refused = "refused".toBytes();
+  f.feed(refused, 1048576, false);
+  seen = seen + upperCase(read, write);
+  f.feed(refused, 1048576, false);
+  seen = seen + passthrough(read, write);
+
+  // Enough data that the loop runs many times rather than once.
+  string unit = "The Quick Brown Fox. ";
+  string big = "";
+  for (i32 i = 0; i < 4000; i++) { big = big + unit; }
+  u8[] bulk = big.toBytes();
+  f.feed(bulk, 4096, true);
+  seen = seen + upperCase(read, write);
+  f.feed(bulk, 4096, true);
+  seen = seen + passthrough(read, write);
+
+  return seen;
+}

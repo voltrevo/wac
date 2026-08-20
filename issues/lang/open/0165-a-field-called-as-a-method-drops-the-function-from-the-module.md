@@ -40,12 +40,28 @@ The name does not matter — `foo` behaves exactly as `len` does, so this is not
 `len()` builtin leaking. A field that does not exist at all *is* caught:
 `error: no such method` at the right column, from both `check` and `build`.
 
-## Both front ends, so the differential is blind to it
+## Corrected 2026-08-20: it is wacc-only, and the differential *could* have caught it
 
-`compiler/wacCompile.ts` accepts it too — "reference: no diagnostics". That is why nothing has found
-it: every checker differential in the tree compares wacc against the reference, and a rule neither
-has is a rule neither can miss. The one thing that does notice is a program whose entry point
-vanishes, and only when somebody tries to run it.
+This said "both front ends accept it, so the differential is blind to it". **That was wrong, and the
+error was in how I asked.** `wacCompile` takes `(files: Map<string, string>, entry: string)` and
+*returns* a `CompileResult` carrying `diagnostics`; it does not throw. My probe called
+`wacCompile(src, { path })` — a string where a Map goes — and reported "no diagnostics" for
+everything I gave it, including things the reference plainly refuses.
+
+Asked properly, the reference refuses this at the checker:
+
+    field called as a method      refused: struct 'P' has no method 'foo'
+    correct field read            ACCEPTED
+
+So this is a **wacc-only checker gap**, which makes it a worse bug and an easier one: the two
+compilers disagree, and the checker differential that exists to notice exactly that did not, because
+no file in its corpus calls a field as a method. That is a corpus gap rather than a shared blind spot,
+and adding this three-line program to the differential's inputs is most of the fix for *finding* the
+next one like it.
+
+The reference's message is also the one to copy: `struct 'P' has no method 'foo'` names the struct and
+the member, where wacc says nothing at check time and `cannot emit … no method Buf.len` at build time
+in some paths and silently drops the function in others.
 
 ## Notes
 

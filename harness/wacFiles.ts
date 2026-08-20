@@ -114,7 +114,7 @@ export function wacFilesIn(all: Map<string, string>, entry: string): Map<string,
  *
  * A stamp is `mtime:size` per file. Validating one costs a `stat`, and 171 of them concurrently is
  * **4ms** — so the memo is checked rather than trusted, and a file edited between two builds in one
- * process invalidates it. That matters: `tools/testCli.test.ts` and friends write a `.wac` and build
+ * process invalidates it. That matters: `tools/wac/testcli_test.wac` and friends write a `.wac` and build
  * it, and a memo that answered from before the write would hand the compiler yesterday's source.
  */
 type Walked = { files: Map<string, string>; roots: Map<string, string>; stamps: Map<string, string>; readAt: number };

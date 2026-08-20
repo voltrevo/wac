@@ -142,10 +142,15 @@ const kinds = await Promise.all(results.map(async (r) => {
   // A task whose command names no driver, or names one that is not there, is a task pointing at
   // nothing — said out loud rather than counted among the harmless ones.
   if (src === null || path === null) return "no driver";
-  // A wac driver is exercises and nothing else, so it is always "reports": a coverage *floor* has no
-  // wac spelling yet, and inferring one from a `return 1;` in unrelated code would be a classification
-  // pretending to be a measurement.
-  if (path.endsWith(".wac")) return "reports";
+  // **A wac driver is exercises and nothing else *unless it ratchets*.** That was "always reports"
+  // until 2026-08-20, when a coverage floor got a wac spelling: `tools/wac/covledger.wac` holds the
+  // shared two-way ratchet and a package's driver calls it with its own pins
+  // (`packages/gzip/test/cov_ledger.wac` is the first). So the marker is the call — not a `return 1;`
+  // somewhere in the file, which would be a classification pretending to be a measurement.
+  //
+  // "floor" rather than "entries", and that is the stronger of the two: the shared ratchet fails when a
+  // point nothing reaches has no entry *and* when an entry it carries has been covered or has drifted.
+  if (path.endsWith(".wac")) return /\bratchet\(/.test(src) ? "floor" : "reports";
   if (!/Deno\.exit\(1\)/.test(src)) return "reports";
   // The two shapes differ in what they hold you to. One fails when a point nothing reaches has no
   // entry — a coverage floor. The others fail only when an entry they already carry has drifted onto
@@ -164,8 +169,16 @@ console.log(
 for (const r of failed) {
   // The reason, not just the fact: a bare "FAIL" is the same silence this file exists to end. Each of
   // these lines is what that task's own report already said — repeated here so one screen has all of it.
+  //
+  // **`is listed as unreach` and not the whole sentence**, because the whole sentence was one word too
+  // specific. `packages/crypto/cov.ts` says "is listed as unreached but was covered" and
+  // gzip's `cov.ts` said "unreachable" — so a stale gzip entry of that kind exited 1 and had its
+  // only explanation filtered out here. What reached the screen was the *continuation* line, "That
+  // reason no longer holds — drop the entry.", which matched on `no longer holds` by accident: a reason
+  // with its subject removed, naming no file and no line. gzip says "unreached" now as well, and this
+  // matches the prefix so the next spelling cannot repeat it.
   const lines = r.output.split("\n").filter((l) =>
-    /no longer holds|is listed as unreached but was covered|branch point\(s\) uncovered|^error/.test(l)
+    /no longer holds|is listed as unreach|branch point\(s\) uncovered|^error/.test(l)
   );
   console.log(`\n── coverage:${r.pkg} (exit ${r.code})`);
   for (const l of verbose ? r.output.split("\n") : lines) console.log(`   ${l.replace(/\x1b\[[0-9;]*m/g, "")}`);

@@ -11,7 +11,7 @@
 // mismatch in whatever it was actually testing. That is the worst kind of red — a true failure
 // message about the wrong thing.
 
-import { Cli } from "std/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 
 /** Where `deno task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
 export string binaryPath(Cli cli) {
@@ -42,4 +42,34 @@ export string agentDir(Cli cli) {
 export string scratch(Cli cli, string name) {
   string who = agentDir(cli);
   return "/tmp/wac-" + name + (who == "" ? "" : "-" + who);
+}
+
+/**
+ * The **wasmtime** host binary — `wacland` — built when its sources are newer than it, or `""`.
+ *
+ * The second host is how a two-host differential has two hosts, so a test that cannot find it has to
+ * say so: *silent skipping is how a differential test comes to compare nothing*. `who` names the
+ * caller in that message, because the line is read in a run of ninety files.
+ *
+ * **The staleness test is `find -newer`, not a rebuild every time.** `cargo build --release` on a warm
+ * target is a second or two and on a cold one is minutes, and three test files ask for this binary in a
+ * suite pass.
+ *
+ * Two copies of this existed — `native_shell_test.wac` and `arrival_users_test.wac` — and they had
+ * drifted in exactly one respect: one warned when the build failed and the other returned `""` in
+ * silence. The warning is the version that is kept. `issues/system/0161`.
+ */
+export string nativeBinaryPath(Core core, Cli cli, string who) {
+  string path = cli.cwd().wait() + "/native/target/release/wacland";
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c",
+      "if [ -x '" + path + "' ] && " +
+      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer '" + path +
+      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
+      "cd native && cargo build --release --quiet"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0 || !cli.stat(path).wait().isFile) {
+    core.warn(who + ": SKIPPING the native half — cargo did not build `native`");
+    return "";
+  }
+  return path;
 }

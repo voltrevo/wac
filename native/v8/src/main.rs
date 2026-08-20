@@ -1071,7 +1071,7 @@ fn test_command(rest: &[String]) -> i32 {
     // that does not exist, so one that "did not run" — and printed a phantom entry in the summary that
     // reads as a failing test, with the grant silently absent from the run that did happen. Neither
     // half says "the flag is in the wrong place", and every other tool here takes them in any position.
-    // `tools/testCli.test.ts`.
+    // `tools/wac/testcli_test.wac`.
     let mut targets: Vec<String> = Vec::new();
     let mut j = i;
     while j < rest.len() {
@@ -2196,7 +2196,7 @@ fn validate_command(paths: &[String]) -> i32 {
                 // null result and a pending exception agree — `Check failed: maybe_compiled.is_null()
                 // == i_isolate->has_exception()` — which aborts the process with SIGABRT rather than
                 // returning. Nothing else in this file needs one because nothing else compiles twice.
-                // `tools/testCli.test.ts` puts a good module *after* a bad one for exactly this.
+                // `tools/wac/testcli_test.wac` puts a good module *after* a bad one for exactly this.
                 let tc = std::pin::pin!(v8::TryCatch::new(scope));
                 let mut tc = tc.init();
                 if v8::WasmModuleObject::compile(&tc, &bytes).is_none() {
