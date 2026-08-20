@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-38 packages, 131,107 lines of wac, 2582 tests,
+38 packages, 131,188 lines of wac, 2594 tests,
 81 command-line programs and 11 browser pages.
 
 ## Packages
@@ -13,7 +13,7 @@ In dependency order: nothing here imports anything below it.
 
 | package | what it is | wac lines | tests | builds on |
 |---|---|---|---|---|
-| [`bytes`](packages/bytes/) | `Buf` — a growable byte buffer. | 339 | 39 | — |
+| [`bytes`](packages/bytes/) | `Buf` — a growable byte buffer. | 361 | 40 | — |
 | [`unicode`](packages/unicode/) | UTF-8 as code points, simple case mapping, and whether a code point is printable. | 251 | 13 | — |
 | [`bignum`](packages/bignum/) | Arbitrary-precision integers. | 629 | 50 | `bytes` |
 | [`codec`](packages/codec/) | Base16, base32 and base64, from RFC 4648. | 368 | 10 | `bytes` |
@@ -26,7 +26,7 @@ In dependency order: nothing here imports anything below it.
 | [`url`](packages/url/) | A WHATWG URL parser: parse, serialize, and resolve a reference against a base. | 1,219 | 27 | `bytes` |
 | [`zstd`](packages/zstd/) | Zstandard (RFC 8878) in wac. | 3,033 | 72 | `bytes` |
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 9 | `fmt` |
-| [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,327 | 40 | `bytes` `codec` `fmt` |
+| [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,311 | 46 | `bytes` `codec` `fmt` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point. | 1,321 | 57 | `bytes` `fmt` |
 | [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,305 | 222 | `bytes` `fmt` |
 | [`raster`](packages/raster/) | A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell. | 1,071 | 27 | `fmt` `unicode` |
@@ -47,7 +47,7 @@ In dependency order: nothing here imports anything below it.
 | [`ssz`](packages/ssz/) | SSZ is how Ethereum's consensus layer lays out data. | 802 | 26 | `bytes` `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,203 | 185 | `bytes` `codec` `crypto` |
 | [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,363 | 313 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `json` `tls` `wactest` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 34,693 | 283 | `bytes` `codec` `crypto` `fmt` `fs` `wacpkg` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 34,768 | 288 | `bytes` `codec` `crypto` `fmt` `fs` `wacpkg` |
 | [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 1,749 | 45 | `bytes` `codec` `fmt` `git` `json` `tls` `wacc` |
 | [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 2,103 | 34 | `bytes` `crypto` `fmt` `json` |
 | [`webrtc`](packages/webrtc/) | WebRTC in wac — the data channel half, following `design/system/0008`. | 3,711 | 73 | `crypto` `fmt` `gzip` `tls` |

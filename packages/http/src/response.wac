@@ -51,14 +51,6 @@ u8[] reason(i32 status) {
   return "Unknown".toBytes();
 }
 
-void writeDecimal(Buf out, i32 v) {
-  if (v == 0) { out.push('0'); return; }
-  u8[] tmp = u8[12]();
-  i32 n = 0;
-  i32 x = v;
-  while (x > 0) { tmp[n] = 48 + (x % 10); x = x / 10; n++; }
-  for (i32 i = n - 1; i >= 0; i--) { out.push(tmp[i]); }
-}
 
 /** Whether a status carries a body at all, regardless of what anyone asked for. */
 export bool statusHasBody(i32 status) {
@@ -74,7 +66,7 @@ export bool statusHasBody(i32 status) {
 export u8[] write(Response res, u8[] method, bool keepAlive) {
   Buf out = Buf.create();
   out.pushAll("HTTP/1.1 ".toBytes());
-  writeDecimal(out, res.status);
+  out.pushDecimal(res.status);
   out.push(' ');
   out.pushAll(reason(res.status));
   out.push(13);
@@ -98,7 +90,7 @@ export u8[] write(Response res, u8[] method, bool keepAlive) {
   // legitimately disagree.
   if (bodyAllowed) {
     out.pushAll("Content-Length: ".toBytes());
-    writeDecimal(out, res.body.len());
+    out.pushDecimal(res.body.len());
     out.push(13);
     out.push(10);
   }

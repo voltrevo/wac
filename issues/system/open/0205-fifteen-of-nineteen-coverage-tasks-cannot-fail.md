@@ -336,6 +336,45 @@ always fires before the stack bound can.
 Grants are worth 20 points here (639 → 619 without them), and the figure does not move when the seed
 does.
 
+### `http` ninth: 404 of 447 → **505 of 523**, and a denominator that was short
+
+**14 hold a coverage floor, 0 only check their own exemptions have not drifted, 7 report and cannot
+fail.**
+
+**`src/proxy.wac` was not in the report at all** — not as a low percentage, not as uncovered lines.
+The exercise imported two probes, neither reached it, and eighty-six branch points were outside the
+module graph, so the total said 447. A coverage figure names the points it can see, and the
+denominator is the one number that cannot warn you it is wrong. Wiring the package's own 38 tests
+brought the file in.
+
+**And the grants have to reach the exercise, not the tool.** `covreport` takes them *after* the entry
+and prefix and passes them to the build; a `--allow-run` before `covreport.wac` grants the reporting
+tool. With the flag on the wrong side of `--`, every test that spawns `node` failed inside the driver,
+the driver only warns, and the number was nineteen points short with no error anywhere. Worth stating
+because the flag is spelled identically on both sides and the failure mode is a smaller number.
+
+What the new tests are for, in each case something an oracle-driven corpus structurally cannot hold:
+
+  - **the reason-phrase table** — seventeen string literals nothing had read. `405 Not Found` is
+    wire-legal and passes every framing test, because a client reads the code. Against Node's
+    `http.STATUS_CODES`, with 413 as a named exception: RFC 9110 renamed it *Content Too Large* and
+    Node still says *Payload Too Large*, so the row asserts the disagreement and fails if Node catches
+    up;
+  - **the body-size refusals**, one per route into a body. `maxBody` is our number, so no
+    agreement test will ever exceed it — a limit is precisely what an oracle has no opinion about;
+  - **the header table's growth**, where a copy one short loses a field and the message still parses;
+  - **`Outgoing.create`/`set`**, the client's builder, which nothing called: tests inside the package
+    build the struct positionally, which a caller outside it cannot.
+
+One duplicate removed on the way: `writeDecimal` was written twice, byte for byte, for a
+`Content-Length` and a status code. It is `Buf.pushDecimal` in `packages/bytes` now, with the sign
+handling neither caller needed and a `Buf` method does — `packages/bytes` went 79/80 to 86/87 and its
+floor still holds.
+
+Eighteen points remain: one pin, and two rules covering `connectThrough`, which owns the only socket
+and is tested by `tunnel_test.wac` — three cases that dial the container's real proxy. They are out of
+the driver deliberately: a coverage number that needs the network is a floor over the weather.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,

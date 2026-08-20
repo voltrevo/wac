@@ -107,6 +107,28 @@ export struct Buf {
     this.push(((v >> 24) & 0xFF) as@ i32);
   }
 
+  /**
+   * `v` in decimal ASCII, sign and all.
+   *
+   * Here rather than in each caller because it was written twice, byte for byte, in
+   * `packages/http`'s `outgoing.wac` and `response.wac` — a `Content-Length` and a status code are
+   * the same problem, and two copies of a loop are two places for it to drift.
+   *
+   * **The sign is handled through i64.** `-v` on `i32.MIN` is `i32.MIN` again, so negating first
+   * writes the wrong number for exactly one input and nothing else — the same wrap that
+   * `packages/bignum`'s `shl` guards against, GitHub wac-mono#4. Widening before negating has no
+   * such value.
+   */
+  void pushDecimal(this, i32 v) {
+    if (v == 0) { this.push('0'); return; }
+    i64 x = v as i64;
+    if (x < 0) { this.push('-'); x = 0 - x; }
+    u8[] tmp = u8[12]();
+    i32 n = 0;
+    while (x > 0) { tmp[n] = 48 + ((x % 10) as! i32); x = x / 10; n++; }
+    for (i32 i = n - 1; i >= 0; i--) { this.push(tmp[i]); }
+  }
+
   // `start`, not `from` — `from` is a keyword (import ... from "...").
   void pushBytes(this, u8[] src, i32 start, i32 count) {
     this.reserveFor(count);
