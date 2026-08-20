@@ -652,3 +652,56 @@ string sectionNamed(string text, string heading) {
   }
   return text.slice(at, text.len());
 }
+
+/**
+ * `packages/crypto`'s side-channel table lists exactly the routines `ct.wac` traces.
+ *
+ * The sibling of the check above, and it was missing for the same reason that one was: the generator
+ * existed and nothing compared its output to what got published. `ct.wac`'s header has argued since it
+ * was written that "published figures that cannot be regenerated go stale silently" — and the argument
+ * stops at *regenerable*, which is not the same as *checked*. Thirteen rows were hand-edited into that
+ * README across 2026-08-20 as five leaks were fixed, and a wrong one would have sat there.
+ *
+ * The commit that added the speed-table check even wrote "that is the same relationship `ct.wac` has
+ * with the side-channel table" — asserting a relationship while nothing enforced it, which is the
+ * failure that sentence was describing.
+ *
+ * A set comparison, no tolerance: a routine traced and not published is an unmeasured claim of
+ * silence, and one published and not traced is a verdict with nothing behind it. The event counts and
+ * the verdicts are *not* compared — those move with the code and the tool prints them; what cannot be
+ * allowed to drift is which routines the table speaks for.
+ */
+export string test_the_side_channel_table_lists_what_ct_wac_traces(Core core, Cli cli) {
+  T t = T.create();
+  string tool = read(core, cli, "packages/crypto/tools/ct.wac");
+  string readme = read(core, cli, "packages/crypto/README.md");
+
+  string[] traced = identifiersMatching(tool, "Case\\(\"([A-Za-z0-9]+)\"");
+  string[] published = identifiersMatching(sectionNamed(readme, "## Side channels"),
+                                           "^\\| `([A-Za-z0-9]+)` *\\|");
+
+  t.isTrue(traced.len() >= 10,
+           "only " + itoa(traced.len()) + " Case(…) found in ct.wac — the pattern has stopped matching");
+  t.isTrue(published.len() >= 10,
+           "only " + itoa(published.len()) + " row(s) found in the side-channel table — the pattern " +
+           "has stopped matching");
+  if (traced.len() < 10 || published.len() < 10) { return t.report(); }
+
+  string missing = "";
+  for (i32 i = 0; i < traced.len(); i++) {
+    if (!listed(published, traced[i])) { missing = missing + " " + traced[i]; }
+  }
+  string extra = "";
+  for (i32 i = 0; i < published.len(); i++) {
+    if (!listed(traced, published[i])) { extra = extra + " " + published[i]; }
+  }
+  t.eqStr(missing, "",
+          "ct.wac traces these and the side-channel table does not list them:" + missing +
+          " — a routine measured and not published, which reads as one nobody looked at. Run " +
+          "`wac run --allow-read --allow-write --allow-run packages/crypto/tools/ct.wac` and put its " +
+          "output in the table.");
+  t.eqStr(extra, "",
+          "the side-channel table names these and ct.wac does not trace them:" + extra +
+          " — a verdict with nothing behind it, which is what that section exists not to have.");
+  return t.report();
+}
