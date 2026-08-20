@@ -194,3 +194,55 @@ type*. That is the largest single gap between wacc and the spec's own conformanc
 
 The other four are unrelated: a generic struct constructed with "2 of 1 fields", enum methods naming a
 type only while emitting, and two `is`-against-an-unrelated-type cases.
+
+## How to build it: there is prior art in this file
+
+The spec asks for a synthesised one-field struct, and this emitter **already synthesises a struct type**
+for something else. `fn[…]` values need a `{funcref, env}` pair, and `emit.wac:685` does it with a
+marker in the signature table:
+
+```wac
+string pairMark() { return "pair:"; }
+bool isPairEntry(string t) { return t.len() > 5 && t.slice(0, 5) == pairMark(); }
+i32 pairType(this, string t) { ... return this.sigType(pairMark() + t); }
+```
+
+A `box:` marker is the same shape, so the type-allocation half is a known quantity rather than new
+machinery. Two constraints come with it, both already written down there:
+
+- **The signature table must stay last.** `pairMark`'s comment: the table grows lazily during emission,
+  so nothing may be appended after it — an index emitted early would move when it grew. A box type has
+  to be allocated the same way, in the same table.
+- **Nothing may be first named while emitting.** There is a pre-pass (`emit.wac:1219`) that gives every
+  registered `fn[…]` its pair before the type section, precisely so none is first named later. Boxes
+  need the equivalent sweep over every nullable primitive in a parameter, return, local or field. This
+  is not hypothetical: *"a type this emitter names only while emitting"* is one of the ten declines
+  above, so the failure mode is live in this compiler today.
+
+### The part that is not analogous, and is the real risk
+
+`isNullableTy`'s comment at `emit.wac:626` says the quiet part: *"`T?` and `T` are one wasm type here,
+deliberately: every reference this emitter writes is nullable, so the difference is the checker's to
+keep."* For a reference that is true. For a primitive it is exactly wrong — `i32?` is a reference and
+`i32` is not — so **the type name has to start carrying the `?`**, and `typeOfTyName` must return
+`"i32?"` where it currently returns `""`.
+
+That is the change with reach. Every comparison against a type name that today can assume `"i32"` may
+now see `"i32?"`, and the ones that get it wrong will not fail loudly — they will take a branch meant
+for a plain `i32`. So the order is:
+
+1. `boxMark`/`isBoxEntry`/`boxType`, mirroring the pair three.
+2. `writeValType` writes a box entry as a one-field struct.
+3. The pre-pass sweep, so no box is first named while emitting.
+4. `typeOfTyName` returns `"i32?"` — **and then sweep the call sites**, because this is the step that
+   can silently mis-branch rather than fail.
+5. Box on write, `struct.get 0` after the null check in the `Unwrap` arm.
+
+**Do not reach for `i31ref`** — see above; it is in that same expression, it is free, and issue 0045
+removed it because 31 bits truncate silently.
+
+### The failing case already exists
+
+No new test is needed to drive this. `KNOWN_UNEMITTABLE` in `packages/wacc/test/specEmit.test.ts` holds
+the four tags, so a working implementation makes that test fail with *"emit now — take them out"*. That
+is the canary and the acceptance check in one, and it is already in the suite.
