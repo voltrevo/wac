@@ -154,3 +154,37 @@ what they assert does not.
 
 Two packages remain with a bare `%` on the plain variant — `regex` and `unicode`, both with driver and test
 in the plain group, so both want converting as a pair the same way.
+
+### Second conversion — `unicode`, and it found a hole in a test's premise
+
+Converting `unicode`'s pair the same way went red, and the failure is the interesting part of this whole
+issue:
+
+    whole strings: lower "…ⱤΣ": got "…ɽσ", host says "…ɽς"
+
+**Greek final sigma.** `Σ` lowercases to `σ` per code point and to `ς` at the end of a word, which is
+Unicode's `SpecialCasing` contextual rule. The host's `toLowerCase` applies it; this package does *simple*
+case mapping and says so — `packages/unicode/README.md` names final sigma as a contextual form it does not
+do and lists full case mapping as out of scope. So **wac is right and the test's oracle was wrong.**
+
+The test's own docstring is where the hole is: *"Only code points this package's table leaves unmoved or
+moves to a single code point can be used, and the case sweep has already established that those are exactly
+the ones the host maps singly"*. `Σ` satisfies that — it maps singly in isolation, on both sides — and
+still differs inside a string. Per-codepoint agreement does not imply string agreement for a contextual
+mapping, and the premise did not know it.
+
+**The old corpus never drew a string ending in `Σ`.** That is not luck about one code point: the signed
+draw walked a different half of the space, so a whole class of strings was unreachable. Fixed by excluding
+`0x03A3` from the string corpus rather than tolerating it at the comparison, so a difference still means
+something.
+
+Two interface costs, both named by the compiler rather than found later: `next()` returning `u32` broke
+`b[i] = r.next() & 0xff` in each file, which is the sweep cost this issue warns about arriving one call
+site at a time.
+
+**Numbers, before and after:** `deno task coverage:unicode` is **105 of 108, 97.2%** with the same three
+unexecuted branch points in `utf8.wac` either way — measured by stashing the change and re-running. Lane
+13 of 13.
+
+So both conversions so far moved the corpus by about half its draws and moved no coverage. `regex` is the
+remaining bare-`%` pair.

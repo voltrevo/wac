@@ -35,17 +35,19 @@ import { mapLower, mapUpper, mapFold, printable, decodeCode, decodeSize, valid, 
 struct Rng {
   i32 x;
 
-  i32 next(this) {
+  // **`as@ u32`, which is what the host returned** — its `cov.ts` ended `x >>>= 0; return x`. Handing
+  // back the signed `i32` made every `%` a signed remainder and the corpus a different one from the
+  // recorded one this file's comment claims. `issues/system/0220`.
+  u32 next(this) {
     this.x = this.x ^ (this.x << 13);
     this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
     this.x = this.x ^ (this.x << 5);
-    return this.x;
+    return this.x as@ u32;
   }
 
-  i32 upto(this, i32 n) {
-    i32 v = this.next() % n;
-    return v < 0 ? v + n : v;
-  }
+  // The fold that was here — `v < 0 ? v + n : v` — compensated for that signed return without restoring
+  // the host's sequence: `(-k) % n + n` is not `(unsigned x) % n`. Unsigned, there is nothing to fold.
+  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
 }
 
 /** Valid text of every encoded length, and the mapping paths over it. */
@@ -119,7 +121,7 @@ export i32 main() {
   for (i32 t = 0; t < 4000; t++) {
     i32 n = r.upto(12);
     u8[] b = u8[n]();
-    for (i32 i = 0; i < n; i++) { b[i] = r.next() & 0xff; }
+    for (i32 i = 0; i < n; i++) { b[i] = (r.next() & (0xff as@ u32)) as@ i32; }
     if (valid(b)) { seen = seen + 1; }
     seen = seen + lower(b).len();
     if (equalFold(b, test)) { seen = seen + 1; }
