@@ -23,28 +23,28 @@ export const TOTALS = {
   packages: 38,
   lines: 130990,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2566,
+  tests: 2567,
   programs: 81,
   pages: 11,
   /**
-   * The whole repository: the packages (2566), and the compiler, harness and tooling
+   * The whole repository: the packages (2567), and the compiler, harness and tooling
    * around them (1374).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3940,
+  testsAll: 3941,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 491,
+  wacTests: 494,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
 export const BUILT: BuiltPackage[] = [
-  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 339, tests: 38 },
+  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 339, tests: 39 },
   { name: "unicode", what: "UTF-8 as code points, simple case mapping, and whether a code point is printable.", lines: 251, tests: 13 },
   { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 50 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 368, tests: 10 },

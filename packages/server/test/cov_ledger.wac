@@ -1,0 +1,84 @@
+// server's coverage, and the argument for the three points left.
+//
+//   deno task coverage:server
+//   deno task coverage:server --verbose
+//
+// **123 of 126**, from 117. Two-way ratchet over `tools/wac/covledger.wac`. `issues/system/0205`.
+//
+// ## Six of the nine were requests nobody had written
+//
+// Every uncovered point in this package was in `routes.wac`, and six of the nine closed by adding
+// requests to `cov_exercise.wac` — which is the sixth package in a row where an uncovered point turned
+// out to be a hole in the driver rather than a fact about the code:
+//
+//   - **an unparseable request target**, which is the `400` at `routes.wac:187`;
+//   - **an empty path segment**, `/echo//a//b`, which is the `else` at `:134`;
+//   - **a regex match that does not start at byte 0.** `writeInt` writes the `"start"` field of the
+//     match route's JSON, and every `/match/` request in the corpus matched at the first byte — so the
+//     integer writer had only ever been handed **zero**, leaving its loops and its `v == 0` else
+//     uncovered. `/match/b/abc` fixed three points at once;
+//   - **control bytes that JSON has to escape**, and getting these right took two attempts. A literal
+//     control character in the request target does not survive the request parser, so the first
+//     version covered nothing; `%1A` and `%1F` percent-encoded do, because `pctDecode` produces them
+//     and both have a low nibble of ten or more.
+//
+// ## The three that are left
+//
+// Two are provably unreachable and say why below. The third is honestly unresolved, and is marked as
+// what it is rather than dressed up.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/server/test/cov_exercise.wac";
+const string PREFIX = "packages/server/";
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/server/src/routes.wac", 66, "out.push(hi < 10 ? 48 + hi : 87 + hi);", true,
+        "**The high nibble of a control character is never ten or more.** This is inside " +
+        "`writeJsonString`'s `else if (c < 0x20)`, so `c` is at most 0x1F and " +
+        "`hi = (c >> 4) & 15` is 0 or 1. The `87 + hi` arm — the one that produces a letter — cannot " +
+        "run for the high half.\n" +
+        "         The line below it is the same expression on the *low* nibble and is covered, by " +
+        "`%1A` and `%1F` in the exercise. Kept because the two lines are one idea written twice and " +
+        "splitting them would be worse than the dead arm: a reader checking the escape against " +
+        "RFC 8259 wants to see both halves computed the same way."),
+    Pin("packages/server/src/routes.wac", 76, "if (v < 0) { out.push('-'); v = -v; }", true,
+        "**`writeInt` has one caller and it cannot pass a negative.** `writeInt(out, start)` at " +
+        "`:175` is inside `if (start != NO_MATCH())`, and `NO_MATCH()` is -1 — the only negative the " +
+        "regex returns. A match position is otherwise an index into the subject.\n" +
+        "         Kept because `writeInt` reads as a general integer writer and is one: the sign " +
+        "handling is what makes it correct on its own terms rather than by the habits of its single " +
+        "caller, which is the argument `packages/gzip`'s ledger makes for `copyBytes` and " +
+        "`packages/codec`'s for `digitsFor`."),
+    Pin("packages/server/src/routes.wac", 127, "u8[][] out = u8[][count > 0 ? count : 1]();", false,
+        "**Reachable in principle, and I did not manage it.** `segments` allocates one slot when the " +
+        "path has no `/` followed by a non-`/`, which is a path of only slashes. Its one caller at " +
+        "`:228` runs for any request that gets past the earlier routes.\n" +
+        "         Tried and did not reach it: `//`, `///`, `////` and `//?x=1`, all of which left this " +
+        "point uncovered. Something earlier answers them — most likely the URL parse and `pathname` " +
+        "normalising the path before routing sees it, so a slash-only path arrives as `/` and the root " +
+        "route takes it. **I did not establish which**, and this entry says so rather than claiming " +
+        "the point is dead: `proven: false` is the honest flag, and the next person to look has the " +
+        "four inputs that failed and the one hypothesis worth testing.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No grants: the exercise drives `handle(request, now)` over byte strings and touches nothing else.
+  // The nine tests in `test/wac/live_test.wac` that bind a real port are deliberately not here — a
+  // coverage driver racing the suite for a port is `issues/system/0216`'s shape.
+  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

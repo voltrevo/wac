@@ -16,7 +16,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Buf } from "../../src/buf.wac";
-import { slice, clamped } from "../../src/slice.wac";
+import { slice, clamped, equal } from "../../src/slice.wac";
 
 u8[] five() { return u8[]('a', 'b', 'c', 'd', 'e'); }
 
@@ -162,3 +162,24 @@ export string test_traps_repeating_from_a_negative_index() {
   return "";
 }
 
+/**
+ * `equal` compares length before content, and empty equals empty.
+ *
+ * **The one export of `slice.wac` that had no test.** `slice` and `clamped` have this file; `equal` had
+ * nothing, in its own package, while `packages/ssz`, `packages/ens` and `packages/tls` import from the
+ * same file. Found by reading `packages/bytes`'s uncovered points for `issues/system/0205`: its *entry*
+ * was uncovered, which is not a branch nobody took but a function nobody called.
+ *
+ * The four cases are the four the implementation distinguishes, and the last is the one its doc comment
+ * argues about: "Empty equals empty here. A caller that means 'present and equal' should say
+ * `a.len() > 0 && equal(...)` at the call site." A test that did not pin that would let it flip.
+ */
+export string test_equal_compares_length_before_content() {
+  T t = T.create();
+  t.isTrue(equal(u8[](1, 2, 3), u8[](1, 2, 3)), "the same bytes are equal");
+  t.isFalse(equal(u8[](1, 2, 3), u8[](1, 2)), "a different length is not equal, whatever the prefix");
+  t.isFalse(equal(u8[](1, 2, 3), u8[](1, 9, 3)), "one differing byte in the middle is not equal");
+  t.isFalse(equal(u8[](1, 2, 3), u8[](1, 2, 9)), "and the last byte counts — the loop runs to the end");
+  t.isTrue(equal(u8[0](), u8[0]()), "empty equals empty, which this function promises on purpose");
+  return t.report();
+}

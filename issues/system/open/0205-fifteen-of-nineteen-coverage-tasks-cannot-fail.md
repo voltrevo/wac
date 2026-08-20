@@ -141,6 +141,92 @@ What it recovered, and what it did not:
 read what is left.** Doing it the other way round would have written three pins here, one of them
 claiming a security-relevant check was untested when it was unreachable.
 
+### `bytes` fourth, and the trap tests are the trap in this work
+
+**9 hold a coverage floor, 0 only check their own exemptions have not drifted, 12 report and cannot
+fail.**
+
+Six of its seven uncovered points were one function — `slice.wac`'s `equal`, whose **entry** was
+uncovered. It had **no test at all**, in its own package, while `packages/ssz`, `packages/ens` and
+`packages/tls` all import from that file. One is written now, pinning among other things the
+"empty equals empty" its doc comment argues for.
+
+And **none of this package's 39 tests takes a capability**, so its exercise could have called them
+since the day it was written. `0221` removed the blocker for packages whose tests need one; this was
+never in that set. It was simply never wired — which is the more common case, and worth knowing before
+attributing the other thirteen to `0221`.
+
+**The mistake to avoid, because it looks exactly like success.** Wiring all 39 into `main` changed the
+number *not at all* — 73 of 80 before and after, no failure printed. Twelve of `bounds_test.wac`'s
+seventeen tests **expect a trap**, and a trap in `main` ends the run: the third call killed the process
+after the probes had already covered their 73. A report identical to the one before the change reads as
+"the wiring did nothing" and meant "the wiring stopped the run".
+
+So the wiring is a split: the tests that return are called from `main`, and the ones that trap go into
+a `trapCase(i32)` sweep named in `cases()`, which `covdump` calls one at a time with the trap caught.
+**Every package left here will need that split**, and the tell is `test_traps_` in the name — `crypto`
+already does it as `trapCase:130`.
+
+79 of 80, with one pin: `buf.wac`'s clamp of the capacity doubling at `i32.MAX`. `proven: false`, not
+`true` — reaching it needs a real two-gigabyte allocation on every `coverage:all`, which is a line
+whose *input* costs too much, not a line no input reaches. Calling it unreachable would be a false
+claim about the code: the clamp is the only thing between `cap * 2` overflowing and
+`u8[cap as! i32]()` being handed the result.
+
+### `stream` fifth, and it is the one package that cannot be rewired
+
+**10 hold a coverage floor, 0 only check their own exemptions have not drifted, 11 report and cannot
+fail.** 32 of 32, with both lists empty.
+
+`packages/stream` has **no wac tests at all** — its subject is `host/bridge.ts`, a WHATWG
+`TransformStream`, which `issues/system/0161` records as staying TypeScript for that reason. So the
+"rewire the exercise to call the tests" step does not apply, and reading the exercise's gaps was the
+only way to find anything.
+
+It found something. All four uncovered points were two pairs of one thing: `case Failed(why)` in both
+`passthrough` and `upperCase`, and the `broke ? -2 : total` each returns because of it. `Read` has
+three variants and the exercise's `Feeder` only ever answered two — so **the failure path of both
+transforms was measured by nothing**, and what those points defend is what `transform.wac`'s comment
+says: "a broken input is its own answer, not a smaller total". A caller that could not tell -2 from a
+short count would treat a failed read as a successful short one.
+
+Closed rather than pinned: `Feeder` gained a `feedFailing`, and the exercise fails on the first read
+and on two later ones — later matters, because by then bytes have been written and `upperCase` is
+holding a partial scalar. Canaried by removing the failing reads again: 28 of 32, four uncovered.
+
+**The general shape, after five packages**: an uncovered point in one of these drivers is more often a
+hole in the driver than a fact about the code. Five for five so far — a function nobody called
+(`codec`, `bytes`), a code point the loop skipped (`unicode`), a variant nobody produced (`stream`) —
+and only four genuine exemptions among them.
+
+### `server` sixth: 117 → 123 of 126, and one entry that says "I do not know"
+
+**11 hold a coverage floor, 0 only check their own exemptions have not drifted, 10 report and cannot
+fail.**
+
+All nine gaps were in `routes.wac`, and six closed by writing requests nobody had written:
+
+- an **unparseable request target** (the `400`), and an **empty path segment** (`/echo//a//b`);
+- a **regex match that does not start at byte 0.** `writeInt` writes the `"start"` field of the match
+  route's JSON, and every `/match/` request in the corpus matched at the first byte — so the integer
+  writer had only ever been handed **zero**, leaving both its loops and its `v == 0` else uncovered.
+  One request fixed three points;
+- **control bytes JSON must escape**, which took two attempts: a literal control character in the
+  request target does not survive the request parser, so the first version covered nothing. `%1A` and
+  `%1F` percent-encoded do, because `pctDecode` produces them.
+
+Two of the three left are provably unreachable — the *high* nibble of a character below 0x20 is never
+ten or more, and `writeInt`'s one caller is inside `if (start != NO_MATCH())` where `NO_MATCH()` is the
+only negative the regex returns.
+
+**The third entry says it is unresolved, and that is deliberate.** `segments`' one-slot allocation
+wants a path of only slashes; `//`, `///`, `////` and `//?x=1` all failed to reach it, most likely
+because the URL parse normalises the path before routing sees it. I did not establish which, so it is
+`proven: false` with the four failed inputs and the one hypothesis written down — rather than
+`proven: true`, which would be a claim about the code I have not earned. **A ledger that cannot say "I
+do not know" collects false confidence**, which is the failure this issue is about wearing a different
+hat.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
