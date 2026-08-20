@@ -52,14 +52,45 @@ call it and it produces the missed points. The ledger is the same story one laye
 - `ssh` gains a ratchet by joining, which is most of the value: nothing there currently notices a
   stale exemption.
 
-Two things to settle before writing it:
+## Both open questions have an answer already written in the tree — 2026-08-20
 
-1. **What "accounted for" means**, given four current answers. `fs`'s is the strictest (pins *plus*
-   category rules, and leftovers are named rather than counted).
-2. **Whether a stale pin fails the run**, which four of the five do with `Deno.exit(1)` and `ssh` does
-   not. If the shared one fails, `ssh` acquires a way to go red that it has never had, and its
-   exemptions have never been checked — so the first run may well be red, and that is the point of
-   doing it rather than a reason not to.
+I filed this saying two things had to be settled. Reading the five ledgers rather than counting them,
+both are already decided somewhere, and the strongest statement is `packages/gzip/cov.ts`'s:
+
+> Named rather than tolerated as a percentage below 100: a report that sits at 99.6% forever teaches
+> everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one that
+> was always there. **Anything not listed here is expected to be covered and the run fails if it is
+> not — and anything listed that *does* get covered fails too, since the reason has stopped holding.**
+
+That is a **two-way ratchet** and it is the answer to question 1, not `fs`'s. `fs`'s category rules are
+a *softening* — a way to speak for a group of points without naming each — which is a reasonable
+convenience and a weaker guarantee. Generalise gzip's contract; keep categories, if at all, as sugar
+over it rather than as the definition.
+
+Question 2 answers itself the same way: a stale pin has to fail, because the point of the snippet is
+that a line number alone is fragile. gzip says why, from experience — *"this list started out pointing
+at line 306 and the comment explaining why moved the code to 322"*.
+
+**And there is a third constraint I had not noticed: the output phrasing is an API.**
+`tools/coverageAll.ts:168` matches on
+
+    /no longer holds|is listed as unreached but was covered|branch point\(s\) uncovered|^error/
+
+and line 153 decides whether a package "holds a coverage floor" by whether its output says
+`branch point(s) uncovered`. So a shared ledger has to emit those exact strings, and the twenty-producer
+convention `0161` mentions is narrower than it sounds: three phrases and a leading `error`.
+
+## What is left to decide is therefore only the shape
+
+The contract is settled; where the code lives is not. `covreport.wac` computes the missed set already,
+so either it grows an optional pins input, or it splits into a library the per-package ledger programs
+import. The second is better — a package's ledger wants to *be* a wac program holding its own pins as
+data — but it means refactoring a file twelve packages now depend on, which is the part worth doing
+deliberately.
+
+Suggested order: extract the library, port **`gzip`** first because its ledger is three pins and its
+contract is the one being generalised, and let the remaining four follow the template. `ssh` last,
+since it has never had a ratchet and is the one most likely to go red.
 
 ## Notes
 
