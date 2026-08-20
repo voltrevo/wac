@@ -586,7 +586,7 @@ for (const u of UNREACHABLE) {
     console.log(`  The UNREACHABLE entry has drifted onto the wrong line; fix the line number.`);
     failed = true;
   } else if (!uncovered.has(where)) {
-    console.log(`\n${where} is listed as unreachable but was covered. The reason given was:`);
+    console.log(`\n${where} is listed as unreached but was covered. The reason given was:`);
     console.log(`  ${u.why}\n  That reason no longer holds — drop the entry.`);
     failed = true;
   } else {

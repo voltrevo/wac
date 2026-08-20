@@ -164,8 +164,16 @@ console.log(
 for (const r of failed) {
   // The reason, not just the fact: a bare "FAIL" is the same silence this file exists to end. Each of
   // these lines is what that task's own report already said — repeated here so one screen has all of it.
+  //
+  // **`is listed as unreach` and not the whole sentence**, because the whole sentence was one word too
+  // specific. `packages/crypto/cov.ts` says "is listed as unreached but was covered" and
+  // `packages/gzip/cov.ts` said "unreachable" — so a stale gzip entry of that kind exited 1 and had its
+  // only explanation filtered out here. What reached the screen was the *continuation* line, "That
+  // reason no longer holds — drop the entry.", which matched on `no longer holds` by accident: a reason
+  // with its subject removed, naming no file and no line. gzip says "unreached" now as well, and this
+  // matches the prefix so the next spelling cannot repeat it.
   const lines = r.output.split("\n").filter((l) =>
-    /no longer holds|is listed as unreached but was covered|branch point\(s\) uncovered|^error/.test(l)
+    /no longer holds|is listed as unreach|branch point\(s\) uncovered|^error/.test(l)
   );
   console.log(`\n── coverage:${r.pkg} (exit ${r.code})`);
   for (const l of verbose ? r.output.split("\n") : lines) console.log(`   ${l.replace(/\x1b\[[0-9;]*m/g, "")}`);
