@@ -18,7 +18,7 @@ another agent.
 | ~~`zstd`~~ | ~~1,022~~ | 8 → 17 | done 2026-08-20 — the staleness check was hiding sixteen |
 | `ssh` | 794 | 0 | **none** — no staleness check at all |
 | ~~`gzip`~~ | ~~605~~ | 3 | done 2026-08-20 — the contract this generalised |
-| `fs` | 582 | 33 | `NOT_COVERED` *and* `CATEGORIES`, snippet staleness, `Deno.exit(1)` |
+| ~~`fs`~~ | ~~582~~ | 33 → 31 + 8 rules | done 2026-08-20 — two pins were one entry twice, about a covered branch |
 | `sh` | 473 | — | another agent's package |
 
 **The ratchet is four separate implementations of one idea**, and `ssh` is a fifth position: it has no
@@ -177,9 +177,38 @@ Two constraints the remaining three will hit:
 importer of both. `test/writer.ts` stays: `test/oracle.ts` uses it, and it is deliberately a second
 reading of RFC 8878 rather than the decoder's, so it is a structured fuzzer rather than an oracle.
 
-Left: `fs` (33 pins, and category rules that are a *softening* of the contract — decide whether they
-survive as sugar), `crypto` (28), and `ssh`, which has never ratcheted and is therefore the one most
-likely to go red.
+## Done: `fs`, and the categories keep their place — 2026-08-20
+
+**806 points and 679 covered, unchanged**, because the workload was unchanged: `test/wac/cov_probe.wac`
+has been the whole of it since the probe existed, and the TypeScript instrumented it, called its
+thirteen exports and held the ledger. So `cov_exercise.wac` here is the calling and nothing else.
+
+**The open question is answered: category rules survive as sugar over the two-way contract.** They are
+not a weaker alternative to it. 94 of this package's 127 uncovered points are one fact repeated — an arm
+needing a `Cli` only a built program has, or a peer only a real parent process can be — and 94 pins
+would each carry the same sentence. `Rule` states it once and says which points it covers, with three
+scopes (the point's own line, its enclosing declaration, its enclosing `struct`) and the same staleness
+property a pin has: a rule that matches nothing fails.
+
+Two defects found on the way, both invisible to a staleness-only check:
+
+1. **Its principal failure could not be reported, and it was mis-classified.** The message was "N
+   uncovered branch point(s) are not accounted for" — the same words `tools/coverageAll.ts` greps for,
+   in the other order — so an unaccounted point exited 1 with nothing on screen but "(nothing matched
+   the known failure shapes)". That same phrase is how `coverageAll.ts` decides a package holds a
+   coverage floor, so the strictest ledger of the five was counted among the ones that only check their
+   own exemptions. Fixed in the TypeScript before the port, so the fix stands on its own.
+2. **Two of its 33 pins were the same entry twice, about a branch that is covered.** Both named
+   `image.wac:336`, reason "one of the two `r.bad` checks … reachable, and not constructed"; all five
+   `r.bad` checks in that file are covered. Line 336 still holds that text, so the snippet matched both
+   times and the check passed. The two-way ratchet fails it as listed-but-covered. 31 pins remain.
+
+That is the **third** vacuous entry this issue has turned up — after zstd's pin on a line with no branch
+point at all — and they share a shape: a staleness check can only ask whether a line still says what it
+said, never whether the claim about it is still true.
+
+Left: `crypto` (28 pins), and `ssh`, which has never ratcheted and is therefore the one most likely to
+go red.
 
 ## Notes
 
