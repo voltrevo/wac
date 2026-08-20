@@ -1,0 +1,93 @@
+// Where a traced module's journal entry came from.
+//
+// `wac build --trace` writes a `<module>.trace` table beside the module: one row per site, tab
+// separated, as `<site> <line> <col> <kind> <file>`. `ctcompare` answers with site *numbers*, so
+// anything that wants to say where a divergence was has to read that table back.
+//
+// ## Why this is one function and not two
+//
+// It was two, and they drifted in the way that mattered.
+//
+// `packages/crypto/tools/ct.wac`'s copy shortened a path by cutting `packages/crypto/src/` out of
+// it, which is what the README's side-channel table prints. `packages/crypto/test/wac/`'s copy cut
+// the *repository root* instead, with a comment saying why — "an assertion naming a line of `aes.wac`
+// should not also be naming whose checkout it is in".
+//
+// Only one of the two writes a file that is **public on GitHub**, and it was the one without the
+// repository cut. It went unnoticed because every leak the table had ever reported was inside
+// `packages/crypto/src`, so the crypto cut happened to also remove the absolute prefix. The first row
+// to leak outside it — `modExpSecret`, whose divergence is in `packages/bignum` — printed
+// `/home/claude/<agent>/workspaces/wac/packages/bignum/src/big.wac:68` into a table on its way to a
+// commit.
+//
+// So the repository cut lives here and happens always. A caller that wants a cosmetic shortening on
+// top does it to the result.
+
+import { Cli, FileResult } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { splitLines, startsWith } from "./strings.wac";
+
+/** One row of a `.trace` table, resolved. */
+export struct TraceSite {
+  /** `branch`, `ternary-then`, `index`, `loop`, `entry` — what kind of point it is. */
+  string kind;
+  /** The source file, relative to the repository root. */
+  string file;
+  /** The line, as it was written in the table. */
+  string line;
+  /** The column. */
+  string col;
+  /** False when the table could not be read or has no such site. */
+  bool ok;
+}
+
+/**
+ * Site `site` of the module at `stem` — `stem` being the path without `.wasm`.
+ *
+ * The path is made relative to the current directory, which is the repository root for every caller
+ * here: the table records the path the build was given, and the drivers these tools write are given
+ * absolute ones.
+ */
+export TraceSite traceSite(Cli cli, string stem, i32 site) {
+  FileResult f = cli.readFile(stem + ".trace").wait();
+  if (!f.ok) { return TraceSite("", "", "", "", false); }
+  string[] rows = splitLines(string.fromBytes(f.bytes));
+  string want = itoa(site) + "\t";
+  for (i32 i = 0; i < rows.len(); i++) {
+    if (!startsWith(rows[i], want)) { continue; }
+    string[] parts = string[5](fill: "");
+    i32 n = 0;
+    string cur = "";
+    for (i32 k = 0; k <= rows[i].len(); k++) {
+      string c = k < rows[i].len() ? rows[i].slice(k, k + 1) : "\t";
+      if (c == "\t") { if (n < 5) { parts[n] = cur; n = n + 1; } cur = ""; }
+      else { cur = cur + c; }
+    }
+    if (n < 5) { return TraceSite("", "", "", "", false); }
+    string file = parts[4];
+    string here = cli.cwd().wait() + "/";
+    if (startsWith(file, here)) { file = file.slice(here.len(), file.len()); }
+    return TraceSite(parts[3], file, parts[1], parts[2], true);
+  }
+  return TraceSite("", "", "", "", false);
+}
+
+/** `<kind>@<file>:<line>`, which is how an assertion names a site. */
+export string describeSite(TraceSite s) {
+  if (!s.ok) { return "<no such site>"; }
+  return s.kind + "@" + s.file + ":" + s.line;
+}
+
+/**
+ * `file` with `prefix` and everything before it removed, or `file` unchanged.
+ *
+ * The cosmetic shortening: the README's table prints `aes.wac:129` rather than the whole path,
+ * because every row it had for a long time was in one directory. Separate from the repository cut
+ * above on purpose — that one is about not publishing a home directory and is not optional.
+ */
+export string withoutPrefix(string file, string prefix) {
+  for (i32 k = 0; k + prefix.len() <= file.len(); k++) {
+    if (file.slice(k, k + prefix.len()) == prefix) { return file.slice(k + prefix.len(), file.len()); }
+  }
+  return file;
+}

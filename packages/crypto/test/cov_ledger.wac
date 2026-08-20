@@ -9,7 +9,7 @@
 // listed here is expected to be covered and the run fails if it is not — and anything listed that *does*
 // get covered fails too, since the reason has stopped holding. `issues/system/0222`.
 //
-// ## 1123 of 1154, against the TypeScript's 974 of 1053
+// ## 1117 of 1148, against the TypeScript's 974 of 1053
 //
 // More points seen *and* fewer missed, and the reason is one thing: `harness/wacCoverage.ts` could not
 // call a test that takes an argument. `runTestExports` skips any whose `fn.length > 0`, because

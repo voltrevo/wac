@@ -10,12 +10,30 @@
 
 import { beWord64, storeBE64 } from "./layout.wac";
 
+/** All ones, which a 0/1 bit multiplies up to. The mask, without a subtraction that has to wrap. */
+const u64 ALL_ONES = 0xFFFFFFFFFFFFFFFF;
+
 /**
  * z = x * y in GF(2^128).
  *
- * Shift-and-add over the 128 bits of x, most significant first. Not
- * constant-time: the branch on each bit of x is exactly what a table-driven or
- * carry-less-multiply implementation exists to remove.
+ * Shift-and-add over the 128 bits of x, most significant first — **adding on every bit and masking
+ * the addend**, and reducing on every step with the constant masked by the bit that fell off.
+ *
+ * It branched on both until 2026-08-20, and this file's own header called that out as "exactly what a
+ * table-driven or carry-less-multiply implementation exists to remove" — which is true of the *cost*
+ * and was the wrong reason to leave it. `ghash(h, data)` calls this with `y` as H, the GCM
+ * authentication key, and `x` as the accumulator, which is a function of H. So both branches leaked
+ * H, and **a leaked GHASH key is tag forgery** rather than a read of the plaintext: an attacker who
+ * knows H can authenticate a message they wrote. `packages/crypto/tools/ct.wac` put the first
+ * divergence between two H values at the reduction's `if`.
+ *
+ * The mask is `bit * ALL_ONES` rather than `0 - bit`: `bit` is 0 or 1, wac's `>>` on `u64` is logical
+ * so there is no sign to extend, and a multiply says what it means without relying on unsigned
+ * subtraction wrapping.
+ *
+ * This does not make AES-GCM constant-time — `aes.wac` indexes its S-box with key-derived bytes and
+ * says so — but it removes one of the two, and it lets the tracer see past a point it used to stop
+ * at.
  */
 void gfMul(u64[] x, u64[] y, u64[] z) {
   u64 vhi = y[0];
@@ -27,13 +45,16 @@ void gfMul(u64[] x, u64[] y, u64[] z) {
     u64 bit = 0;
     if (i < 64) { bit = (x[0] >> ((63 - i) as! u64)) & 1; }
     else        { bit = (x[1] >> ((127 - i) as! u64)) & 1; }
-    if (bit != 0) { zhi ^= vhi; zlo ^= vlo; }
+    u64 addMask = bit * ALL_ONES;
+    zhi ^= vhi & addMask;
+    zlo ^= vlo & addMask;
 
-    // V >>= 1 across both words, then reduce if a 1 fell off the bottom.
+    // V >>= 1 across both words, then reduce — always, with the constant masked by the bit that
+    // fell off the bottom.
     u64 lsb = vlo & 1;
     vlo = (vlo >> 1) | (vhi << 63);
     vhi = vhi >> 1;
-    if (lsb != 0) { vhi ^= 0xE100000000000000; }
+    vhi ^= 0xE100000000000000 & (lsb * ALL_ONES);
   }
 
   z[0] = zhi;

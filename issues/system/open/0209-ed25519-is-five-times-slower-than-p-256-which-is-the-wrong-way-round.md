@@ -61,7 +61,16 @@ the fix went the right way — Montgomery multiplication over 32-bit limbs is **
 variable-time byte version**, so `p256Sign` is 2.4ms against `ed25519Sign`'s 2.3ms. The ordering this
 issue is named after is no longer inverted in either direction; the two are the same speed.
 
-So what remains of this issue is **RSA at 117ms**, and nothing has looked at it.
+So what remains of this issue is **RSA at 117ms**, and as of 2026-08-20 something has looked at it —
+from the side-channel end rather than the performance end, but they turn out to name the same place.
+`modPowSecret` with two 1024-bit exponents parts at `packages/bignum/src/big.wac:68`, which is
+`trim`'s `while` over leading zero limbs, at event 25,728 of 17.4 million.
+
+`trim` running a variable number of iterations is *why* it leaks and is also a hint about the cost:
+every `mul` and `divmod` result is trimmed, and `modPowSecret` does four of those per exponent bit —
+1024 bits, so about four thousand big-integer operations per signature, each with a normalisation pass
+whose length depends on the operand. Nobody has profiled it, so that is a lead rather than an answer.
+There is no CRT either, which `rsa.wac`'s header notes would be roughly four times faster.
 
 The original measurement follows.
 

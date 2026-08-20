@@ -513,12 +513,13 @@ which is how AES keys have been recovered from cache timing since 2005.
 | `poly1305` | 140 | uniform |
 | `x25519Base` | 1,812,173 | uniform |
 | `ed25519Sign` | 7,399,082 | uniform |
-| `ghash` | 740 | **leaks** — control flow diverges where one run stood at `ghash.wac:36`; not examined past that |
-| `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
-| `aesEncrypt` | 11,779 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges where one run stood at `aes.wac:66`; not examined past that |
+| `ghash` | 484 | uniform |
+| `aesExpandKey` | 516 | **leaks** — secret-dependent index at `aes.wac:129`, `aes.wac:130`, `aes.wac:131`, `aes.wac:132` |
+| `aesEncrypt` | 9,475 | **leaks** — secret-dependent index at `aes.wac:129`, `aes.wac:130`, `aes.wac:131`, `aes.wac:132`, `aes.wac:165` |
 | `p256PublicKey` | 8,190,814 | uniform |
 | `p256Sign` | 8,456,980 | uniform |
 | `kemDecapsSecret` | 1,023,945 | uniform |
+| `modExpSecret` | 17,430,337 | **leaks** — control flow diverges where one run stood at `packages/bignum/src/big.wac:68`; not examined past that |
 | `bcryptPbkdf` | 8,177,005 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
 
 **The event counts changed on 2026-08-12 and the verdicts did not.** These are wacc's
@@ -691,16 +692,62 @@ an arithmetic instruction took, so a uniform row here is a claim about control f
 access and not about arithmetic timing. Real ML-KEM implementations use Barrett reduction for
 exactly this reason. Named because a clean row should not be read as more than it is.
 
-**AES leaks in five places, not one.** Four are the key schedule's `SubWord` lookups
-(`aes.wac:113`–`116`) and the fifth is `SubBytes` itself (`aes.wac:149`), each indexing
-the S-box with a key-derived byte — index 0 for an all-zero key against 255 for an
-all-ones one. Then control flow diverges at `xtime`'s conditional reduction
-(`aes.wac:66`), which was not previously documented, and **nothing past that point has
-been examined**: once two runs take different paths their event streams describe
-different executions, so comparing them further produces noise rather than findings.
+**AES leaks in exactly five places, and that is now the whole of it.** Four are the key
+schedule's `SubWord` lookups (`aes.wac:129`–`132`) and the fifth is `SubBytes` itself
+(`aes.wac:165`), each indexing the S-box with a key-derived byte — index 0 for an all-zero key
+against 255 for an all-ones one. That is the 2005-era cache-timing attack, it is what a
+table-driven AES *is*, and the only answer is a bitsliced S-box.
 
-`ghash` diverges in control flow before any index does, so the same caveat applies to
-everything after its multiply loop.
+**Until 2026-08-20 there was a sixth thing and it was hiding the answer.** `xtime`'s conditional
+reduction was a *branch*, at `aes.wac:66`, and `--all` stops at a split because past one the two
+journals are not aligned and every later difference is an artefact of the misalignment. So the
+row said "nothing past that point has been examined" and nobody could say whether the five index
+sites were all of it. `xtime` masks now — `s ^ (0x1B * ((a & 0x80) >> 7))` — and the whole trace
+is examined: **the same five sites and no others.** A weaker leak was concealing the strength of
+the claim about the stronger one.
+
+It is also 2,304 events cheaper, which is the branch points that went.
+
+**`ghash` was the other half of AES-GCM and no longer leaks at all.** `gfMul` was shift-and-add
+with the add taken only when the bit was set and the reduction applied only when a one fell off
+the bottom — two branches per iteration, one over the accumulator and one over H itself, and
+`ghash(h, data)` passes H as the multiplicand. **A leaked GHASH key is forgery**, not disclosure:
+an attacker who knows H can authenticate a message they wrote. Both are masks now, and it went
+740 events to 484 — exactly the 256 branch points the two `if`s contributed over 128 iterations,
+so this one was free.
+
+GCM as a whole is still not constant-time, because the block cipher under it is not. What changed
+is that one of its two halves stopped depending on its key.
+
+**RSA had no row until 2026-08-20, and it was the one routine here whose own header says at
+length that it is not constant-time.** So "we did not measure it" and "it is fine" looked
+identical for exactly the case this section exists to keep apart — the same argument that put
+`bcryptPbkdf` below in, and the same omission that let `p256Sign` and `ed25519Sign` sit
+unmeasured until they were found to be leaking.
+
+The row is `modPowSecret` rather than `rsaSignPkcs1`: it is the routine the exposure is about,
+and a 2048-bit signature would be a 300-million-event journal where 1024 bits is 17.4 million.
+The modulus and base are held and the **exponent** varies, which is the question — a private
+exponent must not change the work.
+
+It does, at event 25,728 of 17.4 million, which is inside the first few rounds. And the useful
+part is *where*: `packages/bignum/src/big.wac:68`, which is `trim`'s `while` over leading zero
+limbs. `rsa.wac`'s header predicted the class — "`bignum`'s `mul` and `divmod` take time that
+depends on their operands' magnitudes" — and the measurement names the line. That is a more
+actionable fact than "not constant-time", and it does not change the standing advice in that
+header: these functions are for keys whose compromise does not matter, and the fix is a
+constant-time `bignum`, which is a direction rather than a patch.
+
+**The row also found a bug in the tool that prints this table.** Every leak it had ever reported
+was inside `packages/crypto/src`, and the path shortening cut exactly that prefix — so it
+happened to remove the absolute path as a side effect. `modExpSecret`'s divergence is in
+`packages/bignum`, and what came out was
+`/home/claude/<agent>/workspaces/wac/packages/bignum/src/big.wac:68`: a working directory, on its
+way into a file that is public on GitHub. The repository-relative cut existed thirty lines away in
+`test/wac/constanttime_test.wac`, with a comment saying an assertion "should not also be naming
+whose checkout it is in" — in the file that does *not* publish. Both now use one
+`packages/wactest/src/tracesite.wac`, where the repository cut is unconditional and the cosmetic
+one is a separate call.
 
 **`bcryptPbkdf` is measured now, and it was the row that was not a result.** The tracer
 wrote into a buffer of 2^22 events fixed in the compiler; a single bcrypt hash is 129 full

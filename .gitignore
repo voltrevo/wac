@@ -37,3 +37,18 @@ native/target/
 probe*.ts
 native/seed/
 native/spike-v8/target/
+
+# Python bytecode caches. Three of these were *tracked* until 2026-08-20 — two under
+# `packages/bls/test/` and one under `packages/tty/tools/` — committed by accident alongside the
+# `.py` files they cache. They are build artefacts, and they embed the absolute path of whichever
+# checkout compiled them: the tracked ones carried
+# `/home/claude/<agent>/workspaces/wac-mono/packages/bls/test/tower.py`, from the layout that
+# existed before the two repositories merged. This repository is public.
+#
+# `packages/tty/tools/__pycache__/pty.cpython-312.pyc` cached a `pty.py` that no longer exists,
+# so it was dead as well as unwanted.
+#
+# Removing them from the index does not remove them from history and is not meant to; what it
+# stops is the next one.
+__pycache__/
+*.pyc
