@@ -78,7 +78,7 @@ Deno.test("[§wac-cli-nocaps-5hq2xn9] wacland: a main that takes no capabilities
     await Deno.writeTextFile(src, "export i32 main() { return 3; }\n");
     await buildNative(src, `${dir}/p`, {});
     const r = new Deno.Command(`${Deno.cwd()}/native/target/release/wacland`, {
-      args: [`${dir}/p.json`],
+      args: [`${dir}/p.wasm`],
       stdout: "piped",
       stderr: "piped",
     }).outputSync();

@@ -54,5 +54,12 @@ The first is the one that matches `design/lang/0009`'s direction — one install
 handling it already does for `wacc`. Note that `boxsh.wac` lives in `packages/box`, so the seed would
 gain a dependency on that package.
 
-`update` is in the same position and is not covered here: `design/lang/0009` D10 names it as an
-explicit operation, so whether `wac update` exists after a seed is the same question.
+`update` is in the same position, and on 2026-08-20 it stopped being hypothetical: two tests in
+`packages/wacc/test/wac/mappedspec_test.wac` — another agent's, closing `issues/lang/0169a` — run
+`wac update` and fail against a seeded binary, because `UPDATE.is_some()` is false and the argument
+falls through to the compiler, which answers with its own usage. So this is not only a documentation
+mismatch any more; it is a red suite for anyone whose `wac` came from `deno task seed`, which is
+everyone following the supported route.
+
+That also means the two payloads should be settled together. `design/lang/0009` D10 names `update` as
+an explicit operation, so "does `wac update` exist after a seed" is the same question as the shell.
