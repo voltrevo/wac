@@ -124,9 +124,15 @@ void mentionedIn(u8[] b, Strs into) {
  * nothing else, so the twelve `§wac-cli-*` clauses — what `check`, `compile`, `run`, `test`, the
  * grants, the exit statuses and `uninstall` promise — were stated in the spec and checked by
  * nobody. Every one of them does have a test, which is the only reason widening this is free; four
- * are held in `tools/*.test.ts`, which is why that directory joins the list of places a clause may
+ * were held in `tools/*.test.ts`, which is why that directory joined the list of places a clause may
  * be held from. A guard against a class of rot that reads one file of that class is a shape this
  * repository keeps finding, and it surfaced here because adding a clause did not move the count.
+ *
+ * **`tools/*.test.ts` came back off the list on 2026-08-20**, and the reach check below is what said
+ * so rather than anyone noticing: the last of those four moved to `tools/wac/runcli_test.wac`
+ * (`issues/system/0161`), that source named no tags at all, and the assertion that every source must
+ * contribute failed. Which is the assertion doing exactly its job — a directory that stops being read
+ * is the failure this whole file is about, and one that has nothing left to read is the same shape.
  */
 string[] SPEC_DIRS() { return string[]("spec/spec", "spec/cli"); }
 
@@ -211,12 +217,17 @@ export string test_every_clause_that_is_not_wapys_is_held_outside_the_reference(
   t.isTrue(corpus.ok, "cannot read the recorded corpus — " + corpus.error);
   if (corpus.ok) { mentionedIn(corpus.bytes, ours); }
 
-  // `tools` and `tools/mutate` are here because four of the CLI clauses are held there —
+  // `tools/wac` and `tools/mutate` are here because four of the CLI clauses are held there —
   // `covdump`, `validate`, `nocaps` and `status` — and they are as much "outside the reference" as
   // the rest. Flat walks, so a subdirectory holding coverage has to be named.
+  //
+  // **`tools/*.test.ts` was here too and came off on 2026-08-20**: the last of those four moved to
+  // `tools/wac/runcli_test.wac` (`issues/system/0161`), so that walk had nothing left to find. The
+  // reach assertion in the check below is what noticed — this list has none, so it would have kept
+  // walking an empty directory indefinitely.
   string[] dirs = string[]("packages/wacc/test", "packages/wacc/test/wac", "tools/wac",
-                           "tools", "tools/mutate");
-  string[] suffixes = string[](".test.ts", "_test.wac", "_test.wac", ".test.ts", ".test.ts");
+                           "tools/mutate");
+  string[] suffixes = string[](".test.ts", "_test.wac", "_test.wac", ".test.ts");
   for (i32 d = 0; d < dirs.len(); d++) {
     string[] tests = filesIn(cli, dirs[d], suffixes[d]);
     i32 before = ours.len();
@@ -298,9 +309,9 @@ export string test_every_wacc_only_clause_in_spec_is_named_by_a_case_or_a_test(
     if (f.ok) { namedByCase(string.fromBytes(f.bytes), named); }
   }
   string[] dirs = string[]("packages/wacc/test", "compiler", "packages/wacc/test/wac",
-                           "tools", "tools/wac", "tools/mutate");
+                           "tools/wac", "tools/mutate");
   string[] suffixes = string[](".test.ts", ".test.ts", "_test.wac",
-                               ".test.ts", "_test.wac", ".test.ts");
+                               "_test.wac", ".test.ts");
   i32[] contributed = i32[dirs.len()]();
   for (i32 d = 0; d < dirs.len(); d++) {
     string[] tests = filesIn(cli, dirs[d], suffixes[d]);
