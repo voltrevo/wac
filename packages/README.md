@@ -146,7 +146,7 @@ deno task test:heavy      # ...the ten files `deno task test` skips — docs/dev
 deno task check           # type-check every .ts, including the drivers no test imports (~1s)
 wac run --allow-read <entry.wac> args               # run a wac application
 deno task app:build <entry.wac> --allow-read -o wc   # ...or build one JavaScript file; ./wc needs Deno
-deno task app:binary <entry.wac> --allow-read -o wc  # ...or a standalone executable, runtime inside
+wac app <entry.wac> --allow-read -o wc               # ...or one executable file; ./wc needs `wac`
 deno task app:build <entry.wac> --target node -o wc  # ...for Node instead of Deno
 deno task app:build <entry.wac> --target browser -o page/index.html  # ...or a browser page
 deno task app:build <entry.wac> --worker -o child.worker.js  # ...or something `spawn` can run

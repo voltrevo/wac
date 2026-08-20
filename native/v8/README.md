@@ -220,13 +220,16 @@ Everything above is a *runtime*: it is handed a program. With `seed/wacc.wasm` p
 time, `build.rs` embeds it and the same binary is a **command**. In one step:
 
 ```
-deno task app:native-binary packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
-./wac compile main.wac main.wasm
+deno task seed
+./native/v8/target/release/wac compile main.wac main.wasm
 ```
 
-and that works for *any* wac program, not only the compiler — `app:native-binary` is `app:binary` on this
-host, 64 MB against 105 MB because a V8 comes along without the rest of a runtime. Or by hand, which
-is what that command does:
+**Packaging a program is no longer packaging an engine.** `app:native-binary` built one of these per
+program — 67 MB of V8 and Rust host around a 200 KB module — and went on 2026-08-20 along with
+`app:binary`, its 105 MB `deno compile` twin. `wac app <entry.wac> -o thing` writes the module with a
+`/bin/sh` preamble that execs `wac app-run` on itself, so a distributed program is a few hundred KB
+and the engine on the machine is the one the compiler ships in. `spec/cli/wac.md`. The seed below is
+still built by hand the same way:
 
 ```
 deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \
