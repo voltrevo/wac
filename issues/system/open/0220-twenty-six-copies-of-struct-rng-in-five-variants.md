@@ -60,15 +60,31 @@ The four with a real subject are all in `packages/fmt`, against
 what that generator's `x >>> 0` produces. So every claim that still has something to be true of is
 true.
 
-The twelve false ones are corrected: they now say the generator is seeded and the corpus reproducible,
-which is the property a fuzz test actually needs, and say what the sentence used to claim. **That
-dissolves most of the risk in this issue**: where there is no host generator, the cast split cannot
-break parity with one, and unification only moves a corpus that is self-consistent either way.
+The twelve are corrected — but **not the way this section first said, and the correction is the
+interesting part.** The first attempt wrote "there is no host-side generator to match", which is true
+of the filesystem and false about the constraint: `issues/system/0161` deleted the drivers and left
+the **expectations recorded against them**, so the draw those drivers made is still the one that has
+to be reproduced. A claim that is no longer checkable by looking is worse than one that is wrong,
+because nothing fails.
+
+Another agent found that the hard way, in the same hour and in a file this pass had already touched:
+`packages/datetime/test/wac/datetime_test.wac` returned the signed `i32`, its `next() % 4000000` was
+a signed remainder, and `spreadMillis` was drawing from a wider range than it documents. Their commit
+names the deleted `cov.ts` and its `x >>>= 0; return x` as the thing that was being matched. That
+merge conflicted with this pass's comment edit and their version was kept, because it is right and
+this one was not.
+
+**So the cast split is not a preference between two self-consistent corpora.** The deleted drivers
+returned unsigned, so the unsigned family reproduces what the expectations were recorded against and
+the signed family does not. That makes the twelve signed copies suspect rather than merely different,
+and each wants checking the way datetime's was.
 
 ## What to do, revised
 
-Unify on the **u32** family — the one that matches `packages/fmt`'s host generator, and the one whose
-`upto` needs no sign correction. One `packages/wactest/src/rng.wac` exporting `next` and `upto`; the
+Unify on the **u32** family — the one the deleted host drivers returned, the one
+`packages/fmt/tools/sweep.ts` still returns, and the one whose `upto` needs no sign correction. A
+signed copy is not an alternative convention; it is a corpus that stopped matching its expectations
+when nobody was looking. One `packages/wactest/src/rng.wac` exporting `next` and `upto`; the
 extras stay local, as free functions taking an `Rng`, because a wac struct's methods cannot be
 extended from another file. The interfaces are: 13 files want exactly `next` and `upto`, two want
 `bit`, two want `nextDouble`, one wants `pick`, and six use `next` alone.
@@ -133,14 +149,26 @@ brace-matching version then missed 13 files because their signature is `u32 next
 `i32 next(this)`. The population being mixed method/free-function is why the first two answers looked
 plausible and were wrong.)*
 
-**Nine of the twelve plain copies use a bare `%` on `next()`** — the ones this issue says are not
-insulated:
+**Which plain copies use a bare `%`.** I first wrote nine here; that count matched inside *comments* —
+`regex_test.wac` was flagged on a docstring reading "`next() % n` there is a modulo of a…". With comments
+stripped, and after the two conversions below, the plain files with a real bare `%` in code are **four,
+and every one is a coverage driver**:
 
-    bignum/test/cov_exercise.wac        regex/test/cov_exercise.wac
-    datetime/test/cov_exercise.wac      regex/test/wac/regex_test.wac
-    datetime/test/wac/datetime_test.wac unicode/test/cov_exercise.wac
-    http/test/cov_exercise.wac          unicode/test/wac/unicode_test.wac
-                                        url/test/cov_exercise.wac
+    bignum/test/cov_exercise.wac    regex/test/cov_exercise.wac
+    http/test/cov_exercise.wac      url/test/cov_exercise.wac
+
+and the plain files with no bare `%` are `codec/test/wac/codec_test.wac`, `fmt/test/cov_exercise.wac`,
+`url/test/wac/fuzz_test.wac`, and `regex/test/wac/regex_test.wac` — which is **already correct**: it casts
+at the point of use, `((this.next() as@ u32) % (n as@ u32)) as@ i32`, and its docstring is the clearest
+statement of this issue's whole point anywhere in the tree:
+
+> `x >>> 0` in the host-side generator was not decoration: `next() % n` there is a modulo of a 32-bit
+> unsigned, and a signed remainder corrected into range afterwards picks different atoms. The corpus would
+> still be a corpus, and it would not be the same one — so a seed named in a failure would no longer
+> reproduce it.
+
+So the remaining four are drivers whose `upto` is the `v < 0 ? v + n : v` fold that docstring describes:
+corrected into range, and not the host's sequence.
 
 ### The drift this issue is about is in three packages, and it is systematic
 
@@ -166,3 +194,131 @@ over half, which is what a signed remainder on a value with the top bit set give
 
 So this issue's *"a claim nothing checks"* now has two named pairs and a number behind it, which is
 probably where a sweep should start rather than at the thirteen identical copies.
+
+### Which of the two variants is *right*, measured against the thing they claim to match
+
+The table at the top calls the eighteen "one generator split by whether the result is cast", which reads
+as a tidying job. It is not symmetric: one of the two matches the host-side generator and the other does
+not, and four files that use the wrong one **say in a comment that they use the right one**.
+
+The host-side generators, recovered from git history because the files are deleted —
+`packages/{regex,unicode,datetime,url}/cov.ts` — are all:
+
+```js
+x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x;    // unsigned
+```
+
+The wac copies' **state evolution is a faithful port**: `(this.x >> 17) & 0x7FFF` is a signed shift masked
+to fifteen bits, which is bit-for-bit `x >>> 17` on a 32-bit value either side of zero. The only
+difference is the *return* — the host hands back an unsigned value, `as@ u32` reproduces that, and plain
+does not.
+
+So **the cast variant is correct and the plain one is wrong**, and these four carry the claim while being
+the wrong one:
+
+| file | claim | bare `%` |
+|---|---|---|
+| `regex/test/wac/regex_test.wac` | "matching the host-side generator so the patterns are the same" | yes |
+| `unicode/test/wac/unicode_test.wac` | "…so the corpora are the same ones" | yes |
+| `datetime/test/wac/datetime_test.wac` | "…so the corpus is the same one" | yes |
+| `url/test/wac/fuzz_test.wac` | "…so the corpus is the same one" | no |
+
+Three of the four read the draw through a bare `%`, where signedness decides the answer — and the
+measurement above says **21 of 40 draws differ**. So those three test a corpus that is about half new,
+while saying it is the recorded one.
+
+**And nothing in the tree can check any of it**, which is the sharpest form of this issue's point: the
+host-side files those comments refer to were deleted by the port. The claim's referent exists only in git
+history, so it is not stale — it is unverifiable from HEAD.
+
+That gives the sweep a direction it did not have: converge on the **cast** form, and the three bare-`%`
+tests are the ones whose numbers should be expected to move.
+
+### First conversion done, with its numbers — `datetime`
+
+The guidance above is to convert one file, run that package, and check the numbers before the sweep. Done
+for `datetime`, which needed **both** of its files: they were internally consistent as plain, so converting
+only the test would have created the split this issue is about.
+
+- `test/wac/datetime_test.wac` — `next()` returns `as@ u32`, and `spreadMillis`'s `% 4000000` is unsigned.
+  That restores the range its own comment documents: with an unsigned draw the spread is 1963.7–1976.3,
+  which is what *"about 1963 to 1976"* says; signed, it was roughly 1951–1976.
+- `test/cov_exercise.wac` — same, and **the fold came out**. `upto` was
+  `i32 v = this.next() % n; return v < 0 ? v + n : v;` — a compensation for the signed return that did not
+  restore the host's sequence either, since `(-k) % n + n` is not `(unsigned x) % n`. With the draw
+  unsigned there is nothing to fold, and `upto` is the one-liner the cast-variant files already use.
+
+**Numbers after:** the wac lane is 12 of 12, and `deno task coverage:datetime` is **123 of 123, 100.0%** —
+unchanged. So a corpus that moved by about half its draws did not move the coverage, which is worth knowing
+before the sweep: these are differentials against a host oracle, so *which* inputs they draw changes and
+what they assert does not.
+
+Two packages remain with a bare `%` on the plain variant — `regex` and `unicode`, both with driver and test
+in the plain group, so both want converting as a pair the same way.
+
+### Second conversion — `unicode`, and it found a hole in a test's premise
+
+Converting `unicode`'s pair the same way went red, and the failure is the interesting part of this whole
+issue:
+
+    whole strings: lower "…ⱤΣ": got "…ɽσ", host says "…ɽς"
+
+**Greek final sigma.** `Σ` lowercases to `σ` per code point and to `ς` at the end of a word, which is
+Unicode's `SpecialCasing` contextual rule. The host's `toLowerCase` applies it; this package does *simple*
+case mapping and says so — `packages/unicode/README.md` names final sigma as a contextual form it does not
+do and lists full case mapping as out of scope. So **wac is right and the test's oracle was wrong.**
+
+The test's own docstring is where the hole is: *"Only code points this package's table leaves unmoved or
+moves to a single code point can be used, and the case sweep has already established that those are exactly
+the ones the host maps singly"*. `Σ` satisfies that — it maps singly in isolation, on both sides — and
+still differs inside a string. Per-codepoint agreement does not imply string agreement for a contextual
+mapping, and the premise did not know it.
+
+**The old corpus never drew a string ending in `Σ`.** That is not luck about one code point: the signed
+draw walked a different half of the space, so a whole class of strings was unreachable. Fixed by excluding
+`0x03A3` from the string corpus rather than tolerating it at the comparison, so a difference still means
+something.
+
+Two interface costs, both named by the compiler rather than found later: `next()` returning `u32` broke
+`b[i] = r.next() & 0xff` in each file, which is the sweep cost this issue warns about arriving one call
+site at a time.
+
+**Numbers, before and after:** `deno task coverage:unicode` is **105 of 108, 97.2%** with the same three
+unexecuted branch points in `utf8.wac` either way — measured by stashing the change and re-running. Lane
+13 of 13.
+
+So both conversions so far moved the corpus by about half its draws and moved no coverage. `regex` is the
+remaining bare-`%` pair.
+
+### The four drivers, and where the sweep now stands
+
+The remaining four — `bignum`, `http`, `regex`, `url` coverage drivers — took the same one-liner, and
+**only in `upto`**: `((this.next() as@ u32) % (n as@ u32)) as@ i32`, leaving `next()` returning `i32`.
+That is the shape `regex_test.wac` already uses, and it is the smaller change: casting at the point of use
+fixes the corpus without changing the interface, so no other call site moves. `datetime` and `unicode`
+went the other way — `next()` returns `u32` — because their `next()` is used directly as well, and each
+of those cost two compiler errors to sweep.
+
+Both idioms are correct and the tree now has both, which the shared module this issue asks for would
+settle. Worth saying plainly rather than leaving as an inconsistency somebody finds later.
+
+**Numbers.** All four coverage tasks exit 0, so no floor moved, and two measured against a stashed
+baseline are identical either way:
+
+| package | branch points | covered | baseline |
+|---|---:|---:|---|
+| `bignum` | 230 | 226 | 226 — same |
+| `url` | 727 | 712 | 712 — same |
+| `http` | 447 | 404 | floor held |
+| `regex` | 649 | 573 | floor held |
+
+With `datetime` (123/123) and `unicode` (105/108) that is **six packages converted and none whose coverage
+moved**. A corpus that changed by about half its draws changed no coverage anywhere — because these are
+differentials against a host oracle, so which inputs they draw moves and what they assert does not.
+
+**What is left.** Every file with a *live* signedness difference is now correct. The plain files that
+remain — `codec/test/wac/codec_test.wac`, `fmt/test/cov_exercise.wac`, `url/test/wac/fuzz_test.wac` — take
+no bare `%`, so their variant makes no difference to what they draw; and the thirteen cast copies were
+already right. So what is left of this issue is the **deduplication** it was filed for: one
+`packages/wactest/src/rng.wac` and twenty-odd imports. The correctness half is done, and that was the
+half that could silently be wrong.

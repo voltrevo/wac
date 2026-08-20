@@ -156,29 +156,29 @@ export string test_invalid_dates_are_rejected() {
 }
 
 /**
- * xorshift32, seeded, so the corpus is reproducible.
+ * xorshift32, matching the host-side generator so the corpus is the same one.
  *
- * **There is no host-side generator to match**, and this comment said there was until
- * 2026-08-20. It was true when written: a TypeScript driver generated the same sequence so the
- * two sides walked one corpus. `issues/system/0161` deleted that driver, and the sentence
- * outlived what it described — thirteen copies of it did, across as many packages
- * (`issues/system/0220`). What is left is the real property: the same seed gives the same
- * corpus, which is what a fuzz test needs from a generator.
+ * **`as@ u32`, and that is the whole of the match.** The host's `cov.ts` was
+ * `x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x` — it hands back an
+ * *unsigned* value. The state evolution ports faithfully either way, since `(x >> 17) & 0x7FFF` is
+ * bit-for-bit `x >>> 17` on a 32-bit value, but returning the signed `i32` made `next() % 4000000`
+ * a signed remainder and the corpus a different one. `spreadMillis` below documents the range that
+ * follows from the unsigned draw, and was getting a wider one. `issues/system/0220`.
  */
 struct Rng {
   i32 x;
 
-  i32 next(this) {
+  u32 next(this) {
     this.x = this.x ^ (this.x << 13);
     this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
     this.x = this.x ^ (this.x << 5);
-    return this.x;
+    return this.x as@ u32;
   }
 }
 
 /** The random spread the host-side version used: about 1963 to 1976, in hundred-second steps. */
 i64 spreadMillis(Rng rng) {
-  i64 draw = (rng.next() % 4000000) as i64;
+  i64 draw = ((rng.next() % (4000000 as@ u32)) as@ i32) as i64;
   return draw * 100000 - 200000000000;
 }
 
