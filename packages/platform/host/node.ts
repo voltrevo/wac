@@ -14,7 +14,7 @@ import { type Handlers } from "./respond.ts";
 import { EMPTY_ARG, argBytes, i32le, i64le, readI32le, str, unstr } from "./call.ts";
 import { GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, OP } from "./ops.ts";
 import { randomBytes } from "./entropy.ts";
-import { ChildStack, joinPath, packCaptured, unpackPush } from "./child.ts";
+import { ChildStack, envRecord, joinPath, packCaptured, unpackExec, unpackPush } from "./child.ts";
 import { ByteQueue } from "./queue.ts";
 import {
   type Child,
@@ -760,25 +760,25 @@ export function nodeWorld(
     },
 
     /** `Cli.exec` — a host program, run to completion. `issues/system/0165`. */
-    [OP.EXEC]: async (p) => {
-      const nPath = readI32le(p);
-      const path = unstr(p.subarray(4, 4 + nPath));
-      const rest = p.subarray(4 + nPath);
-      const nArgs = readI32le(rest);
-      const joined = unstr(rest.subarray(4, 4 + nArgs));
-      // `"".split()` gives `[""]`, so an empty payload has to mean *no* arguments — which is what
-      // `cat` with none needs.
-      const args = joined.length === 0 ? [] : joined.split("\u0000");
-      const stdin = rest.subarray(4 + nArgs);
+    [OP.EXEC_WITH]: async (p) => {
+      const { path, args, env, stdin, clearEnv, inherit } = unpackExec(p);
       if (opts.run !== true) return execBytes(0, EMPTY, EMPTY, "Not granted to this application");
       try {
         const { spawn } = await import("node:child_process");
         return await new Promise<Uint8Array>((resolve) => {
-          const child = spawn(path, args, { stdio: ["pipe", "pipe", "pipe"] });
+          // Node replaces the whole environment when it is given one, where Deno adds unless it
+          // is told to clear — so the merge is written out here rather than left to a default that
+          // differs between the two hosts serving the same capability.
+          const child = spawn(path, args, {
+            stdio: inherit ? ["pipe", "inherit", "inherit"] : ["pipe", "pipe", "pipe"],
+            env: clearEnv ? envRecord(env) : { ...process.env, ...envRecord(env) },
+          });
           const out: Uint8Array[] = [];
           const err: Uint8Array[] = [];
-          child.stdout.on("data", (c: Uint8Array) => out.push(c));
-          child.stderr.on("data", (c: Uint8Array) => err.push(c));
+          // Null when inherited — the bytes went to this process's own descriptors, which is what
+          // the caller asked for, and there is no stream here to read them from.
+          child.stdout?.on("data", (c: Uint8Array) => out.push(c));
+          child.stderr?.on("data", (c: Uint8Array) => err.push(c));
           child.on("error", (e: Error) => resolve(execBytes(0, EMPTY, EMPTY, `${path}: ${e.message}`)));
           // A signalled child has no code; -1 rather than 0, so it is never read as success.
           // Node hands each stream back in chunks; `exec` answers one buffer per stream.
@@ -793,7 +793,16 @@ export function nodeWorld(
           };
           child.on("close", (code: number | null) =>
             resolve(execBytes(code ?? -1, concat(out), concat(err), "")));
-          child.stdin.end(stdin);
+          // **Ignored, and both Rust hosts have always ignored it** — `let _ = write_all(&stdin)`.
+          // A child that exits without reading its input closes the pipe, and `/bin/echo` does
+          // exactly that: the bytes were not wanted, which is the child's business rather than a
+          // failure of this call. Node raises it as an `error` *event* on the stream, so nothing
+          // catches it and an EPIPE from `echo` took the whole host down — found by
+          // `test/wac/exec_probe.wac`, which is the first program to run `echo` through this host.
+          child.stdin?.on("error", () => {});
+          // Always a pipe — both branches above ask for one, and only the *output* streams differ
+          // between inherited and buffered. The `?` is the price of a union type, not a case.
+          child.stdin?.end(stdin);
         });
       } catch (e) {
         return execBytes(0, EMPTY, EMPTY, `${path}: ${e instanceof Error ? e.message : e}`);

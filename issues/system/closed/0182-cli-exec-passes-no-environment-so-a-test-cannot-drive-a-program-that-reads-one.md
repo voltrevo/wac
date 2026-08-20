@@ -1,6 +1,6 @@
 # 0182 — `Cli.exec` passes no environment, so a wac test cannot drive a program that reads one
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-17
@@ -139,3 +139,45 @@ Each conversion was canaried against the thing it was said to need. Removing the
 brings `drop.txt` back as untracked; pointing `XDG_CONFIG_HOME` at nothing fails nine assertions and
 makes `gitci` report that no config file names an identity; dropping `GIT_AUTHOR_DATE` puts the
 clock in the author line instead of the pinned time.
+
+## Closed — the parameter landed 2026-08-20, by agent-c
+
+`Cli.execWith(path, args, stdin, env, clearEnv, inherit)`, with `Cli.exec` kept as a method that
+calls it with nothing added, nothing cleared and buffered output — so the 342 existing call sites did
+not move.
+
+**Two differences from what this issue proposed, both deliberate.**
+
+- The environment is `NAME=value` strings rather than a map, because the capability bridge marshals
+  strings and byte arrays and a map would be a new shape on it for no gain. Split at the *first* `=`;
+  a string with no `=` is ignored; a name given twice takes the last value.
+- **Total is a parameter rather than the semantics.** This issue argued the map should be total —
+  "what you pass is what the child gets, and passing nothing means nothing" — and that is exactly
+  what `clearEnv: true` does. It is not yet the *default*, because making it one is the 342-site
+  sweep that `issues/system/0198` is about, and each site has to answer "which of these did it
+  actually need". The place it flips is one line: `Cli.exec`'s body.
+
+The second question this issue raised — whether an empty environment and an absent argument mean the
+same thing — is answered by having both: `execWith(prog, args, stdin, string[](), false, …)` inherits
+and `…, true, …)` hands over nothing.
+
+**And the interpreter question 0198 asked is answered by a measurement.** That issue said the fix
+needed "an answer for how a program names an interpreter it does not have an absolute path to",
+because a cleared child has no `PATH`. The answer is that the caller passes one:
+`packages/ssh/test/wac/wacsshd.wac` resolves a bare `ssh` under `clearEnv: true` with
+`PATH` among the pairs it hands over, and its twelve tests pass. A caller that wants the host's
+`PATH` reads it with `cli.env("PATH")`, which needs `--allow-env` — which is the principle working
+rather than a wrinkle.
+
+## What it is held by
+
+- `packages/platform/test/wac/exec_test.wac` — the environment arrives, the inherited names survive,
+  a repeated name takes the last value, and `clearEnv` leaves exactly what was passed. That last one
+  is measured with `printenv` rather than a shell, because a POSIX shell *assigns* `PATH` a default
+  when it starts without one and the first version of the test read that default back as proof the
+  clearing had failed.
+- `packages/platform/test/wac/runtimes_test.wac` — the same three claims from a program built for the
+  Deno host and for the Node host, which is where the capability had never run.
+- `packages/wactest/src/childenv.wac` — `withEnv` and `onlyEnv` are now one call each instead of a
+  `/bin/sh -c` line, so the six tests this issue was filed for exercise the parameter rather than
+  working around its absence.

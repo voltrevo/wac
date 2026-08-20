@@ -251,3 +251,63 @@ export function unpackPush(
   // reads its input over many calls.
   return { argv, stdin: p.slice(cwdAt + 4 + cwdLen), cwd, inheritInput };
 }
+
+/**
+ * `Cli.execWith`'s payload: `clearEnv` and `inherit` as a byte each, then the path, the argument
+ * vector, the environment and whatever is left, which is stdin. `provider.ts` writes it.
+ *
+ * Beside `unpackPush` rather than in each host, because the two JavaScript hosts read the same bytes
+ * and a second copy of this offset arithmetic is a second place to get it wrong.
+ */
+export function unpackExec(
+  p: Uint8Array,
+): {
+  path: string;
+  args: string[];
+  env: string[];
+  stdin: Uint8Array;
+  clearEnv: boolean;
+  inherit: boolean;
+} {
+  const clearEnv = p[0] === 1;
+  const inherit = p[1] === 1;
+  const q = p.subarray(2);
+  const dv = new DataView(q.buffer, q.byteOffset, q.byteLength);
+  const dec = new TextDecoder();
+  const nPath = dv.getInt32(0, true);
+  const path = dec.decode(q.subarray(4, 4 + nPath));
+  const argsAt = 4 + nPath;
+  const nArgs = dv.getInt32(argsAt, true);
+  // `[].join()` and `[""].join()` are both "", so an empty run of bytes means *no* arguments rather
+  // than one empty argument — which `/bin/cat` with no arguments needs. The environment below has
+  // the same shape and the same reason.
+  const joined = dec.decode(q.subarray(argsAt + 4, argsAt + 4 + nArgs));
+  const args = joined.length === 0 ? [] : joined.split("\u0000");
+  const envAt = argsAt + 4 + nArgs;
+  const nEnv = dv.getInt32(envAt, true);
+  const envJoined = dec.decode(q.subarray(envAt + 4, envAt + 4 + nEnv));
+  const env = envJoined.length === 0 ? [] : envJoined.split("\u0000");
+  // Copied, like `unpackPush`'s: `p` is a view into the ring and the write to the child happens
+  // after the next call may have overwritten it.
+  return { path, args, env, stdin: q.slice(envAt + 4 + nEnv), clearEnv, inherit };
+}
+
+/**
+ * `NAME=value` strings as the record a spawn API wants.
+ *
+ * Split at the *first* `=`, because a value may contain one and a name may not. A string with no `=`
+ * is dropped rather than being a fault: there is nothing it could mean, and the alternative is a
+ * capability that fails on a caller's typo in a variable it did not need.
+ *
+ * Later wins, which is what makes `execWith(..., string[]("A=1", "A=2"), ...)` end at 2 — the same
+ * rule as a shell's, and the one a caller assembling a list from two sources expects.
+ */
+export function envRecord(pairs: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pair of pairs) {
+    const at = pair.indexOf("=");
+    if (at <= 0) continue;
+    out[pair.slice(0, at)] = pair.slice(at + 1);
+  }
+  return out;
+}

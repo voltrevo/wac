@@ -22,7 +22,7 @@ import { bridgeOf, CHUNK, newBridge } from "./layout.ts";
 import { EMPTY_ARG, argBytes, i32le, i64le, readI32le, str, unstr } from "./call.ts";
 import { GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, OP } from "./ops.ts";
 import { randomBytes } from "./entropy.ts";
-import { ChildStack, joinPath, packCaptured, unpackPush } from "./child.ts";
+import { ChildStack, envRecord, joinPath, packCaptured, unpackExec, unpackPush } from "./child.ts";
 import { ByteQueue } from "./queue.ts";
 import {
   CHANGED_OK,
@@ -124,6 +124,32 @@ export type DenoWorldOptions = {
 };
 
 const EMPTY = new Uint8Array(0);
+
+/**
+ * Hand a child its input and close it, ignoring a pipe the child has already closed.
+ *
+ * **Both Rust hosts have always ignored this** — `let _ = w.write_all(&stdin)` — and the reason is
+ * the same here: a program that exits without reading its input closes the pipe, `/bin/echo` does
+ * exactly that, and the bytes not being wanted is the child's business rather than a failure of the
+ * call. Reported as one it would put "Broken pipe" in `Exec.error`, which is the field that means
+ * *the program could not be started*.
+ *
+ * Closing is attempted whatever the write did, because a child that read half of a large input still
+ * needs to see the end.
+ */
+async function feed(stdin: WritableStream<Uint8Array>, bytes: Uint8Array): Promise<void> {
+  const w = stdin.getWriter();
+  try {
+    await w.write(bytes);
+  } catch {
+    // The child is gone or has closed its input; there is nobody to tell.
+  }
+  try {
+    await w.close();
+  } catch {
+    // Already closed, for the same reason.
+  }
+}
 
 /** A read answer, tagged: 0 data, 1 end, 2 failed. See `Read` in platform.wac. */
 function data(bytes: Uint8Array): Uint8Array {
@@ -981,33 +1007,37 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
      * not a program that could not be started, and the first is the case a differential oracle
      * cares about most.
      */
-    [OP.EXEC]: async (p) => {
-      const nPath = readI32le(p);
-      const path = unstr(p.subarray(4, 4 + nPath));
-      const rest = p.subarray(4 + nPath);
-      const nArgs = readI32le(rest);
-      const joined = unstr(rest.subarray(4, 4 + nArgs));
-      // `[""].join()` and `[].join()` are both "", so an empty payload is no arguments rather than
-      // one empty argument — which `/bin/cat` with no arguments needs.
-      const args = joined.length === 0 ? [] : joined.split("\u0000");
-      const stdin = rest.subarray(4 + nArgs);
+    [OP.EXEC_WITH]: async (p) => {
+      const { path, args, env, stdin, clearEnv, inherit } = unpackExec(p);
       if (opts.run !== true) return execBytes(0, EMPTY, EMPTY, "Not granted to this application");
       try {
         const child = new Deno.Command(path, {
           args,
+          // `clearEnv` false is Deno's default and means added to what the child would have
+          // had; true is `issues/system/0198`'s total environment, where what the caller passed is
+          // the whole of it.
+          env: envRecord(env),
+          clearEnv,
           stdin: "piped",
-          stdout: "piped",
-          stderr: "piped",
+          // Inherited means the real file descriptor: the bytes reach this process's own output and
+          // are not collected, which is why the answer below carries none.
+          stdout: inherit ? "inherit" : "piped",
+          stderr: inherit ? "inherit" : "piped",
         }).spawn();
+        if (inherit) {
+          // `output()` refuses a child whose streams are not piped, and there is nothing to collect
+          // anyway. The status is still the status.
+          await feed(child.stdin, stdin);
+          const s = await child.status;
+          return execBytes(s.code ?? -1, EMPTY, EMPTY, "");
+        }
         // **The output is awaited before the write, not after.** A child that answers while it is
         // still being fed — `cat`, `grep`, any filter — blocks on its own output once the pipe
         // buffer is full, and a host that writes the whole of stdin first blocks on the write. Both
         // waiting on the other, which is what two megabytes through `cat` did on every host:
         // `packages/platform/test/wac/exec_test.wac`. Starting `output()` here drains concurrently.
         const outcome = child.output();
-        const w = child.stdin.getWriter();
-        await w.write(stdin);
-        await w.close();
+        await feed(child.stdin, stdin);
         const r = await outcome;
         // A signalled child has no code; -1 rather than 0, so it is never read as success.
         return execBytes(r.code ?? -1, r.stdout, r.stderr, "");

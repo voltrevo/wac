@@ -48,8 +48,8 @@ export const OP = {
   CWD: 41,
   PUSH_CHILD: 42,
   POP_CHILD: 43,
-  /** `Cli.exec` — a host program, run to completion. `issues/system/0165`. */
-  EXEC: 44,
+  // 44 was `EXEC`, the same capability without an environment or a choice about the child's streams.
+  // Retired rather than reused — see `EXEC_WITH` at the end.
   OUTPUT_ERROR: 45,
   LINK_STAT: 47,
   WRITE_STDERR: 48,
@@ -88,6 +88,15 @@ export const OP = {
    * unserved opcode fails and names itself.
    */
   CLOSE_SEND: 57,
+  /**
+   * `Cli.execWith` — a host program, run to completion. `issues/system/0165`.
+   *
+   * A new number rather than a longer payload on 44, for the reason `CLOSE_SEND` is not a flag: a
+   * host that had not been rebuilt would read the environment as the head of stdin, silently, where
+   * an opcode it does not serve fails and names itself. `Cli.exec` is a method that calls this one,
+   * so each host still implements exactly one of them.
+   */
+  EXEC_WITH: 58,
 } as const;
 
 /**

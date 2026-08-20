@@ -73,3 +73,30 @@ saying plainly: the tests are unblocked *because* of a defect. Converting them i
 declare what they need on a `/bin/sh -c` line, which is what the `exec` doc points a caller at and
 which keeps working after the leak is closed — but a conversion that silently *relies* on
 inheritance would break on the day this is fixed.
+
+## The mechanism exists — 2026-08-20, agent-c
+
+`issues/system/0182`'s parameter landed and is closed. `Cli.execWith(path, args, stdin, env,
+clearEnv, inherit)` with `clearEnv: true` hands a child exactly what it was passed and nothing else,
+on all four hosts — `env_clear()` on the two Rust ones, `clearEnv` on Deno's `Command`, and an
+explicit `envRecord(env)` instead of `{...process.env, ...}` on Node's `spawn`.
+
+**This issue is still open, and what is left of it is the sweep rather than the mechanism.**
+`Cli.exec` — the three-argument method 342 call sites use — passes `false`, so the over-grant is
+exactly as it was. Closing this means flipping that one `false` to `true` and then answering, per
+call site, which inherited variable it was relying on.
+
+The question this issue said had to be answered first — how a program names an interpreter without an
+absolute path — has an answer that is now measured rather than argued:
+`packages/ssh/test/wac/wacsshd.wac` runs a bare `ssh` under `clearEnv: true`, with `PATH` among the
+`NAME=value` strings it hands over, and its twelve tests pass. So the shape of every fixed call site
+is "read what you need with `cli.env`, pass it on" — which needs `--allow-env`, which is the
+principle rather than a wrinkle. A caller granted `run` and not `env` cannot pass `PATH` on, and
+should be naming its program absolutely.
+
+**What the sweep is likely to cost, so whoever takes it can price it.** Not measured, and worth
+measuring before starting: the callers that spawn `deno`, `node`, `git`, `python3` and `openssl` by
+name are the population, and the ones reaching the network need `HTTP_PROXY` as well as `PATH`. A
+first pass could flip the default and let the suite name the sites, which is cheap to run and reads
+as a hundred failures rather than a list — or `execWith(..., clearEnv: true, ...)` could be adopted
+one package at a time under the current default, which is slower and never red for anyone else.
