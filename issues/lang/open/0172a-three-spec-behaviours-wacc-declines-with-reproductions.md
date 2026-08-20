@@ -39,6 +39,40 @@ where the field count is taken from the template rather than from the instantiat
 
 `issues/lang/closed/0034-generics.md` is the generics work this sits on top of.
 
+### Diagnosed to the line, and attempted — 2026-08-20
+
+**The field count comes from a discarded token.** `emit.wac`'s instantiation pass registers the
+instance's struct with
+
+```wac
+env.structNames[env.structCount] = inst;
+env.structParentToks[env.structCount] = -1;      // <- the template's parent, thrown away
+```
+
+and `parentTok` **is bound by the enclosing `case StructDecl(nameTok, parentTok, …)` pattern** — it is
+simply not used. `parentOf` then answers `""` for `Parented<i32>`, `inheritedCount` is 0, and
+`fieldCountOf` says 1 for a struct that has two fields. Hence "2 of 1 fields" for a correct
+construction. The ordinary declaration path a hundred lines below passes `parentTok` properly, which is
+what makes the two comparable.
+
+**I tried the one-line change and reverted it, because it is not the whole fix.** Carrying the token
+makes `blocked()` return `""` — the count is right — and the emitter *still* drops the function, so the
+failure moves from a decline naming its reason to the export-parity net saying only "`f` is not in the
+module". The remaining work is the type section: an instantiation that now claims a parent has to be
+emitted as a wasm subtype of it, and the pass that orders parents before children
+(`emit.wac`, the `structParents` swap loop) runs over structs registered *before* the instantiation
+pass appends to them.
+
+So this is two pieces, and the second is the real one. Worth knowing before starting: the cheap half is
+already understood, and doing only it makes the diagnostics worse for the same outcome.
+
+**Two traps in the attempt, both worth repeating.** The same registration block appears twice, and the
+second is `case EnumDecl(...)` — an enum has no parent, so `-1` is correct there and patching both sites
+is wrong. wacc named it immediately (*"no parentTok in scope"*), which is the audit's own principle
+paying for itself. And nothing in this repository writes a generic struct with a parent in a `.wac`
+file — the only instance is the spec suite's own template string — so a grep over `.wac` sources reports
+zero and is not evidence.
+
 ## 2. An enum method that names a type only while emitting — `§enum-methods-6vkq2wn`
 
 ```wac
