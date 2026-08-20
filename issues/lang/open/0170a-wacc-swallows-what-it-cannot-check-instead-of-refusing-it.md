@@ -255,6 +255,39 @@ Both caught cases the checker did not, and `0154`'s symptom is now caught by the
 `spec/cases/0205`–`0208`, in the corpus both compilers read: **210 of 210 met by wacc**, and the
 reference's harness passes. Checked for false refusals across 23 packages after each rule.
 
-**Still open here:** `""` remains an ordinary value meaning "I don't know" — 53 `typeOfE` call sites,
-15 of which guard it. Nothing above changes that, and it is the mechanism by which the next gap will
-be silent too.
+## The "38 unguarded call sites" figure was wrong, and the real shape is better
+
+I wrote that `""` travels as an answer across 53 `typeOfE` call sites of which 15 guard it, and
+offered 38 as the measure of the problem. That counted an *idiom* — an immediate `== ""` — not holes.
+Sampling four of the 38:
+
+| site | what it does with an empty answer |
+|---|---|
+| the `switch` walk | passes it as the expected slot, where empty legitimately means "no slot" |
+| the cast walk | handles it deliberately, with a comment: a literal has no type and takes the slot's |
+| the index walk | compares it against `"string"`; empty simply is not, and falls through |
+| the member walk | `if (!env.isStructName(ot2)) { return; }` — **a silent bail** |
+
+So one of four. Anyone hunting 38 sites would have found mostly deliberate handling, and that is a
+bad way to spend a day.
+
+### The measurement that does mean something
+
+The emitter has **40 bare `if (…) { return; }` bails in its expression walk, and not one records a
+reason.** The whole file contains **6** `declineFor` calls.
+
+Those bails are not meant to be reachable: `canEmit`/`unsupportedIn` decides emittability *before*
+emitting, so anything that got as far as the emitter should be emittable. They are defence in depth —
+which means every one of them is a place where **the gate and the doer disagreeing turns into
+silence**, and that is exactly what the four cases in this issue were.
+
+Two walks that must agree is the anti-pattern this codebase already names, in `findLambdas`'
+own comment: *"Two walks that agree almost always is the bug, so this one records what emission needs
+and emission reads it by index."* The gate and the emitter are that pair, at a much larger scale, and
+they have no such shared record.
+
+**Which is the argument for the nets rather than for auditing the 40.** Export parity and build
+validation catch a disagreement whatever its cause, without requiring the two walks to agree — and
+they caught cases the checker did not. Making the 40 bails record a reason would be worth doing and
+would improve the *messages*; it would not remove the need for the nets, because a walk can always
+disagree in a way neither side thought to record.
