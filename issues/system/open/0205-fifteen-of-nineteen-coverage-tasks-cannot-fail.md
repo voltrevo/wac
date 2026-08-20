@@ -12,9 +12,10 @@
 
 - **two hold a coverage floor** — a branch point nothing reaches must carry an entry saying why, and an
   entry that names a line it no longer matches, or a point it claims is unreached while something
-  covers it, fails the run. `packages/crypto/cov.ts` is the worked example.
+  covers it, fails the run. `packages/crypto/test/cov_ledger.wac` is the worked example.
 - **two only check their own exemptions have not drifted.** They fail when an entry points at the wrong
-  line; they say nothing about coverage falling. `packages/zstd/cov.ts` ends `if (stale) Deno.exit(1)`.
+  line; they say nothing about coverage falling. zstd's `cov.ts` ended `if (stale) Deno.exit(1)` — and
+  it is `packages/zstd/test/cov_ledger.wac` now, which holds a floor as well (`issues/system/0222`).
 - **fifteen report and cannot fail.** They end with `report(...)` and exit 0 whatever they measured.
 
 The summary line said `19/19 passed`, and `tools/push.sh` prints underneath it that "a package above is

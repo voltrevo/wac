@@ -83,6 +83,20 @@ named. A trap ends the function it is in, so several trapping cases in one `main
 the first; a coverage driver with twelve bounds probes needs twelve calls, which is what the host is
 for. The counters survive a trap — that is what lets a trapping branch be counted as covered at all.
 
+`[§wac-cli-covdump-sweep-4tn8mr6]` **`name:<n>` is a sweep**: it calls `name(0)` through `name(n-1)`,
+each trap caught, instead of calling `name()` once. One name holds one trapping case, so a sweep of a
+thousand would otherwise need a thousand names — and the cases are not always separable: a driver that
+damages a real frame at every byte in turn, over several frames and masks, is more than a hundred
+thousand calls, and sampling it was measured as reaching about half, because the checks are close
+enough together that stepping over bytes steps over whole branches.
+
+The count is the **caller's**, not the module's. A module reporting its own case count would be a
+second place for the number to be wrong, and the caller already has to know how wide the sweep is to
+have written it. `n` above zero, and anything else is a usage error rather than a sweep of nothing —
+so `sweep:many` says what it could not read instead of reporting a module that exports no `sweep:many`.
+The argument is passed only for a sweep, because handing a one-parameter export no value is not the
+same as calling a no-parameter one with an extra.
+
 The exit status is about the **dump**, not about the program: a run that printed a table succeeded at
 what it was asked, whatever the exercise returned, and an exercise's `main` typically returns an
 accumulator rather than a status.

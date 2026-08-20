@@ -1,0 +1,64 @@
+// Branch coverage for fs: the probe's thirteen transcripts, run natively.
+//
+//   deno task coverage:fs
+//
+// This was fs's `cov.ts` until 2026-08-20 — `issues/system/0161`, `issues/system/0222`. The ledger is
+// `cov_ledger.wac` beside this file and the reporting is `tools/wac/covledger.wac`, shared.
+//
+// **The exercises were already in wac.** `test/wac/cov_probe.wac` has been the whole of the workload
+// since the probe existed; the TypeScript instrumented it, called its thirteen exports and then held
+// the ledger. So this file is the calling, and there is nothing here that was not there.
+//
+// Each export returns a transcript, and **the transcripts are not compared** — `test/host.test.ts`
+// compares the same operations against the real filesystem and `test/image.test.ts` and
+// `test/synth.test.ts` assert the answers. What is measured here is which lines ran. But an empty
+// transcript is checked, because a probe that returned nothing measured nothing and would read from the
+// outside as a package whose branches are simply not covered.
+//
+// ## Why `main` and no exports
+//
+// Nothing here traps. Every one of these builds a filesystem that needs no capability — that is what
+// makes it a probe rather than a test — so a trapping case has nowhere to come from and there is no
+// sweep to run. `packages/zstd/test/cov_exercise.wac` is the other shape, where most of the file is
+// exports because most of the workload is refusals.
+
+import { Core } from "std/platform.wac";
+import { memoryOps, synthOps, imageOps, imageBadOps, renameOps, rootlessOps, mountOps, edgeOps,
+         pathOps, procOps, streamOps, wireOps, permissionOps } from "./wac/cov_probe.wac";
+
+/** Every transcript, in the order the TypeScript called them, with what each one is for. */
+export i32 main(Core core) {
+  string[] said = string[](
+    memoryOps(),
+    synthOps(),
+    imageOps(),
+    pathOps(),
+    renameOps(),
+    rootlessOps(),
+    mountOps(),
+    edgeOps(),
+    imageBadOps(),
+    // The process table, which nothing had asked for — 24.5% of `proc.wac` and none of it needing a
+    // capability, a mount or a host. `issues/system/0134`.
+    procOps(),
+    // The streaming write and the session state — `openOut`/`writeOut`/`closeOut`, `setUser`, `setCwd`.
+    streamOps(),
+    // The child/parent wire, round-tripped: the half of `remote.wac` that needs no peer to answer.
+    wireOps(),
+    // Being refused: `may(node, 2)` answering no on every operation that changes what a directory
+    // holds, which was the largest unaccounted group and the one a wrong answer matters most in.
+    permissionOps());
+
+  string[] names = string[](
+    "memoryOps", "synthOps", "imageOps", "pathOps", "renameOps", "rootlessOps", "mountOps",
+    "edgeOps", "imageBadOps", "procOps", "streamOps", "wireOps", "permissionOps");
+
+  // **Named rather than counted.** "a probe returned nothing" sent the reader to thirteen candidates.
+  for (i32 i = 0; i < said.len(); i++) {
+    if (said[i].len() == 0) {
+      core.warn("error: " + names[i] + " returned an empty transcript, so it measured nothing");
+      return 1;
+    }
+  }
+  return 0;
+}

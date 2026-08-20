@@ -107,6 +107,17 @@ for (const line of input.split("\n")) {
   try {
     if (op === "compress") {
       const [level, checksum, data] = rest;
+      // **Three fields, and a missing one is a `FAIL` rather than an empty input.** Asked
+      // `compress 9 <hex>`, this read the hex as the checksum flag and `data` as undefined, so it
+      // compressed nothing and answered `frame` — a valid frame of the empty string, which is
+      // indistinguishable from a correct answer to a different question. A coverage exercise built six
+      // frames that way and every one of them decoded, so nothing was red; what said so was the
+      // *coverage*, four hundred branches short. An oracle cannot tell a missing argument from an
+      // empty one unless it counts them.
+      if (rest.length !== 3) {
+        out.push(`FAIL compress: wants <level|-> <checksum:0|1> <hex>, got ${rest.length} field(s)`);
+        continue;
+      }
       const params: Record<number, number> = {};
       if (level !== "-") params[z.constants.ZSTD_c_compressionLevel] = Number(level);
       if (checksum === "1") params[z.constants.ZSTD_c_checksumFlag] = 1;

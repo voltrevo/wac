@@ -489,7 +489,8 @@ WebCrypto's HKDF at the 255-block cap, and the committed vector discriminates ex
 call did — three canaries say so. It is lossless because the inputs are fixed, and **63 of the 64
 tests in this tier use no unseeded randomness**, so that generalises.
 
-**The reactive half cannot be captured and does not need to be.** `packages/crypto/test/rsaOracle.ts`
+**The reactive half cannot be captured and does not need to be.** crypto's `test/rsaOracle.ts` — since
+deleted with the driver that was its only importer —
 is the clearest: node signs and we verify, *and* we sign and node verifies. The second direction has
 no expected value to commit — our PSS signature carries fresh salt each run, so the oracle has to be
 there to judge it. That is a live oracle, which is what `Cli.exec` is for: `openssl dgst -verify` or
@@ -566,7 +567,7 @@ alone. `deno task docs` catches every one through the backticked-path check, so 
 pushing rather than after.
 
 **`deno task docs` finds backticked paths, not paths passed as arguments.** It caught the citations
-in all six conversions and missed one: `packages/crypto/cov.ts` instruments the trap fixture through
+in all six conversions and missed one: crypto's `cov.ts` instrumented the trap fixture through
 `instrument("packages/crypto/test/wac/traps.wac")`, which is a string argument rather than a
 backticked path in prose. So `grep -rn <basename>` as well, and run the package's `coverage:` task if
 it has one — a `cov.ts` naming a file that no longer exists fails at run time, not at check time.
@@ -1492,7 +1493,7 @@ The table it regenerates is strictly better than the one it replaces:
   - **Every count is one higher, uniformly**, because a run is a program whose `main` calls the
     routine and `main`'s entry is an event. Stated in the README rather than subtracted.
 
-What is left in `packages/crypto` is three oracles — `mlkem_oracle.ts`, `rsaOracle.ts`,
+What is left in `packages/crypto` is two oracles — `mlkem_oracle.ts`,
 `bench/hash.ts` — and `cov.ts`, which is a coverage driver rather than a test.
 
 ### The next frontier is `cov.ts`, and it is 20 files — 2026-08-19
@@ -1523,9 +1524,8 @@ reason `ctcompare` had to be a command was the *size* of a trace, and that reaso
   - Each package's exercises become a wac program whose `main` calls the probe's exports — the same
     shape the trace drivers took. That part is mechanical.
   - **The ledgers are not.** `packages/crypto/cov.ts` is 1,100 lines and most of it is a reasoned list
-    of points that *cannot* be reached and why, one entry at a time; gzip's had its own, now
-    `packages/gzip/test/cov_ledger.wac`. That is content, not boilerplate, and it has to move with
-    the exercises rather than be regenerated.
+    of points that *cannot* be reached and why, one entry at a time; gzip's had its own. All five have
+    moved — `issues/system/0222` — and the content moved with them rather than being regenerated.
   - `tools/coverageAll.ts` greps the output for `branch point(s) uncovered`, `no longer holds` and
     `is listed as unreached but was covered`, so the phrasing is a contract between twenty producers
     and one consumer.

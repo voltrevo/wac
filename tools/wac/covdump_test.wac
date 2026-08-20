@@ -23,6 +23,7 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
 import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 
 /** A program that reads a file and says whether it could. */
@@ -45,6 +46,30 @@ const string TRAPPER =
   "export i32 main() { return guard(1) + 40; }\n" +
   "export i32 first() { return guard(0 - 1); }\n" +
   "export i32 second() { return guard(0 - 2); }\n";
+
+/**
+ * One export whose **argument** selects the case, and eight cases of which three trap.
+ *
+ * A named export can hold one trapping case, so a sweep of a thousand needs a thousand names. The
+ * cases that matter are not always separable either: `packages/zstd/test/cov_exercise.wac` damages a
+ * real frame at
+ * every byte in turn and says why sampling does not do — "the checks are close enough together that
+ * stepping over bytes steps over whole branches".
+ *
+ * `which` picks a different guard per case so the branches taken differ, and the trapping ones are
+ * interleaved with the returning ones — which is the arrangement a single export cannot survive,
+ * since the first trap would end it and lose every case after.
+ */
+const string SWEEPER =
+  "i32 guard(i32 n) { if (n < 0) { trap; } return n; }\n" +
+  "export i32 main() { return 0; }\n" +
+  "export i32 sweep(i32 i) {\n" +
+  "  if (i == 1) { return guard(0 - 1); }\n" +
+  "  if (i == 3) { return guard(0 - 2); }\n" +
+  "  if (i == 5) { return guard(0 - 3); }\n" +
+  "  if (i == 6) { return guard(7); }\n" +
+  "  return i;\n" +
+  "}\n";
 
 Exec build(Cli cli, string src, string stem, string grant) {
   string[] argv = grant == ""
@@ -181,6 +206,63 @@ export string test_covdump_says_when_a_module_carries_no_counters(Core core, Cli
 
   Exec bare = dump(cli, string[]("covdump"));
   t.eqI32(bare.status, 2, "no arguments is usage, not failure: " + string.fromBytes(bare.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * **A sweep: one export called once per case, each trap caught.**
+ *
+ * `[§wac-cli-covdump-sweep-4tn8mr6]`
+ *
+ * `covdump <module> sweep:8` calls `sweep(0)` through `sweep(7)`. Without it a sweep has to become one
+ * export per case, which is fine for a dozen hand-built malformations and not for damaging a real
+ * frame at every byte — `packages/zstd/test/cov_exercise.wac` does that over six frames and three
+ * masks, which is
+ * more than a hundred thousand calls.
+ *
+ * The count is the caller's, not the module's, and deliberately: a module that reported its own case
+ * count would be a second place for the number to be wrong, and the ledger that names the sweep is
+ * already where a reader looks for how wide it is.
+ */
+export string test_covdump_sweeps_one_export_across_a_range_of_cases(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "covdump-sweep");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Change wrote = cli.writeFile(dir + "/sweeper.wac", SWEEPER.toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+  Exec made = build(cli, dir + "/sweeper.wac", dir + "/s", "");
+  t.eqI32(made.status, 0, "build: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { cli.remove(dir, true).wait(); return t.report(); }
+
+  // `main` returns 0 and touches none of the cases.
+  i32 alone = nonZero(string.fromBytes(dump(cli, string[]("covdump", dir + "/s.wasm")).stdout));
+
+  // One call, so exactly the `i == 1` case and its trap. Everything after it is lost, which is what
+  // the range is for.
+  Exec once = dump(cli, string[]("covdump", dir + "/s.wasm", "sweep"));
+  i32 first = nonZero(string.fromBytes(once.stdout));
+  t.isTrue(first > alone, "calling sweep once covers more than main: " + string.fromBytes(once.stdout));
+
+  // **Eight cases, three of which trap, and the trapping ones are not last.** A run that stopped at
+  // the first trap would report the same number as the single call above.
+  Exec swept = dump(cli, string[]("covdump", dir + "/s.wasm", "sweep:8"));
+  t.isTrue(swept.ran(), "covdump did not run — " + swept.error);
+  t.eqI32(swept.status, 0, "a caught trap is not a failure: " + string.fromBytes(swept.stderr));
+  i32 all = nonZero(string.fromBytes(swept.stdout));
+  t.isTrue(all > first,
+           "a sweep must reach past its first trap — got " + itoa(all) + " counters against " +
+           itoa(first) + " for one call:\n" + string.fromBytes(swept.stdout) +
+           string.fromBytes(swept.stderr));
+
+  // A count that is not a number is a usage error rather than a sweep of nothing.
+  Exec bad = dump(cli, string[]("covdump", dir + "/s.wasm", "sweep:many"));
+  t.eqI32(bad.status, 2, "a count that is not one is usage: " + string.fromBytes(bad.stderr));
+  t.isTrue(contains(string.fromBytes(bad.stderr), "many"),
+           "and says what it could not read: " + string.fromBytes(bad.stderr));
 
   cli.remove(dir, true).wait();
   return t.report();

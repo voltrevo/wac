@@ -2185,7 +2185,14 @@ struct AsChild {
     /// after reads 0. `packages/bytes`'s driver has seven such cases and `packages/bignum`'s four,
     /// and the TypeScript called each from the host in its own `try`. This is that, in the host,
     /// where the counters are.
-    cov_exports: Vec<String>,
+    ///
+    /// **The `i32` is a sweep**: `Some(n)` calls `name(i)` for `i` in `0..n` and `None` calls `name()`
+    /// once with no argument. A named export holds one trapping case, so a sweep of a thousand would
+    /// otherwise need a thousand names — and the cases are not always separable: zstd's coverage driver
+    /// damages a real frame at every byte in turn, over several frames and masks, which is more than a
+    /// hundred thousand calls. Sampling was measured and reaches about half, because "the checks are
+    /// close enough together that stepping over bytes steps over whole branches".
+    cov_exports: Vec<(String, Option<i32>)>,
     /// Where this program's output goes, instead of the terminal.
     out: Option<Arc<Stream>>,
     err: Option<Arc<Stream>>,
@@ -2500,10 +2507,10 @@ fn call_for_counters(
     scope: &mut v8::PinScope,
     exports: v8::Local<v8::Object>,
     m: &Manifest,
-    names: &[String],
+    names: &[(String, Option<i32>)],
 ) {
     let mut missing: Vec<&str> = Vec::new();
-    for name in names {
+    for (name, cases) in names {
         match get_export(scope, exports, name) {
             Some(f) => {
                 // **A `TryCatch` per call, and it is not optional** — the same reason
@@ -2515,10 +2522,32 @@ fn call_for_counters(
                 //
                 // Without it `packages/bytes` measured 69 covered on one run and 73 on the next from
                 // an unchanged tree, which is what a swallowed call looks like from the outside.
-                let tc = std::pin::pin!(v8::TryCatch::new(scope));
-                let mut tc = tc.init();
-                f.call(&tc, exports.into(), &[]);
-                tc.reset();
+                //
+                // **A sweep is the same thing per case, and the `TryCatch` is per *call*.** One for
+                // the whole loop would leave the first trap pending through every case after it,
+                // which is the arrangement the paragraph above says aborts the process.
+                //
+                // The argument is passed only for a sweep. A wac export taking no parameter is a wasm
+                // function of arity zero, and handing it an extra value is harmless; handing a
+                // one-parameter function *no* value is not, so "call it once" and "call it with 0"
+                // stay distinct rather than being the same case spelled two ways.
+                match cases {
+                    None => {
+                        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                        let mut tc = tc.init();
+                        f.call(&tc, exports.into(), &[]);
+                        tc.reset();
+                    }
+                    Some(n) => {
+                        for i in 0..*n {
+                            let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                            let mut tc = tc.init();
+                            let arg = v8::Integer::new(&tc, i);
+                            f.call(&tc, exports.into(), &[arg.into()]);
+                            tc.reset();
+                        }
+                    }
+                }
             }
             None => missing.push(name),
         }
@@ -2543,8 +2572,9 @@ fn call_for_counters(
 /// runs, and a trap in it still prints what was reached.
 fn covdump_command(rest: &[String]) -> i32 {
     let Some(path) = rest.first() else {
-        eprintln!("usage: wac covdump <module.wasm> [export…]");
+        eprintln!("usage: wac covdump <module.wasm> [export|export:<cases>…]");
         eprintln!("       no export names runs `main`; several are called in order, traps caught");
+        eprintln!("       `name:<n>` calls name(0)…name(n-1), each trap caught, for a sweep");
         return 2;
     };
     let bytes = match std::fs::read(path) {
@@ -2586,10 +2616,27 @@ fn covdump_command(rest: &[String]) -> i32 {
             return 1;
         }
     };
+    // **Parsed here, so a bad count is a usage error rather than a missing export.** Left to
+    // `call_for_counters`, `sweep:many` would come back as "exports no sweep:many" — a message about
+    // the module, naming a fault in the command line.
+    let mut cov_exports: Vec<(String, Option<i32>)> = Vec::new();
+    for a in &rest[1..] {
+        match a.split_once(':') {
+            None => cov_exports.push((a.clone(), None)),
+            Some((name, count)) => match count.parse::<i32>() {
+                Ok(n) if n > 0 => cov_exports.push((name.to_string(), Some(n))),
+                _ => {
+                    eprintln!("wac: {a} — `{count}` is not a case count; a sweep is \
+                               `name:<n>` for some n above zero");
+                    return 2;
+                }
+            },
+        }
+    }
     start_v8();
     let code = run_as_with(&manifest, &bytes, &text, AsChild {
         dump_counters: true,
-        cov_exports: rest[1..].to_vec(),
+        cov_exports,
         ..Default::default()
     });
     // The program's own status is not this command's answer — see `COUNTERS_PRINTED`. A run that

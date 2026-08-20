@@ -21,7 +21,9 @@ $ echo hi > /home/user/notes
 $ exit
 # …and the writes are still there next time`;
 
-const CORE = `import { Read } from core;   // no quotes: it is not a file`;
+const CORE = `import { Read } from "core";        // embedded in the compiler
+import { Cli } from "std/platform.wac";   // so is std
+import { Thing } from "@/lib/thing.wac";  // the project root, wherever it is`;
 
 /** A direction's steps and whether they exist. Done is the only state that gets the accent. */
 function State({ rows }: { rows: [string, string][] }) {
@@ -154,8 +156,8 @@ export default function Roadmap() {
         <P>
           <Lead>It is a toolchain now, not a runtime.</Lead> Build it with a compiled wacc beside it
           and the same binary stops needing to be handed a program:{" "}
-          {m({ children: "wacv8 compile packages/wacc/src/api.wac" })} answers with 324,014 bytes,
-          the same bytes the Deno toolchain writes from the same input, in <Lead>one 64 MB
+          {m({ children: "wac compile packages/wacc/src/api.wac" })} answers with 601,855 bytes from
+          17 files, the same bytes the Deno toolchain writes from the same input, in <Lead>one 69 MB
           file</Lead> with no Deno and no JavaScript in the path.{" "}
           {m({ children: "check" })}, {m({ children: "build" })}, {m({ children: "run" })} — which
           compiles and executes with no file in between — {m({ children: "bindgen" })}, and{" "}
@@ -275,15 +277,29 @@ export default function Roadmap() {
 
       <Section id="packages" kicker="direction four" title="Packages, and the version diamond wac cannot have">
         <P>
-          Every import is a relative file path, plus one that is not: {m({ children: "core" })}, the
-          module the compiler ships.
+          Every import is a quoted path, and not all of them are files on disk.{" "}
+          {m({ children: "core" })} and {m({ children: "std" })} are source trees the compiler
+          carries — nothing on the filesystem answers for them, which is what makes them built-ins a
+          project cannot shadow — and {m({ children: "@/" })} names the project root wherever the
+          file importing it happens to live.
         </P>
         <Code code={CORE} />
         <P>
-          That is the first provider of a mechanism meant to grow: a prefix resolving to a set of
-          wac sources that need not be files on disk — an embedded module, a checkout beside you, or
-          one day a fetched package. The next step is the directory kind, which is what lets a
-          library live in its own repository at all.
+          <Lead>This direction moved fast and is nearly done.</Lead> A bare {m({ children: "core" })}{" "}
+          used to be written without quotes, on the argument that a quoted specifier promises a path;
+          every specifier is a quoted path now, {m({ children: "core" })} included, and the bare word
+          is an error that says so. Both compilers agree on all of it, which is the only way a second
+          surface stays honest.
+        </P>
+        <P>
+          Beyond the language: a project says where its dependencies come from in{" "}
+          {m({ children: "wac.json5" })}, git mappings resolve to a commit, and{" "}
+          {m({ children: "wac.lock" })} pins what was fetched —{" "}
+          {m({ children: "packages/wacpkg" })}, 1,687 lines and 44 tests, with{" "}
+          {m({ children: "wacfetch" })} to resolve what the lock does not cover.{" "}
+          {m({ children: "deno task wac:install" })} builds the seed, checks it is a fixed point, and
+          installs the command; {m({ children: "wac uninstall" })} removes exactly what it put there
+          and never a lockfile or a source file.
         </P>
         <P>
           The constraint worth knowing now, because it decides what a package service can be:{" "}
@@ -296,8 +312,12 @@ export default function Roadmap() {
         </P>
         <State
           rows={[
-            ["`core`, embedded in the compiler", "done"],
-            ["a directory provider — a package in its own repo", "not started"],
+            ["`core` and `std`, embedded in the compiler", "done"],
+            ["every specifier a quoted path, both compilers", "done"],
+            ["`@/`, the project root as a prefix", "done"],
+            ["git mappings and `wac.lock` — `packages/wacpkg`", "done"],
+            ["`wac:install` and `wac uninstall`", "done as tasks"],
+            ["one module however it is spelled", "half done"],
             ["a package service", "a destination, not a plan"],
           ]}
         />
