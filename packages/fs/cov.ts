@@ -67,7 +67,7 @@ for (const t of transcripts) {
 /**
  * Branches this run does not cover, each with the reason and whether it is provable.
  *
- * The same two claims `packages/zstd/cov.ts` keeps apart:
+ * The same two claims `packages/zstd/test/cov_ledger.wac` keeps apart:
  *
  *   - `proven: true` — no input reaches it;
  *   - `proven: false` — reachable, and we did not manage to construct the input. A gap, not an exemption.

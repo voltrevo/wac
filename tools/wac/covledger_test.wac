@@ -170,7 +170,8 @@ export string test_the_prefix_and_the_test_rule_decide_what_counts(Core core, Cl
  * about the code, an unproven one has had its gap closed by somebody and is now a record of nothing.
  *
  * A ledger that let the second kind pass silently would stop being a list of what is still missing,
- * which is the whole reason `packages/zstd/cov.ts` kept the flag rather than calling both unreachable.
+ * which is the whole reason zstd's ledger keeps the flag rather than calling both unreachable —
+ * `packages/zstd/test/cov_ledger.wac`.
  */
 export string test_an_unproven_pin_is_accounted_for_while_the_gap_is_open(Core core, Cli cli) {
   T t = T.create();

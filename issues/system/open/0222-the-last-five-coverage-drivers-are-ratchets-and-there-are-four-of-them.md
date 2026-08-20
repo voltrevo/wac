@@ -15,9 +15,9 @@ another agent.
 | package | lines | pins | ledger machinery |
 |---|---:|---:|---|
 | `crypto` | 1,101 | 28 | snippet staleness, `Deno.exit(1)` |
-| `zstd` | 1,022 | 8 | `NOT_COVERED`, snippet staleness, `Deno.exit(1)` |
+| ~~`zstd`~~ | ~~1,022~~ | 8 → 17 | done 2026-08-20 — the staleness check was hiding sixteen |
 | `ssh` | 794 | 0 | **none** — no staleness check at all |
-| `gzip` | 605 | 3 | snippet staleness, `Deno.exit(1)` |
+| ~~`gzip`~~ | ~~605~~ | 3 | done 2026-08-20 — the contract this generalised |
 | `fs` | 582 | 33 | `NOT_COVERED` *and* `CATEGORIES`, snippet staleness, `Deno.exit(1)` |
 | `sh` | 473 | — | another agent's package |
 
@@ -130,9 +130,56 @@ reason filtered out and only "(nothing matched the known failure shapes)" on scr
 `tools/wac/covledger_test.wac` is the test none of the four ratchets had: six cases over synthetic
 points driving all three failure modes plus the unreadable-file case.
 
+## Done: `zstd`, and what a staleness-only ledger was hiding — 2026-08-20
+
+**739 of 758 points against the TypeScript's 733**, and this ledger holds seventeen lines where that one
+held eight. The eight were not a smaller problem — the old check was **staleness only**. It read the
+source at each entry's line and failed if the snippet had moved; it never asked whether a listed point
+was still uncovered, nor whether an unlisted one had appeared. Sixteen uncovered points were therefore
+unlisted and unmentioned, which is the thing this issue was filed about, and `tools/coverageAll.ts`
+classified the package as "only checks its own exemptions" rather than as holding a floor. It holds one
+now.
+
+Of those sixteen: **eleven were reachable and are now covered** — the streamed frame-header
+cross-product (`headerLength` exists only for a reader that cannot look ahead, so driving those headers
+through the buffered decoder reached `readHeader` and not it), the xxh64 range bounds that were never
+ported at all, a not-single-segment frame declaring no content size, and the reference's many-block
+frame for treeless literals and repeat-mode tables. **Five are new pins** with reasons written.
+
+**And one of the old eight pointed at a line with no branch point on it.** The entry for
+`encode.wac:367` named `} else {`, the three-byte sequence-count form. The instrumentation puts that
+edge on the `} else if` at line 364 — verified against the `.cov` table, which has points at `364:10`
+and none anywhere on 367. So the entry described nothing, its snippet matched, the check passed, and the
+real uncovered point at 364 was one of the sixteen nobody had written down. A staleness check cannot
+catch that. A two-way one fails it as *listed but covered*, because a point that does not exist is never
+in the uncovered set.
+
+`covdump` grew a **sweep** for this package (`[§wac-cli-covdump-sweep-4tn8mr6]`): `name:<n>` calls
+`name(0)`…`name(n-1)` with each trap caught. Damaging six real frames at every byte under three masks is
+thousands of calls and the old driver's own comment recorded that sampling reaches about half, "because
+the checks are close enough together that stepping over bytes steps over whole branches". A name per
+case was not an option.
+
+Two constraints the remaining three will hit:
+
+1. **A sweep export is handed its index and nothing else.** No capability, and wac has no module-level
+   mutable state — `const` is deep-const — so a case cannot read what `main` set up and cannot ask an
+   oracle. It has to recompute, which bounds how big its inputs can be. The frames zstd damages are
+   built by its own encoder inside each case for exactly this reason; the reference's frames are driven
+   from `main`, where a `Cli` exists.
+2. **`main` is one call and a trap ends it.** Anything that might be refused belongs in a sweep. The
+   refusing-sink calls sat in the middle of `main` at one point and took eight of `xxh64`'s branches with
+   them — the drop from 46 covered to 40 is what said so, since a trapped `main` still prints its
+   counters and reports the rest as simply unreached. What needs a `Cli` *and* might trap has to be last,
+   and say so.
+
+`packages/zstd/cov.ts` is deleted, and with it `test/frames.ts` and `test/reference.ts` — it was the last
+importer of both. `test/writer.ts` stays: `test/oracle.ts` uses it, and it is deliberately a second
+reading of RFC 8878 rather than the decoder's, so it is a structured fuzzer rather than an oracle.
+
 Left: `fs` (33 pins, and category rules that are a *softening* of the contract — decide whether they
-survive as sugar), `crypto` (28), `zstd` (8), and `ssh`, which has never ratcheted and is therefore the
-one most likely to go red.
+survive as sugar), `crypto` (28), and `ssh`, which has never ratcheted and is therefore the one most
+likely to go red.
 
 ## Notes
 

@@ -51,7 +51,8 @@ const string TRAPPER =
  * One export whose **argument** selects the case, and eight cases of which three trap.
  *
  * A named export can hold one trapping case, so a sweep of a thousand needs a thousand names. The
- * cases that matter are not always separable either: `packages/zstd/cov.ts` damages a real frame at
+ * cases that matter are not always separable either: `packages/zstd/test/cov_exercise.wac` damages a
+ * real frame at
  * every byte in turn and says why sampling does not do — "the checks are close enough together that
  * stepping over bytes steps over whole branches".
  *
@@ -217,7 +218,8 @@ export string test_covdump_says_when_a_module_carries_no_counters(Core core, Cli
  *
  * `covdump <module> sweep:8` calls `sweep(0)` through `sweep(7)`. Without it a sweep has to become one
  * export per case, which is fine for a dozen hand-built malformations and not for damaging a real
- * frame at every byte — `packages/zstd/cov.ts` does that over six frames and three masks, which is
+ * frame at every byte — `packages/zstd/test/cov_exercise.wac` does that over six frames and three
+ * masks, which is
  * more than a hundred thousand calls.
  *
  * The count is the caller's, not the module's, and deliberately: a module that reported its own case

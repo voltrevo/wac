@@ -61,7 +61,8 @@ export struct Pin {
   /**
    * **Whether no input can reach it, or whether we merely failed to build one.**
    *
-   * Two different claims, and `packages/zstd/cov.ts` is where the distinction was written down:
+   * Two different claims, and zstd's `cov.ts` is where the distinction was written down — it lives
+   * in `packages/zstd/test/cov_ledger.wac` now:
    *
    *   - `true` — no input reaches it. A guard that cannot fire is still worth keeping when what it
    *     guards is worse than a wrong answer, but counting it as covered would make the number
