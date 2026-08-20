@@ -185,3 +185,39 @@ does not emit has nothing to call — which is the point about declines hiding m
 Cases: `spec/cases/0211` (110 — `is` 0, `is not` 10, `is P` 100) and `0212` (101 — an aliased local is
 identity, a same-contents different object is not). Each carries a term that a compiler answering a
 blanket constant or a blanket true would fail rather than pass. 214 of 214 met; seed a fixed point.
+
+## A fourth instance, found by enumeration rather than by a failure — 2026-08-20
+
+After fixing gap 2 I enumerated every `match (prog.decls[d].kind)` in `emit.wac` — 32 of them — and
+asked which had `Func` and `StructDecl` arms and no `EnumDecl`. **One did**, and it is the walk whose
+comment explains why it cannot be skipped:
+
+> Every body, walked the way the emitter walks it. A call to a generic function is the only instance
+> nothing declares, and its arguments are *locals* — so the walk that finds it has to be one that has
+> locals in scope.
+
+An enum method has locals like any other body. So a generic **call** inside one registered no instance,
+and the module lost the function:
+
+```wac
+T pick<T>(T a, T b) { return a; }
+enum E {
+  A(i32 v), B,
+  i32 sum(const this) {
+    i32 x = match (this) { case A(v): v, case B: 0 };
+    return pick(x, 9);
+  }
+}
+export i32 f() { return E.A(4).sum(); }
+```
+
+    reference: OK
+    wacc:      cannot emit — `f` is not in the module
+
+**The control is what makes it a diagnosis rather than a guess:** the identical call from a plain
+function has always built. Verified both before and after.
+
+**Nothing in `spec/` exercised this**, so the ledger did not move and no corpus case failed — it was
+predicted from the structure and then reproduced. `spec/cases/0214` covers it now, with the match arm
+feeding the local so the inferred argument cannot be a constant. The enumeration is worth keeping as a
+one-off script: after this fix, `Func`+`StructDecl`-without-`EnumDecl` is **0 of 32**.

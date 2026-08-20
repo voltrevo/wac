@@ -10307,6 +10307,22 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
                     typeOfTyName(env, src, lexed, methods[m].returnType));
           }
         }
+        // **An enum's methods, for the reason above.** This walk exists because a call to a generic
+        // function is the only instance nothing declares — its type arguments are inferred from
+        // *locals*, so only a walk with locals in scope can find it. An enum method has locals like
+        // any other body, and without this arm `pick(x, 9)` inside one registered no instance and the
+        // module lost the function. The identical call from a plain function builds, which is what
+        // isolates it. Found by enumerating this file's declaration walks after `issues/lang/0172a`
+        // gap 2, not by a failing corpus case — nothing in `spec/` exercises it.
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          string eowner = nameKeyOf(env, src, lexed, nameTok);
+          for (i32 m = 0; m < methods.len(); m++) {
+            canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                    methods[m].hasThis ? eowner : "",
+                    typeOfTyName(env, src, lexed, methods[m].returnType));
+          }
+        }
         else: { }
       }
     }
