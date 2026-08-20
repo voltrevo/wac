@@ -23,6 +23,22 @@
 import { mapLower, mapUpper, mapFold, printable, decodeCode, decodeSize, valid, scalarCount,
          encodeOne, lower, upper, casefold, equalFold } from "./probe.wac";
 import { Rng } from "../../wactest/src/rng.wac";
+import { Core, Cli } from "std/platform.wac";
+import {
+  test_simple_case_mapping_agrees_with_the_host as u__simple_case_mapping_agrees_with_the_host,
+  test_sharp_s_under_simple_uppercase as u__sharp_s_under_simple_uppercase,
+  test_fold_is_an_equivalence as u__fold_is_an_equivalence,
+  test_the_fold_classes as u__the_fold_classes,
+  test_fold_all_matches_fold_equal as u__fold_all_matches_fold_equal,
+  test_mapping_whole_strings_agrees_with_the_host as u__mapping_whole_strings_agrees_with_the_host,
+  test_fold_equal_on_named_pairs as u__fold_equal_on_named_pairs,
+  test_fold_equal_over_random_strings as u__fold_equal_over_random_strings,
+  test_utf8_encoding_matches_the_host_at_every_code_point as u__utf8_encoding_matches_the_host_at_every_code_point,
+  test_invalid_utf8_is_rejected as u__invalid_utf8_is_rejected,
+  test_scalar_counting_matches_the_host as u__scalar_counting_matches_the_host,
+  test_random_byte_strings_never_crash_the_decoder as u__random_byte_strings_never_crash_the_decoder,
+  test_is_printable_agrees_with_the_host as u__is_printable_agrees_with_the_host,
+} from "./wac/unicode_test.wac";
 
 
 /** Valid text of every encoded length, and the mapping paths over it. */
@@ -43,7 +59,7 @@ u8[][] malformed() {
     u8[](0xe0, 0xa0, 0x41), u8[](0x61, 0x80, 0x62), u8[]());
 }
 
-export i32 main() {
+export i32 main(Core core, Cli cli) {
   i32 seen = 0;
 
   // The whole space, thinned only where the branches cannot differ. The ends matter most: a binary
@@ -57,8 +73,12 @@ export i32 main() {
   }
   if (printable(-1)) { seen = seen + 1; }
 
+  // `0xd800` and `0xdfff` are the surrogate ends, and they are here because the loop above *skips*
+  // them — so `encodedLength`'s refusal of a surrogate had never been reached from this driver, while
+  // `test/wac/unicode_test.wac` has tested the decoder's refusal of one since it was written.
   i32[] edges = i32[](0, 1, 0x41, 0x5a, 0x61, 0x7a, 0x7f, 0x80, 0xdf, 0x130, 0x131, 0x212a,
-                      0x3c2, 0x3c3, 0x3a3, 0x7ff, 0x800, 0xffff, 0x10000, 0x10ffff, -1, 0x110000);
+                      0x3c2, 0x3c3, 0x3a3, 0x7ff, 0x800, 0xffff, 0x10000, 0x10ffff, -1, 0x110000,
+                      0xd800, 0xdfff);
   for (i32 i = 0; i < edges.len(); i++) {
     i32 cp = edges[i];
     seen = seen + mapLower(cp) + mapUpper(cp) + mapFold(cp) + encodeOne(cp).len();
@@ -101,6 +121,73 @@ export i32 main() {
     seen = seen + lower(b).len();
     if (equalFold(b, test)) { seen = seen + 1; }
   }
+
+
+  // **The package's own tests, which is most of what this file now measures.**
+  //
+  // Nine of the thirteen take `(Core, Cli)`, and until `issues/system/0221` a coverage driver
+  // could not call one: `harness/wacCoverage.ts` skipped any test whose `fn.length > 0` because
+  // `instrument` cannot supply a capability. So this file was hand-built probes, and its number
+  // answered "what do the probes reach" rather than "what do the tests reach".
+  //
+  // `wac covdump` runs the ordinary program path, so `main` here has a real `Core` and `Cli` and
+  // simply calls them. What that recovered: the over-long ASCII rejection at `utf8.wac:45`, the
+  // surrogate rejection in `encodedLength`, and the four-byte encode arm — all three tested
+  // since `unicode_test.wac` was written, none of them reachable from here before.
+  i32 bad = 0;
+  if (u__simple_case_mapping_agrees_with_the_host(core, cli).len() > 0) {
+    core.warn("error: FAILED unicode_test test_simple_case_mapping_agrees_with_the_host");
+    bad = bad + 1;
+  }
+  if (u__sharp_s_under_simple_uppercase().len() > 0) {
+    core.warn("error: FAILED unicode_test test_sharp_s_under_simple_uppercase");
+    bad = bad + 1;
+  }
+  if (u__fold_is_an_equivalence(core, cli).len() > 0) {
+    core.warn("error: FAILED unicode_test test_fold_is_an_equivalence");
+    bad = bad + 1;
+  }
+  if (u__the_fold_classes().len() > 0) {
+    core.warn("error: FAILED unicode_test test_the_fold_classes");
+    bad = bad + 1;
+  }
+  if (u__fold_all_matches_fold_equal().len() > 0) {
+    core.warn("error: FAILED unicode_test test_fold_all_matches_fold_equal");
+    bad = bad + 1;
+  }
+  if (u__mapping_whole_strings_agrees_with_the_host(core, cli).len() > 0) {
+    core.warn("error: FAILED unicode_test test_mapping_whole_strings_agrees_with_the_host");
+    bad = bad + 1;
+  }
+  if (u__fold_equal_on_named_pairs().len() > 0) {
+    core.warn("error: FAILED unicode_test test_fold_equal_on_named_pairs");
+    bad = bad + 1;
+  }
+  if (u__fold_equal_over_random_strings(core, cli).len() > 0) {
+    core.warn("error: FAILED unicode_test test_fold_equal_over_random_strings");
+    bad = bad + 1;
+  }
+  if (u__utf8_encoding_matches_the_host_at_every_code_point(core, cli).len() > 0) {
+    core.warn("error: FAILED unicode_test test_utf8_encoding_matches_the_host_at_every_code_point");
+    bad = bad + 1;
+  }
+  if (u__invalid_utf8_is_rejected(core, cli).len() > 0) {
+    core.warn("error: FAILED unicode_test test_invalid_utf8_is_rejected");
+    bad = bad + 1;
+  }
+  if (u__scalar_counting_matches_the_host(core, cli).len() > 0) {
+    core.warn("error: FAILED unicode_test test_scalar_counting_matches_the_host");
+    bad = bad + 1;
+  }
+  if (u__random_byte_strings_never_crash_the_decoder(core, cli).len() > 0) {
+    core.warn("error: FAILED unicode_test test_random_byte_strings_never_crash_the_decoder");
+    bad = bad + 1;
+  }
+  if (u__is_printable_agrees_with_the_host(core, cli).len() > 0) {
+    core.warn("error: FAILED unicode_test test_is_printable_agrees_with_the_host");
+    bad = bad + 1;
+  }
+  seen = seen + bad;
 
   return seen;
 }

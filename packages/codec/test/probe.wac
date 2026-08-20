@@ -6,6 +6,7 @@
 // so the tests check acceptance and contents as two questions rather than inferring one from the
 // other.
 
+import { decoded as hexDecodedStrict } from "../src/hex.wac";
 import { encode as hexEncode, encodeUpper as hexEncodeUpper, decode as hexDecode }
   from "../src/hex.wac";
 import { encode as b64Encode, decode as b64Decode, ALPHABET_STANDARD, ALPHABET_URL }
@@ -20,6 +21,17 @@ export u8[] hexDec(u8[] text) {
   return r is null ? u8[0]() : r!;
 }
 export bool hexAccepts(u8[] text) { return !(hexDecode(text) is null); }
+
+/**
+ * The *trapping* hex decode, which `hexDec` above cannot reach.
+ *
+ * `hex.wac` offers two: `decode` answering `null` for a caller that has to handle malformed input,
+ * and `decoded` trapping for one that is asserting there is none. Only the first was wrapped, so
+ * `decoded`'s entry and both arms of its `is null` check were uncovered — three of `packages/codec`'s
+ * four gaps, and a gap rather than an exemption: nothing was unreachable, nobody had called it.
+ * `issues/system/0205`.
+ */
+export u8[] hexDecodedOrTrap(string text) { return hexDecodedStrict(text); }
 
 export u8[] b64Enc(u8[] data, bool url, bool pad) {
   return b64Encode(data, url ? ALPHABET_URL() : ALPHABET_STANDARD(), pad);

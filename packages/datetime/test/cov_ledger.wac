@@ -1,0 +1,56 @@
+// datetime's coverage, and an empty argument — there is nothing this package does not reach.
+//
+//   deno task coverage:datetime
+//   deno task coverage:datetime --verbose
+//
+// **123 of 123.** Both lists below are empty, and that is the point rather than an omission: a ledger
+// with no entries is the strongest form of this ratchet, because *every* branch point is expected to
+// be covered and the first one that is not fails the run by name. `issues/system/0205`.
+//
+// ## Why this package got one first
+//
+// `0205` is about fifteen coverage drivers that end with `report(…)` and exit 0 whatever they
+// measured — "a package that lost half its coverage was reported as passing, in a block that reads
+// like a gate". Its stated blocker was that a floor is only honest where the driver can reach what the
+// tests reach, and `crypto`'s could not: `harness/wacCoverage.ts` skipped every test taking a
+// capability.
+//
+// That blocker is gone. `wac covdump` runs the ordinary program path (`issues/system/0221`), so a wac
+// exercise's `main` gets a real `Core` and `Cli` — and **all fourteen of the remaining report-only
+// packages already have a wac exercise**, so none of them is blocked either. This one is first because
+// it is at 100%, which means the ledger needs no arguments at all and the ratchet is unambiguous: not
+// "these exemptions still hold" but "nothing is exempt".
+//
+// ## What the two directions mean here
+//
+// The ratchet fails in both directions, and with empty lists only one of them can fire: a point that
+// stops being covered. The other direction — an entry that names something now covered — has nothing
+// to check, and the day this package grows a branch nothing reaches, the failure will say so and
+// whoever adds it writes the argument here rather than watching a percentage drift down.
+//
+// **No sweeps and no grants.** `cov_exercise.wac`'s `main` takes nothing, reads nothing and spawns
+// nothing, so it is compiled with nothing — a driver given capabilities it does not need is one whose
+// exercises could quietly start using them. There are no `trap_` cases either: this package's guards
+// are reached by its ordinary tests.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/datetime/test/cov_exercise.wac";
+const string PREFIX = "packages/datetime/";
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
+                 Pin[0](fill: Pin("", 0, "", true, "")),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

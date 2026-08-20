@@ -51,6 +51,104 @@ So the order that makes sense is: **give the drivers a way to see what the binar
 it then deletes; a flag that wrote it out would let a driver union the binary's measurement with its own.
 `0200` records that.
 
+## The first floor added, and there is no blocker left for the other fourteen — 2026-08-20
+
+`packages/datetime/test/cov_ledger.wac`, and the split reads **6 hold a coverage floor, 0 only check
+their own exemptions have not drifted, 15 report and cannot fail.**
+
+**The "Against" argument no longer applies to any of them.** It was that a floor is only honest where
+the driver can reach what the tests reach — and the check that matters is not whether a package's tests
+need a host, it is whether its *exercise* is wac. `wac covdump` runs the ordinary program path
+(`issues/system/0221`), so a wac exercise's `main` has a real `Core` and `Cli`.
+
+Counted: **all fourteen remaining report-only packages already have a `test/cov_exercise.wac`** —
+`bignum`, `bytes`, `codec`, `fmt`, `http`, `json`, `raster`, `regex`, `server`, `stream`, `unicode`,
+`url`, `wacpkg`, and `datetime` which now has the ledger. Not one is blocked. There is no
+`test/cov.ts` left in `packages/` at all.
+
+`datetime` went first because it reads **123 of 123**, so both lists in its ledger are empty — which is
+the strongest form of this ratchet rather than a placeholder: every branch point is expected to be
+covered, and the first one that is not fails by name. It also means the first floor needed no arguments
+to be written, so what is being tested here is the machinery and not somebody's prose.
+
+**Both directions canaried**, because with empty lists it would be easy to ship something that cannot
+fail:
+
+| perturbation | what it says |
+|---|---|
+| pin a line that *is* covered | `civil.wac:1 is listed as unreached but was covered. That reason no longer holds — drop the entry.` |
+| gut the exercise's `main` | `123 / 0 / 0.0%`, and `59 reachable branch point(s) uncovered` |
+
+And one attempt that was **not** a valid canary, which is worth recording: deleting the exercise's
+far-date loop left coverage at 123 of 123, because the day-by-day loop below it already reaches those
+branches. A perturbation that removes redundant work proves nothing, and it looked like a passing
+canary for a moment.
+
+### `codec` second, and three of its four gaps were closed rather than blessed
+
+**7 hold a coverage floor, 0 only check their own exemptions have not drifted, 14 report and cannot
+fail.**
+
+It read 186 of 190, and writing four pins would have been the quick way. Three were not exemptions:
+
+- `hex.wac:73` was `decoded`'s **entry**. That file offers two decodes — `decode` answering `null` for
+  a caller that must handle malformed input, and `decoded` trapping for one asserting there is none —
+  and `test/probe.wac` wrapped only the first, so nothing in this package's coverage had ever called
+  the trapping one;
+- `hex.wac:75`'s two arms follow. The `else` is an ordinary call now; the `then` is a named trap case.
+
+**An uncovered *entry* is the strongest form of a lead**: not a branch nobody took but a function
+nobody called, which means nothing was asserting anything about it. Pinning one is how a ledger becomes
+a list of things nobody looked at — which is the failure this issue is about, one level in.
+
+189 of 190 now, with one pin: `base32.wac`'s `digitsFor(0)`, whose two call sites both guard `> 0` and
+which is private to its file, so the argument is closed rather than probable. Kept because the function
+is total over its documented domain.
+
+Canaried both ways: breaking the pin's snippet reports "no longer holds", and dropping the trap case
+from `cases()` reports "1 reachable branch point(s) uncovered".
+
+### `unicode` third, and it found the thing this issue was arguing about
+
+**8 hold a coverage floor, 0 only check their own exemptions have not drifted, 13 report and cannot
+fail.**
+
+Its three gaps were not the code's testing but **the driver's reach**, and that is the "Against"
+argument in this issue, live: nine of `unicode`'s thirteen tests take `(Core, Cli)`, so before
+`issues/system/0221` the exercise could not call them and was written as hand-built probes instead.
+`wac covdump` runs the ordinary program path, so `main` gets a real `Core` and `Cli` and calls all
+thirteen. The ledger passes the grants they need — read, write, run, env, and deliberately not net.
+
+**Only three of nineteen exercises had been rewired when this was written**: `crypto` with 288 test
+calls, `ssh` with 32, `wacpkg` with 2. Sixteen were still measuring their probes. That is the number
+worth knowing before anyone sets the remaining floors, because a floor over a probe corpus records what
+the probes happened to reach — the exact sentence this issue used to argue against floors, and now a
+fixable one.
+
+What it recovered, and what it did not:
+
+- **`encodedLength` refusing a surrogate** was a real gap, and a small one: the exercise's main loop
+  *skips* surrogates and its edge list had none. Closed by adding `0xd800` and `0xdfff` to the list;
+- **`utf8.wac:45`, the over-long two-byte check, is unreachable** — and it reads like the opposite. An
+  uncovered over-long check looks exactly like the classic UTF-8 attack going untested, and `0xC0 0x80`
+  *is* in `unicode_test.wac`'s rejection table. It is rejected sixteen lines earlier, by
+  `if (b0 < 0xC2)`, so a two-byte sequence reaching line 45 has `code >= 0x80` and the condition cannot
+  hold. Pinned with that argument rather than with "no test covers it";
+- **`encode`'s fall-through** past all four arms needs `encodedLength` to answer 0, which only a caller
+  ignoring that same answer can arrange. Pinned as the defensive arm it is.
+
+106 of 108. The lesson for the remaining thirteen: **rewire the exercise to call the tests first, then
+read what is left.** Doing it the other way round would have written three pins here, one of them
+claiming a security-relevant check was untested when it was unreachable.
+
+### The ordering for the remaining fourteen
+
+By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
+`bytes` 73/80, `stream` 28/32, `regex` 573/649. A package at 88% wants seventy-six arguments, and
+writing seventy-six is how a ledger becomes a list nobody reads — so the low ones first, and the high
+ones may want their coverage *raised* before their floor is set rather than their gaps blessed. `codec`
+is the evidence for that: its report was four gaps and only one of them was a fact about the code.
+
 ## One trap for whoever does this, measured
 
 **Do not compare the two instruments on generic code.** `packages/std/src/map.wac` reads `56/56` from its

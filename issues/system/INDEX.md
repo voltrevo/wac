@@ -9,7 +9,6 @@ record of what has been fixed and why.
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
 | [0213a](open/0213a-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
-| [0212](open/0212-the-mutation-recall-floor-is-decided-by-filenames-not-by-the-checker.md) | rung 3 pairs each corpus file with `MUTATIONS[i % 7]` over an alphabetical list, so adding one file re-pairs every later one — two gate runs failed under the 97% floor for that reason | bug | wrong answer |
 | [0209](open/0209-ed25519-is-five-times-slower-than-p-256-which-is-the-wrong-way-round.md) | the title's ordering is gone — ed25519 and P-256 now cost the same — and all three rows are explained: ed25519 was `ptAdd` inverting per addition, P-256 was byte-wise order arithmetic, and RSA is 2048 rounds of two multiplies and two divisions with nothing hiding. What is left is two changes nobody has made: CRT and a Montgomery multiply | performance | no error |
 | [0208](open/0208-nothing-owns-the-wasmtime-hosts-build-so-five-callers-do-it-themselves.md) | nothing owns the wasmtime host's build, so five callers each do it themselves | missing feature | not implemented |
 | [0205](open/0205-fifteen-of-nineteen-coverage-tasks-cannot-fail.md) | fifteen of nineteen coverage drivers end with `report(...)` and cannot fail, while the summary read "19/19 passed" — two hold a floor, two only check their own exemptions | missing feature | no error |
@@ -64,7 +63,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-234 issues, 182 closed.
+234 issues, 183 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
