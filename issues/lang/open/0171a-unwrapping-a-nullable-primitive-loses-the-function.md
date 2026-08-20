@@ -184,3 +184,13 @@ strictly better than silence and strictly worse than the feature, and it is the 
 first if the feature is not being done immediately — with the caveat that it needs a check across this
 repository for a nullable primitive in existing code, which I have run: **there is none outside
 test-fixture strings**, so the blast radius is nil.
+
+## How much of the spec this accounts for
+
+With `specEmit.test.ts` now recording what wacc declines rather than logging a count, the number is
+exact: wacc declines **ten** of the reference's accepted spec programs, and **six of the ten are this
+bug** — every case that declares a nullable primitive, each with the same reason, *local of an unspelled
+type*. That is the largest single gap between wacc and the spec's own conformance corpus.
+
+The other four are unrelated: a generic struct constructed with "2 of 1 fields", enum methods naming a
+type only while emitting, and two `is`-against-an-unrelated-type cases.

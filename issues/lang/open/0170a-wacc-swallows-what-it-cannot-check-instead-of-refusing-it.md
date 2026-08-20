@@ -361,3 +361,29 @@ change whose failure mode is a compiler that refuses everything, so it wants its
 program that must still build.
 
 Recorded here rather than attempted at the end of a session with unpushed work in the tree.
+
+## The instrument had the same disease, and it is fixed — 2026-08-20
+
+`packages/wacc/test/specEmit.test.ts` asserted two things at 100% and `console.log`ged the third. Its
+loop called `blocked()` — wacc's **decline** mechanism — got back an explicit reason, dropped it, and
+`continue`d *before* the counter, so a declined program could not spoil the answer count either. Every
+spec behaviour wacc cannot produce was a number in a log line nothing could fail on. Same silence as
+the compiler's, one layer up.
+
+Now a `KNOWN_UNEMITTABLE` set keyed by tag, shrink-only, mirroring the `KNOWN_DIFFERENT` beside it.
+Canaried both ways: an empty set names all of them, a stale tag fails with "emit now".
+
+**And it corrected a number I had written here.** I said 31, taking 279 minus the 248 in the log line.
+**Ten** are wacc's. The other 21 are refused by the *reference* and skipped a line earlier — extracting
+a `run(` block does not guarantee a program that compiles alone. Capturing the reason instead of the
+count is what showed it, which is the same lesson as the bail breakdown above: the subtraction I could
+do without running anything was wrong twice.
+
+The ten, with the emitter's own words:
+
+| cases | reason | what it is |
+|---|---|---|
+| 6 | `local of an unspelled type` / `untyped name` | a nullable primitive — `issues/lang/0171a` |
+| 1 | `a construction of Parented<i32> with 2 of 1 fields` | a generic struct's inherited fields |
+| 1 | `a type this emitter names only while emitting` | enum methods |
+| 2 | `a test for Q on a P`, `a test for Other on a P` | `is` against an unrelated type |
