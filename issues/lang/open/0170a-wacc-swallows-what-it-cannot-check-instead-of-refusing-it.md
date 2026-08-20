@@ -387,3 +387,29 @@ The ten, with the emitter's own words:
 | 1 | `a construction of Parented<i32> with 2 of 1 fields` | a generic struct's inherited fields |
 | 1 | `a type this emitter names only while emitting` | enum methods |
 | 2 | `a test for Q on a P`, `a test for Other on a P` | `is` against an unrelated type |
+
+## `valType`'s catch-all, and canarying a guard with no natural trigger — 2026-08-20
+
+`emit.wac`'s `valType` ended in `return 127` — a plain `i32` — so **every unrecognised type spelling
+became a number**: `""`, `"i32?"`, a misspelled struct name. A module written with the wrong type in it
+rather than refused, which is this issue in one line. `isWritableValType` now lists what genuinely
+belongs in that fallthrough (the i32 family plus the other numbers and the two abstract refs) and
+`writeValType` declines anything else by name, because it has the `Env` that `valType` does not.
+
+**It had no reachable trigger, so I made one.** Nothing I could write reached it: a nullable-primitive
+*parameter* is caught earlier by `addFunc` now, a nullable-primitive *local* still declines through the
+parity net without passing here, and a misspelled type name is refused by the checker first. A guard
+nothing can reach is a claim nothing checks — the same objection that keeps `issues/lang/0155` open.
+
+So I canaried it against a deliberate break: removed `f32` from `isWritableValType` and rebuilt.
+
+    wacc: cannot emit cf.wac — a value of a type this emitter cannot write: f32
+
+**And the seed build failed too**, which is the stronger half of the evidence: wacc's own source uses
+`f32`, so the guard is reached during real compilation and not only by a toy. Reverted, and recovery
+needed `seed:bootstrap` rather than `seed` — the canary-built seed could no longer compile wacc, which is
+exactly the escape hatch `CLAUDE.md` describes. Seed back to 969125 bytes and a fixed point, 216 of 216
+cases.
+
+Worth keeping as the method: when a guard has no natural trigger, break the thing it guards and watch it
+fire, rather than shipping it unproven or deleting it for being quiet.
