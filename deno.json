@@ -40,7 +40,7 @@
     "coverage:json": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/json/test/cov_exercise.wac packages/json/ --allow-read trap_when_an_array_index_is_past_the_end trap_when_an_array_index_is_negative trap_when_an_object_index_is_past_the_end trap_when_an_object_index_is_negative",
     "coverage:regex": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/regex/test/cov_exercise.wac packages/regex/",
     "coverage:raster": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/raster/test/cov_exercise.wac packages/raster/",
-    "coverage:server": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/server/test/cov_exercise.wac packages/server/",
+    "coverage:server": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/server/test/cov_ledger.wac",
     "coverage:stream": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/stream/test/cov_ledger.wac",
     "coverage:zstd": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/zstd/test/cov_ledger.wac",
     "coverage:ssh": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/ssh/test/cov_ledger.wac",

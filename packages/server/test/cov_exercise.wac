@@ -88,6 +88,37 @@ export i32 main() {
   string[] rs = requests();
   for (i32 i = 0; i < rs.len(); i++) { seen = seen + one(rs[i]); }
 
+  // **Targets and bodies the corpus above never built.** Each of these was an uncovered branch in
+  // `routes.wac` when `issues/system/0205` gave this package a floor, and every one is an ordinary
+  // input rather than an unreachable line — see `cov_ledger.wac`.
+  string US = string.fromCodepoint(0x1f);       // a control character whose low nibble is >= 10
+  string SO = string.fromCodepoint(0x1a);       // and whose high nibble is not
+  string[] more = string[](
+    // an unparseable request target
+    "GET :// HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET %%%% HTTP/1.1\r\nHost: a\r\n\r\n",
+    // empty segments, and a path that has none at all
+    "GET // HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /echo//a//b HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /b64//aGk HTTP/1.1\r\nHost: a\r\n\r\n",
+    // control characters that JSON has to escape as `\u00xx`, both nibble halves
+    "GET /echo?q=" + US + SO + " HTTP/1.1\r\nHost: a\r\n\r\n",
+    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 8\r\n\r\n{\"a\":" + US + SO + "1}",
+    // numbers the JSON writer has to render, which it was only ever handed zero for
+    "GET /echo?n=12345&m=-7 HTTP/1.1\r\nHost: a\r\n\r\n",
+    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 20\r\n\r\n{\"n\":12345,\"m\":-7}",
+    // A match that does not start at 0, which is the only way `writeInt` is handed a non-zero: it
+    // writes `"start"` for the regex route, and every request above matched at the first byte.
+    "GET /match/b/abc HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /match/c/abcdefghijkl HTTP/1.1\r\nHost: a\r\n\r\n",
+    // Control bytes *percent-encoded*, so `pctDecode` produces them and the JSON writer has to escape
+    // them as `\u00xx`. A literal control character in the target does not survive the request parser,
+    // which is why the first attempt at this covered nothing. `0x1a` and `0x1f` both have a low nibble
+    // of ten or more, which is the half of that ternary nothing had reached.
+    "GET /echo?q=%1A%1F%0B HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /match/(.)/a%1Fb HTTP/1.1\r\nHost: a\r\n\r\n");
+  for (i32 i = 0; i < more.len(); i++) { seen = seen + one(more[i]); }
+
   // Every prefix of a request, which is what reaches the `Incomplete` return.
   string full = "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}";
   for (i32 n = 0; n <= full.len(); n++) { seen = seen + one(full.slice(0, n)); }

@@ -199,6 +199,34 @@ hole in the driver than a fact about the code. Five for five so far — a functi
 (`codec`, `bytes`), a code point the loop skipped (`unicode`), a variant nobody produced (`stream`) —
 and only four genuine exemptions among them.
 
+### `server` sixth: 117 → 123 of 126, and one entry that says "I do not know"
+
+**11 hold a coverage floor, 0 only check their own exemptions have not drifted, 10 report and cannot
+fail.**
+
+All nine gaps were in `routes.wac`, and six closed by writing requests nobody had written:
+
+- an **unparseable request target** (the `400`), and an **empty path segment** (`/echo//a//b`);
+- a **regex match that does not start at byte 0.** `writeInt` writes the `"start"` field of the match
+  route's JSON, and every `/match/` request in the corpus matched at the first byte — so the integer
+  writer had only ever been handed **zero**, leaving both its loops and its `v == 0` else uncovered.
+  One request fixed three points;
+- **control bytes JSON must escape**, which took two attempts: a literal control character in the
+  request target does not survive the request parser, so the first version covered nothing. `%1A` and
+  `%1F` percent-encoded do, because `pctDecode` produces them.
+
+Two of the three left are provably unreachable — the *high* nibble of a character below 0x20 is never
+ten or more, and `writeInt`'s one caller is inside `if (start != NO_MATCH())` where `NO_MATCH()` is the
+only negative the regex returns.
+
+**The third entry says it is unresolved, and that is deliberate.** `segments`' one-slot allocation
+wants a path of only slashes; `//`, `///`, `////` and `//?x=1` all failed to reach it, most likely
+because the URL parse normalises the path before routing sees it. I did not establish which, so it is
+`proven: false` with the four failed inputs and the one hypothesis written down — rather than
+`proven: true`, which would be a claim about the code I have not earned. **A ledger that cannot say "I
+do not know" collects false confidence**, which is the failure this issue is about wearing a different
+hat.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
