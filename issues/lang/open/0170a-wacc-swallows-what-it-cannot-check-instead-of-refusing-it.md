@@ -413,3 +413,26 @@ cases.
 
 Worth keeping as the method: when a guard has no natural trigger, break the thing it guards and watch it
 fire, rather than shipping it unproven or deleting it for being quiet.
+
+## What is left in this issue — 2026-08-20, end of the audit
+
+The measurement this was filed on is settled: **all fourteen ill-typed programs are refused**, and a
+function that goes missing is now named with its cause (`funcWhy`, quoted by the parity net). The spec
+corpus agrees completely — `specEmit`'s ledger is empty, 419 of 419 answers, and `wontLoad` is asserted
+rather than logged.
+
+Three things keep it open, and they are all *structural* rather than a list of programs:
+
+1. **25 lookup failures in the emitter bail without a reason.** `funcWhy` covers the function-level
+   verdict; these are the expression-level `if (at < 0) { return; }` returns underneath it. Three of the
+   25 are the decline cascade working as designed and should decline the caller through
+   `unsupportedExpr` instead.
+2. **The `emitFiles*` family is not netted.** Seven entry points in `api.wac`, which is what every test
+   and tool here calls, go through `emitLinked` and never ask `missingExport`. Options and a
+   recommendation are above; the recommendation is still to leave it.
+3. **`""` as an ordinary value meaning "I don't know."** Every gap closed today was an instance —
+   `typeOfTyName` for a nullable primitive, `typeOfExpr` for an array construction, `valType`'s
+   catch-all. The mechanism is untouched, so the *next* gap will be silent in the same way.
+
+Anyone taking (1) should read `issues/lang/0173a` first: it is the smallest instance of the same theme,
+and fixing it lets `writeValType` refuse a bare unresolved name outright instead of tolerating one.
