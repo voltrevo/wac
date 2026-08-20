@@ -140,3 +140,31 @@ here rather than diagnosed.
 carries the trap's own message when the guest wrote one. Worth widening that message before the next
 occurrence.
 
+## The trap is a stale seed, and it is not load-dependent — 2026-08-20
+
+The part that did not fit was right to be suspicious of. The same message —
+`wac: packages/wacc/example/wacc.wac trapped` — turned up again, and this time with a reproduction: any
+`wac test <file>` produced it, and so did `deno task seed` itself.
+
+```
+wac: packages/wacc/example/wacc.wac trapped
+wasm://wasm/003a9cda:401394: Uncaught RuntimeError: array element access out of bounds
+wasm://wasm/003a9cda:525985: Uncaught RuntimeError: dereferencing a null pointer
+```
+
+**The cause is the seed, not the machine.** The binary carries a compiler built before somebody else's
+change to `packages/wacc`; that compiler traps on the new sources, and `deno task seed` cannot recover
+because it needs the seed to rebuild the seed. `deno task seed:bootstrap` builds wacc with the
+*reference* and the trap goes with it: 965,855 bytes, a fixed point, and the file that had been failing
+passes. CLAUDE.md describes this case exactly — what it does not say is that the symptom can be a
+**trap** rather than a diagnostic, which is why it read as a mystery here.
+
+So this entry leaves the population it was filed into: the earlier gate failure was the same thing —
+that gate had pulled immediately before running, and `seedFresh` failed in the same suite, which is the
+tell. Nothing about it tracked load; it tracked *when a pull brought a wacc change*. The two peer
+failures above are unaffected.
+
+**What would have said so immediately** is the seed's own freshness, and the suite does check it —
+`tools/seedFresh.test.ts` failed in that same run and was read as a second, separate problem. A trap
+from the compiler and a stale seed in one suite are one fact, and the fix is `seed:bootstrap`.
+

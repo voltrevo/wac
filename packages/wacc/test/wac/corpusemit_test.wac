@@ -195,6 +195,14 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   }
 
   // The canary: a harness that compiled nothing would report that nothing is wrong.
+  // **Printed, because this is a measurement and nobody could read it.** The counts are asserted only
+  // for their shape — some whole, some partial, none invalid — so the numbers themselves reached nobody:
+  // `README.md` and the website both quoted "411 of 414 whole", from a run in the days when this rung
+  // still printed. A measurement that cannot be read goes stale in the documents that cite it.
+  core.warn("rung 4: " + itoa(whole) + " of " + itoa(c.paths.len()) + " corpus files emitted whole, "
+            + itoa(partial) + " partially, " + itoa(invalid) + " invalid, "
+            + itoa(reasons) + " declined by name");
+
   t.isTrue(whole > 0, "no corpus file was emitted in full — the harness is not reaching the emitter");
   t.isTrue(partial > 0, "every file emitted whole, which cannot be true yet");
   t.isTrue(reasons > 0, "nothing was declined by name — the emittability walk is not running");

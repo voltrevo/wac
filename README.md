@@ -64,7 +64,7 @@ Structs with methods and subtyping, monomorphised generics, enums with payloads 
 cost — `as` lossless, `as!` checked, `as~` lossy, `as@` raw.
 
 The collector owns the heap, so there is no allocator to write and no linear memory in the artifact.
-The compiler is about 18,000 lines of TypeScript with no LLVM, no binaryen and nothing to install,
+The compiler is about 19,000 lines of TypeScript with no LLVM, no binaryen and nothing to install,
 and it runs in a browser as readily as on a command line.
 
 [`spec/tour.wac`](spec/tour.wac) is the whole language in one annotated file that compiles and
@@ -89,20 +89,23 @@ stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    15 sources, 431,705 bytes, identical
+B == C    16 sources, 965,855 bytes, identical
 ```
 
 Every rung was checked against the TypeScript compiler before the next was started — token streams,
 syntax trees, then diagnostics at exact positions. The type checker was finished against four
-independent corpora, the newest being this repository's own **414** wac files, with no false alarm
+independent corpora, the newest being this repository's own **729** wac files, with no false alarm
 among them.
 
-It is not finished. The emitter compiles **411 of those 414** files whole, three partially and none
+It is not finished. The emitter compiles **702 of those 729** files whole, 27 partially and none
 invalidly — and that number goes down as well as up, because the corpus is the live repository and
-code written for other reasons arrives using things the emitter has not reached yet. The four numbers
-in this section are printed by the rungs that produce them (`deno test -A packages/wacc/test/`), and
-were last read on 2026-08-17; they said 354, 346, 8 and 266,164 six days earlier, when the
-compiler was five eighths of its present size.
+code written for other reasons arrives using things the emitter has not reached yet.
+
+Every number in this section is printed by the rung that produces it, and read on 2026-08-20:
+`wac test packages/wacc/test/wac/corpusemit_test.wac` for the corpus and the emitter — it is in the
+heavy lane, about twenty-five minutes, because it compiles the tree — and `deno task seed` for the bytes.
+Three days earlier they were 414 files, 411 whole, three partial and 431,705 bytes; six days before
+that, 354, 346, 8 and 266,164. The figures move because the repository does.
 
 **wacc builds this repository now.** Applications go through it (`packages/platform/build.ts`), the
 `wac` binary carries a wacc-built compiler inside it, and coverage instruments with it. The reference
@@ -158,7 +161,7 @@ against the TypeScript one. Where a differential found a disagreement and *we* w
 side got an issue rather than us getting a workaround.
 
 ```sh
-deno task test        # seven to ten minutes, depending on the machine
+deno task test        # three to four minutes, depending on the machine
 ```
 
 ## Where things are
