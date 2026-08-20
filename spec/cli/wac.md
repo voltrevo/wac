@@ -41,7 +41,7 @@ wac run     main.wac [args…]         # compile into a temporary file and run i
 wac test    [path…] [--ignore p,…]   # every `test*` export under each path
 wac sh      [-c script]              # the shell, sealed unless granted
 wac validate mod.wasm […]            # whether the engine accepts each module, without running it
-wac covdump mod.wasm                 # run `main` under the counters and print each one
+wac covdump mod.wasm [export…]       # run it under the counters and print each one
 wac ctcompare [--all] a.wasm b.wasm  # two traced runs, and where their journals differ
 wac tracestat mod.wasm               # one traced run's size, and what it wanted
 wac app     main.wac -o thing        # an executable that runs itself, calling out to `wac`
@@ -69,9 +69,23 @@ often. `--coverage` on `test` answers a different question — how many points w
 percentage per file — and cannot say how often any one of them ran. Nothing in wac can ask directly:
 `__cov_get` is injected by the instrumentation, so no source names it.
 
-The module is instantiated with no imports and `main` is called if it is exported. A module with no
-`__cov_init` is an error rather than an empty report, because a module built without coverage and one
-whose counters all read zero are different facts.
+A module with no `__cov_init` is an error rather than an empty report, because a module built without
+coverage and one whose counters all read zero are different facts.
+
+`[§wac-cli-covdump-world-6knq4vt]` **It runs the module the way `wac prog.wasm` does** — the world built
+from its manifest, with the grants the manifest declares — so an exercise may read a corpus if it was
+built with `--allow-read`. This used to instantiate with no imports at all, which is not the same as
+granting nothing: a `main(Core, Cli)` was not refused, it *failed to instantiate*, because the imports
+were absent rather than denied. `issues/system/0221`.
+
+**Named exports are called after `main`, each with its trap caught**, and `main` alone when none are
+named. A trap ends the function it is in, so several trapping cases in one `main` lose every one after
+the first; a coverage driver with twelve bounds probes needs twelve calls, which is what the host is
+for. The counters survive a trap — that is what lets a trapping branch be counted as covered at all.
+
+The exit status is about the **dump**, not about the program: a run that printed a table succeeded at
+what it was asked, whatever the exercise returned, and an exercise's `main` typically returns an
+accumulator rather than a status.
 
 ### check, compile, bindgen
 

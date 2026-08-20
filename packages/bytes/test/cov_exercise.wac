@@ -1,0 +1,109 @@
+// Branch coverage for bytes: the exercises, and nothing else.
+//
+//   deno task coverage:bytes
+//   deno task coverage:bytes --verbose
+//
+// Driven from the package's own wac tests, which are the thing that exercises `Buf` directly.
+// `tools/coverage.ts` also reports on `buf.wac`, but only the branches gzip happens to reach — which
+// is why it shows 67.7% for a type with twelve test cases.
+//
+// ## The trapping cases are exports, not calls — `issues/system/0221`
+//
+// A trap ends the function it is in, so nine bounds cases inside one `main` would lose eight of them:
+// measured, the branch before a trap reads 1 and the one after reads 0. They are exports here, and
+// `covdump` calls each one with its trap caught — which is what the TypeScript did from the host, in
+// its own `try` per probe, and what a single `main` cannot express.
+//
+// A trap unwinds to the host and leaves the instance usable, which is the whole reason a trapping
+// branch can be counted as covered at all.
+//
+// **They answer `i32`, not the `string` the tests they call answer.** A wac `string` is a WasmGC
+// reference and cannot cross into JavaScript: calling one of these from the host with a `string`
+// return raised `TypeError: type incompatibility when transforming from/to JS`, which is not a
+// missing export and was reported as one. Nothing reads the value, so `i32` is the honest shape.
+
+import { test_growth_from_empty, test_bytes_are_stored_unsigned, test_push_truncates_to_a_byte,
+         test_with_capacity, test_push_bytes_range, test_push_bytes_grows_once_and_correctly,
+         test_push_all, test_little_endian_writes, test_push_codepoint_widths,
+         test_push_codepoint_rejects_non_scalars, test_take_avoids_the_copy_when_exactly_full,
+         test_grows_from_zero_capacity, test_bulk_append_onto_a_partly_filled_buffer,
+         test_bulk_append_from_zero_capacity, test_bytes_is_a_copy, test_to_str,
+         test_take_empties_the_buffer_when_it_copies, test_drop_front_shifts_what_is_left,
+         test_drop_front_at_the_edges, test_push_repeat_copies_from_earlier_in_the_buffer,
+         test_push_repeat_overlaps_to_make_a_run, test_push_repeat_grows_the_buffer } from "./wac/buf_test.wac";
+import { test_traps_getting_past_the_end, test_traps_getting_a_negative_index,
+         test_traps_getting_at_capacity_not_length, test_traps_pushing_repeat_before_the_start,
+         test_traps_pushing_repeat_past_the_end, test_traps_pushing_a_negative_repeat_count,
+         test_traps_slicing_past_the_end, test_traps_slicing_from_a_negative,
+         test_traps_slicing_backwards, test_traps_repeating_from_beyond_what_is_written,
+         test_traps_repeating_a_negative_count, test_traps_repeating_from_a_negative_index,
+         test_slice_returns_the_bytes_when_the_range_is_inside,
+         test_clamped_answers_every_range_slice_refuses, test_get_returns_the_byte_when_in_range,
+         test_repeating_from_the_last_written_byte_is_allowed } from "./wac/bounds_test.wac";
+
+export i32 main() {
+  i32 seen = 0;
+  seen = seen + test_growth_from_empty().len();
+  seen = seen + test_bytes_are_stored_unsigned().len();
+  seen = seen + test_push_truncates_to_a_byte().len();
+  seen = seen + test_with_capacity().len();
+  seen = seen + test_push_bytes_range().len();
+  seen = seen + test_push_bytes_grows_once_and_correctly().len();
+  seen = seen + test_push_all().len();
+  seen = seen + test_little_endian_writes().len();
+  seen = seen + test_push_codepoint_widths().len();
+  seen = seen + test_push_codepoint_rejects_non_scalars().len();
+  seen = seen + test_take_avoids_the_copy_when_exactly_full().len();
+  seen = seen + test_grows_from_zero_capacity().len();
+  seen = seen + test_bulk_append_onto_a_partly_filled_buffer().len();
+  seen = seen + test_bulk_append_from_zero_capacity().len();
+  seen = seen + test_bytes_is_a_copy().len();
+  seen = seen + test_to_str().len();
+  seen = seen + test_take_empties_the_buffer_when_it_copies().len();
+  seen = seen + test_drop_front_shifts_what_is_left().len();
+  seen = seen + test_drop_front_at_the_edges().len();
+  seen = seen + test_push_repeat_copies_from_earlier_in_the_buffer().len();
+  seen = seen + test_push_repeat_overlaps_to_make_a_run().len();
+  seen = seen + test_push_repeat_grows_the_buffer().len();
+  seen = seen + test_slice_returns_the_bytes_when_the_range_is_inside().len();
+  seen = seen + test_clamped_answers_every_range_slice_refuses().len();
+  seen = seen + test_get_returns_the_byte_when_in_range().len();
+  seen = seen + test_repeating_from_the_last_written_byte_is_allowed().len();
+  return seen;
+}
+
+/** `test_traps_getting_past_the_end`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_getting_past_the_end() { test_traps_getting_past_the_end(); return 0; }
+
+/** `test_traps_getting_a_negative_index`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_getting_a_negative_index() { test_traps_getting_a_negative_index(); return 0; }
+
+/** `test_traps_getting_at_capacity_not_length`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_getting_at_capacity_not_length() { test_traps_getting_at_capacity_not_length(); return 0; }
+
+/** `test_traps_pushing_repeat_before_the_start`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_pushing_repeat_before_the_start() { test_traps_pushing_repeat_before_the_start(); return 0; }
+
+/** `test_traps_pushing_repeat_past_the_end`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_pushing_repeat_past_the_end() { test_traps_pushing_repeat_past_the_end(); return 0; }
+
+/** `test_traps_pushing_a_negative_repeat_count`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_pushing_a_negative_repeat_count() { test_traps_pushing_a_negative_repeat_count(); return 0; }
+
+/** `test_traps_slicing_past_the_end`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_slicing_past_the_end() { test_traps_slicing_past_the_end(); return 0; }
+
+/** `test_traps_slicing_from_a_negative`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_slicing_from_a_negative() { test_traps_slicing_from_a_negative(); return 0; }
+
+/** `test_traps_slicing_backwards`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_slicing_backwards() { test_traps_slicing_backwards(); return 0; }
+
+/** `test_traps_repeating_from_beyond_what_is_written`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_repeating_from_beyond_what_is_written() { test_traps_repeating_from_beyond_what_is_written(); return 0; }
+
+/** `test_traps_repeating_a_negative_count`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_repeating_a_negative_count() { test_traps_repeating_a_negative_count(); return 0; }
+
+/** `test_traps_repeating_from_a_negative_index`, as an export so `covdump` can call it and catch the trap. */
+export i32 trap_repeating_from_a_negative_index() { test_traps_repeating_from_a_negative_index(); return 0; }

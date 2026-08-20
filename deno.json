@@ -28,7 +28,7 @@
     "coverage:all": "deno run -A tools/coverageAll.ts",
     "size": "deno run -A tools/size.ts",
     "coverage:bignum": "deno run -A packages/bignum/cov.ts",
-    "coverage:bytes": "deno run -A packages/bytes/cov.ts",
+    "coverage:bytes": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/bytes/test/cov_exercise.wac packages/bytes/ trap_getting_past_the_end trap_getting_a_negative_index trap_getting_at_capacity_not_length trap_pushing_repeat_before_the_start trap_pushing_repeat_past_the_end trap_pushing_a_negative_repeat_count trap_slicing_past_the_end trap_slicing_from_a_negative trap_slicing_backwards trap_repeating_from_beyond_what_is_written trap_repeating_a_negative_count trap_repeating_from_a_negative_index",
     "coverage:codec": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- packages/codec/test/cov_exercise.wac packages/codec/",
     "coverage:core": "deno run -A core/cov.ts",
     "coverage:crypto": "deno run -A packages/crypto/cov.ts",

@@ -191,14 +191,40 @@ string slug(string path) {
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   if (argc < 2) {
-    core.warn("usage: covreport <exercise.wac> <prefix/> [--verbose]");
+    core.warn("usage: covreport <exercise.wac> <prefix/> [--verbose] [--allow-…] [export…]");
     return 2;
   }
   string entry = string.fromBytes(cli.arg(0).wait());
   string prefix = string.fromBytes(cli.arg(1).wait());
   bool verbose = false;
+  // **Grants go to the build and export names go to the run**, and both are new on 2026-08-20 with
+  // `issues/system/0221`: `covdump` used to instantiate with no imports and call only `main`, so an
+  // exercise could hold no capabilities and at most one trapping case. It runs the ordinary program
+  // path now — the world from the manifest, the grants baked into it — and calls each named export
+  // with its trap caught.
+  //
+  // A grant here is not a widening of what the *report* may do: it is what the exercise is compiled
+  // with, so an exercise that reads a corpus says so and one that does not cannot.
+  string[] grants = string[8](fill: "");
+  i32 nGrants = 0;
+  string[] exports = string[64](fill: "");
+  i32 nExports = 0;
   for (i32 i = 2; i < argc; i++) {
-    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--verbose") {
+      verbose = true;
+    } else if (a.len() > 8 && a.slice(0, 8) == "--allow-") {
+      if (nGrants >= 8) { core.warn("covreport: too many grants"); return 2; }
+      grants[nGrants] = a;
+      nGrants = nGrants + 1;
+    } else if (a.len() > 0 && a.slice(0, 2) != "--") {
+      if (nExports >= 64) { core.warn("covreport: too many export names"); return 2; }
+      exports[nExports] = a;
+      nExports = nExports + 1;
+    } else {
+      core.warn("covreport: " + a + " is not --verbose, a --allow-… grant, or an export name");
+      return 2;
+    }
   }
 
   // **A directory per exercise, because `deno task coverage:all` runs four of these at once.**
@@ -217,8 +243,15 @@ export i32 main(Core core, Cli cli) {
   cli.mkdir(dir, true).wait();
   string stem = dir + "/prog";
 
-  Exec built = cli.exec(binary(cli),
-    string[]("build", entry, "--coverage", "-o", stem, "--quiet"), u8[0]()).wait();
+  string[] build = string[6 + nGrants](fill: "");
+  build[0] = "build";
+  build[1] = entry;
+  build[2] = "--coverage";
+  for (i32 i = 0; i < nGrants; i++) { build[3 + i] = grants[i]; }
+  build[3 + nGrants] = "-o";
+  build[4 + nGrants] = stem;
+  build[5 + nGrants] = "--quiet";
+  Exec built = cli.exec(binary(cli), build, u8[0]()).wait();
   if (!built.ran() || built.status != 0) {
     core.warn("covreport: " + entry + " did not build — " + built.error +
               string.fromBytes(built.stderr));
@@ -230,11 +263,21 @@ export i32 main(Core core, Cli cli) {
     core.warn("covreport: no coverage table beside the module — " + table.error);
     return 1;
   }
-  Exec dumped = cli.exec(binary(cli), string[]("covdump", stem + ".wasm"), u8[0]()).wait();
+  string[] dump = string[2 + nExports](fill: "");
+  dump[0] = "covdump";
+  dump[1] = stem + ".wasm";
+  for (i32 i = 0; i < nExports; i++) { dump[2 + i] = exports[i]; }
+  Exec dumped = cli.exec(binary(cli), dump, u8[0]()).wait();
   if (!dumped.ran() || dumped.status != 0) {
     core.warn("covreport: covdump — " + dumped.error + string.fromBytes(dumped.stderr));
     return 1;
   }
+  // **What covdump said even when it succeeded**, because the thing it says on a *good* run is that
+  // one of the export names is not an export — and that reads from the outside as a package whose
+  // trapping branches simply are not covered, which is the same number a real gap gives. A mistyped
+  // name was silent until this line: `zzz_not_an_export` produced a clean report four branches short.
+  string said = string.fromBytes(dumped.stderr);
+  if (said.len() > 0) { core.warn(said); }
 
   // `<index>\t<count>` per counter, then a line saying how many. Anything else is not a dump.
   string[] dumpRows = linesOf(string.fromBytes(dumped.stdout));

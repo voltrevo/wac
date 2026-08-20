@@ -1,7 +1,6 @@
 # 0221 — `covdump` runs `main` with no world and stops at the first trap, so seven coverage drivers cannot move
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
 - **Reported by:** agent-b
 - **Date:** 2026-08-20
 - **Kind:** missing feature
@@ -85,3 +84,31 @@ prefix — which is the whole output `covreport` exists to produce.
 
 Two drivers need neither fix and are the next ones to move: `packages/stream` (its transform takes
 funcref callbacks, which wac can supply) and `packages/sh` — the latter belongs to another agent.
+
+## Closed 2026-08-20
+
+`wac covdump <module.wasm> [export…]` runs through `run_as_with` — the world from the manifest, grants
+as the manifest declares them — and calls each named export after `main`, each trap caught.
+
+Both halves shown rather than argued: an exercise whose `main(Core, Cli)` reads a file succeeds built
+with `--allow-read` and answers *Not granted to this application* built without, which needs the world
+to exist in order to refuse; and `packages/bytes` moved with its twelve trapping cases as exports,
+going from the TypeScript's 54 covered to 73 of 80. The nineteen extra branches are all in
+`slice.wac`, which the hand-written list of seven probe names never reached.
+
+Three things fell out of it that were not in the plan above:
+
+- **`covdump`'s exit status is about the dump, not the program.** The world path returns what `main`
+  returned, and an exercise returns an accumulator; `packages/codec`'s came back as 205 and read as a
+  failed dump.
+- **A trap wrapper must not answer a `string`.** A wac `string` is a WasmGC reference and cannot cross
+  into JavaScript: the call raises `TypeError: type incompatibility when transforming from/to JS`,
+  which is not a missing export and was reported as one.
+- **A `TryCatch` per call**, for the reason `validate_command` has one per module: a throw leaves an
+  exception on the isolate and the next operation meets V8's own null-result-versus-pending-exception
+  check. Its comment said "nothing else in this file needs one because nothing else compiles twice" —
+  twelve deliberate traps are that, for calls.
+
+`covreport` also prints covdump's stderr on a *successful* run now, because what covdump says on a
+good run is that a name is not an export — which reads as a package whose trapping branches are simply
+uncovered.
