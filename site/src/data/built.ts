@@ -23,23 +23,23 @@ export const TOTALS = {
   packages: 38,
   lines: 131201,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2602,
+  tests: 2606,
   programs: 81,
   pages: 11,
   /**
-   * The whole repository: the packages (2602), and the compiler, harness and tooling
+   * The whole repository: the packages (2606), and the compiler, harness and tooling
    * around them (1374).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3976,
+  testsAll: 3980,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 505,
+  wacTests: 507,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -49,7 +49,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 50 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 368, tests: 10 },
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 12 },
-  { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 21 },
+  { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 25 },
   { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2024, tests: 128 },
   { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1550, tests: 26 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },

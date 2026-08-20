@@ -40,6 +40,21 @@ export u8[] sumTest(u64 a, i32 ashift, u64 b, i32 bshift) {
   return dump(z);
 }
 
+/**
+ * `x.add(y)` in place, which is a different function from `setSum` and has a different caller.
+ *
+ * `add` is reached only from `mulU64`, and there `this` is always the *shorter* operand — the scratch
+ * it is handed has been shifted left 32. So the two arms that handle `this` being longer had never
+ * run: `issues/system/0205` listed `bigint.wac:162` and `:167`. A seam is the only way to them, since
+ * no caller in the package can be the other shape.
+ */
+export u8[] addTest(u64 a, i32 ashift, u64 b, i32 bshift) {
+  FixedBig x = FixedBig.fromU64(a); x.shiftLeft(ashift);
+  FixedBig y = FixedBig.fromU64(b); y.shiftLeft(bshift);
+  x.add(y);
+  return dump(x);
+}
+
 export u8[] subTest(u64 a, i32 ashift, u64 b, i32 bshift) {
   FixedBig x = FixedBig.fromU64(a); x.shiftLeft(ashift);
   FixedBig y = FixedBig.fromU64(b); y.shiftLeft(bshift);

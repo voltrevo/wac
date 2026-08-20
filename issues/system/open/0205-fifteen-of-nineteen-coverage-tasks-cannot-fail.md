@@ -513,6 +513,43 @@ than the one this issue opened with and belongs to whoever owns them — `box` a
 `wacc` is the compiler, and `wactest` is test support whose consumers are tests by construction. What
 has changed is that the number is on the screen instead of implied by its absence.
 
+### `fmt` thirteenth: 383 of 429 → **418 of 429**, and the seed sensitivity was a missing test
+
+**18 hold a coverage floor, 0 only check their own exemptions have not drifted, 3 report and cannot
+fail.**
+
+`fmt` was held back because its figure moved with the seed — 383 and 382 — and a floor over a number
+that changes when nothing changes is a floor over a lottery. Right reason to wait, wrong diagnosis.
+
+The cause was that **none of its 21 tests were being called**. Wiring them put deterministic coverage
+over the branch the draw had been reaching by luck, and the number stopped moving: **418 under both
+seeds**. The sampling is still there and still worth having; it is no longer the only thing reaching
+anything. That is the answer for `url` too, if its number settles the same way.
+
+**`src/itoa.wac` was at 10 of 29** — every test file here is about floats, so the integer writer was
+reached only through whatever `ftoa` happened to call. `atoi` was uncovered entirely, and its own doc
+comment records having been wrong twice: "a leading `-` failed the digit test on the first character
+and the answer was 0. It surfaced in `box`'s `seq` as `seq 10 -3 1` refusing a step of zero it had
+invented itself." A function with two recorded regressions, tested in neither package that hit them and
+not in the one that owns it. There is an `itoa_test.wac` now and the file is at 29 of 29.
+
+**`add` and `setSum` in `bigint.wac` are near copies** — same carry, same limb-count max — and `add` is
+reached only from `mulU64`, where its operand is always the longer, so half its arms never ran. They
+are checked against each other now, in both orders.
+
+### Two things this package taught that the previous twelve did not
+
+**A `tail`-truncated report cost a wrong pin.** I read `atof.wac:203` as covered from a list cut by
+`tail -12`, and wrote a pin for its neighbour reasoning from that. Three `--verbose` runs say both are
+uncovered — a different and simpler fact. The pin says so in place; the general form is that a report
+read through a pipe is a report you have not read.
+
+**Grants buy the comparison, not the coverage.** Dropping them leaves `fmt` at 418 — the only package
+where they are worth nothing, against 280 in `json` and 104 in `bignum`. These tests call `atof` over
+their whole case list first and ask the host once at the end, so the code runs whether or not a process
+can be spawned; what fails is the assertion. **A coverage figure cannot tell you whether the assertions
+ran.** The grants stay: without them fifteen tests pass vacuously inside a driver that only warns.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
