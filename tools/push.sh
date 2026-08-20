@@ -442,40 +442,32 @@ for attempt in 1 2 3; do
     echo "== merge needs hands: resolve, then run this again =="
     exit 1
   fi
-  # **Reseed when the merge brought somebody else's compiler.** `native/v8/seed/wacc.wasm` is
-  # gitignored and one per agent, so merging a change to `packages/wacc/src` ages it — and the next
-  # attempt then runs the suite against a compiler older than the tree. That is `issues/system/0160`,
-  # and it costs a full suite run each time: three of the four failures on the attempt that prompted
-  # this were the seed, and only `tools/seedFresh.test.ts` named it. The others complained about
-  # committed test vectors.
+  # **Reseed when the merge aged the seed, and ask the test that owns that question.**
   #
-  # Here rather than in the caller's hands because the gate is what did the pulling. CLAUDE.md tells
-  # an agent to reseed after a merge; a script that merges on your behalf should not also expect you
-  # to notice that it did.
-  if ! git diff --quiet "$before" HEAD -- packages/wacc/src; then
-    echo "   the merge touched packages/wacc/src — rebuilding the seed"
+  # `native/v8/seed/wacc.wasm` and `native/v8/target/release/wac` are gitignored and one per agent, so
+  # a merge that brings somebody else's change to anything they are built from ages them — and the next
+  # attempt runs the suite against a compiler older than the tree. That is `issues/system/0160`, and it
+  # costs a full suite run each time.
+  #
+  # Here rather than in the caller's hands because the gate is what did the pulling. CLAUDE.md tells an
+  # agent to reseed after a merge; a script that merges on your behalf should not also expect you to
+  # notice that it did.
+  #
+  # **This used to test `git diff … -- packages/wacc/src` and `-- native`, and that was too narrow.**
+  # The seed is built from the whole import closure of `packages/wacc/example/wacc.wac`, which reaches
+  # `packages/bytes`, `packages/platform`, `packages/fs` and more — so a merge touching
+  # `packages/bytes/src/buf.wac` aged the seed, this condition said no, and the retry failed on
+  # `seedFresh` after 364 seconds. Naming the directories means keeping a copy of that closure here and
+  # being wrong the first time somebody adds an import.
+  #
+  # `tools/seedFresh.test.ts` already owns the question — it compares both artefacts against everything
+  # they are built from — and answering it costs about 200ms. So the condition is that test, and it
+  # cannot drift from the definition because it *is* the definition.
+  if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
+    echo "   the merge aged the seed or the host — rebuilding"
     if ! deno task seed >/dev/null 2>&1; then
       echo "== the seed would not rebuild after the merge: not retrying =="
       echo "   Run \`deno task seed\` by hand to see why; every later failure would be downstream of it."
-      exit 1
-    fi
-  # **And the host, which is the same problem one directory over.** `native/v8/target/release/wac` is
-  # compiled Rust, gitignored, one per agent — every word of the paragraph above applies to it, and
-  # this arm was missing until 2026-08-20. Another agent's change to how the native host resolves a
-  # pushed child's paths landed while this batch was queued; the binary here was 72 minutes older,
-  # and their new test failed saying "the frame's cwd was ignored". Nothing said "binary". A full
-  # suite run to find out.
-  #
-  # `deno task seed` would also do it and costs 34s for a fixpoint that did not change. Only the Rust
-  # moved, so only `cargo build` runs, which is about six seconds.
-  #
-  # `elif`, because the wacc arm already runs `cargo build` as its last step.
-  elif ! git diff --quiet "$before" HEAD -- native; then
-    echo "   the merge touched native/ — rebuilding the host"
-    if ! (cd native/v8 && cargo build --release >/dev/null 2>&1); then
-      echo "== the host would not rebuild after the merge: not retrying =="
-      echo "   Run \`cd native/v8 && cargo build --release\` by hand to see why; every test that"
-      echo "   drives the binary would be running the older host."
       exit 1
     fi
   fi

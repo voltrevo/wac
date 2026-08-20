@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0227a](open/0227a-the-wc-differentials-oracle-counts-words-in-whatever-locale-it-inherited.md) | the `wc` differential agrees because the child inherits `LC_ALL=C.UTF-8`; in the C locale the oracle says 472 where ours says 474, and the test neither sets the locale nor mentions it | untested behaviour | no error |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
@@ -16,7 +17,7 @@ record of what has been fixed and why.
 | [0203](open/0203-the-gate-fails-one-run-in-six-and-never-on-the-same-test.md) | the gate failed 5 of 28 runs in one day on five different files — two were real breakage arriving through the merge, two were fixed-wait races, one is unexplained | bug | no error |
 | [0202](open/0202-two-simultaneously-due-timers-have-no-tie-break-so-continuations-run-in-either-order.md) | two simultaneously due timers have no tie-break, so a scheduler dispatches their continuations in either order | missing feature | wrong answer |
 | [0201](open/0201-a-shell-builtin-shadows-a-box-applet-and-answers-differently.md) | a shell builtin shadows a box applet and refuses in fewer words than the applet does | bug | wrong answer |
-| [0198](open/0198-allow-run-also-grants-allow-env-because-exec-inherits-the-whole-environment.md) | `--allow-run` also grants `--allow-env`: `Cli.exec` inherits the host's whole environment, 37 variables including the proxy | bug | no error |
+| [0198](open/0198-allow-run-also-grants-allow-env-because-exec-inherits-the-whole-environment.md) | `--allow-run` carries `--allow-env`: 37 variables including the proxy. Measured — 21 of 24 exec-using directories need only `PATH`, three name what they need, and the seal test's canary is built on the leak, which settles the fourth parameter | bug | no error |
 | [0197](open/0197-a-built-app-costs-107ms-to-start-and-the-same-program-costs-15ms.md) | a built app costs 107 ms to start and the same program through the `wac` binary costs 15 ms | performance | no error |
 | [0196](open/0196-the-caret-blink-precondition-still-reds-under-load.md) | the caret-blink test's precondition still reds under load, which is the half `0159` left in front of the guard | bug | wrong answer |
 | [0195](open/0195-a-frame-cannot-express-an-open-and-silent-standard-input.md) | a `Frame`'s standard input cannot be open and silent, which is the shape a terminal has | missing feature | a case that cannot be written in process |
@@ -63,7 +64,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-234 issues, 183 closed.
+235 issues, 183 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
