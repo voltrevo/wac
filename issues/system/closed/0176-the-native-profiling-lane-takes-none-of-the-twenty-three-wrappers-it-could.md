@@ -1,7 +1,8 @@
 # 0176 — the native profiling lane takes 0 of 23 eligible wrappers, because 100 wac tests take arguments it cannot supply
 
-- **Status:** open
-- **Claimed by:** agent-a, 2026-08-20 — the data half: the five `u8[] vectors` tests
+- **Status:** closed
+- **Fixed in:** this commit
+- **Closed by:** agent-a, 2026-08-20
 - **Reported by:** agent-a
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -30,7 +31,7 @@ silence `nativeShare.test.ts`'s own comment describes paying forty minutes to no
 
 ## Corrected — it is not 0173, and closing 0173 would not fix it
 
-This first said the skips were [0173](0173-a-wac-test-cannot-say-which-grant-it-needs.md)'s: a wac
+This first said the skips were [0173](../open/0173-a-wac-test-cannot-say-which-grant-it-needs.md)'s: a wac
 test cannot say which grant it needs, so it gets skipped. That is wrong, and acting on it would have
 been wasted work.
 
@@ -212,3 +213,24 @@ Only the question it was filed to ask, now with a different subject: **are the w
 natively, and how many?** The wrapper count was the measurement and it no longer means anything. Nobody
 has counted the `wacShare` take rate over the entries a mutation run profiles, and with the grants fixed
 that number should now be most of them. That is the next measurement, and it is cheap.
+
+## The take rate, which was the last question — agent-a, 2026-08-20
+
+**17 of 17.** A spread sample of one `*_test.wac` entry per package — `bytes`, `codec`, `regex`,
+`json`, `unicode`, `url`, `zstd`, `bignum`, `datetime`, `gzip`, `tls`, `platform`, `quic`, `webrtc`,
+`http`, `crypto`, `wactest` — and `wacShare` took every one, 2 to 28 tests each, 346ms to 6.0s.
+
+So the lane is working: the wrapper population is zero, the entries are taken, and nothing falls back
+to `deno test` for want of a profile.
+
+**What that number does not prove.** It is not evidence for the grant fix in the section above, and it
+would be easy to read it that way. A test that fails for want of `--allow-net` is not *skipped*, so
+`skipped` stayed empty and `wacShare` took those files before the fix as well — the take rate was
+always high. What the fix changed is the *content*: `patience_test.wac` went from two tests failing at
+`listen` with 40 attributed points to two passing with 50. The rate says the lane runs; the grants say
+what it measured is true.
+
+Closed on that basis: the question this issue asked — how many are taken — is answered, and the defect
+found while answering it is fixed. If the take rate ever drops, the thing to check first is whether a
+grant has been added to the suite's wac lane and not to `WAC_LANE_GRANTS`, which
+`tools/mutate/grants.test.ts` now fails on.

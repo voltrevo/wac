@@ -30,7 +30,6 @@ record of what has been fixed and why.
 | [0180](open/0180-a-coverage-driver-cannot-call-a-wac-test-that-takes-capabilities.md) | `deno task coverage:fmt` crashes: a coverage driver cannot call a wac test that takes capabilities | bug | wrong answer |
 | [0179](open/0179-fetobytes-carries-three-times-and-nothing-observes-two-of-them.md) | `feToBytes` carries three times, and nothing in the repository observes two of them | untested behaviour | no error |
 | [0178](open/0178-the-caret-goes-solid-after-a-click-and-the-test-that-waits-for-it-to-blink-gives-up.md) | the caret stays lit for over a second after a click, and the test waiting for it to go dark gives up | bug | wrong answer |
-| [0176](open/0176-the-native-profiling-lane-takes-none-of-the-twenty-three-wrappers-it-could.md) | the wrappers are gone, so it is 0 of 0 — and the live path `wacShare` granted less than the lane it claims to match, so 29 files' net tests failed rather than skipped and their coverage went to nobody. Fixed; the take rate is now the open question | bug | no error |
 | [0175](open/0175-a-trap-test-can-observe-nothing-about-the-trap-except-that-it-happened.md) | a `test_traps_*` case can observe nothing about the trap except that it happened | missing feature | not implemented |
 | [0173](open/0173-a-wac-test-cannot-say-which-grant-it-needs.md) | a wac test cannot say which grant it needs, so a lane must grant everything | missing feature | wrong answer |
 | [0165](open/0165-wac-cannot-run-a-host-program-and-the-best-oracles-are-host-programs.md) | wac cannot run a host program, and the strongest oracles this repository has are host programs | missing feature | not implemented |
@@ -64,7 +63,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-236 issues, 184 closed.
+236 issues, 185 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
