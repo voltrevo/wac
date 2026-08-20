@@ -84,3 +84,82 @@ Deno.test("the seed inside `wac` is there, and not older than anything it is bui
       `    deno task seed`,
   );
 });
+
+// **And the binary around it, which is a second artefact with the same problem.**
+//
+// `native/v8/target/release/wac` is compiled Rust, gitignored, one per agent, built by a command
+// nobody runs on a schedule — every sentence above about the seed is true of it. Nothing compared it
+// to `native/v8/src/` until 2026-08-20, and the omission cost a full gate run: another agent's change
+// to how the native host resolves a pushed child's paths against its frame's cwd landed at 14:39, my
+// binary was built at 13:27, and their new test in `packages/platform/test/wac/frame_test.wac` failed
+// against my stale host with the message "the frame's cwd was ignored". Nothing said "binary".
+//
+// `tools/push.sh` reseeds after a merge that touched `packages/wacc/src`, and now also rebuilds after
+// one that touched `native/` — but that arm only helps when the gate did the pulling. A plain
+// `git pull` leaves the binary stale with nothing to say so, which is the same argument that put the
+// seed check here rather than trusting the script.
+//
+// A `cargo build --release` is about six seconds, so unlike the seed there is no reason to defer it.
+const HOST = `${ROOT}/native/v8/target/release/wac`;
+
+/** Every Rust source and manifest the host is built from. */
+async function rustInputs(): Promise<string[]> {
+  const out: string[] = [];
+  // `native/spike-v8` is not in the binary: `native/Cargo.toml` names the members, and a spike is
+  // not one of them. Watching it would make this red for an edit that changes nothing.
+  for (const dir of ["native/v8/src", "native/manifest/src", "native/src"]) {
+    let entries: Deno.DirEntry[];
+    try {
+      entries = [...Deno.readDirSync(`${ROOT}/${dir}`)];
+    } catch {
+      continue;
+    }
+    for (const e of entries) if (e.isFile && e.name.endsWith(".rs")) out.push(`${dir}/${e.name}`);
+  }
+  for (const f of ["native/Cargo.toml", "native/Cargo.lock", "native/build.rs", "native/v8/Cargo.toml"]) {
+    try {
+      await Deno.stat(`${ROOT}/${f}`);
+      out.push(f);
+    } catch { /* not every one of these exists in every layout */ }
+  }
+  return out;
+}
+
+Deno.test("the `wac` binary is not older than the Rust it is built from", async () => {
+  let host: Deno.FileInfo;
+  try {
+    host = await Deno.stat(HOST);
+  } catch {
+    throw new Error(
+      "native/v8/target/release/wac is missing, so nothing in the suite that drives the binary can\n" +
+        "  run. It is gitignored — one per agent. Build it:\n" +
+        "    cd native/v8 && cargo build --release",
+    );
+  }
+  const inputs = await rustInputs();
+  // A short list is a walk that did not resolve, and would make this pass for ever.
+  if (inputs.length < 4) {
+    throw new Error(`the host's Rust inputs came back as ${inputs.length} file(s) — they did not resolve`);
+  }
+  let at = 0, what = "";
+  for (const f of inputs) {
+    const t = (await Deno.stat(`${ROOT}/${f}`)).mtime?.getTime() ?? 0;
+    if (t > at) { at = t; what = f; }
+  }
+  const hostAt = host.mtime?.getTime() ?? 0;
+  if (hostAt >= at) return;
+
+  const mins = (at - hostAt) / 60_000;
+  const behind = mins < 60
+    ? `${Math.max(1, Math.round(mins))} minute(s)`
+    : mins < 1440
+    ? `${(mins / 60).toFixed(1)} hour(s)`
+    : `${(mins / 1440).toFixed(1)} day(s)`;
+  throw new Error(
+    `native/v8/target/release/wac is ${behind} older than ${what}.\n` +
+      `  Every test that drives the binary is driving an older host, and a test written for the\n` +
+      `  change you just merged will fail saying something about what the host did rather than\n` +
+      `  about the host. Rebuild:\n` +
+      `    cd native/v8 && cargo build --release`,
+  );
+});
