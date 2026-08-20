@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | wacc refuses 10 of 14 ill-typed programs the reference refuses all of; in each of the 4 it accepts, the build exits 0 and the exported function is absent | bug | no error |
 | [0165](open/0165-a-field-called-as-a-method-drops-the-function-from-the-module.md) | `p.foo()` where `foo` is a *field* passes both front ends with no diagnostic and the enclosing function is then absent from the module — `wac build` exits 0 and `main` is gone; a field that does not exist at all is caught, so this is the callable check missing, not a lookup | bug | invalid wasm |
 | [0164a](open/0164a-wacc-never-compares-array-types-so-any-array-satisfies-any-slot.md) | any array value satisfies any slot in wacc — argument, assignment, return or field, including a slot that is not an array — so the checker is silent and the engine rejects the module | bug | invalid wasm |
 | [0163](open/0163-one-file-under-two-keys-is-silent-in-the-reference-and-an-invalid-module-in-wacc.md) | one file reached under two keys: the reference reads it twice and runs, wacc's checker stays clean and the engine rejects the module — neither is what D8 says the failure looks like | bug | invalid wasm |
@@ -38,7 +39,7 @@ has been fixed and why.
 
 ## Closed
 
-170 issues, 140 closed.
+171 issues, 140 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
