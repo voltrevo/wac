@@ -375,6 +375,42 @@ Eighteen points remain: one pin, and two rules covering `connectThrough`, which 
 and is tested by `tunnel_test.wac` — three cases that dial the container's real proxy. They are out of
 the driver deliberately: a coverage number that needs the network is a floor over the weather.
 
+### `raster` tenth: 230 of 298 → **299 of 299**, and a crash behind the last three points
+
+**15 hold a coverage floor, 0 only check their own exemptions have not drifted, 6 report and cannot
+fail.** Empty pin and rule lists.
+
+None of this package's 26 tests were being called: the exercise drove `test/wac/scenes.wac` and
+nothing else. Wiring them took `grid.wac` from 69 of 128 to 114 — the scenes drive a `Grid` the way a
+desktop does and the tests drive it the way a terminal does.
+
+`hosts_test.wac` is left out deliberately, and for a **different reason** from the exclusions in
+`http` and `server`: it draws the same desktop on two hosts and compares pixels, so the drawing
+happens in child processes. The driver would pay six seconds and measure only the spawn. Worth not
+conflating with "needs a port" or "needs the network".
+
+The twenty-two that remained were the documented degenerate contracts — `close` an index that is not
+there, `selectTo` before `selectFrom`, `toFocused` with no windows, a rectangle with no area,
+`Grid.create` handed a zero. Each had a sentence in its doc comment and nothing running it. The best
+of them is the **backwards selection**: `Grid`'s own field comment says `selHead` may precede
+`selAnchor` — "a drag upwards is an ordinary drag" — and nothing had ever dragged upwards, so both
+halves of the two min/max ternaries implementing it had never run.
+
+**And the last three points were hiding a crash.** `grid.wac:228` clamps the cursor when it lands past
+the last column, and reaching it needs a glyph wider than the whole grid — `put` wraps *before*
+writing, so only a double-width glyph in a one-column grid can still overshoot. Writing that case
+trapped: *array element access out of bounds*, because the continuation cell went one past the end of
+the row, which on the last row is one past the end of the array. `Grid.create` clamps `cols` up to 1
+rather than refusing and `Desk.open` takes its count from a caller, so a one-column window plus any
+double-width character brought the program down.
+
+That is what an uncovered defensive clamp was worth: not a line to pin, but the one input nobody had
+built, and it crashed.
+
+Grants are worth **one point** here — measured, after I guessed ten. Against nineteen in `http`,
+twenty in `regex` and a hundred and four in `bignum`. The five tests that read the font hex check
+generated data against vendored data, which is a strong check and barely a branch check.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,
