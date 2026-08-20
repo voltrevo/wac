@@ -64,7 +64,7 @@ export const KNOWN_SURVIVORS: KnownSurvivor[] = [
       "being written into. Every caller takes that length from the modulus and passes a " +
       "value already reduced below it, so it always fits. Defensive against a future " +
       "caller that computes the length some other way, and recorded in " +
-      "packages/crypto/cov.ts for the same reason.",
+      "packages/crypto/test/cov_ledger.wac for the same reason.",
   },
   // ── crypto's remaining guards, after the ones that were real gaps were tested ──
   //

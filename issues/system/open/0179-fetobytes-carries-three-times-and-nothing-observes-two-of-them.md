@@ -44,7 +44,7 @@ thing round-to-nearest exists for.
 
 **Deleting them is a change to constant-time code and I have not shown they are dead.** "No input in
 this repository reaches it" is not "no input reaches it". The same argument is already written down
-one function away — `packages/crypto/cov.ts` line 506 explains that `feToBytes`' final conditional
+one function away — `packages/crypto/test/cov_ledger.wac`'s entry for `field25519.wac:200` explains that `feToBytes`' final conditional
 subtraction is unreachable, gives the reason, and says explicitly: *"That is an argument, not a
 proof — I could not construct an input, and I have not shown none exists."* The same caution applies
 here and more so, because two passes are a larger thing to remove than one branch.

@@ -1,6 +1,6 @@
 # 0222 — the last five coverage drivers are exemption ratchets, and the ratchet is written four times
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-20
@@ -14,9 +14,9 @@ another agent.
 
 | package | lines | pins | ledger machinery |
 |---|---:|---:|---|
-| `crypto` | 1,101 | 28 | snippet staleness, `Deno.exit(1)` |
+| ~~`crypto`~~ | ~~1,101~~ | 28 → 32 | done 2026-08-20 — six of its entries were covered |
 | ~~`zstd`~~ | ~~1,022~~ | 8 → 17 | done 2026-08-20 — the staleness check was hiding sixteen |
-| `ssh` | 794 | 0 | **none** — no staleness check at all |
+| ~~`ssh`~~ | ~~794~~ | 0 → 1 + 1 rule | done 2026-08-20 — and it did not go red |
 | ~~`gzip`~~ | ~~605~~ | 3 | done 2026-08-20 — the contract this generalised |
 | ~~`fs`~~ | ~~582~~ | 33 → 31 + 8 rules | done 2026-08-20 — two pins were one entry twice, about a covered branch |
 | `sh` | 473 | — | another agent's package |
@@ -207,8 +207,90 @@ That is the **third** vacuous entry this issue has turned up — after zstd's pi
 point at all — and they share a shape: a staleness check can only ask whether a line still says what it
 said, never whether the claim about it is still true.
 
-Left: `crypto` (28 pins), and `ssh`, which has never ratcheted and is therefore the one most likely to
-go red.
+## Done: `crypto`, and the driver could not call its own tests — 2026-08-20
+
+**1140 of 1173 points, against the TypeScript's 974 of 1053.** More points seen *and* fewer missed, and
+one thing explains it: `harness/wacCoverage.ts`'s `runTestExports` skips any test whose `fn.length > 0`,
+because `instrument` and `wacBind` cannot supply a capability. **64 of this package's 152 returning tests
+were unreachable from its own coverage driver**, and it made up the difference with about six hundred
+lines of hand-built probe calls. `wac covdump` runs the ordinary program path (`issues/system/0221`), so
+the exercise's `main` has a real `Core` and `Cli` and calls them.
+
+Measured on the way: the tests *alone* reach 1100 of 1173. The probe half still earns its place — the
+tests leave 73 points, concentrated in `sha1.wac` (15), `weierstrass.wac` (14), `rsa.wac` (11) — because
+a test asserts an answer at one or two lengths where coverage wants every arm. But five sixths of those
+six hundred lines were driving what the tests already drive.
+
+**`MEASURED_BY_THE_BINARY` is gone.** That list existed for one entry, and it was a good answer to a
+real problem: all five of `mlkem_test.wac`'s tests take `(Core core, Cli cli)`, so the driver called none
+of them and reported fifty of `mlkem.wac`'s points uncovered, while `wac test --coverage` read 125 of
+132. So it spawned the binary, took that measurement every run, and required the figure in both
+directions. `mlkem.wac` reads **131 of 132** here, in the same counter array as everything else. A
+measurement in one place beats a measurement asserted from another — `issues/system/0200` is updated.
+
+**And six of its 28 entries were covered** — `ed25519.wac` lines 70, 75, 107, 113, 153 and 394, which the
+expanded-key and prop228 tests reach. The old check only asked whether the snippet had moved, so it would
+have kept printing their reasons for ever.
+
+Seventeen of the 32 pins are `proven: false`. That is the highest proportion of any package here and it is
+the right answer: an ECDSA verification landing on the identity is *constructible by an attacker* choosing
+r and s together, which is exactly why the check exists. The flag is set from what each reason actually
+claims — "no input reaches it" against "reachable with the right scalar" — rather than from which list it
+lived in, because `UNREACHED` had no such field and calling all 28 unreachable would have buried thirteen
+gaps among the exemptions.
+
+`packages/crypto/cov.ts` is deleted, and `test/rsaOracle.ts` with it — the driver was its only importer.
+
+## Done: `ssh`, the one with no ledger — and it did not go red — 2026-08-20
+
+**605 of 672, against the TypeScript's 561**, and the 67 left are two claims rather than sixty-seven:
+`conn.wac`'s `struct Conn`, which is the whole client session, and one line in `privatekey.wac`. The
+other eleven source files are at 100%.
+
+This was the package with no ledger *at all*: it measured 561, printed the 111 it missed and exited 0, so
+an uncovered branch arriving was indistinguishable from the hundred and eleven that were always there.
+Of the five drivers named above this was the one most likely to go red on being given a ratchet.
+
+The 44 points came from two things the old driver could not do. The **tests** — 29 of the 32
+non-exclusive ones take a capability, and `runTestExports` skips any test whose `fn.length > 0`. And
+**five parsers the probe does not wrap**: `requestName`, `requestWantsReply`, `readOpenChannel`,
+`readPtyReq` and `readWindowChange` need no capability and no port, so 24 of `server.wac`'s 26 uncovered
+points were reachable by calling them. Pinning those would have been a ledger entry for something a call
+reaches.
+
+`struct Conn` is the one place a rule does what only a rule can: 46 lines, one sentence. Its methods are
+the version exchange, the key exchange, NEWKEYS, the service request, authentication, the channel and the
+exit status — all of it needing a peer, and the peer that matters is a real OpenSSH server.
+`live_test.wac` and `cli_test.wac` drive it and both declare `test-lane: exclusive`, because they bind a
+real port and start a real `sshd`. A coverage driver that ran them would race that lane, and two runs
+binding one port do not fail cleanly — they interleave, and the loser reports a protocol error about the
+wrong thing.
+
+## Closed — 2026-08-20
+
+All five have moved. `tools/coverageAll.ts` reads **5 hold a coverage floor, 0 only check their own
+exemptions have not drifted**, where it read 2 and 2 when this was filed.
+
+| package | before | after |
+|---|---|---|
+| `gzip` | 449/452, 3 pins | 449/452, 3 pins |
+| `zstd` | 733/758, 8 pins, staleness only | **739/758**, 17 pins, two-way |
+| `fs` | 679/806, 33 pins + 8 categories | 679/806, 31 pins + 8 rules |
+| `crypto` | 974/1053, 28 pins | **1140/1173**, 32 pins |
+| `ssh` | 561/672, **no ledger** | **605/672**, 1 pin + 1 rule |
+
+Four vacuous entries turned up, all invisible to a staleness-only check: zstd's pin on a line with **no
+branch point on it**, fs's **same entry twice** about a covered branch, and six of crypto's 28 that were
+already covered. They share a shape — a staleness check can only ask whether a line still says what it
+said, never whether the claim about it is still true.
+
+And three instances of the phrasing defect that prompted this issue: gzip's `unreachable` for
+`unreached`, `covreport`'s own failures prefixed `covreport: `, and fs's principal failure saying the
+right words in the wrong order — which also had it classified as holding no floor when it is the
+strictest of the five.
+
+`packages/sh/cov.ts` is the sixth driver and belongs to another agent; it is out of scope here, and
+`tools/coverageAll.ts` counts it among the sixteen that report and cannot fail.
 
 ## Notes
 

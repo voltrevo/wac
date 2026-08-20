@@ -1,0 +1,116 @@
+// ssh's coverage, and the argument for the points nothing reaches.
+//
+//   deno task coverage:ssh
+//   deno task coverage:ssh --verbose
+//
+// **This package had no ledger at all.** Its driver measured 561 of 672 points and printed the 111 it
+// missed, and nothing failed — so an uncovered branch arriving was indistinguishable from the hundred
+// and eleven that were always there, which is the state `issues/system/0222` was filed about. Of the
+// five drivers it names this was the one most likely to go red on being given a ratchet.
+//
+// It does not. **605 of 672**, and the 67 left are two claims rather than sixty-seven:
+//
+//   1. `conn.wac`'s `struct Conn` — the whole client session, driven only by tests that bind a real
+//      port;
+//   2. one line in `privatekey.wac`, for a key file that disagrees with itself.
+//
+// The other eleven source files are at 100%.
+//
+// ## Where the 44 points came from
+//
+// `cov.ts` instrumented `test/wac/probe.wac` and called it; those exercises are carried over unchanged.
+// What is new is two things it could not do:
+//
+//   - **the tests.** `harness/wacCoverage.ts`'s `runTestExports` skips any test whose `fn.length > 0`,
+//     because `instrument` cannot supply a capability — and 29 of the 32 non-exclusive tests take one.
+//     `wac covdump` runs the ordinary program path (`issues/system/0221`), so `main` has a real `Core`
+//     and `Cli` and calls them;
+//   - **five parsers the probe does not wrap.** `requestName`, `requestWantsReply`, `readOpenChannel`,
+//     `readPtyReq` and `readWindowChange` need no capability and no port — they are pure functions over
+//     a payload — so 24 of `server.wac`'s 26 uncovered points were reachable by calling them. Pinning
+//     those would have been a ledger entry for something a call reaches, which is the failure this
+//     whole exercise exists to avoid.
+//
+// ## `proven` is two claims
+//
+//   - `true` — no input reaches it;
+//   - `false` — reachable, and nobody has built the input *here*. Both entries below are the second
+//     kind, and for the rule that means something specific: **driven by a test this driver must not
+//     run.** That is where the measurement stops, not where the testing does.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/ssh/test/cov_exercise.wac";
+const string PREFIX = "packages/ssh/";
+
+/**
+ * The exercise's grants.
+ *
+ * Its 32 tests drive `ssh-keygen` and `openssl` through `Cli.exec` and read key files off disk.
+ * `--allow-net` because two of them open a local socket to a server they start themselves — which is
+ * not the same as the exclusive lane's real OpenSSH on a real port, and is why they are safe to run
+ * here.
+ */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+/**
+ * `trapProbe` — the guards that trap by contract, as one sweep.
+ *
+ * Thirteen cases, each a caller that got a length wrong: a cookie that is not sixteen bytes, a cipher
+ * key that is not sixty-four, an X25519 scalar that is not thirty-two, padding that runs out. Every one
+ * of those lengths is fixed by the protocol, so a guard is the only thing between a short buffer and a
+ * read past its end. `covdump` calls `trapProbe(0)`…`trapProbe(12)` with each trap caught
+ * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`).
+ */
+string[] cases() { return string[]("trapProbe:13"); }
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/ssh/src/privatekey.wac", 173,
+        "if (blobPoint[i] != pub[i]) { return fail(KeyError.Malformed); }", false,
+        "A key file whose header public key disagrees with the one inside the private section. An " +
+        "`openssh-key-v1` file carries the point twice — once in the clear and once inside the part " +
+        "that may be encrypted — and this is the check that they are the same key. Every malformed " +
+        "file built in `cov_exercise.wac` is wrong in one *structural* way: a bad magic, a key count " +
+        "of two, a section cut short, check words that disagree. This one needs a file that parses " +
+        "completely and is internally inconsistent, which is a different kind of wrong and takes " +
+        "building the two blobs apart. Reachable, and not built — and worth building, because a file " +
+        "that passed this check while carrying two different keys would authenticate as one identity " +
+        "and sign as another."));
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/ssh/src/conn.wac", "struct Conn", "struct", false,
+         "The client session, end to end: the version exchange, the key exchange, NEWKEYS, the " +
+         "service request, public-key authentication, the channel, and the exit status. All of it is " +
+         "one struct's methods and all of it needs a peer — and not a peer this driver can be, " +
+         "because the peer that matters is a real OpenSSH server. `test/wac/live_test.wac` and " +
+         "`test/wac/cli_test.wac` are where it is driven, and both declare `test-lane: exclusive` " +
+         "because they bind a real port and start a real `sshd`: 26 of this package's 58 tests are in " +
+         "that lane. A coverage driver that ran them would race it, and two runs binding the same " +
+         "port do not fail cleanly — they interleave, and the loser reports a protocol error about " +
+         "the wrong thing.\n" +
+         "         So this is where the measurement stops rather than where the testing does. The " +
+         "parts of a session that can be checked without a peer are not in here: every message this " +
+         "struct sends and every one it parses has its own function in `packet.wac`, `kexinit.wac`, " +
+         "`kex.wac`, `cipher.wac`, `auth.wac` and `channel.wac`, and all six of those files are at " +
+         "100%. What is left is the sequencing, which is the thing a real server is the only judge of."));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

@@ -1,0 +1,251 @@
+// crypto's coverage, and the argument for every point nothing reaches.
+//
+//   deno task coverage:crypto
+//   deno task coverage:crypto --verbose
+//
+// **Named rather than tolerated as a percentage below 100.** A report that sits at 97.2% for ever
+// teaches everyone to ignore the last line, and then a genuinely new gap arrives and looks like the one
+// that was always there. So this is a two-way ratchet over `tools/wac/covledger.wac`: anything not
+// listed here is expected to be covered and the run fails if it is not — and anything listed that *does*
+// get covered fails too, since the reason has stopped holding. `issues/system/0222`.
+//
+// ## 1140 of 1173, against the TypeScript's 974 of 1053
+//
+// More points seen *and* fewer missed, and the reason is one thing: `harness/wacCoverage.ts` could not
+// call a test that takes an argument. `runTestExports` skips any whose `fn.length > 0`, because
+// `instrument` and `wacBind` cannot supply a capability — so **64 of this package's 152 returning tests
+// were unreachable from its own coverage driver**, and it made up the difference with about six hundred
+// lines of hand-built probe calls. `wac covdump` runs the ordinary program path
+// (`issues/system/0221`), so the exercise's `main` has a real `Core` and `Cli` and simply calls them.
+//
+// **`MEASURED_BY_THE_BINARY` is gone with it.** That list existed for one entry: all five of
+// `mlkem_test.wac`'s tests take `(Core core, Cli cli)`, so the driver called none of them and reported
+// fifty of `mlkem.wac`'s points uncovered, while `wac test --coverage` read 125 of 132. The answer was
+// to spawn the binary, take that measurement and assert the figure — a per-file floor asserted from
+// somewhere else, checked every run so it could not go stale. It reads **131 of 132** here, in the same
+// counter array as everything else, because the shared paths are covered by the rest of the run too. A
+// measurement in one place beats a measurement asserted from another.
+//
+// **And six of the old list's 28 entries are now covered** — `ed25519.wac` lines 70, 75, 107, 113, 153
+// and 394, which the expanded-key and prop228 tests reach and the probe did not. The old check would
+// have kept printing their reasons for ever; this one fails on them, which is how they were found.
+//
+// ## `proven` is two claims, and seventeen of these are the second
+//
+//   - `true` — no input reaches it. A guard that cannot fire is still worth keeping when what it guards
+//     is worse than a wrong answer;
+//   - `false` — reachable, and nobody has built the input. That is a **gap**, not an exemption.
+//
+// The distinction is `packages/zstd`'s and it matters most here, because this package's list is full of
+// the second kind: an ECDSA verification landing on the identity is *constructible by an attacker*
+// choosing r and s together, which is exactly why the check exists. Calling that unreachable would be
+// the remembered-coverage failure this ledger exists to prevent. The flag is set from what each reason
+// actually claims — "no input reaches it" against "reachable with the right scalar" — rather than from
+// which list it happened to live in.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/crypto/test/cov_exercise.wac";
+const string PREFIX = "packages/crypto/";
+
+/**
+ * The exercise's grants.
+ *
+ * Its 152 tests drive openssl, node and Deno's WebCrypto through `Cli.exec` and read KAT vectors off
+ * disk, so it needs to run programs, read, write and see the environment. `--allow-net` because two of
+ * them reach a local socket. Not a widening of what *this* may do: these are what the exercise is
+ * compiled with, and a driver given capabilities it does not need is one whose exercises could quietly
+ * start using them.
+ */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+/**
+ * The sweeps, and their widths.
+ *
+ * `trapCase` is every `test_traps_*` in the package — 130 of its 283 tests, because a guard against a
+ * caller error is exactly the code nothing exercises by accident and one export per case is what lets a
+ * test say it *wants* a trap. `trapProbe` is the guards no test file carries, reached through the
+ * probes' own wrappers. Both are sweeps: `covdump` calls `name(0)`…`name(n-1)` with each trap caught
+ * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`), and a case past the end returns rather than
+ * trapping, so a width may be an upper bound.
+ */
+string[] cases() { return string[]("trapCase:130", "trapProbe:35"); }
+
+/** Points nothing here reaches, each with the argument for it. */
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/crypto/src/ed25519.wac", 326, "if (byteShift + i < 64)", true,
+        "The bound holds by construction: this shifts a 32-byte value left within a 64-byte " +
+        "buffer, and `byteShift` is derived from the same bit count that sizes the loop. The " +
+        "guard is what makes the shift correct *as written* rather than by the caller's " +
+        "arithmetic — the reason it stays is that the alternative is a silent out-of-bounds " +
+        "write into whatever follows."),
+    Pin("packages/crypto/src/field25519.wac", 200, "if (geP == 1)", false,
+        "feToBytes' final conditional subtraction, for a value that is still in [p, 2^255) " +
+        "after carrying. No input reaches it, and the likely reason is that feCarry's " +
+        "round-to-nearest pass already folds anything at or above about 2^254 back down, so " +
+        "the nineteen values in that band never survive to be tested. That is an argument, " +
+        "not a proof — I could not construct an input, and I have not shown none exists. It " +
+        "stays because the cost of being wrong in the other direction is a non-canonical " +
+        "encoding for those nineteen values, which is the kind of defect that shows up as an " +
+        "interop failure years later. If someone proves it dead, delete it and this entry " +
+        "together."),
+    Pin("packages/crypto/src/field25519.wac", 202, "for (i32 i = 0; i < 10; i++) { h[i] = t[i]; }", false,
+        "The copy inside that same conditional. Unreached for the one reason above, not a " +
+        "second one."),
+    Pin("packages/crypto/src/field25519.wac", 214, "if (byteIdx < 32)", true,
+        "The same shape as `ed25519.wac:259`: the ten limb widths sum to 255 bits, so the " +
+        "last bit written is 254 and `byteIdx` is 31. The guard bounds a loop whose total is " +
+        "fixed by the limb layout above it, and it would start firing the day that layout " +
+        "changed — which is when a silent write past the end would otherwise begin."),
+    Pin("packages/crypto/src/fieldp.wac", 51, "if (n != 12) { trap; }", true,
+        "pLimbs asked for a limb count that is neither eight nor twelve. Unreachable for the " +
+        "same reason as the guard above — every field element originates from a decode that " +
+        "already checked — and kept because the alternative to trapping is returning P-384's " +
+        "prime for a P-521 element."),
+    Pin("packages/crypto/src/fieldp.wac", 66, "if (n != 12) { trap; }", true,
+        "foldVector's copy of that same guard."),
+    Pin("packages/crypto/src/keccak.wac", 61, "n == 0 ? x", true,
+        "**No call site passes zero, and the set is closed.** `rotl` is private to this file, " +
+        "so its arguments are enumerable: every one is a literal — 1 in the θ step, and 6, 8, " +
+        "44, 45, 55, 56, 61, 62 and the rest in ρ. The lane whose ρ offset *is* zero is not " +
+        "rotated at all rather than rotated by nothing, which is why the zero never arrives. " +
+        "No test can reach this side without exporting the function to trip it."),
+    Pin("packages/crypto/src/keccak.wac", 194, "if (rate <= 0 || rate > 200) { trap; }", true,
+        "**Every caller in the repository passes a constant rate**: 136 for `keccak256`, " +
+        "`sha3_256` and `shake256`, 72 for `sha3_512`, 168 for `shake128`. `sponge` is " +
+        "exported, so the guard is for a caller outside this repository and is worth keeping; " +
+        "reaching it from a test would mean writing one whose only purpose is to trip a trap, " +
+        "which is what the `fieldp.wac` entries below say about the same shape."),
+    Pin("packages/crypto/src/rsa.wac", 54, "if (!isZero(cur)) { trap; }", true,
+        "toBytes' overflow guard. Every caller passes a length taken from the modulus and a " +
+        "value already reduced below it, so the value always fits. Defensive against a future " +
+        "caller that computes the length some other way."),
+    Pin("packages/crypto/src/rsa.wac", 272, "if (unusedBits > 0)", false,
+        "**`unusedBits` is never zero for a modulus anyone has.** `emBits = bitLen(n) - 1` " +
+        "and `emLen = ceil(emBits / 8)`, so `unusedBits = 8*emLen - emBits` is zero exactly " +
+        "when `emBits` is a multiple of eight — that is, when the modulus is 1 bit more than " +
+        "a whole number of bytes: 2049 bits, 3073, 257. Every generator here and everywhere " +
+        "else produces a multiple of eight. Reachable, not unreachable: a caller may pass " +
+        "such a modulus, and then this masks nothing because there is nothing to mask. " +
+        "issues/lang/0112."),
+    Pin("packages/crypto/src/rsa.wac", 465, "if (unusedBits > 0)", false,
+        "The signing side of the same arithmetic — see the entry for `rsa.wac:272`. Both are " +
+        "the `else`: the mask *is* applied on every key anyone uses, and the branch that " +
+        "skips it needs a modulus of 8k+1 bits."),
+    Pin("packages/crypto/src/weierstrass.wac", 88, "if (jacIsInfinity(q))", false,
+        "jacAdd with the *second* operand at infinity. The ladder only ever adds a fixed " +
+        "point to an accumulator, so the identity always arrives as the first operand and " +
+        "line 110 catches it. Kept because jacAdd is exported and a caller could pass them " +
+        "the other way round."),
+    Pin("packages/crypto/src/weierstrass.wac", 98, "if (fpEquals(s1, s2)) { return jacDouble(c, p); }", false,
+        "The doubling case inside jacAdd, for P + P. The ladder doubles the accumulator " +
+        "before every conditional add, so the accumulator is never equal to the addend at the " +
+        "point of adding. It is reachable through the exported jacAdd and through an ECDSA " +
+        "verification where u1*G happens to equal u2*Q, which needs a signature constructed " +
+        "for the purpose. This is the branch whose absence would be worst — the general " +
+        "formula divides by zero for P + P — so it stays."),
+    Pin("packages/crypto/src/weierstrass.wac", 247, "if (e[at] >= 2)", false,
+        "The borrow side of the odd-scalar adjustment: it runs when a digit is below two and " +
+        "the subtraction has to borrow from the next. Reachable with the right scalar and not " +
+        "driven by the vectors here, which are real keys and signatures. Same status as " +
+        "`ed25519.wac:327` — a test to write."),
+    Pin("packages/crypto/src/weierstrass.wac", 266, "while (cmpBE(out, c.order) >= 0)", false,
+        "scReduce's conditional subtraction, for a value at or above n. n is within 2^-32 of " +
+        "2^256, so a uniformly random 32-byte value — a SHA-256 digest, or a point's " +
+        "x-coordinate — lands above it about once in four billion times. Not reachable by " +
+        "choosing inputs; reachable in the field, eventually, by somebody."),
+    Pin("packages/crypto/src/weierstrass.wac", 268, "for (i32 i = len - 1; i >= 0; i--)", false,
+        "The subtraction inside that same loop."),
+    Pin("packages/crypto/src/weierstrass.wac", 270, "borrow = d < 0 ? 1 : 0;", false,
+        "The borrow inside that same loop."),
+    Pin("packages/crypto/src/weierstrass.wac", 298, "if (jacIsInfinity(shared)) { trap; }", true,
+        "An ECDH result at infinity. P-256 has prime order, so the only point of small order " +
+        "is the identity itself, and p256Decode rejects anything not on the curve — so a " +
+        "validated peer point times a scalar in [1, n) cannot be the identity. Kept because " +
+        "that argument depends on the validation above it staying correct."),
+    Pin("packages/crypto/src/weierstrass.wac", 352, "if (jacIsInfinity(point)) { return false; }", false,
+        "u1*G + u2*Q landing on the identity during verification. Constructible by an " +
+        "attacker choosing r and s together, which is exactly why the check is here; not " +
+        "constructible by accident, which is why no test drives it."),
+    Pin("packages/crypto/src/weierstrass.wac", 374, "if (jacIsInfinity(point)) { return u8[0](); }", true,
+        "k*G at infinity during signing, which needs k = 0 mod n — already rejected above. " +
+        "FIPS 186-4 specifies the retry anyway."),
+    Pin("packages/crypto/src/weierstrass.wac", 379, "if (isZeroBE(r)) { return u8[0](); }", false,
+        "r = 0 during signing. FIPS 186-4 requires the retry; the probability is about 2^-256 " +
+        "and no test can produce it without solving for k."),
+    Pin("packages/crypto/src/weierstrass.wac", 383, "if (isZeroBE(s)) { return u8[0](); }", false,
+        "s = 0 during signing. As above."),
+    Pin("packages/crypto/src/bcryptpbkdf.wac", 134, "if (dest >= origKeylen) { break; }", false,
+        "The striped write's bound: it fires when a destination lands past the end of the " +
+        "key, which needs a stride and a block count that overrun together. Seven key lengths " +
+        "from 1 to 65 are driven here — including the 48 `packages/ssh` asks for, a 32-byte " +
+        "key and a 16-byte IV — and none produced that arrangement. Reachable, and not " +
+        "constructed."),
+    Pin("packages/crypto/src/bcryptpbkdf.wac", 138, "if (written == 0) { break; }", false,
+        "The anti-hang guard the comment beside it describes, and it only fires once the " +
+        "write above has placed nothing — which is the same arrangement as the entry for line " +
+        "134. The two go together and will go together."),
+    Pin("packages/crypto/src/mlkem.wac", 174, "if (at + 3 > stream.len()) { trap; }", true,
+        "Rejection sampling reading past its XOF stream. The stream is squeezed to a length " +
+        "chosen for the worst case — three bytes per pair of candidates, with room for the " +
+        "rejections — so `sampleNTT` cannot run out. Kept because the bound is what makes the " +
+        "sampler correct on its own terms rather than by the length its one caller happens to " +
+        "pick."),
+    Pin("packages/crypto/src/rsagen.wac", 144, "if (cmp(n, small(primes[i] as i64)) != 0) { return true; }", true,
+        "The `else` — a candidate that is *equal* to one of the small primes rather than " +
+        "divisible by it, which is not a factor in the sense that matters. `randomPrime` " +
+        "forces the top two bits of the candidate, so the smallest it can be is 3 * " +
+        "2^(bits-2); for the 256-bit widths driven here that is about 10^76 against a largest " +
+        "small prime under a thousand."),
+    Pin("packages/crypto/src/rsagen.wac", 220, "if (bitLen(candidate) != bits) { continue; }", true,
+        "A candidate of the wrong width. The two lines above it force the top two bits and " +
+        "the low one, so `bitLen` is exactly `bits` for every draw — the guard cannot fire " +
+        "while that forcing is there. Kept because it is the check that would catch the " +
+        "forcing being removed, which the comment beside the odd-bit line says is an " +
+        "efficiency rather than a correctness property."),
+    Pin("packages/crypto/src/rsagen.wac", 252, "if (isZero(p)) { return bad; }", false,
+        "`suitablePrime` exhausting its search. Reachable in the sense that the search is " +
+        "probabilistic and not in any sense a test can use: it would need every one of a " +
+        "million counters to yield a composite or a prime for which e has no inverse. Not " +
+        "constructed, and no plan to."),
+    Pin("packages/crypto/src/rsagen.wac", 254, "if (isZero(q)) { return bad; }", false,
+        "The same for the second prime. One gap counted twice rather than two."),
+    Pin("packages/crypto/src/rsagen.wac", 255, "if (cmp(p, q) == 0) { return bad; }", true,
+        "The two primes coming out equal. They are searched from counters a million apart — " +
+        "the comment above says why, so that one prime's candidates can never be the other's " +
+        "— and the stream is keyed on the counter, so the two draw from disjoint sequences. " +
+        "Kept because that property lives in the two constants above rather than in anything " +
+        "this line can see."),
+    Pin("packages/crypto/src/rsagen.wac", 258, "if (bitLen(n) != bits) { return bad; }", true,
+        "The modulus coming out the wrong width. Each prime has its top two bits set, so each " +
+        "is in [3*2^(h-2), 2^h) and the product is in [9*2^(2h-4), 2^2h) — which has exactly " +
+        "2h bits. The guard is a statement about the forcing in `randomPrime` two functions " +
+        "away."),
+    Pin("packages/crypto/src/rsagen.wac", 269, "if (isZero(d)) { return bad; }", true,
+        "`e` having no inverse mod λ(n). `suitablePrime` already rejects any prime for which " +
+        "e has no inverse mod p-1 — `test_a_prime_is_rejected_when_e_has_no_inverse` in " +
+        "`rsagen_test.wac` is that check — and λ is a divisor of (p-1)(q-1), so an inverse " +
+        "mod both factors is an inverse mod λ. Kept because it is the one line that would " +
+        "notice `suitablePrime` losing that filter."));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  // No rules: every entry here is about one line. `packages/fs` is where a class of points needed one
+  // sentence rather than ninety-four.
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

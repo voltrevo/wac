@@ -129,11 +129,20 @@ anyway, and this is not fine", which is the state that makes a check worthless. 
 corrections matter more than the result:
 
 **1. mlkem's 48 points were the measurement gap this issue describes, and are now measured rather than
-excused.** `packages/crypto/cov.ts` carries a `MEASURED_BY_THE_BINARY` entry that *runs*
-`wac test --coverage` on `mlkem_test.wac` — 0.9s — and requires 125 of 132. Fifty `UNREACHED` entries
-would have been the wrong fix: that list means "no test reaches this", and the tests exist, pass and
-reach almost all of it. The floor works in both directions, so a rise fails with the number to raise it
-to; a ratchet that only loosens is a ledger.
+excused.** The driver carried a `MEASURED_BY_THE_BINARY` entry that *ran* `wac test --coverage` on
+`mlkem_test.wac` — 0.9s — and required 125 of 132. Fifty `UNREACHED` entries would have been the wrong
+fix: that list means "no test reaches this", and the tests exist, pass and reach almost all of it. The
+floor worked in both directions, so a rise failed with the number to raise it to; a ratchet that only
+loosens is a ledger.
+
+> **The mechanism is gone as of 2026-08-20, and the number is better than it was asserting.**
+> `issues/system/0222` moved this driver to wac. `wac covdump` runs the ordinary program path, so the
+> exercise's `main` has a real `Core` and `Cli` and calls mlkem's five tests directly —
+> `packages/crypto/src/mlkem.wac` reads **131 of 132** in the same counter array as everything else,
+> because the shared paths are covered by the rest of the run too. There is no subprocess, no remembered
+> figure and no `measuredElsewhere` exclusion. What this entry was working around was one sentence in
+> `harness/wacCoverage.ts`: `runTestExports` skips any test whose `fn.length > 0`, because `instrument`
+> cannot supply a capability. Sixty-four of the package's 152 returning tests were behind that.
 
 **2. keccak's five remaining points are *not* a measurement gap, and this issue said they were.** It
 claimed they were "reached only by the two tests that compare against the host". Measured:

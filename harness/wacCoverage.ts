@@ -6,7 +6,8 @@
 // is the shared half, so each package can supply only its own half.
 //
 // A package adds `cov.ts` that instruments its entry points, runs whatever exercises
-// them, and calls `report`. See `packages/crypto/cov.ts`.
+// them, and calls `report`. See `core/cov.ts`, which is the last caller: every package driver moved to
+// `tools/wac/covledger.wac` in `issues/system/0222`.
 //
 // **Twelve packages no longer have one** — `issues/system/0161`. Their exercises are wac now, a
 // program whose `main` runs the shapes, with `tools/wac/covreport.wac` as the shared half instead of

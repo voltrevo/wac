@@ -24,7 +24,7 @@
 // `tools/coverageAll.ts` repeats each failing task's own explanation, and selects the lines to repeat by
 // matching `no longer holds`, `is listed as unreach`, `branch point(s) uncovered` and a leading `error`.
 // Those exact strings are what this emits. They are not decoration: gzip's `cov.ts` said
-// "unreachable" where `packages/crypto/cov.ts` said "unreached", and a stale gzip entry therefore exited
+// "unreachable" where crypto's said "unreached", and a stale gzip entry therefore exited
 // 1 with its only explanation filtered out of the summary — a reason with its subject removed.
 //
 // ## A line, not a point

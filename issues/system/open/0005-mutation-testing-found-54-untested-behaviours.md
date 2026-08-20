@@ -282,7 +282,7 @@ so there was nothing there to fail. A perfect score was the symptom.
 
 The thirteen `guard/weierstrass` and `guard/fieldp` survivors are the defensive traps in
 the generalised curve code — `if (n != 12) { trap; }`, `if (b.len() != n) { trap; }` and
-their neighbours. `packages/crypto/cov.ts` already carries an argument for each as
+their neighbours. `packages/crypto/test/cov_ledger.wac` already carries an argument for each as
 unreachable, so unkillable is the expected answer and they want `known.ts` entries rather
 than tests.
 
