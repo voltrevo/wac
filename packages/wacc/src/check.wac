@@ -1121,6 +1121,24 @@ export struct C {
    */
   i32 switchDepth;
 
+  /**
+   * Local spellings that are other names for **one** imported declaration, and what they collapse
+   * onto.
+   *
+   * `import { Point, Point as P }` gives one declaration two names in this file, and
+   * `spec/spec/generics.md` `[§wac-generic-instantiation-identity-6pnq4wj]` says they are one type:
+   * *"`Box<P>` and `Box<Point>` are one struct"*. `renameFrom`/`renameTo` cannot express that — it
+   * maps a declaring name to a **single** local one, so `declareModule` registered the declaration
+   * under one spelling and left the other undeclared, which is silent rather than wrong.
+   *
+   * Different from `renameFrom` in two ways that matter: this maps a *local* name to another *local*
+   * name, and it survives past the import walk, because the entry file's own body is where the second
+   * spelling gets written. `issues/lang/0161`.
+   */
+  string[] aliasFrom;
+  string[] aliasTo;
+  i32 aliasCount;
+
 
 
   /**
@@ -1158,7 +1176,8 @@ export struct C {
              string[decls](), 0,
              i32[decls * 3](), 0,
              Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
-             bool[decls](), i32[locals](fill: 0 - 1), 0);
+             bool[decls](), i32[locals](fill: 0 - 1), 0,
+             string[decls](), string[decls](), 0);
   }
 
   /**
@@ -1213,6 +1232,27 @@ export struct C {
       if (this.renameFrom[i] == n) { return this.renameTo[i]; }
     }
     return n;
+  }
+
+  /**
+   * The one spelling this file's other names for a declaration collapse onto.
+   *
+   * Identity for every name that is not a second spelling, which is nearly all of them — the loop
+   * runs over an empty table in any file that does not import one name twice.
+   */
+  string canon(const this, string n) {
+    for (i32 i = 0; i < this.aliasCount; i++) {
+      if (this.aliasFrom[i] == n) { return this.aliasTo[i]; }
+    }
+    return n;
+  }
+
+  /** Record that this file's `from` is another name for its own `to`. */
+  void addLocalAlias(this, string from, string to) {
+    if (this.aliasCount >= this.aliasFrom.len()) { return; }
+    this.aliasFrom[this.aliasCount] = from;
+    this.aliasTo[this.aliasCount] = to;
+    this.aliasCount = this.aliasCount + 1;
   }
 
   /** Record that the file being declared calls `from` what this file calls `to`. */
@@ -1656,7 +1696,7 @@ export struct C {
     // An instantiation is a struct: `Box<i32>` is as much a reference type as `Box` is, and every
     // rule that asks this question means the reference-type one. `isGeneric` stays exact, so the two
     // together say what is wanted — a bare `Box` is the unmodelled template, `Box<i32>` is a type.
-    string at = templateOf(name);
+    string at = templateOf(this.canon(name));
     for (i32 i = 0; i < this.structCount; i++) {
       if (this.structNames[i] == at) { return true; }
     }
@@ -1665,8 +1705,9 @@ export struct C {
 
   /** Which entry holds this function, or -1. */
   i32 funcAt(this, string name) {
+    string want = this.canon(name);
     for (i32 i = 0; i < this.funcCount; i++) {
-      if (this.funcNames[i] == name) { return i; }
+      if (this.funcNames[i] == want) { return i; }
     }
     return -1;
   }
@@ -1806,8 +1847,9 @@ export struct C {
    * `Opened.Ok` happens to hold.
    */
   i32 variantArityIn(const this, string owner, string name) {
+    string want = this.canon(owner);
     for (i32 i = 0; i < this.variantCount; i++) {
-      if (this.variantOwners[i] == owner && this.variantNames[i] == name) {
+      if (this.variantOwners[i] == want && this.variantNames[i] == name) {
         return this.variantArities[i];
       }
     }
@@ -1830,8 +1872,9 @@ export struct C {
 
   /** An enum has no default value, which is the only thing this pass records about one. */
   bool isEnum(const this, string name) {
+    string want = this.canon(name);
     for (i32 i = 0; i < this.enumCount; i++) {
-      if (this.enumNames[i] == name) { return true; }
+      if (this.enumNames[i] == want) { return true; }
     }
     return false;
   }
@@ -2004,7 +2047,7 @@ export string typeOfTy(C c, Ty t) {
       // Invariance then costs nothing: two instantiations differ exactly when their names do.
       // Under the importing file's name for it, when this is an imported file being declared: a
       // signature that says `Dup` in `b.wac` says `DupB` to the file that imported it that way.
-      string base = c.renamed(tokenText(c, tok));
+      string base = c.canon(c.renamed(tokenText(c, tok)));
       // **A type parameter of the function being checked is an unknown type**, not a name. `T` in
       // `T oops<T>(T a)` stands for whatever a call site binds, so every question about it has an
       // answer this checker cannot compute — and answering with the letter itself made `return a;` a
@@ -4348,7 +4391,7 @@ i32 calleeName(C c, Expr callee) {
 string staticOwnerName(C c, Expr obj) {
   match (obj.kind) {
     case Ident(tok): {
-      string n = c.renamed(tokenText(c, tok));
+      string n = c.canon(c.renamed(tokenText(c, tok)));
       return c.isStruct(n) || c.isEnum(n) ? n : "";
     }
     else: { return ""; }
@@ -4462,7 +4505,7 @@ string writtenTy(C c, Ty t) {
   match (t.kind) {
     case Prim(tok): { return tokenText(c, tok); }
     case Named(tok, typeArgs): {
-      string base = c.renamed(tokenText(c, tok));
+      string base = c.canon(c.renamed(tokenText(c, tok)));
       if (typeArgs.len() == 0) { return base; }
       string out = base + "<";
       for (i32 i = 0; i < typeArgs.len(); i++) {

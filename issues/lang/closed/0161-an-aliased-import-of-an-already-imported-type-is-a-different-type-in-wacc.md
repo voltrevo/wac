@@ -1,7 +1,8 @@
 # 0161 — an aliased import of an already-imported type is a *different* type in wacc
 
-- **Status:** open — the variant half is fixed (2026-08-20); the two-imports half is not
-- **Claimed by:** agent-a, 2026-08-20 — step 1 below (making `renamed` a relation)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Closed by:** agent-a, 2026-08-20
 - **Reported by:** agent-a
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -178,3 +179,78 @@ collapse to one type string or `take(E2)` still refuses an `E`. So:
    qualified `E2.A` want checking separately.
 
 Step 1 alone is worth doing and strictly reduces silence. Step 2 is what closes this issue.
+
+## Fixed — agent-a, 2026-08-20
+
+The reproduction at the top now compiles and answers 1, and the reference agrees.
+
+**And the spec required it, which the earlier notes here missed.** `spec/spec/generics.md`
+`[§wac-generic-instantiation-identity-6pnq4wj]` is exactly this shape:
+
+```wac
+import { Point, Point as P } from "./p.wac";
+Box<P> a = ...;        // one instantiation, not two
+Box<Point> b = ...;
+```
+
+> `Box<P>` and `Box<Point>` are one struct.
+
+So two spellings collapsing onto one declaration is a **stated language rule**, not a convenience —
+and wacc did not implement it. Written as an executable program it was refused:
+
+    i32 take(Box<Point> b) { return b.get().x; }
+    export i32 f() { Box<P> a = Box<P>(P(7, 0)); return take(a); }
+    // wacc: error: argument does not match the parameter's type   — reference: OK
+
+**Why nothing caught it.** The tag's own program is not compilable — `Box<P> a = ...;` with a literal
+`...` — so `compiler/wacSpec.test.ts` has nothing to run and the rule was never exercised against
+either compiler. It now answers **7** through `wac run`, and the test below is executable.
+
+### The mechanism, which is narrower than "a different type"
+
+`C.renamed` maps a declaring file's name to **one** importing-file name. `api.wac` records an entry
+only when the alias differs, so `import { E, E as E2 }` records exactly `E → E2`, `declareModule`
+registers the enum as `E2`, and **nothing is registered as `E`**. An undeclared name is `typeNone()`,
+and unknown means silent — so the plain spelling did not become a second type. It stopped being a type,
+and every rule about it went quiet. That is why the symptom surfaced at a call rather than at the name.
+
+It was not only types. The same registration declares functions, and a call to an unknown function is
+silent too: `import { add, add as plus }` then `add(1)` against a two-parameter `add` was **accepted**.
+`packages/ssh/test/wac/probe.wac` had two such call sites in a green package.
+
+### The fix
+
+A second table, `aliasFrom`/`aliasTo` on `C`, mapping a local spelling to the local spelling it
+collapses onto — different from `renameFrom` in the two ways that matter: it is local-to-local, and it
+survives the import walk, because the entry's own body is where the second spelling gets written.
+
+`c.canon(n)` reads it, and it is consulted in exactly seven places, which is the whole change:
+
+- the four bare-name lookups every rule funnels through — `isStruct`, `isEnum`, `funcAt`,
+  `variantArityIn`;
+- the three sites where a written name becomes a type *string* — `typeOfTy`'s `Named` arm, the
+  instantiation-name arm, and `staticOwnerName` — so two spellings produce one string and every
+  comparison downstream sees one type.
+
+The canonical spelling is whichever one `renamed` already registers under: the plain name when the
+file imports it plainly, otherwise the first alias.
+
+**One name from two different modules stays two types**, which is `issues/lang/0128` and is asserted
+as a control — the table is keyed by the module and the declaring name, so nothing collapses across
+files.
+
+### Canaried, and what the canary showed about one of the tests
+
+`packages/wacc/test/wac/aliasimport_test.wac` is 7 tests. Reverting the fix fails two of them and
+passes five. Among the five is the emitter test, and that is recorded in its docstring rather than
+quietly left: the emitter always built one declaration, so it cannot fail for this bug's reason. It
+guards the failure mode the *fix* could introduce — a checker that canonicalises where the emitter
+does not, which arrives as a missing export rather than a diagnostic.
+
+`tools/wac/importtwice_test.wac`, added earlier today to refuse the shape tree-wide while it was
+broken, is **deleted**: it forbade a construct the spec requires. The rename in
+`packages/ssh/test/wac/probe.wac` stays, because the file's own convention is the `srv*` prefix and
+the plain spellings were the anomaly there regardless.
+
+Rung 3 of `corpuscheck_test.wac` — the repository's own code, no false alarm — is clean, and
+`spec/cases` is 223 of 223.

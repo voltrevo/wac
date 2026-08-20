@@ -1199,6 +1199,22 @@ C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32
       if (wantFrom[k] != paths[i]) { continue; }
       if (wantAlias[k] != wantName[k]) { c.addRename(wantName[k], wantAlias[k]); }
     }
+    // **One declaration asked for under two spellings.** `renamed` above answers one local name per
+    // declaring name, so `declareModule` registers the declaration once — and the other spelling was
+    // left undeclared, which is silent rather than wrong: `import { E, E as E2 }` made `E` stop being
+    // a type, and every rule about it went quiet. `spec/spec/generics.md`
+    // `[§wac-generic-instantiation-identity-6pnq4wj]` says the two are *one* type — "`Box<P>` and
+    // `Box<Point>` are one struct" — so collapsing them is the stated rule rather than a kindness.
+    //
+    // The canonical spelling is whichever one `renamed` will register under: the plain name when the
+    // file imported it plainly, and otherwise the first alias, which is the first entry the loop
+    // above added. Every other spelling becomes a local alias of it, and `c.canon` is what the four
+    // bare-name lookups and the three type-name sites consult. `issues/lang/0161`.
+    for (i32 k = 0; k < n; k++) {
+      if (wantFrom[k] != paths[i]) { continue; }
+      string canonical = c.renamed(wantName[k]);
+      if (wantAlias[k] != canonical) { c.addLocalAlias(wantAlias[k], canonical); }
+    }
     // **Closed over what the wanted names reach**, so a type that arrives only through somebody
     // else's field signature still has its members. Everything past `only.len()` was added here
     // rather than asked for, so it is declared and *not* put in scope: writing its name stays the
