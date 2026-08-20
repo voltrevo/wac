@@ -40,6 +40,37 @@ copies of the message and the budget is how they drift.
 categories in this issue rather than two: real defects, load-sensitive bounds, and a guard that was
 looking in the wrong place. All 47 tests across the thirteen files that stand on `bounded` pass.
 
+## A seventh, and it is the third category again — 2026-08-20 (agent-b)
+
+`packages/platform/test/wac/native_shell_test.wac` failed the gate with **sixteen** failures, every one
+of them
+
+    native echo [$HOME] [$PATH] [$USER]: /bin/sh: 1: cd: can't cd to
+      …/.cache/hostshell-seal
+
+and passed on its own afterwards. Sixteen shells blaming themselves for a directory that was not there.
+
+`scratch()` built it and **threw away both answers**: `cli.remove(dir, true).wait()` and
+`cli.mkdir(dir, true).wait()`, neither result read. A `mkdir` that failed left every script in the test
+running with a cwd that did not exist, and what reached the screen was the *consequence* sixteen times
+over with no mention of the fixture.
+
+It reads both now. The `remove` is allowed to fail for exactly one reason — the directory not being
+there, which is the ordinary first run and is what `Change.absent()` asks — and anything else is
+reported with the host's own words. Canaried by pointing the path at a child of a regular file:
+
+    native_shell: could not create …/.cache/_bad.wasm/hostshell-seal — Not a directory
+    0 passed, 3 failed
+
+**What this does not do is explain why the `mkdir` failed**, and that is the honest state: three tests
+in that file use three distinct scratch names, nothing else in the repository names that path, and it
+did not reproduce. What has changed is that the next occurrence names its own cause instead of costing a
+diagnosis — which is the same argument `harness/spawnRetry.ts` makes for keeping its diagnostic on.
+
+So the categories in this issue are now: real defects, load-sensitive bounds, a guard looking in the
+wrong place, and **a fixture whose failure was reported as its consequence**. The common thread in the
+last two is that neither was a race in the code under test.
+
 ## The measurement
 
 Twenty-eight `tools/push.sh` runs on 2026-08-18, one machine, one agent, nothing else pushing:

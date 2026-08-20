@@ -35,7 +35,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { nativeBinaryPath } from "../../../wactest/src/host.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Change, Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
@@ -117,10 +117,30 @@ Built builds(Cli cli) {
   return b;
 }
 
-string scratch(Cli cli, string name) {
+/**
+ * A fresh directory for one test, and **it says so when it could not make one.**
+ *
+ * Both answers used to be thrown away. A `mkdir` that failed left every script in the test running with
+ * a cwd that did not exist, and what reached the gate was sixteen shells each saying
+ * *`/bin/sh: 1: cd: can't cd to …/.cache/hostshell-seal`* — sixteen failures blaming the shells for a
+ * directory the fixture never created. That happened on 2026-08-20 and cost a push and a diagnosis.
+ *
+ * The `remove` is allowed to fail for exactly one reason, which is the directory not being there: that
+ * is the ordinary case on a first run, and `Change.absent` is the question `rm -f` asks. Anything else
+ * is reported with the host's own words, because those are the only thing that knows.
+ */
+string scratch(Core core, Cli cli, string name) {
   string dir = root(cli) + "/.cache/hostshell-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  Change gone = cli.remove(dir, true).wait();
+  if (!gone.ok() && !gone.absent()) {
+    core.warn("native_shell: could not clear " + dir + " — " + gone.message);
+    trap;
+  }
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) {
+    core.warn("native_shell: could not create " + dir + " — " + made.message);
+    trap;
+  }
   return dir;
 }
 
@@ -171,7 +191,7 @@ export string test_the_same_sealed_system_answers_the_same_on_a_js_host_and_one_
   Built b = builds(cli);
   t.isTrue(b.ok, "the shells built — " + b.error);
   if (!b.ok) { return t.report(); }
-  string tmp = scratch(cli, "corpus");
+  string tmp = scratch(core, cli, "corpus");
 
   const string ALIVE = "mkdir /x; echo deep > /x/f; cat /x/f; seq 1 3 | tac | head -2";
   // The Deno half asserted on its own, so a skipped native half still tests something — and so that a
@@ -224,7 +244,7 @@ export string test_the_applets_answer_the_same_on_both_hosts_including_the_ones_
   Built b = builds(cli);
   t.isTrue(b.ok, "the shells built — " + b.error);
   if (!b.ok) { return t.report(); }
-  string tmp = scratch(cli, "applets");
+  string tmp = scratch(core, cli, "applets");
 
   // Chosen because each reaches a different part of the boundary: an applet's own output through
   // `Core.log`, a pipeline through `pushChild`'s captured frame, the synthesised files, the process
@@ -302,7 +322,7 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   Built b = builds(cli);
   t.isTrue(b.ok, "the shells built — " + b.error);
   if (!b.ok) { return t.report(); }
-  string tmp = scratch(cli, "seal");
+  string tmp = scratch(core, cli, "seal");
 
   // The machine has these, so an empty answer means they were withheld rather than absent.
   string home = "";
