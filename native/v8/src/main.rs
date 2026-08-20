@@ -1507,6 +1507,202 @@ static UNGRANTED_TESTS: std::sync::atomic::AtomicUsize = std::sync::atomic::Atom
 /// for opposite reasons: the parser asks "is this mine to take?" and `run` asks "did the caller mean
 /// this as an argument?" — and a grant that is only in one of the lists is a grant that goes quiet
 /// somewhere.
+/// The marker line every `wac app` executable carries, and the version that built it.
+const APP_MARK: &str = "# wac-app ";
+
+/// `wac app [--allow-…] <entry.wac> -o <dest>` — build a program that runs by being run.
+///
+/// The output is a shell preamble with a wasm module glued to the end of it. `./thing` execs
+/// `wac app-run "$0"`, which finds the module inside the file it was pointed at and runs it. So the
+/// artefact is one file, it is `chmod +x`, it survives an `scp`, and it is **710 KB rather than
+/// 67 MB** — because the engine is not in it. What is in it is the program.
+///
+/// ## Why it calls out rather than carrying a runtime
+///
+/// The alternative was a self-sufficient executable, which is what `app:binary` and `app:native-binary`
+/// built: a whole V8 and a Rust host per program, 105 MB and 67 MB. Dropped on 2026-08-20 — a machine
+/// that runs one of these runs `wac`, and a hundred copies of an engine is a hundred copies to keep in
+/// step with the compiler that built the modules beside them.
+///
+/// **The grants are in the manifest, not in the preamble.** They are baked into the module by
+/// `wac build`, exactly as for any other artefact, so editing the shell lines at the top of the file
+/// cannot widen what the program may do — the manifest is inside the module, after the `\0asm`, and
+/// changing it means rebuilding. A preamble that passed `--allow-read` on the command line would put
+/// the capability in the one part of the file a text editor can reach.
+///
+/// **A version line, and `app-run` refuses a mismatch.** wac is unstable by choice: the manifest
+/// shape is this binary's, and a module built by another version may name callbacks and structs this
+/// one does not read the same way. Refusing with both numbers is a message somebody can act on;
+/// running it and trapping somewhere inside is not.
+fn app_command(rest: &[String]) -> i32 {
+    let mut grants: Vec<String> = Vec::new();
+    let mut dest = String::new();
+    let mut entry = String::new();
+    let mut i = 0;
+    while i < rest.len() {
+        let a = &rest[i];
+        if a == "-o" {
+            i += 1;
+            match rest.get(i) {
+                Some(d) => dest = d.clone(),
+                None => {
+                    eprintln!("wac: -o wants a path to write");
+                    return 2;
+                }
+            }
+        } else if is_grant(a) {
+            grants.push(a.clone());
+        } else if entry.is_empty() && !a.starts_with('-') {
+            entry = a.clone();
+        } else {
+            eprintln!("wac: {a} is not a grant, -o, or the entry");
+            return 2;
+        }
+        i += 1;
+    }
+    if entry.is_empty() || dest.is_empty() {
+        eprintln!(
+            "usage: wac app [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+             [--allow-run] <entry.wac> -o <dest>"
+        );
+        eprintln!("       ./<dest> runs it, and needs the `wac` command on the machine that does");
+        return 2;
+    }
+
+    let dir = std::env::temp_dir().join(format!("wac-app-{}", std::process::id()));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("wac: no temporary directory to build in — {e}");
+        return 1;
+    }
+    let stem = dir.join("app");
+    let mut build = vec![
+        "build".to_string(),
+        entry.clone(),
+        "-o".to_string(),
+        stem.display().to_string(),
+        "--quiet".to_string(),
+    ];
+    build.extend(grants.iter().cloned());
+    start_v8();
+    let built = run_seed(&build);
+    if built != 0 {
+        return built;
+    }
+    let wasm = match std::fs::read(stem.with_extension("wasm")) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("wac: the build wrote nothing to package — {e}");
+            let _ = std::fs::remove_dir_all(&dir);
+            return 1;
+        }
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // No backtick and no `$` that the shell would expand: this text is read by `/bin/sh` on somebody
+    // else's machine, and the only thing it may do is check for `wac` and exec it. `command -v` is
+    // POSIX, unlike `which`.
+    let preamble = format!(
+        "#!/bin/sh\n\
+         {APP_MARK}{}\n\
+         # A wac program. The wasm module begins at the first NUL byte below.\n\
+         command -v wac >/dev/null 2>&1 || {{\n\
+         \x20 echo \"$0: needs the wac command on PATH — deno task wac:install\" >&2\n\
+         \x20 exit 127\n\
+         }}\n\
+         exec wac app-run \"$0\" \"$@\"\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    let mut out = preamble.into_bytes();
+    out.extend_from_slice(&wasm);
+    if let Err(e) = std::fs::write(&dest, &out) {
+        eprintln!("wac: cannot write {dest} — {e}");
+        return 1;
+    }
+    // Executable for whoever can already read it, which is what a program handed to somebody has to
+    // be — owner-only would make `scp` to a shared machine produce a file nobody there can run.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let made = std::fs::metadata(&dest).and_then(|md| {
+            let mut perm = md.permissions();
+            perm.set_mode(perm.mode() | 0o111);
+            std::fs::set_permissions(&dest, perm)
+        });
+        if let Err(e) = made {
+            eprintln!("wac: cannot make {dest} executable — {e}");
+            return 1;
+        }
+    }
+    eprintln!(
+        "{dest}  {} KB  [{}]",
+        out.len() / 1024,
+        if grants.is_empty() { "no capabilities".to_string() } else { grants.join(" ") }
+    );
+    0
+}
+
+/// `wac app-run <file> [args…]` — run the module glued to the end of a `wac app` executable.
+///
+/// Its own subcommand because the preamble needs something to call: `./thing` has to hand *itself*
+/// to `wac`, and `wac thing` would collide with the compiler's own argument shapes the day somebody
+/// names a program `test`.
+///
+/// **The module is found by scanning for the first `\0asm`.** The preamble is shell text, and shell
+/// text cannot contain a NUL — so the first one in the file is the module's magic and there is
+/// nothing to escape, no length header to keep in step, and no second file. A `\0asm` that is not at
+/// a section boundary would still be the module's, because the bytes before it are the ones this
+/// command wrote.
+fn app_run_command(rest: &[String]) -> i32 {
+    let Some(path) = rest.first() else {
+        eprintln!("usage: wac app-run <file> [args…]");
+        eprintln!("       normally run for you by the first two lines of a `wac app` executable");
+        return 2;
+    };
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("wac: cannot read {path} — {e}");
+            return 1;
+        }
+    };
+    let Some(at) = bytes.windows(4).position(|w| w == b"\0asm") else {
+        eprintln!("wac: {path} carries no wasm module — is it a `wac app` executable?");
+        return 1;
+    };
+    // The marker is looked for only in the text before the module, so a byte sequence inside the
+    // module cannot pass for a version line.
+    let head = String::from_utf8_lossy(&bytes[..at]).into_owned();
+    let Some(built_by) = head
+        .lines()
+        .find_map(|l| l.strip_prefix(APP_MARK))
+        .map(|v| v.trim().to_string())
+    else {
+        eprintln!("wac: {path} has a module in it but no `{APP_MARK}` line — not built by `wac app`");
+        return 1;
+    };
+    let mine = env!("CARGO_PKG_VERSION");
+    if built_by != mine {
+        eprintln!("wac: {path} was built by wac {built_by} and this is wac {mine}");
+        eprintln!("     wac is unstable by choice, so a manifest from another version is not read");
+        eprintln!("     the same way. Rebuild it: wac app <entry.wac> -o {path}");
+        return 1;
+    }
+    let wasm = &bytes[at..];
+    let Some(text) = manifest_in(wasm) else {
+        eprintln!("wac: the module inside {path} carries no wac.manifest section");
+        return 1;
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wac: the manifest inside {path} is not one — {e}");
+            return 1;
+        }
+    };
+    start_v8();
+    let argv = rest[1..].iter().map(|a| a.as_bytes().to_vec()).collect();
+    run_as_with(&manifest, wasm, &text, AsChild { argv, ..Default::default() })
+}
+
 fn is_grant(a: &str) -> bool {
     matches!(
         a,
@@ -1766,6 +1962,8 @@ fn main() {
             eprintln!("                                      cover, and write the lock — the only");
             eprintln!("                                      command that reaches the network");
         }
+        eprintln!("       wac app <entry.wac> -o <dest>  an executable that runs itself — one file,");
+        eprintln!("                                      needing a `wac` on the machine that runs it");
         eprintln!("       wac uninstall [--keep-cache]");
         eprintln!("                                      remove what `deno task wac:install` put under");
         eprintln!("                                      $WAC_HOME, the profile line, and nothing else");
@@ -1821,6 +2019,16 @@ fn main() {
     // cannot instantiate one, and running it is the thing this binary is.
     if SEED.is_some() && stem == "run" {
         std::process::exit(run_command(&args[2..]));
+    }
+    // `app` builds; `app-run` runs what it built. Both are the host's: the compiler writes a module
+    // and knows nothing about making it executable, and `app-run` is what the preamble calls.
+    if SEED.is_some() && stem == "app" {
+        std::process::exit(app_command(&args[2..]));
+    }
+    // No `SEED.is_some()`: running an application needs no compiler, and a build carrying only a
+    // shell is a perfectly good thing to hand somebody's `./thing` to.
+    if stem == "app-run" {
+        std::process::exit(app_run_command(&args[2..]));
     }
     // `sh` is the host's too, and needs no compiler at all — the shell is already a module. It is
     // tested before the seed check for that reason: a build with a shell and no compiler is a

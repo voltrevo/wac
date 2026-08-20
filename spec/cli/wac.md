@@ -22,7 +22,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 | first argument | what happens |
 |---|---|
 | `prog.wasm` | run that program — the module carries its own manifest |
-| `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
+| `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat`, `app`, `app-run` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
 | `uninstall` | remove what an install put under `$WAC_HOME`, and the line it added to each shell profile |
 | `update` | resolve and fetch what `wac.lock` does not cover, and write the lock |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` |
@@ -44,6 +44,8 @@ wac validate mod.wasm […]            # whether the engine accepts each module,
 wac covdump mod.wasm                 # run `main` under the counters and print each one
 wac ctcompare [--all] a.wasm b.wasm  # two traced runs, and where their journals differ
 wac tracestat mod.wasm               # one traced run's size, and what it wanted
+wac app     main.wac -o thing        # an executable that runs itself, calling out to `wac`
+wac app-run thing [args…]            # ...what `./thing` execs; not normally typed
 wac uninstall [--keep-cache]         # remove an installed `wac`, and nothing else
 wac update  [project]                # fetch what the lock does not cover, and lock it
 ```
@@ -211,6 +213,37 @@ whose commit is not in the cache is a compile error naming this command, rather 
 quietly goes online.
 
 Moving a pin deliberately is what `update` is for; `wac.lock` is what makes everything else offline.
+
+### Handing somebody a program
+
+`[§wac-cli-app-4mt8qzv]` `wac app main.wac -o thing` writes **one executable file**: a short `/bin/sh`
+preamble with the wasm module glued to the end of it. `./thing` execs `wac app-run "$0"`, which finds
+the module inside the file it was pointed at and runs it. So it is `chmod +x`, it survives an `scp`,
+and it is a few hundred KB — because the engine is not in it.
+
+**It depends on `wac` being on the machine, and that is the trade.** A self-sufficient executable was
+built here until 2026-08-20 and cost 67 MB of V8 and Rust host per program; a hundred of them is a
+hundred engines to keep in step with the compiler that produced the modules beside them. A machine
+that runs one of these runs `wac`. The preamble checks and says so — `needs the wac command on PATH`
+and exit 127 — rather than leaving the shell to say `wac: not found`, which names our command and
+explains nothing.
+
+`[§wac-cli-app-grants-8xr2knw]` **The grants are inside the module, not in the preamble.** They are
+baked in by the same `wac build` that every other artefact goes through, so the shell lines at the top
+of the file are byte-identical between a sealed build and a granted one, and editing them cannot widen
+what the program may do. `tools/wac/app_test.wac` asserts exactly that — two builds of one source,
+compared byte for byte up to the module — because the alternative design, a `--allow-read` on the
+`exec` line, would put the capability in the one part of the artefact a text editor can reach.
+
+`[§wac-cli-app-skew-3vq9mkt]` **A mismatched version is refused, naming both.** The manifest shape
+belongs to the binary that reads it and wac is unstable by choice, so `app-run` compares the version
+in the preamble with its own and stops. Running it anyway would trap somewhere inside a module built
+against a different contract, which is a worse message than the one it could have given.
+
+The module is found by scanning for the first `\0asm`: shell text cannot contain a NUL, so there is
+no length header to keep in step and no second file. `app-run` is its own command rather than
+`wac thing` because `./thing` has to hand *itself* to `wac`, and a bare stem would collide with the
+subcommands the day somebody names a program `test`.
 
 ### Taking it away
 

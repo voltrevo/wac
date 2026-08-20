@@ -1,0 +1,215 @@
+// `wac app` — a program that runs by being run, and calls out to the `wac` on the machine.
+//
+// The artefact is a shell preamble with a wasm module glued to the end: `./thing` execs
+// `wac app-run "$0"`, which finds the module inside the file it was pointed at. So it is one file,
+// it is executable, it survives an `scp`, and it is a few hundred KB rather than the 67 MB a
+// self-sufficient executable cost — because the engine is not in it.
+//
+// **The interesting assertion is the third one.** Two builds of the same program, one granted and
+// one not, have *byte-identical preambles*: the capability is inside the module, past the `\0asm`,
+// where a text editor cannot reach it. If that ever stops being true then the shell lines at the top
+// of every distributed program become the place its permissions live, which is the one place they
+// must not be.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
+import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+
+/** The directory holding a path, so the built `wac` can be put on a child's PATH. */
+string dirOf(string p) {
+  i32 cut = -1;
+  for (i32 i = 0; i < p.len(); i++) {
+    if (p.slice(i, i + 1) == "/") { cut = i; }
+  }
+  return cut < 0 ? "." : p.slice(0, cut);
+}
+
+/**
+ * A shell, because `Cli.exec` passes no environment and no working directory.
+ *
+ * Both are needed here: the point of the artefact is that it finds `wac` on PATH, so the test has to
+ * be able to say what PATH is — including saying it is one without `wac` in it.
+ */
+Exec sh(Cli cli, string script) {
+  return cli.exec("/bin/sh", string[]("-c", script), u8[0]()).wait();
+}
+
+/** `wac app <entry> [grant] -o <dest>`, run against the binary this test is running under. */
+Exec build(Cli cli, string entry, string grant, string dest) {
+  string[] argv = grant == "" ? string[]("app", entry, "-o", dest)
+                              : string[]("app", entry, grant, "-o", dest);
+  return cli.exec(binaryPath(cli), argv, u8[0]()).wait();
+}
+
+/** A program with no imports beyond `Core`, so the build is a compile of two lines. */
+bool writeEntry(Cli cli, T t, string path) {
+  Change wrote = cli.writeFile(path,
+    ("import { Core } from \"std/platform.wac\";\n" +
+     "export i32 main(Core core) { core.log(\"an app ran\"); return 0; }\n").toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
+  return wrote.ok();
+}
+
+export string test_wac_app_builds_something_that_runs_itself(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "app-runs");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
+
+  Exec made = build(cli, dir + "/hello.wac", "", dir + "/thing");
+  t.isTrue(made.ran(), "wac app did not run — " + made.error);
+  t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { return t.report(); }
+
+  // Run it the way somebody who was handed the file would: by name, with `wac` on PATH and nothing
+  // else about the environment arranged.
+  Exec ran = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin '" + dir + "/thing'");
+  t.isTrue(ran.ran(), "the shell did not run — " + ran.error);
+  t.eqI32(ran.status, 0, "./thing failed: " + string.fromBytes(ran.stderr));
+  t.eqStr(trimmed(string.fromBytes(ran.stdout)), "an app ran",
+          "stdout: " + string.fromBytes(ran.stdout) + string.fromBytes(ran.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_an_app_without_wac_on_the_path_says_so(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "app-nopath");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
+  Exec made = build(cli, dir + "/hello.wac", "", dir + "/thing");
+  t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { return t.report(); }
+
+  // **The failure a stranger meets first.** Without the check in the preamble this is `wac: not
+  // found` from their shell, which names our command and explains nothing; the whole reason the
+  // artefact is small is that it depends on something, so it has to say what.
+  Exec bare = sh(cli, "PATH=/usr/bin:/bin '" + dir + "/thing'");
+  t.isTrue(bare.ran(), "the shell did not run — " + bare.error);
+  t.eqI32(bare.status, 127, "an app with no `wac` should exit 127: " +
+          string.fromBytes(bare.stderr) + string.fromBytes(bare.stdout));
+  t.isTrue(contains(string.fromBytes(bare.stderr), "needs the wac command on PATH"),
+           "it should say what is missing: " + string.fromBytes(bare.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_grants_are_in_the_module_and_not_the_preamble(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "app-grants");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  // A program that reads, so that the grant is the difference between working and refused.
+  Change wrote = cli.writeFile(dir + "/read.wac",
+    ("import { Core, Cli, FileResult } from \"std/platform.wac\";\n" +
+     "export i32 main(Core core, Cli cli) {\n" +
+     "  FileResult r = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();\n" +
+     "  core.log(r.ok ? \"read ok\" : \"refused: \" + r.error);\n" +
+     "  return r.ok ? 0 : 1;\n" +
+     "}\n").toBytes()).wait();
+  t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+  cli.writeFile(dir + "/data.txt", "hello\n".toBytes()).wait();
+
+  Exec sealed = build(cli, dir + "/read.wac", "", dir + "/sealed");
+  Exec granted = build(cli, dir + "/read.wac", "--allow-read", dir + "/granted");
+  t.eqI32(sealed.status, 0, "sealed build: " + string.fromBytes(sealed.stderr));
+  t.eqI32(granted.status, 0, "granted build: " + string.fromBytes(granted.stderr));
+  if (sealed.status != 0 || granted.status != 0) { return t.report(); }
+
+  // **Byte-identical preambles.** Everything before the module's `\0asm` is the same in both, so
+  // nothing a person can edit in a text editor decides what the program may do.
+  FileResult a = cli.readFile(dir + "/sealed").wait();
+  FileResult b = cli.readFile(dir + "/granted").wait();
+  t.isTrue(a.ok && b.ok, "could not read the two artefacts back");
+  if (!a.ok || !b.ok) { return t.report(); }
+  i32 cut = magicAt(a.bytes);
+  t.isTrue(cut > 0, "the sealed artefact has no wasm module in it");
+  t.eqI32(magicAt(b.bytes), cut, "the two preambles are different lengths");
+  if (cut <= 0 || magicAt(b.bytes) != cut) { return t.report(); }
+  bool same = true;
+  for (i32 i = 0; i < cut; i++) {
+    if (a.bytes[i] != b.bytes[i]) { same = false; }
+  }
+  t.isTrue(same, "the preambles differ, so something outside the module decides the grants");
+
+  // And the grant is real on both sides: refused without, allowed with.
+  string path = dirOf(binaryPath(cli));
+  Exec no = sh(cli, "PATH='" + path + "':/usr/bin:/bin '" + dir + "/sealed' '" + dir + "/data.txt'");
+  t.isTrue(contains(string.fromBytes(no.stdout), "refused"),
+           "the sealed app should be refused: " + string.fromBytes(no.stdout) +
+           string.fromBytes(no.stderr));
+  Exec yes = sh(cli, "PATH='" + path + "':/usr/bin:/bin '" + dir + "/granted' '" + dir + "/data.txt'");
+  t.eqStr(trimmed(string.fromBytes(yes.stdout)), "read ok",
+          "the granted app should read: " + string.fromBytes(yes.stdout) +
+          string.fromBytes(yes.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** Where the wasm module starts: the first `\0asm`, which shell text cannot contain. */
+i32 magicAt(u8[] b) {
+  for (i32 i = 0; i + 3 < b.len(); i++) {
+    if (b[i] == 0 && b[i + 1] == 'a' && b[i + 2] == 's' && b[i + 3] == 'm') { return i; }
+  }
+  return -1;
+}
+
+export string test_an_app_built_by_another_version_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "app-skew");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
+  Exec made = build(cli, dir + "/hello.wac", "", dir + "/thing");
+  t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { return t.report(); }
+
+  // Rewrite the version line in place — the same edit an older build would have written — keeping
+  // every byte after it, so the module is untouched and the version is the only difference.
+  FileResult got = cli.readFile(dir + "/thing").wait();
+  t.isTrue(got.ok, "could not read the artefact back — " + got.error);
+  if (!got.ok) { return t.report(); }
+  i32 cut = magicAt(got.bytes);
+  string head = "";
+  for (i32 i = 0; i < cut; i++) { head = head + string.fromCodepoint(got.bytes[i]); }
+  i32 mark = indexOf(head, "# wac-app ");
+  t.isTrue(mark >= 0, "the artefact carries no version line");
+  if (mark < 0) { return t.report(); }
+  i32 eol = mark;
+  while (eol < head.len() && head.slice(eol, eol + 1) != "\n") { eol = eol + 1; }
+  string edited = head.slice(0, mark) + "# wac-app 0.0.0-not-this-one" + head.slice(eol, head.len());
+  u8[] out = u8[edited.len() + (got.bytes.len() - cut)]();
+  u8[] eb = edited.toBytes();
+  for (i32 i = 0; i < eb.len(); i++) { out[i] = eb[i]; }
+  for (i32 i = 0; i < got.bytes.len() - cut; i++) { out[eb.len() + i] = got.bytes[cut + i]; }
+  Change put = cli.writeFile(dir + "/old", out).wait();
+  t.isTrue(put.ok(), "could not write the edited artefact — " + put.message);
+  cli.setExecutable(dir + "/old", true).wait();
+
+  Exec ran = sh(cli, "PATH='" + dirOf(binaryPath(cli)) + "':/usr/bin:/bin '" + dir + "/old'");
+  t.isTrue(ran.ran(), "the shell did not run — " + ran.error);
+  t.eqI32(ran.status, 1, "a version mismatch should be refused: " +
+          string.fromBytes(ran.stdout) + string.fromBytes(ran.stderr));
+  t.isTrue(contains(string.fromBytes(ran.stderr), "0.0.0-not-this-one"),
+           "the refusal should name the version that built it: " + string.fromBytes(ran.stderr));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** First index of `want` in `s`, or -1. */
+i32 indexOf(string s, string want) {
+  if (want.len() == 0 || want.len() > s.len()) { return -1; }
+  for (i32 i = 0; i + want.len() <= s.len(); i++) {
+    if (s.slice(i, i + want.len()) == want) { return i; }
+  }
+  return -1;
+}
