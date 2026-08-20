@@ -34,6 +34,7 @@
 
 import { lex, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
+import { isBuiltinSpec } from "./coretext.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
@@ -130,6 +131,20 @@ export i32 errFloatRange() { return 50; }
 export i32 errNoVariant() { return 51; }
 /** An import specifier that is a bare word other than `core` — `spec/spec/imports.md`. */
 export i32 errUnknownModule() { return 52; }
+/**
+ * A quoted import specifier naming a file the caller did not supply.
+ *
+ * Distinct from `errUnknownModule`, which is a *bare* word — a specifier that names no tree. This
+ * one names a path and there is nothing at it. It was caught a phase later, by the linker, through a
+ * sentinel with no position and no file name, so every checker entry point reported the program was
+ * fine. `issues/lang/0157`.
+ *
+ * The list of unresolved specifiers is handed to `C` rather than computed here, because resolving a
+ * specifier needs the caller's path map and `isBuiltinSpec` — but the *diagnostic* belongs to the
+ * checking phase, at the import's own token, which is what `spec/spec/errors.md` requires of a
+ * phase field.
+ */
+export i32 errMissingImportFile() { return 77; }
 /** A generic that instantiates itself with a larger argument, so it never terminates. */
 export i32 errInfiniteGeneric() { return 53; }
 /** An enum method whose name is one of the enum's own variants: `E.A` would mean both. */
@@ -1139,6 +1154,15 @@ export struct C {
   string[] aliasTo;
   i32 aliasCount;
 
+  /**
+   * Quoted import specifiers in the file being checked that resolve to no supplied file.
+   *
+   * Populated by the caller, which is the only layer holding the path map — see
+   * `errMissingImportFile` for why the diagnostic is still the checker's.
+   */
+  string[] unresolvedSpecs;
+  i32 unresolvedCount;
+
 
 
   /**
@@ -1177,7 +1201,8 @@ export struct C {
              i32[decls * 3](), 0,
              Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
              bool[decls](), i32[locals](fill: 0 - 1), 0,
-             string[decls](), string[decls](), 0);
+             string[decls](), string[decls](), 0,
+             string[decls](), 0);
   }
 
   /**
@@ -1245,6 +1270,20 @@ export struct C {
       if (this.aliasFrom[i] == n) { return this.aliasTo[i]; }
     }
     return n;
+  }
+
+  /** Record a quoted specifier this file imports that no supplied file answers. */
+  void addUnresolved(this, string spec) {
+    if (this.unresolvedCount >= this.unresolvedSpecs.len()) { return; }
+    this.unresolvedSpecs[this.unresolvedCount] = spec;
+    this.unresolvedCount = this.unresolvedCount + 1;
+  }
+
+  bool isUnresolved(const this, string spec) {
+    for (i32 i = 0; i < this.unresolvedCount; i++) {
+      if (this.unresolvedSpecs[i] == spec) { return true; }
+    }
+    return false;
   }
 
   /** Record that this file's `from` is another name for its own `to`. */
@@ -7771,6 +7810,22 @@ void checkDuplicates(C c, Program prog) {
 
 export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   C c = C.create(src, toks, tokenCount, tokenCount);
+  // **One file was supplied, so every quoted specifier that is not a built-in tree names a file
+  // nobody gave.** Read off the parse rather than by scanning the text, which also keeps `files.wac`
+  // out of this file's imports — it imports `emit.wac`, and `emit.wac` imports this. The
+  // files-based entry point does the same job with a real path map, in `api.wac`.
+  // `issues/lang/0157`.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Import(pathTok, prefixTok, items): {
+        if (pathTok < 0) { continue; }
+        string q = tokenText(c, pathTok);
+        string bare = q.len() >= 2 ? q.slice(1, q.len() - 1) : "";
+        if (bare != "" && !isBuiltinSpec(bare)) { c.addUnresolved(bare); }
+      }
+      else: { }
+    }
+  }
   checkModule(c, prog);
   return errorsOf(c);
 }
@@ -8372,6 +8427,12 @@ export void checkModule(C c, Program prog) {
         // this source round-trips through it on every suite run.
         string spec = pathTok < 0 ? "" : tokenText(c, pathTok);
         string bare = spec.len() >= 2 ? spec.slice(1, spec.len() - 1) : "";
+        // **Nothing at that path.** The caller resolved it — see `errMissingImportFile` — and this is
+        // the import's own token, so the message can name the file the way
+        // `§wac-diag-parse-bad-type-n7qm3xf` names a type nobody declared.
+        if (bare != "" && c.isUnresolved(bare)) {
+          c.reportTok(errMissingImportFile(), pathTok, bare);
+        }
         if (bare == "core") {
           for (i32 i = 0; i < items.len(); i++) {
             string named = tokenText(c, items[i].nameTok);

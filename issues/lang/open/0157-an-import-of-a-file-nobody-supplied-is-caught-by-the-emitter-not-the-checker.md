@@ -1,9 +1,10 @@
 # 0157 — an import of a file nobody supplied is caught by the emitter, not the checker
 
-- **Status:** open
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
+- **Status:** open — the single-file half is fixed (2026-08-20); the files-based half is not
+- **Claimed by:** (nobody yet — add yourself before working it)
 - **Symptom:** no error
 
 ## Measured
@@ -80,3 +81,67 @@ saying which name was not found.
 
 `specsingle_test.wac`'s `KNOWN_MISSES` goes empty — 304 of 304 illegal programs refused — and
 `packages/wacc/README.md`'s type-check row stops carrying an exception.
+
+## The single-file half is fixed, and the other half now has a measured blocker — agent-a, 2026-08-20
+
+`checkProgram` — the surface `dumpTypeErrors` answers on — reports it. `C` gained a field rather than
+a parameter (`unresolvedSpecs`), read off the **parse** rather than the text, which also keeps
+`files.wac` out of `check.wac`'s imports: it imports `emit.wac`, and `emit.wac` imports `check.wac`.
+One file supplied means every non-builtin specifier is unsatisfiable, so the list is every quoted
+specifier `isBuiltinSpec` does not claim. The diagnostic is `errMissingImportFile` (77), at the
+import's own token, with the path in the annotation.
+
+`specsingle_test.wac`: **317 of 317** illegal single-file programs refused, `KNOWN_MISSES` **empty** —
+the closing condition this issue named. Its comment said *"refusing it would mean refusing every
+import, which is the opposite of right"*, the second wrong reading of this case in a row, corrected in
+place: refusing an import naming a file **nobody supplied** is not refusing every import.
+
+A bonus, because `isBuiltinSpec` is membership rather than a prefix: **a mistyped built-in path is
+refused too.** There is no io.wac in the core tree and that was silent. Found by writing the new test's
+own control wrongly.
+
+### Why the files-based half is not done, which is now evidence rather than an estimate
+
+The obvious implementation is the same rule in `checkFilesWith`, resolving each specifier with
+`resolveFrom` against the path map it already holds — the way `edgesOf` does, which is also where the
+gap comes from: `edgesOf` **drops** a spec that resolves to nothing, with a comment saying a missing
+file is the caller's to report, and the caller that reports it is `example/wacc.wac`.
+
+That is wrong, and four cases each in `mappedspec_test.wac` and `projectspec_test.wac` say so. A
+**mapped** specifier (`dep/lib.wac` through a lock and cache) and a **project** specifier
+(`@/src/inside.wac`) resolve through a `Res` that `checkFilesWith` does not carry — and so does a
+plain `./a.wac` *inside a mapped subdirectory*, which is the case that shows a prefix test cannot
+rescue it either. `resolveFrom` is simply not the resolver in use there.
+
+So option 1's cost — thread the resolution context — is real and unavoidable for this half, and the
+shortcut of resolving with the plain resolver is not a smaller version of it. `resolveFromIn` and
+`resolveVia` exist; the entry points that carry a `Res` (`diagnoseGraphIn` and friends) could use
+them, and the ones that do not would have to say they cannot answer rather than answer wrongly.
+
+*(Two seed builds were spent on the wrong conclusion here: those tests drive the `wac` **binary**, so
+they were still reporting the pre-revert compiler's behaviour. `deno task seed` before believing a
+host test about a compiler change.)*
+
+### And it exposed something else, which is fixed
+
+Rung 3 of `corpuscheck_test.wac` reported **64 working files** while the files-based rule was in place,
+and every one was true. The corpus walk read three fixed directories per package one level deep —
+`src`, `test/wac`, `bench` — covering 741 of the 943 `.wac` files under `packages/` and none of
+`tools/`, so 64 import edges pointed at files it does not supply: `box/src/applets/*` nested under
+`src`, `bignum`'s `test/probe.wac` beside `test/wac` rather than in it, `tools/wac/covledger.wac`
+outside the walk entirely. Those imports contributed no declarations, every name from them was
+unknown, and unknown is silent — so the row asserting *imports in scope, no false alarm* was false on
+both halves, as was the README's count of 541.
+
+The walk is recursive now and covers `tools/`: **975 files**, and rung 3 is clean over all of them. The
+fix outlives the rule that surfaced it, which is why it is kept even though the corpus path no longer
+carries the diagnostic.
+
+### Three oracles asserted the old single-file contract
+
+`checkalone_test.wac`, `typecheck_test.wac`'s whole-repo rung 3 (**3890** sites — every relative import
+in the repository) and its two shadowing cases all assert that a single-file check says nothing. Each
+now drops code 77 **and counts it**, asserting the count is non-zero, because a filter that hides a
+diagnostic looks exactly like a checker that stopped producing it. `ours` in `rung3_probe.wac` is left
+alone and a sibling added: `ours` also counts what a rejection program *caught*, and dropping a code
+there would quietly lower recall.

@@ -31,7 +31,7 @@ import { Core, Cli, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ref, assertCaught, assertQuiet, assertSound, caughtAndQuiet, complaint, decidedByReference,
          assertComplete, referenceTolerant,
-         joinedWith, ours, referenceFor }
+         joinedWith, ours, oursBesidesMissingImports, referenceFor }
   from "./rung3_probe.wac";
 import { dumpTypeErrors } from "../../src/api.wac";
 
@@ -133,11 +133,18 @@ export string test_a_non_funcref_local_shadowing_an_import_does_not_take_the_cal
     "export i32 main() { i32 helper = helper(); return helper; }",
     "import { helper } from \"./other.wac\";\n" +
     "export i32 main() { i32 helper = 1; return helper(); }");
+  // These programs import a file nobody supplies, which `issues/lang/0157` now refuses. Set aside
+  // and counted, so a lost rule cannot hide behind the filter.
+  i32[] missing = i32[1]();
+  i32 sawMissing = 0;
   for (i32 i = 0; i < cases.len(); i++) {
-    string[] mine = ours(cases[i]);
+    string[] mine = oursBesidesMissingImports(cases[i], missing);
+    sawMissing = sawMissing + missing[0];
     t.eqI32(mine.len(), 0, "we invented " + itoa(mine.len()) + " diagnostic(s) at " +
                            joinedWith(mine, ", ") + " in " + cases[i]);
   }
+  t.eqI32(sawMissing, cases.len(), "the unsupplied import was reported " + itoa(sawMissing) +
+                                " time(s) for " + itoa(cases.len()) + " program(s)");
   return t.report();
 }
 
@@ -189,6 +196,14 @@ export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
   //
   // Single-file: this slice reports nothing that depends on another module, so the import graph is
   // not needed to know that *we* should be quiet about all of them.
+  //
+  // **`errMissingImportFile` is the one exception, and it is not about another module's contents.**
+  // Since `issues/lang/0157` a quoted specifier naming a file the caller did not supply is refused,
+  // and a single-file caller supplied none — so nearly every file here carries one, 3890 of them
+  // across the repository. That is a true statement about this call rather than a false alarm, and the
+  // reference says the same thing (`file not found in programs map`). Counted rather than ignored:
+  // `missing` below must be non-zero, because a filter that hides a diagnostic looks exactly like a
+  // checker that stopped producing it.
   T t = T.create();
   string[] found = string[2048](fill: "");
   i32[] n = i32[1]();
@@ -199,11 +214,13 @@ export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
   string[] complaints = string[12](fill: "");
   i32 said = 0;
   i32 total = 0;
+  i32 missing = 0;
   for (i32 i = 0; i < n[0] && i < found.len(); i++) {
     FileResult f = cli.readFile(found[i]).wait();
     if (!f.ok) { continue; }
     i32[] flat = dumpTypeErrors(f.bytes);
     for (i32 k = 0; k * 3 < flat.len(); k++) {
+      if (flat[k * 3] == 77) { missing = missing + 1; continue; }
       total = total + 1;
       if (said < complaints.len()) {
         complaints[said] = complaint(found[i], flat[k * 3], flat[k * 3 + 1], flat[k * 3 + 2]);
@@ -213,6 +230,8 @@ export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
   }
   t.eqI32(total, 0, "we report diagnostics in " + itoa(total) + " place(s) in files that " +
                     "type-check cleanly:\n  " + joinedWith(complaints, "\n  "));
+  t.isTrue(missing > 0, "no unsupplied import was reported across " + itoa(n[0]) + " files — the " +
+                        "filter above is hiding nothing, so this oracle no longer sees code 77");
   return t.report();
 }
 
@@ -1684,17 +1703,26 @@ export string test_rung3_a_local_does_not_refute_a_call_to_the_imported_name_it_
     "export void ok() { u8[] factor = u8[](1); i32 n = factor(2); }",
     // And the tighter one: the local is named after the very call that fills it.
     "import { cert } from \"./f.wac\";\nexport void ok() { u8[] cert = cert(1); }");
+  // These programs import a file nobody supplies, which `issues/lang/0157` now refuses. Set aside
+  // and counted, so a lost rule cannot hide behind the filter.
+  i32[] missing = i32[1]();
+  i32 sawMissing = 0;
   for (i32 i = 0; i < quiet.len(); i++) {
-    string[] mine = ours(quiet[i]);
+    string[] mine = oursBesidesMissingImports(quiet[i], missing);
+    sawMissing = sawMissing + missing[0];
     t.eqI32(mine.len(), 0, "we invented " + itoa(mine.len()) + " diagnostic(s) at " +
                            joinedWith(mine, ", ") + " in " + quiet[i]);
   }
+  t.eqI32(sawMissing, quiet.len(), "the unsupplied import was reported " + itoa(sawMissing) +
+                                " time(s) for " + itoa(quiet.len()) + " program(s)");
 
   // The other side, which is what stops the fix being "never report an uncallable name": with no
   // import of that name, a value that is not a funcref is still not callable. The funcref test pins
   // `x()` on a parameter; this pins that adding an *unrelated* import does not excuse it.
   string loud = "import { other } from \"./f.wac\";\nexport void bad(i32 x) { x(); }";
-  t.isTrue(ours(loud).len() > 0, "an i32 is callable now, which it is not");
+  // Beyond the import's own diagnostic, or this would pass on the strength of `./f.wac` missing.
+  t.isTrue(oursBesidesMissingImports(loud, missing).len() > 0,
+           "an i32 is callable now, which it is not");
   return t.report();
 }
 

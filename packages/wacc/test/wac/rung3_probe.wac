@@ -53,6 +53,34 @@ export string[] ours(string src) {
   return out;
 }
 
+/**
+ * Ours, minus `errMissingImportFile` (77), and how many of those there were.
+ *
+ * For a test whose program imports a file it deliberately does not supply. Since
+ * `issues/lang/0157` the single-file checker refuses such an import — correctly, and the reference
+ * says the same — so a test about what else the checker says has to set that one aside. Not folded
+ * into `ours`, which is also used to count what a rejection program *caught*: dropping a code there
+ * would quietly lower recall.
+ *
+ * `countOut[0]` is how many were dropped, so a caller can assert the rule is still firing. A filter
+ * that hides a diagnostic looks exactly like a checker that stopped producing it.
+ */
+export string[] oursBesidesMissingImports(string src, i32[] countOut) {
+  i32[] flat = dumpTypeErrors(src.toBytes());
+  i32 n = flat.len() / 3;
+  string[] out = string[n](fill: "");
+  i32 kept = 0;
+  countOut[0] = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (flat[i * 3] == 77) { countOut[0] = countOut[0] + 1; continue; }
+    out[kept] = itoa(flat[i * 3 + 1]) + ":" + itoa(flat[i * 3 + 2]);
+    kept = kept + 1;
+  }
+  string[] trimmed = string[kept](fill: "");
+  for (i32 i = 0; i < kept; i++) { trimmed[i] = out[i]; }
+  return trimmed;
+}
+
 /** Ours, joined — for a message that has to show what we said. */
 export string oursJoined(string src) { return joinedWith(ours(src), ", "); }
 
