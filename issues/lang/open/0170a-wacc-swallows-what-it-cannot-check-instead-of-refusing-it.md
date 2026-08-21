@@ -644,3 +644,36 @@ one at a time by rebuilding:
 All **452** are in the sweep now, so a round that refuses them fails in 48 seconds with the programs
 named, instead of after a seed rebuild. The remaining unknown is round 4, which was never diagnosed — and the
 first thing to do with it is no longer to guess, but to run `tighten_probe.wac` and read the list.
+
+## The three structural items, re-counted — agent-a, 2026-08-21
+
+`issues/lang/0173a` is closed, which was the prerequisite this issue named for touching item 1. Its
+payoff is taken: **`writeValType` refuses a bare unresolved name now** instead of writing an arbitrary
+`i32` byte. The tolerance existed for exactly one producer — the signature-table entry of an uncalled
+generic method — and 0173a stopped producing it, so the branch was unreachable and is gone. A bare name
+falls to the existing refusal and is named. `deno task seed` is a fixed point; genericsig 2, lambda 21,
+cases 224, emit 2, selfhostemit 1, corpuscheck clean, bindhelpers 3, and the sweep at 4540 compared,
+0 mismatched, 0 declined.
+
+`isUnresolvedBareName` — which this issue says "exists only to make room for this entry" — now has
+exactly one caller, in `typeOfTyName`, where it decides not to instantiate. It went from a tolerance to
+a rule.
+
+Then the three items, counted rather than quoted:
+
+**1. Twenty-five lookup failures — confirmed, and it is the only figure here that has not moved.**
+`rg` over one-line `if (… < 0) { return; }` bails in `emit.wac`: **25**, the same number this issue
+recorded. What has not changed either is the reason not to touch them: the section above measured that
+no corpus reaches any of them, so a fix would have no failing case, and this issue's own history is the
+argument against changing the emitter from a guess.
+
+**2. The `emitFiles*` family is now eight entry points, not seven — and the eighth is mine.**
+`emitFilesIn` was added on 2026-08-21 for `issues/system/0229a`, so the un-netted set grew by one while
+this issue was open. `missingExport` is still asked in exactly one place, `buildLinked`, whose own
+comment says why it is last. The recommendation to leave it stands; the count does not.
+
+**3. `""` as "I don't know" is untouched.** This issue counts 53 `typeOfE` call sites, 15 guarding the
+empty answer, 38 carrying on. Today, with the same shape of heuristic — a test for `""` within three
+lines of the call — it is **58 / 18 / 40**. The ratio is unchanged: the number tracked the file growing,
+not any fix. (A three-line window is a heuristic and the original count was too; what it supports is
+"unchanged", not an exact figure.)

@@ -300,19 +300,20 @@ void writeValType(B out, Env env, string t) {
     out.i32leb(env.boxType(boxedPrimInner(t)));
     return;
   }
-  // **A template's own parameter is written as an `i32` and not refused.** It reaches here from the
-  // signature-table entry of a generic *method* nobody calls — `Box<U> map<U>(…)` declared and never
-  // called — and nothing can reference that entry, so the byte is arbitrary and the program is valid.
-  // Declining it made `Box<U> map<U>` fail to build merely by being *declared*, which the spec allows
-  // and `packages/wacc/test/wac/lambda_test.wac` pins.
+  // **A template's own parameter used to be written as an `i32` here, and is refused now.** It reached
+  // this function from the signature-table entry of a generic *method* nobody calls —
+  // `Box<U> map<U>(…)` declared and never called — where `U` is the method's own letter and no
+  // substitution binds it. Nothing referenced that entry, so the arbitrary byte was harmless and the
+  // program was valid; declining it made such a method fail to build merely by being *declared*, which
+  // the spec allows and `packages/wacc/test/wac/lambda_test.wac` pins. So the tolerance was the right
+  // call at the time and the wrong place: the defect was that the entry existed.
   //
-  // The real defect is that such a signature is registered at all: a type mentioning an unsubstituted
-  // parameter is not a type. Filed rather than fixed here, because removing the entry moves every index
-  // after it. See `issues/lang/0173a`.
-  if (isUnresolvedBareName(env, t)) {
-    out.byte(127);
-    return;
-  }
+  // `issues/lang/0173a` removed the entry — a type argument that is still a letter is spelled back
+  // rather than instantiated, and the method that mentions it is declined where it is registered — so
+  // nothing produces such a type any more and this branch became unreachable. Removed rather than kept
+  // as insurance, because a tolerance nothing needs is a hole the next gap falls through silently:
+  // `issues/lang/0170a`'s third item is that `""` and its relatives travel as if they were answers.
+  // A bare unresolved name now falls to the refusal below and is named.
   if (!isWritableValType(t)) {
     env.declineFor(t == "" ? "a value whose type this emitter could not work out"
                            : "a value of a type this emitter cannot write: " + t);
