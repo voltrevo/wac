@@ -94,7 +94,8 @@ export type WaccRes = { readonly $ref?: unknown };
 export function waccRes(
   // **Structurally, not `WaccApi`.** `harness/wacBind.ts` declares its own narrower api type — the
   // two have coexisted since before either carried a `Res` — and a helper that names one of them
-  // cannot be called by the other. All this needs is the constructor.
+  // cannot be called by the other. All this needs is the constructor. That duplication is
+  // `issues/system/0231a`, and this signature is the workaround it names.
   api: { Res: WaccApi["Res"] },
   paths: string[],
   roots: Map<string, string>,
