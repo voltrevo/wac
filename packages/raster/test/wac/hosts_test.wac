@@ -23,6 +23,7 @@
 // is lost, and it says so.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -30,37 +31,7 @@ const string ENTRY = "packages/raster/example/deskshot.wac";
 const i32 WIDTH = 320;
 const i32 HEIGHT = 200;
 
-/**
- * The newest modification time anywhere under `dir`, with `target/` left out.
- *
- * `target/` is cargo's own output and holds the binary this is compared against, so walking it would
- * always answer "newer than the binary" and rebuild every time.
- */
-i64 newestUnder(Cli cli, string dir) {
-  i64 newest = 0 as i64;
-  string[]? names = cli.readDir(dir).wait();
-  if (names is null) { return 0 as i64; }
-  string[] here = names!;
-  for (i32 i = 0; i < here.len(); i++) {
-    if (here[i] == "target") { continue; }
-    string path = dir + "/" + here[i];
-    Stat s = cli.stat(path).wait();
-    if (!s.exists) { continue; }
-    if (s.isDir) {
-      i64 deep = newestUnder(cli, path);
-      if (deep > newest) { newest = deep; }
-      continue;
-    }
-    if (s.modifiedMillis > newest) { newest = s.modifiedMillis; }
-  }
-  return newest;
-}
 
-string trimmedEnd(string s) {
-  i32 n = s.len();
-  while (n > 0 && (s.slice(n - 1, n) == "\n" || s.slice(n - 1, n) == " ")) { n = n - 1; }
-  return s.slice(0, n);
-}
 
 export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_javascript_in_it(
     Core core, Cli cli) {
@@ -130,27 +101,17 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   }
   t.isTrue(distinct > 3, "the desktop has " + itoa(distinct) + " colours in it");
 
-  // The host with no JavaScript in it, built if cargo is here, or skipped with the reason said aloud.
-  //
-  // **Asked by `stat` first.** `cargo build --release --quiet` costs 2.6s in `native/` even when there
-  // is nothing to do, and it was 2.6s of every run of this test. A walk of the crate's own files —
-  // `target/` skipped, since that is where the binary being compared against lives — against the
-  // binary's mtime says whether cargo could have work to do. Same rule and same reason as
-  // `harness/nativeHost.ts`, which is the TypeScript twin of this; it covers a source edit, a
-  // `Cargo.toml` change and a lockfile update, and does not cover a toolchain that moved under an
-  // unchanged tree.
-  string wacland = cwd + "/native/target/release/wacland";
-  Stat host = cli.stat(wacland).wait();
-  bool stale = !host.exists || host.modifiedMillis < newestUnder(cli, cwd + "/native");
-  Exec cargo = stale
-      ? cli.exec("/bin/sh",
-                 string[]("-c", "cd " + cwd + "/native && cargo build --release --quiet"),
-                 u8[0]()).wait()
-      : Exec(0, u8[0](), u8[0](), "");
-  if (stale && (!cargo.ran() || cargo.status != 0)) {
-    core.warn("SKIPPING the two-host pixel comparison: cargo did not build the native host. " +
-              "The JavaScript half above still ran and still asserted. " +
-              trimmedEnd(string.fromBytes(cargo.stderr)));
+  // The host with no JavaScript in it — **asked for, not built here.** This ran its own
+  // `cd native && cargo build --release --quiet`, which costs 2.6s even with nothing to do, and it
+  // carried a private copy of the freshness walk that differed from `wactest`'s in one line: whether
+  // it descended into `target/`, where the binary being compared against lives. Four other files did
+  // the same thing four other ways. `deno task seed` owns the build now — `seed:native` for this crate
+  // alone — and this asks whether the result is there. `issues/system/0208`.
+  string wacland = nativeHost(cli);
+  string whyNot = nativeHostWhyNot(cli);
+  if (whyNot != "") {
+    core.warn("SKIPPING the two-host pixel comparison: " + whyNot + ". " +
+              "The JavaScript half above still ran and still asserted.");
     return t.report();
   }
 

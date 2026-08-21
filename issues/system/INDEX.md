@@ -13,7 +13,6 @@ record of what has been fixed and why.
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
 | [0213a](open/0213a-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
 | [0209](open/0209-ed25519-is-five-times-slower-than-p-256-which-is-the-wrong-way-round.md) | the title's ordering is gone — ed25519 and P-256 now cost the same — and all three rows are explained: ed25519 was `ptAdd` inverting per addition, P-256 was byte-wise order arithmetic, and RSA is 2048 rounds of two multiplies and two divisions with nothing hiding. What is left is two changes nobody has made: CRT and a Montgomery multiply | performance | no error |
-| [0208](open/0208-nothing-owns-the-wasmtime-hosts-build-so-five-callers-do-it-themselves.md) | nothing owns the wasmtime host's build — it cost a 413s gate run when a merge left `wacland` behind, and the v8 freshness check was claiming the wasmtime crate's sources as its own, unclearably. Both checks fixed; the owner is still missing | missing feature | not implemented |
 | [0205](open/0205-fifteen-of-nineteen-coverage-tasks-cannot-fail.md) | fifteen of nineteen coverage drivers end with `report(...)` and cannot fail, while the summary read "19/19 passed" — two hold a floor, two only check their own exemptions | missing feature | no error |
 | [0204](open/0204-wac-test-recompiles-every-directory-on-every-run.md) | `wac test` has no build cache, so every run recompiles every test directory — measured at 9% of the lane's biggest chunks, so worth ~8s of wall rather than the 104s it looked like | performance | no error |
 | [0203](open/0203-the-gate-fails-one-run-in-six-and-never-on-the-same-test.md) | the gate failed 5 of 28 runs in one day on five different files — two were real breakage arriving through the merge, two were fixed-wait races, one is unexplained | bug | no error |
@@ -64,7 +63,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-240 issues, 188 closed.
+240 issues, 189 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

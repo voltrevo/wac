@@ -108,7 +108,8 @@ export string hangReport(string what, string[] names, Ran[] runs) {
 /**
  * Whether `artifact` is older than any file `entry` is made of, and so has to be built again.
  *
- * The rule `harness/nativeHost.ts` uses for the crate and `tools/seedFresh.test.ts` uses for the
+ * The rule `packages/wactest/src/built.wac`'s `nativeHostWhyNot` uses for the crate and
+ * `tools/seedFresh.test.ts` uses for the
  * seed: mtimes, not content.
  *
  * **It used to ask about the whole tree** — `find packages core spec -name '*.wac' -newer …` — and that

@@ -40,16 +40,33 @@ import { Cli, Exec, Stat, FileResult } from "std/platform.wac";
 
 /** The newest modification time anywhere under `dir`, or 0 for a directory that is not there. */
 export i64 newestUnder(Cli cli, string dir) {
+  return newestUnderExcept(cli, dir, string[0](fill: ""));
+}
+
+/**
+ * The same, ignoring any directory entry named in `skip`.
+ *
+ * **`target/` is why this exists.** A freshness check on a cargo binary compares it against its own
+ * crate's sources, and cargo's output directory is *inside* that crate — so a walk that enters
+ * `target/` finds the binary itself, answers "something is newer than the binary", and rebuilds every
+ * single time. `packages/raster/test/wac/hosts_test.wac` had a private copy of `newestUnder` that
+ * differed from this file's in exactly that line, which is the kind of divergence two copies of one
+ * walk are for. `issues/system/0208`.
+ */
+export i64 newestUnderExcept(Cli cli, string dir, string[] skip) {
   i64 newest = 0 as i64;
   string[]? names = cli.readDir(dir).wait();
   if (names is null) { return 0 as i64; }
   string[] here = names!;
   for (i32 i = 0; i < here.len(); i++) {
+    bool skipped = false;
+    for (i32 k = 0; k < skip.len(); k++) { if (here[i] == skip[k]) { skipped = true; } }
+    if (skipped) { continue; }
     string path = dir + "/" + here[i];
     Stat s = cli.stat(path).wait();
     if (!s.exists) { continue; }
     if (s.isDir) {
-      i64 deep = newestUnder(cli, path);
+      i64 deep = newestUnderExcept(cli, path, skip);
       if (deep > newest) { newest = deep; }
       continue;
     }
@@ -164,6 +181,34 @@ i64 nowMillis(Cli cli) {
 
 /** The path of the `wac` binary these tests build and run with. */
 export string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** The wasmtime host — `wacland`, the other crate. `deno task seed:native` is what builds it. */
+export string nativeHost(Cli cli) { return cli.cwd().wait() + "/native/target/release/wacland"; }
+
+/**
+ * `""` when the wasmtime host is built and not older than `native/`, otherwise why not.
+ *
+ * **A test asks; it does not build.** Five test files each ran their own `cd native && cargo build
+ * --release`, in two languages, with five skip messages and two freshness checks that differed in
+ * whether they walked `target/` — so the same 2.6s cargo no-op was paid per file, and one of the
+ * checks rebuilt every run. `deno task seed`, and `deno task seed:native` for just this crate, own the
+ * build now; `tools/seedFresh.test.ts` fails when the binary is older than its sources.
+ * `issues/system/0208`.
+ *
+ * The reason is returned rather than warned, so the caller can put it in its own skip line — the four
+ * that skip say different things about what is lost, and that is worth keeping.
+ */
+export string nativeHostWhyNot(Cli cli) {
+  string root = cli.cwd().wait();
+  Stat host = cli.stat(nativeHost(cli)).wait();
+  if (!host.exists) {
+    return "native/target/release/wacland is not built — `deno task seed:native` builds it";
+  }
+  if (host.modifiedMillis < newestUnderExcept(cli, root + "/native", string[]("target"))) {
+    return "native/target/release/wacland is older than native/ — `deno task seed:native` rebuilds it";
+  }
+  return "";
+}
 
 /**
  * `entry` built into `.cache/built-<name>/<name>.wasm` with `grants`, or the one already there.

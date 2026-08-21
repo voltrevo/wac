@@ -57,6 +57,7 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
     deno task map --check                             MAP.md is generated; staleness is a failure
     deno task seed                                    rebuild the compiler inside the `wac` binary
     deno task seed:bootstrap                          ...from a clone with no binary yet
+    deno task seed:native                             just `wacland`, the wasmtime host
     deno task wac:install                             build it and put it on PATH — $WAC_HOME
     deno task wac:build -o ./wac                      ...or just build one, installing nothing
     deno task wac:uninstall [--keep-cache]            and take it away again
@@ -78,6 +79,12 @@ build the compiler again, is byte-identical — and since 2026-08-17 the command
 rather than asserting it, and puts the previous seed back rather than keep one that is not
 (`tools/seed.sh`, `design/lang/0009` D2). `deno task` is only the task runner here; nothing in
 that command needs a JavaScript host.
+
+**And since 2026-08-21 it builds `wacland` too**, the wasmtime host in `native/` — a separate crate
+that had no owner, so six test files each ran their own `cd native && cargo build --release` with their
+own skip message and their own freshness check. They ask now; `deno task seed` makes it so, and
+`deno task seed:native` does that crate alone when it is the only thing you touched.
+`issues/system/0208`.
 
 **It builds all three payloads, and costs about 34s.** The binary carries a compiler, a shell and a
 fetcher — `wac build`/`run`/`test`, `wac sh`, `wac update` — and until 2026-08-20 this script wrote
