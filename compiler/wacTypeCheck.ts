@@ -1914,7 +1914,10 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
           expr.constRef = scopeEntry.decl;
           return scopeEntry.decl.type;
         }
-        errAt(ctx, `'${expr.name}' is a ${scopeEntry.kind}, not a variable`, expr.line, expr.col);
+        // `a`/`an` from the kind, because `scopeEntry.kind` is interpolated and `enum` made this
+        // read "is a enum". The only test on this message asserts the `not a variable` tail.
+        const article = /^[aeiou]/.test(scopeEntry.kind) ? "an" : "a";
+        errAt(ctx, `'${expr.name}' is ${article} ${scopeEntry.kind}, not a variable`, expr.line, expr.col);
         return null;
       }
       errAt(ctx, `undefined variable '${expr.name}'`, expr.line, expr.col);

@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0235a](open/0235a-written-type-arguments-parse-as-a-comparison.md) | `b.map<i32>(…)` parses as a comparison chain — which the spec says angle brackets are — so the message is `expected Box<i32>, found bool`, naming neither the rule nor the intent | diagnostic | wrong answer |
+| [0235a](open/0235a-written-type-arguments-parse-as-a-comparison.md) | the silent half is fixed — a type name in value position was refused only for structs, so `x < i32`, `x < E` and `x < string` checked clean; what is left is that `found bool` is still the first of three lines | diagnostic | wrong answer |
 | [0233a](open/0233a-a-shift-by-a-variable-is-typed-from-the-amount-not-the-slot.md) | `i64 x = 1 << count;` is refused by both compilers: a shift is typed from its left operand, which for a literal has no type, so the only type in reach is the amount's — the one the result is explicitly not supposed to follow | decision | compile error |
 | [0232a](open/0232a-the-diagnostic-wire-cannot-carry-contextstart.md) | the diagnostic wire has no `contextStart`, so wacc renders `§wac-diag-multiline-ic7x2hq` two source lines shorter than the reference — and `renderdiag_test.wac` cannot see it, because both renderers are fed wacc's own wire | decision | wrong answer |
 | [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | bindgen refuses a nullable primitive at the host boundary, so `export i32 read(i32? x)` — the accessor the spec prescribes — gets no glue; the emitter half is done | decision | no glue for a signature the spec shows |

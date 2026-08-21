@@ -112,7 +112,7 @@ export string checkMessage(i32 code) {
   if (code == 46) { return "this cast is between one type and itself"; }
   if (code == 47) { return "this is not something that can be called"; }
   if (code == 48) { return "a method is not a value; call it or take it as a funcref"; }
-  if (code == 49) { return "a struct name is not a value"; }
+  if (code == 49) { return "a type name is not a value"; }
   if (code == 50) { return "float literal out of range for its type"; }
   if (code == 51) { return "no variant of that name"; }
   if (code == 52) { return "unknown module"; }

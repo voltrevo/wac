@@ -190,8 +190,8 @@ export i32 errRedundantCast() { return 46; }
 export i32 errNotCallable() { return 47; }
 /** A method named without calling it. */
 export i32 errMethodAsValue() { return 48; }
-/** A struct's name used where a value belongs. */
-export i32 errStructAsValue() { return 49; }
+/** A type's name — a struct, an enum or a primitive — used where a value belongs. */
+export i32 errTypeAsValue() { return 49; }
 /** A method that hides a parent's without saying `override`. */
 export i32 errOverrideMissing() { return 21; }
 /** `override` on a method no parent declares. */
@@ -3546,11 +3546,27 @@ void checkExpr(C c, Expr e) {
         c.reportWith(errUndefinedName(), e.line, e.col, "no " + idn + " in scope");
         return;
       }
-      // A struct's name is not a value. It reaches expression position legitimately as the receiver
+      // A type's name is not a value. It reaches expression position legitimately as the receiver
       // of a static call, and that arrives through the `Call` and `Member` arms rather than here —
-      // so an `Ident` that names a struct and nothing else is one used where a value belongs.
-      if (!c.isDeclaredName(idn) && c.isStruct(idn) && c.funcAt(idn) < 0) {
-        c.report(errStructAsValue(), e.line, e.col);
+      // so an `Ident` that names a type and nothing else is one used where a value belongs.
+      //
+      // **All three kinds, not just a struct.** The reason above is about how a type name arrives, and
+      // it does not distinguish them: an enum reaches a value position only as `E.Variant` and a
+      // primitive only as a cast or a static, both through the same two arms. Asking about structs
+      // alone left `x < i32` and `x < E` with **no diagnostic at all** — the emitter caught them
+      // later, with `unresolved name i32 on line 1` and no position, and only because it declines what
+      // it cannot resolve. That is also why `b.map<i32>(…)` reported `expected Box<i32>, found bool`:
+      // the comparison's right operand was a type name nothing objected to. `issues/lang/0235a`.
+      //
+      // **`isPrimitiveName` and not `isValueType` here, deliberately.** The comment on `isValueType`
+      // warns that three rules have used `isPrimitiveName` where they meant "held by value", because
+      // `string` is in that list and is a reference. This rule wants the other thing: the list of
+      // *type names*, which is what `isPrimitiveName` is — and `x < string` is as much a type name in
+      // value position as `x < i32`, so `string` belonging to the list is the point rather than a
+      // trap. `string.fromBytes(…)` is unaffected: a static call arrives through `Member`.
+      if (!c.isDeclaredName(idn) && c.funcAt(idn) < 0 &&
+          (c.isStruct(idn) || c.isEnum(idn) || isPrimitiveName(idn))) {
+        c.report(errTypeAsValue(), e.line, e.col);
       }
     }
     // `x is null` and `a is b` ask about a *reference*, so a primitive is not something they can be
@@ -4123,7 +4139,10 @@ void checkLvalueExprs(C c, Lvalue lv) {
 bool nameExists(C c, string n) {
   if (c.isDeclaredName(n)) { return true; }
   if (c.funcAt(n) >= 0 || c.isStruct(n) || c.isEnum(n)) { return true; }
-  return isPrimitiveName(n) || n == "string" || n == "bool" || n == "anyref";
+  // `isPrimitiveName` already covers `string` and `bool`; naming them again here read as though it
+  // did not, which is the same doubt `isValueType`'s comment exists to settle. `anyref` is the only
+  // one it does not list.
+  return isPrimitiveName(n) || n == "anyref";
 }
 
 /** Whether an expression is known not to be a boolean. Unknown is `false`: silence, as everywhere. */

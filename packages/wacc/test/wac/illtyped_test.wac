@@ -1,4 +1,4 @@
-// The negative half of the corpus: 21 ill-typed programs that must all be refused — 14 single-file,
+// The negative half of the corpus: 25 ill-typed programs that must all be refused — 18 single-file,
 // and 7 that are only ill-typed across an import boundary.
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/illtyped_test.wac
@@ -18,8 +18,10 @@
 // **Two questions per program**, because the failure mode is passing one and failing the other: does
 // the checker refuse it, and does the emitter decline anything. A program answering no to both builds
 // with its exported function missing, which is the shape `issues/lang/0155` and the export-parity net
-// in `emit.wac` are the other guards against. Measured 2026-08-21: **14 of 14 refused by the checker**,
-// 7 of them also declined by the emitter, 0 silent in both.
+// in `emit.wac` are the other guards against. Measured 2026-08-21: **18 of 18 refused by the checker**,
+// 0 silent in both. The last four are a *type name* where a value belongs, and three of them were
+// silent until `issues/lang/0235a`: only a struct was refused, so `x < i32`, `x < E` and `x < string`
+// checked clean and the emitter caught them later as `unresolved name i32`, without a position.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles } from "../../src/api.wac";
@@ -28,7 +30,11 @@ string[] names() {
   return string[](
     "a01 s - 1", "a02 s[0] - 1", "a03 i32 n = s[0]", "a04 b ? s : 1", "a05 p + 1 (struct)",
     "a06 s < 1", "a07 a(1) (i32 called)", "a08 p.v() (field as method)", "a09 a[0] (i32 indexed)",
-    "a10 -s", "a11 a.nope", "a12 g(1,2) for g(i32)", "a13 b + 1 (bool)", "a14 return s from i32");
+    "a10 -s", "a11 a.nope", "a12 g(1,2) for g(i32)", "a13 b + 1 (bool)", "a14 return s from i32",
+    // A **type name** where a value belongs. Only the struct case was refused: the other three
+    // checked clean and the emitter caught them later as `unresolved name i32`, with no position.
+    // The reference refuses all four. `issues/lang/0235a`.
+    "a15 x < i32 (primitive)", "a16 x < E (enum)", "a17 x < string", "a18 x < P (struct)");
 }
 
 string[] programs() {
@@ -46,7 +52,11 @@ string[] programs() {
     "export i32 f(i32 a) { return a.nope; }\n",
     "i32 g(i32 x) { return x; }\nexport i32 f() { return g(1, 2); }\n",
     "export i32 f(bool b) { return b + 1; }\n",
-    "export i32 f(string s) { return s; }\n");
+    "export i32 f(string s) { return s; }\n",
+    "export bool f(i32 x) { return x < i32; }\n",
+    "enum E { A, B }\nexport bool f(i32 x) { return x < E; }\n",
+    "export bool f(i32 x) { return x < string; }\n",
+    "struct P { i32 v; }\nexport bool f(i32 x) { return x < P; }\n");
 }
 
 export string test_every_ill_typed_program_here_is_refused_by_the_checker() {
