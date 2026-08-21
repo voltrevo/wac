@@ -290,3 +290,71 @@ That is **not** evidence the emitter can no longer produce an invalid module for
 evidence that the shapes recorded here do not, and the aggregate that started this is a lane, not a
 file anyone can write down. What is left of this issue is the decision it already names: whether the
 linker should qualify further rather than refuse.
+
+### Narrowed further the same day: three files, nothing referenced, and the name decides
+
+The smallest reproduction found, with the two colliding structs **never used**:
+
+```wac
+// one.wac                        // two.wac                        // agg.wac
+export struct Case { i32 x; }     export struct Case { i32 y; }     import { one } from "./one.wac";
+export i32 one() { return 1; }    export i32 two() { return 2; }    import { two } from "./two.wac";
+                                                                    import { dumpTypeErrors }
+                                                                      from ".../wacc/src/api.wac";
+                                                                    export i32 main() { … }
+```
+
+That contradicts *"two exported structs of one name in a link, unreferenced, build fine"* — true in the
+shape it was measured in, which had no library in the graph, and false as soon as one is there. So
+**declaring is enough**; the collision does not need a use, which removes the last reason to think the
+emitter is mishandling a *reference*.
+
+**And the name decides, but not the way this issue says.** Same three-file shape, only the struct's
+name changed:
+
+| name | in `ast.wac`? | result |
+|---|---|---|
+| `Case` | yes | refused as ambiguous |
+| `Expr` | yes | refused as ambiguous |
+| `Ty` | yes | refused as ambiguous |
+| `Stmt` | yes | refused as ambiguous |
+| `Decl` | yes | refused as ambiguous |
+| **`Arm`** | yes | **not refused — the linker guesses, and a member access fails five levels away** |
+| `Program` | yes | **builds, 627 KB from 20 files** |
+| `Zork` | no | builds |
+
+**`Arm` is the one to look at**, because it is this issue's original complaint reproduced in three
+files. The linker does *not* call it ambiguous — it picks one, and the guess surfaces where nothing
+mentions either declaration:
+
+    wacc: cannot emit agg.wac — a call to dumpTypeErrors, declined: a call to checkProgram,
+          declined: a call to checkModule, declined: a call to checkExpr, declined: a call to
+          typeOfExpr, declined: untyped member
+
+`check.wac`'s `typeOfExpr` cannot type a member of the `Arm` it was handed. That the resolution picked
+one of the two one-field structs is an inference, not something observed — what is measured is that
+adding two declarations of `Arm` and nothing else turns a member access five levels down into
+`untyped member`. Either way it is *"a module built on a guessed name is worse than none"* happening — and the only reason it is a decline rather than `expected (ref null 1), got (ref
+null 7)` is the cascade reporting landed for `issues/lang/0170a` earlier the same day.
+
+So the earlier note — *"`struct Expr` — also exported by `ast.wac`, also in the graph — does nothing,
+and neither does `struct Buf`"* — does not hold here: `Expr` and `Ty` behave exactly like `Case`. What
+is left is two much smaller questions: **why `Arm` is guessed at where five of its neighbours are
+refused**, which is the defect, and **why `Program` is neither**.
+
+`Zork` is the control that matters: a name wacc's own source does not declare, in the identical shape
+with the identical graph, builds. So this is not about graph depth, file count, or the API import as
+such — it needs the imported library to declare the name too, making a third declaration the reader
+never wrote.
+
+Things ruled out for `Program` specifically, each checked rather than assumed: it is not that it
+appears in one of `api.wac`'s exported signatures (neither `Program` nor `Ty` does), and not that
+`emit.wac` imports it explicitly (it imports `Program`, `Expr` and `Ty` — and *not* `Case`, which is
+the one that started this).
+
+**The next step is an instrument, not another guess.** `keyAt` is where the count is taken; what nobody
+can see is *which file* asked for the name and how many candidates it found. Logging
+`(file, name, candidates)` from the two `candidates > 1` sites — and from the successful lookups too,
+since the interesting comparison is `Program` against `Ty` — turns this from a reading exercise into
+one run. Four of my own hypotheses died to a two-minute experiment today; the fifth should not be
+argued either.

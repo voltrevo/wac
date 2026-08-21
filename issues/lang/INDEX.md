@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0234a](open/0234a-declaring-a-struct-a-library-uses-internally-breaks-the-library.md) | declaring `export struct Arm` in one file breaks any program that also imports `packages/wacc/src/api.wac` — `check` says no diagnostics and `build` declines a call five levels away; three of nine ast exports do it, from a single unrelated declaration | bug | no error from `check` |
 | [0233a](open/0233a-a-shift-by-a-variable-is-typed-from-the-amount-not-the-slot.md) | `i64 x = 1 << count;` is refused by both compilers: a shift is typed from its left operand, which for a literal has no type, so the only type in reach is the amount's — the one the result is explicitly not supposed to follow | decision | compile error |
 | [0232a](open/0232a-the-diagnostic-wire-cannot-carry-contextstart.md) | the diagnostic wire has no `contextStart`, so wacc renders `§wac-diag-multiline-ic7x2hq` two source lines shorter than the reference — and `renderdiag_test.wac` cannot see it, because both renderers are fed wacc's own wire | decision | wrong answer |
 | [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | bindgen refuses a nullable primitive at the host boundary, so `export i32 read(i32? x)` — the accessor the spec prescribes — gets no glue; the emitter half is done | decision | no glue for a signature the spec shows |
@@ -33,7 +34,7 @@ has been fixed and why.
 
 ## Closed
 
-180 issues, 155 closed.
+181 issues, 155 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
