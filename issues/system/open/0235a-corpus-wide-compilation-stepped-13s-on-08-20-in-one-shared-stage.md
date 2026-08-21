@@ -1,39 +1,79 @@
-# 0235a — a per-file CPU figure in the wac lane includes its chunk's shared build
+# 0235a — corpus-wide compilation stepped about +13.5s on 2026-08-20, and one shared stage did it
 
 - **Status:** open
 - **Claimed by:** agent-a, 2026-08-21
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
-- **Kind:** bug
-- **Symptom:** wrong answer — in an instrument, and it made me file a regression that is not there
+- **Kind:** performance
+- **Symptom:** no error — every push pays it, and nothing failed
 
-## Corrected, an hour after filing. Read this first.
+## Filed, withdrawn, reinstated. The withdrawal was the mistake.
 
-**I filed this as "compiling the corpus got several times slower on 08-20, and the gate logs say when".
-That was wrong, and the way it was wrong is the useful part.**
+**The regression is real.** I withdrew it on a measurement that was a failed run, and the failure was
+mine: this shell is zsh, which does not word-split an unquoted `$G`, so a helper of the form
 
-`wac test` reports a per-file CPU table. A directory's files **share one build** since 2026-08-18
-(`issues/system/0192`), the lane splits a large directory into chunks, and the chunk's build is charged
-to **one file** — whichever the runner reports first. Measured directly:
+    G="--allow-read --allow-write --allow-run --allow-env --allow-net"
+    wac test $G $FILE
 
-    describewac_test.wac alone                     4.1s
-    describewac_test.wac beside cases_test.wac    14.6s   (cases_test: 1.5s)
+passed all five grants as **one argument**. Every run through it exited 2 in about four seconds with
+`unknown flag '--allow-read --allow-write ...'` — and I never captured the exit status, so I read 4.1s as
+"describewac_test alone is cheap" and built a withdrawal on it. Measured with the arguments passed as a
+list:
 
-Same file, same machine, minutes apart. The 10.5s difference is the other file's build, charged to the
-first one. So a per-file figure is **not that file's cost**, and two runs are comparable only if chunk
-membership did not change between them.
+    describewac_test.wac alone                     17.7s   exit 0, 1 passed
+    describewac_test.wac beside cases_test.wac     14.4s   (cases_test 1.6s)
 
-That destroys the timeline I built. `describewac_test` going 1.6s → 15.3s on 08-20 is that file becoming
-the first of its chunk — files were added to `packages/wacc/test/wac/` that evening — and its own cost
-never moved: 1.6s then, about 1.6s of the 4.1s now. `corpuscheck_test` rose by **+13.5s** and
-`describewac_test` by **+13.7s**, which I noticed and read as two multipliers when an additive constant
-appearing twice is the signature of exactly this. `bindgenwac_test` bounces between 5.9s and 19.2s
-run-to-run — ±13.3s — which is the same constant arriving and leaving, and I called it "bimodal" and
-moved on.
+**No alone-versus-grouped discrepancy exists.** The file costs about 15-18s either way, and the gate has
+been reporting ~15s all day. Against 1.6s before 08-20 17:53. So the step stands.
 
-**And the fix I recommended was built on the same mistake.** "Keep the last run's per-file table and print
-the movers" would compare numbers that move when chunking moves. Any such check has to compare a
-*directory or chunk total*, or run one file at a time.
+The withdrawal's other pillar was that per-file figures include a chunk's shared build. That is *also*
+wrong as stated: `native/v8/src/main.rs` computes `built[group_of[i]]` **before** the timed loop, so a
+group's build is outside the per-file measurement. The 14.4s is run time.
+
+**One thing the episode did establish**: the refusal that caught it is the one added for
+`issues/system/0198` earlier the same day. Before that, an unknown flag was accepted silently — and a
+silently-accepted bad flag is exactly how four failed runs read as four fast ones.
+
+## What the shape of the step says
+
+    describewac_test    1.6s → 15.3s     +13.7s
+    corpuscheck_test   17.4s → 30.9s     +13.5s
+
+**Equal absolute gains on very different baselines**, which is not what "the compiler got N× slower"
+looks like — that would scale each. It is what a *shared stage* costing +13.5s more looks like, paid once
+per whole-corpus pass. `describewac_test` makes one `describeFiles` pass and `corpuscheck_test` one
+`diagnoseGraph` pass, and both cross the same front end: read the corpus, resolve every import, link.
+
+I read those two numbers as two multipliers when I first filed this, and then as evidence of a shared
+*build* when I withdrew it. They are evidence of a shared *stage*, which is a third thing and the one the
+arithmetic actually supports.
+
+## Ruled out, by measurement rather than by reading
+
+- **The two `setType` calls `0174a` added** (08-20 18:54) — an unconditional `findName` per variable
+  declaration, and the best-fitting mechanism I had. With the arguments passed properly:
+  **17704ms with them, 17515ms without.** Not the cause.
+- **`declinedExport` widening to every function** (08-20 18:38). Its expensive `canEmit` re-run needs
+  `!funcOk[at] || funcIndex[at] < 0` and its own census found 0 of 1797, so the widened loop is a walk.
+- **`api.wac`'s `indexOfPath` inside the import-edge loop** is a genuine O(files² × imports) — worth
+  fixing on its own — but `git log -S` dates it 08-21 01:26, seven hours after the window.
+
+## What is left, and it is one commit
+
+Only two commits touched `packages/wacc/src` inside 17:53–19:37, and one of them is measured out above.
+The window's boundary also brushes `cb6b29d2` at 17:47 — *"0161 closed: two spellings of one import are
+one type"* — which is a change to **import identity**, i.e. to the shared front end the arithmetic points
+at. A gate run takes about five minutes, so a log written at 17:53 may not contain a commit made at
+17:47: it is inside the window in the sense that matters.
+
+The experiment is the same one that cleared `setType`, and it needs no seed rebuild — the corpus tests
+import `api.wac` from the working tree, so the current seed compiles whatever source is on disk:
+
+    revert the candidate's change to packages/wacc/src, run
+    wac test --allow-read --allow-write --allow-run --allow-env --allow-net \
+      packages/wacc/test/wac/describewac_test.wac
+
+15s says it is not the cause; 1.6s says it is. **Pass the flags as separate arguments.**
 
 ## What survives
 
@@ -158,3 +198,43 @@ and does not need the heavy lane:
 
 1.6s before, 15s after, and the runner prints its own CPU.
 
+
+## Four mechanisms proposed, three measured out, and I am stopping — agent-a, 2026-08-21
+
+Recorded so the next person does not spend the afternoon I did.
+
+| mechanism | how it died |
+|---|---|
+| `declinedExport` widened to every function (0170a) | read: the expensive branch needs `!funcOk`, census found 0 of 1797 |
+| the two `setType` calls (0174a) | measured: **17704ms** with, **17515ms** without |
+| `0161`'s alias table, scanned by `canon` in five hot paths | measured: **17992ms** with `addLocalAlias`, **17687ms** without |
+| the corpus growing in the window | 7 files added, 30 KB total, 0.24% of 12.4 MB |
+| the test itself changing | byte-identical since 08-19 |
+
+`0161` is also outside the window once the boundary is read properly: a log's mtime is when the run
+*finished*, and a gate run takes about five minutes, so the 17:53 log reflects a tree from about 17:48 and
+a 17:47 commit is on the good side.
+
+**That leaves nothing in the window.** Only two commits touched `packages/wacc/src` between 17:48 and
+19:32, and both are measured or read out above. So either the cause is not a source change — the runner,
+the grouping, the engine — or my window is wrong in a way I have not found.
+
+One measurement worth having before anybody resumes: `wac test packages/wacc/test/wac` as a **single
+unit** ran past **20 minutes** with no output and was killed, where the gate covers the same directory in
+about 150s of wall across four workers and six shards. So the whole-directory aggregate is dramatically
+worse than the sharded arrangement, which is the opposite of what "sharding costs more builds" predicts
+and is the thread I would pull next. The runner's two paths are the place to look: `native/v8/src/main.rs`
+runs a file either from a pre-built aggregate (`Some(..) if carried.contains(&i)`) or by building inside
+the timed call (`None => build_and_call`), and only the second puts a build inside a per-file figure.
+
+### The method note, which is the transferable part
+
+Every wrong turn here had the same shape: **I reasoned from code structure to a cost, when measuring the
+cost was minutes of work.** `findName` looked quadratic and was not; `canon` looked hot and was not;
+`indexOfPath` genuinely is quadratic and is irrelevant to this. The one thing that was cheap throughout —
+edit, run one file, read the number — is what settled every question, and needed no seed rebuild because
+the corpus tests import `api.wac` from the working tree.
+
+And the measurement that misled me worst was the one I did not check the exit status of. Four runs at
+"4.1s" were four failures at exit 2. **Capture the status, and pass the grants as separate arguments** —
+this shell does not split an unquoted `$G`.
