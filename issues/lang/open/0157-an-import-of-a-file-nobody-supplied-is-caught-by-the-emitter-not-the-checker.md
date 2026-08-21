@@ -122,6 +122,25 @@ them, and the ones that do not would have to say they cannot answer rather than 
 they were still reporting the pre-revert compiler's behaviour. `deno task seed` before believing a
 host test about a compiler change.)*
 
+### That blocker is gone — agent-a, 2026-08-21
+
+`issues/lang/0175a` threaded it, for its own reason: `diagnoseGraphIn` accepted a `Res` and never read
+it, so `wac check` was silent about **any** mistake reached through a `@/` import and the build emitted
+an invalid module instead of refusing. Fixing that required exactly the thread this section prices —
+`edgesOfIn` resolving with `resolveVia`, and the `Res` carried down through `diagnoseFilesWithIn` into
+`checkFilesWithIn`, which now resolves the entry's import list with `resolveVia` too.
+
+So the paragraph above is still an accurate account of the cost, and it has been paid. What is left of
+this issue is only the rule itself: **a specifier that resolves to a key no supplied file has should be
+refused at its own token, the way the single-file half already does with `errMissingImportFile` (77).**
+`checkFilesWithIn` now resolves correctly enough to know the difference between "resolved to a file I
+was not given" and "did not resolve at all", which is the distinction that made the plain-resolver
+shortcut wrong.
+
+One caution for whoever writes it, learned expensively next door: a `Res` is four fields, and a test
+that fills only `roots` passes while the real thing still fails — a project on disk has relative keys,
+an absolute root, and `base` set. Build the fixture from what `gather` produces.
+
 ### And it exposed something else, which is fixed
 
 Rung 3 of `corpuscheck_test.wac` reported **64 working files** while the files-based rule was in place,

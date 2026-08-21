@@ -24,7 +24,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { diagnoseFiles, diagnoseGraph } from "../../src/api.wac";
+import { diagnoseFiles, diagnoseGraph, diagnoseGraphIn } from "../../src/api.wac";
+import { Res } from "../../src/path.wac";
 import { wireField, wireLines } from "./wire_probe.wac";
 
 const string MAIN = "import { helper } from \"./lib.wac\";\nexport i32 main() { return helper(); }\n";
@@ -169,5 +170,90 @@ export string test_and_through_a_parameter_type_which_is_the_same_reach_the_othe
   string accepts = RETURNS + "export i32 give(Pending<i32> p) { return p.wait(); }\n";
   string[] got = wireLines(diagnoseGraph(paths(), string[](TAKES, accepts), "/t/m.wac"));
   t.isTrue(got.len() > 0, "passing an i32 where a Pending<i32> goes was accepted");
+  return t.report();
+}
+
+// ── The same mistake, through a `@/` import ──────────────────────────────────────────────────────
+//
+// `wac check` calls `diagnoseGraphIn`, which takes the resolution context the reader worked out. That
+// function accepted a `Res` and **never read it**: its body mentioned the parameter zero times, so it
+// was `diagnoseGraph` with a parameter, and the two resolved every specifier alike with plain
+// `resolveFrom`. A `@/` spec resolves to nothing under that rule, so the imported file was not an
+// edge, so it was not in the closure, so every name it exports was unknown — and unknown is silent.
+//
+// The consequence, measured on a two-file project with its entry in `app/`:
+//
+//     import { mean } from "../src/stats.wac";   →  error: wrong number of arguments, with a caret
+//     import { mean } from "@/src/stats.wac";    →  "2 file(s), no diagnostics"
+//
+// and `wac build` then wrote a module the engine will not load, so the compiler emitted something
+// invalid in place of refusing the program. `issues/lang/0175a`, and 0157 is the other half — an
+// import that resolves to a file nobody supplied should be *refused*, which is a separate change.
+//
+// **The relative arm is the control and it is not optional.** It is the thing that proves the rule
+// fires at all on this graph, so that the `@/` arm's report is evidence about resolution rather than
+// about the rule. Both arms use one `lib.wac`; only the specifier and the `Res` differ.
+const string ARITY = "export i32 one(i32 n) { return n; }\n";
+const string CALLS_REL =
+  "import { one } from \"../src/lib.wac\";\nexport i32 main() { return one(1, 2); }\n";
+const string CALLS_PROJ =
+  "import { one } from \"@/src/lib.wac\";\nexport i32 main() { return one(1, 2); }\n";
+
+string[] projPaths() { return string[]("/p/app/m.wac", "/p/src/lib.wac"); }
+
+export string test_a_project_import_is_checked_the_way_a_relative_one_is() {
+  T t = T.create();
+  // Both files sit in the project `/p`, which is what a reader hands over as the roots — parallel to
+  // `paths`, so index 0 is the entry's and index 1 the imported file's.
+  Res res = Res.of(string[]("/p", "/p"));
+  string[] specs = string[]("a relative import", "a `@/` import");
+  string[] entries = string[](CALLS_REL, CALLS_PROJ);
+  for (i32 i = 0; i < specs.len(); i++) {
+    string[] got = wireLines(diagnoseGraphIn(projPaths(), string[](entries[i], ARITY), res, "/p/app/m.wac"));
+    t.eqI32(got.len(), 1, specs[i] + ": expected one diagnostic, got " + itoa(got.len())
+        + " — " + joinedWith(got, " | "));
+    if (got.len() != 1) { continue; }
+    t.eqStr(wireField(got[0], 0), "/p/app/m.wac", specs[i] + ": blamed the wrong file");
+    t.isTrue(wireField(got[0], 4).indexOf("arguments") >= 0,
+        specs[i] + ": the wrong rule — " + wireField(got[0], 4));
+  }
+  return t.report();
+}
+
+export string test_and_a_project_graph_that_is_correct_stays_silent() {
+  // The canary for the arm above: resolving `@/` through the `Res` must not make the checker complain
+  // about a call that is right. Without this, "reports a diagnostic" and "reports one per file it
+  // suddenly reached" look the same.
+  T t = T.create();
+  Res res = Res.of(string[]("/p", "/p"));
+  string good = "import { one } from \"@/src/lib.wac\";\nexport i32 main() { return one(1); }\n";
+  string[] got = wireLines(diagnoseGraphIn(projPaths(), string[](good, ARITY), res, "/p/app/m.wac"));
+  t.eqI32(got.len(), 0, "correct code through `@/` was refused — " + joinedWith(got, " | "));
+  return t.report();
+}
+
+// ── And the shape a real project actually has ────────────────────────────────────────────────────
+//
+// The arm above passes a `Res` whose roots are set and whose `base` is empty, and **that is not what
+// `wac check` hands over**. A project found on disk has relatively-keyed paths and an *absolute* root,
+// so `resolveFromAt` finishes by mapping the join back through `base` — see `relativeTo`. Resolving
+// with the root alone gives `/abs/p/src/lib.wac` for a file keyed `src/lib.wac`, which is not the
+// file, which is silence one step further along.
+//
+// It cost a cycle: the arm above went green while `wac check` on a real two-file project still said
+// "no diagnostics", because the fix honoured `rootAt` and dropped `base`. A `Res` is four fields and a
+// test that fills one of them can only prove something about that one.
+export string test_the_res_a_project_on_disk_produces_resolves_too() {
+  T t = T.create();
+  string[] keys = string[]("app/m.wac", "src/lib.wac");
+  // Relative keys, absolute root, and the base they are measured from — what `gather` builds.
+  Res res = Res(string[]("/abs/p", "/abs/p"),
+                string[0](fill: ""), string[0](fill: ""), string[0](fill: ""), "/abs/p");
+  string[] got = wireLines(diagnoseGraphIn(keys, string[](CALLS_PROJ, ARITY), res, "app/m.wac"));
+  t.eqI32(got.len(), 1, "expected one diagnostic, got " + itoa(got.len()) + " — "
+      + joinedWith(got, " | "));
+  if (got.len() != 1) { return t.report(); }
+  t.eqStr(wireField(got[0], 0), "app/m.wac", "blamed the wrong file");
+  t.isTrue(wireField(got[0], 4).indexOf("arguments") >= 0, "the wrong rule: " + wireField(got[0], 4));
   return t.report();
 }
