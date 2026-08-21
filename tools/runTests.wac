@@ -447,6 +447,94 @@ string[] runArgs(string[] targets, string[] ignore) {
   return args.all();
 }
 
+/** How often the queue looks at its children's logs while waiting for one of them to finish. */
+i32 pollMs() { return 250; }
+
+/** Where a chunk's output goes while it is being read — one file per slot, swept at lane start. */
+string logDir(Cli cli) { return cli.cwd().wait() + "/.cache/suite-logs"; }
+
+/**
+ * One shell word.
+ *
+ * Single quotes, so nothing inside is expanded or re-split; an embedded `'` ends the quoting, escapes
+ * itself and reopens — `'\''`, the only form that works in `sh`, since single quotes do not nest.
+ * A local copy rather than `packages/wactest`'s, which is test scaffolding: the runner should not
+ * import the thing it runs.
+ */
+string quoted(string s) {
+  string out = "'";
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    out = out + (c == "'" ? "'\\''" : c);
+  }
+  return out + "'";
+}
+
+/**
+ * `wac test … > log 2>&1` as a shell line.
+ *
+ * **A shell, because `Cli.exec` has no redirect of its own** — `issues/system/0231c` prices the
+ * alternative. `exec` at the front so the shell replaces itself rather than waiting on a child: one
+ * process instead of two, and the status that comes back is `wac test`'s own rather than a shell's
+ * copy of it.
+ *
+ * **What moved: a binary that cannot start is now a status rather than an `error`.** `Exec.error` is
+ * "could not be started", and what is started here is `/bin/sh`, which starts. A missing or
+ * unexecutable `wac` is then `127` with the shell's own sentence in the log — which streams, so it is
+ * on screen either way — and the lane still exits non-zero. `!r.ran()` below is now about the shell
+ * itself, which is a different and much rarer failure.
+ */
+string chunkLine(string wac, string[] targets, string[] ignore, string log) {
+  string line = "exec " + quoted(wac);
+  string[] args = runArgs(targets, ignore);
+  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  return line + " > " + quoted(log) + " 2>&1";
+}
+
+/** The whole lines after `from`, and how far they consumed. */
+struct Tail {
+  string text;
+  i32 at;
+}
+
+/**
+ * What a log has gained since `from`, up to its last newline.
+ *
+ * **A partial line is held back**, which is the whole reason four workers can share one terminal:
+ * what gets printed is always whole lines, so one chunk cannot splice itself into another's. The
+ * `stat` first is not a micro-optimisation — re-reading every active log on every wake is quadratic
+ * in a chunk's output, and this makes it quadratic only in what actually arrived.
+ *
+ * `all` when the child has finished: there is no more coming, so a trailing partial line is the last
+ * thing it said and printing it is better than dropping it.
+ */
+Tail newLines(Cli cli, string path, i32 from, bool all) {
+  Stat st = cli.stat(path).wait();
+  if (!st.exists || st.size <= (from as i64)) { return Tail("", from); }
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) { return Tail("", from); }
+  string text = string.fromBytes(f.bytes);
+  if (text.len() <= from) { return Tail("", from); }
+  string fresh = text.slice(from, text.len());
+  if (all) { return Tail(fresh, text.len()); }
+  i32 cut = -1;
+  for (i32 i = fresh.len(); i > 0; i--) {
+    if (fresh.slice(i - 1, i) == "\n") { cut = i; break; }
+  }
+  if (cut < 0) { return Tail("", from); }
+  return Tail(fresh.slice(0, cut), from + cut);
+}
+
+/** Every line of `text`, each prefixed with the worker that produced it. */
+void emit(Core core, string tag, string text) {
+  i32 at = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i != text.len() && text.slice(i, i + 1) != "\n") { continue; }
+    if (i > at) { core.log(tag + " " + text.slice(at, i)); }
+    at = i + 1;
+  }
+}
+
 /** What one run in a lane cost, for the report. */
 struct Took {
   string what;
@@ -905,20 +993,69 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
   // The queue. Each slot holds one ticket; when any of them answers, its block is printed whole and
   // the slot takes the next chunk. `waitAny` answers the *index* in the list it was handed, so the
   // list is rebuilt each turn from the slots that are still busy.
+  //
+  // **Streamed, and counted, which took neither a new capability nor a choice between them.** Each
+  // chunk writes to its own log through a shell redirect; the wait below has a deadline, so the parent
+  // gets control back while its children run; and what it prints is whole lines tagged with the
+  // worker that produced them. Four workers share one terminal without splicing into each other,
+  // because a partial line is held until it is finished — which is what the old block-at-a-time
+  // printing was working around.
+  //
+  // It replaced exactly that: `Cli.execWith` buffered, so a chunk said nothing until it ended — one
+  // held 66s of its own output, and 151s in another run — and "which file is it stuck on" was a
+  // question the lane could not answer while it was stuck. The counts were the reason it could not
+  // simply inherit instead: they are parsed out of this output, and an inherited stream is one
+  // nothing here can read.
+  //
+  // So the two lanes divide along one line: the lane this runner *reads* it cannot show as it goes,
+  // and the lane it shows it cannot read. Both follow from `Cli.execWith` having two modes and
+  // nothing between them — buffered, or straight to the descriptor. An incremental read is the
+  // streaming form `issues/system/0165` deferred "until a caller needs it", and this is that caller:
+  // `issues/system/0231c`.
+  //
+  // **`wac test` itself streams, and that is measured** — run directly with its output redirected to
+  // a file, the file grows 326 bytes at 6s, 1,206 at 18s, 10,178 at 24s, because the host flushes
+  // every write. So nothing is buffered at the source and nothing here is inherent to `wac test`:
+  // the bytes exist incrementally already, and it is this runner that cannot take them that way. The
+  // first three seconds are silent for the aggregate build a directory's tests share
+  // (`issues/system/0192`), which is the one gap `inherit` would not close either.
+  //
+  // What it costs today, measured: 54 chunks at four workers, so output lands often, but the longest
+  // single chunk held **66s** of its own output before printing any of it, and a slow file inside a
+  // fast chunk is invisible until the chunk ends. Nothing is lost — a hang shows as a chunk that
+  // never prints — but "which file is it stuck on" is a question the lane cannot answer while it is
+  // stuck, and `issues/system/0175` wants a per-test deadline that would need to.
   // Not `fill:` — a `Pending<T>` array is default-initialised, as `exec_test.wac` builds one, and
   // only the slots `busy` marks are ever read.
   Pending<Exec>[] live = Pending<Exec>[workers]();
   i32[] slotItem = i32[workers]();
   i64[] slotStart = i64[workers]();
+  i32[] slotAt = i32[workers]();
   bool[] busy = bool[workers]();
   i32 next = 0;
 
+  // Swept rather than appended to: a log from a killed run would otherwise be read as this run's
+  // output, and the first thing it would do is add somebody else's test count to this one's.
+  string logs = logDir(cli);
+  cli.remove(logs, true).wait();
+  cli.mkdir(logs, true).wait();
+  string[] slotLog = string[workers](fill: "");
+  string[] slotTag = string[workers](fill: "");
+  for (i32 s = 0; s < workers; s++) {
+    slotLog[s] = logs + "/w" + itoa(s + 1) + ".log";
+    slotTag[s] = "[w" + itoa(s + 1) + "]";
+  }
+
   string[] ignore = f.skip;
   for (i32 s = 0; s < workers && next < queue.len(); s++) {
-    live[s] = cli.execWith(wac, wacArgs(queue[next].targets, ignore), u8[0](),
-                           string[0](fill: ""), false, false);
+    cli.writeFile(slotLog[s], u8[0]()).wait();
+    core.log("── " + slotTag[s] + " " + queue[next].label);
+    live[s] = cli.execWith("/bin/sh",
+                           string[]("-c", chunkLine(wac, queue[next].targets, ignore, slotLog[s])),
+                           u8[0](), string[0](fill: ""), false, false);
     slotItem[s] = next;
     slotStart[s] = nowMs(core);
+    slotAt[s] = 0;
     busy[s] = true;
     next = next + 1;
   }
@@ -936,22 +1073,42 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
       slotOf[at] = s;
       at = at + 1;
     }
-    i32 which = core.waitAny(ids, -1);
-    if (which < 0) {
-      core.warn("   the queue waited without a deadline and was told nothing settled");
-      return 1;
+    // **A deadline rather than for ever, which is what makes this lane watchable.** `waitAny` answers
+    // -1 when nothing settled in the time given, and that is the parent getting control back while
+    // its children are still running — the only moment it can say what has arrived.
+    i32 which = core.waitAny(ids, pollMs());
+
+    // Whatever every running chunk has produced since the last look, in whole lines.
+    for (i32 i = 0; i < nBusy; i++) {
+      i32 s = slotOf[i];
+      Tail t = newLines(cli, slotLog[s], slotAt[s], false);
+      slotAt[s] = t.at;
+      if (t.text.len() > 0) {
+        emit(core, slotTag[s], t.text);
+        files = files + filesReported(t.text);
+        tests = tests + testsReported(t.text);
+        if (filesReported(t.text) > 0) { summaries = summaries + 1; }
+      }
     }
+    if (which < 0) { continue; }
+
     i32 slot = slotOf[which];
     Exec r = live[slot].wait();
     Chunk done = queue[slotItem[slot]];
-    took[tookN] = Took(done.label, nowMs(core) - slotStart[slot]);
+    i64 ms = nowMs(core) - slotStart[slot];
+    took[tookN] = Took(done.label, ms);
     tookN = tookN + 1;
-    string block = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
-    i32 said = filesReported(block);
-    if (said > 0) { summaries = summaries + 1; }
-    files = files + said;
-    tests = tests + testsReported(block);
-    core.log(trimEnd(block));
+    // The rest of the log, partial last line included: the child is gone, so nothing more is coming
+    // and what it managed to write is what it said.
+    Tail rest = newLines(cli, slotLog[slot], slotAt[slot], true);
+    slotAt[slot] = rest.at;
+    if (rest.text.len() > 0) {
+      emit(core, slotTag[slot], trimEnd(rest.text));
+      files = files + filesReported(rest.text);
+      tests = tests + testsReported(rest.text);
+      if (filesReported(rest.text) > 0) { summaries = summaries + 1; }
+    }
+    core.log("── " + slotTag[slot] + " done in " + secs(ms) + ": " + done.label);
     if (!r.ran()) {
       core.warn("   " + done.label + " did not start — " + r.error);
       if (wacCode == 0) { wacCode = 1; }
@@ -960,14 +1117,21 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
 
     busy[slot] = false;
     if (next < queue.len()) {
-      live[slot] = cli.execWith(wac, wacArgs(queue[next].targets, ignore), u8[0](),
-                                string[0](fill: ""), false, false);
+      cli.writeFile(slotLog[slot], u8[0]()).wait();
+      core.log("── " + slotTag[slot] + " " + queue[next].label);
+      live[slot] = cli.execWith("/bin/sh",
+                                string[]("-c",
+                                         chunkLine(wac, queue[next].targets, ignore, slotLog[slot])),
+                                u8[0](), string[0](fill: ""), false, false);
       slotItem[slot] = next;
       slotStart[slot] = nowMs(core);
+      slotAt[slot] = 0;
       busy[slot] = true;
       next = next + 1;
     }
   }
+  // The logs are the lane's own scratch and nothing reads them after this.
+  cli.remove(logs, true).wait();
 
   // ── and the ones that said they need the machine, one at a time ──────────────────────────────
   Names alsoAlone = Names.create();

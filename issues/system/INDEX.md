@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0231c](open/0231c-a-lane-can-be-watched-or-counted-and-not-both.md) | the suite's Deno pass is inherited so it can be watched and is therefore uncountable; its wac lane is buffered so its 2,387 tests can be counted and is therefore unwatchable — one chunk held 66s of output — because `Cli.execWith` has two modes and no incremental read. Not a blocker: a shell redirect plus a bounded `waitAny` and a tail does both today, measured — the capability would make it one process and one read instead of two and a re-read | missing feature | no error |
 | [0230c](open/0230c-the-heavy-lanes-declared-costs-are-stale-and-nothing-checks-them.md) | `checked_test.wac` declares `140s, measured` and ran past **1,166s** without finishing; the heavy lane's six files declare 412s and had spent 9m20s of CPU on the first four, and `tools/lane.test.ts` checks that a reason names a number rather than that the number is true | performance | wrong answer |
 | [0231a](open/0231a-two-declarations-of-one-compiler-api-and-only-one-of-them-had-a-res.md) | `type WaccApi` is declared twice, 20 members and 7, and neither mentioned the `Res`-taking entry points that were already exported — so 0229a's fix had to be applied to two lists on two days, and `waccRes` takes a structural type to be callable from both | decision | no error |
 | [0230a](open/0230a-the-deno-path-is-a-compiler-not-a-wac-command.md) | six of the seven documented subcommands exist as separate Deno entry points and none of them is `wac`; `deno task check` is the *TypeScript* check, and 0229a is what the arrangement already cost | decision | not implemented |
@@ -63,7 +64,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-241 issues, 190 closed.
+242 issues, 190 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
