@@ -17,7 +17,7 @@ import {
 } from "../packages/wacc/tools/waccBindgen.ts";
 
 /** The half of wacc's API a build uses. */
-type WaccApi = {
+export type WaccApi = {
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
   emitFilesCovered: (paths: string[], sources: string[], entry: string) => Uint8Array;
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
@@ -42,7 +42,64 @@ type WaccApi = {
   traceTableFiles: (paths: string[], sources: string[], entry: string) => string;
   /** The same with the journal sized by the caller — `issues/lang/0059`. */
   emitFilesTracedSlots: (paths: string[], sources: string[], entry: string, slots: number) => Uint8Array;
+
+  /**
+   * **The resolution context, and the entry points that read it.**
+   *
+   * The variants above build an empty `Res`, which resolves `./a.wac` and nothing else: a `@/`
+   * specifier lands on a key no supplied file has, so the file contributes no declarations and the
+   * emitter declines the program. Every one of these has been exported by `api.wac` the whole time,
+   * and this type declared only the root-less half — so a host reading the type could not see there
+   * was a choice. GitHub issue 22 finding 4.
+   */
+  Res: {
+    empty: () => WaccRes;
+    of: (roots: string[]) => WaccRes;
+    /** All five fields — mappings and the base included. `$`-prefixed because it is the constructor. */
+    $of: (
+      roots: string[],
+      mapFrom: string[],
+      mapSpec: string[],
+      mapTo: string[],
+      base: string,
+    ) => WaccRes;
+  };
+  diagnoseGraphIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  diagnoseFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  buildFilesIn: (
+    paths: string[],
+    sources: string[],
+    res: WaccRes,
+    entry: string,
+  ) => { wasm: Uint8Array; described: string };
+  describeFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  bindTypesFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  exportSigsFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  emitFilesCoveredIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => Uint8Array;
+  covTableFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
 };
+
+/** wacc's `Res`, held by reference on the wac side — opaque here, built by `Res.$of`. */
+export type WaccRes = { readonly $ref?: unknown };
+
+/**
+ * The resolution context as wacc wants it, from what `wacFilesWithRoots` found.
+ *
+ * **`roots` is parallel to `paths`, not a map**, because `Res.rootAt` looks a file's root up by
+ * position — so a file with no project gets `""` and resolves the ordinary way. `base` is the
+ * directory relative keys are measured from, and dropping it is its own silence: a project reached by
+ * an *absolute* root whose graph is keyed *relatively* resolves back through it, so honouring the root
+ * alone gives `/abs/p/src/lib.wac` for a file keyed `src/lib.wac`, which is not the file.
+ */
+export function waccRes(
+  api: WaccApi,
+  paths: string[],
+  roots: Map<string, string>,
+  base: string,
+): WaccRes {
+  if (roots.size === 0) return api.Res.empty();
+  return api.Res.$of(paths.map((p) => roots.get(p) ?? ""), [], [], [], base);
+}
 
 let cached: WaccApi | null = null;
 
@@ -134,9 +191,19 @@ export async function waccArtifacts(
   opts: {
     coverage?: boolean;
     optimize?: (wasm: Uint8Array) => Promise<Uint8Array>;
+    /** See `compileArtifacts`. `wacFilesWithRoots` is what produces both of these. */
+    roots?: Map<string, string>;
+    base?: string;
   } = {},
 ): Promise<WaccArtifacts> {
-  const cacheKey = await compileKey(files, entry, opts.coverage === true, opts.optimize !== undefined);
+  const cacheKey = await compileKey(
+    files,
+    entry,
+    opts.coverage === true,
+    opts.optimize !== undefined,
+    opts.roots,
+    opts.base,
+  );
   if (cacheKey !== null) {
     const hit = await readCompiled(cacheKey);
     if (hit !== null) return hit;
@@ -152,14 +219,26 @@ async function compileKey(
   entry: string,
   coverage: boolean,
   optimize: boolean,
+  roots: Map<string, string> | undefined,
+  base: string | undefined,
 ): Promise<string | null> {
   const compiler = await compilerKeyParts();
   if (compiler === null) return null;
   return await contentKey([
-    "wacc-artifacts 1",
+    // **2, because the roots below changed what a key means.** An entry written before them holds a
+    // build whose `@/` imports resolved to nothing; served against a key that now includes them it
+    // would answer a correctly-resolved question with the declined artefact. `filesParts` covers file
+    // *contents*, and a project's root is not in any of them.
+    "wacc-artifacts 2",
     entry,
     coverage ? "coverage" : "plain",
     optimize ? "optimized" : "asis",
+    // Sorted: a `Map`'s order follows insertion, so one project walked from two entries would
+    // otherwise key differently and each would miss the other's artefact.
+    ...[...(roots ?? new Map<string, string>())]
+      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([p, r]) => `root ${p} ${r}`),
+    `base ${base ?? ""}`,
     ...compiler,
     ...filesParts(files),
   ]);
@@ -225,13 +304,23 @@ async function compileArtifacts(
      * Without it a `@/` specifier cannot resolve through this path: the root-less API variants build
      * an empty `Res`, and an outsider compiling their own project got "an import of a file that was
      * not supplied" where `wac build` compiled it. GitHub issue 21.
+     *
+     * **And for a year of commits this option was declared and never read.** Its name appeared once
+     * in this file — in the type above — while every call below went to the root-less variant, so the
+     * paragraph explaining what breaks without it described what happened *with* it. Both compilers
+     * failed, in different words, which is what sent GitHub issue 22 looking for two loaders instead
+     * of one unread parameter. An option a caller cannot make a difference with is worse than none:
+     * `packages/platform/test/project.test.ts` is the test that would have said so.
      */
     roots?: Map<string, string>;
+    /** The directory relative keys are measured from — `Deno.cwd()` for a caller that walked from it. */
+    base?: string;
   } = {},
 ): Promise<WaccArtifacts> {
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
+  const res = waccRes(api, paths, opts.roots ?? new Map(), opts.base ?? "");
 
   // **The checker first.** This asked only what the *emitter* declined, so a program with type
   // errors was built and run as long as the emitter could guess its way through: an example here
@@ -246,7 +335,7 @@ async function compileArtifacts(
   // than the whole graph: box's 179 files go from 61ms to 1.6s, and a build is cached, so that is
   // once per program rather than once per test. Swept over all 73 programs here before switching:
   // nothing was hiding.
-  const diagnostics = api.diagnoseGraph(paths, sources, entry);
+  const diagnostics = api.diagnoseGraphIn(paths, sources, res, entry);
   if (diagnostics !== "") {
     const lines = diagnostics.split("\n").filter((l) => l !== "").map((l) => {
       const [file, line, col, phase, message, , hint] = l.split("\t");
@@ -263,10 +352,10 @@ async function compileArtifacts(
   // that a second front costs nobody anything. `issues/lang/0129`.
   const built = opts.coverage
     ? null
-    : api.buildFiles(paths, sources, entry);
+    : api.buildFilesIn(paths, sources, res, entry);
 
   const raw = built === null
-    ? api.emitFilesCovered(paths, sources, entry)
+    ? api.emitFilesCoveredIn(paths, sources, res, entry)
     : built.wasm;
 
   // **One call for both.** Asking separately rebuilt the whole front end twice — link, lex, parse,
@@ -274,7 +363,7 @@ async function compileArtifacts(
   // always wanted together. About 10% off a build: `packages/box` went 4561ms to 4081ms and
   // `packages/wacc` 1830ms to 1589ms. `issues/lang/0129` has the rest, which is still there.
   // `packages/wacc/test/wac/describewac_test.wac` holds the one call against the two it replaced.
-  const described = (built === null ? api.describeFiles(paths, sources, entry) : built.described)
+  const described = (built === null ? api.describeFilesIn(paths, sources, res, entry) : built.described)
     .split(api.describeSeparator());
   const blocked = described[0] ?? "";
   if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
@@ -291,7 +380,7 @@ async function compileArtifacts(
   // `index\tline\tcol\tkind\tfile` per counter, in counter order. The caller gets `file:line` so the
   // dump carries lines rather than indices and nothing needs a second copy of this table.
   const covPoints: CovPoint[] = opts.coverage
-    ? parseCovTable(api.covTableFiles(paths, sources, entry), entry)
+    ? parseCovTable(api.covTableFilesIn(paths, sources, res, entry), entry)
     : [];
   const covLines = covPoints.map((p) => `${p.file}:${p.line}`);
 

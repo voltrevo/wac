@@ -8,9 +8,8 @@
 //   deno run -A tools/coverage.ts            # summary
 //   deno run -A tools/coverage.ts --verbose  # plus every uncovered point
 
-import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
-import { wacFiles } from "../harness/wacFiles.ts";
+import { compileEntry } from "../harness/referenceCompile.ts";
 import { buildCorpus } from "../packages/gzip/test/fuzz/corpus.ts";
 
 type Point = { index: number; file: string; line: number; col: number; kind: string };
@@ -22,7 +21,7 @@ async function instrument(entry: string): Promise<{
   mod: Record<string, unknown>;
   points: Point[];
 }> {
-  const result = wacCompile(await wacFiles(entry), entry, { coverage: true });
+  const result = await compileEntry(entry, { coverage: true });
   if (!result.ok) {
     throw new Error(`compile failed:\n${result.diagnostics.map(d =>
       `  ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n")}`);

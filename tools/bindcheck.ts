@@ -1,9 +1,7 @@
-import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
-import { wacFiles } from "../harness/wacFiles.ts";
+import { compileEntry } from "../harness/referenceCompile.ts";
 for (const entry of Deno.args) {
-  const files = await wacFiles(entry);
-  const r = wacCompile(files, entry);
+  const r = await compileEntry(entry);
   if (!r.ok) { console.log(`${entry}: DIAG ${r.diagnostics[0].message}`); continue; }
   const ts = wacBindgen(r.compiled);
   const classes = [...ts.matchAll(/^export class (\w+)/gm)].map(m => m[1]);

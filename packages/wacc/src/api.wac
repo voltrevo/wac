@@ -220,6 +220,11 @@ export Built buildFilesIn(string[] paths, string[] sources, Res res, string entr
     return buildLinked(paths, sources, res, entry);
 }
 
+/** `describeFiles` with the project root each file sits in — `design/lang/0009` D7. */
+export string describeFilesIn(string[] paths, string[] sources, Res res, string entry) {
+  return describeLinked(paths, sources, res, entry);
+}
+
 /** The line `describeFiles` puts between its two halves. */
 export string describeSeparator() { return describeSep(); }
 
@@ -684,10 +689,15 @@ export string diagnoseFilesRendered(string[] paths, string[] sources, string ent
 }
 
 export string diagnoseFiles(string[] paths, string[] sources, string entry) {
+  return diagnoseFilesIn(paths, sources, Res.empty(), entry);
+}
+
+/** `diagnoseFiles` with the project root each file sits in — `design/lang/0009` D7. */
+export string diagnoseFilesIn(string[] paths, string[] sources, Res res, string entry) {
   Lexed?[] lexes = Lexed?[paths.len() + 1]();
   Program?[] progs = Program?[paths.len() + 1]();
   i32[] counts = declCountsInto(paths, sources, lexes, progs);
-  return diagnoseFilesWith(paths, sources, entry, counts, lexes, progs);
+  return diagnoseFilesWithIn(paths, sources, res, entry, counts, lexes, progs);
 }
 
 /** The same, with the declaration counts already taken — see `declCountsOf`. */

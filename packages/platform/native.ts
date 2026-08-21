@@ -36,7 +36,8 @@ async function ensureOutDir(out: string): Promise<void> {
 // but the conformance suite makes them agree. The format is versioned for that reason.
 
 import { wacCompile } from "wac/wacCompile.ts";
-import { wacFiles } from "../../harness/wacFiles.ts";
+import { wacFilesWithRoots } from "../../harness/wacFiles.ts";
+import type { WaccRes } from "../../harness/waccBuild.ts";
 
 /** Bumped when a field changes meaning. A runtime refuses a manifest it does not know. */
 export const MANIFEST_VERSION = 1;
@@ -171,15 +172,28 @@ function uleb(n: number): Uint8Array {
  * would leave the other implied.
  */
 export async function buildNative(entry: string, out: string, grants: Grants = {}): Promise<Manifest> {
-  const files = await wacFiles(entry);
+  // **With the roots, which `wacFiles` computes and drops.** `@/` is defined as the nearest
+  // `wac.json5` at or above the importing file, so the walk that opens files is the only thing that
+  // can answer it — and both compilers below need to be told. Asking for the files alone made the
+  // documented Deno path unable to compile any project using `@/`, in two different words:
+  //
+  //     wacc:        wacc cannot compile main.wac yet — an import of a file that was not supplied
+  //     reference:   `@/src/lib.wac` needs a project: no `wac.json5` above main.wac
+  //
+  // GitHub issue 22 finding 4 read that as two loaders diverging. It is one loader, asked the smaller
+  // of its two questions by everything except `harness/referenceRun.ts` and `referenceCheck.ts`.
+  const { files, roots } = await wacFilesWithRoots(entry);
+  // The directory relative keys are measured from. The walk resolved `@/` against `Deno.cwd()`, so a
+  // compiler handed a different base would file the same file under a second key.
+  const base = Deno.cwd();
   // **wacc, unless asked otherwise**, the same rule and the same switch as `build.ts`: both jobs are
   // "build an application", and a manifest describing a module the reference compiled cannot
   // describe one that uses a feature only wacc has. `issues/lang/0105` — this was the last bundler
   // on the reference, and the binary embedding the pair is why it mattered.
   if (Deno.env.get("WAC_APP_FROM") !== "reference") {
-    return await buildNativeWithWacc(entry, out, grants, files);
+    return await buildNativeWithWacc(entry, out, grants, files, roots, base);
   }
-  const r = wacCompile(files, entry, {});
+  const r = wacCompile(files, entry, { roots, base });
   if (!r.ok) {
     throw new Error(
       `${entry} did not compile:\n` +
@@ -322,10 +336,15 @@ const wireOf = new Map<string, { wire: string; sigWire: string }>();
  */
 async function nativeWire(
   api: { bindTypesFiles: (p: string[], s: string[], e: string) => string;
-         exportSigsFiles: (p: string[], s: string[], e: string) => string },
+         exportSigsFiles: (p: string[], s: string[], e: string) => string;
+         bindTypesFilesIn: (p: string[], s: string[], r: WaccRes, e: string) => string;
+         exportSigsFilesIn: (p: string[], s: string[], r: WaccRes, e: string) => string },
   paths: string[],
   sources: string[],
   entry: string,
+  res: WaccRes,
+  roots: Map<string, string>,
+  base: string,
 ): Promise<{ wire: string; sigWire: string }> {
   const { cached, compilerKeyParts, contentKey, filesParts } = await import(
     "../../harness/buildCache.ts"
@@ -334,8 +353,13 @@ async function nativeWire(
   const compiler = await compilerKeyParts();
   const producer = compiler === null ? null : [...compiler, ...filesParts(await wacFiles(WACC_API))];
   const key = await contentKey([
-    "native-wire 2",
+    // **3, because the resolution context is now part of the answer.** A wire cached before it was
+    // computed from a graph whose `@/` imports resolved to nothing, and would be served against a key
+    // that now resolves them — a stale boundary for a module that compiled correctly.
+    "native-wire 3",
     entry,
+    ...[...roots].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([p, r]) => `root ${p} ${r}`),
+    `base ${base}`,
     ...(producer ?? ["unkeyed"]),
     ...paths.flatMap((p, i) => [p, sources[i]]),
   ]);
@@ -343,8 +367,8 @@ async function nativeWire(
   if (hit !== undefined) return hit;
 
   const make = () => ({
-    wire: api.bindTypesFiles(paths, sources, entry),
-    sigWire: api.exportSigsFiles(paths, sources, entry),
+    wire: api.bindTypesFilesIn(paths, sources, res, entry),
+    sigWire: api.exportSigsFilesIn(paths, sources, res, entry),
   });
   let made: { wire: string; sigWire: string };
   if (producer === null) {
@@ -369,16 +393,21 @@ async function buildNativeWithWacc(
   out: string,
   grants: Grants,
   files: Map<string, string>,
+  roots: Map<string, string>,
+  base: string,
 ): Promise<Manifest> {
-  const { waccApi, waccArtifacts } = await import("../../harness/waccBuild.ts");
+  const { waccApi, waccArtifacts, waccRes } = await import("../../harness/waccBuild.ts");
   const { parseAliases, parseBindTypes, parseCallbacks, parseSigs } = await import(
     "../wacc/tools/waccBindgen.ts"
   );
-  const art = await waccArtifacts(files, entry);
+  const art = await waccArtifacts(files, entry, { roots, base });
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
-  const answered = await nativeWire(api, paths, sources, entry);
+  // **The wire needs it as much as the module does.** It is where the manifest's struct and signature
+  // tables come from, so a type declared in a file reached only through `@/` would be missing from the
+  // boundary of a module that otherwise compiled.
+  const answered = await nativeWire(api, paths, sources, entry, waccRes(api, paths, roots, base), roots, base);
   const wire = answered.wire;
   const types = parseBindTypes(wire);
   const cbs = parseCallbacks(wire);

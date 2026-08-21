@@ -15,17 +15,15 @@
 // and the artifact runs; the collision only surfaces when somebody imports the bindings into a
 // TypeScript project, which is what bindgen is *for*.
 
-import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
-import { wacFiles } from "../harness/wacFiles.ts";
+import { compileEntry } from "../harness/referenceCompile.ts";
 
 if (Deno.args.length !== 2) {
   console.error("usage: deno task bindgen <entry.wac> <out.gen.ts>");
   Deno.exit(2);
 }
 const [entry, out] = Deno.args;
-const files = await wacFiles(entry);
-const r = wacCompile(files, entry);
+const r = await compileEntry(entry);
 if (!r.ok) {
   console.error(`${entry}: ${r.diagnostics[0].message}`);
   Deno.exit(1);

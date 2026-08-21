@@ -56,9 +56,38 @@ a binary — and it is a developer fallback rather than the supported route, whi
 **It did not work from outside this repository until 2026-08-20**, which is worth saying because
 somebody hit it: the compiler's own sources were named by relative path, so it read
 `packages/wacc/src/api.wac` from *your* directory and died with a `NotFound` and ten frames of
-TypeScript; and the project root never reached wacc, so a `@/` import answered "an import of a file
-that was not supplied". Both are fixed, a failure now prints the message without the stack
-(`WAC_STACK=1` if you want it), and GitHub issue 21 is where it was reported.
+TypeScript. That is fixed, a failure now prints the message without the stack (`WAC_STACK=1` if you
+want it), and GitHub issue 21 is where it was reported.
+
+**And a `@/` import did not work here until 2026-08-21**, which is worth saying more plainly still,
+because this paragraph claimed it did. The walk that reads your files searches upward for the nearest
+`wac.json5` — it has to, to follow the import at all — and then handed the compiler the files and not
+what it had found. Both compilers refused, in different words:
+
+    wacc         wacc cannot compile main.wac yet — an import of a file that was not supplied
+    reference    `@/src/lib.wac` needs a project: no `wac.json5` above main.wac
+
+from any entry position, and `deno task bindgen` refused the same import for the same reason. GitHub
+issue 22 reported it; `issues/system/0229a` has the measurement and the fix, and
+`packages/platform/test/project.test.ts` is what now holds this sentence to being true.
+
+### What the Deno path is, and is not
+
+It compiles. It is not the `wac` command. The seven things `wac` does are, through Deno, seven
+different entry points with different flags and exit codes — `native.ts` builds, `tools/check.ts`
+checks, `harness/referenceRun.ts` runs, `deno task bindgen` generates bindings, and `wac update` has no
+Deno equivalent at all. Note that **`deno task check` is this repository's own TypeScript check**, not
+`wac check`.
+
+So if you want the development loop rather than an artefact, install the binary. `issues/system/0230a`
+is the open question of whether Deno should host the whole command, with options and a recommendation;
+GitHub issue 22 is the case for it, and it makes the case better than that issue does.
+
+**One thing here does need the network, once.** Compiling does not: the two commands above complete
+under `deno run --cached-only`, which fetches nothing. But building a *runnable application bundle*
+(`packages/platform/build.ts`) shells out to `deno bundle`, and Deno downloads `@esbuild` for your
+platform the first time it does — about 72 seconds of waiting and then a failure if you are offline.
+`issues/system/0228a` item 7 has the measurement.
 
 ## The smallest program
 
@@ -235,6 +264,43 @@ wac hello.wasm                        # run a built artefact — the manifest sa
 wac test    src/math_test.wac         # or a directory
 wac bindgen src/main.wac [--js]       # src/main.gen.ts — the glue a JS host calls it through
 ```
+
+### Reading those `[args…]`
+
+The line above passes arguments and does not say how a program gets them, which somebody noticed. Two
+fields on `Cli`, and **argument 0 is the first argument to your program**, not the program's own name:
+
+```wac
+// greet.wac
+import { Cli, Core } from "std/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  string who = n > 0 ? string.fromBytes(cli.arg(0).wait()) : "world";
+  cli.write(("hello, " + who + "\n").toBytes());
+  return 0;
+}
+```
+
+```sh
+$ wac run greet.wac Ada
+hello, Ada
+$ wac run greet.wac
+hello, world
+```
+
+**The `.wait()` is not ceremony and neither is `string.fromBytes`** — they are the two boundaries a
+wac program crosses, and both show up in those five lines:
+
+- **A capability answers a `Pending<T>`, not a `T`.** `argCount` and `arg` are fields holding
+  funcrefs, because what they do is leave the module; `.wait()` is where the answer arrives. Nothing
+  is granted implicitly, so a program that never declared a capability cannot have one — which is why
+  reading an argument looks like work rather than like a variable.
+- **A capability deals in bytes, and `string` is a wac type.** `cli.arg(0)` answers `u8[]`, and
+  `string.fromBytes` interprets those bytes as text; `"…".toBytes()` goes the other way, which is why
+  `cli.write` takes the result of one. The conversion is explicit in both directions because the
+  bytes crossing the boundary are not guaranteed to be text, and a silent decode is how that becomes
+  somebody's corrupted output rather than an error.
 
 A test is an exported function whose name begins with `test`, returning a string — empty for pass,
 the reason for failure:
