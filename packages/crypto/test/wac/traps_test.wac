@@ -26,11 +26,16 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { CtrStream } from "../../src/aesctr.wac";
+import { aesEncrypt, aesDecrypt } from "../../src/aes.wac";
+import { chachaBlock, chacha20 } from "../../src/chacha20.wac";
+import { poly1305 } from "../../src/poly1305.wac";
+import { Sha1 } from "../../src/sha1.wac";
 import { fpFromBytes, fpMul, fpToBytes, fpInRange } from "../../src/fieldp.wac";
 import { rsaVerifyPkcs1, rsaVerifyPss } from "../../src/rsa.wac";
 import { p256Ecdh, p256PublicKey, p256Sign, p256Verify, p256ScalarBase, p256Reencode,
          p256Order } from "../../src/p256.wac";
-import { p384Verify } from "../../src/p384.wac";
+import { p384, p384Verify } from "../../src/p384.wac";
+import { curveDecodes } from "../../src/weierstrass.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import {
   ed25519PublicKey, ed25519Sign, ed25519ExpandedSecret, ed25519PublicKeyExpanded,
@@ -735,9 +740,31 @@ export string test_the_p384_small_x_point_decodes() {
   return t.report();
 }
 
-export string test_traps_p384_on_an_x_that_is_x_plus_p() {
-  p384Verify(p384Point(P384_X_PLUS_P, P384_Y), "canonicity".toBytes(), p384NonsenseSig());
-  return "";
+/**
+ * A coordinate of `x + p` is refused, and refused as an *answer* rather than a trap.
+ *
+ * **This was `test_traps_p384_on_an_x_that_is_x_plus_p` until GitHub issue 14.** It asserted that
+ * `p384Verify` trapped here, which is what that issue is about: a function returning `bool`, handed a
+ * public key by whoever sent the signature, took the process down instead of saying no. So the trap
+ * became `false` — and that costs this test its discrimination, because a nonsense signature is also
+ * `false`. Two assertions rather than one, at the level where each fact lives:
+ *
+ *   - `curveDecodes` answers *no* for `x + p` and *yes* for the canonical `x`, which is the
+ *     canonicity rule itself and cannot be satisfied by a decoder that refuses everything;
+ *   - `p384Verify` returns rather than trapping, which is the contract the issue asked for.
+ *
+ * The pairing matters as much as it did before: without the positive half, both assertions pass for a
+ * decoder that says no to every point.
+ */
+export string test_p384_refuses_an_x_that_is_x_plus_p_as_an_answer() {
+  T t = T.create();
+  t.isTrue(curveDecodes(p384(), p384Point(P384_X, P384_Y)),
+           "the canonical point decodes, so the refusal below is about canonicity");
+  t.isFalse(curveDecodes(p384(), p384Point(P384_X_PLUS_P, P384_Y)),
+            "x + p decoded as if it were x — the reduction is not canonical");
+  t.isFalse(p384Verify(p384Point(P384_X_PLUS_P, P384_Y), "canonicity".toBytes(), p384NonsenseSig()),
+            "a malformed public key is an answer, not a trap");
+  return t.report();
 }
 
 // A length that is not a curve this file knows.
@@ -822,4 +849,128 @@ export string test_values_at_or_above_p_are_not_in_range() {
     "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" +
     "ffffffffffffffffffffffffffffffff")), "nor 2^384-1");
   return t.report();
+}
+
+// ── The seven reported from outside, GitHub issues 11 to 17 ──────────────────────────────────────
+//
+// All one family, all found by reading rather than by running: an entry point that consumes a
+// fixed-width or serialized input without requiring the shape it documents. Every one of them had
+// the same two failure modes — a short input trapping somewhere that says nothing about the
+// caller's mistake, and a *long* one silently truncated, which is the case worth refusing because
+// two visibly different inputs then produce one answer.
+//
+// The four that trap are here. The three whose contract is a *value* — a verifier returning false,
+// a recovery returning empty — are in `rsa_test.wac` and `nistcurve_test.wac`, because a test that
+// wants an answer cannot live in a file whose convention is to want a trap.
+
+// AES's single-block API is exactly sixteen bytes. `aesEncrypt(k, b16)` and `aesEncrypt(k, b16+1)`
+// returned identical ciphertext before this: the seventeenth byte was never read. GitHub 16.
+
+export string test_traps_aes_encrypt_refuses_a_15_byte_block() {
+  aesEncrypt(u8[16](), padded(15, 3));
+  return "";
+}
+
+export string test_traps_aes_encrypt_refuses_a_17_byte_block() {
+  aesEncrypt(u8[16](), padded(17, 3));
+  return "";
+}
+
+export string test_traps_aes_decrypt_refuses_a_17_byte_block() {
+  aesDecrypt(u8[16](), padded(17, 3));
+  return "";
+}
+
+// ChaCha20 is a 32-byte key and a 12-byte nonce, Poly1305 a 32-byte key. A 33-byte key produced the
+// same keystream as its 32-byte prefix. GitHub 13.
+
+export string test_traps_chacha_refuses_a_33_byte_key() {
+  chachaBlock(padded(33, 3), 0, padded(12, 4));
+  return "";
+}
+
+export string test_traps_chacha_refuses_a_31_byte_key() {
+  chachaBlock(padded(31, 3), 0, padded(12, 4));
+  return "";
+}
+
+export string test_traps_chacha_refuses_a_13_byte_nonce() {
+  chachaBlock(padded(32, 3), 0, padded(13, 4));
+  return "";
+}
+
+export string test_traps_chacha20_refuses_a_33_byte_key() {
+  chacha20(padded(33, 3), 0, padded(12, 4), u8[4]());
+  return "";
+}
+
+export string test_traps_poly1305_refuses_a_33_byte_key() {
+  poly1305(padded(33, 3), u8[4]());
+  return "";
+}
+
+export string test_traps_poly1305_refuses_a_31_byte_key() {
+  poly1305(padded(31, 3), u8[4]());
+  return "";
+}
+
+// A resumed CTR stream's `used` is a position inside the keystream block, so 0..16. 17 was accepted
+// and the first non-empty `apply` then ran off the block. GitHub 11.
+
+// **No `apply` in these two, and that is the whole point.** With the `.apply(u8[](0))` these were
+// written with, both passed before the guard existed: the deferred read runs off the keystream block
+// and traps there, so a test that only wants *a* trap cannot tell an argument check from its absence.
+// Calling `resume` alone means the trap can only come from `resume`. Verified by removing the guard:
+// with the `apply` both passed, without it both fail as "returned instead of trapping".
+
+export string test_traps_ctr_resume_refuses_a_used_of_17() {
+  CtrStream.resume(u8[16](), u8[16](), u8[16](), 17);
+  return "";
+}
+
+export string test_traps_ctr_resume_refuses_a_used_of_64() {
+  CtrStream.resume(u8[16](), u8[16](), u8[16](), 64);
+  return "";
+}
+
+export string test_traps_ctr_resume_refuses_a_negative_used() {
+  CtrStream.resume(u8[16](), u8[16](), u8[16](), -1);
+  return "";
+}
+
+/** And 16 is legal — `apply` refills before it reads, which is the state a block boundary saves. */
+export string test_ctr_resume_accepts_a_used_of_16() {
+  T t = T.create();
+  t.eqI32(CtrStream.resume(u8[16](), u8[16](), u8[16](), 16).apply(u8[4]()).len(), 4,
+          "a spent block is a legal resume point");
+  t.eqI32(CtrStream.resume(u8[16](), u8[16](), u8[16](), 0).apply(u8[4]()).len(), 4,
+          "and so is a fresh one");
+  return t.report();
+}
+
+// A saved SHA-1 state has `pending` in 0..63 and `pending == total % 64`. Only the 96-byte length was
+// checked, so `pending = 64` loaded and then trapped on the first `update` — and other combinations
+// gave a digest whose length field disagreed with the bytes buffered, which is worse. GitHub 12.
+
+export string test_traps_sha1_loadstate_refuses_a_pending_of_64() {
+  u8[] raw = u8[96]();
+  raw[87] = 64;
+  Sha1.loadState(raw);
+  return "";
+}
+
+export string test_traps_sha1_loadstate_refuses_a_pending_that_disagrees_with_total() {
+  // pending = 1, total = 0: no sequence of updates produces that, and the digest it would answer
+  // has a length field for zero bytes over one buffered byte.
+  u8[] raw = u8[96]();
+  raw[87] = 1;
+  Sha1.loadState(raw);
+  return "";
+}
+
+export string test_traps_sha1_loadstate_refuses_a_negative_pending() {
+  u8[] raw = u8[96]();
+  raw[84] = 0x80;
+  Sha1.loadState(raw);
+  return "";
 }

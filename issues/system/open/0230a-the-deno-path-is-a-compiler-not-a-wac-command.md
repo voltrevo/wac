@@ -119,3 +119,39 @@ a few months.
   `diagnoseGraphIn`, which was the only `In` variant that existed: the whole-graph walk is a *stricter*
   check than the entry-only one this lane has always done, and swapping them while adding roots would
   have made every wac test file in the repository a subject of a second change nobody asked for.
+
+## Measured on Node as well — agent-c, 2026-08-21
+
+`packages/platform/build.ts` builds `packages/wacc/example/wacc.wac` for the **node** target
+(1,357K, all five grants), and it runs. So the JS-hosted half of this is not "a compiler with no
+commands": it is **four commands**, and they work.
+
+    node ./wac-node check src/main.wac    ->  src/main.wac: 4 file(s), no diagnostics
+    node ./wac-node run   src/main.wac    ->  wacc: unknown command 'run' — check, compile, build or bindgen
+
+The four are `check`, `compile`, `bindgen` and `build`, and `@/` resolves correctly through all of
+them from an external project — 0229a's fix holds on this host too, tested from the project root.
+
+**So the split is not compiler-versus-nothing; it is wac-program versus Rust host**, and the boundary
+is one capability:
+
+| where | commands |
+|---|---|
+| `wacc.wac`, which any host can run | `check`, `compile`, `bindgen`, `build` |
+| `native/v8/src/main.rs`, Rust only | `run`, `test`, `sh`, `update`, `app`, `uninstall` |
+
+The host side's own comments say why, and they name the same reason three times: *"`run` is this
+host's own command rather than the compiler's: the compiler writes a module and cannot instantiate
+one"*, and `sh` and `update` are "the host's too… the shell/fetcher is already a module". Every one of
+the six is an *instantiate a module* command.
+
+**Which makes the gap smaller than it reads, and points at where to close it.** `Cli.spawn` takes
+module bytes, an argv, grant bits and a working directory, and starts a confined module — so
+"instantiate a module with these grants" is already expressible *in wac*, on every host that has the
+capability. A `run` implemented in `wacc.wac` over `spawn` would appear on the native binary, the Deno
+host and the Node host at once, which is what this issue is asking for; `update` is the same shape,
+since the fetcher is already a wac program the host merely instantiates.
+
+Not done here, because which commands belong in the shared program and which stay host-specific is
+this issue's decision rather than a patch — and `test` genuinely is not in that class, since its
+chunking, ranking and module caching are the host's.

@@ -26,7 +26,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { p256Verify, p256Sign, p256PublicKey, p256Ecdh, p256Order, p256ScalarBase,
+import { p256Verify, p256VerifyDigest, p256Sign, p256PublicKey, p256Ecdh, p256Order, p256ScalarBase,
          p256Reencode } from "../../src/p256.wac";
 import { p384Verify, p384VerifyDigest, p384Order } from "../../src/p384.wac";
 import { sha256 } from "../../src/sha256.wac";
@@ -465,5 +465,52 @@ export string test_a_sha256_digest_under_a_p384_key_is_right_aligned(Core core, 
   t.isTrue(p384VerifyDigest(decodedHex(word(a.lines[0], 2)), sha256(msg),
                             decodedHex(word(a.lines[0], 3))),
            "a SHA-256 signature under a P-384 key verifies");
+  return t.report();
+}
+
+/**
+ * A malformed public key is `false` from a verifier, not a trap — GitHub issue 14.
+ *
+ * The reported reproduction: a 65-byte key of the right *length* with no `0x04` prefix, and a
+ * signature whose r and s are both 1 so that the scalar-range checks pass and the key is actually
+ * reached. `p256Verify` returns `bool`, and it took the process down.
+ *
+ * Four entry points share the path — `p256Verify`, `p256VerifyDigest`, `p384Verify`,
+ * `p384VerifyDigest` — so all four are asked. The canonical-key call is the canary: a verifier that
+ * refused everything would satisfy the four refusals on its own.
+ */
+export string test_a_malformed_public_key_is_false_not_a_trap(Core core, Cli cli) {
+  T t = T.create();
+  u8[] sig = u8[64]();
+  sig[31] = 1;
+  sig[63] = 1;
+  u8[] noPrefix = u8[65]();          // right length, no 0x04
+  u8[] digest = u8[32]();
+
+  t.isFalse(p256Verify(noPrefix, u8[0](), sig), "p256Verify trapped on a prefixless key");
+  t.isFalse(p256VerifyDigest(noPrefix, digest, sig), "p256VerifyDigest trapped on it");
+
+  u8[] sig384 = u8[96]();
+  sig384[47] = 1;
+  sig384[95] = 1;
+  u8[] noPrefix384 = u8[97]();
+  t.isFalse(p384Verify(noPrefix384, u8[0](), sig384), "p384Verify trapped on a prefixless key");
+  t.isFalse(p384VerifyDigest(noPrefix384, u8[48](), sig384), "p384VerifyDigest trapped on it");
+
+  // And the shapes either side of the length, which took a different route in: too short and too
+  // long were both refused by the length check before, and must still be.
+  t.isFalse(p256Verify(u8[64](), u8[0](), sig), "a 64-byte key");
+  t.isFalse(p256Verify(u8[66](), u8[0](), sig), "a 66-byte key");
+
+  // The canary: a real key and a real signature over a real message still verify.
+  u8[] priv = u8[32]();
+  priv[31] = 9;
+  u8[] pub = p256PublicKey(priv);
+  u8[] msg = "malformed keys".toBytes();
+  u8[] k = u8[32]();
+  k[31] = 7;
+  u8[] good = p256Sign(priv, msg, k);
+  t.isTrue(good.len() == 64 && p256Verify(pub, msg, good),
+           "a genuine signature still verifies, so the refusals above are about the key");
   return t.report();
 }

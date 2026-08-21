@@ -218,12 +218,27 @@ export u8[] aesDecryptBlock(u8[] w, u8[] block, i32 nr) {
   return s;
 }
 
-/** Encrypt one block under `key`, expanding the key first. */
+/**
+ * Encrypt one block under `key`, expanding the key first.
+ *
+ * **Exactly 16 bytes, and the long case is why.** A short block ran off the end of the copy loop in
+ * `aesEncryptBlock` and trapped there, saying nothing about the caller; a *long* one was silently
+ * truncated, so `aesEncrypt(k, b16)` and `aesEncrypt(k, b16 + one more byte)` returned identical
+ * ciphertext — two visibly different inputs with one output, which is the failure worth refusing.
+ * GitHub issue 16.
+ *
+ * `aesEncryptBlock` and `aesDecryptBlock` are deliberately left unguarded: they take an *expanded*
+ * key and are the per-block interior of CTR, GCM and the KDFs, where a length check per block is a
+ * cost paid a million times for a caller that has already been checked here. They are exported for
+ * those callers rather than as an interface.
+ */
 export u8[] aesEncrypt(u8[] key, u8[] block) {
+  if (block.len() != 16) { trap; }
   return aesEncryptBlock(aesExpandKey(key), block, aesRounds(key.len()));
 }
 
-/** Decrypt one block under `key`. */
+/** Decrypt one block under `key`. Exactly 16 bytes, as `aesEncrypt`. */
 export u8[] aesDecrypt(u8[] key, u8[] block) {
+  if (block.len() != 16) { trap; }
   return aesDecryptBlock(aesExpandKey(key), block, aesRounds(key.len()));
 }

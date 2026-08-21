@@ -783,3 +783,53 @@ export string test_a_pkcs1_signature_recovers_the_payload_it_carried() {
   t.eqI32(rsaRecoverPkcs1(n, e, sig).len(), 0, "a corrupted block recovered a payload");
   return t.report();
 }
+
+/**
+ * A one-byte modulus recovers nothing, rather than trapping — GitHub issue 15.
+ *
+ * `rsaRecoverPkcs1` documents that malformed input answers empty, and the encoded block is as long as
+ * the modulus, so a one-byte modulus makes it one byte. The parser then read `em[0]` and `em[1]`
+ * behind a `||`, and short-circuiting is no protection here: `em[0] != 0x00` is *false* for the block
+ * `[0]`, so evaluation continued to a byte that does not exist.
+ *
+ * A real modulus is hundreds of bytes. The point is that "real" is not something a function can
+ * assume about an argument, and this one had already promised an answer for input it dislikes.
+ */
+export string test_a_one_byte_modulus_recovers_nothing(Core core, Cli cli) {
+  T t = T.create();
+  t.eqI32(rsaRecoverPkcs1(u8[](3), u8[](1), u8[](0)).len(), 0,
+          "a one-byte modulus should recover nothing");
+  // Two bytes is the smallest that reaches the padding walk, and it has no room for the 0x00 0x01
+  // prefix plus eight 0xFF bytes, so it is also empty — by the rules rather than by a bound.
+  t.eqI32(rsaRecoverPkcs1(u8[](3, 3), u8[](1), u8[](0, 0)).len(), 0,
+          "a two-byte modulus should recover nothing");
+  return t.report();
+}
+
+/**
+ * A negative salt length is rejected, rather than reaching an out-of-bounds read — GitHub issue 17.
+ *
+ * The size check reads `emLen < hashLen + saltLen + 2`, so `saltLen = -1` weakens it rather than
+ * failing it: an ordinary modulus passes, and the delimiter index computed from it then falls beyond
+ * the decoded data block. A `bool` verifier trapped where it should have answered.
+ *
+ * The positive half is the canary — the same call with the correct salt length still verifies — so
+ * this cannot pass for a verifier that rejects everything.
+ */
+export string test_a_negative_salt_length_is_rejected(Core core, Cli cli) {
+  T t = T.create();
+  u8[] msg = "a negative salt length".toBytes();
+  Lines lines = Lines.create();
+  lines.add("rsakeygen 2048");
+  lines.add("rsapss 32 32 " + hex(msg));
+  Answers a = askRsa(t, cli, lines, "a key and one PSS signature");
+  if (!a.ok) { return t.report(); }
+  Key k = Key.of(a.lines[0]);
+  u8[] sig = valueOf(a.lines[1]);
+  // The canary: the same call with the salt length it was signed with. Without it both refusals
+  // below would pass for a verifier that says no to everything.
+  t.isTrue(rsaVerifyPss(k.n, k.e, msg, sig, 32, 32), "the genuine signature verifies");
+  t.isFalse(rsaVerifyPss(k.n, k.e, msg, sig, 32, -1), "a negative salt length was not rejected");
+  t.isFalse(rsaVerifyPss(k.n, k.e, msg, sig, -32, 32), "a negative hash length was not rejected");
+  return t.report();
+}

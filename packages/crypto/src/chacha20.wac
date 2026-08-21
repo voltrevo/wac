@@ -35,8 +35,21 @@ import { leWord32, storeLE32 } from "./layout.wac";
 
 u32 rotl(u32 x, u32 n) { return (x << n) | (x >> (32 - n)); }
 
-/** The 16-word initial state for a key, counter and nonce. */
+/**
+ * The 16-word initial state for a key, counter and nonce.
+ *
+ * **Exactly 32 and 12 bytes, checked here because both entry points come through it.** A short key
+ * or nonce ran off the end of `leWord32` and trapped there; a long one was read for its first 32 or
+ * 12 bytes and the tail ignored, so a 33-byte key and its 32-byte prefix produced the *same
+ * keystream* — one keystream for two visibly different keys, which is the case worth refusing.
+ * GitHub issue 13.
+ *
+ * One guard rather than one per export: `chachaBlock` and `chacha20` both build their state here, and
+ * a check in each would be two places to forget. It costs one comparison per call rather than per
+ * block, because the state is built once and the block loop reuses it.
+ */
 u32[] initialState(u8[] key, u32 counter, u8[] nonce) {
+  if (key.len() != 32 || nonce.len() != 12) { trap; }
   u32[] s = u32[16]();
   // "expand 32-byte k", as four little-endian words.
   s[0] = 0x61707865; s[1] = 0x3320646e; s[2] = 0x79622d32; s[3] = 0x6b206574;

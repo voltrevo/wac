@@ -171,7 +171,20 @@ export struct Sha1 {
     return out;
   }
 
-  /** The inverse of `saveState`. */
+  /**
+   * The inverse of `saveState`.
+   *
+   * **The length was the only thing checked, and it is the least of what a state has to satisfy.**
+   * `pending` and `total` came out of the bytes unexamined, so a 96-byte array with `pending = 64`
+   * loaded as a valid `Sha1` and then trapped on the first `update` — `buf[64]` — and other values
+   * produced a digest whose length field disagreed with the bytes that had been buffered. A wrong
+   * digest is worse than a trap. GitHub issue 12.
+   *
+   * The two invariants come straight from `update`: `pending` is reset to 0 the moment it reaches
+   * 64, so it is 0..63 and never 64; and `total` counts every byte absorbed while `pending` holds
+   * the tail of them, so `pending == total % 64`. That second one is what rejects a state no
+   * `saveState` could have written — the case a length check cannot see.
+   */
   Sha1 loadState(u8[] raw) {
     if (raw.len() != 96) { trap; }
     u32[] h = u32[5]();
@@ -182,6 +195,11 @@ export struct Sha1 {
     for (i32 i = 0; i < 4; i++) { pending = (pending << 8) | raw[84 + i]; }
     i64 total = 0;
     for (i32 i = 0; i < 8; i++) { total = (total << 8) | (raw[88 + i] as i64); }
+    // Both bounds: four big-endian bytes can be read as a negative `i32` as easily as as a large one,
+    // and a negative `pending` indexes backwards rather than off the end.
+    if (pending < 0 || pending > 63) { trap; }
+    if (total < 0 || total < (pending as i64)) { trap; }
+    if (total % (64 as i64) != (pending as i64)) { trap; }
     return Sha1(h, buf, pending, total);
   }
 
