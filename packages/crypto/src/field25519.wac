@@ -180,6 +180,29 @@ export void feCSwap(i64[] a, i64[] b, i32 swap) {
  */
 export u8[] feToBytes(i64[] hIn) {
   i64[] h = feCopy(hIn);
+  // **The two round-to-nearest passes are not what canonicalises**, and it is worth saying what they
+  // are for, because `issues/system/0179` measured that deleting them changes no answer anywhere in
+  // this repository and that is true and not a licence to delete them.
+  //
+  // `feCarryFloor` canonicalises on its own, in both directions. Floor division leaves a non-negative
+  // remainder, so its first pass puts limbs 1..9 in `[0, 2^bits)` whatever magnitude it started from;
+  // and the fold at limb 9 — `h[0] += c * 19`, which is `-c * (2^255 - 19)` — works with `c` negative
+  // as well, so a representation whose integer value is *below zero* comes out as its positive
+  // residue. `feSub(0, 1)` is the smallest such input and
+  // `test_a_negative_representation_encodes_as_its_positive_residue` pins it.
+  //
+  // What `feCarryFloor` needs is that **two floor passes are enough**, which is its own comment's
+  // claim: the wrap can push limb 0 out of range again, and the second pass settles it *provided the
+  // excursion is small*. That is a claim about the input's magnitude. Pass two can itself carry out of
+  // limb 9 if the ripple reaches that far, and the 19 it folds back arrives at limb 0 after limb 0 was
+  // reduced. So the guarantee is not unconditional, and these two passes are what make its precondition
+  // hold: they bring any input down to limb magnitudes where the ripple cannot reach limb 9.
+  //
+  // Which is why they stay. This function is **exported and takes a raw `i64[]`** — a caller can hand
+  // it an accumulation that has never been carried, and every value the field's own operations produce
+  // has been carried twice by `feMul` already, so the passes cost two loops on values that are already
+  // small and buy correctness on the ones that are not. Straight-line either way, so constant time is
+  // unaffected. `issues/system/0179` has the derivation and the two canaries.
   feCarry(h);
   feCarry(h);
   feCarryFloor(h);

@@ -198,6 +198,45 @@ export string test_encoding_round_trips_and_canonicalises() {
   return t.report();
 }
 
+/**
+ * A representation whose **integer value is negative**, which is the other direction of the wrap.
+ *
+ * Every case above is a value at or above zero, so the fold at limb 9 only ever *subtracts* p:
+ * `h[0] += c * 19` with a positive `c` removes `c * 2^255` from the top and puts `c * 19` back at the
+ * bottom, which is `-c * (2^255 - 19)`. `feSub` can hand the encoder a representation whose limbs sum
+ * to a negative integer — `feSub(0, 1)` is the smallest — and then `c` is **negative** and the same
+ * line *adds* p. That is the whole reason a floor-carry is sufficient on its own, and nothing here
+ * observed it.
+ *
+ * `issues/system/0179` is why this is here: it asks whether `feToBytes`' two round-to-nearest passes
+ * are load-bearing, and the answer turns on what `feCarryFloor` can do unaided. It can canonicalise
+ * any representation, in either direction, which these lines pin.
+ */
+export string test_a_negative_representation_encodes_as_its_positive_residue() {
+  T t = T.create();
+  // p - k, little-endian, for the k below.
+  for (i32 k = 1; k <= 20; k++) {
+    i64[] below = feSub(feZero(), feMulSmall(feOne(), k as i64));
+    u8[] want = u8[32]();
+    want[0] = (0xED - k) & 0xFF;
+    for (i32 i = 1; i < 31; i++) { want[i] = 0xFF; }
+    want[31] = 0x7F;
+    t.eqBytes(feToBytes(below), want, "0 - " + itoa64(k as i64) + " encodes as p - " + itoa64(k as i64));
+  }
+  // Twice negative, so the fold has to add p on a representation that is already below zero — one
+  // `feSub` leaves limb 9 negative and the second takes it further.
+  i64[] twice = feSub(feSub(feZero(), feOne()), feOne());
+  u8[] wantTwice = u8[32]();
+  wantTwice[0] = 0xEB;
+  for (i32 i = 1; i < 31; i++) { wantTwice[i] = 0xFF; }
+  wantTwice[31] = 0x7F;
+  t.eqBytes(feToBytes(twice), wantTwice, "0 - 1 - 1 encodes as p - 2");
+  // And the same value reached through a multiply, which carries twice on the way out: the encoder
+  // must agree with itself whether or not its input has already been reduced.
+  t.eqBytes(feToBytes(feMul(twice, feOne())), wantTwice, "the same through feMul(., 1)");
+  return t.report();
+}
+
 export string test_conditional_swap_is_conditional() {
   // The ladder's constant-time primitive. Swapping on 0, or failing to on 1, breaks
   // X25519 for half its inputs — and the failure looks like a wrong shared secret rather
