@@ -199,3 +199,20 @@ the build stops during collection — which means the first run's evidence looke
 resolved against a partial table" when the deferred pass three lines below would have corrected them.
 The probe short-circuited the pass it was measuring. What survives that correction is the finding
 above, which is about a record the deferred pass does *not* touch.
+
+### The names that build are not silently wrong, at least on this path
+
+Worth checking before anyone assumes the three-of-nine split is an artefact of what the test program
+happens to exercise: it is not. Running the same two-file program with the entry's answer being the
+diagnostic count for a known-bad snippet, so a mis-resolved type inside the library would show up as a
+wrong number:
+
+    Zork  6      Case  6      Expr  6      Decl  6      Program  6      Method  6      Ty  6
+
+Six ints — two diagnostics — for every colliding name and for `Zork`, which collides with nothing. So
+the six that build agree with the control rather than quietly disagreeing, and the failure for `Arm`,
+`Param` and `Stmt` is loud. That is the good news in this issue: nothing here is a wrong answer, only a
+refusal of a correct program.
+
+It is evidence about the path this entry exercises, not a proof about every path — but it is the
+cheapest check available and it rules out the worst reading.
