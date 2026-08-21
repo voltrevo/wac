@@ -87,7 +87,7 @@ Per host, since a capability is only as portable as its worst host:
 
 | host | what it costs |
 | --- | --- |
-| `host/deno.ts` | `Deno.listenDatagram`, which needs `--unstable-net`; the build already varies the launcher by grant, and `tools/runTests.ts` needs it too |
+| `host/deno.ts` | `Deno.listenDatagram`, which needs `--unstable-net`; the build already varies the launcher by grant, and `tools/runTests.wac` needs it too |
 | `host/node.ts` | `node:dgram`, stable |
 | `native/` (wasmtime) | a Rust `UdpSocket`, plus an `Outcome`, a `Kind`, a `make_datagram` and a registration in the pending-kind table |
 | `native/v8` | the same again in that host's own shapes — `Sock::Datagram`, `Answer::Datagram`, `build_datagram` |

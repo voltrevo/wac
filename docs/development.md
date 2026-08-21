@@ -18,7 +18,7 @@ own time for exactly that reason.
 The suite runs in three lanes: a parallel pass capped at four workers, then the files that declare
 `// test-lane: exclusive` run alone, because they want a real port or a real external binary, and then
 the same wac tests through `wac test` with no Deno in the path. The cap is measured rather than
-guessed — see the table in [`tools/runTests.ts`](../tools/runTests.ts).
+guessed — see the table in [`tools/runTests.wac`](../tools/runTests.wac).
 
 **The wac lane is a queue at the same four workers**, changed 2026-08-18. It was one process walking
 every directory in turn, which was 266s while the Deno half of the same suite ran four ways. A directory

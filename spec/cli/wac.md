@@ -178,7 +178,7 @@ summary is where that gets noticed; excluding *every* file is its own message ra
 under packages/", which would send you looking for a naming mistake that is not there.
 
 The suite uses it for the heavy lane. A test file declares `// test-lane: heavy — <cost>` when it is
-too expensive for a run that discovers everything, and `tools/runTests.ts` builds this flag from
+too expensive for a run that discovers everything, and `tools/runTests.wac` builds this flag from
 those declarations so a push does not pay for them; `deno task test:heavy` runs them. **Naming a
 path still runs it** — the exclusion is for the run that discovers, not a way to turn a file off.
 

@@ -1,7 +1,7 @@
 // `wac test --ignore <path,…>` — dropping paths from what a directory walk found.
 //
 // The suite's heavy lane is built on this: a file declares `// test-lane: heavy — <cost>` when it is
-// too expensive for a run that discovers everything, and `tools/runTests.ts` turns those
+// too expensive for a run that discovers everything, and `tools/runTests.wac` turns those
 // declarations into this flag. Before it existed the lane could only exclude `.test.ts` files, so
 // the eight wac files that had declared themselves heavy ran on every push regardless — 463s of a
 // 1451s suite, measured.

@@ -28,16 +28,16 @@ log="$(mktemp -t push-suite-XXXXXX.log)"
 # from in here. The operator's standing answer (2026-08-05) is to clear *Deno's* cache and retry, and to
 # leave the repo's own `.cache` alone — it is small and every test repopulates it with the same bytes.
 #
-# The clearing itself lives in `tools/runTests.ts`, which the suite runs through anyway, so there is one
-# implementation of it rather than a shell copy beside a TypeScript one. It used to clear `gen` — 220 MB
+# The clearing itself lives in `tools/runTests.wac`, which the suite runs through anyway, so there is
+# one implementation of it rather than a shell copy beside the runner's own. It used to clear `gen` — 220 MB
 # — while 28 GB sat next to it in `v8_code_cache_v2`, three times, reporting success each time.
 guardDenoCache() {
-  deno run --allow-read --allow-write --allow-env tools/runTests.ts guard
+  ./native/v8/target/release/wac run --allow-read --allow-write --allow-env tools/runTests.wac -- guard
 }
 freeDenoCache() {
   echo "== the disk is full and it is not this change: clearing Deno's caches and retrying =="
   du -sh "$HOME/.cache/deno"/* 2>/dev/null | sort -h | tail -3
-  deno run --allow-read --allow-write --allow-env tools/runTests.ts free
+  ./native/v8/target/release/wac run --allow-read --allow-write --allow-env tools/runTests.wac -- free
   df -h / | tail -1
 }
 
@@ -214,7 +214,7 @@ for attempt in 1 2 3; do
     # reads an empty log and concludes the run died.
     # **The refusal has its own exit code, and it did not always.** `tools/suiteGate.ts` exits 75
     # (`EX_TEMPFAIL`) when it will not start a suite. It used to exit 3 — which is also `wac test`'s
-    # code for a failing test and what `tools/runTests.ts` passes through — so a genuine red suite
+    # code for a failing test and what `tools/runTests.wac` passes through — so a genuine red suite
     # arrived in this branch, had its log deleted below, and was announced as "nothing ran, and the
     # reason is printed above" while the reason was a `FAIL` line in the log that had just been removed.
     #

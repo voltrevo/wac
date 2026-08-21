@@ -79,7 +79,7 @@ export const isWacTest = (file: string): boolean => file.endsWith("_test.wac");
  *
  * `issues/system/0192` made a directory's test files share one build — one aggregate module,
  * instantiated per file — so a directory is the smallest piece that can be handed to a worker without
- * paying for that build twice. `tools/runTests.ts` runs the lane as a queue of these.
+ * paying for that build twice. `tools/runTests.wac` runs the lane as a queue of these.
  *
  * A directory is included when it holds a test file directly. A directory that only *contains* such
  * directories is not: handing `packages/` to one worker is what this replaced.
@@ -89,7 +89,7 @@ export const isWacTest = (file: string): boolean => file.endsWith("_test.wac");
  *
  * **One list, because two of them desynchronised the day there was a second root.** `core/` became a
  * source tree with tests in `design/lang/0009` step 3 and is deliberately not under `packages/` — it
- * ships inside the compiler. `tools/runTests.ts` was taught to walk it and `tools/lane.test.ts`, the
+ * ships inside the compiler. `tools/runTests.wac` was taught to walk it and `tools/lane.test.ts`, the
  * guard that checks nothing is registered outside the lane, still said `packages` — so the guard
  * failed on a file the lane *did* run. That is the same shape as this module's note about
  * `jobsSweep.sh`: a consumer that assembles the list rather than asking for it.
@@ -119,7 +119,7 @@ export async function wacTestDirs(root: string): Promise<string[]> {
 /**
  * The wac test files directly in one directory, sorted as the walk sorts them.
  *
- * `tools/runTests.ts` splits a large directory into chunks of files, and the chunks have to be lists the
+ * `tools/runTests.wac` splits a large directory into chunks of files, and the chunks have to be lists the
  * runner assembled rather than a range it guessed: `wac test` sorts what it collects, so a caller that
  * wants half of a directory has to name which half.
  */

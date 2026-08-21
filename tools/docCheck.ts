@@ -17,7 +17,7 @@
 //     deno task test          doc problems are printed, the suite stays green
 //     deno task docs          the same checks, failing, for when you want them to
 //
-// — and `tools/runTests.ts` prints how many warnings a run produced, so they land in the footer
+// — and `tools/runTests.wac` prints how many warnings a run produced, so they land in the footer
 // instead of eight hundred lines up.
 //
 // ## Why the whole test is wrapped rather than each assertion

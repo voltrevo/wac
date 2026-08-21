@@ -1150,7 +1150,7 @@ fn test_command(rest: &[String]) -> i32 {
     }
     files.dedup();
     // **Applied after the walk, and to a named file too.** A path given directly is normally run
-    // whatever it is called, but a caller assembling both lists — `tools/runTests.ts` names the
+    // whatever it is called, but a caller assembling both lists — `tools/runTests.wac` names the
     // packages and the lane in one command — means the two must not contradict each other. The
     // match is a prefix, as `deno test --ignore` is, so a directory excludes what is under it.
     let before = files.len();
@@ -1180,7 +1180,7 @@ fn test_command(rest: &[String]) -> i32 {
         let code = build_and_call(&args, Entry::Tests);
         // **A walk that found one file still says how many it found.** The summary below is printed for
         // two files and was not printed for one — and a caller counting files across many walks then
-        // loses the single-file ones silently. `tools/runTests.ts` runs this lane as a queue of
+        // loses the single-file ones silently. `tools/runTests.wac` runs this lane as a queue of
         // directories and adds the counts up; five of the thirty-eight hold one file, so its own total
         // could say it was short without being able to say by how much.
         //

@@ -2161,7 +2161,7 @@ takes a worker bundle so that what a child may do is the *parent's* choice, and 
 express that at any granularity. The second does not follow from it, and nobody checked.
 
 A C tor never needed to live inside the capability world. It needs to be **a peer on a socket**. The
-suite is TypeScript, `tools/runTests.ts` already gives every test subprocess `--allow-run` and
+suite is TypeScript, `tools/runTests.wac` already gives every test subprocess `--allow-run` and
 `--allow-net`, and `network_tor_test.wac` was already shelling out — to run the launcher. So
 `test/wac/ctor_live_test.wac` starts a real tor beside the wac network and requires it to bootstrap through
 it. No platform change was needed. What needs one is `network.wac` *owning* a C tor, which is a much

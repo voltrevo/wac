@@ -11,7 +11,7 @@
 # without bound. Hence the marker below.
 cd "$(git rev-parse --show-toplevel)"
 # The marker every tool that spawns a suite sets — see `tools/suiteGuard.ts`. This calls `deno test`
-# directly rather than through `runTests.ts`, because setting DENO_JOBS per run is the whole point,
+# directly rather than through `runTests.wac`, because setting DENO_JOBS per run is the whole point,
 # so it has to set the marker itself: without it a test that invoked one of our tools would not be
 # refused, which is the second half of 0077.
 export WAC_SUITE_RUNNING=1
@@ -22,12 +22,12 @@ export WAC_SUITE_RUNNING=1
 # and does not type-check. That is why the table this writes had gone stale: the instrument stopped
 # running at all, silently, and nothing re-ran it to notice (issues/system 0142).
 #
-# The lane list comes from `harness/testLane.ts`, which is where `runTests.ts` gets it, so a file that
+# The lane list comes from `harness/testLane.ts`, which is where `runTests.wac` gets it, so a file that
 # declares itself exclusive leaves this measurement the same day. `site` is named because a
 # command-line `--ignore` *replaces* the config's exclude rather than adding to it.
 #
 # **Both lanes, and the second one is why this comment now says "lanes".** When the heavy lane was
-# added, `runTests.ts` began skipping ten files in its parallel pass and this kept running them — so
+# added, `runTests.wac` began skipping ten files in its parallel pass and this kept running them — so
 # the instrument measured a suite nobody runs, and would have reported a peak an agent then chose
 # `DENO_JOBS` from. Taking the list from `testLane.ts` was supposed to stop exactly that, and did
 # not, because it asked for one lane by name. It now asks for every declared file, so a *third* lane
@@ -38,7 +38,7 @@ if [ -z "$IGNORE" ]; then
   exit 1
 fi
 #
-# **The same flags and the same environment, too.** `runTests.ts` passes `--unstable-net` (without it
+# **The same flags and the same environment, too.** `runTests.wac` passes `--unstable-net` (without it
 # `Deno.listenDatagram` does not exist and every datagram test fails) and sets `WAC_SCHED=seed`
 # (deterministic scheduling). Missing the first, the warm-up here reported **24 failures at jobs=1**
 # — sequential, no memory pressure, nothing wrong with the tree — and aborted the sweep on them.

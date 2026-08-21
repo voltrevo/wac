@@ -204,7 +204,7 @@ export string test_three_children_run_at_once(Core core, Cli cli) {
 /**
  * The child is handed variables, and keeps the ones it was already going to get.
  *
- * `exec` had no way to say this, and the caller that wants it is a test runner: `tools/runTests.ts`
+ * `exec` had no way to say this, and the caller that wants it is a test runner: `tools/runTests.wac`
  * passes the worker count to `deno test` as `DENO_JOBS`, which is a thing you can only say in an
  * environment. Every child until now got the host process's environment and nothing else, so a
  * caller who needed one variable different had no way to ask.
@@ -284,7 +284,7 @@ export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli 
  * An inherited stream goes to this program's own output, and not into the answer.
  *
  * The caller is the same one: a suite runner shows the lanes it is running as they run, which is
- * `stdout: "inherit"` in `tools/runTests.ts` today. Through a buffered `exec` a three-minute suite is
+ * `stdout: "inherit"` in `tools/runTests.wac` today. Through a buffered `exec` a three-minute suite is
  * silent until it ends.
  *
  * **Three levels, because two cannot see it.** A program cannot read its own stdout, so the program

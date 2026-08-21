@@ -1,0 +1,209 @@
+// What the suite reclaims on its way in: Deno's code cache, stale temp directories, and transpiles
+// of sources that no longer exist.
+//
+// The housekeeping half of `tools/runTests.ts`, in wac. The reasons are recorded there and in
+// `wac-mono 0068` and `0136` — a 28 GB code cache, 2,300 leaked temp entries, 17 GB of mirrored
+// staging directories across three agents on a disk at 95%. This file is the same work; what follows
+// is only what differs about doing it here.
+//
+// **`chmod` is the one thing wac cannot spell.** A test that fixtures a permission failure leaves a
+// directory it cannot itself delete — `packages/box`'s `rm -rf` cases make `dr-x------` on purpose —
+// and the TypeScript widens the mode on the way down with `Deno.chmodSync`. `Cli` has
+// `setExecutable`, which is one bit, deliberately: `issues/system` records that a general `chmod`
+// would be unanswerable on a browser's OPFS rather than merely unsupported. So the widening pass
+// asks `/bin/chmod` for it, through the capability that runs a host program, and says so where it
+// happens. That is a real gap rather than a translation: three of these entries exist per week.
+
+import { Cli, Core, Exec, FileResult, Stat } from "std/platform.wac";
+import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
+import { startsWith, endsWith } from "../../packages/wactest/src/strings.wac";
+import { envOf } from "./suitegate.wac";
+
+/** Deno's cache directory, wherever this environment puts it. */
+export string denoDir(Cli cli) {
+  string dir = envOf(cli, "DENO_DIR");
+  if (dir != "") { return dir; }
+  string home = envOf(cli, "HOME");
+  return (home == "" ? "/root" : home) + "/.cache/deno";
+}
+
+/** 4 GiB — the cache keys on content and never evicts, and this repo runs a lot of unique scripts. */
+i64 cacheLimitBytes() { return 4 as i64 * (1024 as i64) * (1024 as i64) * (1024 as i64); }
+
+/** A day, which is far longer than any suite: nothing another agent is using can be this old. */
+i64 dayMs() { return 24 as i64 * (3600000 as i64); }
+
+i64 mb(i64 bytes) { return bytes / (1024 as i64) / (1024 as i64); }
+
+/** Whether anything is at this path, following no links — `existsSync`'s question. */
+bool present(Cli cli, string path) { return cli.linkStat(path).wait().exists; }
+
+/** Every byte under `path`, counting a file as itself and a directory as its contents. */
+i64 sizeOf(Cli cli, string path) {
+  Stat s = cli.linkStat(path).wait();
+  if (!s.exists) { return 0 as i64; }
+  if (!s.isDir) { return s.size; }
+  string[]? entries = cli.readDir(path).wait();
+  if (entries is null) { return 0 as i64; }
+  string[] names = entries!;
+  i64 total = 0 as i64;
+  for (i32 i = 0; i < names.len(); i++) { total = total + sizeOf(cli, path + "/" + names[i]); }
+  return total;
+}
+
+/**
+ * Remove a path, making it removable first if it is not.
+ *
+ * The widening pass is `/bin/chmod -R u+rwX`, for the reason in this file's header: wac has no
+ * `chmod` capability and the directories this exists for are made unreadable on purpose. Answers
+ * whether the path is gone, so the caller can name what it could not sweep rather than swallowing it
+ * — a cleanup that fails quietly is how 2,300 temp entries accumulated in the first place.
+ */
+export bool removeWidening(Cli cli, string path) {
+  cli.remove(path, true).wait();
+  if (!present(cli, path)) { return true; }
+  cli.execWith("/bin/chmod", string[]("-R", "u+rwX", path), u8[0](), string[0](fill: ""),
+               false, false).wait();
+  cli.remove(path, true).wait();
+  return !present(cli, path);
+}
+
+/**
+ * Deno's code cache, cleared when it is over the limit.
+ *
+ * One implementation, because `tools/push.sh` calls this too — through the runner's `guard`
+ * subcommand rather than by knowing where the cache is.
+ */
+export void guardCodeCache(Core core, Cli cli) {
+  string db = denoDir(cli) + "/v8_code_cache_v2";
+  Stat s = cli.stat(db).wait();
+  if (!s.exists) { return; }                       // no cache yet, nothing to bound
+  if (s.size <= cacheLimitBytes()) { return; }
+  core.log("clearing Deno's code cache: " + itoa64(mb(s.size)) + " MB, over the " +
+           itoa64(mb(cacheLimitBytes())) + " MB limit");
+  cli.remove(db, false).wait();
+  cli.remove(db + "-wal", false).wait();
+  cli.remove(db + "-shm", false).wait();
+}
+
+/** Everything Deno caches, for when the disk is actually full. `push.sh free` calls this. */
+export void freeCaches(Cli cli) {
+  string dir = denoDir(cli);
+  cli.remove(dir + "/v8_code_cache_v2", false).wait();
+  cli.remove(dir + "/v8_code_cache_v2-wal", false).wait();
+  cli.remove(dir + "/v8_code_cache_v2-shm", false).wait();
+  cli.remove(dir + "/gen", true).wait();
+}
+
+/**
+ * Remove `/tmp/wac-*` left by runs that were **killed**, which is where the disk went.
+ *
+ * The shape almost every test file uses is a module-level temp directory and an unload listener, and
+ * that survives a failing test; what it does not survive is the process being *killed*, because no
+ * listener runs. On a machine three agents share that is an ordinary event, so it is swept here, at
+ * the start of the run that would otherwise create more.
+ *
+ * Three names are spared explicitly rather than left to the age test: the doc-warning tally, the
+ * lock, and the per-agent cooldown stamps. The age test would spare all three anyway — a sweep that
+ * *could* delete a lock held by a live run is not something to leave resting on an arithmetic
+ * argument.
+ */
+export void sweepStaleTemp(Core core, Cli cli) {
+  i64 now = core.nowMillis().wait();
+  string[]? entries = cli.readDir("/tmp").wait();
+  if (entries is null) { return; }
+  string[] names = entries!;
+  i32 gone = 0;
+  i64 bytes = 0 as i64;
+  i32 stuck = 0;
+  string first = "";
+  for (i32 i = 0; i < names.len(); i++) {
+    string name = names[i];
+    if (!startsWith(name, "wac-")) { continue; }
+    if (name == "wac-doc-warnings" || name == "wac-suite.lock") { continue; }
+    if (startsWith(name, "wac-suite-last-")) { continue; }
+    string path = "/tmp/" + name;
+    Stat s = cli.linkStat(path).wait();
+    if (!s.exists) { continue; }
+    if (now - s.modifiedMillis < dayMs()) { continue; }
+    i64 was = s.isDir ? 0 as i64 : s.size;
+    if (removeWidening(cli, path)) {
+      gone = gone + 1;
+      bytes = bytes + was;
+    } else {
+      stuck = stuck + 1;
+      if (first == "") { first = path; }
+    }
+  }
+  if (gone > 0) {
+    core.log("swept " + itoa(gone) + (gone == 1 ? " temp entry" : " temp entries") +
+             " older than a day (0136)");
+  }
+  if (stuck > 0) {
+    core.log("could not sweep " + itoa(stuck) + " (0136): " + first +
+             (stuck > 1 ? " — and " + itoa(stuck - 1) + " more" : ""));
+  }
+}
+
+/** How many entries a walk dropped, and how many bytes they held. */
+struct Dropped {
+  i32 gone;
+  i64 bytes;
+}
+
+/**
+ * One mirror directory against the sources it mirrors, recursively.
+ *
+ * The cache mirrors an absolute source path under `gen/file/` and appends `.js` to files, so the
+ * source of `gen/file/home/x/y.ts.js` is `/home/x/y.ts`. An entry whose source is gone can never be
+ * hit again by anybody, which is what makes removing it free rather than a cache eviction.
+ *
+ * Recursive from the root, which is the whole point: an earlier version of the TypeScript walked two
+ * levels and so only ever saw `gen/file/tmp/*` — "the failure mode where a cleanup tool reports
+ * success and does nothing". Other agents' entries included, deliberately: an entry is removed only
+ * when the path it was built from is gone, so a surviving entry can still be hit and a removed one
+ * never could.
+ */
+Dropped dropOrphaned(Cli cli, string mirror, string source) {
+  string[]? entries = cli.readDir(mirror).wait();
+  if (entries is null) { return Dropped(0, 0 as i64); }  // no such mirror, the normal state
+  string[] names = entries!;
+  i32 gone = 0;
+  i64 bytes = 0 as i64;
+  for (i32 i = 0; i < names.len(); i++) {
+    string name = names[i];
+    string stem = endsWith(name, ".js") ? name.slice(0, name.len() - 3) : name;
+    string path = mirror + "/" + name;
+    if (present(cli, source + "/" + stem) || present(cli, source + "/" + name)) {
+      if (cli.linkStat(path).wait().isDir) {
+        Dropped r = dropOrphaned(cli, path, source + "/" + name);
+        gone = gone + r.gone;
+        bytes = bytes + r.bytes;
+      }
+      continue;
+    }
+    i64 was = sizeOf(cli, path);
+    if (removeWidening(cli, path)) {
+      gone = gone + 1;
+      bytes = bytes + was;
+    }
+  }
+  return Dropped(gone, bytes);
+}
+
+/**
+ * Deno's transpile cache for sources that no longer exist, which can never be hit again.
+ *
+ * `guardCodeCache` bounds `v8_code_cache_v2`; its sibling `gen/` has no bound and held 6.8 GB on one
+ * agent, 5.7 GB of it mirroring staging directories that had already been deleted. This is the mop,
+ * and `wac-mono 0068` still asks for reuse rather than sweeping.
+ */
+export void dropUnreachableTranspiles(Core core, Cli cli) {
+  // The whole mirror, from the root: an empty source root makes the first level `/home`, `/tmp` and
+  // their siblings, which is why this takes one call rather than a list somebody has to keep current.
+  Dropped r = dropOrphaned(cli, denoDir(cli) + "/gen/file", "");
+  if (r.gone > 0) {
+    core.log("dropped " + itoa(r.gone) + " transpile(s) of sources that no longer exist, " +
+             itoa64(mb(r.bytes)) + " MB (0068)");
+  }
+}

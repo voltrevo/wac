@@ -72,7 +72,7 @@ Deno.test("every heavy test says what it costs, in a number", async () => {
 
 Deno.test("no file is in both lanes, because they disagree about what to do with it", async () => {
   // Exclusive means "run this on every push, alone"; heavy means "do not run this on a push". A file
-  // claiming both leaves `runTests.ts` to break the tie by whichever `--ignore` it assembles first,
+  // claiming both leaves `runTests.wac` to break the tie by whichever `--ignore` it assembles first,
   // which is a coin toss written as an implementation detail. If a file really is both, it is heavy:
   // say so, and let the heavy lane run it at two workers where its exclusivity costs nothing.
   const heavy = new Set((await heavyTests()).map((e) => e.file));
@@ -178,7 +178,7 @@ Deno.test("the wac lane's directories each hold a test, and every declared one i
 });
 
 Deno.test("the wac driver the suite skips registers nothing the wac lane does not run", async () => {
-  // `tools/runTests.ts` leaves `harness/wac/hostless.test.ts` out of the parallel pass because every
+  // `tools/runTests.wac` leaves `harness/wac/hostless.test.ts` out of the parallel pass because every
   // test it registers runs natively in the `wac test` lane — 575 of them, twice, at 26s a time. That is
   // a claim about a list, and this is the list: an entry registered under a path the lane never walks
   // would be a test that stopped running anywhere, while both lanes still reported green.
@@ -197,6 +197,6 @@ Deno.test("the wac driver the suite skips registers nothing the wac lane does no
     "",
     "entries registered here that the `wac test` lane does not walk — the suite skips this file, so " +
       "these run nowhere. Either move them under a package's test/wac/, or take the exclusion out of " +
-      "`tools/runTests.ts`.",
+      "`tools/runTests.wac`.",
   );
 });
