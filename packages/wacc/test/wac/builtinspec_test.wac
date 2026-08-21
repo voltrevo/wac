@@ -20,6 +20,7 @@ import { binaryPath, scratch } from "../../../wactest/src/host.wac";
 import { joined, contains } from "../../../wactest/src/strings.wac";
 import { Change, Cli, Core, Exec } from "std/platform.wac";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
+import { coreFile, coreFiles, isBuiltinSpec, stdFile, stdFiles } from "../../src/coretext.wac";
 
 /** Only the entry. Whatever the tree contributes has to come from inside the compiler. */
 string[] paths() { return string[]("main.wac"); }
@@ -210,5 +211,46 @@ export string test_a_bare_specifier_is_refused_the_same_way_by_both_compilers(Co
     }
   }
   cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * `isBuiltinSpec` answers for exactly the files `coreFile` and `stdFile` serve.
+ *
+ * **It used to ask them, and that was the cost.** `coreFile(spec) != "" || stdFile(spec) != ""` was the
+ * whole implementation, and those two *build* a file's source by concatenating hundreds of literals — so
+ * a membership test reconstructed up to 107 KB of `std/platform.wac` and discarded it. `resolveFromAt`
+ * asks this once per import specifier and this repository has 603 imports of that one file: taking the
+ * question to the name lists instead cut a whole-corpus check from 21.1s to 10.2s.
+ *
+ * The point of this test is that the cheap answer is the *same* answer. Both are generated from one pair
+ * of lists, so they cannot drift while that holds — and this is what says it holds, in both directions:
+ * every served file is a built-in, and a near-miss is not.
+ */
+export string test_the_cheap_builtin_test_agrees_with_the_files_served() {
+  T t = T.create();
+  string[] core = coreFiles();
+  for (i32 i = 0; i < core.len(); i++) {
+    t.isTrue(isBuiltinSpec(core[i]), core[i] + " is listed and not a built-in");
+    t.isTrue(coreFile(core[i]) != "", core[i] + " is listed and `coreFile` serves nothing");
+  }
+  string[] std = stdFiles();
+  for (i32 i = 0; i < std.len(); i++) {
+    t.isTrue(isBuiltinSpec(std[i]), std[i] + " is listed and not a built-in");
+    t.isTrue(stdFile(std[i]) != "", std[i] + " is listed and `stdFile` serves nothing");
+  }
+  t.isTrue(isBuiltinSpec("core"), "the core root");
+  t.isTrue(isBuiltinSpec("std"), "the std root");
+
+  // **The other direction, which is what a list can get wrong.** A name the fetchers do not serve must
+  // not be called a built-in — otherwise the resolver reserves a specifier nothing can supply, which is
+  // a module the graph reads and the linker cannot find.
+  string[] near = string[]("core/nope.wac", "std/nope.wac", "./core/option.wac", "option.wac",
+                           "core/option", "std/platform.wac.bak");
+  for (i32 i = 0; i < near.len(); i++) {
+    t.isTrue(!isBuiltinSpec(near[i]), near[i] + " is not served and is called a built-in");
+    t.isTrue(coreFile(near[i]) == "" && stdFile(near[i]) == "",
+             near[i] + " is served after all, so the lists are short");
+  }
   return t.report();
 }

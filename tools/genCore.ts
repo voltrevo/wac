@@ -266,9 +266,20 @@ export string[] stdFiles() {
   return string[](${STD.map((f) => JSON.stringify(f)).join(", ")});
 }
 
+/**
+ * **Named, not fetched.** This asked \`coreFile(spec) != "" || stdFile(spec) != ""\`, and those *build*
+ * the file's whole source by concatenating hundreds of literals — so a membership test reconstructed up
+ * to 107 KB of \`std/platform.wac\` and threw it away. \`resolveFromAt\` calls this once per import
+ * specifier, and this repository has 603 imports of that one file: measured at **4.7s of a 21.1s
+ * whole-corpus check**, by doubling the resolve loop and subtracting.
+ *
+ * The comparisons below are generated from the same two lists that generate \`coreFile\` and
+ * \`stdFile\`, so they cannot fall out of step with what those answer for — which is the whole reason
+ * this file is generated.
+ */
 export bool isBuiltinSpec(string spec) {
   if (spec == "core" || spec == "std") { return true; }
-  return coreFile(spec) != "" || stdFile(spec) != "";
+  return ${[...SIBLINGS, ...STD].map((f) => `spec == ${JSON.stringify(f)}`).join("\n      || ")};
 }
 
 /** Every sibling's specifier, so a caller can reserve them without guessing the list. */
