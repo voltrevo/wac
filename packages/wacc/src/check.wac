@@ -200,6 +200,14 @@ export i32 errOverrideSpurious() { return 22; }
 export i32 errIncrType() { return 23; }
 /** `>>>` on a type where it says nothing, or on a non-integer. */
 export i32 errShiftOp() { return 24; }
+/**
+ * A bitwise or shift operator on something that is not an integer.
+ *
+ * Separate from `errShiftOp` because that code answers two questions already — `>>>` on an unsigned
+ * type, which *is* an integer and is merely redundant, and `>>>` on a float, which is not one. Adding
+ * a third meaning to it would make the message unable to name any of them.
+ */
+export i32 errBitwiseInt() { return 203; }
 /** Positional construction with the wrong number of arguments. */
 export i32 errCtorArity() { return 25; }
 /** A packed type in a position that has no slot for one. */
@@ -3473,6 +3481,27 @@ void checkExpr(C c, Expr e) {
       // about the type being a reference.
       if (arith && k != kPlus() && (alt == "string" || art == "string")) {
         c.reportTok(errOperandKind(), op, "");
+      }
+      // **Bitwise and shift want an integer, which is narrower than "a number".** `arith` above
+      // includes `& | ^` and asks only that the operands are not bool, a reference or a string — so a
+      // float slipped through, and shifts are not in `arith` at all and were asked nothing. The
+      // reference states both: *"'&' requires i32 or i64"* and *"'<<' requires an integer type"*, with
+      // the shift amount checked separately because it need not match the width.
+      //
+      // Measured before writing it: `1.5 & 2.5`, `x & 1.5` and `x << "a"` all checked clean, and the
+      // last two emitted a module the engine refuses — *"type mismatch: expected i32, found (ref
+      // $type)"* — which is the compiler emitting something invalid rather than refusing the program.
+      // `"a" << 1` was declined by the emitter instead. `issues/lang/0236a`.
+      //
+      // `isIntegerName` is the whole set: a packed type cannot be a parameter or a field, and reading
+      // one out of an array yields an `i32`, so every integer *expression* in the language is one of
+      // the four this names. `nl`/`nr` rather than `alt`/`art` so that a literal, which has no type
+      // until something gives it one, is filled in by `naturalTypeOf` instead of reading as unknown.
+      bool bitwise = k == kAnd() || k == kOr() || k == kCaret();
+      bool shifty = k == kShl() || k == kShr() || k == kShrU();
+      if ((bitwise || shifty) && nl != "" && nr != "" &&
+          (!isIntegerName(nl) || !isIntegerName(nr))) {
+        c.reportTok(errBitwiseInt(), op, "");
       }
       // **Two literals of different families**, which is the one case where neither side can take
       // its type from the other: `1 + "é"` has nothing to infer from and is a mismatch whatever the
