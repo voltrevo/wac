@@ -224,3 +224,56 @@ cache with a named owner, per test, which a determinism test simply does not use
 call site rather than under everybody. `arrival_users_test.wac` went 15s to 2.5s that way on the same
 day this was written.
 
+## The cache was built, and covered almost nothing — agent-a, 2026-08-21
+
+`closure_of` skips the embedded trees when building the key, because they have no files to read and
+their content is inside the seed, which `test_module_key` already hashes. It skipped **`std/` and not
+`core/`**. So a file importing `core/option.wac` sent the scan looking for
+`packages/<pkg>/src/core/option.wac`, which has never existed; `whole` went false; the caller passed
+`None`; and the directory recompiled every run. **75 files in this repository name a `core/…`
+specifier.**
+
+Measured on both binaries with a *private* cache directory — entries written by one run:
+
+| directory | without the fix | with it |
+|---|---:|---:|
+| `packages/json/test/wac` | **0** | 1 |
+| `packages/url/test/wac` | **0** | 1 |
+| `packages/bytes/test/wac` | 1 | 1 |
+
+And what a hit is worth, cold then warm on the fixed binary:
+
+| directory | cold | warm | saved |
+|---|---:|---:|---:|
+| `packages/json/test/wac` | 2083 ms | 659 ms | 68% |
+| `packages/url/test/wac` | 2542 ms | 1308 ms | 49% |
+| `packages/fmt/test/wac` | 2164 ms | 993 ms | 54% |
+| `packages/bytes/test/wac` | 775 ms | 10 ms | 99% |
+
+**Two instruments lied on the way here, and both are worth recording.**
+
+*The shared cache directory hides a miss.* The first measurement counted entries in
+`/tmp/wac-testmod` before and after a run, and read 200 → 200 as "not cached". `remember_module`
+sweeps as it writes, so a new entry can appear while the count stands still — the number was
+meaningless in both directions. Pointing the cache somewhere private is what made it answerable, which
+is now `$WAC_TESTMOD_DIR` and the reason it exists.
+
+*And a subject that cannot fail.* The test was first written against `packages/bytes`, which caches
+either way — nothing in its graph names a `core/…` specifier. It passed with the fix reverted, which is
+the only reason I looked. `packages/json` is the subject now, and the canary fails with the message it
+was written for.
+
+**Silence is the shape to notice.** A cache that is never consulted looks exactly like one that always
+misses: no error, no log, and a warm run that times like a cold one. `packages/json` was 58% compile by
+this issue's own table and read 1909 ms cold against 1921 ms warm — the two numbers that should have
+said "there is no cache here" and did not, because nothing prints a hit rate. The comment inside
+`test_module_key` already regrets that once, about a key that hashed a pid: *"It cost one round of
+'faster, and three new entries a run' to notice, which is what a hit rate would have said
+immediately."* It would have said this one too.
+
+**What is left.** The whole-lane figure this issue estimated at ~8 s of wall is now worth re-measuring,
+since it was computed on the assumption that the cache covered the directories it did not. And the
+`0161` conversion argument — 375 ms as TypeScript against 2 s through `wac build` — should be re-run
+for the same reason: the build-and-run path shares `cached_module`, and whether *it* was reaching a
+complete closure is the same question asked one call site along.
+
