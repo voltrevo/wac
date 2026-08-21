@@ -182,6 +182,20 @@ i64 nowMillis(Cli cli) {
 /** The path of the `wac` binary these tests build and run with. */
 export string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
+/**
+ * The newest mtime of `path`, whether it is a file or a directory.
+ *
+ * **`newestUnder` answers 0 for a file**, because it asks `readDir` and gets null — so a list of
+ * freshness inputs that mixes directories with `Cargo.toml` silently ignores the files, and a
+ * lockfile change goes unnoticed. Found while writing exactly that list.
+ */
+export i64 newestOf(Cli cli, string path) {
+  Stat s = cli.stat(path).wait();
+  if (!s.exists) { return 0 as i64; }
+  if (!s.isDir) { return s.modifiedMillis; }
+  return newestUnder(cli, path);
+}
+
 /** The wasmtime host — `wacland`, the other crate. `deno task seed:native` is what builds it. */
 export string nativeHost(Cli cli) { return cli.cwd().wait() + "/native/target/release/wacland"; }
 
@@ -204,8 +218,19 @@ export string nativeHostWhyNot(Cli cli) {
   if (!host.exists) {
     return "native/target/release/wacland is not built — `deno task seed:native` builds it";
   }
-  if (host.modifiedMillis < newestUnderExcept(cli, root + "/native", string[]("target"))) {
-    return "native/target/release/wacland is older than native/ — `deno task seed:native` rebuilds it";
+  // **The crate's own inputs, named — not a walk of `native/`.** A blanket walk answered "stale"
+  // forever: `native/v8/seed/*.wasm` is the *seed's output*, written by every `deno task seed`, and it
+  // lives under `native/` without being inside a `target/`. So every seed made `wacland` look older
+  // than its sources, six callers skipped their native halves, and the two that *assert* the native
+  // half ran failed in the gate. The list is `tools/seedFresh.test.ts`'s, which had it right, and it
+  // is `native/`'s crate — `native/v8` is the other one.
+  string[] inputs = string[]("native/src", "native/manifest/src", "native/Cargo.toml",
+                             "native/Cargo.lock", "native/build.rs");
+  for (i32 i = 0; i < inputs.len(); i++) {
+    if (host.modifiedMillis < newestOf(cli, root + "/" + inputs[i])) {
+      return "native/target/release/wacland is older than " + inputs[i]
+          + " — `deno task seed:native` rebuilds it";
+    }
   }
   return "";
 }

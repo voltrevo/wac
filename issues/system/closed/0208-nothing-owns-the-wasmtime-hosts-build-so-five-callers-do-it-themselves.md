@@ -193,3 +193,36 @@ reason in its docstring.
 `arrival_test` 3, and `builtinspec_test` 5 as a caller of the shared helper — all passing.
 `deno task seed:native` builds it in isolation; `deno task docs` is green with the new task documented in
 `CLAUDE.md`.
+
+## The first version of the shared check was wrong, and the gate said so — agent-a, 2026-08-21
+
+`nativeHostWhyNot` compared the binary against **a walk of `native/`, `target/` excluded**. That is
+wrong, and permanently so: `native/v8/seed/*.wasm` is the **seed's own output**, written by every
+`deno task seed`, and it lives under `native/` without being inside a `target/`. Cargo does not relink a
+binary that has nothing to rebuild, so after any seed the host looked older than its "sources" for ever.
+
+Six callers skipped their native halves, which is invisible — and two of them *assert* the native half
+ran, which is not:
+
+    FAIL test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts
+      — the native half ran; without cargo only the Deno half above was checked: expected true
+
+**Those two assertions are the reason this was a five-minute diagnosis instead of a silent regression.**
+Four of the six only warn, and a warned skip passes. Whoever wrote *"the native half ran"* as an
+assertion rather than a log line is the reason the sweep that broke them could not land.
+
+Fixed by naming the crate's inputs instead of walking its directory — `native/src`,
+`native/manifest/src`, `native/Cargo.toml`, `native/Cargo.lock`, `native/build.rs`, which is
+`tools/seedFresh.test.ts`'s list, and that file had it right all along. `native/v8` is the other crate
+and has no business in this answer.
+
+Canaried by restoring the blanket walk with the seed's output freshly touched: `native_hostfs_test`
+fails with the gate's exact message, and 7 of 7 pass with the fix.
+
+### And a second bug the same list exposed
+
+`newestUnder` asks `readDir`, which answers null for a plain file — so `Cargo.toml`, `Cargo.lock` and
+`build.rs` in that list were **silently contributing 0**, and a lockfile change would never have marked
+the host stale. `newestOf` stats first and walks only a directory. A list that mixes files and
+directories needs a helper that knows which is which, and the one that already existed did not say it
+only took directories.
