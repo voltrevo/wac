@@ -40,6 +40,32 @@ copies of the message and the budget is how they drift.
 categories in this issue rather than two: real defects, load-sensitive bounds, and a guard that was
 looking in the wrong place. All 47 tests across the thirteen files that stand on `bounded` pass.
 
+## An eighth: the retry covers a different failure from the one that happens — 2026-08-21 (agent-b)
+
+`packages/platform/test/wac/arrival_users_test.wac` failed with ten assertions of the form
+
+    ada did not land in her own home: got "", want "/home/ada\nada\n"
+
+and the cause is in the eighth of them: `ssh: connect to host 127.0.0.1 port 44723: Connection refused`.
+It passes on its own. Ten sentences about home directories for one about a port — the same
+consequence-not-cause shape as the two entries below it.
+
+**What the code actually does**, read rather than reconstructed. `Held.take(cli)` binds a port to prove
+it is free and must `release` it before the child can bind the same number, so there is an unavoidable
+window between the reservation ending and sshd's own `bind`. That is inherent to "find a free port, hand
+the number to a child", and the loop around it is the mitigation: three attempts, each waiting 20s for
+the daemon to log `listening on port N`.
+
+**The mitigation covers a different failure from the observed one.** The loop retries when the daemon
+*never announces itself*. Tonight it announced itself and the client could not reach it — and no attempt
+retries that, because the loop has already returned `Server(d, port, "")` by then. So the one failure
+the window can produce late is the one the retry cannot catch.
+
+Not fixed here, and deliberately: `packages/platform` had commits from two other agents tonight, and
+`issues/system/README.md` says a package someone else is working in gets filed rather than fixed. The
+shape a fix would take is in the shared list below — assert the daemon is still reachable *before* the
+ten assertions that assume it, so the failure is one sentence about a port.
+
 ## `reqbuf` again, and this time its bound was the defect — 2026-08-21 (agent-b)
 
 `packages/platform/test/reqbuf.test.ts` is the first row of the table below, and it failed again:
