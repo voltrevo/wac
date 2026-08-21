@@ -42,7 +42,14 @@ string[] names() {
     // expression's own type was never computed, so what it produced could go anywhere. Four spellings
     // because the missing arm served all four: postfix, prefix, decrement, and an argument rather than
     // an initialiser. `issues/lang/0242a`.
-    "a23 string s = x++", "a24 string s = ++x", "a25 string s = x--", "a26 g(x++) for g(string)");
+    "a23 string s = x++", "a24 string s = ++x", "a25 string s = x--", "a26 g(x++) for g(string)",
+    // An **all-literal `match` expression in a slot no literal of that family can inhabit**.
+    // `spec/spec/enums.md` §enum-match-expr-4wnq7bk has the arms unifying *"exactly as a ternary's two
+    // branches are … and by the same code"*, and `litFamily` implemented that for the ternary and not
+    // for the match — so the identical program was refused with `?:` and accepted with `match`. Every
+    // family, because the arm serves them all. `issues/lang/0243a`.
+    "a27 int arms -> string", "a28 int arms -> bool", "a29 string arms -> i32",
+    "a30 bool arms -> i32", "a31 int arms -> f64");
 }
 
 string[] programs() {
@@ -72,7 +79,12 @@ string[] programs() {
     "export i32 f(i32 x) { string s = x++; return s.len(); }\n",
     "export i32 f(i32 x) { string s = ++x; return s.len(); }\n",
     "export i32 f(i32 x) { string s = x--; return s.len(); }\n",
-    "i32 g(string s) { return s.len(); }\nexport i32 f(i32 x) { return g(x++); }\n");
+    "i32 g(string s) { return s.len(); }\nexport i32 f(i32 x) { return g(x++); }\n",
+    "enum E { A, B }\nexport i32 f(E e) { string s = match (e) { case A: 1, else: 2 }; return s.len(); }\n",
+    "enum E { A, B }\nexport i32 f(E e) { bool z = match (e) { case A: 1, else: 2 }; return z ? 1 : 0; }\n",
+    "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { case A: \"x\", else: \"y\" }; return n; }\n",
+    "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { case A: true, else: false }; return n; }\n",
+    "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { case A: 1, else: 2 }; return d; }\n");
 }
 
 export string test_every_ill_typed_program_here_is_refused_by_the_checker() {

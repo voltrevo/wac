@@ -63,13 +63,26 @@ export string test_every_match_rule_the_reference_has_is_enforced() {
 export string test_the_ordinary_matches_are_accepted() {
   T t = T.create();
   string[] name = string[]("one else arm", "two distinct bindings", "exhaustive with no else",
-                           "two discards", "a discard beside a name");
+                           "two discards", "a discard beside a name",
+                           // The other side of `illtyped_test`'s a27–a31. Making an all-literal match
+                           // answer with its arms' literal family is what refuses those five, and the
+                           // way to get that wrong is to refuse these — the same programs in a slot
+                           // the family *can* inhabit. `issues/lang/0243a`.
+                           "integer arms into an i32", "string arms into a string",
+                           "an integer arm and a float arm, which the slot decides",
+                           "arms that are not literals at all",
+                           "a match expression as an argument");
   string[] src = string[](
     "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } } }\n",
     ENUM + "export i32 f(E e) { match (e) { case A(p, q): { return p + q; } else: { return 2; } } }\n",
     "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } } }\n",
     ENUM + "export i32 f(E e) { match (e) { case A(_, _): { return 1; } else: { return 2; } } }\n",
-    ENUM + "export i32 f(E e) { match (e) { case A(_, y): { return y; } else: { return 2; } } }\n");
+    ENUM + "export i32 f(E e) { match (e) { case A(_, y): { return y; } else: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { case A: 1, else: 2 }; return n; }\n",
+    "enum E { A, B }\nexport i32 f(E e) { string s = match (e) { case A: \"x\", else: \"y\" }; return s.len(); }\n",
+    "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { case A: 1, else: 2.5 }; return d; }\n",
+    "enum E { A, B }\nexport i32 f(E e, i32 x, i32 y) { i32 n = match (e) { case A: x, else: y }; return n; }\n",
+    "enum E { A, B }\ni32 g(i32 v) { return v; }\nexport i32 f(E e) { return g(match (e) { case A: 1, else: 2 }); }\n");
   for (i32 i = 0; i < src.len(); i++) {
     t.eqI32(diagsFor(src[i]), 0, name[i] + ": refused an ordinary match");
   }

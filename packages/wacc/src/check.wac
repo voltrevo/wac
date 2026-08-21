@@ -2677,6 +2677,40 @@ i32 litFamily(C c, Expr e) {
       if (tf == litNone() || tf == litNull()) { return litNone(); }
       return tf == litFamily(c, tels) ? tf : litNone();
     }
+    /**
+     * **And an expression `match` of literals, for the same reason and by the same rule.**
+     *
+     * `spec/spec/enums.md` `[§enum-match-expr-4wnq7bk]`: the arms unify *"exactly as a ternary's two
+     * branches are (see control.md), and by the same code"*. The arm above was that code and this one
+     * was missing, so the identical program was refused written with `?:` and accepted written with
+     * `match` — `string s = b ? 1 : 2;` reported, `string s = match (e) { case A: 1, else: 2 };`
+     * silent, along with every other family: string arms in an `i32` slot, bool arms in an `i32` slot,
+     * integer arms in an `f64` slot that `f64 d = 1;` refuses on its own.
+     *
+     * Nothing was checking them because `typeOfExpr` answers `typeNone()` for an all-literal match
+     * *deliberately* — the arms take the type expected of the whole expression, so the match has no
+     * type of its own to compare — and unknown is silence unless the literal path picks it up. This is
+     * the literal path picking it up. `issues/lang/0243a`.
+     *
+     * **Mixed integer and float arms stay unanswered**, exactly as a ternary's do: `1` and `2.5` are
+     * different families, so this returns `litNone()` and `f64 d = match (e) { case A: 1, else: 2.5 }`
+     * behaves as it did. Whether that program is legal is a question the spec answers twice and
+     * differently — `enums.md` has literal arms taking the expected type, `control.md:256` has a float
+     * literal typing as `f64` "regardless of context" — and picking one is not this arm's business.
+     * Filed as the decision in `issues/lang/0243a`.
+     */
+    case MatchExpr(subject, arms): {
+      if (arms.len() == 0) { return litNone(); }
+      i32 mf = litNone();
+      for (i32 i = 0; i < arms.len(); i++) {
+        // A statement arm carries a body and no value; one `Arm` serves both forms.
+        if (arms[i].value is null) { return litNone(); }
+        i32 af = litFamily(c, arms[i].value!);
+        if (af == litNone() || af == litNull()) { return litNone(); }
+        if (i == 0) { mf = af; } else if (af != mf) { return litNone(); }
+      }
+      return mf;
+    }
     else: { return litNone(); }
   }
 }
