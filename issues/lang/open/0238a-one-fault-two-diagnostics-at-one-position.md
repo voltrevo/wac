@@ -228,3 +228,51 @@ The rule I keep re-learning: **an oracle answers the case you gave it.** *"The r
 reports one"* was true of `~s` and `s % 2` and false of every cast in the corpus, and I had no business
 carrying it across without a second run — least of all into an issue whose whole point was that
 something had gone unmeasured.
+
+## The unary shape is fixed, and the corpus could not see it
+
+`typeOfExpr`'s unary arm answered the **operand's** type:
+
+```wac
+case Unary(op, operand): {
+  if (tokenKind(c, op) == kBang()) { return "bool"; }
+  return typeOfExpr(c, operand);
+}
+```
+
+So `~s` was a `string`, and the slot rule then disagreed with the `i32` return type — a second
+diagnostic resting on a type invented for an expression the operand rule had already refused. It answers
+unknown for a rejected operand now, and unknown is silence.
+
+The two conditions were already spelled out at the reporting site, so they are **factored rather than
+mirrored** — one `unaryAccepts` predicate that both the reporting site and `typeOfExpr` read. Mirroring
+is what `issues/lang/0236a` got wrong four hours earlier, and the site's own comment already wanted this:
+*"the question is now asked of one predicate instead of being spelled out per rule"*. All three unary
+operators go through it now, so no row of it is dead.
+
+Measured:
+
+| program | before | after |
+| --- | --- | --- |
+| `export i32 f(string s) { return ~s; }` | 2 | **1** |
+| `export i32 f(bool b) { return -b; }` | 2 | **1** |
+| `export i32 f(string s) { return -s; }` | 2 | **1** |
+| `export bool f(string s) { return !s; }` | 1 | 1 |
+| `export string f(string s) { return ~s; }` | 1 | 1 |
+
+**And the corpus moved not at all: still 19.** The mutation sweep contains no unary in a mismatched
+slot, so the counter this issue landed cannot hold this fix — which is why the test asserts an *exact
+count* rather than `diags > 0`, the shape every other row in `illtyped_test.wac` uses and which was true
+before the fix and after it. Canaried by disabling the guard: the three rows fail with `got 2, want 1`
+and the matching-slot control keeps passing.
+
+### What is left
+
+`s % 2` in an `i32` function is still 2 — `this operator does not take an operand of that kind` *and*
+`operands have mismatched types`, two operand rules for one operand. That is the second shape named
+above and it is a different repair: not a type this checker invented, but two rules with overlapping
+conditions, which is the thing `check.wac`'s own comment says was untangled once already.
+
+The corpus's 19 are the initialiser and comparison shapes — `string x = 1; u32 y = 1; return x / y;`
+and its neighbours — and sorting which of those are ours needs the question this issue names, one program
+at a time.

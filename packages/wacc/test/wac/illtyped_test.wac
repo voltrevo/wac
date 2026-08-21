@@ -128,6 +128,37 @@ export string test_no_program_here_is_accepted_by_both_the_checker_and_the_emitt
   return t.report();
 }
 
+/**
+ * A refused unary reports **once**, not once per rule that notices the consequence.
+ *
+ * `~s` in an `i32` function drew two diagnostics: the operand rule that refused it, and a slot rule
+ * comparing the `i32` return type against the type `typeOfExpr` had handed back for `~s` — its
+ * *operand's* type, invented for an expression already refused. Moving the same expression into a
+ * `string` function dropped it to one, which is what identified the mechanism. `issues/lang/0238a`.
+ *
+ * **The count is the assertion, and it has to be.** Every other test in this file asks `diags > 0`,
+ * which was true before the fix and after it, so nothing here could hold this. The mutation corpus
+ * cannot either: its 19 count-disagreements are binary and initialiser shapes, and re-running it after
+ * this fix moved the number not at all — it contains no unary in a mismatched slot.
+ */
+export string test_a_refused_unary_reports_once() {
+  T t = T.create();
+  string[] name = string[]("~ on a string", "unary - on a bool", "unary - on a string");
+  string[] src = string[](
+    "export i32 f(string s) { return ~s; }\n",
+    "export i32 f(bool b) { return -b; }\n",
+    "export i32 f(string s) { return -s; }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
+    t.eqI32(diags, 1, name[i] + ": one fault, and this many diagnostics");
+  }
+  // The control: the same expression where the slot agrees was always one, so a fix that simply
+  // silenced the second rule everywhere would pass the rows above and fail nothing.
+  i32 ok = dumpTypeErrors("export string f(string s) { return ~s; }\n".toBytes()).len() / 3;
+  t.eqI32(ok, 1, "the matching-slot control");
+  return t.report();
+}
+
 // ---------------------------------------------------------------------------------------------
 // The two-file half.
 //

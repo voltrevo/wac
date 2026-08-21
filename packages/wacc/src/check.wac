@@ -596,6 +596,26 @@ string dropLast(string s, i32 n) {
  */
 bool isValueType(string n) { return isPrimitiveName(n) && n != "string"; }
 
+/**
+ * Whether the unary operator `uk` takes an operand of type `ut` at all.
+ *
+ * **One predicate, two readers.** `checkExpr` reports when the answer is no, and `typeOfExpr` answers
+ * *unknown* for the expression — because an operator that rejects its operand produces something with
+ * no type, not something of the operand's type. Answering the operand's type made a slot rule
+ * downstream disagree with a type this checker had invented for an expression it had just refused, so
+ * `export i32 f(string s) { return ~s; }` reported two faults where there is one. `issues/lang/0238a`.
+ *
+ * The `u32`/`u64` row is negation: an unsigned integer has none, and the reference says so.
+ */
+bool unaryAccepts(C c, i32 uk, string ut) {
+  if (uk == kBang()) { return ut == "bool"; }
+  if (uk == kMinus()) {
+    return !(ut == "bool" || ut == "u32" || ut == "u64" || isReferenceName(c, ut));
+  }
+  if (uk == kTilde()) { return isIntegerName(ut); }
+  return true;
+}
+
 /** Whether a type is one of the integers, which is what the bitwise operators and `~` demand. */
 bool isIntegerName(string n) {
   return n == "i32" || n == "i64" || n == "u32" || n == "u64";
@@ -2920,8 +2940,14 @@ export string typeOfExpr(C c, Expr e) {
     }
     // `!x` is a boolean; `-x` and `~x` are whatever `x` is.
     case Unary(op, operand): {
-      if (tokenKind(c, op) == kBang()) { return "bool"; }
-      return typeOfExpr(c, operand);
+      i32 uk = tokenKind(c, op);
+      if (uk == kBang()) { return "bool"; }
+      string ut3 = typeOfExpr(c, operand);
+      // **A rejected operand leaves the expression with no type**, rather than with the operand's.
+      // Unknown is silence here, which is what stops a slot rule reporting a second time for the one
+      // fault the operand rule already named. `issues/lang/0238a`.
+      if (ut3 != typeNone() && !unaryAccepts(c, uk, ut3)) { return typeNone(); }
+      return ut3;
     }
     // Both branches or nothing. A conditional whose arms disagree has a type the reference works out
     // by unification, which this slice cannot do — and guessing one branch would be worse than
@@ -3672,21 +3698,16 @@ void checkExpr(C c, Expr e) {
       // fill it in. Asking `typeOfExpr` answered unknown and stayed silent on every one of them.
       string ut = naturalTypeOf(c, operand);
       if (ut != typeNone()) {
-        if (uk == kBang() && ut != "bool") {
-          c.reportTok(errOperandKind(), op, "");
-        // **Negating a reference**, which listed `bool`, `string` and structs — so `-someEnum`,
-        // `-someArray`, `-someFn` and `-someAnyref` all compiled. The list is the same one that
-        // forgot enums twice elsewhere today, which is why the question is now asked of one
-        // predicate instead of being spelled out per rule.
-        // **And an unsigned integer has no negation.** `-a` on a `u32` or a `u64` compiled; the
-        // reference answers *"unary '-' is not defined on u32"*, at the operator, which is where
-        // this reports. `u8` and `u16` are packed rather than unsigned-arithmetic types and the
-        // reference complains about them three times over — this catches one of the three, which
-        // rung 3 permits, because a subset at the right position is the contract.
-        } else if (uk == kMinus() &&
-                   (ut == "bool" || ut == "u32" || ut == "u64" || isReferenceName(c, ut))) {
-          c.reportTok(errOperandKind(), op, "");
-        } else if (uk == kTilde() && !isIntegerName(ut)) {
+        // **All three ask `unaryAccepts`**, which `typeOfExpr` also reads so that a rejected
+        // operand leaves the expression with no type. The lists that were spelled out here are the
+        // ones that forgot enums twice; one predicate is the answer to that as well.
+        //
+        // `-a` on a `u32` or `u64` is included because an unsigned integer has no negation — the
+        // reference answers *"unary '-' is not defined on u32"*. `u8` and `u16` are packed rather
+        // than unsigned-arithmetic types and the reference complains about them three times over;
+        // this catches one of the three, which rung 3 permits, because a subset at the right
+        // position is the contract.
+        if (!unaryAccepts(c, uk, ut)) {
           c.reportTok(errOperandKind(), op, "");
         }
       }
