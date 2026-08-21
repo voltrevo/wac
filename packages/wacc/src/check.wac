@@ -775,6 +775,17 @@ export struct C {
    * in the spec illegal.
    */
   bool[] nameAliasOnly;
+  /**
+   * Whether the name is in this table only so that the name *exists*.
+   *
+   * An `import { f } from "./x.wac"` declares `f` with no type, which is what makes a single-file
+   * check say nothing about it rather than call it undefined. That entry is not a binding: it has no
+   * type to narrow, nothing assigns to it, and the declaration it refers to is recorded properly
+   * elsewhere — `declareModule` gives an imported function its return type, its parameters and its
+   * arity. Rules that ask *does this name exist* want it; rules that ask *what is this local* must
+   * skip it and look the declaration up instead. `issues/lang/0180a`.
+   */
+  bool[] nameImportOnly;
   i32 nameCount;
   /** Enum names. An enum has no default value, which is the only thing recorded about one here. */
   string[] enumNames;
@@ -1179,7 +1190,7 @@ export struct C {
    */
   C create(u8[] src, i32[] toks, i32 locals, i32 decls) {
     return C(src, toks, string[locals](), string[locals](), bool[locals](),
-             bool[locals](), 0,
+             bool[locals](), bool[locals](), 0,
              string[decls](), 0,
              string[decls](), i32[decls](), i32[decls](), 0,
              0,
@@ -1341,6 +1352,7 @@ export struct C {
     this.types[this.nameCount] = ty;
     this.nameConsts[this.nameCount] = isConst;
     this.nameAliasOnly[this.nameCount] = false;
+    this.nameImportOnly[this.nameCount] = false;
     if (this.nameCount < this.nameFuncArity.len()) { this.nameFuncArity[this.nameCount] = 0 - 1; }
     if (this.nameCount < this.nameScope.len()) {
       this.nameScope[this.nameCount] = this.openScopeCount > 0
@@ -1361,6 +1373,18 @@ export struct C {
   void markAliasOnly(this, string name) {
     i32 i = this.findName(name);
     if (i >= 0) { this.nameAliasOnly[i] = true; }
+  }
+
+  /** Say that the name just declared is there only so the name exists — see `nameImportOnly`. */
+  void markImportOnly(this, string name) {
+    i32 i = this.findName(name);
+    if (i >= 0 && i < this.nameImportOnly.len()) { this.nameImportOnly[i] = true; }
+  }
+
+  /** Whether the nearest binding of `name` is an import's placeholder rather than a binding. */
+  bool isImportOnlyName(const this, string name) {
+    i32 i = this.findName(name);
+    return i >= 0 && i < this.nameImportOnly.len() ? this.nameImportOnly[i] : false;
   }
 
   /** Whether a name's constness is the aliasing kind, which does not stop it being rebound. */
@@ -2715,7 +2739,10 @@ export string typeOfExpr(C c, Expr e) {
       // the same name instead: `case Str(bytes): string.fromBytes(bytes)` in a file that also exports
       // `Fixture bytes(Core, Cli, …)` was reported as passing a funcref where `u8[]` belongs. Unknown
       // is the answer, and unknown is silence. `issues/lang/0145`'s family, in value position.
-      if (c.isDeclaredName(idName)) { return held; }
+      // **Except an import's placeholder, which is not a binding.** It is in the table so the name
+      // exists; its type is unknown because nothing put one there, and answering unknown here hid
+      // the signature `declareModule` had already recorded. `issues/lang/0180a`.
+      if (c.isDeclaredName(idName) && !c.isImportOnlyName(idName)) { return held; }
       // **A declared function used as a value is a funcref** — see `funcValueType`.
       return funcValueType(c, c.funcAt(idName));
     }
@@ -8458,6 +8485,15 @@ export void checkModule(C c, Program prog) {
           string alias = tokenText(c, items[i].aliasTok);
           if (c.isDeclaredName(alias) || c.isStruct(alias) || c.isEnum(alias)) { continue; }
           c.declare(alias, typeNone());
+          // **Declared so the name exists, and marked so nothing reads it as a binding.** The line
+          // above is why a single-file check calls an imported name unknown rather than undefined,
+          // and `isDeclaredName` is then read by two kinds of rule asking different questions: *does
+          // this name exist* and *what is this local's type*. An imported function is a yes to the
+          // first and not a subject for the second, and with one answer for both, `typeOfExpr`'s
+          // `Ident` arm returned unknown and shadowed the funcref that `declareModule` had already
+          // recorded — so `take(MESSAGE)` for an imported `MESSAGE` got no diagnostic and the
+          // emitter built the funcref pair for a call wanting an `i32`. `issues/lang/0180a`.
+          c.markImportOnly(alias);
         }
         if (prefixTok >= 0 && !c.isDeclaredName(tokenText(c, prefixTok))) {
           c.declare(tokenText(c, prefixTok), typeNone());

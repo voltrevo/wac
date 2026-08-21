@@ -1,4 +1,5 @@
-// The negative half of the corpus: fourteen ill-typed programs that must all be refused.
+// The negative half of the corpus: 21 ill-typed programs that must all be refused — 14 single-file,
+// and 7 that are only ill-typed across an import boundary.
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/illtyped_test.wac
 //
@@ -21,7 +22,7 @@
 // 7 of them also declined by the emitter, 0 silent in both.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { dumpTypeErrors, blockedFiles } from "../../src/api.wac";
+import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles } from "../../src/api.wac";
 
 string[] names() {
   return string[](
@@ -107,5 +108,109 @@ export string test_no_program_here_is_accepted_by_both_the_checker_and_the_emitt
         name[i] + ": the checker and the emitter both accepted it, so a build writes a module with "
         + "no `f` in it and exits 0");
   }
+  return t.report();
+}
+
+// ---------------------------------------------------------------------------------------------
+// The two-file half.
+//
+// **Everything above is single-file, and that is a bound on what it can measure.** `issues/lang/0180a`
+// is a program the fourteen above cannot express: an imported function passed where an `i32` belongs.
+// wacc checked it clean and the engine refused the module —
+//
+//     Compiling function #1:"f" failed: call[0] expected type i32, found struct.new of type (ref 29)
+//
+// — because the import walk declares the imported name as a *typeless name* so that a single-file
+// check calls it unknown rather than undefined, and `isDeclaredName` was the only thing telling that
+// placeholder apart from a local. `typeOfExpr`'s `Ident` arm asked it and returned unknown, shadowing
+// the signature `declareModule` had already recorded. The identical program with a **local** function
+// was refused correctly, which is what named the import as the whole difference. The fix is a second
+// bit on the names table; the two shapes that changed what the one bit *says* both false-alarmed on
+// working code, which is the more useful half of `issues/lang/0180a`.
+//
+// The same argument as the header applies one dimension over: wacc's negative corpora were all
+// single-file, so a whole class of its silence — names that arrive through an import — had nothing
+// looking at it. Measured 2026-08-21: **7 of 7 refused by the checker**, and with the fix reverted
+// b01 and b02 go silent in both tests — which is the canary for the row that motivated the half.
+// b03 to b07 were already refused by other rules, which is the argument for the half rather than
+// for the one row: five of the seven exercise paths nobody had asked about across an import.
+
+string[] names2() {
+  return string[](
+    "b01 take(MESSAGE), imported funcref as i32", "b02 i32 x = MESSAGE, imported",
+    "b03 dbl(s) for imported dbl(i32)", "b04 return imported i32 from a string function",
+    "b05 dbl(1, 2) for imported dbl(i32)", "b06 p.v() for an imported struct's field",
+    "b07 fn[i32(string)] g = imported dbl(i32)");
+}
+
+/** The imported file for each row, parallel to `names2`. */
+string[] libs2() {
+  return string[](
+    "export i32 MESSAGE() { return 4; }\n",
+    "export i32 MESSAGE() { return 4; }\n",
+    "export i32 dbl(i32 n) { return n * 2; }\n",
+    "export i32 one() { return 1; }\n",
+    "export i32 dbl(i32 n) { return n * 2; }\n",
+    "export struct P { i32 v; }\n",
+    "export i32 dbl(i32 n) { return n * 2; }\n");
+}
+
+/** The entry for each row, which imports from `./lib.wac` and misuses what it got. */
+string[] imps2() {
+  return string[](
+    "import { MESSAGE } from \"./lib.wac\";\ni32 take(i32 n) { return n; }\n" +
+      "export i32 f() { return take(MESSAGE); }\n",
+    "import { MESSAGE } from \"./lib.wac\";\nexport i32 f() { i32 x = MESSAGE; return x; }\n",
+    "import { dbl } from \"./lib.wac\";\nexport i32 f(string s) { return dbl(s); }\n",
+    "import { one } from \"./lib.wac\";\nexport string f() { return one(); }\n",
+    "import { dbl } from \"./lib.wac\";\nexport i32 f() { return dbl(1, 2); }\n",
+    "import { P } from \"./lib.wac\";\nexport i32 f(P p) { return p.v(); }\n",
+    // **The signature is compared now, which it was not.** Before `issues/lang/0180a` an imported
+    // name had no type at all, so no funcref declaration could disagree with it; the message names
+    // both sides — `expected fn(string) -> i32, found fn(i32) -> i32`.
+    "import { dbl } from \"./lib.wac\";\nexport i32 f() { fn[i32(string)] g = dbl; return 0; }\n");
+}
+
+export string test_every_two_file_ill_typed_program_is_refused_by_the_checker() {
+  T t = T.create();
+  string[] name = names2();
+  string[] lib = libs2();
+  string[] imp = imps2();
+  t.eqI32(name.len(), lib.len(), "the name and lib lists disagree in length");
+  t.eqI32(name.len(), imp.len(), "the name and entry lists disagree in length");
+  if (name.len() != lib.len() || name.len() != imp.len()) { return t.report(); }
+  for (i32 i = 0; i < imp.len(); i++) {
+    i32 diags = dumpTypeErrorsFiles(
+        string[]("/imp.wac", "/lib.wac"), string[](imp[i], lib[i]), "/imp.wac").len() / 3;
+    t.isTrue(diags > 0, name[i] + ": checked clean across the import boundary");
+  }
+  return t.report();
+}
+
+/**
+ * And the same pair claim as the single-file half: nothing here is accepted by both.
+ *
+ * The control that matters is the row's *well-typed* twin — `take(MESSAGE())` with the call — which
+ * must still check clean, or the rule above is just refusing every imported name.
+ */
+export string test_no_two_file_program_here_is_accepted_by_both() {
+  T t = T.create();
+  string[] name = names2();
+  string[] lib = libs2();
+  string[] imp = imps2();
+  string[] paths = string[]("/imp.wac", "/lib.wac");
+  for (i32 i = 0; i < imp.len(); i++) {
+    i32 diags = dumpTypeErrorsFiles(paths, string[](imp[i], lib[i]), "/imp.wac").len() / 3;
+    string blocked = blockedFiles(paths, string[](imp[i], lib[i]), "/imp.wac");
+    t.isTrue(diags > 0 || blocked != "", name[i] + ": accepted by both, so a build writes a module "
+        + "the engine will not load or one with no `f` in it");
+  }
+  // **The well-typed twin of b01**, which is the canary for the whole half: with the call parentheses
+  // it is an ordinary program and must be silent. A guard that refused an imported function *used*
+  // would pass every assertion above and break every program in this repository.
+  string good = "import { MESSAGE } from \"./lib.wac\";\ni32 take(i32 n) { return n; }\n" +
+                "export i32 f() { return take(MESSAGE()); }\n";
+  i32 goodDiags = dumpTypeErrorsFiles(paths, string[](good, libs2()[0]), "/imp.wac").len() / 3;
+  t.eqI32(goodDiags, 0, "refused the well-typed twin of b01");
   return t.report();
 }
