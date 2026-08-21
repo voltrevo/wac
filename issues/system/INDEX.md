@@ -5,6 +5,8 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0239c](open/0239c-the-compiler-spends-minutes-on-a-file-that-is-not-wac-source.md) | `wac run <a module.wasm>` burns 90s of CPU on 75 KB and writes nothing — the compiler is handed binary as source, and a 36 KB text file finishes at once, so it is superlinear in recovery rather than any one byte; the zero-length output is its own bug | performance | hangs |
+| [0238c](open/0238c-a-socket-carries-no-fault-so-refused-and-failed-can-only-be-told-apart-in-english.md) | `Socket` carries no `fault` where `FileResult` and `Change` do, so "the network was not granted" and "nothing is listening" differ only in the host's English — and the four hosts spell it two ways, which made `probe.wac` report a refused *read* as `failed` under both native hosts | missing feature | wrong answer |
 | [0234a](open/0234a-a-bare-specifier-means-two-things-and-the-two-hosts-pick-differently.md) | `dep/lib.wac` is a mapping name per the spec and not a relative path, but the Deno walk joins it to the importing file's directory — with `dep/` mapped and a real `src/dep/lib.wac` it compiles the local file and the program answers 99, exit 0, no diagnostic; and the binary resolves a bare specifier no mapping declares as though it were relative, which the spec does not define either | bug | wrong answer |
 | [0233c](open/0233c-three-github-design-issues-were-not-captured-anywhere.md) | GitHub 8, 18 and 19 had no record in this tracker: 19's bootstrap rule is already met and checked by `tools/seed.sh`, 18's first question is answered by 0009's D8/D9 — two commits are two modules, so versions can coexist — and 8 is untouched | decision | not implemented |
 | [0231c](open/0231c-a-lane-can-be-watched-or-counted-and-not-both.md) | the suite's Deno pass is inherited so it can be watched and is therefore uncountable; its wac lane is buffered so its 2,387 tests can be counted and is therefore unwatchable — one chunk held 66s of output — because `Cli.execWith` has two modes and no incremental read. Not a blocker: a shell redirect plus a bounded `waitAny` and a tail does both today, measured — the capability would make it one process and one read instead of two and a re-read | missing feature | no error |
@@ -38,7 +40,6 @@ record of what has been fixed and why.
 | [0154](open/0154-a-slow-suite-is-starved-at-the-push-because-master-moves-under-it.md) | a slow suite is starved at the push: 45 minutes of green suite, beaten three times, nothing landed | process | no error |
 | [0147](open/0147-every-program-pays-for-every-capability-on-cli.md) | every program pays code size for every capability on `Cli`, including the ones it never names | performance | wrong answer |
 | [0146](open/0146-a-script-under-site-cannot-use-the-wac-import-map.md) | a script under `site/` cannot use the `wac/` import map, so `wacc-api.js` was never built and the playground fell back silently | build | compile error |
-| [0144](open/0144-a-wasm-program-can-be-spawned-natively-and-not-on-the-javascript-hosts.md) | a wasm program can be spawned on the native hosts and not on the JavaScript ones | missing feature | not implemented |
 | [0142](open/0142-a-suite-was-killed-with-the-gate-in-place.md) | a suite was killed at the parallel pass with the suite gate in place, and the log says no — reopened: the kill detector reads a cgroup counter that cannot move when the container has no memory limit | bug | no error |
 | [0139](open/0139-mutation-testing-cannot-reach-a-low-level-package-in-practice.md) | mutation testing cannot reach a low-level package: nine minutes before the first mutant runs | performance | no error |
 | [0138](open/0138-wasmtimes-default-collector-costs-25x-on-escaping-allocation.md) | wasmtime's default collector costs 25x on escaping allocation — fixed by choosing the copying one; a 4x residue is unexplained | performance | no error |
@@ -60,7 +61,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-246 issues, 198 closed.
+248 issues, 199 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

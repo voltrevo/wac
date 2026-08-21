@@ -227,8 +227,20 @@ function dumpCoverage(app: AppModule, cov: Coverage): void {
  * the program needs no filesystem permission of its own. Every argument goes to the
  * application; the launcher takes none.
  */
-export async function runLauncher(workerSource: string, grants: Grants = {}): Promise<void> {
-  await runAsLauncher(workerSource, grants);
+export async function runLauncher(
+  workerSource: string,
+  grants: Grants = {},
+  /**
+   * The generic wasm-child entry, already bundled, so this program's `spawn` can start a **module**.
+   *
+   * Written by `build.ts`, for the same reason `workerSource` is: the build is the only thing that can
+   * bundle it, and a built application has no source tree to find it in. Optional so that a launcher
+   * built before this existed still runs — such a program refuses a module by name, which is what
+   * every built application did until 2026-08-21. `issues/system/0144`.
+   */
+  moduleEntry?: string,
+): Promise<void> {
+  await runAsLauncher(workerSource, grants, moduleEntry);
 }
 
 async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
@@ -280,7 +292,11 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
   }
 }
 
-async function runAsLauncher(workerSource: string, grants: Grants): Promise<void> {
+async function runAsLauncher(
+  workerSource: string,
+  grants: Grants,
+  moduleEntry?: string,
+): Promise<void> {
   const bridge = newBridge();
   const responder = serveHostCalls(bridge, denoWorld({
     args: [...Deno.args],
@@ -295,6 +311,8 @@ async function runAsLauncher(workerSource: string, grants: Grants): Promise<void
     // The program's own bundle, so `spawnSelf` has something to run. The launcher is the only
     // place that has it: it is what started the program.
     selfSource: workerSource,
+    // And the generic entry for a child that is a wasm module, for the same reason.
+    ...(moduleEntry === undefined ? {} : { moduleEntry }),
   }));
 
   const url = URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" }));

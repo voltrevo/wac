@@ -227,43 +227,109 @@ export type WorkerLike = {
  */
 const NO_WASM_CHILD = "this host starts JavaScript worker bundles, and cannot start a wasm module here";
 
+/** A wasm module rather than a bundle: the four magic bytes, which is the whole test. */
+function looksLikeModule(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 &&
+    bytes[0] === 0 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6d;
+}
+
 /**
- * A wasm module as a worker bundle: the marker, an import of the generic entry, and the bytes.
+ * Where the stub leaves a module's bytes for the entry to pick up.
+ *
+ * **The one name the two halves share, and deliberately not a function name.** The entry is *bundled*
+ * in a built application, and a bundler is free to rename any binding it inlines — so a stub that
+ * called `childMain` would work from source and fail in a build, in the one direction nothing here
+ * would notice. A property on `globalThis` survives bundling because it is a string, not a binding.
+ */
+const CHILD_BYTES = "__wacChildBytes";
+
+/**
+ * Which runtime's worker entry drives the module — the one thing that is not generic about this.
+ *
+ * A worker is `self` and `onmessage` under Deno and `parentPort` under Node, so the *loop* differs
+ * even though everything above it — manifest, driver, marshalling, capabilities — does not. Hence two
+ * files and one shape, rather than a runtime test inside one file: the wrong one must not be *bundled*
+ * into the other's build, and a `typeof parentPort` would carry both everywhere.
+ */
+export type ChildRuntime = "deno" | "node";
+
+/** The sibling that holds each one's entry, and the only place this mapping is written. */
+const CHILD_ENTRY: Record<ChildRuntime, string> = {
+  deno: "./childWasm.ts",
+  node: "./childWasmNode.ts",
+};
+
+/**
+ * The generic child entry: import it, and start it on whatever the stub left on `globalThis`.
+ *
+ * **This exact text is what `build.ts` bundles**, so both worlds run the same source and differ only
+ * in whether it arrived pre-bundled. Node's takes `worker_threads` as an argument for the reason
+ * `entryNode.ts` gives: the module must type-check under Deno, where that import does not resolve, so
+ * whoever *runs* it supplies it — and here that is this generated line.
+ */
+export function childEntrySource(url: string, runtime: ChildRuntime = "deno"): string {
+  return runtime === "node"
+    ? `import { childMainNode } from ${JSON.stringify(url)};\n` +
+      `import * as wt from "node:worker_threads";\n` +
+      `await childMainNode(wt, globalThis.${CHILD_BYTES});\n`
+    : `import { childMain } from ${JSON.stringify(url)};\n` +
+      `await childMain(globalThis.${CHILD_BYTES});\n`;
+}
+
+/**
+ * The entry unbundled, for a host running from its own source tree.
+ *
+ * `null` when the file is not reachable, which is what a *built* application looks like: there
+ * `import.meta.url` is the built file and no such sibling exists. A built application passes the
+ * bundled copy to `spawnChild` instead, and **each host chooses between the two** — this is not a
+ * default inside `spawnChild`, because the choice of which entry is the host's own and a wrong
+ * default is a build that starts the other runtime's worker loop.
+ */
+export function moduleEntryFromSource(runtime: ChildRuntime): string | null {
+  const url = new URL(CHILD_ENTRY[runtime], import.meta.url);
+  try {
+    // **`Deno` not existing is one of the answers.** This file is bundled into Node and browser
+    // programs too, and there the reference throws rather than returning — which is the same
+    // conclusion as a missing file: there is no source tree here, so there is no entry to be had.
+    if (url.protocol === "file:") Deno.statSync(url);
+  } catch {
+    return null;
+  }
+  return childEntrySource(url.href, runtime);
+}
+
+/**
+ * A wasm module as a worker bundle: the marker, the bytes, and the entry that starts them.
+ *
+ * **One shape, and the only difference between the two worlds is whether the entry is bundled.** From
+ * a source tree it is `childEntrySource` as written; in a built application it is the same text put
+ * through `deno bundle`, which the build produces and the launcher carries. Until 2026-08-21 only the
+ * first existed, so every built application refused every module by name — `issues/system/0144`, and
+ * the reason this is threaded from the build rather than resolved here.
  *
  * The bytes are base64 rather than fetched, because a worker created from a blob has no base URL to
  * resolve a path against and a temporary file would outlive the child that failed to start. It
  * costs a third again in size and nothing in correctness.
  */
-function wrapModule(wasm: Uint8Array): string {
-  if (!(wasm.length >= 4 && wasm[0] === 0 && wasm[1] === 0x61 && wasm[2] === 0x73 && wasm[3] === 0x6d)) {
+function wrapModule(wasm: Uint8Array, moduleEntry: string | null): string {
+  if (!looksLikeModule(wasm)) {
     // Not a module either — decoded so the marker check below says which of its two things it is.
     return new TextDecoder().decode(wasm);
   }
-  // **Only where the entry can be reached.** The stub imports `childWasm.ts` by URL, which works
-  // while the host runs from source and does not in a *built* application: there `import.meta.url`
-  // is the built file and no such sibling exists, so the worker died with "Module not found" —
-  // a worse message than the honest refusal it replaced. Inlining the entry at build time is what
-  // closes that, and it costs a `deno bundle` on every build; `issues/system/0144` holds the
-  // decision. Until then this says which world it is in.
-  const entryUrl = new URL("./childWasm.ts", import.meta.url);
-  if (entryUrl.protocol === "file:") {
-    try {
-      Deno.statSync(entryUrl);
-    } catch {
-      return NO_WASM_CHILD;
-    }
-  }
+  if (moduleEntry === null) return NO_WASM_CHILD;
   let binary = "";
   for (let i = 0; i < wasm.length; i += 0x8000) {
     binary += String.fromCharCode(...wasm.subarray(i, i + 0x8000));
   }
+  // The bytes are set before the entry runs, and an `import` inside the entry hoists above this
+  // without changing that: hoisting moves the *fetch and evaluation of the imported module*, and
+  // `childWasm.ts` only declares things. The call that reads this line's work is in the entry's body.
   return `${WORKER_MARKER}
-import { childMain } from ${JSON.stringify(entryUrl.href)};
 const b = atob(${JSON.stringify(btoa(binary))});
 const bytes = new Uint8Array(b.length);
 for (let i = 0; i < b.length; i++) bytes[i] = b.charCodeAt(i);
-await childMain(bytes);
-`;
+globalThis.${CHILD_BYTES} = bytes;
+${moduleEntry}`;
 }
 
 export function blobWorker(source: string): WorkerLike {
@@ -306,9 +372,9 @@ export function spawnChild(
    * The program: a worker bundle as text, or a **wasm module** as bytes.
    *
    * `spawn` takes `u8[]` now, and on the native hosts those bytes are a module carrying its own
-   * manifest. A module reaching here is wrapped in a stub that imports `childWasm.ts` and hands it
-   * the bytes — so the protocol below is untouched, and one file serves every wasm child where a
-   * bundle carries glue written for one program. `issues/system/0144`.
+   * manifest. A module reaching here is wrapped in a stub that hands the bytes to `childWasm.ts` —
+   * so the protocol below is untouched, and one file serves every wasm child where a bundle carries
+   * glue written for one program. `issues/system/0144`.
    */
   program: string | Uint8Array,
   args: Uint8Array[],
@@ -323,6 +389,15 @@ export function spawnChild(
   makeBridge: () => { sab: SharedArrayBuffer },
   makeWorker: (source: string) => WorkerLike = blobWorker,
   graceMs?: number,
+  /**
+   * The generic wasm-child entry, ready to inline: bundled by the build, or `moduleEntryFromSource`.
+   *
+   * **The host's to supply, and `null` is an answer**: a page has no way to start a module and every
+   * host had none at all before 2026-08-21, so a refusal by name is the right outcome rather than a
+   * worker that dies on a missing import. Which of the two entries it is comes from the host, because
+   * only the host knows whether its workers are Deno's or Node's. `issues/system/0144`.
+   */
+  moduleEntry?: string | null,
 ): Child {
   // The two the child writes are capped; what the parent sends it is not — see `ByteQueue`.
   const out = new ByteQueue(QUEUE_CAP);
@@ -332,12 +407,15 @@ export function spawnChild(
   const fsReq = new ByteQueue();
   const fsRep = new ByteQueue();
 
-  const source = typeof program === "string" ? program : wrapModule(program);
+  const source = typeof program === "string"
+    ? program
+    : wrapModule(program, moduleEntry ?? null);
+
 
   // **Before anything starts.** A file that parses and is not one of these used to be indistinguishable
   // from a program still loading, and the caller waited for ever (0033). The marker is a fact about the
   // source, so it is answered here rather than by a deadline — and the message says which of the two
-  // things it is, because "not a wac worker bundle" and "built by an older wac" are different problems
+  // things it is, because "not a wac program" and "built by an older wac" are different problems
   // with different fixes.
   if (!source.startsWith(WORKER_MARKER)) {
     const looksBuilt = source.includes("SharedArrayBuffer") || source.includes("wacBind");
@@ -345,7 +423,12 @@ export function spawnChild(
       ? NO_WASM_CHILD
       : looksBuilt
       ? "built by an older wac than this one: rebuild it with --worker"
-      : "not a wac worker bundle: build one with --worker";
+      // **Both forms named, since 2026-08-21 both are accepted.** This said "not a wac worker
+      // bundle: build one with --worker", which was the whole truth while a bundle was the only thing
+      // a JavaScript host could start; a module carrying its own manifest works here now, so a
+      // message naming only one of them sends a reader to rebuild something they may already have.
+      // `issues/system/0144`.
+      : "not a wac program: no `wac.manifest` section and not a worker bundle";
     out.end();
     err.end();
     input.end();

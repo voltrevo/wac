@@ -193,6 +193,15 @@ export async function runLauncherNode(
   workerSource: string,
   grants: Grants = {},
   net?: NodeNet,
+  /**
+   * The generic wasm-child entry, already bundled, so this program's `spawn` can start a **module**.
+   *
+   * `build.ts` writes it, for the same reason it writes `workerSource`: a built application has no
+   * source tree to find it in. **After `net`, which is why the build now always passes that slot** —
+   * `undefined` where the network is not granted, rather than omitting it and letting this argument
+   * arrive as the network. `issues/system/0144`.
+   */
+  moduleEntry?: string,
 ): Promise<void> {
   let stdinIter: AsyncIterator<Uint8Array> | null = null;
   const io = {
@@ -281,6 +290,7 @@ export async function runLauncherNode(
     env: grants.env === true ? (n) => proc.env[n] : undefined,
     makeWorker: workerFrom(wt),
     selfSource: workerSource,
+    ...(moduleEntry === undefined ? {} : { moduleEntry }),
   }));
 
   const worker = new wt.Worker(workerSource, { eval: true });

@@ -245,6 +245,8 @@ through `waitAny` and forwards the exit code — and it is reachable on **no hos
 | Deno | *"this host starts JavaScript worker bundles, and cannot start a wasm module here"* | yes, and then it cannot spawn |
 | Node | same host code as Deno | same |
 
+**Three of those four rows are obsolete as of 2026-08-21** — see the entry below.
+
 So the code was reverted rather than landed. Unreachable code that compiles is the shape this
 repository keeps finding — a capability wired in and never executed — and it would have sat here
 looking done.
@@ -271,3 +273,28 @@ So the order under the ruling is:
 4. **delete the Rust `run`**, with the differential as the proof that the two agreed before the swap;
 5. `update` the same way; `test` last or never — its chunking, worker scheduling, module caching and
    CPU ranking belong to `tools/runTests.wac`, not to the compiler.
+
+## 2026-08-21: step 2 is done, so option 2 can move
+
+`issues/system/0144` is closed. **All four hosts start a wasm module now**, measured with one runner
+and one probe, both `.wasm`, through each host:
+
+| host | `spawn(moduleBytes, …)` |
+|---|---|
+| the `wac` binary (V8) | works — it always did |
+| `wacland` (wasmtime) | works — `Cap::Spawn` builds a `World` from the bytes it was handed |
+| a built Deno program | works — the build inlines `host/childWasm.ts` into the stub |
+| a built Node program | works — the same, with `host/childWasmNode.ts` |
+
+`packages/platform/test/wac/spawn_test.wac` holds three cases over it, each watched failing with its
+own half disabled. So the table above — three of whose four rows said "and then it cannot spawn" — is
+history, and the estimate this issue corrected once is now correct: `run` in `wacc.wac` is reachable
+everywhere, which is what the 124 reverted lines were waiting for.
+
+**The order stands, and step 3 is next**: move `run` into `wacc.wac`, with `commandparity_test.wac`
+widened to cover it. Nothing here is claimed beyond 0144, which is closed.
+
+One thing found while doing it belongs to this issue rather than to 0144: **`wac run <a module>` hangs**
+— `issues/system/0239c`. It compiles whatever path it is given, so a `.wasm` goes to the lexer. Now
+that every host can *start* a module, `run` recognising the magic bytes and running it is a real option,
+and it is this issue that owns which subcommand does what.

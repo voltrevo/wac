@@ -5,20 +5,21 @@
 // that imports `childWasm.ts`, which drives it from that manifest and hands it to the runtime's
 // ordinary worker loop. `issues/system/0144`.
 //
-// ## The two worlds, and why one of them refuses
+// ## The two worlds, and what this file is the near half of
 //
-// The stub imports the entry **by URL**, which works while the host runs from source and cannot in a
-// *built* application: there `import.meta.url` is the built file and no such sibling exists. So a
-// built application says
+// The entry has to reach the worker as *source*, and there are two ways to have it: as written, which
+// is what a host running from its own tree does and what this file exercises, or already bundled,
+// which is what a built application carries. This one is the cheap half — no build, no subprocess,
+// `spawnChild` called directly with a module and the entry `moduleEntryFromSource` found.
 //
-//     this host starts JavaScript worker bundles, and cannot start a wasm module here
-//
-// which is an honest refusal a shell falls through on, rather than a worker dying with "Module not
-// found". Closing that means inlining the entry at build time, which costs a `deno bundle` on every
-// build — the decision 0144 holds. Both are asserted here so neither can change unnoticed.
+// The far half is `packages/platform/test/wac/spawn_test.wac`, where a *built* program spawns a
+// module and is granted the filesystem through it. That case is the one 0144 was open on: a built
+// application refused every module by name until 2026-08-21, because it looked for `childWasm.ts`
+// beside itself and found the built file. Neither test replaces the other — this one would pass with
+// the build broken, and that one costs a build.
 
 import { buildNative } from "../native.ts";
-import { spawnChild } from "../host/children.ts";
+import { moduleEntryFromSource, spawnChild } from "../host/children.ts";
 import { bridgeOf, newBridge } from "../host/layout.ts";
 import { serveHostCalls } from "../host/respond.ts";
 import { denoWorld } from "../host/deno.ts";
@@ -57,6 +58,12 @@ Deno.test("a wasm module is started as a child, and its output comes back", asyn
         }));
       },
       () => newBridge(),
+      // **What the host passes, rather than a default inside `spawnChild`.** The choice between the
+      // Deno and Node entries is the host's — a wrong default is a build that starts the other
+      // runtime's worker loop — so there is no default and every caller says which world it is.
+      undefined,
+      undefined,
+      moduleEntryFromSource("deno"),
     );
 
     // `loaded` is the empty string when the source loaded and the host's message when it did not.

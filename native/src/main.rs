@@ -1464,19 +1464,49 @@ fn dispatch(
             // Whether this program promises to answer the child's filesystem questions — see
             // `spawnSelf` in platform.wac. Not a grant: it widens nothing.
             let serve_fs = matches!(arg(5), Val::I32(n) if n != 0);
-            return spawn_instance(caller, argv, want, cwd, inherit, serve_fs, results);
+            let Some(world) = caller.data().world.clone() else {
+                return no_spawn_here(caller, results);
+            };
+            return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, results);
         }
         Cap::Spawn => {
-            // `spawn(source, …)` hands over a *program's source*, which in the JavaScript hosts is a
-            // worker bundle. There is no such thing here — a second instance comes from this module —
-            // so this is -1 with a reason rather than -2: **this world can spawn**, and a caller that
-            // reads -2 would give up on `spawnSelf` too, which works.
-            return settle_now(
-                caller,
-                Kind::Child,
-                Outcome::Child(-1, -1, -1, "spawning a program from its source is not implemented in the native runtime; spawnSelf works".into()),
-                results,
-            );
+            // `spawn(prog, argv, grants, cwd, inheritInput, serveFs)` — **a module carrying its own
+            // manifest**, which is what `wac build` writes and what `native/v8` has always started.
+            // Until 2026-08-21 this answered "not implemented in the native runtime; spawnSelf
+            // works", and the gap was not the confinement or the streams — `spawnSelf` already had
+            // all of that — but simply that nothing here built a `World` from bytes it was given.
+            // `issues/system/0144`.
+            let prog = read_u8_array(caller, &params[1])?;
+            let argv = read_bytes_array(caller, &params[2])?;
+            let want = match arg(3) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let cwd = read_string(caller, &params[4])?;
+            let inherit = matches!(arg(5), Val::I32(n) if n != 0);
+            let serve_fs = matches!(arg(6), Val::I32(n) if n != 0);
+            // **-2 still means what it means**: a world with no `spawn` at all says so, and it says
+            // the same thing to both spawns rather than refusing one and serving the other.
+            if caller.data().world.is_none() {
+                return no_spawn_here(caller, results);
+            }
+            // The parent's engine, so a child shares its configuration and its compile cache — and a
+            // module spawned in a loop is compiled once. Nothing else of the parent's crosses.
+            let engine = caller.engine().clone();
+            return match world_from(&engine, &prog) {
+                Ok(world) => {
+                    spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, results)
+                }
+                // **A failed child rather than a trap.** A parent handed a file that is not a wac
+                // program has done nothing wrong, and `Child.error` is the field that says so —
+                // `packages/sh` turns a negative handle into 126 and carries the reason.
+                Err(why) => settle_now(
+                    caller,
+                    Kind::Child,
+                    Outcome::Child(-1, -1, -1, why),
+                    results,
+                ),
+            };
         }
         // ── The network ──────────────────────────────────────────────────────
         //
@@ -2579,9 +2609,56 @@ fn keep(caller: &Caller<'_, Host>, what: Handle) -> i32 {
     caller.data().handles.lock().unwrap().push(what)
 }
 
-/// Start another instance of this module on its own thread.
+/// "This world has no `spawn` at all" — -2 on every handle, and no message.
+///
+/// `platform.wac` gives -2 its own meaning for a reason it states: without it "a world that cannot
+/// spawn made every spawnable name *fail* rather than fall through", which hid `packages/box`'s own
+/// `wc` behind a `WACPATH` lookup that could never work. A missing capability is not a broken program.
+fn no_spawn_here(
+    caller: &mut Caller<'_, Host>,
+    results: &mut [Val],
+) -> Result<(), wasmtime::Error> {
+    settle_now(caller, Kind::Child, Outcome::Child(-2, -2, -2, String::new()), results)
+}
+
+/// Everything needed to run a module we were handed, or why it cannot be run.
+///
+/// The manifest is read from the module rather than from beside it, which is the whole reason one
+/// artefact can be spawned: a host given bytes can find the field order of `Core`, the callback
+/// signatures and the grants without being told anything else. `native.ts` says why that must not be
+/// hardcoded anywhere.
+///
+/// Every failure is a `String` rather than an error, because the caller turns it into `Child.error`:
+/// a file that is not a wac program is a failed child, not a fault in the parent.
+fn world_from(engine: &Engine, wasm: &[u8]) -> Result<Arc<World>, String> {
+    let Some(text) = wacmanifest::manifest_in(wasm) else {
+        return Err("not a wac program: no `wac.manifest` section in it".into());
+    };
+    let m: Arc<Manifest> = serde_json::from_str::<Manifest>(&text)
+        .map(Arc::new)
+        .map_err(|e| format!("its `wac.manifest` section does not parse: {e}"))?;
+    if m.version != SUPPORTED_VERSION {
+        return Err(format!(
+            "manifest version {} — this runtime speaks {}",
+            m.version, SUPPORTED_VERSION
+        ));
+    }
+    // Content-keyed, so a module spawned in a loop is compiled once and a `.cwasm` is shared with
+    // every other process on this machine that runs it.
+    let module = compiled(engine, wasm).map_err(|e| format!("it does not compile: {e}"))?;
+    Ok(Arc::new(World { engine: engine.clone(), module, manifest: m }))
+}
+
+/// Start a program on its own thread, given the world it runs in.
+///
+/// **`world` is a parameter because it is no longer always this module.** `spawnSelf` passes the
+/// caller's own — the same engine, module and manifest — and `spawn` passes one built from the bytes
+/// it was handed. Everything below is identical for the two, which is what says the confinement is a
+/// property of the *store* rather than of where the code came from: a child's `Store` is built on its
+/// own thread and nothing from the parent's crosses, because a `Val` is not `Send`.
 fn spawn_instance(
     caller: &mut Caller<'_, Host>,
+    world: Arc<World>,
     argv: Vec<Vec<u8>>,
     want: i32,
     cwd: Vec<u8>,
@@ -2589,14 +2666,6 @@ fn spawn_instance(
     serve_fs: bool,
     results: &mut [Val],
 ) -> Result<(), wasmtime::Error> {
-    let Some(world) = caller.data().world.clone() else {
-        return settle_now(
-            caller,
-            Kind::Child,
-            Outcome::Child(-2, -2, -2, String::new()),
-            results,
-        );
-    };
 
     // **A ceiling of the parent's own, intersected here rather than trusted.** `platform.wac`: "a
     // parent built without `--allow-net` cannot hand `GRANT_NET` to anyone; asking is not an error,

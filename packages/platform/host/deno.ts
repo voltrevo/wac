@@ -9,6 +9,7 @@ import {
   blobWorker,
   type Child,
   failedChild,
+  moduleEntryFromSource,
   noSpawnHere,
   spawnChild,
   childHandles,
@@ -103,6 +104,15 @@ export type DenoWorldOptions = {
    * as the tests do, has no bundle to speak of.
    */
   selfSource?: string;
+  /**
+   * The generic wasm-child entry, already bundled, so that `spawn` can start a **module**.
+   *
+   * Passed by the launcher for the same reason as `selfSource` — the build is what has it. Absent
+   * means the host looks for `childWasm.ts` beside its own source, which is right when it is running
+   * from a source tree and finds nothing in a built application; that is the split
+   * `issues/system/0144` was about, and it is why this is threaded rather than imported.
+   */
+  moduleEntry?: string;
   readStdin?(): Promise<Uint8Array>;
   /**
    * One chunk of standard input, for `readChunk` and `recv(0)`.
@@ -388,11 +398,15 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         parentFs,
         // So that a child can run itself as well: the bundle is the same one.
         selfSource: opts.selfSource,
+        // And so that a child can start a module too. A grandchild is where this went missing first
+        // in the equivalent `selfSource` line's history: a capability the top of the tree has and
+        // nothing below it does is a capability that works until something nests.
+        moduleEntry: opts.moduleEntry,
         // Where its relative paths resolve from, and what its own `cwd()` reports. Empty means the
         // host's own directory, which is what a caller with no opinion passes.
         cwd: childCwd === "" ? opts.cwd : childCwd,
       }));
-    }, newBridge, blobWorker, graceEnv());
+    }, newBridge, blobWorker, graceEnv(), opts.moduleEntry ?? moduleEntryFromSource("deno"));
 
     // **A parent that will not serve says so before the child runs.** Ending the reply queue is
     // what makes `Fs.overParent` answer immediately instead of waiting: a child asks one question,

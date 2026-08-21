@@ -1713,10 +1713,16 @@ export struct Cli {
 
 
   /**
-   * Start a worker on `source`, with `args` as its arguments.
+   * Start a child on `prog`, with `args` as its arguments.
    *
-   * `source` is JavaScript — a worker bundle that expects the bridge protocol. Running a
-   * *program* is therefore two steps, read it and spawn it, which is why there is no
+   * `prog` is a **program's bytes**: since 2026-08-21 a wasm module carrying its own `wac.manifest`
+   * runs on every host — the two native ones and, through `host/driver.ts`, Deno and Node — and the
+   * JavaScript hosts also accept the worker bundle they used to require. So one artefact is a program
+   * everywhere, which is what `issues/system/0144` was open on: before it, a program that read a file
+   * and ran it worked under `wac` and failed under Deno, and `packages/sh` searching `$WACPATH` was
+   * where that split showed up first.
+   *
+   * Running a *program* is therefore two steps, read it and spawn it, which is why there is no
    * registry of launchable things here: the capability is "run this", and where the code
    * came from is the caller's business and the filesystem's.
    *

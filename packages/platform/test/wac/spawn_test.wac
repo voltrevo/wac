@@ -18,7 +18,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
-import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
+import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot, wacBinary }
+  from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { freshDir } from "../../../wactest/src/host.wac";
@@ -151,7 +152,7 @@ export string test_a_source_that_is_not_a_program_is_a_failed_child_not_a_dead_p
   // The reason is now the *marker's* rather than a `SyntaxError`, and it arrives without starting a
   // worker at all: a bundle says on its first line that it is one, so "this is not a program" is a
   // fact about the file rather than something inferred from how it failed. 0033.
-  t.isTrue(contains(r.err, "not a wac worker bundle"),
+  t.isTrue(contains(r.err, "not a wac program"),
            "with a reason that names the gap: " + r.err);
   // The line that used to be there, and is the parent dying rather than reporting.
   t.isFalse(contains(r.err, "Unhandled error in child worker"), r.err);
@@ -230,6 +231,123 @@ export string test_node_spawns_the_same_way_from_the_same_code(Core core, Cli cl
   t.eqI32(badRun.code, 1, badRun.err);
   t.isTrue(contains(badRun.err, "runner: "), badRun.err);
   cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_built_program_spawns_a_wasm_module_and_grants_it_the_same_way(
+    Core core, Cli cli) {
+  // **The same artefact the native host runs, started by a built Deno program.** Not a worker bundle:
+  // a `.wasm` carrying its own `wac.manifest`, driven from that manifest by `host/driver.ts` with no
+  // glue written for this program anywhere in the path. That is what `issues/system/0144` is about,
+  // and until 2026-08-21 this was the one thing a *built* application could not do — it looked for
+  // `childWasm.ts` beside its own source, found the built file instead, and refused every module by
+  // name. The stub carries the entry now, bundled by `build.ts`.
+  //
+  // **The second run is the canary, and it is the reason this is a grants test as well.** A module
+  // that never started would also print nothing and also look denied; a module that reads `README.md`
+  // when its parent passes `read` has been instantiated, given a world, and marshalled a
+  // `FileResult` back. Two runs of one artefact where the only difference is the grant.
+  T t = T.create();
+  string dir = freshScratch(t, cli, "wasmchild");
+  string runner = dir + "/runner";
+  string why = build(cli, "packages/platform/example/runner.wac", runner,
+                     string[]("--allow-read"), "deno", false);
+  t.eqStr(why, "", "the runner built");
+  if (why != "") { return t.report(); }
+
+  // `builtProgram` rather than `build`: the `wac` binary writes a module, `build.ts` writes a bundle,
+  // and the whole point here is which of the two `spawn` is handed.
+  string mod = builtProgram(cli, "packages/platform/example/probe.wac", "spawn-probe-wasm", none());
+  t.isTrue(cli.stat(mod).wait().isFile, "the module built: " + mod);
+  if (!cli.stat(mod).wait().isFile) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Ran denied = run(cli, runner, string[](mod, ""));
+  t.eqI32(denied.code, 0, denied.err);
+  t.eqStr(trimmed(denied.out), "read=denied net=denied", denied.out + denied.err);
+
+  Ran granted = run(cli, runner, string[](mod, "", "read"));
+  t.eqI32(granted.code, 0, granted.err);
+  t.eqStr(trimmed(granted.out), "read=ok net=denied", granted.out + granted.err);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_node_spawns_a_wasm_module_from_the_same_module(Core core, Cli cli) {
+  // **The same `.wasm`, and it is the same file on disk as the case above** — `builtProgram` keys on
+  // the entry, so both hosts are handed one artefact rather than two builds of one program. What
+  // differs is only the worker loop it lands in: `childWasmNode.ts` against `childWasm.ts`, eight
+  // lines each, over one driver. If the driver had anything runtime-specific in it, this is the test
+  // that would not pass.
+  T t = T.create();
+  string dir = freshScratch(t, cli, "wasmchild-node");
+  string runner = dir + "/runner";
+  string why = build(cli, "packages/platform/example/runner.wac", runner,
+                     string[]("--allow-read"), "node", false);
+  t.eqStr(why, "", "the Node runner built");
+  if (why != "") { return t.report(); }
+
+  string mod = builtProgram(cli, "packages/platform/example/probe.wac", "spawn-probe-wasm", none());
+  t.isTrue(cli.stat(mod).wait().isFile, "the module built: " + mod);
+  if (!cli.stat(mod).wait().isFile) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Ran denied = run(cli, "node", string[](runner, mod, ""));
+  t.eqI32(denied.code, 0, denied.err);
+  t.eqStr(trimmed(denied.out), "read=denied net=denied", denied.out + denied.err);
+
+  Ran granted = run(cli, "node", string[](runner, mod, "", "read"));
+  t.eqI32(granted.code, 0, granted.err);
+  t.eqStr(trimmed(granted.out), "read=ok net=denied", granted.out + granted.err);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way(Core core, Cli cli) {
+  // **The whole of `issues/system/0144`, in one table.** Two artefacts — a runner and a probe, both
+  // `.wasm` — through four hosts, and the answer has to be the same twice over: refused without the
+  // grant, served with it. The two above cover the JavaScript hosts because those need a *build* to
+  // carry the child entry; this one adds the native pair and puts all four side by side, which is
+  // where a host that drifts shows up.
+  //
+  // On 2026-08-12 exactly one of these four worked. `wacland` said "spawning a program from its source
+  // is not implemented in the native runtime", and both JavaScript hosts said "this host starts
+  // JavaScript worker bundles" — so a program that read a file and ran it was portable between no
+  // two hosts, which is the split that issue was filed about.
+  T t = T.create();
+  string wac = wacBinary(cli);
+  t.isTrue(cli.stat(wac).wait().isFile, "the wac binary is built: " + wac);
+  if (!cli.stat(wac).wait().isFile) { return t.report(); }
+
+  // One runner and one probe, built once and handed to every host — the same bytes, so a difference
+  // in the answer is a difference in the host.
+  string runner = builtProgram(cli, "packages/platform/example/runner.wac", "spawn-runner-wasm",
+                               string[]("--allow-read"));
+  string mod = builtProgram(cli, "packages/platform/example/probe.wac", "spawn-probe-wasm", none());
+  t.isTrue(cli.stat(runner).wait().isFile, "the runner module built: " + runner);
+  t.isTrue(cli.stat(mod).wait().isFile, "the probe module built: " + mod);
+  if (!cli.stat(runner).wait().isFile || !cli.stat(mod).wait().isFile) { return t.report(); }
+
+  Ran v8Denied = run(cli, wac, string[](runner, mod, ""));
+  t.eqI32(v8Denied.code, 0, v8Denied.err);
+  t.eqStr(trimmed(v8Denied.out), "read=denied net=denied", v8Denied.out + v8Denied.err);
+  Ran v8Granted = run(cli, wac, string[](runner, mod, "", "read"));
+  t.eqI32(v8Granted.code, 0, v8Granted.err);
+  t.eqStr(trimmed(v8Granted.out), "read=ok net=denied", v8Granted.out + v8Granted.err);
+
+  // The wasmtime host is asked for rather than built — `issues/system/0208` — and says why when it is
+  // not there. Skipped rather than failed, because a checkout may never have run `seed:native`; the
+  // three hosts above still ran, which is what stops the skip from hiding everything.
+  string why = nativeHostWhyNot(cli);
+  if (why != "") {
+    core.warn("   skipping the wasmtime half: " + why);
+    return t.report();
+  }
+  string wacland = nativeHost(cli);
+  Ran wlDenied = run(cli, wacland, string[](runner, mod, ""));
+  t.eqI32(wlDenied.code, 0, wlDenied.err);
+  t.eqStr(trimmed(wlDenied.out), "read=denied net=denied", wlDenied.out + wlDenied.err);
+  Ran wlGranted = run(cli, wacland, string[](runner, mod, "", "read"));
+  t.eqI32(wlGranted.code, 0, wlGranted.err);
+  t.eqStr(trimmed(wlGranted.out), "read=ok net=denied", wlGranted.out + wlGranted.err);
   return t.report();
 }
 

@@ -404,10 +404,13 @@ export string test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts(
 export string test_the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ(Core core, Cli cli) {
   // A file that exists, is not a directory, and is not a program. The three cases above are the
   // filesystem's to answer and are the same everywhere; **this one is the runtime's**, and the two
-  // runtimes do not have the same answer to give. A JavaScript host would run a worker bundle and this
-  // is not one; the native host cannot run a foreign program at all, whatever it contains — see
-  // `Cap::Spawn` in `native/src/main.rs`, which answers -1 with a reason rather than -2 so that the
-  // shell reports the program rather than giving up on spawning.
+  // runtimes do not have the same answer to give — but the *reason* they differ changed on 2026-08-21.
+  //
+  // It used to be that the native host could not run a foreign program at all: `Cap::Spawn` answered
+  // "not implemented in the native runtime; spawnSelf works". It can now (`issues/system/0144`), so
+  // both hosts do the same thing here — look at the bytes and refuse — and what they name is what each
+  // one accepts. The native host takes a module and says the manifest is missing; a JavaScript host
+  // takes either and says so.
   //
   // So the sentences are pinned rather than compared. What *is* the same on both, and is what a script
   // can see, is the status and the shell naming the path it was given. If someone makes the two agree,
@@ -423,7 +426,8 @@ export string test_the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ
   fixture(cli, tmp);
   Ran js = shell(core, cli, tmp, s.deno, string[0](fill: ""), "./f");
   t.eqI32(js.code, 126, "deno status");
-  t.eqStr(js.err, "sh: ./f: not a wac worker bundle: build one with --worker\n", "deno");
+  t.eqStr(js.err, "sh: ./f: not a wac program: no `wac.manifest` section and not a worker bundle\n",
+          "deno");
   // GNU's is `Permission denied` and neither host can say that: there is no execute bit in this
   // system to have refused. What both hosts do say is 126, which is the part a script reads.
   fixture(cli, tmp);
@@ -435,9 +439,7 @@ export string test_the_two_hosts_each_say_why_a_file_is_not_a_program_and_differ
   fixture(cli, tmp);
   Ran rs = shell(core, cli, tmp, native, string[](s.manifest), "./f");
   t.eqI32(rs.code, 126, "native status");
-  t.eqStr(rs.err,
-          "sh: ./f: spawning a program from its source is not implemented in the native runtime; " +
-          "spawnSelf works\n", "native");
+  t.eqStr(rs.err, "sh: ./f: not a wac program: no `wac.manifest` section in it\n", "native");
   cli.remove(tmp, true).wait();
   return t.report();
 }

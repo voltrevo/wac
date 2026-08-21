@@ -31,7 +31,7 @@ import {
   harnessKeyParts,
   stageDir,
 } from "../../harness/buildCache.ts";
-import { WORKER_MARKER } from "./host/children.ts";
+import { childEntrySource, WORKER_MARKER } from "./host/children.ts";
 
 /**
  * What the built file asks Deno for: exactly the capabilities granted, and nothing else.
@@ -701,6 +701,37 @@ async function produceApp(
           `  ${coverage ? JSON.stringify({ dir: COV_DUMP_DIR, lines: covLines }) : "undefined"});\n`,
       ));
 
+    // `--worker` emits the worker bundle alone: the half that expects a `SharedArrayBuffer`
+    // by `postMessage` and runs the application on it. That is exactly what `spawn` takes,
+    // so this is how a wac program becomes a *child* rather than a program of its own.
+    //
+    // No shebang — it is not runnable by itself, and pretending otherwise would invite
+    // someone to try. Its first line is `WORKER_MARKER`, which is what lets `spawn` refuse a file that
+    // is not one of these *before* starting anything — see `host/children.ts` for why no deadline can
+    // answer that question.
+    //
+    // **Answered here rather than after the launcher**, which is where it used to be: a `--worker`
+    // build paid for a launcher bundle it threw away, and now pays for neither that nor the child
+    // entry below. `packages/box`'s tests want twenty-seven worker builds.
+    if (workerOnly) return workerSource;
+
+    // **A third bundle, and what it buys is that `spawn` takes a module here too.** The generic
+    // wasm-child entry is program-independent — the same text for every build — but a built
+    // application cannot *find* it: `import.meta.url` is the built file, so the launcher looked for a
+    // sibling that was not there and refused every module by name. `issues/system/0144` held this
+    // decision on the cost of a `deno bundle` per build; measured, it is **~70ms and 37 KB**, against
+    // the two passes already here and a build that is seconds of compiling. `packages/box`'s tests
+    // want twenty-seven builds, so this is under two seconds across all of them.
+    //
+    // Only where a child can be started: a page has no `spawn` at all, and the Node target's worker
+    // entry is `entryNode.ts` rather than this one, so it needs its own and does not get it here.
+    const moduleEntry = target === "browser" ? null : await bundle(
+      "childwasm",
+      target === "node"
+        ? childEntrySource(import.meta.resolve("./host/childWasmNode.ts"), "node")
+        : childEntrySource(import.meta.resolve("./host/childWasm.ts")),
+    );
+
     const launcher = target === "browser"
       ? await bundle(
         "launcher",
@@ -761,24 +792,20 @@ async function produceApp(
           `  process as unknown as Parameters<typeof runLauncherNode>[2],\n` +
           `  ${JSON.stringify(workerSource)},\n` +
           `  ${JSON.stringify(grants)},\n` +
-          (grants.net === true ? `  nodeNet,\n` : ``) +
+          // **Always passed, `undefined` where the network is not granted.** It used to be omitted,
+          // which is fine while it is last and silently hands the next argument to the network the
+          // day one is added — see `runLauncherNode`.
+          (grants.net === true ? `  nodeNet,\n` : `  undefined,\n`) +
+          `  ${JSON.stringify(moduleEntry)},\n` +
           `);\n`,
       )
       : await bundle(
         "launcher",
         `import { runLauncher } from "${runtime}";\n` +
-          `await runLauncher(${JSON.stringify(workerSource)}, ${JSON.stringify(grants)});\n`,
+          `await runLauncher(${JSON.stringify(workerSource)}, ${JSON.stringify(grants)}, ` +
+          `${JSON.stringify(moduleEntry)});\n`,
       );
 
-    // `--worker` emits the worker bundle alone: the half that expects a `SharedArrayBuffer`
-    // by `postMessage` and runs the application on it. That is exactly what `spawn` takes,
-    // so this is how a wac program becomes a *child* rather than a program of its own.
-    //
-    // No shebang — it is not runnable by itself, and pretending otherwise would invite
-    // someone to try. Its first line is `WORKER_MARKER`, which is what lets `spawn` refuse a file that
-    // is not one of these *before* starting anything — see `host/children.ts` for why no deadline can
-    // answer that question.
-    if (workerOnly) return workerSource;
     if (target === "browser") {
       // A page, not an executable.
       const title = entry.split("/").pop() ?? "wac";

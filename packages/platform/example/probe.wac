@@ -6,29 +6,41 @@
 //   probe                  ->  read=ok net=ok        (built with --allow-read --allow-net)
 //   runner probe.worker.js  ->  read=denied net=denied
 
-import { Cli, Core, FileResult, Socket } from "std/platform.wac";
+import { Cli, Core, FAULT_NOT_GRANTED, FileResult, Socket } from "std/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   // A file that certainly exists when run from the repository root. A denial and a missing
   // file are deliberately not distinguished by the world, so the *message* is what says
   // which — and either way the answer is "not readable", which is what a caller acts on.
   FileResult f = cli.readFile("README.md").wait();
-  string read = f.ok ? "ok" : (f.error == "" ? "denied" : f.error);
+  // **The fault, not the sentence.** Reading `error` is what this program used to do, and the four
+  // hosts spell one refusal two ways — "filesystem read not granted to this application" on the
+  // JavaScript hosts against "Not granted to this application" on both native ones. A `contains`
+  // looking for lowercase "not granted" therefore reported `failed` under `wacland` and `wacv8`: the
+  // confinement was working and the program said it was not. `FileResult.fault` is the field that
+  // exists for exactly this, and its own docstring says why the message cannot be branched on.
+  string read = f.ok ? "ok" : (f.fault == FAULT_NOT_GRANTED() ? "denied" : "failed");
 
   // Port 1 is privileged and nothing is listening, so a *grant* failure and a connection
   // failure differ in their message rather than in whether they failed.
+  // **And here it is still the sentence, because `Socket` has no `fault`.** `FileResult` and `Change`
+  // both carry a category and this does not, so the one refusal that has to be told from a connection
+  // failure is the one with only English to go on. Matched with the first letter dropped, which is the
+  // least bad thing available and is not a fix: `issues/system/0238c`.
   Socket s = cli.connect("127.0.0.1", 1).wait();
   string net = s.handle < 0 ? s.error : "ok";
   if (s.handle >= 0) { cli.closeSocket(s.handle); }
 
-  core.log("read=" + summary(read) + " net=" + summary(net));
+  // `read` is already one of the three words; only the network still needs the message read.
+  core.log("read=" + read + " net=" + summary(net));
   return 0;
 }
 
 /** "ok", or "denied" when the message says the capability was withheld, or "failed". */
 string summary(string outcome) {
   if (outcome == "ok") { return "ok"; }
-  return contains(outcome, "not granted") ? "denied" : "failed";
+  // "ot granted", so that both "not granted" and "Not granted" match. See the note at the call.
+  return contains(outcome, "ot granted") ? "denied" : "failed";
 }
 
 bool contains(string haystack, string needle) {

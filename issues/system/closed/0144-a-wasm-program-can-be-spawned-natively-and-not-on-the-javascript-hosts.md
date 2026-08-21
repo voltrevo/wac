@@ -1,6 +1,9 @@
 # 0144 — a wasm program can be spawned on the native hosts and not on the JavaScript ones
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** the change of 2026-08-21 that gave every host a module child — `host/childWasm.ts` and
+  `host/childWasmNode.ts` inlined into a build by `packages/platform/build.ts`, and `Cap::Spawn` in
+  `native/src/main.rs`
 - **Claimed by:** agent-c, 2026-08-15 — the runtime marshaller first
 - **Reported by:** agent-b
 - **Date:** 2026-08-12
@@ -170,3 +173,83 @@ form of `needsFill` and cannot go stale if a second non-defaultable element type
 The wiring itself, unchanged: `deno.ts`, `node.ts` and `browser.ts` start worker bundles and `spawn`
 still refuses a module by name. That is where "and then stop, in one change" applies. What this
 entry buys is that there is now one marshaller to wire in rather than two to choose between.
+
+## Closed 2026-08-21: all four hosts start one module, and the wasmtime host with them
+
+**One runner and one probe, both `.wasm`, through four hosts:**
+
+    read=denied net=denied      # spawned with no grant
+    read=ok     net=denied      # spawned with `read`, from a parent that has it
+
+identical under `wac` (V8), `wacland` (wasmtime), a built Deno program and a built Node program.
+`packages/platform/test/wac/spawn_test.wac` holds it as three cases — the Deno one, the Node one, and
+`test_all_four_hosts_spawn_one_module_and_confine_it_the_same_way` — and each was watched failing with
+its own half disabled before the half was restored.
+
+### What the remaining gap turned out to be
+
+Not the marshaller, and not the driver: those were done on 2026-08-15 and `childWasm.ts` was already
+wired into `spawnChild`. It was that **the stub imported the entry by URL**, so it worked from a source
+tree and refused in a *built* application — where `import.meta.url` is the built file and no sibling
+exists. Every built program therefore answered
+
+    this host starts JavaScript worker bundles, and cannot start a wasm module here
+
+which is every program a person actually runs. The reproduction is two artefacts and no test harness:
+
+    $ deno task app:build packages/platform/example/runner.wac -o runner --allow-read
+    $ wac build native/v8/example/hello.wac -o hello
+    $ ./runner hello.wasm ""
+    runner: this host starts JavaScript worker bundles, and cannot start a wasm module here
+    $ wac run --allow-read --allow-run packages/platform/example/runner.wac -- hello.wasm ""
+    hello from a Rust host on V8
+
+### The decision this issue was holding, measured
+
+It said the fix "costs a `deno bundle` on every build". **Measured: 40-72ms and 37 KB**, against the two
+bundle passes a build already makes and the seconds it spends compiling. `packages/box`'s tests want
+twenty-seven builds, so it is under two seconds across all of them, and a built program grew from 387K
+to 427K. Cheap enough that the alternatives — reusing the program's own worker bundle as the child
+entry, which would re-instantiate the parent's module per child — were not worth their downside.
+
+A `--worker` build now pays *neither* that nor the launcher bundle it used to build and throw away, so
+the change is a net saving for the twenty-seven.
+
+### One shape, two worlds
+
+`children.ts` writes one stub either way: the bytes, then an entry that starts them. The entry is
+`childEntrySource` as written when the host runs from its own tree, and the same text put through
+`deno bundle` when it does not. The only name the two halves share is `globalThis.__wacChildBytes` —
+**deliberately not a function name**, because a bundler may rename any binding it inlines and a stub
+calling `childMain` would have worked from source and failed in a build, which is the one direction
+nothing would have noticed.
+
+Which of the two entries a host uses is the *host's* to say — `moduleEntryFromSource("deno" | "node")`
+— rather than a default inside `spawnChild`, since a wrong default is a build that starts the other
+runtime's worker loop.
+
+### The wasmtime half, which was smaller than it looked
+
+`Cap::Spawn` answered *"spawning a program from its source is not implemented in the native
+runtime; spawnSelf works"*, and the gap was not the confinement, the streams, the grant intersection
+or the thread — `spawnSelf` had all of it. It was that nothing built a `World` from bytes it was
+handed. `spawn_instance` takes the world as a parameter now, `spawnSelf` passes the caller's own and
+`spawn` passes `world_from(engine, bytes)`; the module goes through the same content-keyed `.cwasm`
+cache, so a module spawned in a loop compiles once. About forty lines.
+
+### Two things found in passing, both filed
+
+- **`issues/system/0238c`** — `Socket` carries no `fault`, so `packages/platform/example/probe.wac`
+  had to branch on the host's English. It was branching on lowercase `"not granted"` and both native
+  hosts say `"Not granted to this application"`, so it printed `read=failed` where the read had been
+  *refused* — under the two hosts no test ever ran it on. Its read half now reads
+  `FileResult.fault`; the network half cannot, because there is no field.
+- **`issues/system/0239c`** — `wac run <a module>` burns 90s of CPU on 75 KB and writes nothing. The
+  compiler is being handed binary as source, and a 36 KB text file finishes at once, so it is
+  superlinear in what recovery does with dense garbage rather than any one byte.
+
+### What this unblocks
+
+`issues/system/0230a`'s option 2, whose recorded order had this as step 2 and said *"until then option
+2 cannot move a single non-compiler subcommand"*. It can now: `run` in `wacc.wac` is reachable on every
+host, which is what the reverted 124 lines were waiting for.

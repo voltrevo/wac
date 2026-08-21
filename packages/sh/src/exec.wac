@@ -1824,7 +1824,7 @@ Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
   bool serveFs = serveFsFor(sh);
   i32 grants = stageGrants(sh);
   // **`/bin/wc` is this build's `wc` here too.** `dispatched` rewrites it before looking at any bytes;
-  // this route did not, so the same command answered "not a wac worker bundle" behind `&` — the file
+  // this route did not, so the same command answered "not a wac program" behind `&` — the file
   // in `/bin` is a sentence about the program, and reading it is what that refusal is about. One place
   // decides what a path into `/bin` means, and both routes ask it.
   string inBin = binProgram(sh, argv.len() > 0 ? argv.get(0) : "");
@@ -3372,7 +3372,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   //
   // Rewritten to the bare name rather than read: the file in `/bin` is one sentence saying the applet
   // is built into this binary (see `Fs.mountBin`), so the spawn route below would read it and refuse
-  // it as "not a wac worker bundle", which is true of the sentence and false of the program. This is
+  // it as "not a wac program", which is true of the sentence and false of the program. This is
   // the *first* thing tried for a slashed name, before anything looks at the bytes.
   string named = binProgram(sh, argv.len() > 0 ? argv.get(0) : "");
   if (named != "") {
@@ -3470,11 +3470,14 @@ PathFault pathFault(Shell sh, string name) {
 /**
  * Run `argv` as a spawned worker, if `$WACPATH` names one.
  *
- * **`$WACPATH` and not `$PATH`.** What `spawn` starts is a wac program built as a worker bundle,
- * not an executable — `/usr/bin/cat` handed to it is JavaScript that does not parse. Searching the
- * real `$PATH` would therefore turn every working `cat` into a spawn failure, which is a worse
- * answer than the one we already had. A separate variable also makes this opt-in: an unset
- * `$WACPATH` behaves exactly as before.
+ * **`$WACPATH` and not `$PATH`.** What `spawn` starts is a wac program — a `.wasm` carrying its own
+ * manifest, or a worker bundle on the JavaScript hosts — and not an executable: `/usr/bin/cat` handed
+ * to it is neither. Searching the real `$PATH` would therefore turn every working `cat` into a spawn
+ * failure, which is a worse answer than the one we already had. A separate variable also makes this
+ * opt-in: an unset `$WACPATH` behaves exactly as before.
+ *
+ * A `.wasm` here used to run under one host and not another, which is the case `issues/system/0144`
+ * said would find that split first. It closed on 2026-08-21; the same file now runs under all four.
  *
  * `spawn` takes the source rather than a path, so finding a program is two steps — locate it and
  * read it. There is no notion of an executable bit here for the same reason: a program is a file

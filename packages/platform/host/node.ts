@@ -19,6 +19,7 @@ import { ByteQueue } from "./queue.ts";
 import {
   type Child,
   failedChild,
+  moduleEntryFromSource,
   noSpawnHere,
   spawnChild,
   childHandles,
@@ -154,6 +155,15 @@ export type NodeWorldOptions = {
    * it is what started the program.
    */
   selfSource?: string;
+  /**
+   * The generic wasm-child entry, already bundled, so `spawn` can start a **module** here too.
+   *
+   * The Node twin of `deno.ts`'s option, and it is a separate bundle rather than the same one: a
+   * module is driven identically on both, but the worker loop it is handed to is `entryNode.ts`'s.
+   * Absent means the host looks for `childWasmNode.ts` beside its own source, which is right from a
+   * source tree and finds nothing in a built application. `issues/system/0144`.
+   */
+  moduleEntry?: string;
   /** Where relative paths resolve from, and what `cwd` reports. Absent means the process's own. */
   cwd?: string;
   /**
@@ -341,9 +351,11 @@ export function nodeWorld(
         // why this is passed unconditionally rather than as a grant.
         parentFs,
         selfSource: opts.selfSource,
+        // And the entry for a child that is a module, so that a grandchild can start one too.
+        moduleEntry: opts.moduleEntry,
         cwd: childCwd === "" ? opts.cwd : childCwd,
       }));
-    }, newBridge, makeWorker, graceEnv());
+    }, newBridge, makeWorker, graceEnv(), opts.moduleEntry ?? moduleEntryFromSource("node"));
 
     // **A parent that will not serve says so before the child runs.** Ending the reply queue is
     // what makes `Fs.overParent` answer immediately instead of waiting: a child asks one question,

@@ -318,6 +318,15 @@ export string builtByDeno(Cli cli, string entry, string name, string[] grants, s
   if (ref > newest) { newest = ref; }
   Stat builder = cli.stat("packages/platform/build.ts").wait();
   if (builder.exists && builder.modifiedMillis > newest) { newest = builder.modifiedMillis; }
+  // **And `host/`, which is the rest of what goes into the artefact.** `build.ts` bundles `entry.ts`,
+  // `deno.ts`, `children.ts` and their imports into every program it writes, and this check watched
+  // only the file that does the bundling — so a host change left every cached build in place. Found by
+  // widening a refusal message in `children.ts` and having a test assert the *old* sentence, from a
+  // binary built before the edit: the message was right, the build was three minutes old, and the
+  // failure named neither. `build.ts` keys its own work on the content of every file it reads, so this
+  // is the only stale link in the chain.
+  i64 host = newestUnder(cli, "packages/platform/host");
+  if (host > newest) { newest = host; }
   if (have.exists && have.modifiedMillis > newest) { return out; }
 
   string line = "exec env -u WAC_PROFILE deno run -A packages/platform/build.ts \"" + entry + "\"";

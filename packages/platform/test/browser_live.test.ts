@@ -766,7 +766,7 @@ Deno.test({
       // which makes the browser and Deno one host for this purpose and the native runtime the odd one
       // out (`native_hostfs` pins both of those). The guess was wrong and the code written for it is
       // gone; this line is what the run actually said.
-      await desk(2, "./shared", "not a wac worker bundle");
+      await desk(2, "./shared", "not a wac program");
       assertEquals(
         ((await page2.textContent("#scr2")) ?? "").includes("from-the-first"),
         true,
