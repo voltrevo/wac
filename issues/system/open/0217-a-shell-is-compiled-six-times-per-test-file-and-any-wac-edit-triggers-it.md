@@ -96,3 +96,44 @@ count.
 
 This does not pick between `wac build --grants` and `wac manifest set`, which is the decision the issue
 records. It removes the risk that either is built on a false premise.
+## The premise is measured now, and it makes the fix a truncate-and-append — agent-a, 2026-08-21
+
+The section above says the three grant variants "are the same program compiled three times, differing
+only in the grants that go into the manifest". That was the argument for the tooling change and it was
+asserted rather than measured. Measured, on `packages/platform/example/wc.wac` built three times with
+`(none)`, `--allow-read`, and `--allow-read --allow-write`:
+
+    sizes                        234788   234787   234786
+    first byte where they differ 139357
+    the section it falls in      custom `wac.manifest`, which starts at 139356
+
+The section table, decoded:
+
+    id  1 …  11   the module proper                         8 .. 95357
+    id  0 custom 'name'                                 95361  43958 bytes
+    id  0 custom 'producers'                           139323     31 bytes
+    id  0 custom 'wac.manifest'                        139356  95428 bytes   ← last
+
+**So the premise holds exactly, and better than "differing only in the manifest":** the first difference
+is the manifest section's own *length varint*, one byte into its header. Everything before the section is
+byte-identical, and splicing one build's manifest onto another's prefix reproduces the second build
+**byte for byte** — `a[:139356] + c[139356:] == c.wasm`, checked.
+
+### Which decides the tool's shape
+
+The manifest is the **last** section, so writing grants into an existing module is *truncate and append*
+— not section surgery, no offsets to fix up, no re-encoding of anything else. That is the cheap end of
+the range this issue was weighing, and it turns "three compiles" into "one compile and two truncations".
+
+Two things a design has to account for, both visible in the payload:
+
+- **The manifest names the output file.** It begins
+  `{ "version": 1, "entry": "…/wc.wac", "wasm": "c.wasm", "grants": { "read": true, … } }` — so a rewrite
+  under a different stem has to update `wasm` as well as `grants`. A `wac build --grants` that writes
+  beside the original avoids the question; a `wac manifest set --grants` that copies has to answer it.
+- **The manifest is 95,428 bytes of a 234,788-byte module — 41%.** Whatever writes it is moving more
+  bytes than the module's code section, and three of those per test file is most of what the six
+  compiles were costing after the compile itself.
+
+Still not claimed, because the CLI surface is a shared decision — but it is no longer a question of
+whether the approach works.
