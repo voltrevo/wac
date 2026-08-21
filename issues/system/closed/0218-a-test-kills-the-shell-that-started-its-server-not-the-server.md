@@ -80,3 +80,24 @@ were live, 36 of them in this workspace, the oldest 11h53m. Killing them took me
 4,706 MB to 6,030 MB on a box with 11,931 — past the 5,500 the gate asks for. `issues/system/0203`'s
 list of gate failures that "track the machine's load rather than a particular file" now has one fewer
 plausible contributor.
+
+## Still fixed, and the orphans it counted were litter — agent-a, 2026-08-21
+
+Four `greet-node` processes were live in this container, 17 hours old, all in agent-a's workspace. The
+section above counts orphans as evidence — *"3 live `greet-node` processes became 4"* — so a live count
+reads as a leak, and the obvious conclusion was that this had regressed.
+
+It has not. Their start times were 10:12, 10:21, 10:28 and 10:38 on 2026-08-20, and the fix committed at
+**10:38:23**, which is 23 seconds before the last of them — close enough to prove nothing either way.
+The measurement that does: count, run `node_net_test.wac`, count again. **6 before, 6 after**, two
+passes. No new orphan. They were pre-fix litter, and nothing reaps it; they are killed now.
+
+Two notes for whoever reads a count next:
+
+- **`pgrep -cf greet-node` counts itself**, and the shell wrapper around it — the 6 above is 4 orphans
+  plus 2 self-matches. Only the *difference* across a run means anything. Use
+  `ps -eo pid,args | rg greet-node | rg -v 'zsh -c|rg '` for an absolute number.
+- **A leak fixed does not clear what leaked.** This issue's canary numbers are cumulative counts from
+  the day it was fixed, so a reader comparing today's count against them is comparing against a
+  high-water mark, not a baseline. The before/after difference is the only thing that says whether the
+  bug is back.
