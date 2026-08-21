@@ -13,7 +13,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std/platform.wac";
-import { diagnoseFiles, emitFiles } from "../../src/api.wac";
+import { diagnoseFiles, emitFiles, blockedFiles } from "../../src/api.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 
@@ -47,7 +47,7 @@ export string test_the_curve(Core core, Cli cli) {
   T t = T.create();
   // Stepped finely across the reported wall, so a step and a curve look different. Kept under 600
   // because the issue's own figure there is twenty seconds and this runs on a shared machine.
-  i32[] sizes = i32[](1024);
+  i32[] sizes = i32[](1020, 1024, 1200);
   string rows = "";
   for (i32 s = 0; s < sizes.len(); s++) {
     i32 n = sizes[s];
@@ -62,6 +62,8 @@ export string test_the_curve(Core core, Cli cli) {
     u8[] wasm = emitFiles(paths, sources, "/main.wac");
     i64 emitMs = millisSince(core, t1);
 
+    string blocked = blockedFiles(paths, sources, "/main.wac");
+    rows = rows + "    blockedFiles: " + (blocked == "" ? "(none)" : blocked) + "\n";
     rows = rows + "  " + itoa(n) + " imports: check " + itoa64(checkMs) + "ms, emit "
         + itoa64(emitMs) + "ms, " + (diags == "" ? "clean" : "DIAGNOSTICS") + ", module "
         + itoa(wasm.len()) + " bytes\n";

@@ -2754,6 +2754,9 @@ i32 countLines(string s) {
  * `paths` is ordinary rather than a caller's mistake: only a file writing `@/` has a root worth
  * recording, so a program using none passes an empty array and the feature costs it nothing.
  */
+/** How many files the linker's walk can have queued — see `queue` in `linkFiles`. */
+i32 linkQueueSize() { return 1024; }
+
 string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] starts,
                  i32[] edges, string[] names, string[] filePaths) {
   // **One file under two keys is refused here**, which is the one place both routes pass through:
@@ -2768,7 +2771,10 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
   // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
   // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named
   // the wrong cause and six of box's programs looked like they had a broken import [issue 0106].
-  string[] queue = string[1024]();
+  // **1024, and `linkFailure` says so when this fills.** One entry per file *to visit*, which is one
+  // per import edge followed, so a program whose entry imports 1024 files fills it before the walk is
+  // done. `linkQueueSize()` rather than a literal so the message cannot drift from the array.
+  string[] queue = string[linkQueueSize()]();
   string[] seen = string[1024]();
   // The import edges, by path: a file is imported before it has an index, so the pairs are recorded
   // as they are read and turned into indices once every file has one.
@@ -2795,7 +2801,12 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
       if (seen[i] == path) { dup = true; }
     }
     if (dup) { continue; }
-    if (sn >= seen.len()) { return ""; }
+    // **Which limit, through the sentinel the reader already looks for.** `linkFailure` asks
+    // `starts[0] == 1` and answered *"more import edges than the linker was given room for"* — and
+    // nothing in this file ever *wrote* `starts[0]`, so that message was unreachable and every one of
+    // the five room guards below reported as *"an import of a file that was not supplied"*, which is
+    // a claim about the caller's map rather than about this table. `issues/lang/0179a`.
+    if (sn >= seen.len()) { starts[0] = 1; return ""; }
     seen[sn] = path;
     sn = sn + 1;
     string body = path == " core" ? coreSource() : sourceOf(paths, sources, path);
@@ -2826,11 +2837,13 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
           // instead, under a path no source can spell, which makes it a file to everything below.
           if (prefixTok >= 0) {
             if (tokenTextOf(b, lexed, prefixTok) != "core") { continue; }
-            if (qn >= queue.len()) { return ""; }
+            if (qn >= queue.len()) { starts[0] = 2; return ""; }
             queue[qn] = " core";
             qn = qn + 1;
             for (i32 it = 0; it < items.len(); it++) {
-              if (en >= fromPath.len()) { continue; }
+              // **Refused, not skipped.** A dropped edge links: the module comes out with a name
+              // resolved to nothing, which is `issues/lang/0130`'s shape and worse than a refusal.
+              if (en >= fromPath.len()) { starts[0] = 3; return ""; }
               fromPath[en] = path;
               toPath[en] = " core";
               edgeName[en] = tokenTextOf(b, lexed, items[it].aliasTok) + " " +
@@ -2841,7 +2854,7 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
           }
           string quoted = tokenTextOf(b, lexed, pathTok);
           if (quoted.len() < 2) { continue; }
-          if (qn >= queue.len()) { return ""; }
+          if (qn >= queue.len()) { starts[0] = 2; return ""; }
           // **The reader's answer where it has one.** A mapping cannot be resolved here — it needs a
           // manifest, a lockfile and a cache, and this function opens nothing — so `Res` carries
           // what `gather` worked out and this looks it up. `design/lang/0009` predicted exactly this
@@ -2870,7 +2883,7 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
             en = en + 1;
           }
           for (i32 it = 0; it < items.len(); it++) {
-            if (en >= fromPath.len()) { continue; }
+            if (en >= fromPath.len()) { starts[0] = 3; return ""; }
             fromPath[en] = path;
             toPath[en] = target;
             // The alias and the declared name travel together, separated by a space that no
@@ -10554,8 +10567,22 @@ string linkFailure(string[] paths, string[] sources, Res res, string entry) {
   string twoKeys = twoKeysForOneFile(paths);
   if (twoKeys != "") { return twoKeys; }
   linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
-  return starts[0] == 1 ? "more import edges than the linker was given room for"
-                        : "an import of a file that was not supplied";
+  // **Three ways to run out, and they used to be one sentence about the caller's file map.** The
+  // sentinel is set by `linkFiles` at each guard; `0` means it never ran out and the refusal really is
+  // a file nobody supplied. `issues/lang/0179a`.
+  if (starts[0] == 1) {
+    return "more files in one program than the linker was given room for (at most "
+        + numText(filePaths.len()) + ")";
+  }
+  if (starts[0] == 2) {
+    return "more files to visit than the linker's queue holds (at most " + numText(linkQueueSize())
+        + ", which is one per import edge followed)";
+  }
+  if (starts[0] == 3) {
+    return "more import edges in one program than the linker was given room for (at most "
+        + numText(edges.len() / 2) + ")";
+  }
+  return "an import of a file that was not supplied";
 }
 
 string blockedOf(Front f) {

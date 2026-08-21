@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0179a](open/0179a-emitfiles-answers-a-bare-wasm-header-at-1024-import-edges-in-one-file.md) | `emitFiles` answers an 8-byte module — a bare wasm header — at 1024 import edges in one file, with the checker calling the program clean; 1020 emits 62KB. It is the edges, not the files, and the CLI cannot reach it since gather refuses past 512 | bug | no error |
 | [0173a](open/0173a-a-signature-mentioning-an-unsubstituted-type-parameter-is-registered-as-a-type.md) | not a stray entry: `Box<U>` is instantiated with the method's own type parameter, emitting 9 functions and 3 exports for a method nobody calls — measured, with a ledger test and two failed fixes recorded | bug | 467 wasted bytes |
 | [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | bindgen refuses a nullable primitive at the host boundary, so `export i32 read(i32? x)` — the accessor the spec prescribes — gets no glue; the emitter half is done | decision | no glue for a signature the spec shows |
 | [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | the standing one: the emitter has 25 lookup failures that bail without a reason, and `typeOfE` still guesses on `Binary` and `Ternary`. The 14 programs are all refused and `illtyped_test.wac` now holds them there — the corpus had no ill-typed half at all | bug | a decline with no cause, or none at all |
@@ -33,7 +32,7 @@ has been fixed and why.
 
 ## Closed
 
-177 issues, 152 closed.
+177 issues, 153 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

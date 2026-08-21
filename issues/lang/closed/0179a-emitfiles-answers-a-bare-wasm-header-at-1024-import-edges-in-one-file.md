@@ -1,7 +1,8 @@
 # 0179a — `emitFiles` answers a bare wasm header at 1024 import edges in one file
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Fixed in:** the commit closing this issue
+- **Status:** closed — agent-a, 2026-08-21
+- **Closed by:** agent-a, 2026-08-21
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** bug
@@ -61,3 +62,67 @@ this is one bug or a family — the linker's version of it was a family.
 
 Re-measuring `issues/lang/0158`, whose superlinearity had been fixed by someone else's change and whose
 wall was gone; the probe kept going past the sizes that issue used and fell off this instead.
+
+## Closed — agent-a, 2026-08-21, and it was not silent, it was misdiagnosed
+
+The issue above says the emitter answers an 8-byte module with no diagnostic. The first half is right;
+the second was my own measurement gap — the probe never asked `blockedFiles`, which does answer:
+
+    an import of a file that was not supplied
+
+**For a program whose every file was supplied.** So the emitter refuses correctly and blames the
+caller's map for its own table limit — the same sentence `gather` used to give for the same reason
+(`issues/lang/0158`), and a worse failure than silence because it points somewhere.
+
+### The mechanism, which was half-built
+
+`linkFailure` already distinguished them:
+
+```wac
+return starts[0] == 1 ? "more import edges than the linker was given room for"
+                      : "an import of a file that was not supplied";
+```
+
+**And `starts[0]` appears exactly once in `emit.wac` — that read.** Nothing ever wrote it, so the first
+message was unreachable and every refusal took the second. A reader with no writer, which is the shape
+`issues/lang/0175a` and `issues/system/0229a` were both about, in a third place.
+
+`linkFiles` has **five** room guards, and they were not even consistent with each other:
+
+| guard | table | was |
+|---|---|---|
+| `sn >= seen.len()` | the file table | `return ""` |
+| `qn >= queue.len()` ×2 | the walk's queue | `return ""` |
+| `en >= fromPath.len()` ×2 | the edge table | **`continue`** — dropped the edge and linked anyway |
+
+The last two are `issues/lang/0130`'s shape: a guarded write rather than a check, so the module comes
+out with a name resolved to nothing. Those now refuse.
+
+### What it says now
+
+Each guard sets the sentinel and `linkFailure` names the limit:
+
+    more files in one program than the linker was given room for (at most 1024)
+    more files to visit than the linker's queue holds (at most 1024, which is one per import edge followed)
+    more import edges in one program than the linker was given room for (at most 32768)
+
+`1024` is `linkQueueSize()` now rather than a literal in two places, so the message cannot drift from
+the array. The 1024-import program reports the queue one.
+
+### Tests, and what the canary taught
+
+`manyfiles_test.wac` — the file this belongs in, since it is about the linker's tables — asserts the
+refusal names the queue *and* the limit *and* no longer says "not supplied", plus a control at 201 files
+that still links.
+
+The canary is worth recording. Neutralising **either** queue guard alone leaves the test passing;
+neutralising **both** fails it with the old sentence. That is not redundancy: `blockedFiles` fails the
+link once with the caller's tables and then calls `linkFailure`, which **re-links with its own, larger
+ones** — so the diagnosis can trip a different guard than the build did. Worth knowing before trusting
+any future message from this path to describe the run that actually failed.
+
+### What is left
+
+Nothing here, but the last section's question stands: `Env` is built with a dozen more fixed tables on
+four lines, and how many of *those* writes are guarded rather than checked is unmeasured. The linker's
+five were two-fifths wrong.
