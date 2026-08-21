@@ -3162,7 +3162,16 @@ export string typeOfExpr(C c, Expr e) {
      *
      * `typeOfLvalue` is what `checkIncr` already asks, so the answer is the one the guard used.
      */
-    case Incr(target, op, prefix): { return typeOfLvalue(c, target); }
+    case Incr(target, op, prefix): {
+      string it = typeOfLvalue(c, target);
+      // **A packed element widens to `i32` here too**, exactly as reading one does in `case Index`
+      // above — `a[0]++` *is* a read, and `spec/cases/0108` says what it reads: *"postfix `++`
+      // answers what the element held, and a packed element holds what a store-and-read leaves — 255,
+      // not -1"*, which is an `i32` value. Answering `u8` refused that case with *expected i32, found
+      // u8*: the widening rule was already written down one arm away, and a new arm that skipped it
+      // woke the packed-position guard on a value that had never had a type to check.
+      return isPackedName(it) ? "i32" : it;
+    }
     else: { return typeNone(); }
   }
 }

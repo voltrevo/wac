@@ -81,12 +81,44 @@ second naming the consequence:
     a23 string s = x++: the checker and the emitter both accepted it, so a build writes a module
         with no `f` in it and exits 0
 
-Then green with the arm. Checked for false refusals across ten legal programs — the spec's own
-`i32 old = x++; i32 nu = ++x;`, `i64`, `u32`, a struct field, a `u8[]` element, `a[i++]`, `g(x++)`, the
-statement form and a `for` update — and `corpuscheck_test`, `typecheck_test` (rung 3: 0 false alarms,
-0 contradicted), `checkalone_test` and `codes_test` are green.
+Then green with the arm. And then the first version of the arm broke two spec cases, which is the part
+of this worth reading.
 
-One of those ten *is* refused and was refused before this change: `u8 n = b[0]++;`, because a `u8`
-local is illegal whatever is on the right — `spec/spec/types.md` allows packed types as array elements
-only, and `u8 n = b[0];` gets the same message. Recorded because a new refusal beside a new rule is
-worth attributing rather than assuming.
+## The first fix was wrong, and the grid that said otherwise was measuring the old compiler
+
+`typeOfLvalue` answers `u8` for `a[0]` where `a` is a `u8[]`. So the arm typed `a[0]++` as a `u8`, and
+`spec/cases/0106` and `0108` — both of them *about* increment-as-a-value on a packed element, from
+`issues/lang/0084` — started failing with *expected i32, found u8*:
+
+```wac
+// expect: answers f = 255000
+u8[] a = u8[1](fill: 255);
+i32 v = a[0]++;
+```
+
+The rule was already written down **one arm away**: `case Index` widens a packed element read to `i32`,
+with a comment saying *"`i32` exactly, not 'some integer'"* and citing `0170a`. `a[0]++` is a read, so
+it widens the same way, and the corrected arm says `isPackedName(it) ? "i32" : it`. Nothing else needed
+changing — the case files' own `why:` lines state the value: *"a packed element holds what a
+store-and-read leaves — 255, not -1"*, which is an `i32`.
+
+**A dead clause woke when the predicate widened.** The packed-position guard could never fire on
+`a[0]++` while the expression had no type at all; giving it one made that guard live, and it was right
+about `u8` and wrong about the program.
+
+**And the check that should have caught it before the gate did not, because it ran the wrong
+compiler.** The ten-legal-program grid — the spec's own `i32 old = x++; i32 nu = ++x;`, `i64`, `u32`, a
+struct field, a `u8[]` element, `a[i++]`, `g(x++)`, the statement form, a `for` update — was run with
+`wac check`, and **`wac check` runs the seed**, not the working tree. The seed at that moment was the
+compiler from *before* the edit, so the grid faithfully reported that the old code had no false
+refusals, which was true and answered nothing. `wac test` on a file importing `../../src/api.wac`
+compiles the working tree and is the only probe that sees an unseeded change; that is what
+`illtyped_test` and `cases_test` do, and `cases_test` is what found this.
+
+One refusal in that ten is real and pre-existing either way: `u8 n = b[0]++;`, because a `u8` local is
+illegal whatever is on the right — `spec/spec/types.md` allows packed types as array elements only, and
+`u8 n = b[0];` gets the same message.
+
+Canaried the right way round in the end: with the widening removed, `cases_test` fails on exactly
+`0106` and `0108`; with it, they pass. `corpuscheck_test`, `typecheck_test` (rung 3: 0 false alarms, 0
+contradicted), `checkalone_test`, `codes_test`, `illtyped_test` and `matcharms_test` are green.
