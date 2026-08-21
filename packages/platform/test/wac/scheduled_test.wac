@@ -15,7 +15,7 @@
 // immediately or sit for a minute, and either shows against any clock at all.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Core, Cli, Exec, Pending } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 
@@ -174,5 +174,44 @@ export string test_dropall_makes_leaving_deliberate(Core core, Cli cli) {
   t.eqStr(joinedWith(splitLines(r.out), "\n"), "scheduled 2, ran 0\nabandoned 2", "the transcript");
   // Neither continuation ran, which is the difference between abandoning and draining.
   t.isTrue(r.out.indexOf("first") < 0, r.out);
+  return t.report();
+}
+
+// ── Which of two ready tickets `waitAny` answers ─────────────────────────────────────────────────
+//
+// `issues/system/0202` asks whether `waitAny` should break a tie deterministically "or is completion
+// order the contract", and answers *"completion order is what there is now"*. **Both hosts already
+// break the tie by list position**, and one of them says so:
+//
+//   - `packages/platform/host/call.ts`: `for (const t of tickets) if (isDone(b, t)) return t;`
+//   - `native/src/tickets.rs`: *"The policy, and D12's whole point. First in the caller's list rather
+//     than first to finish, so the answer does not depend on how the threads were scheduled."*
+//
+// So the question was settled in the code and nowhere else. This is the assertion that says so, and it
+// is the one that would have answered the issue without a decision being needed.
+//
+// **The two arms are the whole test.** Asking once with both tickets ready cannot distinguish "the
+// first in the list" from "the one that finished first" — the 1ms timer finished first *and* is first
+// in the list. Reversing the list separates them: if position decides, the answer is index 0 both
+// times, and the ticket it names is a different one.
+export string test_waitany_answers_the_first_ready_ticket_in_the_callers_list(Core core, Cli cli) {
+  T t = T.create();
+  Pending<i64> first = core.delay(1);
+  Pending<i64> second = core.delay(2);
+  // Both are long overdue by the time anything is asked, which is what makes this a tie rather than a
+  // race. Without this the 1ms timer's completion is what is being measured.
+  core.sleepMillis(60).wait();
+
+  i32 asWritten = core.waitAny(i32[](first.id, second.id), 0);
+  t.eqI32(asWritten, 0, "with both ready, the list's first entry");
+  i32 reversed = core.waitAny(i32[](second.id, first.id), 0);
+  t.eqI32(reversed, 0, "and with the list reversed, still its first entry — so position decides, "
+      + "not which finished first");
+
+  // **Taken, not abandoned.** `waitAny` reports and collects nothing, so a ticket nobody waits on
+  // keeps its slot until the ring is full — `packages/platform/host/call.ts` says so in the error it
+  // raises when all 128 are held.
+  first.wait();
+  second.wait();
   return t.report();
 }
