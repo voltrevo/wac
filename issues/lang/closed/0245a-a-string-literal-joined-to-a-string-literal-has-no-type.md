@@ -171,3 +171,16 @@ row was right — but the conclusion drawn from it, *"find which path already re
 which should own it"*, was the wrong question. Both paths should report it, one at a time, and the code
 already had a mechanism for that. The comment naming the blindness was two lines above the thing that
 depended on it.
+
+## And it introduced one, found the same day — `issues/lang/0247a`
+
+Giving a string literal a type makes `typeOfExpr` answer `"string"` for `1 + "a"`, where it used to
+answer unknown because *both* operands were literals. Unknown was doing a job there: keeping the slot
+rule quiet about a fault the operand rule had already named. So `i32 n = 1 + "a";` went from one
+diagnostic to two.
+
+**The fifteen-row canary could not see it.** It pinned two strings, two bools, a three-string chain, a
+literal beside a named string, and nine legal programs — and no *mixed* literal pair, which is the only
+shape where this change gives exactly one operand a type. Counts were the whole point of that table and
+it still missed the case the change was specifically about. `0247a` has the guard that fixes it.
+

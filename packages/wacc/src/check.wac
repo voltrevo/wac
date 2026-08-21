@@ -2999,6 +2999,16 @@ export string typeOfExpr(C c, Expr e) {
                 : lk == litString() ? "string" : lk == litBool() ? "bool" : typeOfExpr(c, left);
       string br = rLit ? typeNone()
                 : rk == litString() ? "string" : rk == litBool() ? "bool" : typeOfExpr(c, right);
+      // **Two literals of different families answer nothing**, because the operand rule has already
+      // reported at the operator: `1 + "a"` is one fault. Giving the string side a type here — which
+      // is what the four lines above started doing — made the *initialiser* complain a second time,
+      // so `i32 n = 1 + "a";` drew two diagnostics where the reference draws one. This is the rule
+      // stated three times over in this arm already, arriving for the pair `0245a` newly typed.
+      // `issues/lang/0247a`.
+      if (lk != litNone() && rk != litNone() && lk != rk &&
+          lk != litNull() && rk != litNull()) {
+        return typeNone();
+      }
       // **Unknown from a literal and unknown from an error are the same value and not the same
       // thing.** `x + 1` takes its type from `x`, because the literal has none of its own; `(s * 2) +
       // t` has an operand that was *reported* and therefore has no type to offer, and answering with
