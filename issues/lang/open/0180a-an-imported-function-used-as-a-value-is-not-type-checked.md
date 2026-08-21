@@ -121,14 +121,20 @@ that touch it.
 
 ## Where to look
 
-`packages/wacc/src/api.wac`'s `checkFilesWithIn` declares, for each import, the names the entry asked
-for — `wantFrom`/`wantName`/`wantAlias` and then `declareModule`. What it does *not* appear to do is give
-an imported **function** its signature type, so `typeOfName` answers nothing for it and the argument
-check has nothing to compare. The local case works because the function is declared in the file being
-checked and `funcAt` finds it.
+*(This section said the fix was probably in what `declareModule` records. The narrowing above supersedes
+it: `declareModule`'s `Func` arm calls `declareFunc` with the return type, the parameter types and the
+arity, so the signature **is** recorded. Kept as the first guess, because the corrected version is only
+legible against it.)*
 
-The fix is probably in what `declareModule` records for an imported function rather than in the argument
-check, and the test for it belongs beside `illtyped_test.wac` — with two files, which is the point.
+`packages/wacc/src/api.wac`'s `checkFilesWithIn` declares, for each import, the names the entry asked
+for — `wantFrom`/`wantName`/`wantAlias`, `addRename`, `addLocalAlias`, then `declareModule`. One of those
+is putting the bare name in scope as a *name*, which is what shadows the funcref lookup; `declareFunc`
+is not the problem and neither is the argument check. The candidates are `addLocalAlias` (added for
+`issues/lang/0161`, and only used when a spelling differs — which this reproduction does not, so probably
+not) and whatever `declareModule` does for a name that is not one of the four declaration kinds it
+matches on.
+
+The test belongs beside `illtyped_test.wac` — with two files, which is the point.
 
 ## Worth fixing at the same time
 
