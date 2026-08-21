@@ -107,3 +107,29 @@ Neither gap was reachable by any differential here. The corpus is programs that 
 produced it would take the harness down rather than be counted. Both were found by reading the
 reference's rule table and asking each row of wacc in turn, which is now four bugs from that one
 exercise: `issues/lang/0236a`, `0237a`, `0238a`'s two shapes, and these.
+
+### The fix false-alarmed, and four corpora said so
+
+The duplicate-binding rule shipped counting `_` as a name, so `case Ok(_, _, _, _, _, _)` read as one
+name six times. Nineteen places in working code — `packages/http`'s fuzz, oracle and response tests,
+`nodeoracle.wac`, `responseoracle.wac` and `packages/json`'s tree test — and the gate went red before the
+push. Four separate instruments named it in the same run: `corpuscheck_test.wac`'s
+`test_rung_3_the_repositorys_own_code_checked_no_false_alarm`, `typecheck_test.wac`'s
+`test_rung3_the_whole_repo_stays_silent`, and the spec corpus, which has a rule for it —
+`§enum-match-ignore`, *"`_` discards a payload and may repeat"*. **The spec said so and the reference says
+so** (`wacTypeCheck.ts:1584`, `if (name === "_") continue;   // a deliberate discard, and may repeat`);
+this read neither before writing the loop.
+
+The repair merged the two loops so the skip covers the subject check as well, which also reproduces the
+reference's precedence: a binding that collides with the subject is not also reported as a duplicate.
+Two controls added — two discards, and a discard beside a name — and the skip canaried by disabling it.
+
+**The count test cannot see the `break`.** `A(n, n, n)` is two diagnostics with it and two without, because
+the two reports it saves land at one position with one code and `report` collapses a repeat of the
+diagnostic immediately before it. Measured by removing the `break` and watching the count hold, which is
+worth recording as the reason the comment beside it no longer claims to be load-bearing.
+
+**And it aged a test of its own.** `collide0234_test.wac`'s entry program asked the library for exactly
+two diagnostics on `export i32 f(string s) { return s - 1; }` — the program `0238a` had made report once,
+landed hours earlier in the same session. A linker test, red because of a checker fix. Its oracle is now
+two-sided and countless: some diagnostics for a broken program, none for a clean one.

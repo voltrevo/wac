@@ -7593,24 +7593,34 @@ string subjectName(C c, Expr subject) {
  */
 void checkBindingCollision(C c, Expr subject, Arm arm) {
   string nm = subjectName(c, subject);
-  if (nm != "") {
-    for (i32 b = 0; b < arm.bindingToks.len(); b++) {
-      if (tokenText(c, arm.bindingToks[b]) != nm) { continue; }
-      c.reportTok(errBindingCollision(), arm.bindingToks[b], "");
-    }
-  }
-  // **And against each other, which is the same rule with both names from the payload.** `case A(n, n)`
-  // compiled, and the *second* binding won: `A(7, 9)` answered 9. The reference refuses it — *"duplicate
-  // binding 'n' in case 'A'"* — and silently choosing one of two meanings is what the collision rule
-  // above exists to prevent. Reported at the later binding, which is the one to rename.
-  // `issues/lang/0239a`.
-  //
-  // The subject check returns early on an unnamed subject and this must not, so the two are separate
-  // loops rather than one: `match (f())` has no name to collide with and can still bind twice.
   for (i32 b = 0; b < arm.bindingToks.len(); b++) {
+    string bt = tokenText(c, arm.bindingToks[b]);
+    // **`_` is a deliberate discard and may repeat.** It is the wildcard for a payload field nobody
+    // wants a name for, so `case Ok(_, _, _, _, _, _)` names nothing six times rather than one thing
+    // six times. Treating it as a name made the duplicate rule below report in 19 places across
+    // `packages/http`, `packages/json` and their oracles — working files, caught by rung 3, which is
+    // the corpus that exists for exactly this. `issues/lang/0239a`.
+    if (bt == "_") { continue; }
+    if (nm != "" && bt == nm) {
+      c.reportTok(errBindingCollision(), arm.bindingToks[b], "");
+      continue;
+    }
+    // **And against each other, which is the same rule with both names from the payload.**
+    // `case A(n, n)` compiled, and the *second* binding won: `A(7, 9)` answered 9. The reference
+    // refuses it — *"duplicate binding 'n' in case 'A'"* — and silently choosing one of two meanings
+    // is what the subject check above exists to prevent. Reported at the later binding, which is the
+    // one to rename.
+    //
+    // The reference keeps a set of the bindings it accepted and says "duplicate" once per repeat; this
+    // loop compares against every earlier twin, so `A(n, n, n)` reaches the third `n` with two matches.
+    // `break` makes that one report rather than two. **It is not what makes the count agree** — the two
+    // would land at one position with one code and `report` collapses a repeat of the diagnostic
+    // immediately before it, which was measured by taking the `break` out and watching the count stay
+    // at two. It is here so the count does not *depend* on those two reports staying adjacent.
     for (i32 d = 0; d < b; d++) {
-      if (tokenText(c, arm.bindingToks[d]) == tokenText(c, arm.bindingToks[b])) {
+      if (tokenText(c, arm.bindingToks[d]) == bt) {
         c.reportTok(errDuplicateBinding(), arm.bindingToks[b], "");
+        break;
       }
     }
   }

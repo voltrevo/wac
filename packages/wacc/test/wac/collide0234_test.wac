@@ -21,9 +21,9 @@
 // declaration and an entry importing both — is clean on `dumpTypeErrorsFiles`, `blockedFiles` and
 // `emitDeclineFiles` alike, with and without the collision. The ingredient is wacc's real graph.
 //
-// **Building is not enough, so this checks the answer.** The entry asks the library how many
-// diagnostics a known-bad snippet has and exits 0 only if the count is right, which is what says the
-// library still *works* with the colliding name in the link rather than merely compiling.
+// **Building is not enough, so this checks the answer.** The entry asks the library to judge one broken
+// program and one clean one, and exits 0 only if it separated them — which is what says the library
+// still *works* with the colliding name in the link rather than merely compiling.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
@@ -36,13 +36,20 @@ bool writeTree(Cli cli, string dir, string name) {
       ("export struct " + name + " { i32 x; }\nexport i32 one() { return 1; }\n").toBytes()).wait();
   if (a.fault != 0) { return false; }
   // `../..` from `.cache/<dir>/` back to the repository root, then into the compiler's own source.
-  // The entry answers 0 when the library gave the right count, so the exit status is the assertion.
+  // The entry answers 0 when the library discriminated, so the exit status is the assertion.
+  //
+  // **No expected count.** This asked for exactly two diagnostics from `s - 1` and went red within the
+  // day, because `issues/lang/0238a` made that program report once — a checker fix, arriving through a
+  // test about the *linker*. What this file needs of the library is that it can tell a broken program
+  // from a clean one, so that is what it asks: some diagnostics for one, none for the other. A library
+  // that returned a constant, or an empty array, fails both halves.
   return cli.writeFile(dir + "/agg.wac",
       ("import { one } from \"./one.wac\";\n" +
        "import { dumpTypeErrors } from \"../../packages/wacc/src/api.wac\";\n" +
        "export i32 main() {\n" +
-       "  i32 n = dumpTypeErrors(\"export i32 f(string s) { return s - 1; }\".toBytes()).len();\n" +
-       "  return n == 6 && one() == 1 ? 0 : 1;\n" +
+       "  i32 bad = dumpTypeErrors(\"export i32 f(string s) { return s - 1; }\".toBytes()).len();\n" +
+       "  i32 ok = dumpTypeErrors(\"export i32 f(i32 x) { return x - 1; }\".toBytes()).len();\n" +
+       "  return bad > 0 && ok == 0 && one() == 1 ? 0 : 1;\n" +
        "}\n").toBytes()).wait().fault == 0;
 }
 

@@ -62,11 +62,14 @@ export string test_every_match_rule_the_reference_has_is_enforced() {
  */
 export string test_the_ordinary_matches_are_accepted() {
   T t = T.create();
-  string[] name = string[]("one else arm", "two distinct bindings", "exhaustive with no else");
+  string[] name = string[]("one else arm", "two distinct bindings", "exhaustive with no else",
+                           "two discards", "a discard beside a name");
   string[] src = string[](
     "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } } }\n",
     ENUM + "export i32 f(E e) { match (e) { case A(p, q): { return p + q; } else: { return 2; } } }\n",
-    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } } }\n");
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } } }\n",
+    ENUM + "export i32 f(E e) { match (e) { case A(_, _): { return 1; } else: { return 2; } } }\n",
+    ENUM + "export i32 f(E e) { match (e) { case A(_, y): { return y; } else: { return 2; } } }\n");
   for (i32 i = 0; i < src.len(); i++) {
     t.eqI32(diagsFor(src[i]), 0, name[i] + ": refused an ordinary match");
   }
@@ -80,6 +83,26 @@ export string test_the_ordinary_matches_are_accepted() {
  * fix that reported *and* still reached the emitter would pass the table above. One diagnostic, and the
  * program the checker refuses never gets emitted.
  */
+/**
+ * The duplicate rule's *count*: one fault per repeat, which is the reference's.
+ *
+ * Two rows because a rule that reported once per arm would satisfy either one alone.
+ *
+ * **Neither row can see the `break` in `checkBindingCollision`**, and that was worth finding out by
+ * taking it out: the two reports it saves land at one position with one code, and `report` collapses a
+ * repeat of the diagnostic immediately before it. So this pins the reference's count and *not* the loop
+ * shape that produces it — a nested-loop version without the `break` passes here too.
+ */
+export string test_a_binding_repeated_three_times_reports_twice() {
+  T t = T.create();
+  string three = "enum F { A(i32 x, i32 y, i32 z), B }\n";
+  t.eqI32(diagsFor(three + "export i32 f(F e) { match (e) { case A(n, n, n): " +
+                   "{ return n; } else: { return 2; } } }\n"), 2, "a name bound three times");
+  t.eqI32(diagsFor(ENUM + "export i32 f(E e) { match (e) { case A(n, n): " +
+                   "{ return n; } else: { return 2; } } }\n"), 1, "a name bound twice");
+  return t.report();
+}
+
 export string test_two_else_arms_report_exactly_once() {
   T t = T.create();
   string src = "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } " +
