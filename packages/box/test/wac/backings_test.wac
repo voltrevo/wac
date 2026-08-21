@@ -49,6 +49,7 @@ import { Ran, memoryFs, runOn } from "./memory.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { corpus } from "../../../sh/test/wac/corpus.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 
 /** The same, on the real disk: `Shell.create` builds `Fs.onHost`, and the frame's cwd is where it lands. */
@@ -90,7 +91,8 @@ export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mou
   T t = T.create();
   string[] scripts = corpus();
   string root = workRoot(cli);
-  cli.mkdir(root, true).wait();
+  string whyDir1 = madeDir(cli, root);
+  t.isTrue(whyDir1 == "", whyDir1);
   string seed = root + "/seed.wacimg";
   string scratch = root + "/saved.wacimg";
   t.isTrue(seedImage(core, cli, seed), "could not write the seed image");
@@ -105,7 +107,8 @@ export string test_the_corpus_answers_the_same_on_memory_an_image_and_a_host_mou
     // A directory of its own per script, because the corpus writes files and reads them back. Absolute,
     // because a relative frame `cwd` does not resolve — `issues/system/0194`.
     string work = root + "/host" + itoa(i);
-    cli.mkdir(work, true).wait();
+    string whyDir2 = madeDir(cli, work);
+    t.isTrue(whyDir2 == "", whyDir2);
 
     Ran memory = runOn(core, cli, memoryFs(core, "sealedsh"), script);
     Fs image = imageFs(core, cli, seed);
@@ -165,7 +168,8 @@ export string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Co
   T t = T.create();
   string script = "mkdir -p /tmp/d; echo hello > /tmp/d/f; cat /tmp/d/f; ls /tmp/d | wc -l";
   string root = workRoot(cli);
-  cli.mkdir(root, true).wait();
+  string whyDir3 = madeDir(cli, root);
+  t.isTrue(whyDir3 == "", whyDir3);
 
   Ran memory = runOn(core, cli, memoryFs(core, "sealedsh"), script);
   t.eqStr(memory.out, "hello\n1\n", "memory: " + shape(memory));
@@ -177,7 +181,8 @@ export string test_each_backing_is_alive_and_answers_about_its_own_filesystem(Co
   t.eqStr(onImage.out, "hello\n1\n", "image: " + shape(onImage));
 
   string work = root + "/alive";
-  cli.mkdir(work, true).wait();
+  string whyDir4 = madeDir(cli, work);
+  t.isTrue(whyDir4 == "", whyDir4);
   Ran onHost = runHost(core, cli, work, script);
   cli.remove(work, true).wait();
   t.eqStr(onHost.out, "hello\n1\n", "host: " + shape(onHost));

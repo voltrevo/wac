@@ -20,7 +20,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { freshDir } from "../../../wactest/src/host.wac";
+import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
 const string WC = "packages/platform/example/wc.wac";
 const string ROUNDTRIP = "packages/platform/example/roundtrip.wac";
@@ -205,8 +205,10 @@ export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_re
 
   string denoDir = dir + "/d";
   string nodeDir = dir + "/n";
-  cli.mkdir(denoDir, true).wait();
-  cli.mkdir(nodeDir, true).wait();
+  string whyDir1 = madeDir(cli, denoDir);
+  t.isTrue(whyDir1 == "", whyDir1);
+  string whyDir2 = madeDir(cli, nodeDir);
+  t.isTrue(whyDir2 == "", whyDir2);
 
   Exec d = inDir(cli, denoDir, "'" + denoOut + "' hello");
   Exec n = inDir(cli, nodeDir, "node '" + nodeOut + "' hello");
@@ -250,7 +252,8 @@ export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_tak
   if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
 
   string work = dir + "/w";
-  cli.mkdir(work, true).wait();
+  string whyDir3 = madeDir(cli, work);
+  t.isTrue(whyDir3 == "", whyDir3);
   Exec d = inDir(cli, work, "'" + denoOut + "' hello");
   Exec n = inDir(cli, work, "node '" + nodeOut + "' hello");
   t.isTrue(d.ran() && n.ran(), "both builds ran — " + d.error + n.error);

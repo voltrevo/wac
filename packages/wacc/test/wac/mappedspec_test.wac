@@ -15,7 +15,7 @@
 // mistake in a different place. That also makes this test fast and offline.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { binaryPath, madeDir, scratch } from "../../../wactest/src/host.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -75,7 +75,8 @@ export string test_a_mapped_specifier_resolves_from_the_lock_and_the_cache(Core 
   string home = dir + "-home";
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
   project(cli, t, dir);
   t.isTrue(lockAt(cli, dir, COMMIT), "the lockfile");
   t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
@@ -101,7 +102,8 @@ export string test_a_mapping_with_no_lock_entry_says_to_update(Core core, Cli cl
   string home = dir + "-home";
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir2 = madeDir(cli, dir);
+  t.isTrue(whyDir2 == "", whyDir2);
   project(cli, t, dir);
   t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the checkout");
 
@@ -129,7 +131,8 @@ export string test_a_commit_that_is_not_in_the_cache_says_where_it_looked(Core c
   string home = dir + "-home";
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir3 = madeDir(cli, dir);
+  t.isTrue(whyDir3 == "", whyDir3);
   project(cli, t, dir);
   t.isTrue(lockAt(cli, dir, "89abcdef0123456789abcdef0123456789abcdef"), "a lock on another commit");
   t.isTrue(checkout(cli, home, COMMIT, "export i32 two() { return 2; }\n"), "the other commit's checkout");
@@ -170,7 +173,8 @@ export string test_two_mappings_at_one_commit_are_one_module(Core core, Cli cli)
   string home = dir + "-home";
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir4 = madeDir(cli, dir);
+  t.isTrue(whyDir4 == "", whyDir4);
 
   // Two names, one repository, one commit, one subdir — D9 permits this: the names do not overlap.
   t.isTrue(put(cli, dir + "/wac.json5",
@@ -228,8 +232,10 @@ export string test_update_is_the_only_command_that_reaches_the_network(Core core
   string home = dir + "-home";
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
-  cli.mkdir(dir, true).wait();
-  cli.mkdir(home, true).wait();
+  string whyDir5 = madeDir(cli, dir);
+  t.isTrue(whyDir5 == "", whyDir5);
+  string whyDir6 = madeDir(cli, home);
+  t.isTrue(whyDir6 == "", whyDir6);
   project(cli, t, dir);
   t.isTrue(lockAt(cli, dir, COMMIT), "a lock naming a commit nothing has fetched");
 
@@ -450,7 +456,8 @@ export string test_a_whole_repository_mapping_may_import_the_builtins(Core core,
   string home = dir + "-home";
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir7 = madeDir(cli, dir);
+  t.isTrue(whyDir7 == "", whyDir7);
   t.isTrue(put(cli, dir + "/wac.json5",
                "{\n  imports: {\n    \"dep/\": { git: \"" + REPO + "\", ref: \"main\" },\n  },\n}\n"),
            "a mapping with no subdir");
@@ -501,7 +508,8 @@ export string test_a_whole_repo_and_a_subdir_mapping_meet_at_one_module(Core cor
   string home = dir + "-home";
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir8 = madeDir(cli, dir);
+  t.isTrue(whyDir8 == "", whyDir8);
 
   // `whole/` takes the repository; `part/` takes `lib` out of the same commit. D9 permits both: the
   // names do not overlap, which is the only thing it forbids.
@@ -566,7 +574,8 @@ export string test_two_mappings_at_different_commits_are_two_modules(Core core, 
   string other = "89abcdef0123456789abcdef0123456789abcdef";
   cli.remove(dir, true).wait();
   cli.remove(home, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir9 = madeDir(cli, dir);
+  t.isTrue(whyDir9 == "", whyDir9);
 
   t.isTrue(put(cli, dir + "/wac.json5",
                "{\n  imports: {\n" +

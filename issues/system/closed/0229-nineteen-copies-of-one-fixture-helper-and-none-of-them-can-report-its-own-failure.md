@@ -155,13 +155,18 @@ incrementally rather than filed as one job, and worth knowing the number.
 
 Two batches, both the `remove`-then-`mkdir` shape, which is `freshDir`'s:
 
-    43 sites converted   21 in tools/wac tests, then 22 across 17 package tests
-    100 remain           91 bare `mkdir` (the `madeDir` shape) and 9 pairs with no `T` in scope
+    74 sites converted   21 in tools/wac tests, 22 across 17 package tests, 31 bare in 6 more
+    69 remain            60 bare with no `T` at the site, and 9 pairs likewise
 
-The 91 are the harder half and not a regex job: a bare `mkdir` is the *non-destructive* shape, and most of
-them sit in `bool`-returning helpers — `put`, `writeTree` — that have no `T` to report through. Each needs
-a decision about how the reason reaches the reader, which is the question this issue answered once and
-would have to answer again in a different shape.
+The bare ones split further than that. **31 of them had a `T` after all** and took `madeDir` — which is
+the right helper for a bare `mkdir` because it creates without emptying, so the behaviour is unchanged even
+where a `remove` of the same path happened a line earlier. `mappedspec_test.wac` is that case: it removes
+`home` between the remove and the mkdir, which is why batch two's same-variable match skipped all nine.
+
+What is left really is the harder kind: 69 sites with no `T` at the site, most in `bool`-returning helpers
+— `put`, `writeTree` — that have nothing to report through. Each needs a decision about how the reason
+reaches the reader, which is the question this issue answered once and would have to answer again in a
+different shape.
 
 The 9 skipped pairs are named rather than silently left: `crypto/tools/ct.wac` and `tools/wac/covledger.wac`
 are tools with no `T` at all, and the rest are sites inside helpers that do not take one —

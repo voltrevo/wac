@@ -31,6 +31,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 import { withHome } from "../../../wactest/src/childenv.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -154,7 +155,8 @@ export string test_all_three_of_gits_answers_in_gits_order(Core core, Cli cli) {
   Git g = repo(t, cli, "st");
   string d = g.dir;
 
-  cli.mkdir(d + "/sub", true).wait();
+  string whyDir1 = madeDir(cli, d + "/sub");
+  t.isTrue(whyDir1 == "", whyDir1);
   cli.writeFile(d + "/a.txt", "one\n".toBytes()).wait();
   cli.writeFile(d + "/sub/b.txt", "two\n".toBytes()).wait();
   cli.writeFile(d + "/gone.txt", "three\n".toBytes()).wait();
@@ -178,7 +180,8 @@ export string test_all_three_of_gits_answers_in_gits_order(Core core, Cli cli) {
 
   // An entirely untracked directory, which git collapses to one line; a directory with a tracked
   // file in it, whose untracked contents are listed individually; and files an ignore rule covers.
-  cli.mkdir(d + "/fresh", true).wait();
+  string whyDir2 = madeDir(cli, d + "/fresh");
+  t.isTrue(whyDir2 == "", whyDir2);
   cli.writeFile(d + "/fresh/one.txt", "x\n".toBytes()).wait();
   cli.writeFile(d + "/fresh/two.txt", "y\n".toBytes()).wait();
   cli.writeFile(d + "/sub/alsonew.txt", "z\n".toBytes()).wait();
@@ -193,7 +196,8 @@ export string test_all_three_of_gits_answers_in_gits_order(Core core, Cli cli) {
   cli.writeFile(d + "/sub/inner.tmp", "brought back by sub/.gitignore\n".toBytes()).wait();
   cli.writeFile(d + "/sub/scoped", "ignored only under sub\n".toBytes()).wait();
   cli.writeFile(d + "/inner.tmp", "still ignored at the root\n".toBytes()).wait();
-  cli.mkdir(d + "/built", true).wait();
+  string whyDir3 = madeDir(cli, d + "/built");
+  t.isTrue(whyDir3 == "", whyDir3);
   cli.writeFile(d + "/built/out", "ignored\n".toBytes()).wait();
 
   string[] theirs = splitLines(g.status());
@@ -323,8 +327,10 @@ export string test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_inf
   string home = "/tmp/wac-git-home" + suffix;
   cli.remove(d, true).wait();
   cli.remove(home, true).wait();
-  cli.mkdir(d, true).wait();
-  cli.mkdir(home, true).wait();
+  string whyDir4 = madeDir(cli, d);
+  t.isTrue(whyDir4 == "", whyDir4);
+  string whyDir5 = madeDir(cli, home);
+  t.isTrue(whyDir5 == "", whyDir5);
 
   Exec init = gitAt(cli, home, d, string[]("init", "-q", "-b", "main", "."));
   t.eqI32(init.status, 0, "git init — " + string.fromBytes(init.stderr));

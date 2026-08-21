@@ -19,6 +19,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -123,7 +124,8 @@ export string test_a_thin_pack_completed_from_the_local_store_and_written(Core c
   if (!made.ok()) { return t.report(); }
   string src = dir + "/src";
   string mine = dir + "/mine";
-  cli.mkdir(src, true).wait();
+  string whyDir1 = madeDir(cli, src);
+  t.isTrue(whyDir1 == "", whyDir1);
 
   // **A history whose later commits deltify against earlier ones.**
   git(cli, src, string[]("init", "-q", "-b", "main", "."));
@@ -179,7 +181,8 @@ export string test_a_thin_pack_completed_from_the_local_store_and_written(Core c
   t.isTrue(at >= 0, "there is a packfile in the reply");
   if (at < 0) { return t.report(); }
   string rawDir = dir + "/raw";
-  cli.mkdir(rawDir, true).wait();
+  string whyDir2 = madeDir(cli, rawDir);
+  t.isTrue(whyDir2 == "", whyDir2);
   cli.writeFile(rawDir + "/got.pack", from(up.stdout, at)).wait();
   Exec refused = git(cli, rawDir, string[]("index-pack", "got.pack"));
   t.isTrue(refused.status != 0 && contains(string.fromBytes(refused.stderr), "unresolved delta"),
@@ -227,7 +230,8 @@ export string test_a_fetch_of_what_we_already_have_is_refused(Core core, Cli cli
   if (!made.ok()) { return t.report(); }
   string src = dir + "/src";
   string mine = dir + "/mine";
-  cli.mkdir(src, true).wait();
+  string whyDir3 = madeDir(cli, src);
+  t.isTrue(whyDir3 == "", whyDir3);
 
   git(cli, src, string[]("init", "-q", "-b", "main", "."));
   cli.writeFile(src + "/a.txt", "one\n".toBytes()).wait();
