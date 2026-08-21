@@ -286,10 +286,32 @@ the record.
 
 ### What is left
 
-Only the wiring, and it is a layering question rather than a resolution one. Neither
-`checkFilesWithIn` nor `diagnoseFilesWithIn` calls the linker, so for the checker to report at the token
-the linker's answer has to reach it — either by the checker asking (which means the checker depends on
-the emitter, and `emit.wac` already imports `check.wac`, so that is the wrong way round) or by the
-caller that has both — `example/wacc.wac` runs the checker and then the emitter — turning the emitter's
-named refusal into a positioned diagnostic itself. The second is a few lines and needs no new dependency:
-it has the paths, the sources and the parse, and now it has the file and the exact specifier to find.
+Only the wiring. Neither `checkFilesWithIn` nor `diagnoseFilesWithIn` calls the linker, so the linker's
+answer has to reach the checker somehow.
+
+**And the obvious objection to the checker asking turns out not to exist.** I wrote here that it would
+invert a dependency because `emit.wac` imports `check.wac`; it does not. Checked:
+
+    check.wac imports  lex, lit, coretext, kinds, ast
+    emit.wac  imports  lex, coretext, lit, parse, path, ast, kinds
+    check.wac is imported by  api.wac
+    emit.wac  is imported by  api.wac, render.wac, files.wac
+
+They are siblings, both under `api.wac`, and there is no path from `emit.wac` back to `check.wac` — so
+`check → files → emit` would be acyclic too. `check.wac`'s own comment at the single-file fix says
+otherwise (*"it imports `emit.wac`, and `emit.wac` imports this"*) and is wrong in its second clause;
+corrected in place.
+
+So both routes are open, and the choice is about what each layer should know rather than about cycles:
+
+- **`example/wacc.wac` turns the emitter's named refusal into a positioned diagnostic.** It runs the
+  checker and then the emitter, has the paths, the sources and the parse, and now has the file *and* the
+  exact specifier to find. A few lines, no new dependency, and the position appears in the one place a
+  person reads.
+- **The checker asks the linker**, which puts the diagnostic where every embedder gets it rather than
+  only the CLI — the set `0175a` was about. Costs `check.wac` a dependency on the resolver, which is
+  allowed after all.
+
+Recommendation: the first, then the second if an embedder ever wants it. The reason is not the dependency
+graph — it is that the first needs no new resolution and cannot reintroduce the unsoundness that got the
+original attempt reverted.

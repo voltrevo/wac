@@ -7812,7 +7812,14 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   C c = C.create(src, toks, tokenCount, tokenCount);
   // **One file was supplied, so every quoted specifier that is not a built-in tree names a file
   // nobody gave.** Read off the parse rather than by scanning the text, which also keeps `files.wac`
-  // out of this file's imports — it imports `emit.wac`, and `emit.wac` imports this. The
+  // out of this file's imports.
+  //
+  // **The reason given here used to be a cycle, and there is no cycle.** It said `files.wac` "imports
+  // `emit.wac`, and `emit.wac` imports this" — the first clause is true and the second is not. Checked
+  // 2026-08-21: `emit.wac` imports lex, coretext, lit, parse, path, ast and kinds, and nothing imports
+  // `check.wac` except `api.wac`. The two are siblings, so `check → files → emit` would be acyclic. The
+  // honest reason to read off the parse is that it needs no resolver at all for a single file, which is
+  // a smaller claim and still a good one. `issues/lang/0157`. The
   // files-based entry point does the same job with a real path map, in `api.wac` — where it resolves
   // each specifier with `resolveVia` and tests it against the map, so a mapped or project specifier is
   // not mistaken for a missing file. That half landed 2026-08-21; this sentence described it for a day

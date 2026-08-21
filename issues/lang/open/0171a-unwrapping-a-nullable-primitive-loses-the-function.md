@@ -351,3 +351,15 @@ downcast and checkalone lanes green; `deno task check` clean.
 
 **Why this issue stays open:** the host boundary still refuses a nullable primitive, so the spec's own
 accessor still gets no glue. That decision is above and is not mine to take unilaterally.
+
+## The recommendation's cost, measured — agent-a, 2026-08-21
+
+"Lift `okType`'s refusal once boxes exist" reads as deleting a line. It is not: **`bindgen.wac` has no
+box machinery at all.** `isBoxedPrimName`, `boxedPrimInner` and the rest live in `emit.wac`; a grep for
+them in `bindgen.wac` finds nothing, and `okType` is still
+
+    if (endsWith(t0, "?") && isScalar(t)) { return false; }
+
+So the work is "teach bindgen what a boxed scalar is at the boundary" — which type index it has, which
+field holds the value, and what the glue does on each side — and that is the same shape of work a struct
+already gets, exactly as this issue says. Naming it so nobody picks this up expecting a one-line change.
