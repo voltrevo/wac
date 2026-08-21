@@ -1,6 +1,9 @@
 # 0238a — one fault, two diagnostics at one position, and nothing counts them
 
-- **Status:** open
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-21 — the two shapes fixed; the residue is one family and not ours
+- **Fixed in:** `packages/wacc/src/check.wac` (the unary and overlap shapes), with
+  `packages/wacc/test/wac/illtyped_test.wac` and the grouping in `packages/wacc/test/mutateCheck.test.ts`
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
@@ -331,3 +334,51 @@ So the 15 need sorting one at a time by the question this issue names — *does 
 on a type the checker invented for something it refused* — and at least one of them is a case where the
 answer is no and the reference is the one being terse. The counter is a queue, and this is what working
 through it looks like.
+
+## Closed — the queue is one family, and here is the rule that decides it, 2026-08-21
+
+The counter stands at **15, in one family.** Every one is the same program with a different pair of
+mismatched types:
+
+    15×  type mismatch in '…': T and T
+         2 ours vs 1 theirs: export i32 f() { i32 x = 1; u32 y = 1; return x != y; }
+
+`!=`, `==`, `<` and `<=` were checked by hand as well: wacc 2, the reference 1, every time. So the whole
+residue is *a mismatched comparison whose result is returned from a non-`bool` function*, which the
+section above had already adjudicated as not ours — and the reason can now be stated as a rule rather
+than as a judgement about one program:
+
+> **Does the operator's result type depend on the operands it rejected?** If it does, answering one is
+> inventing a type for an expression the checker just refused, and the second diagnostic rests on the
+> invention. If it does not, the second diagnostic is an independent fault.
+
+`~s` was the first kind: `~`'s result *is* its operand's type, so answering `i32` for a refused operand
+was an invention, and `typeOfExpr` now answers nothing — one diagnostic instead of two. `x != y` is the
+second kind: a comparison is a `bool` whatever its operands are, so `bool` is determined rather than
+invented, and returning a `bool` from an `i32` function is a second real mistake. The reference stops
+before it because `checkBinaryOp` answers null and never reaches the slot; reporting both is defensible.
+
+So the two shapes this issue was filed about are fixed and canaried, and the count that remains is a
+difference in terseness rather than a defect. **A queue with nothing actionable in it is a closed issue**,
+and leaving it open is how a permanent number comes to be re-litigated — see `issues/lang/0151`, which
+carries its own permanent 1 and says so.
+
+### The instrument, twice over
+
+The counter capped its examples at four and printed those, and all four were the same shape — so "15
+programs" read as fifteen things to look at. It groups by family now, with a count and one example each,
+which is what turned this into a one-line answer.
+
+**And the first grouping key was too fine.** Keyed on the reference's message it put the fifteen in
+*fifteen* families, because `family()` collapses quoted names and numbers and leaves bare type names
+alone — `i32 and u32` is not `i64 and f64`. A key that fine is a cap by another route. `shape()` collapses
+the primitives as well, and is deliberately not `family()` itself, which keys the recall table where a
+reader may want those rows apart.
+
+### What the same run turned up, which is not this
+
+`2 missed of 7  '…' of type '…' is not callable` is a recall row, in the direction that matters, and it
+is now `issues/lang/0241a`: a generic method's body is only ever checked with its type parameters opaque,
+so `v()` where `v` is the `i32` payload of an `Opt<i32>` is invisible to the checker and refused by the
+emitter. Found with `packages/wacc/test/missed.ts`, after guessing the shape against twelve types failed
+— wacc refuses all twelve.

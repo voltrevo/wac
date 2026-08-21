@@ -117,6 +117,22 @@ function family(m: string): string {
   return m.replace(/'[^']*'/g, "'…'").replace(/\b\d+\b/g, "N").replace(/"[^"]*"/g, '"…"');
 }
 
+/**
+ * `family`, with primitive type names collapsed as well — for grouping *shapes* rather than messages.
+ *
+ * **A key too fine is a cap by another route.** Grouping the louder cases on `family` alone put the
+ * fifteen in fifteen families, because `type mismatch in '…': i32 and u32` keeps its two type names
+ * where the quoted parts and the numbers are already collapsed. Fifteen rows of one member each reads
+ * as fifteen things to investigate; it is one shape — a mismatched comparison returned from a
+ * non-`bool` function — with fourteen siblings differing only in which pair of types was mismatched.
+ *
+ * Left out of `family` itself deliberately: that keys the recall table, where collapsing types would
+ * merge rows a reader may want apart, and one report changing shape at a time is easier to trust.
+ */
+function shape(m: string): string {
+  return family(m).replace(/\b(?:[iu](?:8|16|32|64)|f32|f64|bool|string|anyref)\b/g, "T");
+}
+
 Deno.test("rung 3: valid programs broken one way each — no contradiction", () => {
   const cells = generateEmit();
   if (cells.length < 4000) throw new Error(`only ${cells.length} cells generated`);
@@ -130,7 +146,12 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
   const contradictions: string[] = [];
   let contradicted = 0;
   let louder = 0;
-  const louderExamples: string[] = [];
+  // **Grouped, because a cap is not a sample.** This kept the first four and printed them, and all
+  // four were the same shape — a mismatched comparison returned from a non-`bool` function — so
+  // "15 programs" read as fifteen things to look at when it was one family and eleven of its
+  // siblings. Keyed on the *reference's* first message, which is the fault both compilers agree is
+  // there. `issues/lang/0238a` is the queue this feeds.
+  const louderBy = new Map<string, { n: number; example: string }>();
   let broken = 0;
   let caught = 0;
   for (let i = 0; i < cells.length; i++) {
@@ -167,9 +188,16 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
     // one position, and the reference reports both there too. All 24 hits were of that kind.
     if (mine.length > theirs.length) {
       louder++;
-      if (louderExamples.length < 4) {
-        louderExamples.push(`${mine.length} ours vs ${theirs.length} theirs in:\n    ` +
-          mutated.replace(/\n/g, " ⏎ ").slice(0, 300));
+      const lk = shape(theirs[0].message);
+      const seen = louderBy.get(lk);
+      if (seen === undefined) {
+        louderBy.set(lk, {
+          n: 1,
+          example: `${mine.length} ours vs ${theirs.length} theirs: ` +
+            mutated.replace(/\n/g, " ⏎ ").slice(0, 200),
+        });
+      } else {
+        seen.n++;
       }
     }
     const key = family(theirs[0].message);
@@ -193,8 +221,12 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
   }
 
   if (louder > 0) {
-    console.log(`    ${louder} program(s) where we report more diagnostics than the reference:`);
-    for (const d of louderExamples) console.log(`      ${d}`);
+    console.log(`    ${louder} program(s) where we report more diagnostics than the reference, ` +
+      `in ${louderBy.size} ${louderBy.size === 1 ? "family" : "families"}:`);
+    for (const [k, v] of [...louderBy].sort((a, b) => b[1].n - a[1].n)) {
+      console.log(`      ${String(v.n).padStart(3)}×  ${k.slice(0, 70)}`);
+      console.log(`           ${v.example}`);
+    }
   }
   const missing = [...cat].sort((a, b) => (b[1].seen - b[1].caught) - (a[1].seen - a[1].caught))
     .filter(([, v]) => v.seen > v.caught);

@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0238a](open/0238a-one-fault-two-diagnostics-at-one-position.md) | where the two compilers disagree about *how much* is wrong — 19 of 1,189 mutants report more than the reference; some are ours (a slot rule comparing a type invented for a refused expression) and some are the reference stopping early. A queue, not an invariant: two stronger framings were measured and refuted | diagnostic | wrong answer |
+| [0241a](open/0241a-a-generic-methods-body-is-never-checked-under-substitution.md) | a generic method's body is only ever checked with its type parameters opaque, so a fault that exists only for a particular `T` — `v()` where `v` is the `i32` payload of `Opt<i32>` — is invisible: `wac check` answers "no diagnostics" and `wac build` refuses it, naming the method. The spec defers such a mistake *to instantiation*, and there is no instantiation-time pass | diagnostic | no error |
 | [0235a](open/0235a-written-type-arguments-parse-as-a-comparison.md) | the silent half is fixed — a type name in value position was refused only for structs, so `x < i32`, `x < E` and `x < string` checked clean; what is left is that `found bool` is still the first of three lines | diagnostic | wrong answer |
 | [0233a](open/0233a-a-shift-by-a-variable-is-typed-from-the-amount-not-the-slot.md) | `i64 x = 1 << count;` is refused by both compilers: a shift is typed from its left operand, which for a literal has no type, so the only type in reach is the amount's — the one the result is explicitly not supposed to follow | decision | compile error |
 | [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | bindgen refuses a nullable primitive at the host boundary, so `export i32 read(i32? x)` — the accessor the spec prescribes — gets no glue; the emitter half is done | decision | no glue for a signature the spec shows |
@@ -34,7 +34,7 @@ has been fixed and why.
 
 ## Closed
 
-189 issues, 163 closed.
+190 issues, 164 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
