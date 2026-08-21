@@ -113,11 +113,17 @@ with load at 1.11 and the process at 102% of one core, `names_test.wac` (declare
 since 08-19) **did not finish within 900s of CPU**. A floor rather than a duration, since the bound fired;
 the same is true of the 1,166s, and the gap between the two is two different bounds.
 
-What did explain it was already on disk. Seventy `push.sh` logs each carry a per-file CPU table, and
-sorted by date they show `describewac_test` going 1.6s → 15.3s and `corpuscheck_test` 17.4s → 30.9s in
-one 104-minute window on 08-20. That is `issues/system/0235a`, and it is why these declarations are
-stale: **not because the repository grew, but because compiling a corpus file got several times more
-expensive in one evening.** Re-measuring the six would record the new cost without recording the cause.
+**I then claimed to have found the cause in the gate logs, and withdrew it an hour later.** Seventy
+`push.sh` logs carry a per-file CPU table each, and sorted by date they show `describewac_test` going
+1.6s → 15.3s in one window on 08-20. That is not a regression: a directory's files share one build and
+the chunk's build is charged to whichever file is reported first, so `describewac_test` is 4.1s alone and
+14.6s beside one other file. The "step" is that file becoming its chunk's first. `issues/system/0235a`
+carries the correction and the measurement.
+
+**What that means for this issue's step 2.** A currency check that compares a declared number against a
+per-file figure from the lane would be comparing against a number that moves when chunk membership moves.
+It has to compare a directory or chunk total, or run the file alone. The `names_test` figure above was
+taken alone for that reason, and it is the one number here with no attribution problem in it.
 
 ### The older question of which number is wall
 
