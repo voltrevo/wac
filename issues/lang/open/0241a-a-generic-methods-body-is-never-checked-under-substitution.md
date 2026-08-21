@@ -257,3 +257,66 @@ discovery the checker does not have.
 Written down so the next person starts from the obstacle rather than finding it: the tables know what a
 method's parameters *are*, and not what they are *called*.
 
+## Built it, and got the number — agent-a, 2026-08-21
+
+The call-site option, implemented in a scratch worktree and **not landed**. About sixty lines, all four
+pieces as priced:
+
+* `instanceOwner` on `C`, consulted where a type parameter becomes unknown — with one correction to the
+  sketch above: the hook has to sit **before** the `activeParams` loop, not inside it. The
+  instantiation pass leaves `activeParamCount` at zero (the parameters are bound, not in scope as
+  unknowns), so a hook inside the loop never runs and every `T` in the body reads as *undefined type*.
+  Membership needs no second list: `substituteType` knows the owner's parameters from the struct and
+  enum tables and returns a name it does not recognise unchanged.
+* `methodParamNames` beside `methodParamTypes`, and `methodReturnTys` beside `methodReturns` — the
+  return type has to be the **`Ty` node**, because `checkAll` threads it to every `return` and the node
+  is what carries `T`.
+* a queue, drained at the end of `checkModule`. Not a walk at the call site: a call is found *inside* a
+  body walk, and starting another would clear the scope the first is using. Draining last, with nothing
+  live, also lets a body queue further pairs.
+
+**It works on the reproduction.** `o.orElse(0)` with `return v();` inside now reports exactly once, at
+the right position, with the right rule — *this is not something that can be called* — which is the
+reference's `'v' of type 'i32' is not callable`. The correct program is clean, and the second
+reproduction (only `isSome()` called) stays silent, which is the call-site option's known limitation.
+
+**And it refuses ten programs the spec calls legal.**
+
+    corpuscheck   green over the repository — zero new diagnostics on our own code
+    typecheck     rung 3, 0 false alarms, 0 contradicted
+    cases         green, including the executable ones
+    specsingle    369 of 371 silent — 2 false alarms
+    specmulti     34 of 42 silent — 8 false alarms
+
+The ten, by the section that owns them: `§wac-generic-struct-9tkq4wm` (nesting, and crossing module
+boundaries), `§wac-generic-template-check-2wkq7nm` (*"anything depending on T is still deferred"* —
+the rule itself), `§wac-generic-instantiation-identity-6pnq4wj` (four, including a nested instantiation
+keeping its argument), `§wac-generic-enum-7dkq2mv`, and two under `§enum-cross-file`.
+
+**Two hypotheses tried and both wrong**, which is worth recording so nobody spends the time twice.
+Aliased or cross-file instances whose template the tables do not hold: skipping those changed nothing,
+so the templates are there. `genericArgs` mis-parsing a nested argument list: it is depth-aware,
+tracking `<`/`>` and cutting only on a top-level comma.
+
+So the cause is not plumbing, and it is the thing the spec warns about two paragraphs above the
+sentence this issue quotes:
+
+> Anything naming a type parameter is deferred, and so is anything naming **another template** — a
+> `Box<T>` field is not a type until `T` is known, so its members are unknowable rather than absent.
+
+A body that is legal *because* it is deferred stops being deferred when `T` is bound, and our rules are
+not yet right under substitution. That is the finding: **the pass is cheap and the rules are not
+ready.** "It will find things" was the prediction; what it finds first is ten of its own false alarms.
+
+The spec also names a requirement the sketch does not meet, and it should be built in from the start
+rather than added after:
+
+> A `T`-independent mistake is reported **once**, not once per instantiation. Diagnostics are
+> deduplicated by position and message.
+
+**Recommended now: not yet, and the ten are the work.** They are a concrete, bounded list — each a
+program the spec runs — and every one of them is a rule that needs to be correct with `T` bound before
+any version of this pass can land. The sixty lines are the easy part and are written down here; whoever
+takes it should start from `specsingle`'s two, which are single-file and therefore the cheapest to
+reproduce.
+
