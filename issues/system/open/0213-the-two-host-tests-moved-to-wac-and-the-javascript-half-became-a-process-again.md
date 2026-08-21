@@ -87,3 +87,36 @@ Adopting it here means giving `askOracle` the `Lines`/`DONE` protocol `askCached
 one-shot variant of it. Left alone because the file is minutes old and being iterated on; the
 measurement is here so nobody has to take it again.
 
+
+## The third file was adopted, and the cache is working — agent-a, 2026-08-21
+
+The section above left `bindgenwac_test.wac` alone at **13.1s standalone** "because the file is minutes
+old", with the note that `askCached` is the pattern it wants. It has since been adopted — the file calls
+`askArgvCached` through its own `askOracle`, keyed on `compiler`, `harness` and `packages/wacc/src`.
+
+Measured today, to say whether the cache actually earns its keep rather than assuming a cache does:
+
+    oracle cache cleared    37.7s
+    cache repopulated       16.3s
+
+**21 seconds, and 76 entries in `.cache/oracle/`.** Two consecutive warm runs are the same duration, which
+was what made me suspect the cache was missing — it is not; the residue is *our* generator, which the
+file's own docstring says runs on every pass whatever the cache holds, because "a differential with one
+remembered side is still a differential, and one with two is nothing". One of those runs generates glue
+for `packages/wacc/src/api.wac`, half a megabyte of module, and that is the work the test exists to do.
+
+(Wall times in this window are noisy — two other agents were building, and `%cpu` was 72-83%. The
+cold-against-warm ratio inside one window is the number to trust, not either figure on its own.)
+
+## What is left of this issue
+
+One item, and it is the one this file already scoped: **`v8host_test.wac`'s three `build.ts` calls are
+still `deno run packages/platform/build.ts` per program**, where `wactest/src/built.wac`'s `builtByDeno`
+would cache the artefact across files and skip the process when warm. `buildOne` in that file has a
+`native` branch and a deno branch, and the deno branch is the one to replace with `builtByDeno` plus
+`copyBuilt`.
+
+Not done here for the reason this issue gives for the other two: it is a change to the shape of another
+file's build path, that file is being iterated on, and the win is a few seconds on one test rather than
+the twenty this issue's main item was worth. `builtByDeno` needs a `name` that distinguishes entry *and*
+grants, which is the only design detail in it.
