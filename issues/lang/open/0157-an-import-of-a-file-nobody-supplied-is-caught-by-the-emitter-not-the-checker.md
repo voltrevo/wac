@@ -370,3 +370,28 @@ dropping the record: the first fails with the old sentence and the control still
 often they fire: the emitter's (rarely reached), then the reader's (the common one). That is worth
 remembering — the layer whose diagnostic is worst is the one furthest from the code you happen to be
 reading.
+
+## The corpus fix reached one of two loaders — agent-a, 2026-08-21
+
+This issue's commit rewrote `packages/wacc/test/wac/corpus_probe.wac`'s walk, from three fixed
+directories one level deep to a full recursive one, because the new checker rule made the gap report
+itself. **The TypeScript twin, `packages/wacc/test/corpus.ts`, still had the old walk** — the same
+`for (const sub of ["src", "test/wac", "bench"])`, three months of files later.
+
+Counted: **755 of 1,003** `.wac` files. The 248 it missed are `packages/box/src/applets/*` (82, nested
+one level too deep), every `example/` and `size/` directory, `packages/bignum/test/probe.wac` for sitting
+beside `test/wac` rather than in it, and the whole of `tools/` — which `packages/box` and `packages/sh`
+import from.
+
+Mirrored, not reinvented, including the directory test: no extension is the cheap signal for a directory
+and `readDir` on a plain file throws, so a misjudgement costs a wasted call rather than a wrong corpus.
+
+**One consumer, and it gained coverage rather than breaking:** `corpusMutate.test.ts`'s repository sweep
+went from **180 files to 189**, recall 179/180 → 188/189. Nothing else imports that loader — an earlier
+grep of mine said eight files did, and it was matching the string `corpus.ts` in comments and in two
+*different* corpora, `packages/sh/test/corpus.ts` and `packages/zstd/bench/corpus.ts`.
+
+The shape is `issues/system/0231a`'s: one rule with two implementations, and a fix that reached the one in
+front of whoever was looking. It was found by asking, after `issues/system/0235a`, which *other*
+enumerations bound the invariant they feed — the walk's own docstring says the bound is invisible from
+inside, and the next place to look was the file that says the same thing in another language.

@@ -50,26 +50,40 @@ export async function corpus(): Promise<Corpus> {
   const files: Entry[] = [];
   const skipped: { name: string; reason: string }[] = [];
 
-  for await (const entry of Deno.readDir("packages")) {
-    if (!entry.isDirectory) continue;
-    for (const sub of ["src", "test/wac", "bench"]) {
-      const dir = `packages/${entry.name}/${sub}`;
-      let names: string[];
-      try {
-        names = [];
-        for await (const f of Deno.readDir(dir)) {
-          if (f.isFile && f.name.endsWith(".wac")) names.push(f.name);
-        }
-      } catch {
-        // Most packages have no bench/ and wacc has no test/wac/. Absent directories
-        // are the normal case here, unlike an absent file, so they are not reported.
-        continue;
-      }
-      for (const name of names.sort()) {
-        files.push([`${dir}/${name}`, await Deno.readTextFile(`${dir}/${name}`)]);
+  // **Every `.wac` under the tree, recursively — not three fixed directories.**
+  //
+  // This walked `packages/*/{src,test/wac,bench}` one level deep, which found **755 of the 1,003**
+  // `.wac` files this repository has: it missed `packages/box/src/applets/*` (82 files) because they
+  // are nested, every `example/` and `size/` directory, `packages/bignum/test/probe.wac` because it
+  // sits beside `test/wac` rather than in it, and the whole of `tools/`, which `packages/box` and
+  // `packages/sh` import from. Those imports named files the corpus did not supply, so they
+  // contributed no declarations, every name from them was unknown — and unknown is silent.
+  //
+  // `packages/wacc/test/wac/corpus_probe.wac` was fixed this way by `issues/lang/0157`; this is the
+  // TypeScript twin, and it was left behind. Two loaders for one corpus, and the fix reached one.
+  // Mirrored rather than reinvented, including the directory test: no extension is the cheap signal
+  // for a directory, and `readDir` on a plain file throws, which this treats as an absent one — so a
+  // misjudgement costs a wasted call rather than a wrong corpus.
+  async function walk(dir: string): Promise<void> {
+    let entries: Deno.DirEntry[];
+    try {
+      entries = [];
+      for await (const e of Deno.readDir(dir)) entries.push(e);
+    } catch {
+      // Absent directories are the normal case here, unlike an absent file, so they are not reported.
+      return;
+    }
+    for (const e of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = `${dir}/${e.name}`;
+      if (e.isFile) {
+        if (e.name.endsWith(".wac")) files.push([full, await Deno.readTextFile(full)]);
+      } else if (!e.name.includes(".")) {
+        await walk(full);
       }
     }
   }
+  await walk("packages");
+  await walk("tools");
 
   files.sort((a, b) => a[0].localeCompare(b[0]));
 
