@@ -102,6 +102,7 @@ export string checkMessage(i32 code) {
   if (code == 39) { return "no such field"; }
   if (code == 40) { return "a nullable value must be unwrapped before it is used"; }
   if (code == 41) { return "an index must be an integer"; }
+  if (code == 206) { return "only an array or a string can be indexed"; }
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }

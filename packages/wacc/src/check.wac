@@ -117,6 +117,16 @@ export i32 errNoSuchField() { return 39; }
 export i32 errThroughNullable() { return 40; }
 /** An index into something that is not an array, or with something that is not an index. */
 export i32 errIndex() { return 41; }
+/**
+ * Indexing something that is neither an array nor a string.
+ *
+ * Split from `errIndex`, whose message is *"an index must be an integer"* — true when the index is the
+ * problem and false when the *operand* is: `n[0]` on an `i32` denied that `0` is an integer, which it
+ * plainly is. The comment at the lvalue site already knew there were two complaints, *"the 'not an
+ * array' one names the operand and the 'bad index' one names the index"*, and they shared one sentence.
+ * `issues/lang/0240a`.
+ */
+export i32 errNotIndexable() { return 206; }
 /** A ternary whose branches cannot be the same type. */
 export i32 errTernaryBranches() { return 42; }
 /** `is` or `!` applied to something the question does not make sense for. */
@@ -5035,7 +5045,7 @@ void checkWrite(C c, Lvalue lv) {
     case LIndex(base, index): {
       string baseT = typeOfLvalue(c, base);
       if (baseT != typeNone() && baseT != "" && !isArrayName(baseT) && baseT != "string") {
-        c.report(errIndex(), lv.line, lv.col);
+        c.report(errNotIndexable(), lv.line, lv.col);
         return;
       }
       // Both index complaints land on the `LIndex` node — the bracket — where as an expression the
@@ -6033,7 +6043,10 @@ void checkIndex(C c, Expr at, Expr arr, Expr index) {
     // At the **operand**: it is the thing that is not an array. As an lvalue the same complaint lands
     // on the bracket instead, because that is where an `LIndex` node sits — two node kinds, two
     // positions, which is the second time this exact split has come up.
-    c.report(errIndex(), arr.line, arr.col);
+    //
+    // And its own code, because `errIndex` says *"an index must be an integer"* — which denies
+    // something `n[0]` plainly has. `issues/lang/0240a`.
+    c.report(errNotIndexable(), arr.line, arr.col);
     return;
   }
   i32 lit = litKindOf(index);
