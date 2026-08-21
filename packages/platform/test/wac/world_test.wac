@@ -95,7 +95,20 @@ export string test_an_application_written_entirely_in_wac_runs_and_agrees_with_w
 
   // Coreutils is the oracle. `wc < path` rather than `wc path`, so the answer is three numbers and
   // no filename — the same three the example prints, in the same order.
-  Exec oracle = cli.exec("/bin/sh", string[]("-c", "wc < '" + WC + "'"), u8[0]()).wait();
+  //
+  // **`LC_ALL` is stated rather than inherited, and which one it is matters.** `Cli.exec` hands the
+  // child the whole environment, so this used to compare against whatever the image happened to set —
+  // `C.UTF-8` here — and the test neither set it nor mentioned it. In the C locale coreutils answers
+  // **472 words** where it answers **474** in a UTF-8 one, and `wc.wac` says 474, so changing the
+  // image would have failed this with a two-word discrepancy that reads as a bug in our splitting.
+  //
+  // It is not one. `wc.wac` splits on four ASCII bytes and calls every run between them a word.
+  // GNU `wc` additionally drops a run containing no *printable* character, and in the C locale the
+  // three bytes of an em-dash are not printable — this file has exactly two standalone `—`, which is
+  // the whole of the difference. `test_the_c_locale_accounts_for_its_own_two_words` measures that
+  // rather than leaving it as prose. `issues/system/0227a`.
+  Exec oracle = cli.exec("/bin/sh",
+    string[]("-c", "LC_ALL=C.UTF-8 wc < '" + WC + "'"), u8[0]()).wait();
   t.isTrue(oracle.ran() && oracle.status == 0, "the system wc ran — " + oracle.error);
   if (!oracle.ran()) { cli.remove(dir, true).wait(); return t.report(); }
 
@@ -320,4 +333,74 @@ export string test_stat_and_readdir_reach_the_application_and_are_gated(Core cor
   }
   cli.remove(dir, true).wait();
   return t.report();
+}
+
+// ── The locale the oracle above pins, measured ────────────────────────────────────────────────────
+//
+// **Pinning an oracle's environment is how a differential is made to agree with a bug**, so the pin
+// above owes an account of what it excludes. The account is a quantity: the two locales differ by
+// exactly the number of whitespace-delimited runs in the file that contain no ASCII-printable
+// character, because that is the class GNU `wc` drops in the C locale and `wc.wac` — which tests four
+// byte values and nothing else — keeps.
+//
+// Counted from the file's own bytes rather than written down as 2, so a comment edit that adds or
+// removes an em-dash moves the expectation with it instead of failing.
+export string test_the_c_locale_accounts_for_its_own_two_words(Core core, Cli cli) {
+  T t = T.create();
+  FileResult f = cli.readFile(WC).wait();
+  t.isTrue(f.ok, "read " + WC + " — " + f.error);
+  if (!f.ok) { return t.report(); }
+
+  Exec utf8 = cli.exec("/bin/sh", string[]("-c", "LC_ALL=C.UTF-8 wc -w < '" + WC + "'"), u8[0]()).wait();
+  Exec c = cli.exec("/bin/sh", string[]("-c", "LC_ALL=C wc -w < '" + WC + "'"), u8[0]()).wait();
+  t.isTrue(utf8.ran() && utf8.status == 0, "the UTF-8 oracle ran — " + utf8.error);
+  t.isTrue(c.ran() && c.status == 0, "the C oracle ran — " + c.error);
+  if (!utf8.ran() || !c.ran()) { return t.report(); }
+
+  i32 utf8Words = atoi(trimmed(string.fromBytes(utf8.stdout)));
+  i32 cWords = atoi(trimmed(string.fromBytes(c.stdout)));
+  i32 unprintable = runsWithNoPrintable(f.bytes);
+
+  // The invariant, not the numbers: whatever the file says, the gap between the locales is that class
+  // of run. If this ever fails, the C locale is dropping something else and the comment above is stale.
+  t.eqI32(utf8Words - cWords, unprintable,
+      "the two locales differ by " + itoa(utf8Words - cWords) + " words and the file has "
+      + itoa(unprintable) + " run(s) with no printable character");
+  // And which side ours is on, said once here so the comparison above does not have to imply it.
+  t.isTrue(unprintable > 0,
+      "this file no longer has an unprintable-only run, so the pinned locale above buys nothing "
+      + "and the two oracles now agree — check whether the pin should go");
+  return t.report();
+}
+
+/** Whitespace-delimited runs holding no byte in `!`..`~` — what GNU `wc` drops in the C locale. */
+i32 runsWithNoPrintable(u8[] b) {
+  i32 runs = 0;
+  bool inRun = false;
+  bool printable = false;
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 x = b[i];
+    bool space = x == ' ' || x == '\n' || x == '\t' || x == '\r';
+    if (space) {
+      if (inRun && !printable) { runs++; }
+      inRun = false;
+      printable = false;
+      continue;
+    }
+    inRun = true;
+    if (x >= '!' && x <= '~') { printable = true; }
+  }
+  if (inRun && !printable) { runs++; }
+  return runs;
+}
+
+/** The oracle answers a number; nothing here needs a general parser. */
+i32 atoi(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { continue; }
+    n = n * 10 + (b[i] - '0');
+  }
+  return n;
 }

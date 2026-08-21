@@ -12,6 +12,7 @@
 // message about the wrong thing.
 
 import { Core, Cli, Exec } from "std/platform.wac";
+import { nativeHost, nativeHostWhyNot } from "./built.wac";
 
 /** Where `deno task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
 export string binaryPath(Cli cli) {
@@ -60,16 +61,20 @@ export string scratch(Cli cli, string name) {
  * silence. The warning is the version that is kept. `issues/system/0161`.
  */
 export string nativeBinaryPath(Core core, Cli cli, string who) {
-  string path = cli.cwd().wait() + "/native/target/release/wacland";
-  Exec r = cli.exec("/bin/sh",
-    string[]("-c",
-      "if [ -x '" + path + "' ] && " +
-      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer '" + path +
-      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
-      "cd native && cargo build --release --quiet"), u8[0]()).wait();
-  if (!r.ran() || r.status != 0 || !cli.stat(path).wait().isFile) {
-    core.warn(who + ": SKIPPING the native half — cargo did not build `native`");
+  // **Asks; does not build.** The build is `deno task seed`'s, and `deno task seed:native` does this
+  // crate alone — `issues/system/0208`, where five files each ran their own cargo with five skip
+  // messages and two freshness checks.
+  //
+  // **And the check this replaces did not work.** It was
+  // `find native -name '*.rs' -o -name Cargo.toml -newer P -print -quit`, where `-o` binds looser than
+  // the implicit `-a`: the expression is `(-name '*.rs')` or `(-name Cargo.toml -a -newer P -a -print
+  // -a -quit)`. The first branch carries no action, and `-print` in the second suppresses find's
+  // implicit one — so **a changed `.rs` file printed nothing and no rebuild was triggered.** Only
+  // `Cargo.toml` was ever watched, in the helper that ten test files share.
+  string why = nativeHostWhyNot(cli);
+  if (why != "") {
+    core.warn(who + ": SKIPPING the native half — " + why);
     return "";
   }
-  return path;
+  return nativeHost(cli);
 }

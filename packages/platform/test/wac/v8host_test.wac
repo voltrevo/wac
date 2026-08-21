@@ -152,7 +152,8 @@ string scratch(Cli cli, string name) {
  * Each case used to build its own two into a directory it had just wiped, so a run paid for six
  * builds of `box`'s shells whatever had changed. `issues/system/0213` measures what these files cost
  * in the lane; this is the half of it that is not process starts. The rule is `stale`'s — mtimes, the
- * same one `harness/nativeHost.ts` uses for the crate — and the artefacts are identical whichever
+ * same one `packages/wactest/src/built.wac`'s `nativeHostWhyNot` uses for the crate — and the
+ * artefacts are identical whichever
  * case writes them, which is what makes sharing safe.
  */
 struct Programs {

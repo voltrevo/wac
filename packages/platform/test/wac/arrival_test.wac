@@ -36,6 +36,7 @@
 // Host-side until 2026-08-19, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
 import { builtByDeno, builtProgram, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
@@ -46,20 +47,20 @@ const string ENTRY = "packages/box/src/bin/imaged.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
-/** The native host binary — `wacland`, built when its sources are newer than it. */
+/**
+ * The native host binary, or `""` — **asked for, not built here.** `issues/system/0208`.
+ *
+ * The `find` guard this replaces never fired on a `.rs` change: `-o` binds looser than the implicit
+ * `-a`, so `-print` lived only in the `Cargo.toml` branch and the `*.rs` branch carried no action.
+ * `deno task seed` owns the build; `deno task seed:native` does this crate alone.
+ */
 string nativeBinary(Core core, Cli cli) {
-  string path = root(cli) + "/native/target/release/wacland";
-  Exec r = cli.exec("/bin/sh",
-    string[]("-c",
-      "if [ -x '" + path + "' ] && " +
-      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer '" + path +
-      "' -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
-      "cd native && cargo build --release --quiet"), u8[0]()).wait();
-  if (!r.ran() || r.status != 0 || !cli.stat(path).wait().isFile) {
-    core.warn("arrival: SKIPPING the native half — cargo did not build `native`");
+  string why = nativeHostWhyNot(cli);
+  if (why != "") {
+    core.warn("arrival: SKIPPING the native half — " + why);
     return "";
   }
-  return path;
+  return nativeHost(cli);
 }
 
 string buildOne(Cli cli, bool native, string out) {

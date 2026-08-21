@@ -3,8 +3,8 @@
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
-- **Status:** open — the single-file half is fixed (2026-08-20); the files-based half is not
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** open — the single-file half is fixed (2026-08-20); the files-based half was attempted and reverted (2026-08-21)
+- **Claimed by:** (nobody — agent-a attempted it 2026-08-21, see the last section)
 - **Symptom:** no error
 
 ## Measured
@@ -122,6 +122,25 @@ them, and the ones that do not would have to say they cannot answer rather than 
 they were still reporting the pre-revert compiler's behaviour. `deno task seed` before believing a
 host test about a compiler change.)*
 
+### That blocker is gone — agent-a, 2026-08-21
+
+`issues/lang/0175a` threaded it, for its own reason: `diagnoseGraphIn` accepted a `Res` and never read
+it, so `wac check` was silent about **any** mistake reached through a `@/` import and the build emitted
+an invalid module instead of refusing. Fixing that required exactly the thread this section prices —
+`edgesOfIn` resolving with `resolveVia`, and the `Res` carried down through `diagnoseFilesWithIn` into
+`checkFilesWithIn`, which now resolves the entry's import list with `resolveVia` too.
+
+So the paragraph above is still an accurate account of the cost, and it has been paid. What is left of
+this issue is only the rule itself: **a specifier that resolves to a key no supplied file has should be
+refused at its own token, the way the single-file half already does with `errMissingImportFile` (77).**
+`checkFilesWithIn` now resolves correctly enough to know the difference between "resolved to a file I
+was not given" and "did not resolve at all", which is the distinction that made the plain-resolver
+shortcut wrong.
+
+One caution for whoever writes it, learned expensively next door: a `Res` is four fields, and a test
+that fills only `roots` passes while the real thing still fails — a project on disk has relative keys,
+an absolute root, and `base` set. Build the fixture from what `gather` produces.
+
 ### And it exposed something else, which is fixed
 
 Rung 3 of `corpuscheck_test.wac` reported **64 working files** while the files-based rule was in place,
@@ -145,3 +164,67 @@ now drops code 77 **and counts it**, asserting the count is non-zero, because a 
 diagnostic looks exactly like a checker that stopped producing it. `ours` in `rung3_probe.wac` is left
 alone and a sibling added: `ours` also counts what a rejection program *caught*, and dropping a code
 there would quietly lower recall.
+
+## Attempted and reverted, 2026-08-21 — agent-a, and the blocker is now named exactly
+
+`issues/lang/0175a` threaded the `Res` through `checkFilesWithIn` that morning, which is the cost this
+issue priced. So the obvious rule became writable, and it is three lines in `api.wac`'s import loop:
+
+```wac
+string bare = quoted.len() >= 2 ? quoted.slice(1, quoted.len() - 1) : "";
+if (bare != "" && !isBuiltinSpec(bare) && indexOfPath(paths, target) < 0) {
+  c.addUnresolved(bare);
+}
+```
+
+It reuses the single-file half's field, so the reporting stays in `checkProgram` at the import's own
+token — one rule, not two. `missingimport_test.wac` passed, `corpuscheck_test`'s rung 3 was clean over
+975 files, and every other checker lane passed.
+
+**And it refuses three correct programs.** Found by the gate, not by me:
+
+    mappedspec_test    test_a_mapped_subdir_cannot_import_outside_itself
+                       "an import inside the mapped subdir was refused:
+                        error: no file was supplied at that path"
+    projectspec_test   test_the_root_is_the_importing_files_project_not_the_entrys
+                       test_one_file_reached_two_ways_is_one_module
+
+### Why, and this is the part worth keeping
+
+A plain `./a.wac` **inside a mapped checkout** has no entry in the mapping table. The table is keyed by
+`(importer, specifier)` and the reader recorded only the mapping that reached the checkout, so an import
+*within* it resolves by ordinary path arithmetic — to a key the graph does not hold, because the file is
+keyed under the cache. `resolveVia` is the right resolver and still cannot answer for that case.
+
+So **membership in `paths` is not a sound test for "nobody supplied this"**. The section above priced
+this half as "thread the resolution context, which is real and unavoidable"; that was true and it is
+paid, and the remaining obstacle is a different one, which is worth stating plainly:
+
+> The checker cannot distinguish *"this specifier resolved to a file nobody gave me"* from *"this
+> specifier is one I cannot resolve, and the linker can"*. Both come back as a key not in `paths`.
+
+Two ways out, and this is a decision rather than work:
+
+1. **Have the reader record every mapping it followed**, not only the ones it was asked about, so a
+   mapped checkout's internal imports are in `Res.mapFrom/mapSpec/mapTo` and resolve there. Then
+   membership *is* sound. Cost: the reader walks the checkout, and `Res` grows with the graph.
+2. **Ask the linker instead of re-deriving.** `emit.wac` already knows which imports it could not
+   satisfy — that is where the "an import of a file that was not supplied" sentinel comes from. Give
+   that answer a *position* and let the checker report it, rather than computing membership twice with
+   less information. This is the smaller change and it inverts the issue's original framing, which
+   assumed the checker should decide.
+
+**Recommendation: option 2.** The linker resolves for real, with the mapping table it was built with;
+the checker resolving again is the duplication that made this attempt wrong. The issue's title says the
+diagnostic is the checker's — it should still be *reported* there, at the import's token, but the
+*finding* belongs to the layer that already does the resolution.
+
+### And a process note, because it is the same one this file already carries
+
+The parenthetical above says: *"Two seed builds were spent on the wrong conclusion here: those tests
+drive the `wac` binary, so they were still reporting the pre-revert compiler's behaviour. `deno task
+seed` before believing a host test about a compiler change."*
+
+I ran `mappedspec_test` and `projectspec_test` **before** reseeding, read 9 and 5 passed, and believed
+them. Then reseeded for an unrelated reason and never re-ran them. The warning was in the file I was
+editing, one screen above where I was typing.

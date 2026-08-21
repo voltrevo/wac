@@ -70,16 +70,34 @@ fi
 # was read. Their own suggestion 4. stderr, so stdout stays the one parseable line it was.
 stage() { echo "seed: $*" >&2; }
 
+# **Takes the crate**, because there are two and only one of them had an owner. `native/v8` is the
+# `wac` binary and `native/` is `wacland`, the wasmtime host — separate crates sharing a path
+# dependency on `native/manifest`. `issues/system/0208`.
 cargoBuild() {
-  local out
-  if out=$(cd native/v8 && cargo build --release 2>&1); then
+  local dir="${1:-native/v8}" what="${2:-the wac binary}" out
+  if out=$(cd "$dir" && cargo build --release 2>&1); then
     return 0
   fi
-  echo 'seed: cargo build failed, so the wac binary was not rebuilt.' >&2
-  echo '   The seed module is installed; the binary beside it is older than it. Fix the build below' >&2
-  echo '   and run this again — every `wac` command until then compiles with the previous compiler.' >&2
+  echo "seed: cargo build failed in $dir, so $what was not rebuilt." >&2
+  if [ "$dir" = "native/v8" ]; then
+    echo '   The seed module is installed; the binary beside it is older than it. Fix the build below' >&2
+    echo '   and run this again — every `wac` command until then compiles with the previous compiler.' >&2
+  else
+    echo '   Nine test files run this binary and four more assume it is there; they skip with a' >&2
+    echo '   reason until it builds. Nothing else is affected.' >&2
+  fi
   printf '%s\n' "$out" | tail -25 >&2
   exit 1
+}
+
+# **The wasmtime host, built here because nothing else owned it.** Five test files each ran their own
+# `cd native && cargo build --release`, in two languages, with five skip messages and two different
+# freshness checks — `issues/system/0208`. They ask whether the binary is there and fresh now; this is
+# what makes it so.
+buildNativeHost() {
+  stage "the wasmtime host (cargo build --release in native/)"
+  cargoBuild native "the wasmtime host"
+  echo "      wacland $(stat -c %s native/target/release/wacland) bytes"
 }
 
 cd "$(dirname "$0")/.."
@@ -92,6 +110,13 @@ SEED=native/v8/seed
 
 bootstrap=0
 [ "${1:-}" = "--bootstrap" ] && bootstrap=1
+
+# **`--native-only` for when you touched `native/` and nothing else.** The seed work below is about
+# `native/v8` and takes about 34s; the host is a separate crate and rebuilding it needs none of that.
+if [ "${1:-}" = "--native-only" ]; then
+  buildNativeHost
+  exit 0
+fi
 
 if [ "$bootstrap" -eq 0 ] && [ ! -x "$BIN" ]; then
   echo "no \`wac\` binary at $BIN, so there is nothing to build the compiler with." >&2
@@ -246,6 +271,19 @@ if [ "$converged" -ne 0 ]; then
   cargoBuild
   echo "seed: $(stat -c %s "$SEED/wacc.wasm") bytes, and it is a fixed point after $rounds round(s)"
   echo "      sh $(stat -c %s "$SEED/sh.wasm") bytes, update $(stat -c %s "$SEED/update.wasm") bytes"
+  # **And the other binary — but only if it is already there.** Measured: `cargo build --release` in
+  # `native/` is 7s of CPU and about 10s of wall with *nothing to do*, and this task runs after every
+  # `packages/wacc` edit, for three agents. Paying that on every seed to keep a binary fresh that this
+  # checkout may never run is the same waste `issues/system/0208` was filed about, one level up.
+  #
+  # So: refresh what exists, and let `deno task seed:native` be how it comes to exist. A checkout with
+  # no `wacland` is not silently short of coverage — the six callers warn with the reason and name the
+  # task, and `tools/seedFresh.test.ts` fails if the binary is present and stale.
+  if [ -f native/target/release/wacland ]; then
+    buildNativeHost
+  else
+    stage "no wasmtime host to refresh (\`deno task seed:native\` builds one)"
+  fi
   exit 0
 fi
 

@@ -44,15 +44,21 @@ const api = await waccApi() as any;
  * `api.*` call in `harness/waccBuild.ts` is either timed here or carries a `bench-exempt` line
  * saying why. Add a call to a build and this goes red until you decide which it is.
  */
+// **The `In` variants, because that is what a build calls now.** `harness/waccBuild.ts` passes the
+// project roots through so a `@/` import resolves (`issues/system/0229a`), and this guard went red the
+// moment it did — which is the guard working: timing `diagnoseGraph` while a build calls
+// `diagnoseGraphIn` would have reported the cost of a different function with the same body.
+// An empty `Res` is what the repository's own programs resolve with, none of them having a `@/`.
 const PHASES: [string, (p: string[], s: string[], e: string) => unknown][] = [
-  ["diagnoseGraph", (p, s, e) => api.diagnoseGraph(p, s, e)],
-  ["buildFiles", (p, s, e) => api.buildFiles(p, s, e)],
+  ["diagnoseGraphIn", (p, s, e) => api.diagnoseGraphIn(p, s, api.Res.empty(), e)],
+  ["buildFilesIn", (p, s, e) => api.buildFilesIn(p, s, api.Res.empty(), e)],
 ];
 
 // bench-exempt: describeSeparator — a constant, not compiler work.
-// bench-exempt: covTableFiles — only a coverage build asks for it.
-// bench-exempt: emitFilesCovered — the coverage path's own front.
-// bench-exempt: describeFiles — the coverage path still uses it; timed under SUPERSEDED.
+// bench-exempt: covTableFilesIn — only a coverage build asks for it.
+// bench-exempt: emitFilesCoveredIn — the coverage path's own front.
+// bench-exempt: describeFilesIn — the coverage path still uses it; its root-less twin is timed under
+// SUPERSEDED, and the two differ only in whether the `Res` is empty.
 
 /** What one call replaced, still exported, and timed here so the folds stay visible. */
 const SUPERSEDED: [string, (p: string[], s: string[], e: string) => unknown][] = [

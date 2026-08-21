@@ -30,7 +30,7 @@
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
-import { wacFiles } from "./wacFiles.ts";
+import { wacFilesWithRoots } from "./wacFiles.ts";
 
 export type Point = {
   index: number;
@@ -76,13 +76,14 @@ export type Instrumented = {
  * compiler took it.
  */
 export async function instrument(entry: string): Promise<Instrumented> {
-  const files = await wacFiles(entry);
+  const { files, roots } = await wacFilesWithRoots(entry);
+  const base = Deno.cwd();
   await Deno.mkdir(".cache", { recursive: true });
   const out = `.cache/cov_${entry.replaceAll("/", "_")}.gen.ts`;
 
   let points: Point[];
   if (Deno.env.get("WAC_COV_FROM") === "reference") {
-    const result = wacCompile(files, entry, { coverage: true });
+    const result = wacCompile(files, entry, { coverage: true, roots, base });
     if (!result.ok) {
       throw new Error(`compile failed for ${entry}:\n${result.diagnostics.map(d =>
         `  ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n")}`);
@@ -91,7 +92,7 @@ export async function instrument(entry: string): Promise<Instrumented> {
     points = result.compiled.coverage!;
   } else {
     const { waccArtifacts } = await import("./waccBuild.ts");
-    const art = await waccArtifacts(files, entry, { coverage: true });
+    const art = await waccArtifacts(files, entry, { coverage: true, roots, base });
     await Deno.writeTextFile(out, art.glue);
     points = art.covPoints;
   }

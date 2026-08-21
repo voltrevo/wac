@@ -1,7 +1,7 @@
 # 0208 — nothing owns the wasmtime host's build, so five callers each do it themselves
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — agent-a, 2026-08-21
+- **Closed by:** agent-a, 2026-08-21
 - **Reported by:** agent-a
 - **Date:** 2026-08-18
 - **Kind:** missing feature
@@ -130,3 +130,99 @@ and v8 checks and not the wasmtime one; touching `native/src/main.rs` fails only
 **What this does not fix.** The five callers below still each build it, and a parallel suite can still
 have two of them building the same binary at once — which is the shape of a transient two-host failure
 and is what this issue is for.
+
+## Closed — agent-a, 2026-08-21
+
+All three things the section above asked for, and the count was wrong: **six** callers, not five.
+
+**1. A task owns the build.** `tools/seed.sh` grew `buildNativeHost`, and `cargoBuild` takes a crate
+directory instead of hard-coding `native/v8` — one script owns every cargo invocation here, which is why
+this went there rather than into a second script that would duplicate the cargo preflight.
+`deno task seed:native` builds that crate alone.
+
+**And `deno task seed` refreshes it only if it is already there**, which was the second answer. The
+first was to build it unconditionally, so that a checkout running the documented task had both
+binaries — then I timed it: **7s of CPU, about 10s of wall, with nothing to do**, on a task that runs
+after every `packages/wacc` edit for three agents. That is the same waste this issue was filed about
+(*"2.6s of every run of this test"*), moved one level up and multiplied. A checkout with no `wacland` is
+not quietly short of coverage either: the six callers warn with the reason and name the task, and
+`seedFresh` fails on a binary that is present and stale. Both branches were run — with the binary moved
+aside the seed prints *"no wasmtime host to refresh"* and builds nothing.
+
+**2. The freshness check exists** — `tools/seedFresh.test.ts`, added earlier the same day, fails when
+`wacland` is older than the Rust it is built from.
+
+**3. The call sites ask.** `packages/wactest/src/built.wac` gained `nativeHost` and `nativeHostWhyNot`,
+which answer `""` or the reason, and every caller became a `stat`:
+
+| was | now |
+|---|---|
+| `packages/wactest/src/host.wac`'s `nativeBinaryPath` | asks — **and this one is shared by ten files** |
+| `packages/raster/test/wac/hosts_test.wac` | asks, and its private 25-line walk is gone |
+| `packages/platform/test/wac/native_hostfs_test.wac` | asks |
+| `packages/platform/test/wac/native_examples_test.wac` | asks |
+| `packages/platform/test/wac/native_test.wac` | asks |
+| `packages/platform/test/wac/arrival_test.wac` | asks |
+| `tools/corpusHosts.ts` | asks, and *fails* rather than skipping — a corpus comparison with one host missing has nothing to compare |
+
+`harness/nativeHost.ts` is **deleted**. It was the TypeScript twin, 60 lines with a memo and a walk, and
+it had **no importers at all** — the move of those tests to wac left it behind, and three comments
+citing it as "the rule" were the only thing keeping it alive. Those now name the implementation that
+exists.
+
+### Two bugs found by consolidating, which is the argument for consolidating
+
+**The shared freshness guard never fired on a `.rs` change.** Five of the six used
+
+    find native -name '*.rs' -o -name Cargo.toml -newer P -print -quit
+
+and `-o` binds looser than the implicit `-a`, so the expression is `(-name '*.rs')` or
+`(-name Cargo.toml -a -newer P -a -print -a -quit)`. The first branch carries no action, and `-print`
+in the second suppresses find's implicit one — **so editing a `.rs` file printed nothing and no rebuild
+was triggered.** Only `Cargo.toml` was ever watched, including in the helper ten test files share.
+
+**And the two walks differed in one line.** `packages/raster`'s private `newestUnder` skipped `target/`;
+`packages/wactest/src/built.wac`'s did not, and `target/` is where the binary being compared against
+lives — so reusing the shared one would have answered "something is newer than the binary" every single
+time. That is now one implementation, `newestUnderExcept`, with the exclusion as an argument and the
+reason in its docstring.
+
+### Verified
+
+`hosts_test` 1, `native_shell_test` 3, `native_examples_test` 1, `native_hostfs_test` 7, `native_test` 3,
+`arrival_test` 3, and `builtinspec_test` 5 as a caller of the shared helper — all passing.
+`deno task seed:native` builds it in isolation; `deno task docs` is green with the new task documented in
+`CLAUDE.md`.
+
+## The first version of the shared check was wrong, and the gate said so — agent-a, 2026-08-21
+
+`nativeHostWhyNot` compared the binary against **a walk of `native/`, `target/` excluded**. That is
+wrong, and permanently so: `native/v8/seed/*.wasm` is the **seed's own output**, written by every
+`deno task seed`, and it lives under `native/` without being inside a `target/`. Cargo does not relink a
+binary that has nothing to rebuild, so after any seed the host looked older than its "sources" for ever.
+
+Six callers skipped their native halves, which is invisible — and two of them *assert* the native half
+ran, which is not:
+
+    FAIL test_wacsh_over_the_real_filesystem_agrees_with_gnu_on_both_hosts
+      — the native half ran; without cargo only the Deno half above was checked: expected true
+
+**Those two assertions are the reason this was a five-minute diagnosis instead of a silent regression.**
+Four of the six only warn, and a warned skip passes. Whoever wrote *"the native half ran"* as an
+assertion rather than a log line is the reason the sweep that broke them could not land.
+
+Fixed by naming the crate's inputs instead of walking its directory — `native/src`,
+`native/manifest/src`, `native/Cargo.toml`, `native/Cargo.lock`, `native/build.rs`, which is
+`tools/seedFresh.test.ts`'s list, and that file had it right all along. `native/v8` is the other crate
+and has no business in this answer.
+
+Canaried by restoring the blanket walk with the seed's output freshly touched: `native_hostfs_test`
+fails with the gate's exact message, and 7 of 7 pass with the fix.
+
+### And a second bug the same list exposed
+
+`newestUnder` asks `readDir`, which answers null for a plain file — so `Cargo.toml`, `Cargo.lock` and
+`build.rs` in that list were **silently contributing 0**, and a lockfile change would never have marked
+the host stale. `newestOf` stats first and walks only a directory. A list that mixes files and
+directories needs a helper that knows which is which, and the one that already existed did not say it
+only took directories.

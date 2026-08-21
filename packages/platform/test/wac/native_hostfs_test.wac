@@ -42,6 +42,7 @@
 // and the three answers a case compares run concurrently over three trees rather than in turn.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, FileResult, Pending } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -62,17 +63,22 @@ string tooLong() {
 string root(Cli cli) { return cli.cwd().wait(); }
 string built(Cli cli) { return root(cli) + "/" + BUILT; }
 
-/** The native host binary — `wacland`, built when its sources are newer than it. */
+/**
+ * The native host binary, or `""` — **asked for, not built here.**
+ *
+ * This ran its own `cd native && cargo build --release --quiet` behind a `find` guard, and the guard
+ * did not work: in `find native -name '*.rs' -o -name Cargo.toml -newer P -print -quit`, `-o` binds
+ * looser than the implicit `-a`, so the expression is `(-name '*.rs')` or
+ * `(-name Cargo.toml -a -newer P -a -print -a -quit)`. The first branch carries no action and the
+ * presence of `-print` in the second suppresses find's implicit one — so **a changed `.rs` file
+ * printed nothing and the rebuild never triggered**. Only `Cargo.toml` was ever watched.
+ *
+ * `deno task seed` owns this build now, `seed:native` does just this crate, and
+ * `tools/seedFresh.test.ts` fails when the binary is older than its sources — over the whole crate,
+ * recursively. `issues/system/0208`.
+ */
 string nativeBinary(Cli cli) {
-  string path = root(cli) + "/native/target/release/wacland";
-  Exec r = cli.exec("/bin/sh",
-    string[]("-c",
-      "if [ -x " + quoted(path) + " ] && " +
-      "[ -z \"$(find native -name '*.rs' -o -name Cargo.toml -newer " + quoted(path) +
-      " -print -quit 2>/dev/null)\" ]; then exit 0; fi; " +
-      "cd native && cargo build --release --quiet"), u8[0]()).wait();
-  if (!r.ran() || r.status != 0) { return ""; }
-  return cli.stat(path).wait().isFile ? path : "";
+  return nativeHostWhyNot(cli) == "" ? nativeHost(cli) : "";
 }
 
 /**

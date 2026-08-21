@@ -16,7 +16,7 @@
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
 import { waccArtifacts } from "../../harness/waccBuild.ts";
-import { wacFiles } from "../../harness/wacFiles.ts";
+import { wacFilesWithRoots } from "../../harness/wacFiles.ts";
 // Imported for its side effect as much as for `COV_DUMP_DIR`'s twin: under `WAC_PROFILE` it wraps
 // `Deno.test` so that what a *built* program executes is attributed to whichever test ran it. Every
 // subprocess-based test file reaches this module — that is how it builds the binary it runs — and none
@@ -414,7 +414,10 @@ export async function buildApp(
     throw new Error("a coverage build cannot be optimised: wasm-opt may renumber the branches its counters index");
   }
   const optimize = opts.optimize ?? false;
-  const files = await wacFiles(entry);
+  // **With the roots** — see `buildNative`. Both compilers below need to be told which project each
+  // file sits in, or a `@/` import resolves to a key nothing supplied. GitHub issue 22 finding 4.
+  const { files, roots } = await wacFilesWithRoots(entry);
+  const base = Deno.cwd();
   // A page and a worker bundle are not runnable by themselves, so neither gets the execute bit.
   const executable = !workerOnly && target !== "browser";
 
@@ -423,14 +426,14 @@ export async function buildApp(
     const artifact = await cached("app", key, "", async (tmp) => {
       await Deno.writeTextFile(
         tmp,
-        await produceApp(entry, files, grants, target, workerOnly, coverage, optimize, key),
+        await produceApp(entry, files, roots, base, grants, target, workerOnly, coverage, optimize, key),
       );
     });
     await place(await Deno.readTextFile(artifact), out, executable);
     return;
   }
   await place(
-    await produceApp(entry, files, grants, target, workerOnly, coverage, optimize),
+    await produceApp(entry, files, roots, base, grants, target, workerOnly, coverage, optimize),
     out,
     executable,
   );
@@ -560,6 +563,9 @@ async function optimized(wasm: Uint8Array): Promise<Uint8Array> {
 async function produceApp(
   entry: string,
   files: Map<string, string>,
+  /** The project root each file sits in, and the directory relative keys are measured from. */
+  roots: Map<string, string>,
+  base: string,
   grants: Grants,
   target: Target,
   workerOnly: boolean,
@@ -586,11 +592,16 @@ async function produceApp(
   let covLines: string[];
   let exportNames: string[];
   if (Deno.env.get("WAC_APP_FROM") !== "reference") {
-    const a = await waccArtifacts(files, entry, { coverage, optimize: optimize ? optimized : undefined });
+    const a = await waccArtifacts(files, entry, {
+      coverage,
+      optimize: optimize ? optimized : undefined,
+      roots,
+      base,
+    });
     ({ wasm, glue, covLines } = a);
     exportNames = a.exports;
   } else {
-    const r = wacCompile(files, entry, coverage ? { coverage: true } : {});
+    const r = wacCompile(files, entry, { roots, base, ...(coverage ? { coverage: true } : {}) });
     if (!r.ok) {
       throw new Error(
         `${entry} did not compile:\n` +

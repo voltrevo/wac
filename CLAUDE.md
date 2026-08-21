@@ -57,6 +57,7 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
     deno task map --check                             MAP.md is generated; staleness is a failure
     deno task seed                                    rebuild the compiler inside the `wac` binary
     deno task seed:bootstrap                          ...from a clone with no binary yet
+    deno task seed:native                             just `wacland`, the wasmtime host
     deno task wac:install                             build it and put it on PATH — $WAC_HOME
     deno task wac:build -o ./wac                      ...or just build one, installing nothing
     deno task wac:uninstall [--keep-cache]            and take it away again
@@ -78,6 +79,15 @@ build the compiler again, is byte-identical — and since 2026-08-17 the command
 rather than asserting it, and puts the previous seed back rather than keep one that is not
 (`tools/seed.sh`, `design/lang/0009` D2). `deno task` is only the task runner here; nothing in
 that command needs a JavaScript host.
+
+**And since 2026-08-21 it refreshes `wacland`**, the wasmtime host in `native/` — a separate crate that
+had no owner, so six test files each ran their own `cd native && cargo build --release` with their own
+skip message and their own freshness check. They ask now rather than build. `deno task seed:native` is
+how the binary first comes to exist; `deno task seed` rebuilds it **only if it is already there**,
+because cargo costs 7s of CPU and about 10s of wall in that crate with nothing to do, and paying it on
+every seed for a binary this checkout may never run is the waste `issues/system/0208` is about. A
+checkout without one is not quietly short of coverage: the six callers warn with the reason and name the
+task. `issues/system/0208`.
 
 **It builds all three payloads, and costs about 34s.** The binary carries a compiler, a shell and a
 fetcher — `wac build`/`run`/`test`, `wac sh`, `wac update` — and until 2026-08-20 this script wrote

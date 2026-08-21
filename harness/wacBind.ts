@@ -35,10 +35,10 @@ import { wacCompile } from "wac/wacCompile.ts";
 // 'packages/wacc/src/api.wac'` and a ten-frame stack. GitHub issue 21, `issues/system/0228a`.
 import { ROOT } from "./programs.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
-import { wacFiles } from "./wacFiles.ts";
+import { wacFilesWithRoots } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
 import { cached, compilerKeyParts, contentKey, filesParts, harnessKeyParts, hashDir } from "./buildCache.ts";
-import { type CovPoint, parseCovTable } from "./waccBuild.ts";
+import { type CovPoint, parseCovTable, type WaccApi as WaccBuildApi, waccRes, type WaccRes } from "./waccBuild.ts";
 import {
   generate as waccGenerate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs,
   unsupported,
@@ -63,9 +63,26 @@ const tempName = (base: string) => `${base}.${crypto.randomUUID()}.tmp`;
  * read: that is the case where a stale artifact does the most damage, since whoever is editing the
  * compiler would be shown their previous build and told their fix did nothing.
  */
+/**
+ * The graph a bind works from: the files, **and how their imports resolve.**
+ *
+ * One parameter rather than three, because the alternative is a `files` argument with two optional
+ * companions that a caller can leave off — which is what `issues/system/0229a` was: `wacFiles` returns
+ * the files and drops the project roots it had to find, and 18 of 20 callers took the smaller answer
+ * because nothing about the shorter name said it was lossy. A caller here cannot construct a `Graph`
+ * without saying what the roots are.
+ */
+type Graph = {
+  files: Map<string, string>;
+  /** The project root each path sits in, for `@/` — `design/lang/0009` D7. Empty when there is none. */
+  roots: Map<string, string>;
+  /** The directory relative keys are measured from. */
+  base: string;
+};
+
 async function bindKey(
   entry: string,
-  files: Map<string, string>,
+  g: Graph,
   opts: BindOpts,
 ): Promise<string | null> {
   const compiler = await compilerKeyParts();
@@ -87,7 +104,16 @@ async function bindKey(
     ...await hashDir(`${ROOT}/packages/wacc/src`, ".wac"),
     ...await hashDir(`${ROOT}/packages/wacc/tools`, ".ts"),
   ];
-  return await contentKey(["bind", entry, from, ...wacc, ...compiler, ...harness, ...filesParts(files)]);
+  // The roots are in the key for the reason the artefact cache's are: an entry written before them
+  // holds glue built from a graph whose `@/` imports resolved to nothing, and `filesParts` covers file
+  // contents, which a project's root is not among. Sorted, because a `Map` iterates by insertion.
+  const resolution = [
+    ...[...g.roots].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([p, r]) => `root ${p} ${r}`),
+    `base ${g.base}`,
+  ];
+  return await contentKey(
+    ["bind 2", entry, from, ...wacc, ...compiler, ...harness, ...resolution, ...filesParts(g.files)],
+  );
 }
 
 /**
@@ -108,14 +134,15 @@ async function bindKey(
  * Opt-in either way, so a normal suite run is untouched.
  */
 async function waccWasm(
-  files: Map<string, string>,
+  g: Graph,
   entry: string,
   opts: BindOpts,
 ): Promise<Uint8Array | null> {
   if (wasmFrom(opts) !== "wacc") return null;
   const api = await waccApi();
-  const paths = [...files.keys()];
-  const sources = paths.map((p) => files.get(p)!);
+  const paths = [...g.files.keys()];
+  const sources = paths.map((p) => g.files.get(p)!);
+  const res = waccRes(api, paths, g.roots, g.base);
 
   // **The checker first, which this path never asked.** It asked only what the *emitter* declined,
   // so a local `deno test <file>` compiled things the gate refused — a same-type cast, and an import
@@ -123,7 +150,7 @@ async function waccWasm(
   // private surface and being told nothing. Both cost a ten-minute suite to discover, and neither
   // was a compiler disagreement: `packages/platform/build.ts` diagnoses and this did not.
   // `issues/lang/0110`.
-  const diagnostics = api.diagnoseGraph(paths, sources, entry);
+  const diagnostics = api.diagnoseGraphIn(paths, sources, res, entry);
   if (diagnostics !== "") {
     const lines = diagnostics.split("\n").filter((l) => l !== "").map((l) => {
       const [file, line, col, phase, message, , hint] = l.split("\t");
@@ -132,21 +159,30 @@ async function waccWasm(
     throw new Error(`wacc did not compile ${entry}:\n${lines.join("\n")}`);
   }
 
-  const blocked = api.blockedFiles(paths, sources, entry);
+  const blocked = api.blockedFilesIn(paths, sources, res, entry);
   if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
-  return api.emitFiles(paths, sources, entry);
+  return api.emitFilesIn(paths, sources, res, entry);
 }
 
+/**
+ * **The `In` variants throughout, because a bind resolves a real graph.**
+ *
+ * This declared the root-less half and called it, so binding a package whose graph reaches through a
+ * `@/` import produced glue built from a file the compiler never saw — the same fault
+ * `issues/system/0229a` fixed a layer over, and the last caller of it. Nothing in *this* repository
+ * has such an import, which is why it cost nothing here and would cost an outsider everything.
+ */
 type WaccApi = {
-  emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
+  Res: WaccBuildApi["Res"];
+  emitFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => Uint8Array;
   /** Every file's diagnostics, not just the entry's — `issues/lang/0118`. */
-  diagnoseGraph: (paths: string[], sources: string[], entry: string) => string;
-  blockedFiles: (paths: string[], sources: string[], entry: string) => string;
-  exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
-  bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
+  diagnoseGraphIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  blockedFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  exportSigsFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  bindTypesFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
   /** The instrumented build and the table that says what each of its counters is. */
-  emitFilesCovered: (paths: string[], sources: string[], entry: string) => Uint8Array;
-  covTableFiles: (paths: string[], sources: string[], entry: string) => string;
+  emitFilesCoveredIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => Uint8Array;
+  covTableFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
 };
 let waccCached: WaccApi | null = null;
 
@@ -219,15 +255,16 @@ function wasmFrom(opts: BindOpts = {}): "wacc" | "reference" {
  * coverage" among 380. `issues/system/0163`.
  */
 async function waccGlue(
-  files: Map<string, string>,
+  g: Graph,
   entry: string,
   opts: BindOpts,
   coverage = false,
 ): Promise<{ ts: string; points: CovPoint[] } | null> {
   if (bindFrom(opts) !== "wacc") return null;
   const api = await waccApi();
-  const paths = [...files.keys()];
-  const sources = paths.map((p) => files.get(p)!);
+  const paths = [...g.files.keys()];
+  const sources = paths.map((p) => g.files.get(p)!);
+  const res = waccRes(api, paths, g.roots, g.base);
 
   // **The checker first, which this path never asked.** It asked only what the *emitter* declined,
   // so a local `deno test <file>` compiled things the gate refused — a same-type cast, and an import
@@ -235,7 +272,7 @@ async function waccGlue(
   // private surface and being told nothing. Both cost a ten-minute suite to discover, and neither
   // was a compiler disagreement: `packages/platform/build.ts` diagnoses and this did not.
   // `issues/lang/0110`.
-  const diagnostics = api.diagnoseGraph(paths, sources, entry);
+  const diagnostics = api.diagnoseGraphIn(paths, sources, res, entry);
   if (diagnostics !== "") {
     const lines = diagnostics.split("\n").filter((l) => l !== "").map((l) => {
       const [file, line, col, phase, message, , hint] = l.split("\t");
@@ -244,13 +281,13 @@ async function waccGlue(
     throw new Error(`wacc did not compile ${entry}:\n${lines.join("\n")}`);
   }
 
-  const blocked = api.blockedFiles(paths, sources, entry);
+  const blocked = api.blockedFilesIn(paths, sources, res, entry);
   if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
   const wasm = coverage
-    ? api.emitFilesCovered(paths, sources, entry)
-    : api.emitFiles(paths, sources, entry);
-  const wire = api.bindTypesFiles(paths, sources, entry);
-  const sigs = parseSigs(api.exportSigsFiles(paths, sources, entry));
+    ? api.emitFilesCoveredIn(paths, sources, res, entry)
+    : api.emitFilesIn(paths, sources, res, entry);
+  const wire = api.bindTypesFilesIn(paths, sources, res, entry);
+  const sigs = parseSigs(api.exportSigsFilesIn(paths, sources, res, entry));
   const declined = unsupported(sigs, parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire));
   if (declined.length > 0) {
     throw new Error(`wacc's bindgen declined ${entry}: ${declined.join("; ")}`);
@@ -265,19 +302,19 @@ async function waccGlue(
     // Parsed by `harness/waccBuild.ts`, not here: a counter index means nothing without this table,
     // so a second copy of the parse would put attribution wrong everywhere while every count stayed
     // plausible.
-    points: coverage ? parseCovTable(api.covTableFiles(paths, sources, entry), entry) : [],
+    points: coverage ? parseCovTable(api.covTableFilesIn(paths, sources, res, entry), entry) : [],
   };
 }
 
 /** Compile and bind, throwing with the diagnostics a person needs. Shared by both paths. */
 async function generate(
-  files: Map<string, string>,
+  g: Graph,
   entry: string,
   opts: BindOpts,
 ): Promise<string> {
-  const whole = await waccGlue(files, entry, opts);
+  const whole = await waccGlue(g, entry, opts);
   if (whole !== null) return whole.ts;
-  const result = wacCompile(files, entry);
+  const result = wacCompile(g.files, entry, { roots: g.roots, base: g.base });
   if (!result.ok) {
     const lines = result.diagnostics.map((d) =>
       `  ${d.file}:${d.line}:${d.col} [${d.phase}] ${d.message}`);
@@ -286,7 +323,7 @@ async function generate(
   for (const d of result.diagnostics) {
     console.warn(`warning: ${d.file}:${d.line}:${d.col} ${d.message}`);
   }
-  const wasm = await waccWasm(files, entry, opts);
+  const wasm = await waccWasm(g, entry, opts);
   return wacBindgen(wasm === null ? result.compiled : { ...result.compiled, wasm });
 }
 
@@ -316,14 +353,15 @@ export async function wacBind(
   const profiling = profileDir && !opts.asTool;
   // Before the compiler is asked to do anything, so a stale checkout says so itself
   // rather than surfacing as a type error in whichever package used a new feature.
-  const files = await wacFiles(entry);
+  const { files, roots } = await wacFilesWithRoots(entry);
+  const g: Graph = { files, roots, base: Deno.cwd() };
 
   // The fast path: this exact program, compiled by this exact compiler, is already on disk.
   if (!profiling) {
-    const key = await bindKey(entry, files, opts);
+    const key = await bindKey(entry, g, opts);
     if (key !== null) {
       const path = await cached("bind", key, ".gen.ts", async (tmp) => {
-        await Deno.writeTextFile(tmp, await generate(files, entry, opts));
+        await Deno.writeTextFile(tmp, await generate(g, entry, opts));
       });
       return await import(`${Deno.cwd()}/${path}`) as Record<string, unknown>;
     }
@@ -336,10 +374,10 @@ export async function wacBind(
   // The same compiler the cached path above would have used, instrumented. Only when that path is
   // wacc — `bindFrom` may be pinned to the reference, and then this stays the reference too, so the
   // two never disagree about what was measured.
-  const fromWacc = profiling ? await waccGlue(files, entry, opts, true) : null;
+  const fromWacc = profiling ? await waccGlue(g, entry, opts, true) : null;
   const result = fromWacc !== null
     ? null
-    : wacCompile(files, entry, profiling ? { coverage: true } : {});
+    : wacCompile(files, entry, { roots, base: g.base, ...(profiling ? { coverage: true } : {}) });
 
   if (result !== null && !result.ok) {
     const lines = result.diagnostics.map(d =>

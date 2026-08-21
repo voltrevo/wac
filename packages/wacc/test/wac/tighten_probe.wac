@@ -1,0 +1,68 @@
+// What the emitter declines across wacc's own sources, by name.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/tighten_probe.wac
+//
+// **The instrument `issues/lang/0170a` says it did not have.** Tightening `typeOfE` collapsed
+// self-hosting there, over four rounds, and the note reads: *"There is no way to find round 4 from
+// here. The compiler that would tell you which expression it declined is the compiler that no longer
+// builds."*
+//
+// That is true of a *seed*, and only of a seed. A `wac test` file importing `../../src/api.wac`
+// compiles the **working tree** with whatever seed is installed, so a tightened emitter can be asked
+// what it declines while the seed stays the last good one. Nothing here installs anything.
+//
+// It prints rather than asserts, and it prints through a returned reason because that is the only
+// channel a wac test has. Run it before a change and after, and the difference is the list of
+// legitimate expressions the tightening refused.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { blockedFiles } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { closureOf } from "./source_probe.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string ENTRY = "packages/wacc/src/api.wac";
+
+export string test_what_the_emitter_declines_across_waccs_own_sources(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "tighten_probe");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  i32 entryAt = -1;
+  for (i32 i = 0; i < c.paths.len(); i++) { if (c.paths[i] == ENTRY) { entryAt = i; } }
+  t.isTrue(entryAt >= 0, ENTRY + " is in the corpus");
+  if (entryAt < 0) { return t.report(); }
+
+  // `/`-prefixed, because `resolved` answers with a leading slash — the same reason
+  // `selfhostemit_test.wac` does it, and passing plain paths makes every closure the entry alone.
+  string[] keys = string[c.paths.len()](fill: "");
+  for (i32 i = 0; i < c.paths.len(); i++) { keys[i] = "/" + c.paths[i]; }
+  i32[] near = closureOf(keys, c.sources, entryAt);
+  t.isTrue(near.len() >= 8, "only " + itoa(near.len()) + " sources in wacc's closure");
+  if (near.len() < 8) { return t.report(); }
+
+  string[] cp = string[near.len()](fill: "");
+  string[] cs = string[near.len()](fill: "");
+  for (i32 i = 0; i < near.len(); i++) {
+    cp[i] = keys[near[i]];
+    cs[i] = c.sources[near[i]];
+  }
+
+  i32 declined = 0;
+  string rows = "";
+  for (i32 i = 0; i < cp.len(); i++) {
+    string why = blockedFiles(cp, cs, cp[i]);
+    if (why == "") { continue; }
+    declined = declined + 1;
+    rows = rows + "    " + cp[i] + ": " + why + "\n";
+  }
+  // **Reported through `core.warn` and passing**, not through a returned reason. A probe that says
+  // what it found by failing is a red test for anyone who runs it, and `tools/runTests.ts` picking up
+  // one more glob is all it would take. Printing on success is the rule this repository learned the
+  // expensive way — an instrument that reports by failing a build installs itself as the seed.
+  core.warn("tighten_probe: " + itoa(declined) + " of " + itoa(cp.len())
+      + " of wacc's own sources declined" + (rows == "" ? "" : "\n" + rows));
+  return t.report();
+}

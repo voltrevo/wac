@@ -517,3 +517,130 @@ rebuild. Prefer appending to a message the build already prints.
 Unchanged by this: the 25 expression-level bails with no recorded reason, `""` as "I don't know", and
 the `emitFiles*` family having no channel to report through — the recommendation there is still to
 leave it until something in-process actually loses an export.
+
+## The negative corpus exists now — agent-a, 2026-08-21
+
+The section above calls it "probably the highest-yield single addition here", and it is
+`packages/wacc/test/wac/illtyped_test.wac`: all fourteen programs, with the refusal recorded.
+
+Re-measured before writing it rather than copied from the table above, because the export-parity net was
+widened underneath that table:
+
+    refused by the checker    14 of 14
+    declined by the emitter    7
+    silent in both             0
+
+So the four are fixed — a02 `s[0] - 1`, a03 `i32 n = s[0]`, a04 `b ? s : 1`, a08 `p.v()` all draw a
+diagnostic now. What the file adds is that they cannot go back to being silent without a test saying so,
+which nothing said before: the corpus is this repository's files plus `spec/cases/*.wac`, and **every one
+of those is meant to compile**, so a checker's corpus had no way to measure what the checker fails to
+refuse.
+
+Three tests rather than one loop:
+
+- every program is refused by the checker — the count and not the code, since several draw two and
+  which rule fires is the checker's business;
+- the four that used to build with the function missing, named one per line, because a loop failing on
+  "a02" says less than a name that is the reason;
+- **no program is accepted by both** the checker and the emitter, which is the durable one. Seven are
+  not declined by the emitter and that is right — the checker refuses them first and `example/wacc.wac`
+  checks before it emits. A row going silent in *both* is a module built with its exported function
+  missing and an exit code of 0, whatever mechanism did it.
+
+Canaried by putting a legal program (`return a + 1;`) into the ill-typed list: two of the three tests
+fail and name it. That is the harness being checked rather than the compiler — a list-driven test whose
+list is wrong reports nothing.
+
+### What is still open here, and the order is unchanged
+
+Steps 2 to 4 — `typeOfE` guessing on `Binary` and `Ternary`, `""` travelling through 38 unguarded call
+sites as if it were a type, and the missing cases. The reason the order was "report first, then tighten"
+still holds, and the reporting is in better shape than it was: the fourteen are refused, this file holds
+them there, and a tightening round that collapses self-hosting now has a negative corpus to calibrate
+against instead of a rebuild per guess.
+
+## And the instrument the tightening needs, which now exists — agent-a, 2026-08-21
+
+The section above ends *"there is no way to find round 4 from here. The compiler that would tell you
+which expression it declined is the compiler that no longer builds."* That is true of a **seed** and
+only of a seed. Two instruments were built instead, and neither installs anything:
+
+**1. `packages/wacc/test/wac/tighten_probe.wac`** — a `wac test` file importing `../../src/api.wac`
+compiles the *working tree* with whatever seed is installed, so a tightened emitter can be asked what it
+declines while the seed stays the last good one. It runs `blockedFiles` over wacc's own closure and
+prints each decline by file and reason. Baseline: **0 of 17**, in seconds. It reports through
+`core.warn` and passes, because an instrument that reports by failing is a red test for whoever runs it
+next — and in this toolchain a probe that reports by failing a build installs itself as the seed.
+
+**2. `packages/wacc/test/emitSweep.test.ts` now asserts its decline count is zero.** That sweep runs
+4501 generated programs through both compilers and compares answers, and it had `declined++` as a bare
+number in a `console.log`. Every one of those is a program the reference **just accepted** — the check
+is three lines below `r.ok` — so "declining is honest and measured elsewhere" was doing a lot of work
+for a counter nobody read. Measured: **0 declined of 4102 compared.** Zero is assertable, so it is
+asserted, and a failure now lists up to ten programs with the decline reason and the source.
+
+Canaried by forcing a decline on the `as@` cells: 4054 still compared, 48 declined, and the message is
+
+    48 program(s) the reference compiled were declined by this emitter:
+      cast as@ i32->u32: CANARY a forced decline in export u32 f() { i32 x = 0; return x as@ u32; }
+
+The first attempt at that canary inverted the condition instead, which stopped *all* comparisons and
+tripped the older `compared < 1000` guard — so it proved the wrong assertion. Worth recording: the two
+guards protect different things and only a subset-canary tells them apart.
+
+### Which changes the order again, in a useful direction
+
+Step 2 was "`typeOfE` must not guess", and the reason it has not been done is no longer the missing
+report. It is that **there is no failing case for it**: all fourteen programs are refused, the rung 3
+differential already grids every operator against every type against the reference
+(`typecheck_test.wac`, 50-odd slices including `test_rung3_every_operator_against_every_type`), and the
+emit sweep declines nothing. So a tightening today would be a change with no reproduction, which is the
+one thing this repository's rules are firmest about.
+
+What is missing is a case, not a fix. The place to look is where the two differentials do *not* meet:
+rung 3 compares the **checker** against the reference, and the sweep compares **answers** for programs
+both accept. A program the checker accepts, the emitter emits, and whose *result* differs only in a
+type the guess got wrong would be caught by the sweep only if the generator emits that shape — and
+`generateEmit.ts` is a cast cross-product. Extending it to mixed-type binary and ternary operands is the
+next concrete step, and it is a generator change rather than a compiler one.
+
+## Root cause 2 is bounded, measured — agent-a, 2026-08-21
+
+The step named above ("extend `generateEmit.ts` to mixed-type binary and ternary operands") is done, and
+the result says something about the fix rather than finding a bug.
+
+**Every operator family in that generator declared `T x` and `T y`.** So the sweep — 4501 programs —
+had never handed a binary operator two different types, nor an operator a bare literal, in its whole
+existence. Four families added; the reference's verdict on each is the interesting part:
+
+| family | accepted | refused | what it says |
+|---|---:|---:|---|
+| mixed-width binary (`i32 x; f64 y; x + y`) | **0** | 420 | wac has no valid mixed-width binary |
+| a typed operand and a bare literal (`x + 3`) | **324** | 0 | entirely legal, and was untested |
+| a packed element as an operand (`b[1] - 3`) | 80 | 0 | round 2's case, legal, now covered |
+| ternaries, same-type and mixed branches | 54 | 30 | mixed refused, same-type fine |
+
+Sweep after: **5397 programs, 4540 compared, 0 mismatched, 0 declined.** Everything agrees.
+
+### Which changes what step 2 is
+
+`typeOfE(Binary)` returns whichever operand it could type first. **It cannot produce a wrong answer for
+a valid program**, because there is no valid program whose operands have different types — the reference
+refuses all 420. So the guess is not a wrong-answer bug at all: it is a *diagnostic* bug, and the harm
+recorded at the top of this issue is exactly that shape — the safety net asks "do I know the type?",
+gets a confident answer, and does not fire.
+
+That also names the calibration set a tightening has to satisfy, which the four rounds were discovering
+one at a time by rebuilding:
+
+- **324 literal-operand programs** — where the guess is load-bearing and *correct*: one side genuinely
+  has no type of its own, and answering with the other side's is the rule, not a guess.
+- **80 packed programs** — `isNumericTy` does not name `u8`/`i16`, which is what round 2 tripped on.
+- **48 string-concatenation programs** — round 1's case. I wrote here that the generator could not
+  reach it "because `f` must return a number", and that was wrong: line 134 has generated
+  `export i32 f() { return (a + b).len(); }` all along, 48 of them, all accepted. A claim about what a
+  generator cannot do is worth grepping for before writing down.
+
+All **452** are in the sweep now, so a round that refuses them fails in 48 seconds with the programs
+named, instead of after a seed rebuild. The remaining unknown is round 4, which was never diagnosed — and the
+first thing to do with it is no longer to guess, but to run `tighten_probe.wac` and read the list.

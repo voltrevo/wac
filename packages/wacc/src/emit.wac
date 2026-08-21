@@ -3491,6 +3491,11 @@ export u8[] emitLinked(string[] paths, string[] sources, string entry) {
   return emitLinkedWith(paths, sources, entry, false);
 }
 
+/** `emitLinked` with the project root each file sits in — `design/lang/0009` D7. */
+export u8[] emitLinkedIn(string[] paths, string[] sources, Res res, string entry) {
+  return emitLinkedWith2(paths, sources, res, entry, false, false, false);
+}
+
 u8[] emitLinkedWith(string[] paths, string[] sources, string entry, bool checked) {
   Res res = Res.empty();
   return emitLinkedWith2(paths, sources, res, entry, checked, false, false);

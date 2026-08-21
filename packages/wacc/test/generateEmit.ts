@@ -1043,5 +1043,111 @@ export function generateEmit(): Cell[] {
     `P at(P[] a, i32 i) { return a[i]; }\n` +
     `export i32 f() { P[] a = P[2](fill: P(1)); a[1] = P(10); i32 i = 0; return at(a, i++).v * 100 + i; }`);
 
+  // ── Operands whose types differ, which nothing above generates ────────────────────────────────
+  //
+  // **Every operator family above writes `T x` and `T y`.** So the whole sweep, 4501 programs, has
+  // never handed a binary operator two different types — and `typeOfE(Binary)` in `emit.wac` answers
+  // with *whichever operand it could type first*, with no check that the two agree or that the
+  // operator accepts them. `issues/lang/0170a` root cause 2, and the reason it is unfixed is that
+  // nothing produces a failing case. This is the family that would.
+  //
+  // Most of these are not valid wac and the reference refuses them, which costs a skip and nothing
+  // else. The ones it accepts are the interesting ones: mixed-width arithmetic that the language does
+  // allow, where a guessed type is a real answer that can be wrong.
+  const MIXED = ["i32", "u32", "i64", "u64", "f32", "f64"];
+  for (const a of MIXED) {
+    for (const b of MIXED) {
+      if (a === b) continue;
+      for (const op of ARITH.concat(CMP)) {
+        const va = VALUES[a][1] ?? "1";
+        const vb = VALUES[b][1] ?? "1";
+        // The return type is tried from both sides, because which one the language gives is the
+        // question: guessing it here would build the emitter's own answer into the oracle.
+        for (const ret of CMP.includes(op) ? ["bool"] : [a, b]) {
+          add(`mixed ${a} ${op} ${b} -> ${ret}`,
+            `export ${ret} f() { ${a} x = ${va}; ${b} y = ${vb}; return x ${op} y; }`);
+        }
+      }
+    }
+  }
+
+  // ── A typed operand and a bare literal, which is the legal mixed case ─────────────────────────
+  //
+  // **The family above found that wac has no valid mixed-*width* binary: 0 of 420 accepted.** So the
+  // only way two operands legitimately differ is when one of them has no type of its own yet — a
+  // literal takes the shape of its slot, `§wac-literal-adapts`. Nothing in this sweep had generated
+  // that either: every operator row above declares `T x` *and* `T y`, so both sides were always
+  // already typed. `x + 1` is what most real code writes.
+  for (const t of NUMS) {
+    const lit = t.startsWith("f") ? "1.5" : "3";
+    for (const op of t.startsWith("f") ? ARITH : ARITH.concat(INT_ONLY)) {
+      const rhs = op === "<<" || op === ">>" ? "2" : lit;
+      for (const v of VALUES[t].slice(0, 3)) {
+        add(`literal-operand ${t} ${op}`,
+          `export ${t} f() { ${t} x = ${v}; return x ${op} ${rhs}; }`);
+        add(`literal-operand ${t} ${op} reversed`,
+          `export ${t} f() { ${t} x = ${v}; return ${rhs} ${op} x; }`);
+      }
+    }
+    for (const op of CMP) {
+      add(`literal-operand ${t} ${op}`,
+        `export bool f() { ${t} x = ${VALUES[t][0]}; return x ${op} ${lit}; }`);
+    }
+  }
+
+  // ── A packed element as an operand ────────────────────────────────────────────────────────────
+  //
+  // `u8` and `i16` are array element types with no value form of their own, so an indexed one is the
+  // only way to write one — and `bytes[i] - 48` is the exact shape a tightening round refused as
+  // illegal when it is not (`issues/lang/0170a`, round 2). `isNumericTy` does not name the packed
+  // types, which is why they need their own family rather than a row in the one above.
+  for (const t of ["u8", "i8", "u16", "i16"]) {
+    for (const op of ARITH) {
+      add(`packed ${t} ${op} literal`,
+        `export i32 f() { ${t}[] b = ${t}[3](fill: 7); return b[1] ${op} 3; }`);
+      add(`packed literal ${op} ${t}`,
+        `export i32 f() { ${t}[] b = ${t}[3](fill: 7); return 9 ${op} b[1]; }`);
+      add(`packed ${t} ${op} i32 local`,
+        `export i32 f() { ${t}[] b = ${t}[3](fill: 7); i32 n = 5; return b[0] ${op} n; }`);
+    }
+    for (const op of CMP) {
+      add(`packed ${t} ${op} literal`,
+        `export bool f() { ${t}[] b = ${t}[3](fill: 7); return b[1] ${op} 7; }`);
+    }
+    add(`packed ${t} into i32`,
+      `export i32 f() { ${t}[] b = ${t}[2](fill: 5); i32 n = b[0]; return n + 1; }`);
+    add(`packed ${t} both operands`,
+      `export i32 f() { ${t}[] b = ${t}[3](fill: 6); return b[0] + b[1]; }`);
+  }
+
+  // ── Ternaries, whose branches are typed the same way and by the same guess ────────────────────
+  //
+  // `typeOfE(Ternary)` takes the first branch that has a type, with no agreement check — root cause 3,
+  // and a04 in the issue's table on its own. Same-type branches are the valid half and must agree
+  // with the reference; mixed branches are mostly refused, and a mixed pair the reference *accepts*
+  // is the case worth having.
+  for (const t of MIXED) {
+    const vals = VALUES[t];
+    for (const c of ["true", "false"]) {
+      add(`ternary ${t} ${c}`,
+        `export ${t} f() { ${t} x = ${vals[0]}; ${t} y = ${vals[1] ?? vals[0]}; ` +
+        `return ${c} ? x : y; }`);
+      add(`ternary ${t} nested ${c}`,
+        `export ${t} f() { ${t} x = ${vals[0]}; ${t} y = ${vals[1] ?? vals[0]}; ` +
+        `return ${c} ? (${c} ? x : y) : y; }`);
+      add(`ternary ${t} literal branches ${c}`,
+        `export ${t} f() { return ${c} ? ${vals[0]} : ${vals[1] ?? vals[0]}; }`);
+    }
+    for (const u of MIXED) {
+      if (u === t) continue;
+      add(`ternary mixed ${t}/${u} -> ${t}`,
+        `export ${t} f() { ${t} x = ${VALUES[t][0]}; ${u} y = ${VALUES[u][0]}; return true ? x : y; }`);
+    }
+    // A condition that is itself a comparison, so the branches are not the only thing being typed.
+    add(`ternary ${t} computed condition`,
+      `export ${t} f() { ${t} x = ${vals[0]}; ${t} y = ${vals[1] ?? vals[0]}; ` +
+      `return x < y ? x : y; }`);
+  }
+
   return out;
 }

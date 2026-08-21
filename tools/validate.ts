@@ -11,8 +11,7 @@
 //
 //   deno run -A tools/validate.ts packages/bignum/test/probe.wac
 
-import { wacCompile } from "wac/wacCompile.ts";
-import { wacFiles } from "../harness/wacFiles.ts";
+import { compileEntry } from "../harness/referenceCompile.ts";
 
 const entry = Deno.args[0];
 if (!entry) {
@@ -20,7 +19,7 @@ if (!entry) {
   Deno.exit(2);
 }
 
-const result = wacCompile(await wacFiles(entry), entry);
+const result = await compileEntry(entry);
 for (const d of result.diagnostics) {
   console.log(`${d.severity}: ${d.file}:${d.line}:${d.col} [${d.phase}] ${d.message}`);
 }

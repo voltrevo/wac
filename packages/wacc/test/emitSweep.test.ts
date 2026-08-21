@@ -32,6 +32,7 @@ Deno.test("rung 4: the generated sweep — every answer agrees", () => {
 
   let compared = 0;
   let declined = 0;
+  const declines: string[] = [];
   let refused = 0;
   let trapped = 0;
   const mismatches: string[] = [];
@@ -41,8 +42,16 @@ Deno.test("rung 4: the generated sweep — every answer agrees", () => {
       refused++;
       continue;
     }
-    if (blocked(enc.encode(cell.src)) !== "") {
+    // **A decline here is a program the reference just accepted**, so it is not "honest" by default:
+    // it is wacc refusing to emit something that compiles. Today that count is **0** over 4102
+    // compared programs, which makes it assertable — and an assertion is what `issues/lang/0170a`
+    // needs, because tightening `typeOfE` there collapsed self-hosting over four rounds and the note
+    // reads "there is no way to find round 4 from here". A round that refuses correct code now fails
+    // this test *with the expression in the message*.
+    const why = blocked(enc.encode(cell.src));
+    if (why !== "") {
       declined++;
+      if (declines.length < 10) declines.push(`${cell.context}: ${why} in ${cell.src}`);
       continue;
     }
     let want: unknown;
@@ -75,6 +84,15 @@ Deno.test("rung 4: the generated sweep — every answer agrees", () => {
 
   // The canary: a sweep that compared nothing would report that everything agrees.
   if (compared < 1000) throw new Error(`only ${compared} programs were actually run and compared`);
+  // **And the ceiling on declines, which used to be a number nobody read.** If one of these is a
+  // program wac genuinely does not allow, the reference is the thing to fix — it accepted it three
+  // lines above.
+  if (declined !== 0) {
+    throw new Error(
+      `${declined} program(s) the reference compiled were declined by this emitter:\n  ` +
+        declines.join("\n  "),
+    );
+  }
   if (mismatches.length !== 0) {
     throw new Error(`answers differ:\n  ` + mismatches.join("\n  "));
   }

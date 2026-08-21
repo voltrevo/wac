@@ -32,18 +32,15 @@ const flag = (name: string, fallback: number): number => {
 const from = flag("from", 0);
 const count = flag("count", CORPUS.length);
 
-const built = await new Deno.Command("cargo", {
-  args: ["build", "--release", "--quiet"],
-  cwd: "native",
-  stdout: "piped",
-  stderr: "piped",
-}).output();
-if (built.code !== 0) {
-  console.error("cargo could not build native/:");
-  console.error(new TextDecoder().decode(built.stderr));
+// **Asks for the binary; does not build it.** `deno task seed` owns that build and
+// `deno task seed:native` does this crate alone — `issues/system/0208`, where six callers each ran
+// their own cargo. This one is a tool rather than a test, so it *fails* instead of skipping: a corpus
+// comparison with one host missing has nothing to compare.
+const native = `${Deno.cwd()}/native/target/release/wacland`;
+if (!await Deno.stat(native).then((s) => s.isFile).catch(() => false)) {
+  console.error(`${native} is not built — run \`deno task seed:native\` and try again.`);
   Deno.exit(2);
 }
-const native = `${Deno.cwd()}/native/target/release/wacland`;
 
 const dir = await Deno.makeTempDir({ prefix: "corpus-hosts-" });
 const deno = `${dir}/denosh`;

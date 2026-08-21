@@ -28,16 +28,21 @@ export string test_an_import_of_a_file_nobody_supplied_is_refused_when_checked_a
   string main = "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n";
   i32[] single = dumpTypeErrors(main.toBytes());
   t.isTrue(nOf(single) > 0, "single-source: " + itoa(nOf(single)) + " diagnostics");
-  // **The files-based entry point is still silent, and that half of `issues/lang/0157` is open.**
-  // Asserted as it stands rather than left unmentioned: resolving a specifier there cannot be
-  // `resolveFrom` against the path map, because a *mapped* or *project* specifier resolves through a
-  // `Res` that `checkFilesWith` does not carry — `packages/wacc/test/wac/mappedspec_test.wac` and
-  // `projectspec_test.wac` fail on four cases each when it is, including a plain `./a.wac` inside a
-  // mapped subdirectory. That is the "the checker cannot see what it needs" the issue named, measured
-  // rather than estimated.
+  // **The files-based entry point is still silent, and the second half of `issues/lang/0157` is still
+  // open — but no longer for the reason the issue gave.** `issues/lang/0175a` threaded the `Res`, so
+  // the resolution here *is* the linker's own now, and the obvious rule — resolve, then refuse a
+  // specifier whose key no supplied file has — was written, tested, and reverted the same day.
+  //
+  // It false-alarms, and on the cases the issue named: `mappedspec_test.wac` lost
+  // `a_mapped_subdir_cannot_import_outside_itself` and `projectspec_test.wac` lost two, with
+  // *"no file was supplied at that path"* about imports that are fine. A plain `./a.wac` **inside** a
+  // mapped checkout has no entry in the mapping table — the table is keyed by importer and specifier,
+  // and the reader only recorded the mapping that got it there — so it resolves by path arithmetic to
+  // a key the graph does not hold. Membership in `paths` is therefore not a sound test for "nobody
+  // supplied this", and that is a design question rather than a missing line.
   i32[] files = dumpTypeErrorsFiles(string[]("/main.wac"), string[](main), "/main.wac");
-  t.eqI32(nOf(files), 0, "the files-based entry point now reports this — take this assertion out and " +
-                         "close the other half of issues/lang/0157");
+  t.eqI32(nOf(files), 0, "the files-based entry point now reports this — if that is deliberate, read " +
+                         "issues/lang/0157 first: the same change refused three correct programs");
   return t.report();
 }
 

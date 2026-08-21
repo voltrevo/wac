@@ -34,7 +34,7 @@
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
-import { wacFiles } from "./wacFiles.ts";
+import { wacFilesWithRoots } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
 
 const CACHE_DIR = ".cache";
@@ -85,7 +85,10 @@ export async function wacTestRun(
   // only wacc has, it cannot be run at all. What made the switch safe to make rather than to hope
   // about: across all 137 wac test files in this repository the two compilers agree *exactly* on
   // which exports are tests, and neither declines any of them. `issues/lang/0105`.
-  const files = await wacFiles(entry);
+  // **With the roots** — a test file in somebody's project can import through `@/` as readily as any
+  // other file, and dropping them makes every name from that import unknown. `issues/system/0229a`.
+  const { files, roots } = await wacFilesWithRoots(entry);
+  const base = Deno.cwd();
   const useWacc = Deno.env.get("WAC_TEST_FROM") !== "reference";
 
   let tests: { name: string; ret: string; params: { type: string }[] }[];
@@ -93,13 +96,16 @@ export async function wacTestRun(
   let covPoints: { index: number; file: string; line: number; col: number; kind: string }[] = [];
 
   if (useWacc) {
-    const { waccApi, waccArtifacts } = await import("./waccBuild.ts");
+    const { waccApi, waccArtifacts, waccRes } = await import("./waccBuild.ts");
     const api = await waccApi();
     const paths = [...files.keys()];
     const sources = paths.map(p => files.get(p)!);
-    const diags = api.diagnoseFiles(paths, sources, entry);
+    const res = waccRes(api, paths, roots, base);
+    // `diagnoseFilesIn`, not `diagnoseGraphIn`: the entry-only walk is what this lane has always
+    // done, and the whole-graph one is a stricter check that belongs to its own change.
+    const diags = api.diagnoseFilesIn(paths, sources, res, entry);
     if (diags !== "") throw new Error(`wac test file failed to compile: ${entry}\n${diags}`);
-    const art = await waccArtifacts(files, entry, { coverage: profileDir !== undefined });
+    const art = await waccArtifacts(files, entry, { coverage: profileDir !== undefined, roots, base });
     glue = art.glue;
     covPoints = art.covPoints;
     // **`parseSigs`, not a `split(",")`.** A parameter's type can carry commas of its own —
@@ -107,11 +113,11 @@ export async function wacTestRun(
     // _the_host` look as though it wanted two, so every crypto test failed asking for arguments it
     // already had. The nesting-aware split lives with the generator that needs it.
     const { parseSigs } = await import("../packages/wacc/tools/waccBindgen.ts");
-    tests = parseSigs(api.exportSigsFiles(paths, sources, entry))
+    tests = parseSigs(api.exportSigsFilesIn(paths, sources, res, entry))
       .filter(sig => sig.name.startsWith("test") && sig.ret === "string")
       .map(sig => ({ name: sig.name, ret: sig.ret, params: sig.params.map(t => ({ type: t })) }));
   } else {
-    const result = wacCompile(files, entry, profileDir ? { coverage: true } : {});
+    const result = wacCompile(files, entry, { roots, base, ...(profileDir ? { coverage: true } : {}) });
     if (!result.ok) {
       const lines = result.diagnostics.map(d =>
         `  ${d.file}:${d.line}:${d.col} [${d.phase}] ${d.message}`);
