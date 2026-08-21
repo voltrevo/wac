@@ -44,9 +44,30 @@ program (*your index is not an integer* when it is, *your operand is not a refer
 operands are not integers* when they are). All three were found by reading output rather than by any
 test, because a differential comparing positions and counts cannot see a sentence.
 
-## The clusters walked so far
+## The walk, finished
 
-One program per row against the reference's tables: binary and unary operators, structural rules,
-nullable rules, calls and construction, casts, match arms, lvalues. Seven clusters. Four bugs
-(`0236a`, `0238a`'s two shapes, `0239a`'s two) and three misleading messages (`0237a`'s two, this one).
-The remaining untried clusters are statements and const declarations.
+Every rule table in `compiler/wacTypeCheck.ts`, one program per row:
+
+| cluster | rows | what it found |
+| --- | --- | --- |
+| binary and unary operators | 12 | **`0236a`** — bitwise and shift blind to literals; **`0237a`** — `>>>` on an unsigned told it needed integers |
+| structural | 3 | clean |
+| nullable | 4 | **`0237a`** — `!` on a non-nullable told it needed a reference |
+| calls and construction | 5 | clean |
+| casts | 4 | clean |
+| match arms | 9 | **`0239a`** — two `else` arms **trapped the compiler**; `case A(n, n)` silently kept the later binding |
+| lvalues | 12 | **this issue** — indexing a non-array reported as a bad index |
+| statements | 11 | **`issues/lang/0052`** — a `const` reference assigned to a plain local is refused by *neither* compiler, contradicting that page's "every assignment position is guarded" |
+| const declarations | 2 | clean |
+
+**Nine clusters, 62 rows: four bugs, three misleading messages, one hole in both compilers.** Five of the
+nine clusters are clean, which is the more useful half of the result — it says where not to look.
+
+The one that is not a wacc gap is worth separating: the `const` assignment hole is in the reference too,
+which makes it a spec question and puts it with `design/lang/0008` rather than on any porting list.
+
+**What the method cost and what it needs.** One program per row, `wac check` on each, and the reference
+only where wacc looked wrong — about two hours for 62 rows. It needs no corpus, no generator and no
+harness, and it found things no differential here can see: a trap takes the mutation sweep down rather
+than being counted, and a message that misdescribes is invisible to a comparison of positions and counts.
+The rows are also the natural regression tests, which is what `matcharms_test.wac` is.
