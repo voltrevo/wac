@@ -187,3 +187,83 @@ environment by spawning an open one that can, and with the leak closed and no pa
 had no way to give that shell a `HOME`. It has one now, on all four hosts rather than the two this
 issue names — the JavaScript hosts serve the same opcode and had never run a host program at all
 until `runtimes_test.wac` started comparing them.
+
+## The sweep's price, measured — agent-a, 2026-08-21
+
+The section above says of the remaining sweep: *"Not measured, and worth measuring before starting."*
+Here it is, and it does not need the default flipped to get it — what a call site needs from the
+environment is decidable from **how it names its program**. A program named absolutely needs no `PATH`; a
+program named by a bare word needs one, because `PATH` is what naming it that way *means*.
+
+Over `packages/`, `tools/` and `std/`:
+
+    343  .exec( call sites in all
+    208  of them name the program with a literal
+     86    …absolutely — `/bin/sh` ×80, `/bin/echo`, `/bin/cat`, `/bin/sleep`, one deliberate nonexistent
+    122    …by a bare word — and these are the population
+    135  name it with a variable, and they are absolute in all but a couple:
+           binaryPath(cli) ×25, binary(cli) ×24, app ×18, wac ×14, program ×10, root(cli) ×9,
+           wacBinary(cli) ×6, castPath(cli) ×3
+     22  already call `execWith` directly
+
+The 122 by name:
+
+    git 39, deno 35, openssl 12, env 9, node 8, python3 5, ssh-keygen 4,
+    ssh 2, gcc 2, cast 2, ss 1, ln 1, gzip 1, bash 1
+
+**So step 3's two answers cost 3 call sites and 122 call sites.** Supplying `PATH` from the API leaves
+only the three directories already measured — `HOME` twice and the proxy once. Making it explicit is 122
+sites, not the "~180" this issue estimated, and the variable-named sites are almost all absolute so they
+do not enter into it.
+
+### A third answer the options above do not list
+
+The 122 do not each have to *know* about `PATH`. They cluster by tool rather than by file — `git` and
+`deno` are spread over a dozen files, eight in `clone_test.wac`, six in `pull_test.wac`, and so on — so a
+single helper in `packages/wactest` that reads `PATH` with `cli.env` and hands it on turns 122 sites into
+122 mechanical *call* changes with the knowledge in one place. That is the same edit count as full
+explicitness and none of the duplication, and it keeps the property the principle is about: **the API
+grants nothing ambient**, and a caller that wants `PATH` asks for `--allow-env` and passes it.
+
+Worth stating plainly because the choice is not "one change against 122". It is:
+
+- `PATH` implicit in `exec` — no call sites move, and `exec` hands a child something it did not ask for,
+  which is the sentence `packages/platform`'s own documentation already claims is untrue of it;
+- `PATH` explicit through one shared helper — 122 mechanical call sites, the rule in one place, and the
+  documentation becomes true.
+
+The second is what the principle says, and the measurement is that it costs 122 edits rather than an
+argument about interpreters.
+
+### The seal canary is converted, and it answered the interpreter question with a case
+
+This issue says the canary in `packages/platform/test/wac/native_shell_test.wac` is *why* the fourth
+parameter had to exist first, and that it is "built on the leak". It is not any more: it reads `HOME`
+itself — it already did, to compare against — and now hands it over with
+`execWith(…, clearEnv: true, …)` instead of relying on inheritance. Three tests pass.
+
+What it proves is subtly better than before. It used to show the host exposes *the machine's*
+environment; it now shows the host exposes *what was declared*, which is the property the design is
+about. The child still has to read `HOME` through `Cap::Env` to echo it, so the grant is still live or
+the assertion still fails.
+
+**And passing `HOME` alone did not work**, which is the part worth keeping:
+
+    the deno host does not read the environment at all, so the seal below proves nothing:
+      /usr/bin/env: 'deno': No such file or directory
+
+`b.openDeno` is launched through a `#!/usr/bin/env deno` shebang, so the **interpreter** is resolved by
+name before any of the child's own code runs. This issue asked, as the thing to settle first, *"how a
+program names an interpreter without an absolute path"* — here is the answer as a measurement rather than
+an argument: **a shebang needs `PATH` whatever the child does with the environment.** So the canary
+declares `HOME` and `PATH`, and `$USER` stays empty because nothing asks the open shell about it.
+
+That is a point for supplying `PATH` from the API, and it is worth weighing against the 122: the
+population is not only "programs spawned by a bare name" but "programs whose *interpreter* is", and the
+second set is not visible in a grep for `exec("name"`. Every `#!/usr/bin/env …` script the suite spawns
+by absolute path is in it.
+
+The other two callers this issue names — `tor`'s capture tool, which needs `HOME` because the tool's own
+fallback is `/root`, and the uninstaller test, which needs the proxy — are left. They work under today's
+default and converting them means answering "which proxy variables", which is the sweep rather than the
+mechanism.

@@ -337,14 +337,34 @@ export string test_the_seal_holds_on_both_hosts_not_just_the_one_it_was_written_
   // print what the machine says — checked rather than assumed, because `Cap::Env` in the native host
   // is a separate implementation from Deno's.
   //
-  // Its `cwd` is the repository root and its environment is this process's, because the point is
-  // precisely that it *does* see them.
-  Exec seesDeno = cli.exec(b.openDeno, string[]("-c", "echo HOME=[$HOME]"), u8[0]()).wait();
+  // Its `cwd` is the repository root and it is handed **exactly one variable**, which is the whole of
+  // what these two lines are about. `HOME` is passed rather than inherited: `Cli.exec` inherits
+  // everything this process holds, so a canary built on it proves the host's env capability is live
+  // only for as long as that leak exists — and closing the leak is `issues/system/0198`, which names
+  // this canary as the reason the fourth parameter had to land first. It has landed, so this asks with
+  // it. The child must still *read* `HOME` through `Cap::Env` to echo it, which is the property under
+  // test; what changed is that the value arrives because it was declared.
+  //
+  // **`PATH` as well, and finding out why is the interesting part.** One pair was tried first and the
+  // deno host answered `/usr/bin/env: 'deno': No such file or directory` — because `b.openDeno` is
+  // launched through a `#!/usr/bin/env deno` shebang, so the *interpreter* is resolved by name before
+  // any of this program's code runs. That is the question `issues/system/0198` said had to be answered
+  // before the leak could close — "how a program names an interpreter without an absolute path" — and
+  // here it is as a case rather than an argument: a shebang needs `PATH` no matter what the child does.
+  //
+  // `$USER` stays empty, and nothing below asks the open shell about it. The sealed shells are the ones
+  // held to `[] [] []`.
+  string path = "";
+  u8[]? pv = cli.env("PATH").wait();
+  if (pv is not null) { path = string.fromBytes(pv!); }
+  string[] onlyHome = string[]("HOME=" + home, "PATH=" + path);
+  Exec seesDeno = cli.execWith(b.openDeno, string[]("-c", "echo HOME=[$HOME]"), u8[0](),
+                               onlyHome, true, false).wait();
   t.isTrue(contains(string.fromBytes(seesDeno.stdout), home),
            "the deno host does not read the environment at all, so the seal below proves nothing: " +
            string.fromBytes(seesDeno.stdout) + string.fromBytes(seesDeno.stderr));
-  Exec seesNative = cli.exec(native, string[](b.openManifest, "-c", "echo HOME=[$HOME]"),
-                             u8[0]()).wait();
+  Exec seesNative = cli.execWith(native, string[](b.openManifest, "-c", "echo HOME=[$HOME]"),
+                                 u8[0](), onlyHome, true, false).wait();
   t.isTrue(contains(string.fromBytes(seesNative.stdout), home),
            "the native host does not read the environment at all, so the seal below proves nothing: " +
            string.fromBytes(seesNative.stdout) + string.fromBytes(seesNative.stderr));
