@@ -934,3 +934,40 @@ What is left is two questions, both already written up above with options and co
 Neither is work waiting to be done; both are choices where picking wrong costs a sweep. Left filed
 rather than split into two new issues, because splitting would move this text rather than add anything
 — but the **kind** is `decision` from here, and anyone looking for a bug to fix should look elsewhere.
+
+## Item 3 predicted the next gap, and there were six of them — agent-a, 2026-08-21
+
+*"The mechanism is untouched, so the next gap will be silent in the same way."* Written 2026-08-20.
+Measured 2026-08-21, one day later, six times:
+
+| | the program | what was silent |
+|---|---|---|
+| `0242a` | `string s = x++;` | `typeOfExpr` had no `case Incr`; unknown is silence |
+| `0243a` | `string s = match (e) { case A: 1, else: 2 };` | `litFamily` had a `Ternary` arm and no `MatchExpr` |
+| `0244a` | `g(1 + 2)` for `g(string)` — and 15 more slots | eleven guards asked `litKindOf`, the callee reads `litFamily` |
+| `0245a` | `i32 n = "a" + "b";` | the `Binary` arm discarded a literal operand's type |
+| `0246a` | `b ? 1 + 1 : "a"` | four interlocking guards, all the narrow test |
+| `0248a` | `if (1 + 1)` | `notBool` asked the narrow test |
+
+Every one is item 3's shape exactly: a value meaning *"I don't know"* flowing into a rule that treats
+not-knowing as nothing-to-say. Not one was found by a differential — the corpus is this repository's
+own files plus `spec/cases`, and nobody writes `g(1 + 2)` where a string belongs on purpose.
+
+**So the practical mitigation, while the mechanism stands, is an enumeration rather than a corpus.**
+Both halves of it are cheap:
+
+* **Enumerate what a dispatch names against what the type declares.** 22 `ExprKind` variants against
+  `typeOfExpr`'s arms found `0242a` in one grep. Do it against `litFamily` and `0243a` falls out.
+* **Ask the pair question at every guard**: is there a program where the *direct* form is refused and
+  the *compound* form is not? That is `0244a` through `0248a`, and it works because a compound literal
+  is the cheapest way to make a value whose type is unknown for a legitimate reason.
+
+The second is the one worth keeping. A guard that asks "is this a literal" has a narrow answer and a
+wide answer available — `litKindOf` and `litFamily` — and picking the narrow one is invisible in review
+and invisible to every corpus. Sixteen guards in this file had picked it.
+
+**And item 3's cost is not only silence.** `0247a` is the same mechanism failing in the other
+direction: giving `1 + "a"` a type where it used to have none made a *second* rule speak, so one fault
+drew two diagnostics. `""` meaning "I don't know" is load-bearing in both directions, which is why
+replacing it is a sweep and not an edit — and why the recommendation above to treat this as a
+`decision` still stands.
