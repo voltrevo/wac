@@ -2810,7 +2810,16 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
     seen[sn] = path;
     sn = sn + 1;
     string body = path == " core" ? coreSource() : sourceOf(paths, sources, path);
-    if (body == "") { return ""; }
+    // **The one refusal here that can name what is wrong, so it does.** `linkFailure` inferred *"an
+    // import of a file that was not supplied"* from the absence of any other sentinel and could name
+    // no path — which is the whole of `issues/lang/0157`'s complaint about this diagnostic. The path
+    // is in hand at exactly this line; `filePaths` is already an out-parameter and the caller discards
+    // it when the link fails, so the name travels without a new argument.
+    if (body == "") {
+      starts[0] = 4;
+      if (filePaths.len() > 0) { filePaths[0] = path; }
+      return "";
+    }
     // A newline between files, so a file that ends mid-line cannot join itself to the next one —
     // and the line each file begins on, which is the whole of how a name is scoped to it afterwards.
     // **A running count, not a rescan.** This was `countLines(out)`, which calls `s.toBytes()` on
@@ -2876,12 +2885,14 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
           // an import often names a file this walk has not reached yet.
           // One edge per *name*, plus one for the file itself, so a type reached through another
           // file's declaration still resolves.
-          if (en < fromPath.len()) {
-            fromPath[en] = path;
-            toPath[en] = target;
-            edgeName[en] = "";
-            en = en + 1;
-          }
+          // **Refused rather than gated.** This was `if (en < fromPath.len()) { … }`, which is the
+          // same silent truncation as the two `en >=` guards around it and was missed when they were
+          // fixed — a grep for `en >=` cannot see a write gated on `en <`. `issues/lang/0179a`.
+          if (en >= fromPath.len()) { starts[0] = 3; return ""; }
+          fromPath[en] = path;
+          toPath[en] = target;
+          edgeName[en] = "";
+          en = en + 1;
           for (i32 it = 0; it < items.len(); it++) {
             if (en >= fromPath.len()) { starts[0] = 3; return ""; }
             fromPath[en] = path;
@@ -10581,6 +10592,11 @@ string linkFailure(string[] paths, string[] sources, Res res, string entry) {
   if (starts[0] == 3) {
     return "more import edges in one program than the linker was given room for (at most "
         + numText(edges.len() / 2) + ")";
+  }
+  // **Named, when the linker got far enough to know the name.** Sentinel 4 means it read the import,
+  // resolved it, and found nothing supplied under that key — so it wrote the key down.
+  if (starts[0] == 4 && filePaths.len() > 0 && filePaths[0] != "") {
+    return "an import of a file that was not supplied: " + filePaths[0];
   }
   return "an import of a file that was not supplied";
 }

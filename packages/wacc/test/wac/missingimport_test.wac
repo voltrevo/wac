@@ -15,7 +15,7 @@
 // this rule needed no new notion of what a built-in is.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { dumpTypeErrors, dumpTypeErrorsFiles } from "../../src/api.wac";
+import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles } from "../../src/api.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** The code of the first diagnostic, or -1 — a row is `code, line, col`. */
@@ -98,5 +98,37 @@ export string test_a_mistyped_builtin_path_is_refused() {
   i32[] std = dumpTypeErrors(
     ("import { Core } from \"std/nope.wac\";\nexport i32 f() { return 1; }\n").toBytes());
   t.isTrue(nOf(std) > 0, "a std path with no file behind it is accepted");
+  return t.report();
+}
+
+// ── And the emitter's own sentence names the file now ────────────────────────────────────────────
+//
+// `issues/lang/0157`'s complaint about the emitter half was that it is *"caught one phase later, with
+// **no position and no file name*** — `blockedFiles` inferred the message from the absence of any other
+// sentinel and could name nothing. The path is in hand at the line that decides it: `linkFiles` reads
+// each queued file's source and finds none. It records the key now, through `filePaths`, which is
+// already an out-parameter the caller discards on failure.
+//
+// Still not a *position* — that is the checker's half and still open — but "which file" is most of what
+// a reader needs and it was free.
+export string test_the_emitter_names_the_file_it_could_not_find() {
+  T t = T.create();
+  string main = "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n";
+  string why = blockedFiles(string[]("/main.wac"), string[](main), "/main.wac");
+  t.isTrue(why != "", "the emitter accepted an import of a file nobody supplied");
+  t.isTrue(why.indexOf("not supplied") >= 0, "refused for another reason — " + why);
+  // **The key, not the specifier.** `./b.wac` from `/main.wac` resolves to `/b.wac`, and the resolved
+  // key is what the caller's map is keyed by — so it is the thing to go looking for.
+  t.isTrue(why.indexOf("/b.wac") >= 0, "did not name the file — " + why);
+  return t.report();
+}
+
+/** A deeper path, so the name is not just the specifier echoed back. */
+export string test_and_it_names_a_nested_one() {
+  T t = T.create();
+  string why = blockedFiles(string[]("/main.wac"), string[](
+      "import { foo } from \"./sub/deep/gone.wac\";\nexport i32 f() { return foo(); }\n"),
+      "/main.wac");
+  t.isTrue(why.indexOf("/sub/deep/gone.wac") >= 0, "did not name the nested file — " + why);
   return t.report();
 }

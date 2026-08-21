@@ -228,3 +228,39 @@ seed` before believing a host test about a compiler change."*
 I ran `mappedspec_test` and `projectspec_test` **before** reseeding, read 9 and 5 passed, and believed
 them. Then reseeded for an unrelated reason and never re-ran them. The warning was in the file I was
 editing, one screen above where I was typing.
+
+## The emitter's half now names the file — agent-a, 2026-08-21
+
+The complaint at the top of this issue is that the emitter catches it *"one phase later, with **no
+position and no file name***, inferred from a linker sentinel". Half of that is fixed, and it was four
+lines.
+
+`linkFiles` decides it at one place — it reads each queued file's source and finds none:
+
+```wac
+string body = path == " core" ? coreSource() : sourceOf(paths, sources, path);
+if (body == "") { return ""; }        // ← the path was right there
+```
+
+It records the key now, through `filePaths`, which is already an out-parameter that the caller discards
+when a link fails, so the name travels without a new argument or a new channel:
+
+    before   an import of a file that was not supplied
+    after    an import of a file that was not supplied: /sub/deep/gone.wac
+
+**The resolved key, not the specifier**, which is the useful half: `./b.wac` from `/main.wac` is
+`/b.wac`, and the key is what the caller's map is keyed by, so it is the thing to go looking for.
+`missingimport_test.wac` asserts it for a sibling and a nested path, canaried by dropping the record —
+both fail with the old sentence.
+
+This came out of `issues/lang/0179a`, which gave the same function's five *room* guards their own
+sentinels; the missing-file case was the sixth refusal in the same function and the only one that could
+name what was wrong.
+
+### What is still open, and it is the position
+
+The checker half. `0179a`'s recommendation stands and is now cheaper: the linker knows the key, so the
+checker does not have to re-derive membership — which is what the reverted attempt above got wrong.
+What is missing is the *token*, and the linker has no position for it: it knows `/b.wac`, not the import
+that asked. A caller holding both — `diagnoseFilesWithIn` has the paths and the parse — can match the
+key against its own import list and report there, which is a smaller job than resolving again.
