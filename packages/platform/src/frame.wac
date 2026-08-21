@@ -360,6 +360,13 @@ export Cli childCli(Frame f, const Cli parent) {
     // directory*, and `exec` uses neither: it returns its output rather than writing to the frame's
     // capture, and its `path` is resolved by the host, not by `f.path` — remapping it would make a
     // redirected shell unable to name `/bin/sh`. What a frame does not remap, it forwards.
-    parent.exec,
+    //
+    // **`inherit` is the one thing that reaches past a frame**, and it is the capability's own
+    // wording rather than something this could fix: an inherited stream is the process's real file
+    // descriptor, so a child started that way writes past the frame's capture. A shell redirecting
+    // a command that asks for inheritance would not see its output. Nothing does that yet — the
+    // callers that inherit are runners, which do not redirect — and the frame that would have to
+    // refuse it is the place to look when something does.
+    parent.execWith,
   );
 }

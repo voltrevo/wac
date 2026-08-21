@@ -1137,7 +1137,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "rename") => Cap::Rename,
         ("Cli", "setExecutable") => Cap::SetExecutable,
-        ("Cli", "exec") => Cap::Exec,
+        ("Cli", "execWith") => Cap::Exec,
         ("Cli", "openInput") => Cap::OpenInput,
         ("Cli", "openOutput") => Cap::OpenOutput,
         ("Cli", "outputError") => Cap::OutputError,
@@ -1986,6 +1986,12 @@ fn dispatch(
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
                 .collect();
             let stdin = read_u8_array(caller, &params[3])?;
+            let env: Vec<String> = read_string_array(caller, &params[4])?
+                .into_iter()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .collect();
+            let clear_env = matches!(arg(5), Val::I32(n) if n != 0);
+            let inherit = matches!(arg(6), Val::I32(n) if n != 0);
             if !caller.data().grants.run {
                 let refused = Outcome::Exec(
                     0,
@@ -2008,7 +2014,7 @@ fn dispatch(
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
             std::thread::spawn(move || {
-                table.complete(id, run_host_program(path, argv, stdin));
+                table.complete(id, run_host_program(path, argv, stdin, env, clear_env, inherit));
             });
             return pending_for(caller, Kind::Exec, id, results);
         }
@@ -2816,16 +2822,57 @@ fn write_raw(bytes: &[u8], to_stderr: bool) -> bool {
 /// Lifted out of the capability call so the ticket can be handed back before any of this happens;
 /// see the note at `Cap::Exec` and issue 0211. Nothing in here reads wasm memory, which is what
 /// makes it liftable at all.
-fn run_host_program(path: String, argv: Vec<String>, stdin: Vec<u8>) -> Outcome {
+fn run_host_program(
+    path: String,
+    argv: Vec<String>,
+    stdin: Vec<u8>,
+    env: Vec<String>,
+    clear_env: bool,
+    inherit: bool,
+) -> Outcome {
     // An argument *vector*, never a shell line: a value containing a space or a semicolon
     // arrives whole. A caller who wants a shell names `/bin/sh -c`.
     let mut cmd = std::process::Command::new(&path);
-    cmd.args(&argv)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    cmd.args(&argv).stdin(std::process::Stdio::piped());
+    // **`inherit` is the real file descriptor**: the child writes to this process's own stdout and
+    // stderr, so there is nothing here to collect and the answer below carries none.
+    if inherit {
+        cmd.stdout(std::process::Stdio::inherit()).stderr(std::process::Stdio::inherit());
+    } else {
+        cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    }
+    // Inherited unless the caller says otherwise — `issues/system/0198`, where the authority to
+    // run a program has been carrying the authority to read the environment. With `clear_env` the
+    // pairs below are the whole of what the child gets.
+    if clear_env {
+        cmd.env_clear();
+    }
+    for pair in &env {
+        // Split at the *first* `=`: a value may contain one and a name may not. A string with no
+        // `=` is dropped rather than being a fault — there is nothing it could mean.
+        if let Some(at) = pair.find('=') {
+            if at > 0 {
+                cmd.env(&pair[..at], &pair[at + 1..]);
+            }
+        }
+    }
     match cmd.spawn() {
         Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+        Ok(mut child) if inherit => {
+            // Nothing to drain: the deadlock the buffered path below is careful about is a property
+            // of reading a child's output, and this child's output is not coming here. Its input
+            // still is, and closing it is still ours to do.
+            if let Some(mut w) = child.stdin.take() {
+                use std::io::Write;
+                let _ = w.write_all(&stdin);
+            }
+            match child.wait() {
+                Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+                Ok(status) => {
+                    Outcome::Exec(status.code().unwrap_or(-1), Vec::new(), Vec::new(), String::new())
+                }
+            }
+        }
         Ok(mut child) => {
             // **Draining starts before the write, not after.** A child that answers while it
             // is still being fed — `cat`, `grep`, any filter — blocks on its own output once

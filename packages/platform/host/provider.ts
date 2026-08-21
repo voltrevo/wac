@@ -635,14 +635,32 @@ export function cliOf(
       )),
     /*= popChild */
     () => T.captured(submit(b, OP.POP_CHILD, EMPTY)),
-    /*= exec */
+    /*= execWith */
     // Path, then the argument *vector* joined by NULs — which is why it is a vector and not a shell
-    // line: a NUL cannot appear in an argument, so nothing here can be re-split by accident.
-    (path: string, args: string[], stdin: Uint8Array) =>
+    // line: a NUL cannot appear in an argument, so nothing here can be re-split by accident. The
+    // environment travels the same way, as `NAME=value` strings, and `inherit` leads as one byte,
+    // because a host has to know what to do with the child's streams before it has a child.
+    (
+      path: string,
+      args: string[],
+      stdin: Uint8Array,
+      env: string[],
+      clearEnv: boolean,
+      inherit: boolean,
+    ) =>
       T.exec(submit(
         b,
-        OP.EXEC,
-        prefixed(str(path), prefixed(str(args.join("\u0000")), stdin)),
+        OP.EXEC_WITH,
+        headed(
+          flag(clearEnv),
+          headed(
+            flag(inherit),
+            prefixed(
+              str(path),
+              prefixed(str(args.join("\u0000")), prefixed(str(env.join("\u0000")), stdin)),
+            ),
+          ),
+        ),
       )));
 }
 

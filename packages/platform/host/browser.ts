@@ -802,7 +802,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      * say no to while still saying yes to `spawn`, which starts a confined wasm module in a worker
      * — the reason the two are separate capabilities rather than one. `issues/system/0165`.
      */
-    [OP.EXEC]: () => execBytes(0, EMPTY, EMPTY, "a page cannot run a host program"),
+    [OP.EXEC_WITH]: () => execBytes(0, EMPTY, EMPTY, "a page cannot run a host program"),
     [OP.MKDIR]: (p) => {
       const no = writeRefused();
       if (no !== null) return no;

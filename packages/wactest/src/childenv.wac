@@ -1,25 +1,26 @@
-// Giving a child an environment, and taking one away, which `Cli.exec` has no parameter for.
+// Giving a child an environment, and taking one away.
 //
-// `exec(program, args, stdin)` takes no environment and the child gets the host's whole one — 37
-// variables here, including `HOME` and the proxy. That is `issues/system/0198`: the grant `run`
-// silently carries the grant `env`, because a program refused `--allow-env` can spawn something that
-// prints a variable. `issues/system/0182` is the parameter that would fix it.
+// **`Cli.execWith` now has the parameter this module was written around** — `issues/system/0182` —
+// so `withEnv` and `onlyEnv` are one capability call each and no shell is involved in either. What
+// survives of the original reason is `withoutEnv`: a caller who wants everything *except* a name has
+// to say which names stay, and nothing in the capability list can enumerate an environment, since
+// `Cli.env` answers one name at a time. A shell's `unset` can, so that one keeps its shell.
 //
-// Neither is a reason a test cannot set a variable *today*. `Cli.exec`'s own documentation points at
-// the answer — "a caller who wants a shell asks for one by name: `exec("/bin/sh", string[]("-c",
-// line), …)`" — and an assignment on that line is a declaration at the call site rather than an
-// inheritance. It overrides whatever arrived, which is what a test measuring *which file a program
-// reads* needs, and it is the spelling that still works on the day `exec` stops inheriting.
+// The gain is not only the process. Through `/bin/sh -c` every value was a *shell word*, which is why
+// this module carries `quoted`: to stop a path with a space becoming two arguments and a `~` being
+// expanded before the program saw it — `core.excludesFile = ~/.gitignore_global` is a value git
+// expands itself, and a shell that got there first was testing something else. A capability taking
+// `NAME=value` strings has none of that, and the values arrive as they were written.
 //
-// **`withoutEnv` is the other half and is not symmetric with it.** Since everything is inherited, a
-// test that wants to prove a program complains about a *missing* variable has to remove one, and
-// setting it empty is not the same thing: a program asking "is this set" and one asking "is this
-// non-empty" answer differently, and the first is the common spelling. So it is `unset`.
+// **`withoutEnv` is still not symmetric with `withEnv`**, and that is worth keeping: since
+// everything is inherited, a test that wants to prove a program complains about a *missing* variable
+// has to remove one, and setting it empty is not the same thing — a program asking "is this set" and
+// one asking "is this non-empty" answer differently, and the first is the common spelling. So it is
+// `unset`.
 //
-// The quoting lives here because it is the part worth having once: every value goes through
-// `quoted`, so a path with a space arrives whole and a `~` is **not** expanded by the shell. That
-// last one matters directly — `core.excludesFile = ~/.gitignore_global` is a value git expands
-// itself, and a shell that got there first would be testing something else.
+// `issues/system/0198` is the half that is still open: inheritance is an authority nobody declared,
+// and the day `Cli.exec` clears by default, the callers here that *want* the host's environment are
+// the ones that will have to say so.
 
 import { Cli, Exec } from "std/platform.wac";
 
@@ -45,18 +46,22 @@ export string commandLine(string prog, string[] args) {
   return line;
 }
 
+/** `names[i]=values[i]` as the `NAME=value` strings `Cli.execWith` takes. */
+string[] pairs(string[] names, string[] values) {
+  i32 n = names.len() < values.len() ? names.len() : values.len();
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = names[i] + "=" + values[i]; }
+  return out;
+}
+
 /**
  * `prog args…` with `names[i]=values[i]` set, and everything else as it was.
  *
- * `exec` at the front so the shell replaces itself rather than waiting on a child — one process
- * instead of two, and the status that comes back is the program's own.
+ * One process and no quoting: the values are handed over as bytes rather than assembled into a shell
+ * line, so a value containing a space, a quote or a `$` arrives as it was written.
  */
 export Exec withEnv(Cli cli, string[] names, string[] values, string prog, string[] args) {
-  string line = "";
-  for (i32 i = 0; i < names.len() && i < values.len(); i++) {
-    line = line + names[i] + "=" + quoted(values[i]) + " ";
-  }
-  return cli.exec("/bin/sh", string[]("-c", line + commandLine(prog, args)), u8[0]()).wait();
+  return cli.execWith(prog, args, u8[0](), pairs(names, values), false, false).wait();
 }
 
 /** The common case: a fixture `HOME`, so `~` resolves somewhere the test built. */
@@ -79,8 +84,7 @@ export Exec withHome(Cli cli, string home, string prog, string[] args) {
  * -i` removes it and then nothing can be found by name.
  */
 export Exec onlyEnv(Cli cli, string[] names, string[] values, string prog, string[] args) {
-  return cli.exec("/bin/sh", string[]("-c", onlyEnvLine(names, values, prog, args)),
-                  u8[0]()).wait();
+  return cli.execWith(prog, args, u8[0](), pairs(names, values), true, false).wait();
 }
 
 /**
@@ -90,6 +94,11 @@ export Exec onlyEnv(Cli cli, string[] names, string[] values, string prog, strin
  * and why this cannot simply call it. `env -i A=1 exec prog` asks `env` to run a program called
  * `exec`, and it says `env: ‘exec’: No such file or directory`, which reads like a missing binary
  * rather than a malformed line.
+ *
+ * **Still a line, now that `onlyEnv` is a capability call**, and not a duplicate of it. Its caller is
+ * `packages/ssh`, which puts this *inside* something else — a command line run on the far side of a
+ * connection — and a capability cannot be handed to a remote shell. One of them starts a program
+ * here; this one is text that becomes a program somewhere else.
  */
 export string onlyEnvLine(string[] names, string[] values, string prog, string[] args) {
   string line = "exec env -i";
