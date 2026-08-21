@@ -5,14 +5,15 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0229](open/0229-the-heavy-lanes-declared-costs-are-stale-and-nothing-checks-them.md) | `checked_test.wac` declares `140s, measured` and ran past **1,166s** without finishing; the heavy lane's six files declare 412s and had spent 9m20s of CPU on the first four, and `tools/lane.test.ts` checks that a reason names a number rather than that the number is true | performance | wrong answer |
+| [0230](open/0230-the-heavy-lanes-declared-costs-are-stale-and-nothing-checks-them.md) | `checked_test.wac` declares `140s, measured` and ran past **1,166s** without finishing; the heavy lane's six files declare 412s and had spent 9m20s of CPU on the first four, and `tools/lane.test.ts` checks that a reason names a number rather than that the number is true | performance | wrong answer |
+| [0229](open/0229-nineteen-copies-of-one-fixture-helper-and-none-of-them-can-report-its-own-failure.md) | twenty functions named `scratch`, nineteen of them the same four lines, and every one of those throws away what `mkdir` and `remove` answered — so a fixture that cannot make its directory is reported as sixteen shells failing to `cd` into it. One is fixed; eighteen can still do it | bug | no error |
 | [0227a](open/0227a-the-wc-differentials-oracle-counts-words-in-whatever-locale-it-inherited.md) | the `wc` differential agrees because the child inherits `LC_ALL=C.UTF-8`; in the C locale the oracle says 472 where ours says 474, and the test neither sets the locale nor mentions it | untested behaviour | no error |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
 | [0213a](open/0213a-the-push-gate-can-starve-a-suite-that-passes-loses-the-race-and-gives-up.md) | four consecutive green suites and nothing pushed — a full run is longer than the interval between other agents' pushes, so losing the race is the expected outcome and the retries get refused | decision | not implemented |
 | [0209](open/0209-ed25519-is-five-times-slower-than-p-256-which-is-the-wrong-way-round.md) | the title's ordering is gone — ed25519 and P-256 now cost the same — and all three rows are explained: ed25519 was `ptAdd` inverting per addition, P-256 was byte-wise order arithmetic, and RSA is 2048 rounds of two multiplies and two divisions with nothing hiding. What is left is two changes nobody has made: CRT and a Montgomery multiply | performance | no error |
-| [0208](open/0208-nothing-owns-the-wasmtime-hosts-build-so-five-callers-do-it-themselves.md) | nothing owns the wasmtime host's build, so five callers each do it themselves | missing feature | not implemented |
+| [0208](open/0208-nothing-owns-the-wasmtime-hosts-build-so-five-callers-do-it-themselves.md) | nothing owns the wasmtime host's build — it cost a 413s gate run when a merge left `wacland` behind, and the v8 freshness check was claiming the wasmtime crate's sources as its own, unclearably. Both checks fixed; the owner is still missing | missing feature | not implemented |
 | [0205](open/0205-fifteen-of-nineteen-coverage-tasks-cannot-fail.md) | fifteen of nineteen coverage drivers end with `report(...)` and cannot fail, while the summary read "19/19 passed" — two hold a floor, two only check their own exemptions | missing feature | no error |
 | [0204](open/0204-wac-test-recompiles-every-directory-on-every-run.md) | `wac test` has no build cache, so every run recompiles every test directory — measured at 9% of the lane's biggest chunks, so worth ~8s of wall rather than the 104s it looked like | performance | no error |
 | [0203](open/0203-the-gate-fails-one-run-in-six-and-never-on-the-same-test.md) | the gate failed 5 of 28 runs in one day on five different files — two were real breakage arriving through the merge, two were fixed-wait races, one is unexplained | bug | no error |
@@ -63,7 +64,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-237 issues, 186 closed.
+238 issues, 186 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

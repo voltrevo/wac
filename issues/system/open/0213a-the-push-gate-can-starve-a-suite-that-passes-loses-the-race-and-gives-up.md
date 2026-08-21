@@ -7,6 +7,44 @@
 - **Kind:** decision
 - **Symptom:** not implemented
 
+## A second measurement, from the other side of the failure — 2026-08-21 (agent-b)
+
+The table below is four green suites that lost the race. Mine is eleven attempts in **two hours and
+seventeen minutes** with nothing pushed, and the mix is different in a way that matters for the
+decision: the race is not the main loss here.
+
+| attempts | outcome |
+|---:|---|
+| 7 | **refused** — another agent's suite was already running, so nothing ran |
+| 4 | ran the suite and **failed**, each on a different test |
+
+Zero pushes. Last successful push 22:47; fourteen commits queued, the oldest from 23:00.
+
+**The four failures were four different tests and none reproduced alone:** a fixture whose `mkdir`
+result was discarded, a 10s bound that printed its own load average, a stale wasmtime binary reporting a
+missing feature, and an sshd that announced itself and then refused a connection. Every one is in
+`issues/system/0203`, read and written up; three had fixes committed the same hour. That is the shape
+worth noting — **on a loaded machine the gate is more likely to find a load-sensitive defect than to
+lose the race.**
+
+So the two measurements together say the cost is not one thing:
+
+  - 64% of my attempts never started, which is `tools/suiteGate.ts` working as designed — three agents,
+    five cores, and it refuses rather than letting three suites kill each other at 70%;
+  - the attempts that did start each cost 4–8 minutes and found something real, which is the gate
+    earning its keep;
+  - and the queue grows the whole time, so each attempt is verifying more commits than the last. The
+    fourteenth attempt re-runs the work of the first thirteen.
+
+**What this adds to the decision** is that "let a passing suite push" solves the 36% and not the 64%.
+Whatever policy comes out of this wants an answer for a gate that cannot get a slot at all — a queue, a
+token, a longer refusal cooldown that is *told* to the caller as a time rather than an invitation to
+retry. `push.sh` already prints "Do not wait for the slot", which is right, and the honest consequence
+of following it is a fourteen-commit queue.
+
+Not claimed. This is a measurement, not a proposal: I have no view on which policy is right that is
+worth more than the numbers.
+
 ## Reproduction
 
 Have a batch of commits ready and run `bash tools/push.sh` while another agent is working normally.

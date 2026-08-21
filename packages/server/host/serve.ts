@@ -1,17 +1,26 @@
-// The accept loop, which is everything wac cannot do and nothing else.
+// The accept loop, in TypeScript — **which is a choice now and reads here as a constraint.**
 //
-// wasm has no sockets and no clock, so the host owns both and hands the results in. Every
-// decision — is this a complete request, what does it mean, what should the answer be, does the
-// connection stay open — is made in wac by `serve`, which is a pure function from bytes to bytes.
+// This opened "wasm has no sockets and no clock, so the host owns both". That was true when it was
+// written and is not: `std/platform.wac` has `Cli.listen`/`accept` and `Core.nowMillis`,
+// `monotonicNanos`, `sleepMillis`, and ten wac files already run accept loops — `packages/ssh`'s
+// `sshd`, `packages/tor`'s `relayd`, `dird` and `socks`, `packages/box`'s `nc`,
+// `packages/wactest`'s `daemon`. `issues/system/0161` flagged the sentence on 2026-08-19 as "the
+// kind of comment that reads as a constraint and is a date", and it is corrected rather than acted
+// on: rewriting a working server is not a port of a test.
+//
+// What is still true is the division of labour, and it is the interesting part. Every decision — is
+// this a complete request, what does it mean, what should the answer be, does the connection stay
+// open — is made in wac by `serve`, a pure function from bytes to bytes. That is worth keeping
+// whichever language owns the socket, and it is why this file is short.
 //
 // The buffer discipline is the interesting part and it is small: accumulate what arrives, call
 // `serve`, and if it answers, write the response and drop exactly `consumed` bytes. Keeping the
 // remainder rather than clearing the buffer is what makes pipelining work — a client may have
 // sent the next request already, and it is sitting in the tail.
 //
-// Limits live here rather than in wac, because they are about time and connections and wac can
-// see neither. All three are the ones a server actually needs, and a server without them is not
-// finished — a client that opens a connection and says nothing would otherwise hold it forever.
+// Limits live here because this is where the socket is, not because wac cannot see time — it can,
+// through `Core`. All three are the ones a server actually needs, and a server without them is not
+// finished: a client that opens a connection and says nothing would otherwise hold it forever.
 //
 //   deno run -A packages/server/host/serve.ts [port]
 

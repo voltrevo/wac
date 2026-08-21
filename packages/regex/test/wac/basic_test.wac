@@ -11,14 +11,24 @@
 // shell function, so this is safe either way, but the path is written down because the reason is not
 // obvious.
 //
-// ## What the move changed
+// ## The environment, and why this asks for it explicitly
 //
-// **The environment is cleared by `/usr/bin/env -i` rather than by the spawn API.** `Cli.exec` takes
-// a path, an argument vector and stdin, and nothing else — a deliberate floor, since an environment
-// is authority and handing one over is a separate grant. `env -i LC_ALL=C /bin/grep` is the same
-// thing said in the argument vector, and it matters here: a bracket expression is locale-dependent
-// and this container's ambient locale is `C.UTF-8`, under which `grep` reads bytes 128-255 as parts
-// of characters rather than as themselves. The byte sweep below would measure a different `grep`.
+// **The locale is load-bearing**: a bracket expression is locale-dependent, and this container's
+// ambient locale is `C.UTF-8`, under which `grep` reads bytes 128-255 as parts of characters rather
+// than as themselves. The byte sweep below would measure a different `grep`. So the child gets
+// `LC_ALL=C` and nothing else.
+//
+// **It gets that through `Cli.execWith`, and until 2026-08-20 it could not.** This file used
+// `env -i LC_ALL=C /bin/grep` and said so, because `Cli.exec` passed the child no environment at all
+// and there was nothing else to ask with — `issues/system/0182`. That issue is closed and `execWith`
+// takes `(path, args, stdin, env, clearEnv, inherit)`, so the locale is declared in the call instead of
+// laundered through a second process.
+//
+// The correction matters more than the process it saves. **`Cli.exec` now *inherits* everything this
+// program holds** — `clearEnv: false` — where it used to pass nothing, so a comment saying "and
+// nothing else — a deliberate floor" is not merely dated, it is backwards. Anything still relying on
+// `exec` to withhold an environment is relying on the opposite of what happens. `execWith(…, true, …)`
+// is the floor now, and asking for it is one argument.
 //
 // **And this is the port that found the deadlock in `Cli.exec`.** Batching a corpus through `grep` is
 // the one shape where a child answers while it is still being fed, and every host wrote the whole of
@@ -123,15 +133,12 @@ i32[] gnuMatchesAll(Core core, Cli cli, string pattern, u8[][] lines, bool exten
     at = at + 1;
   }
 
-  // **The leading `-i` is `env`'s, not `grep`'s** — it clears the environment, which is what the header
-  // above is about. `grep`'s own `-i` is a separate argument after the binary, and conflating the two
-  // would make every row here a case-folded comparison without changing a visible character.
+  // Every `-i` here is `grep`'s own, which it was not before: the first one used to be `env`'s. That
+  // pair — one flag, two meanings, one letter apart — is why the environment moved into the call.
   string[] args = extended
-    ? (ignoreCase ? string[]("-i", "LC_ALL=C", "/bin/grep", "-E", "-i", "-n", "-e", pattern)
-                  : string[]("-i", "LC_ALL=C", "/bin/grep", "-E", "-n", "-e", pattern))
-    : (ignoreCase ? string[]("-i", "LC_ALL=C", "/bin/grep", "-i", "-n", "-e", pattern)
-                  : string[]("-i", "LC_ALL=C", "/bin/grep", "-n", "-e", pattern));
-  Exec r = cli.exec("/usr/bin/env", args, stdin).wait();
+    ? (ignoreCase ? string[]("-E", "-i", "-n", "-e", pattern) : string[]("-E", "-n", "-e", pattern))
+    : (ignoreCase ? string[]("-i", "-n", "-e", pattern) : string[]("-n", "-e", pattern));
+  Exec r = cli.execWith("/bin/grep", args, stdin, string[]("LC_ALL=C"), true, false).wait();
   if (!r.ran()) {
     core.warn("regex: grep would not start — " + r.error);
     trap;
@@ -402,8 +409,8 @@ export string test_a_refusal_says_whose_problem_it_is(Core core, Cli cli) {
 
     // And the half that keeps this honest: where GNU refuses, it must be refusing for the same
     // reason, in the same words. A message copied from memory drifts from the tool it is copied from.
-    Exec r = cli.exec("/usr/bin/env",
-                      string[]("-i", "LC_ALL=C", "/bin/grep", "-e", patterns[i]), u8[0]()).wait();
+    Exec r = cli.execWith("/bin/grep", string[]("-e", patterns[i]), u8[0](),
+                          string[]("LC_ALL=C"), true, false).wait();
     t.isTrue(r.ran(), "grep ran — " + r.error);
     if (!r.ran()) { continue; }
     string theirs = trimmed(string.fromBytes(r.stderr));

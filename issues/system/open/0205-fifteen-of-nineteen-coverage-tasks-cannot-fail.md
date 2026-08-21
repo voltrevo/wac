@@ -584,6 +584,31 @@ Every package that had a driver now holds a floor except `core` and `sh`. What r
 is the eighteen packages with no driver at all, recorded above, which is a larger question than the one
 it opened with.
 
+### `core` fifteenth: 159 of 159, already, and nothing holding it there
+
+**20 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** The one is `packages/sh`, which is another agent's.
+
+`core` needed no new test and no rewiring: all 50 of its tests were already called, and every branch
+point in all five files with executable code was already reached. What it lacked was the *floor* — its
+task ran `covreport`, which prints and exits 0 whatever it measured, so a change dropping `core/map.wac`
+to half would have been reported in a block that reads like a gate and passed. That is exactly the case
+this issue was filed about.
+
+**Two of `core`'s seven files are absent from the table, and that is correct.** `jsx.wac` and `read.wac`
+declare types and nothing else — an enum of three variants, and the tree JSX builds — so they hold no
+branch points and there is nothing to cover. Worth recording because it looks identical to the failure
+found twice today: `packages/http`'s `proxy.wac` was absent with eighty-six points in it, and
+`coverageAll.ts` counted 21 packages of 38. The way to tell a real short denominator from an empty file
+is to open it, not to count rows.
+
+**And a third measured-versus-guessed correction.** I wrote "dropping the trap sweep costs eleven
+points" from the number of trap tests; it costs **eight**. Eleven tests reach eight points nothing else
+reaches, because several enter the same guard from different call sites and a guard is one point. The
+count of tests is not the count of what they reach. Same mistake as `raster`'s grants ("ten", actually
+one) and it is now the standing rule for these headers: no number in a ledger that a canary has not
+produced.
+
 ### The ordering for the remaining fourteen
 
 By how much argument each needs, which is how many points are uncovered: `unicode` 105/108,

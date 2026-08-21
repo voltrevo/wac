@@ -21,14 +21,6 @@ type WaccApi = {
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
   emitFilesCovered: (paths: string[], sources: string[], entry: string) => Uint8Array;
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
-  /** With the project root of each path, so `@/` resolves — GitHub issue 21. */
-  buildFilesRooted: (
-    paths: string[],
-    sources: string[],
-    roots: string[],
-    base: string,
-    entry: string,
-  ) => { wasm: Uint8Array; described: string };
   /** What the checker says, which a caller wants before it asks what the emitter declined. */
   diagnoseFiles: (paths: string[], sources: string[], entry: string) => string;
   /** The same for every file in the graph, each checked as an entry — `issues/lang/0118`. */
@@ -142,8 +134,6 @@ export async function waccArtifacts(
   opts: {
     coverage?: boolean;
     optimize?: (wasm: Uint8Array) => Promise<Uint8Array>;
-    /** The project root each path sits in — without it `@/` cannot resolve. GitHub issue 21. */
-    roots?: Map<string, string>;
   } = {},
 ): Promise<WaccArtifacts> {
   const cacheKey = await compileKey(files, entry, opts.coverage === true, opts.optimize !== undefined);
@@ -242,9 +232,6 @@ async function compileArtifacts(
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
-  // Parallel to `paths`, which is what `Res.of` wants; `""` for a file with no project above it.
-  const roots = paths.map((p) => opts.roots?.get(p) ?? "");
-  const rooted = roots.some((r) => r !== "");
 
   // **The checker first.** This asked only what the *emitter* declined, so a program with type
   // errors was built and run as long as the emitter could guess its way through: an example here
@@ -276,8 +263,6 @@ async function compileArtifacts(
   // that a second front costs nobody anything. `issues/lang/0129`.
   const built = opts.coverage
     ? null
-    : rooted
-    ? api.buildFilesRooted(paths, sources, roots, Deno.cwd(), entry)
     : api.buildFiles(paths, sources, entry);
 
   const raw = built === null

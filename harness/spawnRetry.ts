@@ -35,15 +35,9 @@
 // have looked exactly like the problem it was meant to fix.
 import "./wacProfile.ts";
 
+import { ATTEMPTS, isBusy, WAIT_MS } from "./etxtbsy.ts";
+
 const RealCommand = Deno.Command;
-
-/** How many times, and how long between: the window measured closed in under a millisecond. */
-const ATTEMPTS = 6;
-const WAIT_MS = 10;
-
-function isBusy(e: unknown): boolean {
-  return String(e).includes("Text file busy");
-}
 
 /** Sleep, synchronously, because `spawn` and `outputSync` cannot await. */
 function pause(ms: number): void {

@@ -212,8 +212,13 @@ string[] envStrings(Cli cli, string home) {
 /**
  * The strings with a NUL between them, which is the one separator an argument cannot contain.
  *
- * Built as bytes because wac has no escape for a NUL in a string literal — and a string is bytes
- * here, so nothing is lost by saying so directly.
+ * Built as bytes because a string is bytes here, so saying so directly loses nothing.
+ *
+ * **This said "wac has no escape for a NUL in a string literal", and it has one.** `spec/spec/strings.md`
+ * lists `\0` beside `\n`, `\t`, `\\` and `\"` in a tagged example — `[§wac-str-esc-h9qm3v7]`, which
+ * asserts each is a single byte — and `"a\0b".toBytes()` is three bytes with a zero in the middle,
+ * checked. The code is unchanged because building bytes is the honest shape for a byte separator; only
+ * the reason was wrong, and a false claim about the language is worth correcting wherever it sits.
  */
 u8[] joinedNul(string[] parts) {
   Buf b = Buf.create();

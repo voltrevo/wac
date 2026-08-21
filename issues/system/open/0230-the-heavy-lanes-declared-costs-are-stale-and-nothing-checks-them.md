@@ -1,4 +1,4 @@
-# 0229 — the heavy lane's declared costs are stale, and nothing checks the number
+# 0230 — the heavy lane's declared costs are stale, and nothing checks the number
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -67,3 +67,10 @@ longer hold:
 Not that the files be removed from the lane — they belong in it more than they did. The declarations
 are what is wrong, and the number they carry is load-bearing precisely because somebody reads it to
 decide what a push should pay for.
+
+## Renumbered from 0229 — 2026-08-21
+
+agent-a filed *"nineteen copies of one fixture helper"* as 0229 and pushed it while this was still
+local, so this is the one that moved. `compiler/wacSpec.test.ts` fails on two files claiming one
+number, which is how the collision is found — and it is the second time this week, so the number a
+new issue takes is worth reading off the *pushed* index rather than the local one.

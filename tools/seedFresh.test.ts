@@ -107,7 +107,14 @@ async function rustInputs(): Promise<string[]> {
   const out: string[] = [];
   // `native/spike-v8` is not in the binary: `native/Cargo.toml` names the members, and a spike is
   // not one of them. Watching it would make this red for an edit that changes nothing.
-  for (const dir of ["native/v8/src", "native/manifest/src", "native/src"]) {
+  // **Its own crate, and `manifest` which it depends on by path — not `native/src`.**
+  // `native/v8` is the crate `wac`; `native/` is the crate `wacland`. They share a `manifest`
+  // dependency and nothing else, so listing `native/src` here asserted a dependency that does not
+  // exist — and made this **unclearable**: touching the wasmtime host's source failed this check, and
+  // the `cd native/v8 && cargo build --release` it recommends does nothing, because nothing this
+  // binary is built from changed. `native/src`, `native/build.rs` and `native/Cargo.*` belong to the
+  // wasmtime check below. `issues/system/0208`.
+  for (const dir of ["native/v8/src", "native/manifest/src"]) {
     let entries: Deno.DirEntry[];
     try {
       entries = [...Deno.readDirSync(`${ROOT}/${dir}`)];
@@ -116,7 +123,8 @@ async function rustInputs(): Promise<string[]> {
     }
     for (const e of entries) if (e.isFile && e.name.endsWith(".rs")) out.push(`${dir}/${e.name}`);
   }
-  for (const f of ["native/Cargo.toml", "native/Cargo.lock", "native/build.rs", "native/v8/Cargo.toml"]) {
+  for (const f of ["native/v8/Cargo.toml", "native/v8/Cargo.lock", "native/v8/build.rs",
+                   "native/manifest/Cargo.toml"]) {
     try {
       await Deno.stat(`${ROOT}/${f}`);
       out.push(f);
@@ -163,3 +171,67 @@ Deno.test("the `wac` binary is not older than the Rust it is built from", async 
       `    cd native/v8 && cargo build --release`,
   );
 });
+
+// **The wasmtime host is a third per-agent artefact, and it had no freshness check.**
+//
+// `native/target/release/wacland` is gitignored, built on demand by whichever test wants it, and
+// nothing owned it — `issues/system/0208`. That was tolerable while the only consequence was a slow
+// first test. It stopped being tolerable on 2026-08-20, when `tools/push.sh` started deciding whether
+// to rebuild after a merge by *running this file*: a merge that changes `native/src/` then produced a
+// retry that could not pass. It cost one, and the message named itself —
+// `Cli.execWith is not implemented in the native runtime yet`, from a host binary that predated the
+// merge that added it.
+//
+// **Absent is fine; stale is not.** A fresh clone has no `wacland` and the callers build it, so this
+// asks the narrower question. `native/Cargo.toml` counts as a source: it pins wasmtime.
+Deno.test("the wasmtime host, if built, is not older than the Rust it is built from", async () => {
+  const binary = `${ROOT}/native/target/release/wacland`;
+  let built: Date;
+  try {
+    built = (await Deno.stat(binary)).mtime!;
+  } catch {
+    return; // never built here, so nothing can be out of date
+  }
+  const newer: string[] = [];
+  for (const rel of ["native/src", "native/manifest/src", "native/Cargo.toml", "native/Cargo.lock",
+                     "native/build.rs"]) {
+    for await (const p of sourcesUnder(`${ROOT}/${rel}`)) {
+      const at = (await Deno.stat(p)).mtime!;
+      if (at > built) newer.push(`${p.slice(ROOT.length + 1)} (${stampGap(at, built)})`);
+    }
+  }
+  if (newer.length > 0) {
+    throw new Error(
+      `native/target/release/wacland is older than ${newer.length} of its sources, the first being ` +
+        `${newer[0]}.\n` +
+        "  Every test that drives the wasmtime host is running the older one, and a two-host\n" +
+        "  differential then fails saying the host lacks something the tree has.\n" +
+        "  `cd native && cargo build --release` — or delete the binary and let the callers rebuild it.",
+    );
+  }
+});
+
+/** Every file under `dir`, or just `dir` when it is a file. */
+async function* sourcesUnder(dir: string): AsyncGenerator<string> {
+  let info: Deno.FileInfo;
+  try {
+    info = await Deno.stat(dir);
+  } catch {
+    return;
+  }
+  if (info.isFile) {
+    yield dir;
+    return;
+  }
+  for await (const e of Deno.readDir(dir)) {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory) yield* sourcesUnder(p);
+    else yield p;
+  }
+}
+
+/** "3.3 hour(s)" — the same phrasing the seed check uses. */
+function stampGap(newer: Date, older: Date): string {
+  const hours = (newer.getTime() - older.getTime()) / 3_600_000;
+  return hours >= 1 ? `${hours.toFixed(1)} hour(s) newer` : `${(hours * 60).toFixed(0)} minute(s) newer`;
+}

@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0175a](open/0175a-diagnosegraphin-accepts-a-res-and-never-reads-it.md) | `diagnoseGraphIn` takes a `Res` and its 39-line body mentions it zero times, so it is `diagnoseGraph` with a parameter — 2 of 8 such entry points ignored theirs; implement it or delete it | bug | no error |
 | [0173a](open/0173a-a-signature-mentioning-an-unsubstituted-type-parameter-is-registered-as-a-type.md) | not a stray entry: `Box<U>` is instantiated with the method's own type parameter, emitting 9 functions and 3 exports for a method nobody calls — measured, with a ledger test and two failed fixes recorded | bug | 467 wasted bytes |
 | [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | bindgen refuses a nullable primitive at the host boundary, so `export i32 read(i32? x)` — the accessor the spec prescribes — gets no glue; the emitter half is done | decision | no glue for a signature the spec shows |
 | [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | the standing one: the emitter has 25 lookup failures that bail without a reason, and the `emitFiles*` family is not covered by the export-parity net. The original 14 programs are all refused | bug | a decline with no cause, or none at all |
@@ -34,7 +35,7 @@ has been fixed and why.
 
 ## Closed
 
-175 issues, 149 closed.
+176 issues, 149 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
