@@ -143,6 +143,27 @@ imports `packages/platform`, whose `Pending<T>.then` is a lambda, and the refere
 why `WAC_APP_FROM=reference` stopped working. So the packages whose graphs reach `platform` are not
 covered by the measurement above and would need the pass itself to answer for them.
 
+## And what it would cost in time, which is the number left
+
+A per-instantiation pass walks a generic's method bodies once per instance, so the multiplier is the
+number of concrete instantiations. Counted over `packages/wacc/src` — the compiler's own sources, the
+graph whose check time anybody editing this feels:
+
+    53 concrete instantiations across ~22 template names
+    19 of them are `Pending<…>` alone, whose methods would be re-walked 19 times
+
+Against a baseline of **833ms** for `wac check packages/wacc/src/api.wac` today. So this is not free and
+it is not alarming either; it is a number the operator should see before it lands, because `wac check` is
+the fast loop and `issues/lang/0153` is already about what a build costs.
+
+Two things that would keep it down, if it is taken:
+
+- **Only where a body says something about a type parameter.** A method whose body never names one is
+  already fully checked by the opaque pass; re-walking it per instance buys nothing. That test is cheap
+  and would take most of the 53 out.
+- **Once per distinct instantiation, not per use.** `Pending<i32>` appearing fourteen times is one
+  instance.
+
 ## Notes
 
 The recall row this came from cannot close until the checker reports, so it will keep reading as `2
