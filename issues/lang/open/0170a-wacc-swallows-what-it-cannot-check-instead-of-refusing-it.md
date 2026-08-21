@@ -636,8 +636,11 @@ one at a time by rebuilding:
 - **324 literal-operand programs** — where the guess is load-bearing and *correct*: one side genuinely
   has no type of its own, and answering with the other side's is the rule, not a guess.
 - **80 packed programs** — `isNumericTy` does not name `u8`/`i16`, which is what round 2 tripped on.
-- string concatenation, round 1, which the generator does not reach because `f` must return a number.
+- **48 string-concatenation programs** — round 1's case. I wrote here that the generator could not
+  reach it "because `f` must return a number", and that was wrong: line 134 has generated
+  `export i32 f() { return (a + b).len(); }` all along, 48 of them, all accepted. A claim about what a
+  generator cannot do is worth grepping for before writing down.
 
-All 404 are in the sweep now, so a round that refuses them fails in 48 seconds with the programs named,
-instead of after a seed rebuild. The remaining unknown is round 4, which was never diagnosed — and the
+All **452** are in the sweep now, so a round that refuses them fails in 48 seconds with the programs
+named, instead of after a seed rebuild. The remaining unknown is round 4, which was never diagnosed — and the
 first thing to do with it is no longer to guess, but to run `tighten_probe.wac` and read the list.
