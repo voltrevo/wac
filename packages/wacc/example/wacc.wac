@@ -451,7 +451,18 @@ Sources gather(Fs fs, Cli cli, string entry) {
       }
       bool seen = false;
       for (i32 k = 0; k < n; k++) { if (paths[k] == next) { seen = true; } }
-      if (seen || n >= maxFiles()) { continue; }
+      // **The cap is reported, not skipped.** This was `if (seen || n >= maxFiles()) { continue; }`,
+      // so a program of more than 512 files was compiled *with a hole in it* — which is the exact
+      // thing this function's own docstring says it refuses to do, twelve lines above. `wac check` on
+      // a 1025-file program answered *"512 file(s), no diagnostics"*, and `wac build` then failed with
+      // "an import of a file that was not supplied", naming neither the limit nor the file that did
+      // not fit. `issues/lang/0158`.
+      if (!seen && n >= maxFiles()) {
+        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "",
+                       "a program may be at most " + itoa(maxFiles()) + " files, and " + next
+                       + " (imported by " + path + ") is past that");
+      }
+      if (seen) { continue; }
       paths[n] = next;
       // Inherited: a file a confined file reaches is as confined as the file that reached it.
       confine[n] = confine[at];

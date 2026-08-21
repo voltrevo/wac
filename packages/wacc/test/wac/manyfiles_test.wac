@@ -125,3 +125,61 @@ export string test_more_files_than_the_linkers_tables_used_to_hold(Core core, Cl
           ". The line table stopped early and their counters were credited to another file.");
   return t.report();
 }
+
+// ── And past the linker's queue, which used to blame the caller ───────────────────────────────────
+//
+// `linkFiles` has five room guards — one on the file table, two on the walk's queue, two on the edge
+// table — and `linkFailure` reads a sentinel, `starts[0] == 1`, to tell "out of room" from "a file
+// nobody supplied". **Nothing in `emit.wac` ever wrote `starts[0]`.** So the message
+// *"more import edges than the linker was given room for"* was unreachable, and all five guards
+// answered *"an import of a file that was not supplied"* — a claim about the caller's map, for a
+// program whose every file was supplied.
+//
+// Measured before: an entry importing 1024 files emitted **8 bytes** — a bare wasm header — with
+// `diagnoseFiles` clean and that sentence as the only explanation. `issues/lang/0179a`.
+//
+// Two of the five also *dropped an edge and carried on*, which is worse than refusing: the module
+// comes out with a name resolved to nothing, and that is `issues/lang/0130`'s shape.
+export string test_past_the_queue_the_refusal_names_the_limit(Core core, Cli cli) {
+  T t = T.create();
+  // One more than the queue holds. The queue is one entry per file *to visit*, so an entry importing
+  // n files queues n + 1.
+  i32 n = 1024;
+  string[] paths = string[n + 1](fill: "");
+  string[] sources = string[n + 1](fill: "");
+  string entry = "";
+  for (i32 i = 0; i < n; i++) {
+    paths[i] = "/f" + itoa(i) + ".wac";
+    sources[i] = "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n";
+    entry = entry + "import { g" + itoa(i) + " } from \"./f" + itoa(i) + ".wac\";\n";
+  }
+  paths[n] = "/main.wac";
+  sources[n] = entry + "export i32 main() { return g0(); }\n";
+
+  string why = blockedFiles(paths, sources, "/main.wac");
+  t.isTrue(why != "", "a program past the linker's queue was accepted");
+  t.isTrue(why.indexOf("queue") >= 0, "did not name the queue — " + why);
+  t.isTrue(why.indexOf("1024") >= 0, "did not name the limit — " + why);
+  // **The old sentence is the assertion that matters.** Naming a limit is only an improvement if it
+  // has stopped blaming the file map.
+  t.isTrue(why.indexOf("not supplied") < 0, "still blames the caller's map — " + why);
+  return t.report();
+}
+
+/** And a program inside the limit still links, which is what says the guard is a guard. */
+export string test_and_inside_the_queue_it_links(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = 200;
+  string[] paths = string[n + 1](fill: "");
+  string[] sources = string[n + 1](fill: "");
+  string entry = "";
+  for (i32 i = 0; i < n; i++) {
+    paths[i] = "/f" + itoa(i) + ".wac";
+    sources[i] = "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n";
+    entry = entry + "import { g" + itoa(i) + " } from \"./f" + itoa(i) + ".wac\";\n";
+  }
+  paths[n] = "/main.wac";
+  sources[n] = entry + "export i32 main() { return g0(); }\n";
+  t.eqStr(blockedFiles(paths, sources, "/main.wac"), "", "a 201-file program was refused");
+  return t.report();
+}

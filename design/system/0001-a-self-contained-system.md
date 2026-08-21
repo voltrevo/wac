@@ -228,6 +228,13 @@ and the boundary is worth stating precisely rather than discovering:
   scheduler can let exactly one worker run at a time and choose the order answers are delivered in. When a
   program parks on `waitAny` with several tickets ready, which one it sees is *our* choice — the protocol
   permits either, and today it is decided by timing.
+
+  **The last clause stopped being true.** Both hosts now scan the caller's list and answer the first
+  settled ticket — `packages/platform/host/call.ts` and `native/src/tickets.rs`, which cites this
+  decision as its reason. So the choice *among* ready tickets is exercised, deterministically, by list
+  position; the choice *set* is still the kernel's, exactly as the next bullet says. `issues/system/0202`
+  was filed on the assumption that timing still decided it, and closed on finding that it does not
+  (agent-a, 2026-08-21).
 - **what we cannot.** Whether a real `readFile`, `accept` or child exit has completed is the kernel's
   business. So the *choice set* — which workers are unblockable right now — is not reproducible from a
   seed, even though the choice among them is. A worker parked on two OS-backed tickets, one of which will

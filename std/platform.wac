@@ -185,6 +185,9 @@ export struct Sched {
         // the check is a claim that cannot fail rather than a value being squeezed.
         budget = (left / (1000000 as i64)) as! i32;
       }
+      // **In registration order**, which `removeAt` preserves by shifting rather than swapping — so
+      // with several continuations due at once they run in the order they were registered. That is
+      // `waitAny`'s tie-break plus this list's order; neither alone is enough to say it.
       i32[] live = i32[this.n]();
       for (i32 i = 0; i < this.n; i++) { live[i] = this.ids[i]; }
       i32 which = core.waitAny(live, budget);
@@ -639,6 +642,19 @@ export struct Core {
    *     i32 w = core.waitAny(i32[](r.id, a.id), -1);   // until one of them answers
    *     i32 w = core.waitAny(i32[](r.id), 5000);       // ...or five seconds, whichever first
    *     i32 w = core.waitAny(i32[](click.id, file.id), 0);   // which is ready right now
+   *
+   * **When several are ready, the answer is the first of them in the list you passed** — not the one
+   * that finished first. Both hosts scan the caller's order and return the first settled ticket:
+   * `packages/platform/host/call.ts` is `for (const t of tickets) if (isDone(b, t)) return t;`, and
+   * `native/src/tickets.rs` says why — *"first in the caller's list rather than first to finish, so the
+   * answer does not depend on how the threads were scheduled"*, which is `design/system/0001` D12.
+   *
+   * **It is not a statement about when work finishes.** A ticket the host has not marked ready yet is
+   * not ready, so a 1ms timer that has been descheduled loses to a 2ms one that has not — and no
+   * tie-break can change that, because there is no tie. `issues/system/0202` was filed on that
+   * observation and asked which policy to adopt; the policy was already here, and what it saw was the
+   * other thing. `packages/platform/test/wac/scheduled_test.wac` asserts the tie-break by asking twice
+   * with the list reversed, which is what separates position from completion.
    *
    * **Returns -1 when the time ran out**, and also for an empty list, which is the same
    * statement: nothing settled. That is how a silent peer is survivable — see

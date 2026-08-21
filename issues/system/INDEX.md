@@ -17,7 +17,6 @@ record of what has been fixed and why.
 | [0205](open/0205-fifteen-of-nineteen-coverage-tasks-cannot-fail.md) | fifteen of nineteen coverage drivers end with `report(...)` and cannot fail, while the summary read "19/19 passed" — two hold a floor, two only check their own exemptions | missing feature | no error |
 | [0204](open/0204-wac-test-recompiles-every-directory-on-every-run.md) | `wac test` has no build cache, so every run recompiles every test directory — measured at 9% of the lane's biggest chunks, so worth ~8s of wall rather than the 104s it looked like | performance | no error |
 | [0203](open/0203-the-gate-fails-one-run-in-six-and-never-on-the-same-test.md) | the gate failed 5 of 28 runs in one day on five different files — two were real breakage arriving through the merge, two were fixed-wait races, one is unexplained | bug | no error |
-| [0202](open/0202-two-simultaneously-due-timers-have-no-tie-break-so-continuations-run-in-either-order.md) | two simultaneously due timers have no tie-break, so a scheduler dispatches their continuations in either order | missing feature | wrong answer |
 | [0201](open/0201-a-shell-builtin-shadows-a-box-applet-and-answers-differently.md) | a shell builtin shadows a box applet and refuses in fewer words than the applet does | bug | wrong answer |
 | [0198](open/0198-allow-run-also-grants-allow-env-because-exec-inherits-the-whole-environment.md) | `--allow-run` carries `--allow-env`: 37 variables including the proxy. Measured — 21 of 24 exec-using directories need only `PATH`, three name what they need, and the seal test's canary is built on the leak, which settles the fourth parameter | bug | no error |
 | [0197](open/0197-a-built-app-costs-107ms-to-start-and-the-same-program-costs-15ms.md) | a built app costs 107 ms to start and the same program through the `wac` binary costs 15 ms | performance | no error |
@@ -64,7 +63,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-242 issues, 190 closed.
+242 issues, 191 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
