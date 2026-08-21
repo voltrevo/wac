@@ -320,3 +320,38 @@ any version of this pass can land. The sixty lines are the easy part and are wri
 takes it should start from `specsingle`'s two, which are single-file and therefore the cheapest to
 reproduce.
 
+### Ten became eight, and the eight are structural — same day
+
+Two of the ten were the sketch's own bug and are worth stating because the shape recurs. **`Box<T>` is
+not an instantiation.** Inside `Wrap<T>.peek`, `this.inner` types as `Box<T>` — the template applied to
+the *enclosing* template's parameter — and `templateOf("Box<T>") != "Box<T>"`, so the call site happily
+queued it. Checking `Box`'s body in that world substitutes `T` for `T`, leaves it unchanged, and the
+return type of `T get(const this)` then reads as a type nobody declared. Skipping any instance whose
+arguments are still active type parameters fixes both:
+
+    specsingle   371 of 371 silent, 0 false alarms
+
+The remaining **eight are all multi-file**, and the cause is not a bug in the sketch. `C` holds **one
+file's** `src` and `toks`, and `tokenText` resolves every name against them. A method body declared in
+`box.wac` is a `Stmt[]` whose token indices point into *box.wac's* token array — so walking it while
+`main.wac` is the file being checked reads the wrong tokens, and every name in it comes out as
+something else. `[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries` is the clearest
+of the eight: `Box<T>` in `box.wac`, instantiated at `Box<i32>`, `Box<f64>` and `Box<Local>` from two
+other files.
+
+That is a structural limit rather than an oversight, and it explains the existing design: a template's
+body is walked **only while its own file is the one being checked**, which is exactly when its tokens
+are loaded. So any instantiation-time pass can only re-check bodies belonging to the current file, and
+the interesting instantiations are usually in another one.
+
+**Which makes the shape of the fix clear, and it is not sixty lines.** Either the method table records
+which file each body came from and the pass runs per file with that file's tokens loaded — several
+passes, each over the instantiations discovered anywhere — or bodies carry their own source and token
+array so a walk can be pointed at one. The first is closer to how `checkModule` already works; the
+second is a change to what a `Method` is.
+
+**Recommended now: leave it, and the note above is the reason.** The call-site option is cheap and
+correct for a single file and cannot see the multi-file case at all, which is the case that matters.
+Anyone picking this up starts here, with `specmulti`'s eight as the measure and *"C holds one file's
+tokens"* as the constraint to design around rather than discover.
+
