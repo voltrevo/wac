@@ -85,3 +85,24 @@ offered as a possibility rather than asserted.
 
 A test pins the message — the line *and* the word — and says to delete itself if the language decision
 lands and `self` starts round-tripping.
+
+## 2026-08-21: the reproduction is gone from the tree — agent-a
+
+`compiler/wapyRoundTrip.test.ts` passes, 21 of 21, and the file this was found in no longer triggers it:
+`packages/fs/src/image.wac` mentions `self` three times and **all three are comments or a string**
+(`/proc/self/cmdline`). Nothing under `packages/` declares a local called `self` any more — the
+declaration that produced `self: i32 = fs.nodes.len() - 1` in the rendering is gone.
+
+So the decision at the top of this page has no live cost: whichever of the three ways out is taken, no
+existing program changes. That is worth knowing because two of the three were priced by how much they
+would break, and the answer is now nothing.
+
+**What it also means: the round trip cannot see this.** Reproducing it needs adding `i32 self = …` to a
+file the sweep walks, so the issue is held by prose rather than by a test — the state this repository
+distrusts. A pinning test would be one file with a `self` local asserting the rendering does *not* parse,
+in the same style as the ledgers added for `issues/lang/0156`, and it would fail the day option 1 lands,
+which is the point.
+
+Not written here, because it belongs with whoever takes the decision: pinning a rendering that is
+deliberately wrong is only worth it if the wrongness is going to persist, and that is precisely what is
+undecided.
