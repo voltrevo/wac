@@ -527,7 +527,11 @@ export function generate(
       }
       const params = c.params.map((p, i) => `a${i}${ann(p)}`).join(", ");
       const fwd = c.params.map((p, i) => fromWasm(p, `a${i}`)).join(", ");
-      const raw = c.params.map((p, i) => `a${i}: unknown`).join(", ");
+      // **`annRaw`, like every other annotation in this file.** Spelled out, this was the one that
+      // did not respect JavaScript mode, so `bindgen --js` on any module with a function at its
+      // boundary wrote a `.js` that did not parse — `const $cbd0 = ($slot, a0: unknown) =>`, where
+      // `$slot` one expression to the left was already handled. GitHub `voltrevo/wac#23`.
+      const raw = c.params.map((_, i) => `a${i}${annRaw("unknown")}`).join(", ");
       lines.push(`const $cbs${c.index}${annRaw(`((${params}) => ${tsType(c.ret)})[]`)} = [];`);
       lines.push(`const $cbd${c.index} = ($slot${annRaw("number")}${raw ? ", " + raw : ""}) =>`);
       lines.push(`  ${toWasm(c.ret, `$cbs${c.index}[$slot](${fwd})`)};`);

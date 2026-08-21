@@ -22,6 +22,7 @@ if (path === undefined) {
 const mod = await import(path.startsWith("/") ? path : `${Deno.cwd()}/${path}`) as {
   origin(x: number, y: number): { sum(): number; x: number };
   greet(who: string): string;
+  apply(f: (n: number) => number, x: number): number;
 };
 
 const wrong: string[] = [];
@@ -33,6 +34,13 @@ if (mod.origin(4, 5).x !== 4) wrong.push(`origin(4,5).x = ${mod.origin(4, 5).x},
 // A string in and a string out — both directions across the staging buffer.
 if (mod.greet("world") !== "hi world") {
   wrong.push(`greet("world") = ${JSON.stringify(mod.greet("world"))}, want "hi world"`);
+}
+
+// A JavaScript function passed *into* the module, which is the only export shape whose glue is a
+// function definition rather than a call — and the shape whose annotations were emitted even in
+// JavaScript mode, so the file did not parse. Calling it is what says the slot table forwards.
+if (mod.apply((n) => n * 3, 7) !== 21) {
+  wrong.push(`apply(n => n * 3, 7) = ${mod.apply((n) => n * 3, 7)}, want 21`);
 }
 
 if (wrong.length > 0) {

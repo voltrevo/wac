@@ -193,7 +193,11 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   cli.writeFile(dir + "/m.wac",
     ("struct Point { i32 x; i32 y; i32 sum(const this) { return this.x + this.y; } }\n" +
      "export Point origin(i32 x, i32 y) { return Point(x, y); }\n" +
-     "export string greet(string who) { return \"hi \" + who; }\n").toBytes()).wait();
+     "export string greet(string who) { return \"hi \" + who; }\n" +
+     // **A function across the boundary**, which is the one shape this sample did not have and the
+     // reason `bindgen --js` emitted TypeScript for a year: the callback dispatcher's parameters were
+     // annotated unconditionally, so the generated `.js` did not parse. GitHub `voltrevo/wac#23`.
+     "export i32 apply(fn[i32(i32)] f, i32 x) { return f(x); }\n").toBytes()).wait();
 
   Exec js = runProgram(cli, program, string[]("bindgen", dir + "/m.wac", "--js"));
   t.eqI32(js.status, 0, "bindgen failed: " + string.fromBytes(js.stderr) +
