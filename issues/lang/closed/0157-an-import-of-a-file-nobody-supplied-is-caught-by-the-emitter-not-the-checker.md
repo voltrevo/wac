@@ -3,8 +3,8 @@
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
-- **Status:** open — the single-file half is fixed (2026-08-20); the files-based half is not
-- **Claimed by:** agent-a, 2026-08-21 — the files-based half, now that 0175a has threaded the `Res`
+- **Status:** closed — the single-file half 2026-08-20, the files-based half 2026-08-21
+- **Closed by:** agent-a, 2026-08-21
 - **Symptom:** no error
 
 ## Measured
@@ -164,3 +164,54 @@ now drops code 77 **and counts it**, asserting the count is non-zero, because a 
 diagnostic looks exactly like a checker that stopped producing it. `ours` in `rung3_probe.wac` is left
 alone and a sibling added: `ours` also counts what a rejection program *caught*, and dropping a code
 there would quietly lower recall.
+
+## The files-based half — agent-a, 2026-08-21
+
+**Fifteen lines, of which one is the rule**, because the blocker this issue priced was paid next door.
+`issues/lang/0175a` threaded the `Res` through `checkFilesWithIn`, so the specifier there is resolved by
+`resolveVia` — the linker's own resolver — and a membership test against `paths` finally means
+something. In `api.wac`'s import loop:
+
+```wac
+string bare = quoted.len() >= 2 ? quoted.slice(1, quoted.len() - 1) : "";
+if (bare != "" && !isBuiltinSpec(bare) && indexOfPath(paths, target) < 0) {
+  c.addUnresolved(bare);
+}
+```
+
+**And that is deliberately not a second implementation of the rule.** `addUnresolved` is the same field
+the single-file half sets, and the *reporting* stays where it already was — `checkProgram`'s import walk,
+`c.reportTok(errMissingImportFile(), pathTok, bare)`, at the import's own token with the path in the
+note. So the files path only contributes the one thing it knows and the single-file path does not: which
+specifiers had no file. Both entry points now answer code **77**, and the test asserts they answer *the
+same* code, which is what stops the two drifting.
+
+The section above priced this as "option 1's cost — thread the resolution context — is real and
+unavoidable", and it was right; what it could not know is that another issue would pay it for its own
+reasons the same week.
+
+### What it was measured against
+
+    missingimport_test.wac              6 passed   (the flipped assertion, and a `@/` case)
+    corpuscheck_test rung 3             clean over 975 files
+    mappedspec_test / projectspec_test  9 and 5 passed — the four-each that a plain `resolveFrom`
+                                        would have refused
+    specsingle_test, cases_test, checkgraph_test, files_test, checkalone_test   all pass
+    linkEmit.test.ts rung 4             the emitter's own sentinel message is unchanged
+
+The corpus being clean is the interesting one: this is the rule whose *previous* outing turned a blind
+spot into 64 diagnostics, because the walk read three fixed directories one level deep. That walk is
+recursive now, so no import edge leaves the set, and a clean run is the correct answer rather than an
+inert check.
+
+### What is not covered
+
+- **The CLI never reaches this rule**, and does not need to: `gather` in `example/wacc.wac` fails first
+  with `wacc: cannot read src/nowhere.wac`, which has the filename and no position. The rule is for
+  callers that supply their own map — the playground, the harness, an embedder — which is exactly the
+  set that got "0 diagnostics" before.
+- **A `@/` import with no project is refused under this code rather than D7's.** `resolveVia` on an
+  empty `Res` answers `""`, which no file is keyed by, so it lands here as `errMissingImportFile`; the
+  reference says *"needs a project: no `wac.json5` above main.wac"*. Both refuse, under two names.
+  `test_a_project_import_with_no_project_is_refused_as_a_missing_file` records the current answer, and
+  which of the two messages is right is a smaller question than this issue was about.

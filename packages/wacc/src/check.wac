@@ -7813,8 +7813,10 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   // **One file was supplied, so every quoted specifier that is not a built-in tree names a file
   // nobody gave.** Read off the parse rather than by scanning the text, which also keeps `files.wac`
   // out of this file's imports — it imports `emit.wac`, and `emit.wac` imports this. The
-  // files-based entry point does the same job with a real path map, in `api.wac`.
-  // `issues/lang/0157`.
+  // files-based entry point does the same job with a real path map, in `api.wac` — where it resolves
+  // each specifier with `resolveVia` and tests it against the map, so a mapped or project specifier is
+  // not mistaken for a missing file. That half landed 2026-08-21; this sentence described it for a day
+  // before it existed. `issues/lang/0157`.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Import(pathTok, prefixTok, items): {

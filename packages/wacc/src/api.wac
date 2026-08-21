@@ -19,7 +19,7 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
          describeLinked, describeSep, buildLinked, Built,
          sourceOf, tokenTextOf, resolveImport, numText,
          emitDeclineLinked, lambdaReportLinked } from "./emit.wac";
-import { coreSource } from "./coretext.wac";
+import { coreSource, isBuiltinSpec } from "./coretext.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, resolveFrom, resolveFromIn } from "./files.wac";
@@ -1150,6 +1150,20 @@ C checkFilesWithIn(string[] callerPaths, string[] callerSources, Res res, string
           // silence again one step further along. On an empty `Res` this is `resolveImport`, so the
           // callers with no filesystem are unaffected. `issues/lang/0175a`.
           : resolveVia(res, paths, entry, quoted.slice(1, quoted.len() - 1));
+        // **And if nothing was supplied under that key, say so — at this token.** The other half of
+        // `issues/lang/0157`. This is the whole of the files-based rule: the *reporting* is
+        // `checkProgram`'s, at the import's own `pathTok`, and all this does is tell it which
+        // specifiers had no file, so there is one rule and not a second implementation of it.
+        //
+        // It could not be written until the resolution above was the linker's own. With
+        // `resolveFrom`, a mapped specifier, a `@/` one, and a plain `./a.wac` *inside* a mapped
+        // subdirectory each resolved to a key no supplied file has — so this test would have refused
+        // four cases each in `mappedspec_test.wac` and `projectspec_test.wac` that are correct
+        // programs. `issues/lang/0175a` is what made the membership test mean something.
+        string bare = quoted.len() >= 2 ? quoted.slice(1, quoted.len() - 1) : "";
+        if (bare != "" && !isBuiltinSpec(bare) && indexOfPath(paths, target) < 0) {
+          c.addUnresolved(bare);
+        }
         for (i32 i = 0; i < items.len(); i++) {
           if (n >= wantName.len()) { continue; }
           wantFrom[n] = target;
