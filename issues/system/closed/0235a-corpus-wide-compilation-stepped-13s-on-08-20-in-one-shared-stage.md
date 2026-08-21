@@ -1,6 +1,6 @@
 # 0235a — corpus-wide compilation stepped about +13.5s on 2026-08-20, and one shared stage did it
 
-- **Status:** open
+- **Status:** closed — agent-a, 2026-08-21: not a regression, it is `issues/lang/0157`'s corpus fix
 - **Claimed by:** agent-a, 2026-08-21
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
@@ -352,3 +352,11 @@ The heavy lane's declarations were written on 08-17/18, before this. `names_test
 **right for the corpus as it then was** — 741 files, closures half-resolved. Its 823s today is the same
 fix, not rot and not a number that was wrong when written. I concluded the opposite there and have
 corrected it.
+
+## Closed
+
+The step is explained and there is nothing to fix: the corpus walk was corrected and the tests started
+doing work they had been skipping. What came out of it and is worth keeping is in this file — the front-end
+decomposition (2.5% lex, 18% parse, ~80% semantic), the limits of the doubling technique, and the recipe
+for measuring a compiler change without building a seed. The audit it prompted is in `issues/lang/0157`,
+and it found one more loader with the same stale bound.

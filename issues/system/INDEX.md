@@ -5,7 +5,6 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0235a](open/0235a-corpus-wide-compilation-stepped-13s-on-08-20-in-one-shared-stage.md) | `describewac_test` 1.6s → 15.3s and `corpuscheck_test` 17.4s → 30.9s in one 104-minute window on 08-20 — **equal absolute gains**, so a shared front-end stage rather than a slower compiler. Filed, withdrawn on a measurement that was a failed run (zsh does not split an unquoted `$G`, so five grants went as one flag and exited 2 in 4s), reinstated. `setType` and `declinedExport` measured out; one commit left | performance | no error |
 | [0234a](open/0234a-a-bare-specifier-means-two-things-and-the-two-hosts-pick-differently.md) | `dep/lib.wac` is a mapping name per the spec and not a relative path, but the Deno walk joins it to the importing file's directory — with `dep/` mapped and a real `src/dep/lib.wac` it compiles the local file and the program answers 99, exit 0, no diagnostic; and the binary resolves a bare specifier no mapping declares as though it were relative, which the spec does not define either | bug | wrong answer |
 | [0233c](open/0233c-three-github-design-issues-were-not-captured-anywhere.md) | GitHub 8, 18 and 19 had no record in this tracker: 19's bootstrap rule is already met and checked by `tools/seed.sh`, 18's first question is answered by 0009's D8/D9 — two commits are two modules, so versions can coexist — and 8 is untouched | decision | not implemented |
 | [0231c](open/0231c-a-lane-can-be-watched-or-counted-and-not-both.md) | the suite's Deno pass is inherited so it can be watched and is therefore uncountable; its wac lane is buffered so its 2,387 tests can be counted and is therefore unwatchable — one chunk held 66s of output — because `Cli.execWith` has two modes and no incremental read. Not a blocker: a shell redirect plus a bounded `waitAny` and a tail does both today, measured — the capability would make it one process and one read instead of two and a re-read | missing feature | no error |
@@ -64,7 +63,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-246 issues, 194 closed.
+246 issues, 195 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
