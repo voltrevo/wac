@@ -270,12 +270,26 @@ So matching by key is out. What is sound is matching by **specifier text**: if t
 importing file and the specifier as written, the checker can find that import in that file by string
 comparison and report at its token, resolving nothing.
 
-The linker does not record it today, and the reason is worth stating rather than discovering: the
-failure is detected while *loading a queued path*, and the queue holds resolved targets. The specifier
-that queued it was in the importer's source, two loop iterations earlier. So this needs the queue to
-carry `(specifier, importer)` alongside each target — two parallel arrays in `linkFiles`, sized like
-`queue`, written where the target is queued and read where the load fails.
+The linker did not record it, and the reason is worth stating: the failure is detected while *loading a
+queued path*, and the queue holds resolved targets — the specifier was in the importer's source two loop
+iterations earlier. **Done now**: `queueSpec` and `queueFrom` run parallel to `queue`, written where a
+target is queued and read where the load fails, which is one lookup because `qi` is the queue index.
 
-That is a contained change and the cheapest sound route to a position. It is *not* the one this issue
-originally proposed, and the difference matters: this issue asked the checker to decide, and the answer
-turned out to be that the checker cannot, and does not have to.
+    an import of a file that was not supplied: /shared/util.wac
+      (/app/lib.wac imports it as "../shared/util.wac")
+
+The three together are what a reader needs *and* what a position needs: the key says what to go looking
+for, the importer says which file to open, and the specifier as written is the string to find in it — so
+a token can be located by comparison, resolving nothing. `missingimport_test.wac` asserts all three, with
+the bad import in the *second* file so the importer cannot be the entry by accident, canaried by dropping
+the record.
+
+### What is left
+
+Only the wiring, and it is a layering question rather than a resolution one. Neither
+`checkFilesWithIn` nor `diagnoseFilesWithIn` calls the linker, so for the checker to report at the token
+the linker's answer has to reach it — either by the checker asking (which means the checker depends on
+the emitter, and `emit.wac` already imports `check.wac`, so that is the wrong way round) or by the
+caller that has both — `example/wacc.wac` runs the checker and then the emitter — turning the emitter's
+named refusal into a positioned diagnostic itself. The second is a few lines and needs no new dependency:
+it has the paths, the sources and the parse, and now it has the file and the exact specifier to find.

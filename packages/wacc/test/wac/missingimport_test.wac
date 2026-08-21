@@ -123,6 +123,29 @@ export string test_the_emitter_names_the_file_it_could_not_find() {
   return t.report();
 }
 
+/**
+ * And who asked, and how they spelled it.
+ *
+ * **The three together are what a reader needs and what a *position* would need.** The key says what to
+ * go looking for, the importer says which file to open, and the specifier as written is the string to
+ * find in it — which is how a token can be located without resolving anything, and resolution is the
+ * step that cannot be redone soundly inside a mapped checkout. `issues/lang/0157`.
+ */
+export string test_it_names_the_importer_and_the_specifier() {
+  T t = T.create();
+  // Two files, and the *second* one has the bad import — so the importer named cannot be the entry by
+  // accident.
+  string why = blockedFiles(
+      string[]("/app/main.wac", "/app/lib.wac"),
+      string[]("import { x } from \"./lib.wac\";\nexport i32 f() { return x(); }\n",
+               "import { y } from \"../shared/util.wac\";\nexport i32 x() { return y(); }\n"),
+      "/app/main.wac");
+  t.isTrue(why.indexOf("/shared/util.wac") >= 0, "did not name the key — " + why);
+  t.isTrue(why.indexOf("/app/lib.wac") >= 0, "did not name the importer — " + why);
+  t.isTrue(why.indexOf("../shared/util.wac") >= 0, "did not name the specifier as written — " + why);
+  return t.report();
+}
+
 /** A deeper path, so the name is not just the specifier echoed back. */
 export string test_and_it_names_a_nested_one() {
   T t = T.create();

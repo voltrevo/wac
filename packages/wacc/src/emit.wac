@@ -2775,6 +2775,13 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
   // per import edge followed, so a program whose entry imports 1024 files fills it before the walk is
   // done. `linkQueueSize()` rather than a literal so the message cannot drift from the array.
   string[] queue = string[linkQueueSize()]();
+  // **Who asked, and how they spelled it — parallel to `queue`.** When a queued file turns out not to
+  // be supplied, the specifier that queued it was in the *importer's* source two iterations earlier,
+  // and by then the queue holds only the resolved key. So the diagnostic could name the key and
+  // nothing else. `issues/lang/0157`. Matching the key back to an import is not an option: it needs
+  // resolution, which is the step that cannot be redone soundly for a mapped checkout.
+  string[] queueSpec = string[linkQueueSize()](fill: "");
+  string[] queueFrom = string[linkQueueSize()](fill: "");
   string[] seen = string[1024]();
   // The import edges, by path: a file is imported before it has an index, so the pairs are recorded
   // as they are read and turned into indices once every file has one.
@@ -2818,6 +2825,10 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
     if (body == "") {
       starts[0] = 4;
       if (filePaths.len() > 0) { filePaths[0] = path; }
+      // The importer and the specifier as written, so the message can say where to look rather than
+      // only what was missing. `qi` is the queue index of this path, so they are one lookup away.
+      if (filePaths.len() > 1) { filePaths[1] = queueFrom[qi]; }
+      if (filePaths.len() > 2) { filePaths[2] = queueSpec[qi]; }
       return "";
     }
     // A newline between files, so a file that ends mid-line cannot join itself to the next one —
@@ -2848,6 +2859,8 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
             if (tokenTextOf(b, lexed, prefixTok) != "core") { continue; }
             if (qn >= queue.len()) { starts[0] = 2; return ""; }
             queue[qn] = " core";
+            queueSpec[qn] = "core";
+            queueFrom[qn] = path;
             qn = qn + 1;
             for (i32 it = 0; it < items.len(); it++) {
               // **Refused, not skipped.** A dropped edge links: the module comes out with a name
@@ -2880,6 +2893,8 @@ string linkFiles(string[] paths, string[] sources, Res res, string entry, i32[] 
           // it in the one place nothing compares them. `design/lang/0009` D5.
           if (target == "core") { target = " core"; }
           queue[qn] = target;
+          queueSpec[qn] = quoted.slice(1, quoted.len() - 1);
+          queueFrom[qn] = path;
           qn = qn + 1;
           // The edge is recorded by *path*, and turned into file indices once every file has one:
           // an import often names a file this walk has not reached yet.
@@ -10596,7 +10611,11 @@ string linkFailure(string[] paths, string[] sources, Res res, string entry) {
   // **Named, when the linker got far enough to know the name.** Sentinel 4 means it read the import,
   // resolved it, and found nothing supplied under that key — so it wrote the key down.
   if (starts[0] == 4 && filePaths.len() > 0 && filePaths[0] != "") {
-    return "an import of a file that was not supplied: " + filePaths[0];
+    string named = "an import of a file that was not supplied: " + filePaths[0];
+    if (filePaths.len() > 2 && filePaths[1] != "" && filePaths[2] != "") {
+      named = named + " (" + filePaths[1] + " imports it as \"" + filePaths[2] + "\")";
+    }
+    return named;
   }
   return "an import of a file that was not supplied";
 }
