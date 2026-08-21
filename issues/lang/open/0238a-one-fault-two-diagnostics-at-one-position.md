@@ -310,3 +310,24 @@ opened with.
 
 Final: **19 → 15** count disagreements, recall **1185 (100%)**, no new missed families. Pinned by exact
 counts in `illtyped_test.wac`, canaried with the too-broad condition, which fails on the `n * "a"` row.
+
+## What the remaining 15 are, so far
+
+Of the four the counter printed when it stood at 19, **three are fixed** by the overlap change above and
+one is not ours:
+
+- `string x = 1; u32 y = 1; return x / y;` and its `u64` twin — the operand rule and the mismatch rule
+  both speaking. Now 2, matching the reference.
+- `M { b: true, n: 7, s: "ab" }` with a `string`-typed field given `7` — was 3, now **2**, and the
+  reference's two are the same two: the field mismatch, and `'*' requires numeric type, got string`
+  further along. Fixed by the same change.
+- `i32 x = 1; u32 y = 1; return x != y;` — **not ours.** wacc reports the mismatched comparison *and*
+  the return-type mismatch; the reference reports the first and stops, because its `checkBinaryOp`
+  answers null for the comparison and never reaches the slot. `x != y` is a `bool` even with the
+  operands fixed, so returning it from an `i32` function is a second, independent fault. Reporting both
+  is defensible and arguably better.
+
+So the 15 need sorting one at a time by the question this issue names — *does the extra diagnostic rest
+on a type the checker invented for something it refused* — and at least one of them is a case where the
+answer is no and the reference is the one being terse. The counter is a queue, and this is what working
+through it looks like.
