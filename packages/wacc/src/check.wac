@@ -3853,6 +3853,13 @@ void checkExpr(C c, Expr e) {
       if (isValueType(lt3) || (!(target is null) && startsWithFn(lt3))) {
         c.report(errReferenceOp(), e.line, e.col);
       }
+      // **And a bare `null` on the left**, which has no type at all rather than a wrong one — so
+      // every guard above skipped it and `null is null` reached the emitter, which declined the whole
+      // module with the reason *"null"*. `spec/spec/types.md`: *"`null` is a keyword literal with no
+      // type of its own … the compiler infers the type from context"*, and there is no context here to
+      // infer from. The reference says *"'is null' requires a reference type, got null"*, which is
+      // this rule's own code. `issues/lang/0249a`.
+      if (litKindOf(left) == litNull()) { c.report(errReferenceOp(), e.line, e.col); }
     }
     // `p!` on something that was never nullable: there is nothing to unwrap.
     case Unwrap(operand): {
@@ -3867,6 +3874,10 @@ void checkExpr(C c, Expr e) {
           (isPrimitiveName(ut2) || ut2 == "bool" || isReferenceName(c, ut2))) {
         c.report(errNeedsNullable(), e.line, e.col);
       }
+      // A bare `null!` for the same reason as `null is null` one arm up: nothing to unwrap and no type
+      // to notice it by. The reference: *"'!' unwrap requires nullable type, got null"*.
+      // `issues/lang/0249a`.
+      if (litKindOf(operand) == litNull()) { c.report(errNeedsNullable(), e.line, e.col); }
     }
     case Unary(op, operand): {
       checkExpr(c, operand);

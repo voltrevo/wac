@@ -1,4 +1,4 @@
-// The negative half of the corpus: 29 ill-typed programs that must all be refused — 22 single-file,
+// The negative half of the corpus: 41 ill-typed programs that must all be refused — 34 single-file,
 // and 7 that are only ill-typed across an import boundary.
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/illtyped_test.wac
@@ -18,7 +18,7 @@
 // **Two questions per program**, because the failure mode is passing one and failing the other: does
 // the checker refuse it, and does the emitter decline anything. A program answering no to both builds
 // with its exported function missing, which is the shape `issues/lang/0155` and the export-parity net
-// in `emit.wac` are the other guards against. Measured 2026-08-21: **22 of 22 refused by the checker**,
+// in `emit.wac` are the other guards against. Measured 2026-08-21: **34 of 34 refused by the checker**,
 // 0 silent in both. The last four are a *type name* where a value belongs, and three of them were
 // silent until `issues/lang/0235a`: only a struct was refused, so `x < i32`, `x < E` and `x < string`
 // checked clean and the emitter caught them later as `unresolved name i32`, without a position.
@@ -49,7 +49,13 @@ string[] names() {
     // for the match — so the identical program was refused with `?:` and accepted with `match`. Every
     // family, because the arm serves them all. `issues/lang/0243a`.
     "a27 int arms -> string", "a28 int arms -> bool", "a29 string arms -> i32",
-    "a30 bool arms -> i32", "a31 int arms -> f64");
+    "a30 bool arms -> i32", "a31 int arms -> f64",
+    // A **bare `null`** where a type is required. `spec/spec/types.md`: *"`null` is a keyword literal
+    // with no type of its own … the compiler infers the type from context"* — and `null is null` has no
+    // context to infer from. The rules were there and keyed on a type the operand does not have, so all
+    // three reached the emitter, which declined the module with the reason *"null"*. The reference
+    // refuses all three by name. `issues/lang/0249a`.
+    "a32 null is null", "a33 null is not null", "a34 null!");
 }
 
 string[] programs() {
@@ -84,7 +90,10 @@ string[] programs() {
     "enum E { A, B }\nexport i32 f(E e) { bool z = match (e) { case A: 1, else: 2 }; return z ? 1 : 0; }\n",
     "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { case A: \"x\", else: \"y\" }; return n; }\n",
     "enum E { A, B }\nexport i32 f(E e) { i32 n = match (e) { case A: true, else: false }; return n; }\n",
-    "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { case A: 1, else: 2 }; return d; }\n");
+    "enum E { A, B }\nexport f64 f(E e) { f64 d = match (e) { case A: 1, else: 2 }; return d; }\n",
+    "export bool f() { return null is null; }\n",
+    "export bool f() { return null is not null; }\n",
+    "export i32 f() { return null!; }\n");
 }
 
 export string test_every_ill_typed_program_here_is_refused_by_the_checker() {
