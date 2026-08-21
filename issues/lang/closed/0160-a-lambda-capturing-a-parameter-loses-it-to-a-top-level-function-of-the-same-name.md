@@ -191,3 +191,30 @@ Also run: `lambda_test` 21, `emit_test` 2, `selfhostemit_test` 1, `illtyped_test
   Not needed to fix this, and it is a bigger change than this was.
 - **`platform.wac`'s parameter could be named `onValue`.** No longer necessary; the collision is
   resolved rather than avoided, and a case now holds that.
+
+## The siblings, enumerated and checked — agent-a, 2026-08-21
+
+A fix in one arm of one resolver invites the question of which other arms ask the same question. There
+are **seven** `env.localType(` call sites in `emit.wac`. Five consult `captureAt` beside it:
+
+| site | |
+|---|---|
+| `typeOfE`'s `Ident` arm | already did, with a comment saying why |
+| `typeOfLv`'s `LName` arm | already did — *"every `a[i] = v` … inside a lambda … emitted `array.set` against type index 0: a trap where the write should have been"* |
+| the emitter's `Construct` arm | already did |
+| `typeOfE`'s `Construct` arm | **this fix** |
+
+Two do not, and both were checked rather than assumed:
+
+- **`unsupportedValueAt`'s `Construct` arm** (the emittability walk) asks `localType` alone, so inside a
+  lambda it falls through and checks a call's arity against a file-level function of the same name. The
+  case that should expose it is a captured `fn[void(i32)] f` beside `i32 f(string, i32)` — one argument
+  passed, one expected by the capture, two by the function. **Both the colliding and the renamed control
+  emit, validate, and answer 4.** So the fall-through does not reach an arity check on this path and the
+  site is inconsistent without being wrong. Not fixed: there is no failing case, and this issue is the
+  argument for not writing one from a guess.
+- **`downcastTarget`** guards on `env.localAt(nm) < 0` first, which a captured name fails by
+  construction, so a capture is not a downcast target. Whether that is intended is a separate question
+  and no program here asks it.
+
+Recorded so the next person does not enumerate them again.
