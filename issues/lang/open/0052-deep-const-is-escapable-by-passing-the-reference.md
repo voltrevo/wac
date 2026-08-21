@@ -171,3 +171,43 @@ hole is reachable through a closure and is not made bigger by one.
 The part that does change is the *fix*. `design/lang/0008` records that its mechanism — ask the callee
 what it does — has no answer for an indirect call, and that closures make indirect calls ordinary
 rather than rare. That is now the case rather than a prediction.
+
+## The assignment position is not guarded either — agent-a, 2026-08-21
+
+This page says *"Every **assignment** position is guarded — a const reference cannot be assigned to a
+plain local, a field or an array element — so the hole is specifically the argument position."* That is
+not true of a plain local, in either compiler:
+
+```wac
+struct P { i32 v; }
+void mutate(P p) { p.v = 99; }
+i32 readOnly(const P p) { P q = p; mutate(q); return p.v; }
+export i32 main() { P p = P { v: 1 }; return readOnly(p); }
+```
+
+    wac check   c2.wac: 1 file(s), no diagnostics
+    wac run     readOnly saw p.v = 99
+    reference   OK
+
+So `readOnly`, whose parameter is `const`, writes through it and observes the write. Nothing needs a
+mutating callee taking the const value *directly* — one assignment launders it, and the argument
+position this issue is about is then reached with an ordinary `P`.
+
+**And the reference accepts it too**, although it has the rule written down —
+*"cannot assign const reference to a non-const target — const is deep"*. So this is not a wacc gap
+measured against a working oracle; it is a hole in both, which makes it a spec-level question rather
+than a porting one and puts it squarely with `design/lang/0008`.
+
+Two consequences for that note:
+
+- Its option A infers const-ness from what a callee does. `mutate` plainly writes, so inference would
+  refuse `mutate(q)` — but only if `q` is known to be const-rooted, and the assignment above is exactly
+  where that provenance is lost. The note's measurement *"the probe tracks const-ness from `const`
+  parameters and `const this`"* would need to follow it through a local, which is a wider change than
+  the argument check.
+- The measured cost recorded there — *"nothing in the repository passes a const-rooted argument to a
+  parameter its callee mutates"* — is a count of the **argument** shape. The assignment shape was not
+  counted, and this is the reason to count it before pricing the option.
+
+Found while walking the reference's statement rules one program per row: eleven rules, and this is the
+only one it does not enforce.
