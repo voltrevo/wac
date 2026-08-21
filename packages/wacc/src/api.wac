@@ -615,29 +615,76 @@ Edges edgesOf(string[] paths, string[] sources) {
  * closure did not contain the file it imports, so every name from it was unknown — and unknown is
  * silent. `issues/lang/0175a`.
  */
+/**
+ * `paths` grouped by length, so finding a path's index compares a handful rather than all of them.
+ *
+ * **Two equal strings have equal length**, so a bucket keyed on length can only ever miss a *different*
+ * path — never the one being looked for. That is the whole of the correctness argument, and it is why
+ * this needs no hash and no arithmetic that could overflow.
+ *
+ * Length rather than a first character because every path in a corpus walk begins `packages/`: the first
+ * byte discriminates nothing. Lengths spread over a few dozen values, so 256 buckets leave tens of
+ * candidates instead of a thousand.
+ */
+struct ByLen {
+  /** `length & 255` → the first path index in that bucket, or -1. */
+  i32[] head;
+  /** A path index → the next index sharing its bucket, or -1. */
+  i32[] next;
+}
+
+ByLen byLength(string[] paths) {
+  i32[] head = i32[256](fill: 0 - 1);
+  i32[] next = i32[paths.len()](fill: 0 - 1);
+  for (i32 i = 0; i < paths.len(); i++) {
+    i32 b = paths[i].len() & 255;
+    next[i] = head[b];
+    head[b] = i;
+  }
+  return ByLen(head, next);
+}
+
+/** `indexOfPath` through the buckets — the same answer, without the scan. */
+i32 indexVia(ByLen ix, string[] paths, string path) {
+  for (i32 i = ix.head[path.len() & 255]; i >= 0; i = ix.next[i]) {
+    if (paths[i] == path) { return i; }
+  }
+  return 0 - 1;
+}
+
 Edges edgesOfIn(string[] paths, string[] sources, Res res) {
   i32 n = paths.len();
-  i32[] start = i32[n + 1]();
-  i32 total = 0;
+  ByLen ix = byLength(paths);
+  // **Parsed once, resolved once, and looked up through buckets — measured at 41% of a whole-corpus
+  // check before this.** The two passes each re-parsed every file's import list and re-resolved every
+  // specifier, and each resolution then scanned `paths` linearly, so the whole function was
+  // O(files² × imports) with the parse done twice over. On the 1,003-file corpus that was 10.9s of a
+  // 26.6s `diagnoseGraph` — measured by calling this twice and subtracting, which is honest where
+  // deleting the call is not: with no edges every closure is empty and almost nothing gets checked.
+  //
+  // The specs are kept rather than recomputed, which is what removes the second parse.
+  string[][] specsOf = string[][n](fill: string[]());
+  i32 upper = 0;
   for (i32 i = 0; i < n; i++) {
-    start[i] = total;
     string src = i < sources.len() ? sources[i] : "";
-    string[] specs = importSpecs(src.toBytes());
-    for (i32 s = 0; s < specs.len(); s++) {
-      if (indexOfPath(paths, resolveVia(res, paths, paths[i], specs[s])) >= 0) { total = total + 1; }
-    }
+    specsOf[i] = importSpecs(src.toBytes());
+    upper = upper + specsOf[i].len();
   }
-  start[n] = total;
-  i32[] to = i32[total]();
+  // **Sized at the upper bound and filled once.** The count pass existed to size `to` exactly; a
+  // specifier that resolves outside the graph is dropped, so the exact count needs the resolutions the
+  // count pass was there to avoid. `start[n]` still says where the edges end and the only reader walks
+  // `start[f]` to `start[f + 1]`, so a longer tail is never looked at.
+  i32[] start = i32[n + 1]();
+  i32[] to = i32[upper]();
   i32 at = 0;
   for (i32 i = 0; i < n; i++) {
-    string src = i < sources.len() ? sources[i] : "";
-    string[] specs = importSpecs(src.toBytes());
-    for (i32 s = 0; s < specs.len(); s++) {
-      i32 t = indexOfPath(paths, resolveVia(res, paths, paths[i], specs[s]));
+    start[i] = at;
+    for (i32 s = 0; s < specsOf[i].len(); s++) {
+      i32 t = indexVia(ix, paths, resolveVia(res, paths, paths[i], specsOf[i][s]));
       if (t >= 0) { to[at] = t; at = at + 1; }
     }
   }
+  start[n] = at;
   return Edges(start, to);
 }
 
