@@ -151,8 +151,15 @@ Deno.test("rung 4: the two ways linking fails say which one it was", () => {
     [`import { x } from "./gone.wac";\nexport i32 f() { return x(); }`],
     "/main.wac",
   );
-  if (missing !== "an import of a file that was not supplied") {
+  // **And it names the key**, which it did not until `issues/lang/0157`: the message was inferred from
+  // a sentinel and could name nothing, so a reader was told a file was missing and left to work out
+  // which. `linkFiles` records the key at the line that decides it. Asserted as a prefix plus the path
+  // rather than as one literal, because what matters is that both halves are there.
+  if (!missing.startsWith("an import of a file that was not supplied")) {
     throw new Error(`a missing import was reported as ${JSON.stringify(missing)}`);
+  }
+  if (!missing.includes("/gone.wac")) {
+    throw new Error(`a missing import did not name the file: ${JSON.stringify(missing)}`);
   }
   // A name two files declare is fine — each file means its own. A name a file reaches for that
   // **two of its imports** declare is not: the import list says which files, not which names came

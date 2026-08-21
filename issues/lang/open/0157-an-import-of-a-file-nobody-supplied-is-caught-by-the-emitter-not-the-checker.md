@@ -228,3 +228,68 @@ seed` before believing a host test about a compiler change."*
 I ran `mappedspec_test` and `projectspec_test` **before** reseeding, read 9 and 5 passed, and believed
 them. Then reseeded for an unrelated reason and never re-ran them. The warning was in the file I was
 editing, one screen above where I was typing.
+
+## The emitter's half now names the file — agent-a, 2026-08-21
+
+The complaint at the top of this issue is that the emitter catches it *"one phase later, with **no
+position and no file name***, inferred from a linker sentinel". Half of that is fixed, and it was four
+lines.
+
+`linkFiles` decides it at one place — it reads each queued file's source and finds none:
+
+```wac
+string body = path == " core" ? coreSource() : sourceOf(paths, sources, path);
+if (body == "") { return ""; }        // ← the path was right there
+```
+
+It records the key now, through `filePaths`, which is already an out-parameter that the caller discards
+when a link fails, so the name travels without a new argument or a new channel:
+
+    before   an import of a file that was not supplied
+    after    an import of a file that was not supplied: /sub/deep/gone.wac
+
+**The resolved key, not the specifier**, which is the useful half: `./b.wac` from `/main.wac` is
+`/b.wac`, and the key is what the caller's map is keyed by, so it is the thing to go looking for.
+`missingimport_test.wac` asserts it for a sibling and a nested path, canaried by dropping the record —
+both fail with the old sentence.
+
+This came out of `issues/lang/0179a`, which gave the same function's five *room* guards their own
+sentinels; the missing-file case was the sixth refusal in the same function and the only one that could
+name what was wrong.
+
+### What is still open, and why the obvious version of it is unsound
+
+The checker half — a diagnostic at the import's own token. The linker now knows *which key* was missing,
+so the checker does not have to re-derive membership, which is what the reverted attempt got wrong. But
+"the checker matches that key against its own import list" **is the same mistake in a smaller place**:
+to know which import produced `/b.wac`, the checker has to resolve its specifiers, and resolution is
+exactly what it cannot do soundly — a plain `./a.wac` *inside a mapped checkout* resolves to a key the
+graph does not hold, which is how the attempt above refused three correct programs.
+
+So matching by key is out. What is sound is matching by **specifier text**: if the linker records the
+importing file and the specifier as written, the checker can find that import in that file by string
+comparison and report at its token, resolving nothing.
+
+The linker did not record it, and the reason is worth stating: the failure is detected while *loading a
+queued path*, and the queue holds resolved targets — the specifier was in the importer's source two loop
+iterations earlier. **Done now**: `queueSpec` and `queueFrom` run parallel to `queue`, written where a
+target is queued and read where the load fails, which is one lookup because `qi` is the queue index.
+
+    an import of a file that was not supplied: /shared/util.wac
+      (/app/lib.wac imports it as "../shared/util.wac")
+
+The three together are what a reader needs *and* what a position needs: the key says what to go looking
+for, the importer says which file to open, and the specifier as written is the string to find in it — so
+a token can be located by comparison, resolving nothing. `missingimport_test.wac` asserts all three, with
+the bad import in the *second* file so the importer cannot be the entry by accident, canaried by dropping
+the record.
+
+### What is left
+
+Only the wiring, and it is a layering question rather than a resolution one. Neither
+`checkFilesWithIn` nor `diagnoseFilesWithIn` calls the linker, so for the checker to report at the token
+the linker's answer has to reach it — either by the checker asking (which means the checker depends on
+the emitter, and `emit.wac` already imports `check.wac`, so that is the wrong way round) or by the
+caller that has both — `example/wacc.wac` runs the checker and then the emitter — turning the emitter's
+named refusal into a positioned diagnostic itself. The second is a few lines and needs no new dependency:
+it has the paths, the sources and the parse, and now it has the file and the exact specifier to find.
