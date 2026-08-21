@@ -114,3 +114,88 @@ hypotheses about this cluster died to two-minute experiments; the fifth should b
   `emitDeclineFiles` alike, with and without the collision. So the ingredient is something wacc's real
   19-file graph has and a hand-made library does not, and iterating on this needs `wac build` and a
   reseed per cycle rather than the fast in-process route.
+
+### A fifth hypothesis, also dead: it is not declaration order
+
+Source structs are registered under `Env.declare`'s **key**, and `declare` gives the first declaration
+of a name the bare name and every later one `name@<file>`:
+
+```wac
+string key = name;
+if (taken) { key = name + "@" + numText(f); }
+```
+
+`structType` then linear-searches `structNames` for the first match, so whichever file declares `Arm`
+first owns the bare `Arm` and the other is only reachable as `Arm@N`. That predicts the outcome should
+flip with link order — put the library's import first and the library wins the bare name.
+
+It does not. Both orders fail identically:
+
+    import { dumpTypeErrors } from ".../api.wac";   import { one } from "./one.wac";
+    import { one } from "./one.wac";                import { dumpTypeErrors } from ".../api.wac";
+    → declined                                      → declined
+
+So the entry's import order is not the link order, or the bare-key ownership is not what the failing
+lookup uses. Both are worth checking, and the second is the more interesting: if some path resolves a
+type by its bare *name* rather than by the key `keyAt` returns, that path is the defect, and it would
+explain why only three of nine names are affected — they would be the ones some code reaches by name.
+
+## Root cause, measured: the name is resolved against a *partial* declaration table
+
+The instrument the section above asks for, built and run. It is gated on the link containing a file
+whose path holds `PROBE0234`, which is the only way to instrument a name wacc's own source uses — and
+it reports through `declineFor`, so the build stops at the first hit.
+
+**The first and only thing that asks for `Arm` is `parse.wac`, and at that moment `ast.wac` has not
+been walked:**
+
+    PROBE0234 asker=5 declCount=13
+      decls: {key=Arm exported=y fileIdx=1 path=PROBE0234.wac}
+      files: 0=agg.wac 1=PROBE0234.wac 2=…/api.wac 3=…/lex.wac 4=…/diag.wac 5=…/parse.wac
+             6=…/ast.wac 7=…/print.wac 8=…/check.wac 9=…/emit.wac …
+
+- the asking file is **5**, `parse.wac`;
+- the file that declares the real `Arm` is **6**, `ast.wac` — *after* it in the walk;
+- `declCount` is **13**, so the table is a fraction of the program's declarations;
+- and the only `Arm` in it is the one from **file 1**, the unrelated declaration, which was walked
+  early because the entry imports it first.
+
+So `parse.wac` resolves `Arm` to the wrong struct, and **no ambiguity is detectable** — there is
+genuinely one candidate at that moment. That is why this never reaches `0154`'s refusal: the second
+declaration does not exist yet.
+
+**And the answer is never revisited.** Re-running the probe gated on `declCount > 40` — after
+collection is complete — it does not fire at all: nothing asks `keyAt` for `Arm` again. The first,
+partial answer is the final one.
+
+### What makes this a bug rather than a design constraint
+
+The same function already knows about this hazard twice, and handles it twice:
+
+```wac
+// The *token*, not the key: the parent may be declared further down this file, so the
+// name it resolves to is not known until every struct in the program has been declared.
+env.structParentToks[env.structCount] = parentTok;
+```
+
+and, a hundred lines later:
+
+```wac
+// And the fields, for the same reason and with the same timing: a field written with a name this
+// file imported resolves only once the file it came from has been walked.
+for (i32 i = 0; i < env.fieldCount; i++) {
+  if (env.fieldTys[i] is null) { continue; }
+  env.fieldTypes[i] = typeOfTyName(env, src, lexed, env.fieldTys[i]!);
+}
+```
+
+Parents and struct fields are deferred to a pass that runs once every declaration is in. Whatever
+record holds this `Arm` is not in either list — and that is the fix: find it and add it to the same
+pass, which is why `Expr`, `Decl`, `Program` and `Method` are unaffected while `Arm`, `Param` and
+`Stmt` are not.
+
+**A correction to my own first reading of this**, kept because it is the trap: the probe declines, so
+the build stops during collection — which means the first run's evidence looked like "field types are
+resolved against a partial table" when the deferred pass three lines below would have corrected them.
+The probe short-circuited the pass it was measuring. What survives that correction is the finding
+above, which is about a record the deferred pass does *not* touch.
