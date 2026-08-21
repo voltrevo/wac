@@ -275,3 +275,20 @@ layers, or deleted-but-open files. So sweeping ours bought 1.85G of a 155G disk 
 remaining headroom is the operator's to look at. Worth stating plainly because the failure mode is
 everyone's push failing at once with `No space left on device`, which is how this issue opened.
 
+### Two follow-ups from the same afternoon
+
+**The gate keeps every log it ever wrote.** `tools/push.sh` makes one with `mktemp -t
+push-suite-XXXXXX.log` and keeps it on purpose — the summary prints `-- full output: $log --` and the
+slow-test lines are grepped back out of it — so deleting on success would throw away what a reader is
+pointed at. What was not deliberate is keeping all of them: 123 by 2026-08-21. It now drops those older
+than three days at the start of a run, which is longer than anyone reads back, and 40 went on the first
+pass.
+
+**And nothing in the suite compiles the C probes.** `hspub-probe.c` is built only by
+`packages/tor/tools/capture-hspub.wac` and its Python twin, both run by hand, so the `rmdir` fix above
+has no automated cover and neither does anything else in those files. That is worth knowing twice over:
+it is why a `mkdtemp` with no matching `rmdir` sat there unremarked, and it means a tor upgrade can break
+a probe and nobody finds out until someone regenerates a capture. Not filed as its own issue because it
+is a deliberate arrangement — the probes need `libtor.a` and take a minute to build — but the *cost* of
+the arrangement is now measured rather than assumed.
+

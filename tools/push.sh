@@ -21,6 +21,13 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
+# **Keep the recent ones and drop the rest.** The log is deliberately kept after a run — the summary
+# prints `-- full output: $log --` and the slow-test lines are grepped out of it — so deleting it on
+# success would throw away the thing a reader is pointed at. What is not deliberate is keeping every
+# one ever written: 123 of them had accumulated by 2026-08-21, on a box whose `/tmp` had 20,394 entries
+# and whose disk was at 99%. Three days is longer than anyone reads back. `issues/system/0136`.
+find /tmp -maxdepth 1 -name 'push-suite-*.log' -mtime +3 -delete 2>/dev/null || true
+
 log="$(mktemp -t push-suite-XXXXXX.log)"
 
 # Space, before blaming the change. This gate has failed twice on `No space left on device` for reasons
