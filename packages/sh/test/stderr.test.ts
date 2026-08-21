@@ -62,7 +62,7 @@ await buildApp("packages/box/src/bin/sh.wac", shell, { read: true, write: true, 
  * between "this machine was busy" and "this program hangs".
  *
  * **The load comes from `harness/bounded.ts`'s `loadNow`, not from `Deno.loadavg()`**, which is gated
- * behind `--allow-sys` that `tools/runTests.ts` does not grant. This line used to call it directly and
+ * behind `--allow-sys` that `tools/runTests.wac` does not grant. This line used to call it directly and
  * so threw at the one moment it was written for: the bound fired on a loaded gate and the report was
  * `NotCapable: Requires sys access to "loadavg"` — naming neither the bound nor the load, from the
  * code whose only job was naming them.

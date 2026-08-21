@@ -48,7 +48,7 @@ export const SUITE_ENV: Record<string, string> = {
  * `what` names the tool, because the message has to tell whoever hits it which of them refused — and
  * because the fix is always the same shape: call the thing you need directly rather than the whole suite.
  */
-// Called at the top level of `runTests.ts`, `testChanged.ts`, `mutate.ts` and `mutate/profile.ts` — the
+// Called at the top level of `runTests.wac`, `testChanged.ts`, `mutate.ts` and `mutate/profile.ts` — the
 // four things that spawn whole test runs. Each is a script whose body runs on import, so there is no
 // `import.meta.main` to add: nothing imports them, and nothing should.
 //

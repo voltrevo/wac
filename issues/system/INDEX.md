@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0230c](open/0230c-the-heavy-lanes-declared-costs-are-stale-and-nothing-checks-them.md) | `checked_test.wac` declares `140s, measured` and ran past **1,166s** without finishing; the heavy lane's six files declare 412s and had spent 9m20s of CPU on the first four, and `tools/lane.test.ts` checks that a reason names a number rather than that the number is true | performance | wrong answer |
 | [0231a](open/0231a-two-declarations-of-one-compiler-api-and-only-one-of-them-had-a-res.md) | `type WaccApi` is declared twice, 20 members and 7, and neither mentioned the `Res`-taking entry points that were already exported — so 0229a's fix had to be applied to two lists on two days, and `waccRes` takes a structural type to be callable from both | decision | no error |
 | [0230a](open/0230a-the-deno-path-is-a-compiler-not-a-wac-command.md) | six of the seven documented subcommands exist as separate Deno entry points and none of them is `wac`; `deno task check` is the *TypeScript* check, and 0229a is what the arrangement already cost | decision | not implemented |
 | [0229](open/0229-nineteen-copies-of-one-fixture-helper-and-none-of-them-can-report-its-own-failure.md) | twenty functions named `scratch`, nineteen of them the same four lines, and every one of those throws away what `mkdir` and `remove` answered — so a fixture that cannot make its directory is reported as sixteen shells failing to `cd` into it. One is fixed; eighteen can still do it | bug | no error |
@@ -61,7 +62,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-240 issues, 191 closed.
+241 issues, 191 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

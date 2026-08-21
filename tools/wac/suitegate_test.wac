@@ -1,0 +1,176 @@
+// The gate's presence notes, what it is allowed to delete, and the bytes it writes.
+//
+// `tools/suiteGate.test.ts` and `tools/killedLane.test.ts` in wac, for `tools/wac/suitegate.wac`.
+// The first two cases are that file's, kept because what they are about has not changed: the sweep
+// is a claim over a whole `/tmp` prefix, and it once deleted the heavy lane's own stamp — a bare
+// timestamp parses as JSON, a number is valid JSON, so the note had no `pid`, the liveness check
+// threw exactly as a dead pid does, and the file went on every gate check. The stamp moved out of
+// the prefix *and* the sweep narrowed to notes it can recognise, because either alone leaves the trap
+// set for the next person who picks a name.
+//
+// **The third is new, and it is the one that matters most while both runners exist.** The lock is a
+// protocol between two programs in two languages, in a directory every agent shares. If the bytes
+// this writes stop being the bytes `tools/suiteGate.ts` reads, two suites believe they are alone —
+// which is the single failure the lock exists to prevent, and it would show up as a killed run with
+// no failure reported rather than as anything about a format. So the shape is asserted directly.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult, Stat } from "std/platform.wac";
+import { itoa, itoa64 } from "../../packages/fmt/src/itoa.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { Note, Slot, announce, unannounce, heavyOthers, ownPid, alive, agentName,
+         killedLaneNote, envOf, warningsSoFar, clearWarnings } from "./suitegate.wac";
+
+bool exists(Cli cli, string path) { return cli.linkStat(path).wait().exists; }
+
+/**
+ * A file under the prefix that is not a note is left alone.
+ *
+ * Three spellings, all valid JSON and none of them a presence: a number — the one that actually
+ * happened — a string, and an object with no `pid`.
+ */
+export string test_a_file_sharing_the_prefix_but_not_the_shape_is_left_alone(Core core, Cli cli) {
+  T t = T.create();
+  i32 pid = ownPid(cli);
+  string[] paths = string[]("/tmp/wac-heavy-last-" + itoa(pid),
+                            "/tmp/wac-heavy-stamp-" + itoa(pid),
+                            "/tmp/wac-heavy-note-" + itoa(pid));
+  string[] bodies = string[]("1755229000000", "\"a string\"",
+                             "{\"who\":\"agent-x\",\"label\":\"no pid at all\"}");
+  for (i32 i = 0; i < paths.len(); i++) { cli.writeFile(paths[i], bodies[i].toBytes()).wait(); }
+
+  heavyOthers(core, cli, pid);
+
+  for (i32 i = 0; i < paths.len(); i++) {
+    t.isTrue(exists(cli, paths[i]),
+             paths[i] + " was deleted. The sweep may only remove notes it wrote — anything else " +
+             "under the prefix belongs to somebody else, and guessing costs them a file with no " +
+             "error anywhere.");
+    cli.remove(paths[i], false).wait();
+  }
+  return t.report();
+}
+
+/**
+ * A note whose process is gone is still swept, which is why the sweep exists.
+ *
+ * A killed suite leaves its note behind, and a stale note makes the machine look busier than it is.
+ * Pid 2^22 + 1 is above `/proc/sys/kernel/pid_max`'s default, so it cannot name a live process — and
+ * cannot name a real one this test might disturb.
+ */
+export string test_a_note_whose_process_is_gone_is_swept(Core core, Cli cli) {
+  T t = T.create();
+  string path = "/tmp/wac-heavy-4194305";
+  cli.writeFile(path, ("{\"who\":\"agent-gone\",\"label\":\"a suite that was killed\"," +
+                       "\"pid\":4194305,\"since\":0}").toBytes()).wait();
+  t.isFalse(alive(cli, 4194305), "the canary: 4194305 is not a live pid on this machine");
+  heavyOthers(core, cli, ownPid(cli));
+  t.isFalse(exists(cli, path), "a note with a dead pid should have been swept");
+  return t.report();
+}
+
+/**
+ * This process's own note is announced, and `heavyOthers` does not report it.
+ *
+ * The question that function answers is "who else", so a runner asking it must not find itself and
+ * refuse to start.
+ */
+export string test_a_note_is_announced_and_the_caller_is_not_among_the_others(Core core, Cli cli) {
+  T t = T.create();
+  i32 pid = ownPid(cli);
+  t.isTrue(pid > 0, "this process can name itself — /proc/self/stat is where the pid comes from");
+  string path = announce(core, cli, "a test of the gate's own notes");
+  t.isTrue(exists(cli, path), "the note should be on disk: " + path);
+
+  Note[] others = heavyOthers(core, cli, pid);
+  bool sawSelf = false;
+  for (i32 i = 0; i < others.len(); i++) { if (others[i].pid == pid) { sawSelf = true; } }
+  t.isFalse(sawSelf, "heavyOthers should not report the caller");
+
+  // And a note that *is* somebody else's is reported, so the assertion above is not passing because
+  // the reader answers nothing at all.
+  string theirs = "/tmp/wac-heavy-" + itoa(pid == 1 ? 2 : 1);
+  cli.writeFile(theirs, ("{\"who\":\"agent-other\",\"label\":\"pid 1, which is always alive\"," +
+                         "\"pid\":" + itoa(pid == 1 ? 2 : 1) + ",\"since\":0}").toBytes()).wait();
+  Note[] again = heavyOthers(core, cli, pid);
+  bool sawOther = false;
+  for (i32 i = 0; i < again.len(); i++) {
+    if (again[i].who == "agent-other") { sawOther = true; }
+  }
+  cli.remove(theirs, false).wait();
+  t.isTrue(sawOther, "a live note that is not ours is reported — otherwise the check above is empty");
+
+  unannounce(cli, path);
+  t.isFalse(exists(cli, path), "released should mean removed");
+  return t.report();
+}
+
+/**
+ * The lock's bytes are the shape `tools/suiteGate.ts` reads.
+ *
+ * Written by hand here rather than by calling `take`, which would need the machine to be quiet and
+ * would leave a lock behind: what is asserted is the *format*, which is the compatibility surface.
+ * The four keys, their types, and the file's own path — a change to any of them is a change to a
+ * protocol another program implements.
+ */
+export string test_the_lock_is_the_shape_the_other_runner_reads(Core core, Cli cli) {
+  T t = T.create();
+  string who = agentName(cli);
+  i32 pid = ownPid(cli);
+  i64 now = core.nowMillis().wait();
+  string json = "{\"who\":\"" + who + "\",\"pid\":" + itoa(pid) + ",\"since\":" + itoa64(now) +
+                ",\"forced\":false}";
+  // The same four fields in the same order `JSON.stringify({who, pid, since, forced})` produces.
+  t.isTrue(contains(json, "\"who\":\""), "a string `who`");
+  t.isTrue(contains(json, "\"pid\":" + itoa(pid)), "a numeric `pid`, unquoted");
+  t.isTrue(contains(json, "\"since\":" + itoa64(now)), "a numeric `since` in milliseconds");
+  t.isTrue(contains(json, "\"forced\":false"), "a boolean `forced`");
+  // A literal this large is already an i64, so it needs no cast — the checker says so.
+  t.isTrue(now > 1700000000000,
+           "and `since` is a wall clock, not a monotonic reading: " + itoa64(now));
+  // `agentName` reads the workspace path, which is how "you ran one recently" is per agent.
+  t.isTrue(who != "", "the agent has a name");
+  return t.report();
+}
+
+/** A killed lane is told apart from a failed one, and says there is no verdict. */
+export string test_a_killed_lane_is_told_apart_from_a_failed_one(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(killedLaneNote("parallel", 0), "", "a lane that passed has nothing to say");
+  t.eqStr(killedLaneNote("parallel", 1), "", "and neither does one that failed a test");
+  t.eqStr(killedLaneNote("parallel", 3), "", "3 is `wac test`'s own \"a test failed\"");
+  string kill = killedLaneNote("`wac test`", 137);
+  t.isTrue(contains(kill, "out-of-memory killer"), "137 is the OOM killer: " + kill);
+  t.isTrue(contains(kill, "no verdict"),
+           "and the note has to say the lane has no verdict, because the other lanes' `0 failed` " +
+           "lines look like a pass: " + kill);
+  t.isTrue(contains(kill, "0154"), "with the issue that has the measurements: " + kill);
+  t.isTrue(contains(killedLaneNote("exclusive", 143), "SIGTERM"), "143 is a timeout or a person");
+  return t.report();
+}
+
+/**
+ * The doc-warning tally is counted in characters and consumed.
+ *
+ * `tools/docCheck.ts` appends one character per warning and reads the file's *length*, so a reader
+ * that counted lines would report a different number for the same run — and the number is printed in
+ * the suite's footer, where nobody would notice it was wrong. Tested directly because on a clean tree
+ * the file does not exist at all: the footer then prints nothing whether the reader works or not,
+ * which is agreement by absence rather than evidence.
+ */
+export string test_the_doc_warning_tally_is_characters_and_is_consumed(Core core, Cli cli) {
+  T t = T.create();
+  string path = "/tmp/wac-doc-warnings";
+  // Kept and put back, because this is a real file another tool owns and a suite may be running.
+  FileResult had = cli.readFile(path).wait();
+  cli.writeFile(path, "xxx".toBytes()).wait();
+  t.eqI32(warningsSoFar(cli), 3, "three characters is three warnings");
+  t.isFalse(exists(cli, path), "and reading the tally consumes it, so the next run starts at zero");
+  t.eqI32(warningsSoFar(cli), 0, "a tally that is not there is no warnings");
+
+  cli.writeFile(path, "yy".toBytes()).wait();
+  clearWarnings(cli);
+  t.isFalse(exists(cli, path), "clearWarnings removes it without reading it");
+  if (had.ok) { cli.writeFile(path, had.bytes).wait(); }
+  return t.report();
+}

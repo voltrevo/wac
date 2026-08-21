@@ -592,7 +592,41 @@ string[][] gone() {
     string[]("tools/jobsSweep.sh", "tools/test.ts"),
     string[]("tools/wac/links_test.wac", "tools/x.ts"),
     string[]("packages/bls/tools/genfips-experiment.py", "packages/bls/test/wac/fips.wac"),
-    string[]("CLAUDE.md", "atoms/wac/"));
+    string[]("CLAUDE.md", "atoms/wac/"),
+    // **One deletion, 2026-08-21: the suite orchestrator moved from TypeScript to wac.**
+    // `tools/runTests.ts`, `tools/killedLane.ts` and its test became `tools/runTests.wac`,
+    // `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac`. Every sentence below is either an
+    // issue recording what the old runner did on a particular day — which is not a claim about
+    // today and must not be rewritten to name a file that did not exist when it was written — or
+    // one of the new files saying what it replaced. The alternative was editing seventeen records
+    // to make a link checker green, which is the wrong direction.
+    string[]("issues/lang/open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md", "tools/runTests.ts"),
+    string[]("issues/system/closed/0069-tests-hand-out-ports-by-binding-and-releasing-them.md", "tools/runTests.ts"),
+    string[]("issues/system/closed/0075-the-test-worker-cap-is-a-guess-and-needs-a-quiet-machine-to-set.md", "tools/runTests.ts"),
+    string[]("issues/system/closed/0077-a-file-named-test-ts-is-run-by-the-suite-that-launches-it.md", "tools/runTests.ts"),
+    string[]("issues/system/closed/0140-every-build-still-orphans-its-transpile-cache-entry.md", "tools/runTests.ts"),
+    string[]("issues/system/closed/0172-the-exec-tests-fail-in-the-wac-test-lane-because-it-grants-nothing.md", "tools/runTests.ts"),
+    string[]("issues/system/closed/0176-the-native-profiling-lane-takes-none-of-the-twenty-three-wrappers-it-could.md", "tools/runTests.ts"),
+    string[]("issues/system/open/0106-the-onion-service-test-goes-red-under-load-on-a-shared-machine.md", "tools/runTests.ts"),
+    string[]("issues/system/open/0136-the-suite-leaves-its-temp-directories-behind-and-the-disk-filled.md", "tools/runTests.ts"),
+    string[]("issues/system/open/0139-mutation-testing-cannot-reach-a-low-level-package-in-practice.md", "tools/runTests.ts"),
+    string[]("issues/system/open/0142-a-suite-was-killed-with-the-gate-in-place.md", "tools/runTests.ts"),
+    string[]("issues/system/open/0154-a-slow-suite-is-starved-at-the-push-because-master-moves-under-it.md", "tools/runTests.ts"),
+    string[]("issues/system/open/0161-moving-the-suite-off-deno-the-order.md", "tools/runTests.ts"),
+    string[]("issues/system/open/0173-a-wac-test-cannot-say-which-grant-it-needs.md", "tools/runTests.ts"),
+    string[]("issues/system/open/0183-mutation-scoring-runs-deno-test-and-twenty-packages-no-longer-have-one.md", "tools/runTests.ts"),
+    string[]("issues/system/open/0204-wac-test-recompiles-every-directory-on-every-run.md", "tools/runTests.ts"),
+    string[]("tools/runTests.wac", "tools/runTests.ts"),
+    string[]("tools/runTests.wac", "tools/killedLane.ts"),
+    string[]("tools/wac/suitegate.wac", "tools/killedLane.ts"),
+    string[]("tools/wac/suitehouse.wac", "tools/runTests.ts"),
+    string[]("tools/runTests.wac", "tools/killedLane.test.ts"),
+    string[]("tools/suiteGate.ts", "tools/killedLane.test.ts"),
+    string[]("tools/wac/suitegate_test.wac", "tools/killedLane.test.ts"),
+    // And the two this list names in the comment above it, which is the same rule applied to the
+    // file that applies it.
+    string[]("tools/wac/links_test.wac", "tools/runTests.ts"),
+    string[]("tools/wac/links_test.wac", "tools/killedLane.ts"));
 }
 
 bool excused(string file, string path) {

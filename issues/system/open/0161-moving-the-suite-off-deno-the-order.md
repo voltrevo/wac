@@ -1912,3 +1912,35 @@ That principle reaches `parse_errors` (which compares diagnostics by position) m
 reaches `corpusMutate` and `mutateCheck` (which use it to *generate* known-bad programs and only ask
 whether wacc notices). Porting them would entrench an arrangement that may be about to go. Left
 alone deliberately, pending that decision.
+
+## The orchestrator itself moved — 2026-08-21, agent-c
+
+`deno task test` is now a wac program. `tools/runTests.ts`, `tools/killedLane.ts` and its test are
+deleted; `tools/runTests.wac`, `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac` replace them,
+and `tools/wac/suitegate_test.wac` covers the gate.
+
+This was not on the order above, and it is worth saying why it could jump the queue: the orchestrator
+needed only two things wac did not have, and both arrived with `Cli.execWith` — an environment for a
+child (`DENO_JOBS`, `WAC_SCHED`, `WAC_SUITE_RUNNING`) and inherited output, so a lane can be watched
+while it runs rather than appearing when it ends. Everything else it does — walking for test files,
+reading lane declarations, a queue of chunks at four workers over `core.waitAny`, `/proc` for the
+machine's readings, the lock — was already expressible.
+
+**Measured against the runner it replaces, back to back on the same box:** 1686 Deno cases in both,
+375 wac test files across 38 directories in both, 53 chunks in both, 257s in the lanes against 253s.
+The exit codes, the report's wording and its number formatting match, so a reader cannot tell from
+the output which one ran.
+
+**What did not move, and why.** `tools/suiteGate.ts` keeps `announceHeavy` — eight TypeScript tools
+announce themselves (`corpus:*`, `coverage:all`, `mutate`) and would each need porting first. Its
+lock, thresholds, cooldown and refusal are deleted, so the *gate* has one implementation and what is
+duplicated across the two languages is one filename and four JSON keys, pinned on both sides by a
+test. `tools/suiteGuard.ts` stays for the same reason: `SUITE_ENV` and `refuseIfNested` have four
+callers that are still TypeScript.
+
+**Two consequences worth knowing before the next step.** A fresh clone can no longer run the suite
+until `deno task seed:bootstrap` has produced a binary, where the TypeScript runner would have run its
+Deno lane and skipped the wac one. And the runner's own tests live under `tools/`, which the *docs*
+gate runs (`deno task docs` starts with `wac test tools/`) rather than the suite — the suite's lane
+roots are `packages` and `core`, in this runner exactly as in the last one. So a change to the
+orchestrator is checked by `deno task docs`, not by the suite it orchestrates.

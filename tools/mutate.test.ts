@@ -200,7 +200,7 @@ Deno.test("a body that already is the default yields no extreme mutant", () => {
 });
 
 Deno.test("the mutation runner runs tests with the flags the suite runs them with", async () => {
-  // `tools/runTests.ts` is the suite; `tools/mutate.ts` runs the same tests under a mutated tree. A
+  // `tools/runTests.wac` is the suite; `tools/mutate.ts` runs the same tests under a mutated tree. A
   // flag one has and the other lacks makes scopes red at baseline, and this tool then excludes those
   // mutants as *unmeasurable* — correctly, and quietly enough that the headline still reads like a
   // score.
@@ -214,7 +214,10 @@ Deno.test("the mutation runner runs tests with the flags the suite runs them wit
   const flagsIn = (src: string) =>
     new Set((src.match(/"--(?:allow-[a-z]+|unstable-[a-z-]+)"/g) ?? []).map((s) => s.slice(1, -1)));
   const read = async (f: string) => await Deno.readTextFile(new URL(f, import.meta.url));
-  const suite = flagsIn(await read("./runTests.ts"));
+  // `runTests.wac` since 2026-08-21 — the suite is a wac program, and the flags are still quoted
+  // strings, so what this reads is unchanged. Both of the runner's lists count: the `deno test`
+  // permissions and the `wac test` grants are the flags the suite runs tests with.
+  const suite = flagsIn(await read("./runTests.wac"));
 
   // Every runner that builds its own `deno test` argument list. `mutate.ts` is the one that drifted;
   // `mutate/profile.ts` is the one where drifting costs most, since it decides which tests reach
@@ -227,7 +230,7 @@ Deno.test("the mutation runner runs tests with the flags the suite runs them wit
     if (missing.length > 0) {
       throw new Error(
         `tools/${runner.replace("./", "")} runs tests without ${missing.join(", ")}, which ` +
-          `tools/runTests.ts passes. A test that cannot start is not a test that failed: it is one ` +
+          `tools/runTests.wac passes. A test that cannot start is not a test that failed: it is one ` +
           `whose absence the runner reports as something else.`,
       );
     }
@@ -235,10 +238,10 @@ Deno.test("the mutation runner runs tests with the flags the suite runs them wit
 
   // **And the sweep, which is a shell script and was therefore outside this check entirely.**
   // `tools/jobsSweep.sh` runs the whole suite at each worker count to produce the table
-  // `runTests.ts` chooses its default width from, and it had drifted three ways at once: no
+  // `runTests.wac` chooses its default width from, and it had drifted three ways at once: no
   // `--ignore` (discovery picks up `site/tools`, which does not type-check, so it aborted in two
   // seconds), no `--unstable-net` (24 datagram failures, and it correctly refuses to time a failed
-  // run), no `WAC_SCHED`. The table went stale, `runTests.ts` kept asserting "memory barely moves
+  // run), no `WAC_SCHED`. The table went stale, `runTests.wac` kept asserting "memory barely moves
   // whether one worker runs or four" — by then false, it climbs about 1.2 GB per worker — and the
   // suite gate admitted runs with less memory available than the suite needs to start.
   // `issues/system/0142`.
@@ -259,7 +262,7 @@ Deno.test("the mutation runner runs tests with the flags the suite runs them wit
   if (sweepMissing.length > 0) {
     throw new Error(
       `tools/jobsSweep.sh runs the suite without ${sweepMissing.join(", ")}, which ` +
-        `tools/runTests.ts passes. The sweep's whole output is a timing table, and a run that ` +
+        `tools/runTests.wac passes. The sweep's whole output is a timing table, and a run that ` +
         `fails to start produces one that is wrong rather than one that is missing.`,
     );
   }

@@ -310,7 +310,7 @@ type NativeShare = { all: string[]; tests: Record<string, string[]>; ms: number 
  * The grants the suite's own wac lane passes, which a profiling run has to match exactly.
  *
  * **It did not, and the cost was silent.** `wacShare` passed four of these and not `--allow-net`,
- * which `tools/runTests.ts` added to the lane on 2026-08-18. A wac test that binds a socket then
+ * which `tools/runTests.wac` added to the lane on 2026-08-18. A wac test that binds a socket then
  * *fails* under the profiler rather than being skipped — `cli.listen` answers a negative handle and
  * the test says "no free port" — so `skipped` stays empty, the profile is taken as authoritative, and
  * the lines those tests would have reached are attributed to nobody. Measured: **29 test files across
@@ -476,7 +476,7 @@ export async function buildProfile(
       if (native.has(f)) continue;
       const began = performance.now();
       const cmd = new Deno.Command("deno", {
-        // `--unstable-net` for the reason `tools/runTests.ts` gives beside its own copy. It matters
+        // `--unstable-net` for the reason `tools/runTests.wac` gives beside its own copy. It matters
         // more here than anywhere: this run is what decides **which tests reach which lines**, so a
         // net test that fails to start contributes no coverage, and every mutant in code only those
         // tests reach is then run against the wrong tests or thought unreachable.

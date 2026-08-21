@@ -296,7 +296,7 @@ export async function boundedInput(
  *
  * **Read through a subprocess, which looks absurd for reading a file and is the only thing that
  * works.** Deno gates `/proc` behind `--allow-all` rather than `--allow-read`, and `Deno.loadavg()`
- * behind `--allow-sys`; `tools/runTests.ts` grants neither. It does grant `--allow-run`, so `cat` it
+ * behind `--allow-sys`; `tools/runTests.wac` grants neither. It does grant `--allow-run`, so `cat` it
  * is.
  *
  * Here rather than in a test because it was written twice and reached for a third time incorrectly.

@@ -1,0 +1,457 @@
+// Whether the machine can afford a full suite right now, and whether you have just had one.
+//
+// `tools/suiteGate.ts`, `tools/suiteGuard.ts` and `tools/killedLane.ts` in wac, for
+// `tools/runTests.wac`. The arguments and the numbers are theirs and are not restated here — read
+// those files for *why* 5500 MB, why swap is not a threshold, and why the gate refuses rather than
+// queueing. What follows is what is different about doing it from wac.
+//
+// **The lock file's format is a compatibility surface, not an internal detail.** Every agent shares
+// `/tmp`, and until the TypeScript runner is deleted the two will be alive at the same time in
+// different workspaces: `agent-a` running `deno task test` has to see a lock this writes, and this
+// has to see theirs. So the bytes are exactly `JSON.stringify({who, pid, since, forced})` — same
+// path, same keys, same types — and the same is true of `/tmp/wac-suite-last-<agent>` (a decimal
+// millisecond stamp) and `/tmp/wac-heavy-<pid>`. A format that only this runner understood would
+// leave two suites believing they were alone, which is the one failure the lock exists to prevent.
+//
+// **Three things are read straight from `/proc` that the TypeScript shells out to `cat` for**, since
+// "Deno gates `/proc` behind `--allow-all`". The wac host does not: `--allow-read` reads
+// `/proc/meminfo` and `/proc/loadavg` directly, which removes two processes from the gate's own cost.
+//
+// **The pid comes from `/proc/self/stat`**, because there is no `getpid` capability — and there
+// probably should not be one for this: a program that wants to name itself in a file other programs
+// read is asking about the operating system, not about its own execution. The first field of that
+// line is the pid, and it is what `Deno.pid` would have answered.
+//
+// **Liveness is `stat("/proc/<pid>")` rather than `kill -0`.** The TypeScript asks the question by
+// sending a signal that does nothing (`Deno.kill(pid, "SIGCONT")`), which needs the authority to
+// signal an arbitrary process; this needs only the authority to read. It is the better spelling of
+// the same question, and it is available here because the answer is a file.
+//
+// **The refusal is a returned verdict rather than an exit.** `Deno.exit(75)` inside the gate is what
+// the TypeScript does; `main` returning 75 is what wac does, so `take` answers a `Slot` and the
+// caller decides. That is not politeness: a `main` that returns is a `main` whose lock gets released.
+
+import { Cli, Core, FileResult, Stat } from "std/platform.wac";
+import { itoa, itoa64, atoi } from "../../packages/fmt/src/itoa.wac";
+import { startsWith } from "../../packages/wactest/src/strings.wac";
+import { parse } from "../../packages/json/src/json.wac";
+import { JsonValue, JsonObject } from "../../packages/json/src/value.wac";
+
+/** Shared by every agent, because the resource being protected is shared. */
+string lockPath() { return "/tmp/wac-suite.lock"; }
+/** Per agent, so "you ran one recently" is about you. */
+string lastRunPath(string who) { return "/tmp/wac-suite-last-" + who; }
+/** One per live heavy runner, keyed by pid so two of them never collide. */
+string heavyPath(i32 pid) { return "/tmp/wac-heavy-" + itoa(pid); }
+
+/** Minutes before the same agent should run a full suite again. */
+i32 cooldownMin() { return 20; }
+/** Megabytes of available memory below which a suite is likely to be killed rather than finish. */
+i32 minAvailableMb() { return 5500; }
+/** One-minute load average above which five cores are already spoken for — 8, in tenths. */
+i32 maxLoadTenths() { return 80; }
+/** The environment variable that says a suite is already running above us. */
+export string marker() { return "WAC_SUITE_RUNNING"; }
+
+/**
+ * A variable's value, or "".
+ *
+ * **"" means unset *or* not granted, and the two are not distinguished** — `Cli.env` answers a
+ * nullable either way. The consequence is worth stating rather than hiding: a build without
+ * `--allow-env` cannot honour `WAC_SUITE_ANYWAY`, `WAC_SUITE_RETRY`, `WAC_HEAVY`, `DENO_JOBS` or
+ * `WAC_SCHED`, and will quietly behave as though none of them was set. The runner is always started
+ * with the grant, and `deno task docs` runs the `tools/` tests *without* it — which is why nothing
+ * here is tested by reading a variable that happens to be in the environment.
+ */
+export string envOf(Cli cli, string name) {
+  u8[]? v = cli.env(name).wait();
+  return v is null ? "" : string.fromBytes(v!);
+}
+
+/**
+ * This process's pid, from `/proc/self/stat`.
+ *
+ * 0 when it cannot be read, which every caller treats as "no pid to record" rather than as an error:
+ * a lock with a pid nobody can check is worse than a lock file that was never written, because the
+ * next agent would then wait on it for ever.
+ */
+export i32 ownPid(Cli cli) {
+  FileResult f = cli.readFile("/proc/self/stat").wait();
+  if (!f.ok) { return 0; }
+  string s = string.fromBytes(f.bytes);
+  i32 sp = s.indexOf(" ");
+  return sp <= 0 ? 0 : atoi(s.slice(0, sp));
+}
+
+/** Whether a pid is still running — the `kill -0` question, asked of the filesystem. */
+export bool alive(Cli cli, i32 pid) {
+  if (pid <= 0) { return false; }
+  return cli.stat("/proc/" + itoa(pid)).wait().exists;
+}
+
+/**
+ * Which agent this is, from the workspace path — `~/agent-c/workspaces/wac` is `agent-c`.
+ *
+ * Not `hostname` (the container id) and not `$USER` (always `claude`): the path is the one thing that
+ * differs per agent. An unrecognised layout answers `unknown`, which still works — it just shares a
+ * cooldown. A scan rather than the TypeScript's regex, which wac does not have.
+ */
+export string agentName(Cli cli) {
+  string cwd = cli.cwd().wait();
+  i32 at = cwd.indexOf("/agent-");
+  if (at < 0) { return "unknown"; }
+  i32 from = at + 1;
+  i32 to = from;
+  while (to < cwd.len() && cwd.slice(to, to + 1) != "/") { to = to + 1; }
+  return to > from ? cwd.slice(from, to) : "unknown";
+}
+
+/** What `/proc` says about room to run, or `known: false` when it could not be read. */
+struct Machine {
+  bool known;
+  i32 availableMb;
+  /** The one-minute load average in tenths, so this file needs no floating point. */
+  i32 loadTenths;
+}
+
+/** The integer following `key` in `/proc/meminfo`, in kB, or -1. */
+i32 memKb(string text, string key) {
+  i32 at = text.indexOf(key);
+  if (at < 0) { return -1; }
+  i32 i = at + key.len();
+  while (i < text.len() && text.slice(i, i + 1) == " ") { i = i + 1; }
+  i32 from = i;
+  while (i < text.len()) {
+    string c = text.slice(i, i + 1);
+    if (c < "0" || c > "9") { break; }
+    i = i + 1;
+  }
+  return i > from ? atoi(text.slice(from, i)) : -1;
+}
+
+/** `1.06 2.25 3.81 …` — the first field, in tenths. */
+i32 loadTenthsOf(string text) {
+  i32 dot = text.indexOf(".");
+  if (dot <= 0) { return -1; }
+  i32 whole = atoi(text.slice(0, dot));
+  string frac = dot + 1 < text.len() ? text.slice(dot + 1, dot + 2) : "0";
+  return whole * 10 + (frac >= "0" && frac <= "9" ? atoi(frac) : 0);
+}
+
+/**
+ * `/proc/meminfo` and `/proc/loadavg`.
+ *
+ * Unreadable is not a reason to block: this gate exists to save time, and refusing a run because it
+ * could not read `/proc` would be the gate costing what it is meant to protect.
+ */
+Machine machine(Cli cli) {
+  FileResult mem = cli.readFile("/proc/meminfo").wait();
+  FileResult load = cli.readFile("/proc/loadavg").wait();
+  if (!mem.ok || !load.ok) { return Machine(false, 0, 0); }
+  i32 kb = memKb(string.fromBytes(mem.bytes), "MemAvailable:");
+  i32 tenths = loadTenthsOf(string.fromBytes(load.bytes));
+  if (kb < 0 || tenths < 0) { return Machine(false, 0, 0); }
+  return Machine(true, kb / 1024, tenths);
+}
+
+/** A lock, or a heavy runner's presence note: the same four fields either way. */
+export struct Note {
+  bool present;
+  string who;
+  string label;
+  i32 pid;
+  i64 since;
+  bool forced;
+}
+
+Note noNote() { return Note(false, "", "", 0, 0 as i64, false); }
+
+/** A string field of a parsed object, or "". */
+string strField(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return ""; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { return ""; }
+  }
+}
+
+/** A numeric field, or -1 — which is why `pid` being absent reads as "not a note of ours". */
+i64 numField(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return -1 as i64; }
+  match (v!) {
+    case Number(value, raw): { return value as! i64; }
+    else: { return -1 as i64; }
+  }
+}
+
+bool boolField(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return false; }
+  match (v!) {
+    case Bool(value): { return value; }
+    else: { return false; }
+  }
+}
+
+/**
+ * One note, parsed and checked for liveness.
+ *
+ * **Recognised before it is trusted**, which is the rule `tools/suiteGate.ts` learned the hard way:
+ * a bare timestamp in a file called `/tmp/wac-heavy-last` parses as JSON — `JSON.parse` accepts a
+ * number — and its `pid` was then `undefined`, so the liveness check threw exactly as a dead pid
+ * does and the sweep deleted somebody else's file on every gate check. A value that is not an object
+ * with a numeric `pid` is not a note.
+ */
+Note readNote(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) { return noNote(); }
+  JsonValue? v = parse(f.bytes);
+  if (v is null) { return noNote(); }
+  match (v!) {
+    case Object(members): {
+      i64 pid = numField(members, "pid");
+      if (pid <= (0 as i64)) { return noNote(); }
+      return Note(true, strField(members, "who"), strField(members, "label"), pid as! i32,
+                  numField(members, "since"), boolField(members, "forced"));
+    }
+    else: { return noNote(); }
+  }
+}
+
+/** The lock, if one is held by a process that is still running. */
+Note readLock(Cli cli) {
+  Note n = readNote(cli, lockPath());
+  if (!n.present) { return noNote(); }
+  // A lock whose process is gone is not a lock.
+  if (!alive(cli, n.pid)) { return noNote(); }
+  return n;
+}
+
+i32 minutesSince(Core core, i64 ms) {
+  i64 now = core.nowMillis().wait();
+  return ((now - ms + (30000 as i64)) / (60000 as i64)) as! i32;
+}
+
+/** What to print instead of the run that was refused. */
+string advice() {
+  return "\n" +
+    "   **Do not wait for the slot.** Go and do the next piece of work — the suite is the gate on a\n" +
+    "   *push*, not on the next edit, and a cooldown spent watching the clock is the one cost this\n" +
+    "   refusal was not meant to have. Come back to it when something is ready to go out.\n" +
+    "\n" +
+    "   Meanwhile, run what you touched — none of these have a cooldown:\n" +
+    "     wac test packages/<name>/test/wac        the package\n" +
+    "     wac test path/to/one_test.wac            one file\n" +
+    "     deno test -A packages/<name>/test/       its TypeScript half\n" +
+    "     deno task docs                           the doc checks, strictly\n" +
+    "\n" +
+    "   The suite is about four minutes and three agents share five cores and 11.9 GB.\n" +
+    "   Two at once is tight; three get killed at about 70% with no failure reported.\n" +
+    "   `WAC_SUITE_ANYWAY=1` goes through anyway, and says that it did.\n";
+}
+
+/** Whether the run may proceed, and what to say if not. */
+export struct Slot {
+  bool taken;
+  /** The exit code to return when it was refused: 75, `EX_TEMPFAIL`. */
+  i32 code;
+  string why;
+  /** This process's pid, so the release knows whether the lock is still ours. */
+  i32 pid;
+}
+
+/**
+ * Refuse, unless the machine is quiet and you have not just had one.
+ *
+ * The refusals are in order of how certain the harm is: another suite running, then the machine's own
+ * readings, then "you ran one recently". `WAC_SUITE_ANYWAY=1` skips all of it and records itself in
+ * the lock; `WAC_SUITE_RETRY=1` skips only the cooldown, which is the rule about reaching for the
+ * suite by reflex rather than about a script finishing a job it started.
+ */
+export Slot take(Core core, Cli cli) {
+  string who = agentName(cli);
+  i32 pid = ownPid(cli);
+  bool forced = envOf(cli, "WAC_SUITE_ANYWAY") == "1";
+  bool retry = envOf(cli, "WAC_SUITE_RETRY") == "1";
+
+  if (!forced) {
+    Note held = readLock(cli);
+    if (held.present) {
+      return Slot(false, 75, held.who + " started one " + itoa(minutesSince(core, held.since)) +
+                  "m ago (pid " + itoa(held.pid) + ")" +
+                  (held.forced ? ", with WAC_SUITE_ANYWAY" : ""), pid);
+    }
+
+    // **Said before the thresholds, because it explains them.** The memory and load readings
+    // describe this instant; a heavy runner next door describes the next ten minutes, which is what
+    // a suite actually has to survive. Not a refusal — see `announce`.
+    Note[] others = heavyOthers(core, cli, pid);
+    if (others.len() > 0) {
+      string said = "";
+      for (i32 i = 0; i < others.len(); i++) {
+        said = said + (i > 0 ? ", " : "") + others[i].label + " (" + others[i].who + ", " +
+               itoa(minutesSince(core, others[i].since)) + "m)";
+      }
+      core.warn("\n== heavy work is running next door: " + said + " ==");
+      core.warn("   Not a refusal. If this run is killed without reporting a failure, that is");
+      core.warn("   the likeliest reason — issues/system 0142.\n");
+    }
+
+    Machine m = machine(cli);
+    if (m.known) {
+      if (m.availableMb < minAvailableMb()) {
+        return Slot(false, 75, "only " + itoa(m.availableMb) +
+                    " MB of memory available, and a suite needs about " + itoa(minAvailableMb()) +
+                    " to finish", pid);
+      }
+      if (m.loadTenths > maxLoadTenths()) {
+        return Slot(false, 75, "the load average is " + itoa(m.loadTenths / 10) + "." +
+                    itoa(m.loadTenths % 10) + " on five cores", pid);
+      }
+    }
+
+    if (!retry) {
+      FileResult last = cli.readFile(lastRunPath(who)).wait();
+      if (last.ok) {
+        string text = string.fromBytes(last.bytes);
+        i64 at = 0 as i64;
+        for (i32 i = 0; i < text.len(); i++) {
+          string c = text.slice(i, i + 1);
+          if (c < "0" || c > "9") { break; }
+          at = at * (10 as i64) + (atoi(c) as i64);
+        }
+        i32 ago = minutesSince(core, at);
+        if (at > (0 as i64) && ago < cooldownMin()) {
+          return Slot(false, 75, who + " ran one " + itoa(ago) + "m ago — the cooldown is " +
+                      itoa(cooldownMin()) + "m", pid);
+        }
+      }
+    }
+  } else {
+    core.warn("\n== WAC_SUITE_ANYWAY=1: running the suite despite the gate ==");
+    core.warn("   Recorded in the lock, so another agent can see why it is held.\n");
+  }
+
+  // `JSON.stringify({who, pid, since, forced})`, byte for byte: the TypeScript runner reads this.
+  i64 now = core.nowMillis().wait();
+  string json = "{\"who\":\"" + who + "\",\"pid\":" + itoa(pid) + ",\"since\":" + itoa64(now) +
+                ",\"forced\":" + (forced ? "true" : "false") + "}";
+  // An unwritable lock should not stop a run that has been allowed.
+  cli.writeFile(lockPath(), json.toBytes()).wait();
+  cli.writeFile(lastRunPath(who), itoa64(now).toBytes()).wait();
+  return Slot(true, 0, "", pid);
+}
+
+/** Print what the gate said and hand back its exit code. */
+export i32 refused(Core core, Slot slot) {
+  core.warn("\n== not running the suite: " + slot.why + " ==\n" + advice() + "\n");
+  return slot.code;
+}
+
+/**
+ * Give the slot back.
+ *
+ * Only if it is still ours: a forced run by somebody else may have taken it in the meantime, and
+ * releasing theirs would be worse than leaving ours.
+ */
+export void release(Cli cli, Slot slot) {
+  if (!slot.taken) { return; }
+  Note now = readLock(cli);
+  if (now.present && now.pid == slot.pid) { cli.remove(lockPath(), false).wait(); }
+}
+
+/**
+ * A heavy non-suite runner announcing itself, so the gate can *see* it.
+ *
+ * Records rather than excludes: a mutual-exclusion token across every heavy runner would serialise
+ * the machine and could deadlock against work that runs after the suite it follows. What a long run
+ * needs to know is not "is there room this instant" — the readings answer that — but "is something
+ * going to keep running while I do".
+ */
+export string announce(Core core, Cli cli, string label) {
+  i32 pid = ownPid(cli);
+  string path = heavyPath(pid);
+  string json = "{\"who\":\"" + agentName(cli) + "\",\"label\":\"" + label + "\",\"pid\":" +
+                itoa(pid) + ",\"since\":" + itoa64(core.nowMillis().wait()) + "}";
+  cli.writeFile(path, json.toBytes()).wait();
+  return path;
+}
+
+/** The other half of `announce`. */
+export void unannounce(Cli cli, string path) { cli.remove(path, false).wait(); }
+
+/** Every heavy runner that is not this process and whose pid is still alive. */
+export Note[] heavyOthers(Core core, Cli cli, i32 mine) {
+  string[]? entries = cli.readDir("/tmp").wait();
+  if (entries is null) { return Note[0](fill: noNote()); }
+  string[] names = entries!;
+  Note[] found = Note[names.len()](fill: noNote());
+  i32 n = 0;
+  for (i32 i = 0; i < names.len(); i++) {
+    if (!startsWith(names[i], "wac-heavy-")) { continue; }
+    string path = "/tmp/" + names[i];
+    Note note = readNote(cli, path);
+    if (!note.present) { continue; }
+    if (note.pid == mine) { continue; }
+    if (!alive(cli, note.pid)) {
+      // A note whose process is gone is not a presence. Swept, and only because it was recognised.
+      cli.remove(path, false).wait();
+      continue;
+    }
+    found[n] = note;
+    n = n + 1;
+  }
+  Note[] out = Note[n](fill: noNote());
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
+}
+
+/**
+ * Stop, loudly, if a suite is already running above us.
+ *
+ * Answers the exit code — 2 — or 0 when there is nothing above us. `wac-mono 0077`'s shape is
+ * something running under the suite invoking a whole suite, which recurses without bound.
+ */
+export i32 refuseIfNested(Core core, Cli cli, string what) {
+  if (envOf(cli, marker()) == "") { return 0; }
+  core.warn(what + ": refusing to run the suite from inside the suite (" + marker() + " is set).");
+  core.warn("This is wac-mono 0077's shape: something running under the suite has invoked a whole");
+  core.warn("suite, which recurses without bound. Call the thing you need directly instead.");
+  return 2;
+}
+
+/**
+ * Whether a lane's exit code says it was **killed** rather than that it failed, and by what.
+ *
+ * A lane the kernel takes for memory leaves no summary, and the output then looks exactly like a
+ * lane that had no tests. 128 + the signal: 9 is the out-of-memory killer on this box, 15 is a
+ * timeout or a person.
+ */
+export string killedLaneNote(string name, i32 code) {
+  string why = code == 137 ? "SIGKILL, which on this box is the out-of-memory killer"
+             : code == 143 ? "SIGTERM — a timeout, or somebody stopping it" : "";
+  if (why == "") { return ""; }
+  return "\n== the " + name + " lane was killed (exit " + itoa(code) + ": " + why + ") ==\n" +
+         "   It printed no summary, so this run has **no verdict** for it — not a pass and not a\n" +
+         "   failure. Treat any other lane's `0 failed` above as covering only that lane.\n" +
+         "   `issues/system/0154` has the measurements; the usual cause is memory.\n";
+}
+
+/**
+ * How many doc warnings this run produced, and reset for the next one.
+ *
+ * `tools/docCheck.ts` keeps a tally by appending one character per warning to a file in `/tmp`, and
+ * reads its *length*. Same file, same arithmetic — a wac runner that counted lines would report a
+ * different number for the same run.
+ */
+/** Called before a run, so a previous one's tally is not counted as this run's. */
+export void clearWarnings(Cli cli) { cli.remove("/tmp/wac-doc-warnings", false).wait(); }
+
+export i32 warningsSoFar(Cli cli) {
+  FileResult f = cli.readFile("/tmp/wac-doc-warnings").wait();
+  if (!f.ok) { return 0; }
+  cli.remove("/tmp/wac-doc-warnings", false).wait();
+  return f.bytes.len();
+}

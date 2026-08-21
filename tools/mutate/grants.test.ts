@@ -2,7 +2,7 @@
 //
 //     deno test -A --no-check tools/mutate/grants.test.ts
 //
-// They were two lists and they drifted. `tools/runTests.ts` added `--allow-net` to the lane on
+// They were two lists and they drifted. `tools/runTests.wac` added `--allow-net` to the lane on
 // 2026-08-18 — because a wac test that binds a socket answers "no free port" without it — and
 // `tools/mutate/profile.ts` kept passing four grants. A profiling run is not a test run: a test that
 // *fails* for want of a grant is not *skipped*, so `skipped` stays empty, `wacShare` takes the file,
@@ -20,15 +20,18 @@
 import { WAC_LANE_GRANTS } from "./profile.ts";
 
 Deno.test("the profiler grants what the wac lane grants", async () => {
-  const src = await Deno.readTextFile(new URL("../runTests.ts", import.meta.url));
-  const at = src.indexOf('"test",\n    "--allow-read",');
+  // **The lane is `tools/runTests.wac` since 2026-08-21**, so the anchor is the function that builds
+  // the list rather than the head of a TypeScript array. Same rule as before: if the anchor stops
+  // matching, this fails loudly rather than passing over nothing.
+  const src = await Deno.readTextFile(new URL("../runTests.wac", import.meta.url));
+  const at = src.indexOf("string[] wacGrants()");
   if (at < 0) {
     throw new Error(
-      "cannot find the wac lane's grant list in tools/runTests.ts — this test is matching nothing " +
+      "cannot find `wacGrants` in tools/runTests.wac — this test is matching nothing " +
         "and would pass whatever the profiler does. Re-anchor it on the list the lane actually builds.",
     );
   }
-  const end = src.indexOf("];", at);
+  const end = src.indexOf("}", at);
   const block = src.slice(at, end);
   const lane = [...block.matchAll(/"(--allow-[a-z-]+)"/g)].map((m) => m[1]);
   if (lane.length < 4) {

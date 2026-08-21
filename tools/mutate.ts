@@ -783,7 +783,7 @@ function isWacRun(dirs: string[]): boolean {
 function testCommand(work: string, dirs: string[], filter?: string): Deno.Command {
   // **The binary, for a scope whose tests are wac files.** `wac test` takes directories and finds the
   // `*_test.wac` under them, so the scope needs no translation; the grants are the ones
-  // `tools/runTests.ts` gives its own lane, because a test skipped for want of one is a test that did
+  // `tools/runTests.wac` gives its own lane, because a test skipped for want of one is a test that did
   // not run — and this tool counts a green run as a survivor. The binary is read from the *original*
   // checkout: it is a build artefact rather than a source, and `stageProject` does not copy
   // `native/target`. `cwd` is still the staged copy, so it compiles the mutated sources.
@@ -803,7 +803,7 @@ function testCommand(work: string, dirs: string[], filter?: string): Deno.Comman
       stderr: "piped",
     });
   }
-  // `--unstable-net` is not a permission and belongs here for the reason `tools/runTests.ts` gives
+  // `--unstable-net` is not a permission and belongs here for the reason `tools/runTests.wac` gives
   // beside its own copy: `Deno.listenDatagram` does not exist without it, so a datagram test fails
   // with "Deno.listenDatagram is not a function" rather than with anything about the code.
   //

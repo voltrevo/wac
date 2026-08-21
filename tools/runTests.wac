@@ -1,0 +1,1101 @@
+// The suite, orchestrated in wac, with no JavaScript in the path except the `deno test` children it
+// starts.
+//
+// **This replaced `tools/runTests.ts` on 2026-08-21, which is deleted.** Everything the suite does
+// is here or in `tools/wac/suitegate.wac` and `tools/wac/suitehouse.wac`; `deno task test` runs
+// this and `deno task test:heavy` runs its other mode.
+//
+//   deno task test                       everything, gated
+//   deno task test packages/json         a subset, same cap, and heavy files are not excluded
+//   deno task test -- --dry              discovery and chunking, nothing run, no slot taken
+//   deno task test -- --deno-only        one lane; `--wac-only` is the other
+//   deno task test:heavy                 the files that declared a cost, at two workers
+//   DENO_JOBS=5 deno task test           the width, honoured as given
+//   WAC_SUITE_ANYWAY=1 deno task test    past the gate, and recorded in the lock
+//
+// What runs, in order:
+//
+//   1. the subcommands `tools/push.sh` calls — `free`, `guard`, `sweep` — which start no suite
+//   2. the nested-suite refusal, exit 2: something running under the suite invoking a whole suite
+//      recurses without bound (`wac-mono 0077`)
+//   3. discovery — every directory under `packages/` and `core/` holding a `*_test.wac`, every
+//      `*.test.ts`, and every `// test-lane: exclusive|heavy — why` in either kind
+//   4. the gate, exit 75 — another suite running, the machine's own readings, or your cooldown
+//   5. housekeeping — Deno's code cache over its bound, `/tmp/wac-*` from killed runs, transpiles of
+//      sources that no longer exist
+//   6. the Deno pass at `jobs` workers, then the `.test.ts` files that declared themselves exclusive,
+//      alone
+//   7. the `wac test` lane — directories chunked at 12 files, run as a queue at `jobs` workers, then
+//      the wac files that declared themselves exclusive, alone
+//   8. the report: per lane, the longest single runs, the lane's own file count, a killed lane's
+//      missing verdict, the doc-warning tally, and an exit code that is the first non-zero
+//
+// `--heavy` is the other mode: the nine files that declared a cost, at two workers, stamping
+// `/tmp/wac-lane-heavy-last` only on success — so "last run 20m ago" cannot mean "last attempted".
+//
+// ## What is different from the TypeScript, and deliberate
+//
+// **`/proc` is read directly.** The gate shells out to `cat` there because "Deno gates `/proc` behind
+// `--allow-all`"; `--allow-read` is enough here, so the memory and load readings cost no processes.
+// Liveness is `stat("/proc/<pid>")` rather than a signal, which needs no authority over processes at
+// all.
+//
+// **A refusal is a returned exit code rather than `Deno.exit` inside the gate**, which is what lets
+// the lock be released on the way out instead of in an unwind that wac does not have.
+//
+// **`chmod` is the one thing that is not a translation.** `suitehouse.wac` widens a mode by asking
+// `/bin/chmod`, because `Cli` has `setExecutable` and not a general `chmod` — deliberately, since a
+// browser's OPFS could not answer one. Three temp entries a week need it.
+//
+// ## What replacing the TypeScript actually costs
+//
+// `tools/runTests.ts` and `tools/killedLane.ts` (and its test) can go: nothing else imports them.
+// **`tools/suiteGate.ts` and `tools/suiteGuard.ts` cannot yet** — eight other TypeScript tools call
+// `announceHeavy` (`corpus*`, `coverageAll`, `mutate`) and four read `SUITE_ENV`, so deleting them
+// means porting those too. Until then the lock protocol has two implementations, in two languages,
+// over the same files in a shared `/tmp` — which is exactly the duplication `CLAUDE.md` warns about,
+// and `tools/wac/suitegate_test.wac` pins the byte format on this side because of it.
+//
+// **A fresh clone cannot run this at all**, where the TypeScript would run its Deno lane and skip the
+// wac one: the runner *is* a wac program, so `deno task seed:bootstrap` has to come first. That is a
+// real ordering constraint rather than a detail, and the reason `deno task test` should keep working
+// until the bootstrap path is documented for it.
+//
+// What the adoption moved, for anyone reading the diff: `deno.json`'s two tasks, `tools/push.sh`'s
+// `guard` and `free` helpers, and `docs/development.md`'s link to the worker-count table — which is
+// now the docstring on `defaultJobs` below, carried over so that deleting a file did not delete the
+// measurements in it. `tools/suiteGate.ts` keeps `announceHeavy` and nothing else: its lock,
+// thresholds, cooldown and refusal are gone, because they are here. `tools/suiteGuard.ts` stays
+// whole — `SUITE_ENV` and `refuseIfNested` have four callers that are still TypeScript.
+//
+// Where the tests live: this runner's own are `tools/wac/suitegate_test.wac`, which the *docs* gate
+// runs — `deno task docs` starts with `wac test tools/`, and the suite's lane roots are `packages`
+// and `core` in both runners. So a change here is checked by `deno task docs`, not by the suite it
+// orchestrates, which is worth knowing before trusting a green suite about it.
+
+import { Change, Core, Cli, Exec, FileResult, Pending, Stat } from "std/platform.wac";
+import { itoa, itoa64, atoi } from "../packages/fmt/src/itoa.wac";
+import { startsWith, endsWith, joined, has } from "../packages/wactest/src/strings.wac";
+import { Slot, take, refused, release, refuseIfNested, killedLaneNote, warningsSoFar,
+         clearWarnings, envOf } from "./wac/suitegate.wac";
+import { guardCodeCache, freeCaches, sweepStaleTemp, dropUnreachableTranspiles }
+  from "./wac/suitehouse.wac";
+
+/** The roots the lane walks — `harness/testLane.ts`'s `LANE_ROOTS`, and one list for its reason. */
+string[] laneRoots() { return string[]("packages", "core"); }
+
+/**
+ * Files per chunk, and the number is the TypeScript's.
+ *
+ * A directory's test files share one aggregate build, so a directory is the smallest piece that can
+ * be handed to a worker without paying for that build twice — and a *large* directory is split
+ * anyway, because the queue's floor is its slowest item. 12 is where `packages/wacc`'s 40 files
+ * become four chunks.
+ */
+i32 chunkSize() { return 12; }
+
+/**
+ * The worker count, and the whole argument for it — carried here when the TypeScript runner it
+ * documented was deleted on 2026-08-21, because the measurements are the reason the number is 4.
+ *
+ * `deno test --parallel` defaults to one worker per core. That is right for a suite of pure
+ * computation and wrong for this one, because a test here is frequently a *process*:
+ * `packages/box` and `packages/sh` spawn a built wac binary per case, and each is an 85 MB Deno
+ * isolate. Five workers each holding one, plus the five workers themselves, is over a gigabyte of
+ * transient allocation — on a machine three agents share.
+ *
+ * The symptom was `packages/ssz`'s merkleization test — then a host-side one, now
+ * `packages/ssz/test/wac/merkle_test.wac` — failing with a bare "Uncaught error" and passing on its
+ * own: a worker killed for memory, reported as though the test were wrong.
+ *
+ *   deno task test                      # everything, capped
+ *   deno task test packages/json        # a subset, same cap
+ *   DENO_JOBS=5 deno task test          # override, honoured as given
+ *
+ * **The cap is 4, and it is measured.** `tools/jobsSweep.sh` on a quiet machine (load 0.6, 11.9 GB
+ * total, 5 cores), sampling `/sys/fs/cgroup/memory.current` and `memory.stat`'s `anon` through each
+ * run — re-measured 2026-08-15, after the heavy lane, issues/system 0142 and 0154:
+ *
+ *   jobs   wall      peak      rise      anon   result
+ *   1      689s    6795MB    3691MB    4123MB   3377 passed
+ *   2      379s    7569MB    4745MB         -   3377 passed
+ *   3      279s    7557MB    5166MB         -   3377 passed
+ *   4      259s    7893MB    5158MB    5905MB   3377 passed      <- the default
+ *   5      231s    7672MB    5359MB         -   3377 passed
+ *
+ * **Every width is 18–27% faster than before the heavy lane**, which is what that lane was for: the
+ * ten files it takes out of this pass are about a gigabyte resident each. 893s at one worker is now
+ * 689s, and 317s at four is 259s.
+ *
+ * **And five no longer dies.** It was `exit=137`, killed by the kernel after 303s with no summary,
+ * in the 2026-08-13 sweep; it now passes in 231s and is the fastest width measured. That is worth
+ * knowing and is *not* a reason to raise this cap — see below.
+ *
+ * **`anon` is the column to read for "will this fit".** `memory.current` charges the cgroup for page
+ * cache too, and the cache this suite reads through is 18 GB, so the peak grew between the two
+ * sweeps while the suite shrank. `anon` cannot be reclaimed — only swapped or OOM-killed — and it is
+ * what `tools/wac/suitegate.wac` should be compared against. At one worker the suite needs about 4.1 GB
+ * of it and at four about 5.9 GB, which is the spread that makes a single floor wrong at both ends.
+ * (The two ranges are maxima of separately-timed extrema, so at jobs=4 `anon` exceeds `rise`: the
+ * kernel was evicting cache while anonymous memory grew. Read them as upper bounds.)
+ *
+ * The wall-clock argument for 4 over 3 is thinner than it looks — 259s against 279s — and the memory
+ * argument is the interesting one: four needs about 5.9 GB of anonymous memory on a box with 11.9
+ * that three agents share. That is why `tools/wac/suitegate.wac` asks for a floor at all.
+ *
+ * **Five has now failed twice and passed twice, and the history is why the cap does not move.** It
+ * first failed with `AddrInUse` — wac-mono 0069, tests binding a port, releasing it and binding
+ * again, which a fifth worker won often enough to redden a run. That was fixed (ports are held until
+ * the bind) and five passed three full suites. On 2026-08-13 it failed again at `exit=137`: the
+ * suite had outgrown the machine at that width. On 2026-08-15, with the heavy lane taking ten
+ * gigabyte-sized files out of this pass, it passes again and is the fastest width measured.
+ *
+ * So "five works" has been true, then false, then true, twice for reasons that had nothing to do
+ * with each other. That is the argument for leaving the default at four rather than chasing the
+ * fastest number: the width that fits is a property of the machine on the day, and this default is
+ * the one that should still be right when the suite grows again.
+ *
+ * **The cap stays at 4 anyway.** 231s against 259s is an 11% gain for a fifth of every core on a
+ * machine two other agents are also using, and this number should be the one that leaves room rather
+ * than the one that wins a benchmark. `DENO_JOBS=5` is there for anyone who disagrees on a machine
+ * they have to themselves.
+ *
+ * Four is also *kinder* to the other agents than one, which is the opposite of what a cap suggests:
+ * the run finishes in 259s instead of 689s, so the window during which this process holds five
+ * gigabytes is a third as long. What no per-process cap can do is bound the *machine* — three agents
+ * at 5 GB each is 15 GB of 11.9 — and that is 0031, which wants a token every heavy runner takes.
+ * `issues/system/0154` is what happens without one: the agent with the least headroom is pushed to
+ * the widest-and-slowest configuration it can afford and then loses every race to the push.
+ * `${DENO_JOBS:-2}` in the task itself would have been simpler and does not work: deno's task
+ * shell does not expand parameter defaults, and passes the text through literally.
+ */
+i32 defaultJobs() { return 4; }
+
+/** What the Deno pass grants, including the flag that is not a grant. */
+string[] denoPerms() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-net", "--allow-env",
+                  "--unstable-net");
+}
+
+/** What the `wac test` lane grants. Broader than reading, for the reasons `runTests.ts` records. */
+string[] wacGrants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+/**
+ * A growable list of strings.
+ *
+ * wac's arrays are fixed at their length, and the alternative in this file would be counting every
+ * walk twice. Doubling, so a walk of 900 files reallocates ten times.
+ */
+struct Names {
+  string[] items;
+  i32 n;
+
+  Names create() { return Names(string[16](fill: ""), 0); }
+
+  void push(this, string s) {
+    if (this.n == this.items.len()) {
+      string[] bigger = string[this.items.len() * 2](fill: "");
+      for (i32 i = 0; i < this.n; i++) { bigger[i] = this.items[i]; }
+      this.items = bigger;
+    }
+    this.items[this.n] = s;
+    this.n = this.n + 1;
+  }
+
+  bool holds(const this, string s) {
+    for (i32 i = 0; i < this.n; i++) { if (this.items[i] == s) { return true; } }
+    return false;
+  }
+
+  void pushNew(this, string s) { if (!this.holds(s)) { this.push(s); } }
+
+  /** The list as an array of exactly its length, which is what every consumer wants. */
+  string[] all(const this) {
+    string[] out = string[this.n](fill: "");
+    for (i32 i = 0; i < this.n; i++) { out[i] = this.items[i]; }
+    return out;
+  }
+}
+
+/** Sorted in place, insertion sort: the lists here are hundreds of entries, not millions. */
+string[] sorted(string[] all) {
+  string[] out = string[all.len()](fill: "");
+  for (i32 i = 0; i < all.len(); i++) { out[i] = all[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string v = out[i];
+    i32 k = i - 1;
+    while (k >= 0 && out[k] > v) { out[k + 1] = out[k]; k = k - 1; }
+    out[k + 1] = v;
+  }
+  return out;
+}
+
+bool isWacTest(string path) { return endsWith(path, "_test.wac"); }
+
+/** Every directory under `root` that holds a test file directly, and the ones its children hold. */
+void walk(Cli cli, string root, Names dirs) {
+  string[]? entries = cli.readDir(root).wait();
+  if (entries is null) { return; }
+  string[] names = sorted(entries!);
+  Names subdirs = Names.create();
+  for (i32 i = 0; i < names.len(); i++) {
+    string path = root + "/" + names[i];
+    Stat s = cli.stat(path).wait();
+    if (s.isDir) { subdirs.push(path); continue; }
+    if (s.isFile && isWacTest(names[i])) { dirs.pushNew(root); }
+  }
+  string[] subs = subdirs.all();
+  for (i32 i = 0; i < subs.len(); i++) { walk(cli, subs[i], dirs); }
+}
+
+/** The wac test files directly in one directory, sorted as `wac test` sorts what it collects. */
+string[] testFilesIn(Cli cli, string dir) {
+  string[]? entries = cli.readDir(dir).wait();
+  if (entries is null) { return string[0](fill: ""); }
+  Names out = Names.create();
+  string[] names = sorted(entries!);
+  for (i32 i = 0; i < names.len(); i++) {
+    if (!isWacTest(names[i])) { continue; }
+    Stat s = cli.stat(dir + "/" + names[i]).wait();
+    if (s.isFile) { out.push(dir + "/" + names[i]); }
+  }
+  return sorted(out.all());
+}
+
+/** Directories a repo walk must not descend into: not ours, not source, or not this runner's. */
+bool skipDir(string name) {
+  return name == "node_modules" || name == ".git" || name == ".cache" || name == "target" ||
+         name == "site" || name == "coverage";
+}
+
+/**
+ * Every `*.test.ts` under `root`, for the lane declarations on the TypeScript side.
+ *
+ * The lanes are read from both kinds of test file — `harness/testLane.ts` says so, and says that
+ * until 2026-08-18 it read `.test.ts` only, which made every declaration in a wac test inert. A
+ * runner that reads only the wac half has the same bug pointing the other way.
+ */
+void walkTs(Cli cli, string root, Names out) {
+  string[]? entries = cli.readDir(root).wait();
+  if (entries is null) { return; }
+  string[] names = sorted(entries!);
+  Names subdirs = Names.create();
+  for (i32 i = 0; i < names.len(); i++) {
+    if (skipDir(names[i])) { continue; }
+    string path = root + "/" + names[i];
+    Stat st = cli.stat(path).wait();
+    if (st.isDir) { subdirs.push(path); continue; }
+    if (st.isFile && endsWith(names[i], ".test.ts")) { out.push(path); }
+  }
+  string[] subs = subdirs.all();
+  for (i32 i = 0; i < subs.len(); i++) { walkTs(cli, subs[i], out); }
+}
+
+/** The roots holding TypeScript tests. `site` is excluded by `skipDir` and by name below. */
+string[] tsRoots() { return string[]("packages", "tools", "harness", "compiler", "core"); }
+
+/**
+ * The wac driver the Deno pass must not discover.
+ *
+ * `runTests.ts` names it for the same reason: it registers wac tests with Deno, and the lane below
+ * runs those files itself.
+ */
+string wacDriver() { return "harness/wac/hostless.test.ts"; }
+
+/** A lane declaration and the reason it gives. */
+struct Declared {
+  string file;
+  string lane;
+  string why;
+}
+
+/**
+ * `// test-lane: <lane> — why`, at the start of a line.
+ *
+ * A scan rather than a regex, which wac does not have — and the two things the TypeScript's regex is
+ * careful about are the two things this is careful about: the marker has to start the line, and the
+ * reason is whatever follows the dash, which `tools/lane.test.ts` requires to be non-empty.
+ */
+string laneOf(string line, string lane) {
+  string want = "// test-lane: " + lane;
+  if (!startsWith(line, want)) { return ""; }
+  string rest = line.slice(want.len(), line.len());
+  i32 dash = rest.indexOf("—");
+  if (dash < 0) { dash = rest.indexOf("-"); }
+  if (dash < 0) { return "(no reason given)"; }
+  return rest.slice(dash + (rest.indexOf("—") >= 0 ? 3 : 1), rest.len());
+}
+
+/** Every lane declaration in these files. One read each, and the head of the file is enough. */
+Declared[] declarations(Cli cli, string[] files) {
+  Names found = Names.create();
+  Names lanes = Names.create();
+  Names whys = Names.create();
+  for (i32 i = 0; i < files.len(); i++) {
+    FileResult f = cli.readFile(files[i]).wait();
+    if (!f.ok) { continue; }
+    string text = string.fromBytes(f.bytes);
+    i32 at = 0;
+    u8[] b = f.bytes;
+    for (i32 k = 0; k <= b.len(); k++) {
+      if (k != b.len() && b[k] != '\n') { continue; }
+      string line = text.slice(at, k);
+      at = k + 1;
+      string why = laneOf(line, "exclusive");
+      if (why != "") {
+        found.push(files[i]); lanes.push("exclusive"); whys.push(why);
+        continue;
+      }
+      why = laneOf(line, "heavy");
+      if (why != "") { found.push(files[i]); lanes.push("heavy"); whys.push(why); }
+    }
+  }
+  string[] fs = found.all();
+  string[] ls = lanes.all();
+  string[] ws = whys.all();
+  Declared[] out = Declared[fs.len()](fill: Declared("", "", ""));
+  for (i32 i = 0; i < fs.len(); i++) { out[i] = Declared(fs[i], ls[i], ws[i]); }
+  return out;
+}
+
+string[] filesDeclaring(Declared[] all, string lane) {
+  Names out = Names.create();
+  for (i32 i = 0; i < all.len(); i++) { if (all[i].lane == lane) { out.push(all[i].file); } }
+  return out.all();
+}
+
+/** One unit of work for the queue: the targets one `wac test` is given, and what to call it. */
+struct Chunk {
+  string[] targets;
+  string label;
+}
+
+/**
+ * Round robin rather than in blocks, which is the TypeScript's reason repeated: files in a directory
+ * are walked in sorted order and neighbours tend to cost alike, so blocks put the expensive ones
+ * together.
+ */
+Chunk[] chunksOf(Cli cli, string[] dirs, string[] skip) {
+  Names labels = Names.create();
+  Chunk[] out = Chunk[dirs.len() * 4](fill: Chunk(string[0](fill: ""), ""));
+  i32 n = 0;
+  for (i32 d = 0; d < dirs.len(); d++) {
+    Names keep = Names.create();
+    string[] files = testFilesIn(cli, dirs[d]);
+    for (i32 i = 0; i < files.len(); i++) {
+      if (!has(skip, files[i])) { keep.push(files[i]); }
+    }
+    string[] mine = keep.all();
+    if (mine.len() == 0) { continue; }
+    if (mine.len() <= chunkSize()) {
+      out[n] = Chunk(string[](dirs[d]), dirs[d]);
+      n = n + 1;
+      continue;
+    }
+    i32 parts = (mine.len() + chunkSize() - 1) / chunkSize();
+    for (i32 k = 0; k < parts; k++) {
+      Names part = Names.create();
+      for (i32 i = k; i < mine.len(); i = i + parts) { part.push(mine[i]); }
+      string[] targets = part.all();
+      out[n] = Chunk(targets, dirs[d] + " — " + itoa(targets.len()) + " of its files");
+      n = n + 1;
+    }
+  }
+  // Biggest first, which is a weak proxy for cost and all the ordering a queue needs.
+  Chunk[] queue = Chunk[n](fill: Chunk(string[0](fill: ""), ""));
+  for (i32 i = 0; i < n; i++) { queue[i] = out[i]; }
+  for (i32 i = 1; i < n; i++) {
+    Chunk v = queue[i];
+    i32 k = i - 1;
+    while (k >= 0 && queue[k].targets.len() < v.targets.len()) { queue[k + 1] = queue[k]; k = k - 1; }
+    queue[k + 1] = v;
+  }
+  return queue;
+}
+
+/**
+ * The arguments for one `wac test` run in the queue.
+ *
+ * **`--ignore` rather than a filtered target list, and the difference is not cosmetic.** A chunk of a
+ * large directory is a list of files, but a small directory is passed *as the directory* — and the
+ * child then collects every test file in it, including the ones this runner filtered out when it
+ * built the chunk. `packages/ssh/test/wac` holds 11 files, four of them declared exclusive, so the
+ * first version of this draft ran those four inside the queue and again alone: 373 files where the
+ * TypeScript ran 369. The exclusive lane exists because those four want the machine to themselves,
+ * so the bug defeated the declaration rather than merely double-counting.
+ */
+string[] runArgs(string[] targets, string[] ignore) {
+  Names args = Names.create();
+  args.push("test");
+  string[] grants = wacGrants();
+  for (i32 i = 0; i < grants.len(); i++) { args.push(grants[i]); }
+  if (ignore.len() > 0) {
+    args.push("--ignore");
+    args.push(joined(ignore, ","));
+  }
+  for (i32 i = 0; i < targets.len(); i++) { args.push(targets[i]); }
+  return args.all();
+}
+
+/** What one run in a lane cost, for the report. */
+struct Took {
+  string what;
+  i64 ms;
+}
+
+i64 nowMs(Core core) { return core.monotonicNanos().wait() / (1000000 as i64); }
+
+string secs(i64 ms) {
+  // The TypeScript's rule, because two reports of the same run should read the same: a decimal
+  // under ten seconds, and rounded whole seconds above it.
+  if (ms >= (10000 as i64)) {
+    return itoa(((ms + (500 as i64)) / (1000 as i64)) as! i32) + "s";
+  }
+  i64 tenths = (ms + (50 as i64)) / (100 as i64);
+  return itoa((tenths / (10 as i64)) as! i32) + "." + itoa((tenths % (10 as i64)) as! i32) + "s";
+}
+
+/**
+ * `wac test`'s own `N files: N ok` summary, so the lane can count what it ran.
+ *
+ * A line scan rather than `indexOf` from an offset, which `string.indexOf` does not take — and
+ * `files?`, because a walk that found one file says `1 file:`. Matching only the plural is how the
+ * TypeScript's count first reported itself short.
+ */
+i32 filesReported(string block) {
+  i32 total = 0;
+  u8[] b = block.toBytes();
+  i32 at = 0;
+  for (i32 k = 0; k <= b.len(); k++) {
+    if (k != b.len() && b[k] != '\n') { continue; }
+    string line = block.slice(at, k);
+    at = k + 1;
+    i32 mark = line.indexOf(" files: ");
+    if (mark < 0) { mark = line.indexOf(" file: "); }
+    if (mark <= 0) { continue; }
+    i32 from = mark;
+    while (from > 0) {
+      string c = line.slice(from - 1, from);
+      if (c < "0" || c > "9") { break; }
+      from = from - 1;
+    }
+    if (from < mark) { total = total + atoi(line.slice(from, mark)); }
+  }
+  return total;
+}
+
+/** Whether `target` names this directory or something inside it, as the TypeScript's filter does. */
+bool named(string[] targets, string dir) {
+  if (targets.len() == 0) { return true; }
+  for (i32 i = 0; i < targets.len(); i++) {
+    string t = targets[i];
+    while (t.len() > 1 && endsWith(t, "/")) { t = t.slice(0, t.len() - 1); }
+    if (dir == t || startsWith(dir, t + "/") || startsWith(t, dir)) { return true; }
+  }
+  return false;
+}
+
+/**
+ * A block without its trailing blank lines.
+ *
+ * `core.log` adds a newline and a captured block already ends in one, so printing it raw puts a blank
+ * line between every chunk — the TypeScript trims for the same reason.
+ */
+string trimEnd(string s) {
+  i32 to = s.len();
+  while (to > 0) {
+    string c = s.slice(to - 1, to);
+    if (c != "\n" && c != " " && c != "\r" && c != "\t") { break; }
+    to = to - 1;
+  }
+  return s.slice(0, to);
+}
+
+/** Those of `files` that lie under one of `targets` — all of them when nothing was named. */
+string[] underTargets(string[] targets, string[] files) {
+  if (targets.len() == 0) { return files; }
+  Names out = Names.create();
+  for (i32 i = 0; i < files.len(); i++) {
+    for (i32 k = 0; k < targets.len(); k++) {
+      if (startsWith(files[i], targets[k])) { out.pushNew(files[i]); }
+    }
+  }
+  return out.all();
+}
+
+/** This program's arguments, as text. */
+string[] argsOf(Cli cli) {
+  i32 n = cli.argCount().wait();
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = string.fromBytes(cli.arg(i).wait()); }
+  return out;
+}
+
+/** The binary both wac lanes go through, declared once because three places start it. */
+string wacBinaryPath(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** When the heavy lane last passed, for the notice the broad pass prints. */
+string heavyStamp() { return "/tmp/wac-lane-heavy-last"; }
+
+/** What the command line asked for. */
+struct Opts {
+  i32 jobs;
+  bool jobsFromEnv;
+  bool dry;
+  bool wacOnly;
+  bool denoOnly;
+  bool heavyOnly;
+  string[] targets;
+  /** Flags this runner does not know, handed to `deno test` — `--filter` is the caller's. */
+  string[] extra;
+}
+
+/** What discovery found: the lanes, and everything that declared its way out of one. */
+struct Found {
+  string[] allDirs;
+  string[] dirs;
+  i32 files;
+  Declared[] declared;
+  string[] heavy;
+  string[] alone;
+  Declared[] tsDeclared;
+  i32 tsFiles;
+  string[] tsHeavy;
+  string[] tsAlone;
+  Chunk[] queue;
+  string[] skip;
+}
+
+Opts parseArgs(Cli cli) {
+  string[] argv = argsOf(cli);
+  Names targets = Names.create();
+  Names extra = Names.create();
+  i32 jobs = defaultJobs();
+  bool fromEnv = false;
+  bool dry = false;
+  bool wacOnly = false;
+  bool denoOnly = false;
+  bool heavyOnly = false;
+  // `DENO_JOBS=n` overrides the measured default, and `--jobs n` overrides that.
+  string env = envOf(cli, "DENO_JOBS");
+  if (env != "" && atoi(env) > 0) {
+    jobs = atoi(env);
+    fromEnv = true;
+  }
+  for (i32 i = 0; i < argv.len(); i++) {
+    if (argv[i] == "--dry") { dry = true; continue; }
+    if (argv[i] == "--wac-only") { wacOnly = true; continue; }
+    if (argv[i] == "--deno-only") { denoOnly = true; continue; }
+    if (argv[i] == "--heavy") { heavyOnly = true; continue; }
+    if (argv[i] == "--jobs" && i + 1 < argv.len()) {
+      jobs = atoi(argv[i + 1]);
+      fromEnv = false;
+      i = i + 1;
+      continue;
+    }
+    // A subcommand is consumed by `main` before this and is not a target.
+    if (argv[i] == "free" || argv[i] == "guard" || argv[i] == "sweep") { continue; }
+    if (startsWith(argv[i], "-")) { extra.push(argv[i]); continue; }
+    targets.push(argv[i]);
+  }
+  if (jobs < 1) { jobs = 1; }
+  return Opts(jobs, fromEnv, dry, wacOnly, denoOnly, heavyOnly, targets.all(), extra.all());
+}
+
+Found discover(Cli cli, Opts o) {
+  Names found = Names.create();
+  string[] roots = laneRoots();
+  for (i32 i = 0; i < roots.len(); i++) { walk(cli, roots[i], found); }
+  string[] allDirs = sorted(found.all());
+
+  Names mine = Names.create();
+  for (i32 i = 0; i < allDirs.len(); i++) {
+    if (named(o.targets, allDirs[i])) { mine.push(allDirs[i]); }
+  }
+  string[] dirs = mine.all();
+
+  Names everyFile = Names.create();
+  for (i32 i = 0; i < dirs.len(); i++) {
+    string[] fs = testFilesIn(cli, dirs[i]);
+    for (i32 k = 0; k < fs.len(); k++) { everyFile.push(fs[k]); }
+  }
+  Declared[] declared = declarations(cli, everyFile.all());
+  string[] heavy = filesDeclaring(declared, "heavy");
+  string[] alone = filesDeclaring(declared, "exclusive");
+
+  // The same declarations on the TypeScript side, which the Deno pass has to honour: a heavy
+  // `.test.ts` is excluded from the broad pass and an exclusive one runs alone after it.
+  Names tsFiles = Names.create();
+  string[] tsr = tsRoots();
+  for (i32 i = 0; i < tsr.len(); i++) { walkTs(cli, tsr[i], tsFiles); }
+  Declared[] tsDeclared = declarations(cli, tsFiles.all());
+  // **Narrowed by the target, which is what `harness/testLane.ts`'s `laneSplit` is for.** Called
+  // with no targets it means "all of them"; called with one it means the declared files *under* it.
+  // The TypeScript had this wrong once and `deno task test packages/tty/` ran two `packages/tor`
+  // live tests — 29s of relays and an authority on real ports — for a package with no Deno tests.
+  string[] tsAlone = underTargets(o.targets, filesDeclaring(tsDeclared, "exclusive"));
+  string[] tsHeavyAll = underTargets(o.targets, filesDeclaring(tsDeclared, "heavy"));
+
+  // **A named target runs the heavy files too**, and `WAC_HEAVY=1` puts them in the broad pass: the
+  // exclusion is for the run that discovers everything, which is the push.
+  bool keepHeavy = o.targets.len() > 0 || envOf(cli, "WAC_HEAVY") == "1" || o.heavyOnly;
+  string[] skippedHeavy = keepHeavy ? string[0](fill: "") : heavy;
+  string[] tsHeavy = keepHeavy ? string[0](fill: "") : tsHeavyAll;
+
+  Names skip = Names.create();
+  for (i32 i = 0; i < skippedHeavy.len(); i++) { skip.push(skippedHeavy[i]); }
+  for (i32 i = 0; i < alone.len(); i++) { skip.push(alone[i]); }
+
+  return Found(allDirs, dirs, everyFile.n, declared, skippedHeavy, alone, tsDeclared, tsFiles.n,
+               tsHeavy, tsAlone, chunksOf(cli, dirs, skip.all()), skip.all());
+}
+
+/**
+ * One `deno test` pass, with the environment every suite run carries.
+ *
+ * Three variables, not one. `DENO_JOBS` is the width — and means nothing without `--parallel`, which
+ * the caller passes. `tools/suiteGuard.ts`'s `SUITE_ENV` adds `WAC_SCHED=seed`, which makes the
+ * host's answers land in an order the *scheduler* chose rather than whichever the runtime finished
+ * first, and `WAC_SUITE_RUNNING=1`, which is how a suite started from inside the suite refuses. A
+ * runner that passed only the width would run a different experiment from the gate, and every count
+ * would come out the same.
+ *
+ * `WAC_SCHED` is overridable, as it is there: an explicit value in the environment wins, so
+ * `WAC_SCHED=off` is how to check a failure is not the scheduler's doing.
+ */
+i32 denoPass(Core core, Cli cli, string[] args, i32 workers) {
+  string sched = envOf(cli, "WAC_SCHED");
+  Exec r = cli.execWith("deno", args, u8[0](),
+                        string[]("DENO_JOBS=" + itoa(workers),
+                                 "WAC_SCHED=" + (sched == "" ? "seed" : sched),
+                                 "WAC_SUITE_RUNNING=1"), false, true).wait();
+  if (!r.ran()) {
+    core.warn("   deno did not start — " + r.error);
+    return 1;
+  }
+  return r.status;
+}
+
+/** The `wac test` grants and `--ignore`, in one place so a lane cannot get one and not the other. */
+string[] wacArgs(string[] targets, string[] ignore) { return runArgs(targets, ignore); }
+
+/**
+ * `--heavy`: the lane on its own, at two workers rather than four.
+ *
+ * These are the files that hold about a gigabyte each; running them at the width tuned for a pass of
+ * mostly-cheap tests is how the machine gets killed, which is the thing the lane exists to stop.
+ */
+i32 heavyLane(Core core, Cli cli, Opts o, Found f) {
+  string[] hw = filesDeclaring(f.declared, "heavy");
+  string[] ht = filesDeclaring(f.tsDeclared, "heavy");
+  if (hw.len() + ht.len() == 0) {
+    // Not success: a lane that runs nothing is the failure this repo keeps finding.
+    core.warn("no file declares `// test-lane: heavy`, so there is nothing to run");
+    return 1;
+  }
+  core.log("the heavy lane: " + itoa(hw.len() + ht.len()) + " file(s), two workers\n");
+  for (i32 i = 0; i < f.declared.len(); i++) {
+    if (f.declared[i].lane == "heavy") { core.log("   " + f.declared[i].file + "  —" + f.declared[i].why); }
+  }
+  for (i32 i = 0; i < f.tsDeclared.len(); i++) {
+    if (f.tsDeclared[i].lane == "heavy") { core.log("   " + f.tsDeclared[i].file + "  —" + f.tsDeclared[i].why); }
+  }
+  i32 code = 0;
+  if (ht.len() > 0) {
+    Names args = Names.create();
+    args.push("test");
+    args.push("--parallel");
+    string[] perms = denoPerms();
+    for (i32 i = 0; i < perms.len(); i++) { args.push(perms[i]); }
+    for (i32 i = 0; i < ht.len(); i++) { args.push(ht[i]); }
+    code = denoPass(core, cli, args.all(), 2);
+  }
+  if (hw.len() > 0) {
+    string wac = wacBinaryPath(cli);
+    // Inherited rather than captured: one run of the whole lane, and watching it is the point.
+    Exec r = cli.execWith(wac, wacArgs(hw, string[0](fill: "")), u8[0](), string[0](fill: ""),
+                          false, true).wait();
+    // 4 is "every test in that file needs a host oracle", which is not a failure.
+    if (code == 0 && r.ran() && r.status != 0 && r.status != 4) { code = r.status; }
+    if (code == 0 && !r.ran()) { code = 1; }
+  }
+  // Stamped only on success, so "last run 20m ago" cannot mean "last *attempted*". A green lane is
+  // the only thing that licenses skipping it on the next push.
+  if (code == 0) {
+    Change wrote = cli.writeFile(heavyStamp(), itoa64(core.nowMillis().wait()).toBytes()).wait();
+    if (!wrote.ok()) {
+      // Said, not swallowed: a green lane that never recorded it looks exactly like a green lane.
+      core.log("(the lane passed, but its stamp could not be written: " + wrote.message + ")");
+    }
+  }
+  return code;
+}
+
+/** "20m ago", "3h ago", or that it has never run here. */
+string heavyAgo(Core core, Cli cli) {
+  FileResult f = cli.readFile(heavyStamp()).wait();
+  if (!f.ok) { return "never on this machine"; }
+  string text = string.fromBytes(f.bytes);
+  i64 at = 0 as i64;
+  for (i32 i = 0; i < text.len(); i++) {
+    string c = text.slice(i, i + 1);
+    if (c < "0" || c > "9") { break; }
+    at = at * (10 as i64) + (atoi(c) as i64);
+  }
+  if (at <= (0 as i64)) { return "never on this machine"; }
+  i32 mins = ((core.nowMillis().wait() - at) / (60000 as i64)) as! i32;
+  return mins < 90 ? itoa(mins) + "m ago" : itoa((mins + 30) / 60) + "h ago";
+}
+
+/** The suite, once the gate has allowed it. */
+i32 lanes(Core core, Cli cli, Opts o, Found f) {
+  Names spentLane = Names.create();
+  Names spentMs = Names.create();
+  i32 code = 0;
+  i32 denoCode = 0;
+  i32 aloneCode = 0;
+  i32 wacCode = 0;
+
+  core.log(o.jobsFromEnv
+    ? itoa(o.jobs) + " workers (DENO_JOBS)"
+    : itoa(o.jobs) + " workers (measured — see issue 0075; DENO_JOBS=n overrides)");
+
+  // ── the Deno pass ────────────────────────────────────────────────────────────────────────────
+  if (!o.wacOnly) {
+    i64 started = nowMs(core);
+    Names args = Names.create();
+    args.push("test");
+    // **`--parallel`, without which `DENO_JOBS` means nothing.** `deno test` is serial by default,
+    // so a runner that passed the environment and not the flag would hand over a worker count
+    // nothing reads — which is what the first draft of this file did, and it looked like it worked.
+    args.push("--parallel");
+    // **`--ignore` on the command line *replaces* `deno.json`'s `exclude`**, so `site` has to be
+    // named here or the website comes back into discovery and fails type-checking as vite-resolved
+    // TypeScript. `harness/wac/hostless.test.ts` registers wac tests the lane below runs itself.
+    Names ignore = Names.create();
+    ignore.push("site");
+    ignore.push(wacDriver());
+    for (i32 i = 0; i < f.tsAlone.len(); i++) { ignore.push(f.tsAlone[i]); }
+    for (i32 i = 0; i < f.tsHeavy.len(); i++) { ignore.push(f.tsHeavy[i]); }
+    args.push("--ignore=" + joined(ignore.all(), ","));
+    string[] perms = denoPerms();
+    for (i32 i = 0; i < perms.len(); i++) { args.push(perms[i]); }
+    // A caller's flags go through; a caller's paths narrow the pass.
+    for (i32 i = 0; i < o.extra.len(); i++) { args.push(o.extra[i]); }
+    for (i32 i = 0; i < o.targets.len(); i++) { args.push(o.targets[i]); }
+    core.log("\n── the Deno pass — " + itoa(o.jobs) + " workers, ignoring " + itoa(ignore.n) +
+             " path(s)");
+    denoCode = denoPass(core, cli, args.all(), o.jobs);
+    if (denoCode != 0 && code == 0) { code = denoCode; }
+    spentLane.push("the Deno pass");
+    spentMs.push(itoa((nowMs(core) - started) as! i32));
+
+    if (f.tsHeavy.len() > 0) {
+      core.log("\n" + itoa(f.tsHeavy.len()) + " `.test.ts` file(s) skipped as heavy — last run " +
+               heavyAgo(core, cli) + ". `--heavy` runs them; `WAC_HEAVY=1` puts them in this pass.");
+    }
+
+    // **Then the ones that asked for the machine, one at a time.** Second rather than first because
+    // a failure in the broad pass is the more likely one and the more useful to see early. No
+    // targets are appended: naming files is already the answer to which files run, and appending a
+    // target here ran the target's ordinary files a second time.
+    if (f.tsAlone.len() > 0) {
+      i64 started2 = nowMs(core);
+      core.log("\n" + itoa(f.tsAlone.len()) +
+               " `.test.ts` file(s) run alone, by their own declaration:");
+      for (i32 i = 0; i < f.tsDeclared.len(); i++) {
+        if (f.tsDeclared[i].lane == "exclusive") {
+          core.log("  " + f.tsDeclared[i].file + " —" + f.tsDeclared[i].why);
+        }
+      }
+      Names solo = Names.create();
+      solo.push("test");
+      string[] perms2 = denoPerms();
+      for (i32 i = 0; i < perms2.len(); i++) { solo.push(perms2[i]); }
+      for (i32 i = 0; i < o.extra.len(); i++) { solo.push(o.extra[i]); }
+      for (i32 i = 0; i < f.tsAlone.len(); i++) { solo.push(f.tsAlone[i]); }
+      aloneCode = denoPass(core, cli, solo.all(), 1);
+      if (aloneCode != 0 && code == 0) { code = aloneCode; }
+      spentLane.push("run alone");
+      spentMs.push(itoa((nowMs(core) - started2) as! i32));
+    }
+  }
+
+  // ── the `wac test` lane, as a queue ──────────────────────────────────────────────────────────
+  if (o.denoOnly) {
+    report(core, spentLane.all(), spentMs.all());
+    return code;
+  }
+  string wac = wacBinaryPath(cli);
+  if (!cli.stat(wac).wait().isFile) {
+    core.log("\n── `wac test` skipped: no binary at native/v8/target/release/wac");
+    report(core, spentLane.all(), spentMs.all());
+    return code;
+  }
+
+  i64 laneStarted = nowMs(core);
+  Chunk[] queue = f.queue;
+  i32 workers = o.jobs < queue.len() ? o.jobs : queue.len();
+  if (workers < 1) { workers = 1; }
+  core.log("\n── the same wac tests, through `wac test` — " + itoa(f.dirs.len()) +
+           " directories in " + itoa(queue.len()) + " chunks, " + itoa(workers) + " workers");
+  if (queue.len() == 0) {
+    core.log("   nothing here: " + joined(o.targets, ", ") +
+             " names no directory holding `*_test.wac`, so this lane ran nothing. That is not the " +
+             "same as passing.");
+  }
+  if (f.heavy.len() > 0) {
+    core.log("   " + itoa(f.heavy.len()) + " file(s) skipped as heavy — last run " +
+             heavyAgo(core, cli) + ":");
+    for (i32 i = 0; i < f.declared.len(); i++) {
+      if (f.declared[i].lane == "heavy") {
+        core.log("     " + f.declared[i].file + "  —" + f.declared[i].why);
+      }
+    }
+  }
+
+  Took[] took = Took[queue.len() + f.alone.len() + 1](fill: Took("", 0 as i64));
+  i32 tookN = 0;
+  i32 files = 0;
+  i32 summaries = 0;
+
+  // The queue. Each slot holds one ticket; when any of them answers, its block is printed whole and
+  // the slot takes the next chunk. `waitAny` answers the *index* in the list it was handed, so the
+  // list is rebuilt each turn from the slots that are still busy.
+  // Not `fill:` — a `Pending<T>` array is default-initialised, as `exec_test.wac` builds one, and
+  // only the slots `busy` marks are ever read.
+  Pending<Exec>[] live = Pending<Exec>[workers]();
+  i32[] slotItem = i32[workers]();
+  i64[] slotStart = i64[workers]();
+  bool[] busy = bool[workers]();
+  i32 next = 0;
+
+  string[] ignore = f.skip;
+  for (i32 s = 0; s < workers && next < queue.len(); s++) {
+    live[s] = cli.execWith(wac, wacArgs(queue[next].targets, ignore), u8[0](),
+                           string[0](fill: ""), false, false);
+    slotItem[s] = next;
+    slotStart[s] = nowMs(core);
+    busy[s] = true;
+    next = next + 1;
+  }
+
+  while (true) {
+    i32 nBusy = 0;
+    for (i32 s = 0; s < workers; s++) { if (busy[s]) { nBusy = nBusy + 1; } }
+    if (nBusy == 0) { break; }
+    i32[] ids = i32[nBusy]();
+    i32[] slotOf = i32[nBusy]();
+    i32 at = 0;
+    for (i32 s = 0; s < workers; s++) {
+      if (!busy[s]) { continue; }
+      ids[at] = live[s].id;
+      slotOf[at] = s;
+      at = at + 1;
+    }
+    i32 which = core.waitAny(ids, -1);
+    if (which < 0) {
+      core.warn("   the queue waited without a deadline and was told nothing settled");
+      return 1;
+    }
+    i32 slot = slotOf[which];
+    Exec r = live[slot].wait();
+    Chunk done = queue[slotItem[slot]];
+    took[tookN] = Took(done.label, nowMs(core) - slotStart[slot]);
+    tookN = tookN + 1;
+    string block = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+    i32 said = filesReported(block);
+    if (said > 0) { summaries = summaries + 1; }
+    files = files + said;
+    core.log(trimEnd(block));
+    if (!r.ran()) {
+      core.warn("   " + done.label + " did not start — " + r.error);
+      if (wacCode == 0) { wacCode = 1; }
+    }
+    if (r.ran() && r.status != 0 && wacCode == 0) { wacCode = r.status; }
+
+    busy[slot] = false;
+    if (next < queue.len()) {
+      live[slot] = cli.execWith(wac, wacArgs(queue[next].targets, ignore), u8[0](),
+                                string[0](fill: ""), false, false);
+      slotItem[slot] = next;
+      slotStart[slot] = nowMs(core);
+      busy[slot] = true;
+      next = next + 1;
+    }
+  }
+
+  // ── and the ones that said they need the machine, one at a time ──────────────────────────────
+  Names alsoAlone = Names.create();
+  for (i32 i = 0; i < f.alone.len(); i++) {
+    for (i32 d = 0; d < f.dirs.len(); d++) {
+      if (startsWith(f.alone[i], f.dirs[d] + "/")) { alsoAlone.pushNew(f.alone[i]); }
+    }
+  }
+  string[] serial = alsoAlone.all();
+  if (serial.len() > 0) {
+    core.log("   " + itoa(serial.len()) + " file(s) run alone, by their own declaration:");
+    for (i32 i = 0; i < f.declared.len(); i++) {
+      if (f.declared[i].lane == "exclusive" && has(serial, f.declared[i].file)) {
+        core.log("     " + f.declared[i].file + " —" + f.declared[i].why);
+      }
+    }
+    for (i32 i = 0; i < serial.len(); i++) {
+      i64 started = nowMs(core);
+      // No `--ignore` here: this run *names a file*, which is the answer to which files run.
+      Exec r = cli.execWith(wac, wacArgs(string[](serial[i]), string[0](fill: "")), u8[0](),
+                            string[0](fill: ""), false, false).wait();
+      took[tookN] = Took(serial[i] + " (alone)", nowMs(core) - started);
+      tookN = tookN + 1;
+      core.log(trimEnd(string.fromBytes(r.stdout) + string.fromBytes(r.stderr)));
+      files = files + 1;
+      if (r.ran() && r.status != 0 && wacCode == 0) { wacCode = r.status; }
+      if (!r.ran() && wacCode == 0) { wacCode = 1; }
+    }
+  }
+
+  // ── what the lane cost ───────────────────────────────────────────────────────────────────────
+  i64 work = 0 as i64;
+  i64 aloneMs = 0 as i64;
+  for (i32 i = 0; i < tookN; i++) {
+    work = work + took[i].ms;
+    if (endsWith(took[i].what, "(alone)")) { aloneMs = aloneMs + took[i].ms; }
+  }
+  if (tookN > 1) {
+    // **Said apart, because it cannot be divided by the workers.** The declared-exclusive files run
+    // one at a time after the queue drains, so they are a floor of their own.
+    i64 floor = (work - aloneMs) / (workers as i64) + aloneMs;
+    core.log("\n   " + secs(work) + " of work at " + itoa(workers) + " workers" +
+             (aloneMs > (0 as i64) ? ", of which " + secs(aloneMs) + " ran alone" : "") +
+             " — so the floor is " + secs(floor) + ", and the longest single runs are:");
+    Names shown = Names.create();
+    for (i32 k = 0; k < 3 && k < tookN; k++) {
+      i32 best = -1;
+      for (i32 i = 0; i < tookN; i++) {
+        if (shown.holds(took[i].what)) { continue; }
+        if (best < 0 || took[i].ms > took[best].ms) { best = i; }
+      }
+      if (best < 0) { break; }
+      shown.push(took[best].what);
+      core.log("     " + secs(took[best].ms) + "  " + took[best].what);
+    }
+  }
+  // **The lane's own count, because a summary per directory is not a summary.** Fifty-three blocks
+  // each saying "6 files: 6 ok" is how a lane that stopped running half its directories would read
+  // as fine. If the arithmetic does not add up, that is said rather than papered over.
+  core.log(summaries == queue.len()
+    ? "   " + itoa(files) + " wac test files across " + itoa(f.dirs.len()) + " directories"
+    : "   " + itoa(files) + " wac test files, but " + itoa(summaries) + " of " + itoa(queue.len()) +
+      " runs reported a summary — the count above is short by whatever the silent ones hold");
+
+  // **Said here, because nothing else says it.** This lane's failures are not in either summary
+  // above, so a run where it alone fails prints two `0 failed` lines and then exits non-zero.
+  if (wacCode != 0) {
+    core.log("\n== the `wac test` lane failed (exit " + itoa(wacCode) + ") ==\n" +
+             "   The Deno summaries above can both say `0 failed` and the suite still exit\n" +
+             "   non-zero: this is a third pass, and its failures are the `FAIL` lines above.\n");
+  }
+  if (wacCode != 0 && code == 0) { code = wacCode; }
+  spentLane.push("`wac test`");
+  spentMs.push(itoa((nowMs(core) - laneStarted) as! i32));
+  report(core, spentLane.all(), spentMs.all());
+
+  // **A killed lane says so**, because nothing else does: a lane the kernel takes for memory leaves
+  // no summary, and the output then looks exactly like a lane that had no tests.
+  string[] names = string[]("parallel", "exclusive", "`wac test`");
+  i32[] codes = i32[](denoCode, aloneCode, wacCode);
+  for (i32 i = 0; i < names.len(); i++) {
+    string note = killedLaneNote(names[i], codes[i]);
+    if (note != "") { core.log(note); }
+  }
+
+  i32 warnings = warningsSoFar(cli);
+  if (warnings > 0) {
+    core.log("\n" + itoa(warnings) + " doc warning(s) — the suite does not fail for these. " +
+             "`deno task docs` runs the same checks and does.");
+  }
+  return code;
+}
+
+/** Where the time went, which is the answer to "what should I make faster". */
+void report(Core core, string[] lanes, string[] ms) {
+  if (lanes.len() < 2) { return; }
+  i64 total = 0 as i64;
+  for (i32 i = 0; i < lanes.len(); i++) { total = total + (atoi(ms[i]) as i64); }
+  core.log("\n── where the time went");
+  for (i32 i = 0; i < lanes.len(); i++) {
+    i64 v = atoi(ms[i]) as i64;
+    i32 share = total > (0 as i64) ? ((v * (100 as i64)) / total) as! i32 : 0;
+    core.log("   " + lanes[i] + "  " + secs(v) + "  " + itoa(share) + "%");
+  }
+  // Their sum rather than the wall clock: the lanes run one after another, and anything outside them
+  // — discovery, the sweeps, the lane declarations — is the difference between this and `push.sh`.
+  core.log("   in the lanes  " + secs(total));
+}
+
+export i32 main(Core core, Cli cli) {
+  string[] argv = argsOf(cli);
+  string sub = argv.len() > 0 ? argv[0] : "";
+
+  // The subcommands `tools/push.sh` calls. They start no suite, so they come before the gate: a disk
+  // at 95% is exactly the moment you do not want to run a suite to clean up after one.
+  if (sub == "free") { freeCaches(cli); return 0; }
+  if (sub == "guard") { guardCodeCache(core, cli); return 0; }
+  if (sub == "sweep") {
+    sweepStaleTemp(core, cli);
+    dropUnreachableTranspiles(core, cli);
+    return 0;
+  }
+
+  // After the subcommands, and before anything expensive.
+  i32 nested = refuseIfNested(core, cli, "the suite runner");
+  if (nested != 0) { return nested; }
+
+  Opts o = parseArgs(cli);
+  i64 t0 = nowMs(core);
+  Found f = discover(cli, o);
+  i64 discovery = nowMs(core) - t0;
+  core.log("── discovery in " + secs(discovery) + ": " + itoa(f.dirs.len()) + " of " +
+           itoa(f.allDirs.len()) + " directories, " + itoa(f.files) + " test files, " +
+           itoa(f.queue.len()) + " chunks, " + itoa(f.declared.len()) + " lane declarations; " +
+           itoa(f.tsFiles) + " `.test.ts` files with " + itoa(f.tsDeclared.len()) + " of their own");
+
+  // `--dry` takes no slot and touches nothing: it is the discovery half, for checking this runner
+  // against the one it replaces.
+  if (o.dry) {
+    for (i32 i = 0; i < f.declared.len(); i++) {
+      core.log("   " + f.declared[i].lane + ": " + f.declared[i].file + " —" + f.declared[i].why);
+    }
+    for (i32 i = 0; i < f.tsDeclared.len(); i++) {
+      core.log("   " + f.tsDeclared[i].lane + ": " + f.tsDeclared[i].file + " —" +
+               f.tsDeclared[i].why);
+    }
+    for (i32 i = 0; i < f.queue.len(); i++) {
+      core.log("   chunk " + itoa(i) + " (" + itoa(f.queue[i].targets.len()) + "): " +
+               f.queue[i].label);
+    }
+    return 0;
+  }
+
+  // **Before the code cache, the workers and everything else**: three agents share five cores, and
+  // the cheapest suite is the one that does not start. It refuses rather than queueing — including
+  // from `tools/push.sh`, deliberately: what to do when the machine is busy is the caller's
+  // decision, and a script that waits quietly for ninety minutes takes it away.
+  Slot slot = take(core, cli);
+  if (!slot.taken) { return refused(core, slot); }
+
+  guardCodeCache(core, cli);
+  sweepStaleTemp(core, cli);
+  dropUnreachableTranspiles(core, cli);
+  // Before anything runs, so a previous suite's warnings are not counted as this one's.
+  clearWarnings(cli);
+
+  i32 code = o.heavyOnly ? heavyLane(core, cli, o, f) : lanes(core, cli, o, f);
+
+  // Released here rather than left to an exit path, because there is no unwinding: a lock let go
+  // anywhere but on the way out is a lock left behind on every ordinary run.
+  release(cli, slot);
+  return code;
+}

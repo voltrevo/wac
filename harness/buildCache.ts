@@ -209,7 +209,7 @@ const denoCacheDir = () =>
  *
  * That is the *rate* `issues/system/0068` asked to change and `0140` said was still unchanged when
  * it closed — "neither tool changes the rate at which the cache refills". The sweeps in
- * `tools/runTests.ts` and `tools/prune-deno-cache.sh` stay as the backstop for entries this misses:
+ * `tools/runTests.wac` and `tools/prune-deno-cache.sh` stay as the backstop for entries this misses:
  * a run killed between the two removals, and everything orphaned before this existed.
  *
  * The real path is taken **before** the removal, because there is nothing left to resolve after it.

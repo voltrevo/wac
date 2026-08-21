@@ -59,7 +59,7 @@ export string test_what_the_emitter_declines_across_waccs_own_sources(Core core,
     rows = rows + "    " + cp[i] + ": " + why + "\n";
   }
   // **Reported through `core.warn` and passing**, not through a returned reason. A probe that says
-  // what it found by failing is a red test for anyone who runs it, and `tools/runTests.ts` picking up
+  // what it found by failing is a red test for anyone who runs it, and `tools/runTests.wac` picking up
   // one more glob is all it would take. Printing on success is the rule this repository learned the
   // expensive way — an instrument that reports by failing a build installs itself as the seed.
   core.warn("tighten_probe: " + itoa(declined) + " of " + itoa(cp.len())
