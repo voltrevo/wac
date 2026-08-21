@@ -98,6 +98,29 @@ export string nativeBinaryPath(Core core, Cli cli, string who) {
  * loses the message — which is the thing being fixed. A returned reason becomes one `t.isTrue` in the
  * caller, which has a `T`, and the failure then names the directory and the host's words.
  */
+/**
+ * Write `text` at `path`, making the directory above it — `""` when that worked, and why not otherwise.
+ *
+ * **Five test files had these four lines each**, byte for byte, and every one threw the `mkdir`'s answer
+ * away — `if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }`. Not silently: `writeFile` failed
+ * too and the `bool` carried that, so the cost was a *misattributed* failure — "could not write x" where
+ * the directory above it was what could not be made. That is `issues/system/0229` again in a second
+ * helper, and the `scratch` copies were the first.
+ *
+ * `cut > 0` rather than `>= 0`: a leading `/` means the parent is the root, which exists.
+ */
+export string putFile(Cli cli, string path, string text) {
+  i32 cut = -1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
+  if (cut > 0) {
+    string why = madeDir(cli, path.slice(0, cut));
+    if (why != "") { return why; }
+  }
+  Change wrote = cli.writeFile(path, text.toBytes()).wait();
+  if (!wrote.ok()) { return "could not write " + path + " — " + wrote.message; }
+  return "";
+}
+
 export string madeDir(Cli cli, string dir) {
   Change made = cli.mkdir(dir, true).wait();
   if (!made.ok()) { return "could not create " + dir + " — " + made.message; }

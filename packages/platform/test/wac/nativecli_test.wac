@@ -29,17 +29,24 @@
 // So one test, for the one thing that is unambiguous: a flag nobody meant is refused.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { freshDir, scratch } from "../../../wactest/src/host.wac";
+import { freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { Cli, Core, Exec } from "std/platform.wac";
 
 /** One file, with its directory made first. */
-bool put(Cli cli, string path, string text) {
-  i32 cut = -1;
-  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
-  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
-  return cli.writeFile(path, text.toBytes()).wait().ok();
-}
+/**
+ * One implementation, in `wactest/src/host.wac`.
+ *
+ * These four lines were in five test files, byte for byte, and each threw away the `mkdir`'s answer. Not
+ * silently — `writeFile` then failed too and the `bool` carried that — so the failure was *misattributed*
+ * rather than lost: "could not write x" where the cause was the directory above it.
+ *
+ * What this buys is one implementation instead of five, and a `putFile` that names the real cause for
+ * anything written from here on. The `bool` is kept because 53 call sites assert on it, and it drops the
+ * reason at this boundary — so the misattribution is fixed for a caller that asks `putFile` directly and
+ * not for these. `issues/system/0229`.
+ */
+bool put(Cli cli, string path, string text) { return putFile(cli, path, text) == ""; }
 
 /**
  * `native.ts <entry> -o <out> <extra…>`, from `at`.

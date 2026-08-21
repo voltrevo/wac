@@ -19,7 +19,7 @@
 //      directory nobody named, so the program would compile against the wrong file.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { binaryPath, freshDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Change, Cli, Core, Exec } from "std/platform.wac";
@@ -40,12 +40,19 @@ Exec wacc(Cli cli, string cmd, string[] args) {
 }
 
 /** One file, with its directory made first. */
-bool put(Cli cli, string path, string text) {
-  i32 cut = -1;
-  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
-  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
-  return cli.writeFile(path, text.toBytes()).wait().ok();
-}
+/**
+ * One implementation, in `wactest/src/host.wac`.
+ *
+ * These four lines were in five test files, byte for byte, and each threw away the `mkdir`'s answer. Not
+ * silently — `writeFile` then failed too and the `bool` carried that — so the failure was *misattributed*
+ * rather than lost: "could not write x" where the cause was the directory above it.
+ *
+ * What this buys is one implementation instead of five, and a `putFile` that names the real cause for
+ * anything written from here on. The `bool` is kept because 53 call sites assert on it, and it drops the
+ * reason at this boundary — so the misattribution is fixed for a caller that asks `putFile` directly and
+ * not for these. `issues/system/0229`.
+ */
+bool put(Cli cli, string path, string text) { return putFile(cli, path, text) == ""; }
 
 export string test_a_project_specifier_resolves_against_its_own_project(Core core, Cli cli) {
   T t = T.create();

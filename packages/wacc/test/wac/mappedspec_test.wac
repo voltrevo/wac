@@ -15,7 +15,7 @@
 // mistake in a different place. That also makes this test fast and offline.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { binaryPath, madeDir, scratch } from "../../../wactest/src/host.wac";
+import { binaryPath, madeDir, putFile, scratch } from "../../../wactest/src/host.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -26,12 +26,19 @@ const string REPO = "https://example.invalid/dep.git";
 const string COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
 /** One file, with its directory made first. */
-bool put(Cli cli, string path, string text) {
-  i32 cut = -1;
-  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
-  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
-  return cli.writeFile(path, text.toBytes()).wait().ok();
-}
+/**
+ * One implementation, in `wactest/src/host.wac`.
+ *
+ * These four lines were in five test files, byte for byte, and each threw away the `mkdir`'s answer. Not
+ * silently — `writeFile` then failed too and the `bool` carried that — so the failure was *misattributed*
+ * rather than lost: "could not write x" where the cause was the directory above it.
+ *
+ * What this buys is one implementation instead of five, and a `putFile` that names the real cause for
+ * anything written from here on. The `bool` is kept because 53 call sites assert on it, and it drops the
+ * reason at this boundary — so the misattribution is fixed for a caller that asks `putFile` directly and
+ * not for these. `issues/system/0229`.
+ */
+bool put(Cli cli, string path, string text) { return putFile(cli, path, text) == ""; }
 
 /** `wac <cmd> …` with `$WAC_HOME` pointed at the fixture's cache. */
 Exec wacc(Cli cli, string home, string dir, string cmd, string entry) {

@@ -156,15 +156,39 @@ incrementally rather than filed as one job, and worth knowing the number.
 Two batches, both the `remove`-then-`mkdir` shape, which is `freshDir`'s:
 
     120 sites converted  21 in tools/wac tests, 22 across 17 package tests, then 77 bare in 37 more
-    101 remain           73 written inline, and 28 on their own line with no `T` at the site
+    29 remain            28 on their own line with no `T` at the site, and one `put` helper (see below)
 
-**And the 144 was my own extractor bounding its own count.** It came from
-`^\s*cli\.mkdir\(…\)\.wait\(\);\s*$` — a site on a *line of its own*. There are another **73**
-written inline, as `if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }` and other one-liners,
-which that pattern cannot see. So the residue was about 217, not 144, and the corrected figures are above.
-That is the third time in a day that a count of mine was bounded by the regex that produced it —
-`issues/system/0235a` is two of the others, and the lesson each time is the one
-`corpus_probe.wac`'s docstring states: an extractor bounds the invariant it feeds.
+### The count, wrong twice, and the second time was mine correcting the first
+
+The original **144** came from `^\s*cli\.mkdir\(…\)\.wait\(\);\s*$` — a site on a *line of its
+own* — so it could not see the 73 written inline. I corrected the residue to ~101 on that basis.
+
+**That correction was worse than the number it replaced.** Sampling the 73 shows they are overwhelmingly
+*correct code*: `return cli.mkdir(dir, true).wait().ok();` checks the answer, so does
+`if (!cli.mkdir(…).ok()) { return false; }`, `Change made = cli.mkdir(…)` captures it,
+`packages/fs/src/fs.wac:772` returns it to its caller, and one "site" was
+`packages/fs/test/cov_ledger.wac` *quoting source text in a coverage pin*. Counted properly — a call whose
+`Change` nothing reads — it is **28 own-line sites and five inline**, the five being one copied helper.
+
+So: the first count was bounded by its regex, and the second was inflated by one. Three of my counts went
+that way today, which is the thing `corpus_probe.wac`'s docstring says and `issues/system/0235a` came down
+to: an extractor bounds the invariant it feeds. The fix is not a better regex, it is reading a sample of
+what the regex matched.
+
+### The second duplicated helper: `put`, five copies, byte for byte
+
+`bool put(Cli cli, string path, string text)` — make the directory above, write the file, answer whether
+the write worked — was in `nativecli_test`, `declined_test`, `mappedspec_test`, `projectspec_test` and
+`stdspec_test`, identical by md5, with 53 call sites between them. One of the five I wrote myself today, by
+copying it.
+
+It is the same finding as this issue's `scratch`, with a smaller cost: the discarded `mkdir` answer was not
+*lost*, because `writeFile` failed too and the `bool` carried that — so a failure was **misattributed**
+rather than silent, reported as "could not write x" when the directory above it was what could not be made.
+
+`putFile` in `wactest/src/host.wac` is the one implementation now and names the real cause; the five locals
+delegate to it and keep their `bool`, because 53 call sites assert on it. The reason therefore still stops
+at that boundary for those callers, which is stated where they are.
 
 The bare ones split further than that. **31 of them had a `T` after all** and took `madeDir` — which is
 the right helper for a bare `mkdir` because it creates without emptying, so the behaviour is unchanged even
