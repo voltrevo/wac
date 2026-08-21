@@ -4,7 +4,7 @@
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
 - **Status:** open — the single-file half is fixed (2026-08-20); the files-based half is not
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a, 2026-08-21 — the files-based half, now that 0175a has threaded the `Res`
 - **Symptom:** no error
 
 ## Measured
