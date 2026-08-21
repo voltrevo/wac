@@ -994,6 +994,21 @@ export struct C {
    */
   i32[] errorWidths;
   /**
+   * The first source line to print for each diagnostic, or `0` to print only the caret's line.
+   *
+   * **Where to start printing is not how wide the span is**, and the two were confused into one
+   * missing field. `widthBetween` decided — correctly — that an expression running across lines has no
+   * width this can state, *"a decision for the formatter rather than a number for the wire"*. That
+   * settled the span and left this: `spec/spec/errors.md`'s `§wac-diag-multiline-ic7x2hq` shows the
+   * lines *above* the caret, because a caret under `3.14` says nothing about which call it is an
+   * argument to, and the renderer cannot work out which construct the diagnostic came from. The
+   * checker can, and does — it has the call in hand at the point it reports.
+   *
+   * `0` rather than the caret's own line so that "nothing recorded one" is distinguishable, the same
+   * convention `errorWidths` uses and for the same reason. `issues/lang/0232a`.
+   */
+  i32[] errorContexts;
+  /**
    * A hint written for *this* diagnostic, or empty to take the code's own.
    *
    * **Because a hint that quotes an identifier cannot be static.** `hintFor(code)` answered every
@@ -1252,7 +1267,7 @@ export struct C {
              string[decls](), bool[decls](), string[decls](), i32[decls](),
              i32[decls](), 0, 0, 0,
              0, "",
-             i32[decls * 3](), string[decls](), i32[decls](), string[decls](), 0, false, false,
+             i32[decls * 3](), string[decls](), i32[decls](), i32[decls](), string[decls](), 0, false, false,
              string[16](), 0, "",
              string[decls](), string[decls](), i32[decls](), bool[decls](), 0,
              string[decls](), string[decls](), 0,
@@ -2038,6 +2053,26 @@ export struct C {
     this.report(code, line, col);
     if (this.errorCount == before) { return; }
     if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
+  }
+
+  /**
+   * Record that the diagnostic at slot `before` should print from `callLine` down.
+   *
+   * **The rule lives here rather than at each caller.** The reference has one site and one condition —
+   * *"if the argument sits on a later line than the call opens on, point the diagnostic's leading
+   * context back at the call line"* — and wacc has the same rule spread over three argument-checking
+   * functions reaching three different report methods. Passing both lines in keeps "only when they
+   * differ" from being written out six times, which is how a rule comes to be enforced five ways.
+   *
+   * Called *after* the report, with the count taken before it, because a report can decline: quiet
+   * while an import is walked, past the cap, or collapsed as a repeat of the diagnostic before it. Any
+   * of those and there is no slot to annotate — the same guard `reportWith` and `reportTok` use.
+   * `issues/lang/0232a`.
+   */
+  void contextAt(this, i32 before, i32 argLine, i32 callLine) {
+    if (this.errorCount == before) { return; }
+    if (argLine == callLine || callLine <= 0) { return; }
+    if (before < this.errorContexts.len()) { this.errorContexts[before] = callLine; }
   }
 
   /**
@@ -4328,7 +4363,7 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
     // A **type parameter's** funcref says how many arguments it takes and nothing about what they
     // are, and inside a generic function even that is a substitution this checker does not perform.
     if (arity != args.len()) { c.report(errCallArity(), call.line, call.col); return; }
-    checkFuncrefArgs(c, t, args);
+    checkFuncrefArgs(c, t, args, call.line);
     return;
   }
   if (c.isEnum(name) || isPrimitiveName(name) || name == "string" || name == "bool") { return; }
@@ -4408,14 +4443,18 @@ string trimmed(string t, i32 from, i32 to) {
  * platform hands a program is a funcref field, so `cli.sendTo(handle, bytes, peer, port)` against
  * `fn(i32, string, i32, u8[])` went to nobody until the module refused to instantiate.
  */
-void checkFuncrefArgs(C c, string held, Expr[] args) {
+void checkFuncrefArgs(C c, string held, Expr[] args, i32 callLine) {
   for (i32 i = 0; i < args.len(); i++) {
     string want = funcrefParam(held, i);
     if (want == "" || want == typeNone()) { continue; }
     if (!nameableType(c, want)) { continue; }
+    // `callLine` is here only for `contextAt` — the same rule as `checkCall`'s, which is why it is one
+    // method and not a condition written out per site. `issues/lang/0232a`.
+    i32 before = c.errorCount;
     i32 lit = litKindOf(args[i]);
     if (lit != litNone()) {
       reportLiteral(c, want, args[i], errArgumentMismatch(), args[i].line, args[i].col);
+      c.contextAt(before, args[i].line, callLine);
       continue;
     }
     string got = typeOfExpr(c, args[i]);
@@ -4425,6 +4464,7 @@ void checkFuncrefArgs(C c, string held, Expr[] args) {
     } else if (!assignable(c, want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
     }
+    c.contextAt(before, args[i].line, callLine);
   }
 }
 
@@ -4857,9 +4897,14 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
   for (i32 i = 0; i < args.len(); i++) {
     string want = c.funcParamTypes[c.funcParamAt[at] + i];
     if (want == typeNone()) { continue; }
+    // **An argument on a later line than the call opens on prints from the call line down.** Taken
+    // before each report and applied after it, because `report` can decline and there is then no slot
+    // — see `contextAt`. `issues/lang/0232a`.
+    i32 before = c.errorCount;
     i32 lit = litKindOf(args[i]);
     if (lit != litNone()) {
       reportLiteral(c, want, args[i], errArgumentMismatch(), args[i].line, args[i].col);
+      c.contextAt(before, args[i].line, call.line);
       continue;
     }
     string got = typeOfExpr(c, args[i]);
@@ -4868,6 +4913,7 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
     } else if (!assignable(c, want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
     }
+    c.contextAt(before, args[i].line, call.line);
   }
 }
 
@@ -6485,7 +6531,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     //
     // Nothing without a slot: `inst` is empty when the call's result goes somewhere this checker cannot
     // name, and substituting in no world at all compares against the letter.
-    if (gm >= 0 && inst != "") { checkMethodArgs(c, inst, gm, args); }
+    if (gm >= 0 && inst != "") { checkMethodArgs(c, inst, gm, args, call.line); }
     return;
   }
 
@@ -6504,7 +6550,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     }
     // And the argument *types*, which used to stop at the count. The reference reports both;
     // `issues/lang/0123` is what the gap cost.
-    if (heldArity >= 0 && !c.isGeneric(recv)) { checkFuncrefArgs(c, held, args); }
+    if (heldArity >= 0 && !c.isGeneric(recv)) { checkFuncrefArgs(c, held, args, call.line); }
     // **A field that is not a funcref cannot be called at all**, and this returned as if it could.
     //
     // The arm above exists because a field *may* hold a funcref — `sh.externalNames()` and the whole
@@ -6601,7 +6647,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // wasm type, so it validated and ran, reading the wrong field: a type confusion with no
   // diagnostic anywhere. The reference answers *"expected A, found B"* and always did.
   //
-  checkMethodArgs(c, recvInst, at, args);
+  checkMethodArgs(c, recvInst, at, args, call.line);
 }
 
 /**
@@ -6617,12 +6663,14 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
  * rather than about the program. `substituteType` answers unknown for a letter with nothing to bind
  * it, which is a generic's own body — where `T` means `T` and there is nothing to check it against.
  */
-void checkMethodArgs(C c, string owner, i32 at, Expr[] args) {
+void checkMethodArgs(C c, string owner, i32 at, Expr[] args, i32 callLine) {
   for (i32 i = 0; i < args.len(); i++) {
     string mwant = substituteType(c, owner, c.methodParamTypes[c.methodParamAt[at] + i]);
     if (mwant == typeNone() || mwant == "") { continue; }
+    i32 before = c.errorCount;
     if (litKindOf(args[i]) != litNone()) {
       reportLiteral(c, mwant, args[i], errArgumentMismatch(), args[i].line, args[i].col);
+      c.contextAt(before, args[i].line, callLine);
       continue;
     }
     string mgot = typeOfExpr(c, args[i]);
@@ -6632,6 +6680,7 @@ void checkMethodArgs(C c, string owner, i32 at, Expr[] args) {
     } else if (!assignable(c, mwant, mgot)) {
       c.reportWith(errArgumentMismatch(), args[i].line, args[i].col, expectedFound(mwant, mgot));
     }
+    c.contextAt(before, args[i].line, callLine);
   }
 }
 
@@ -8029,6 +8078,15 @@ export i32[] widthsOf(C c) {
   i32[] out = i32[c.errorCount]();
   for (i32 i = 0; i < c.errorCount; i++) {
     out[i] = i < c.errorWidths.len() ? c.errorWidths[i] : 0;
+  }
+  return out;
+}
+
+/** The first line to print for each diagnostic, in the same order — `0` for the caret's line alone. */
+export i32[] contextsOf(C c) {
+  i32[] out = i32[c.errorCount]();
+  for (i32 i = 0; i < c.errorCount; i++) {
+    out[i] = i < c.errorContexts.len() ? c.errorContexts[i] : 0;
   }
   return out;
 }

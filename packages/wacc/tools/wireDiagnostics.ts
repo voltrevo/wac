@@ -1,6 +1,7 @@
 // wacc's diagnostics, from the wire form to the shape the shared formatter wants.
 //
-// `src/api.wac`'s `diagnoseFiles` answers `file\tline\tcol\tphase\tmessage\tannotation\thint\tspan\tseverity`,
+// `src/api.wac`'s `diagnoseFiles` answers
+// `file\tline\tcol\tphase\tmessage\tannotation\thint\tspan\tseverity\tcontextStart`,
 // one per line — the boundary carries strings and not structures, because a struct crossing a
 // bindgen boundary is a class the other side has to know about and a diagnostic is not worth that.
 // This is the only place that knows the field order.
@@ -23,7 +24,8 @@ export function parseDiagnostics(wire: string): DiagError[] {
   const out: DiagError[] = [];
   for (const line of wire.split("\n")) {
     if (line === "") continue;
-    const [file, ln, col, phase, message, annotation, hint, span, severity] = line.split("\t");
+    const [file, ln, col, phase, message, annotation, hint, span, severity, contextStart] = line
+      .split("\t");
     out.push({
       // **A `warn` phase is a warning**, which `wacDiag.ts` already knows how to render — it prints
       // `${e.severity ?? "error"}` — and this hardcoded the field, so wacc's first warnings came out
@@ -39,6 +41,15 @@ export function parseDiagnostics(wire: string): DiagError[] {
       span: Number(span) > 0 ? Number(span) : 1,
       ...(annotation ? { annotation } : {}),
       ...(hint ? { hint } : {}),
+      // **The line to start printing from, for a span that runs across lines.** Absent on almost every
+      // diagnostic, and absent is not the same as the caret's own line to `wacDiag` — it defaults to
+      // `lineNum` itself, so omitting the key is what "print one line" means.
+      //
+      // Until this existed the field could not survive the crossing, and `renderdiag_test.wac` hands
+      // *wacc's* wire to both renderers — so both omitted the same two source lines and agreed
+      // perfectly. A field the wire cannot express is a field the differential cannot compare, whatever
+      // programs are added to it. `issues/lang/0232a`.
+      ...(Number(contextStart) > 0 ? { contextStart: Number(contextStart) } : {}),
     });
   }
   return out;

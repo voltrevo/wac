@@ -6,7 +6,7 @@
 // two agree character for character, so the comparison has to hold the reference's own output rather
 // than a description of it — which means importing `wacDiag` rather than reimplementing it.
 //
-// Deno rather than node, because both halves are `.ts`: `parseDiagnostics` reads the eight-field wire
+// Deno rather than node, because both halves are `.ts`: `parseDiagnostics` reads the wire
 // and `wacDiag` lays it out. Neither touches the filesystem, so `--allow-read` is only what Deno
 // wants to load the modules.
 //

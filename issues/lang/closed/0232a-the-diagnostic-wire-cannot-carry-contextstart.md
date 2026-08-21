@@ -1,7 +1,9 @@
 # 0232a — the diagnostic wire cannot carry `contextStart`, so one clause renders short, and the renderer differential cannot see it
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-21 — the recommended option, a tenth wire field
+- **Fixed in:** `packages/wacc/src/check.wac`, `src/api.wac`, `src/render.wac` and
+  `tools/wireDiagnostics.ts`, with three new cases in `packages/wacc/test/wac/renderdiag_test.wac`
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** diagnostic
@@ -132,3 +134,55 @@ reference has carried the field for long enough to have a test for it, and the s
   half of the sentence a string goes in, this one is about a number that has nowhere to go. The five
   clauses measured while filing this are recorded there.
 - `issues/system/0161` — moved this comparison host-side, which is what made it a differential at all.
+
+## Closed — the field exists and the differential can now fail, 2026-08-21
+
+The recommended option, and the order it was done in is the point: **the instrument first, then the
+mechanism.**
+
+1. `check.wac` records it. An `errorContexts` table beside `errorNotes` and `errorWidths`, and one
+   method — `contextAt(before, argLine, callLine)` — holding the reference's single condition, *"if the
+   argument sits on a later line than the call opens on"*. It takes both lines so that the condition is
+   written once; wacc has **three** argument-checking functions where the reference has one, and a rule
+   spread over three sites reaching three different report methods is how a rule comes to be enforced
+   five ways. Called after the report with the count taken before it, because a report can decline —
+   quiet while an import is walked, past the cap, or collapsed as a repeat — and then there is no slot.
+2. `api.wac` puts it on the wire, **only on the rows that have one.** The wire is positional and
+   already ragged: an error stops at `width`, a warning carries `severity`. Appending a tenth field
+   unconditionally would have rewritten every diagnostic in the repository for the sake of the few with
+   a context; appended this way, every existing line is byte-identical and no other consumer moves.
+3. `wireDiagnostics.ts` passes it to the oracle — **and this is what made the test able to fail.**
+   `renderdiag_test.wac` hands *wacc's* wire to both renderers, so until the field could survive the
+   crossing both omitted the same two lines and agreed perfectly. With the field crossing and the
+   renderer still ignoring it, the differential said:
+
+       an argument on a later line than its call — line 4 differs:
+         render.wac " 4 |     3.14",  wacDiag " 3 |   i32 result = compute("
+
+   That was the state to reach before writing any rendering code.
+4. `render.wac` prints the intervening lines, and pads the line number to the caret line's width the
+   way `wacDiag`'s `padStart` does — invisible in every existing case, because the caret's own number is
+   what the width was measured from, and needed the moment a context line is shorter (line 9 above 10).
+
+Now:
+
+    error: argument does not match the parameter's type
+      --> algo.wac:4:5
+       |
+     3 |   i32 result = compute(
+     4 |     3.14
+       |     ^^^^ expected i32, found f64
+
+**Three cases, not one.** wacc's three argument paths — plain call, method call, funcref call — all
+carry it now, and all three agree with the reference character for character. That the reference agreed
+on the method and funcref cases was a question rather than an assumption: it sets `contextStart` at one
+site, and whether its method calls reach that site was answered by adding the cases and running them,
+not by reading.
+
+**Two stale field counts fixed while counting.** `render.wac`'s header said nine (right) and the
+oracle's said eight (wrong); the count is now ten in one and unnumbered in the other, because a sentence
+that has to be revised whenever the wire grows is a sentence that will be wrong again.
+
+Left alone deliberately: the spec block's trailing ` 15 |     );`, which neither renderer emits. Whether
+a multi-line span should show the line *after* it is a real question, unlike the `12:5` header that was
+fixed when this was filed.

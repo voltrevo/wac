@@ -1,9 +1,15 @@
 // A diagnostic a person can read, from the wire a program can parse.
 //
-// `diagnoseFiles` answers `file\tline\tcol\tphase\tmessage\tnote\thint\twidth\tseverity` per line,
-// because a boundary carries strings rather than structures. Nine fields — the `severity` one was
-// added after this sentence first said eight, and counting them is how `issues/lang/0232a` found that
-// there is nowhere to put the reference's `contextStart`.
+// `diagnoseFiles` answers `file\tline\tcol\tphase\tmessage\tnote\thint\twidth\tseverity\tcontextStart`
+// per line, because a boundary carries strings rather than structures. Ten fields, and the count is
+// worth keeping right: this sentence said eight when there were nine, and **counting them is how
+// `issues/lang/0232a` found that there was nowhere to put the reference's `contextStart`** — a
+// diagnostic rendered two source lines short of the spec's clause because a number had no field.
+//
+// The wire is positional and deliberately ragged at the end: an error stops at `width`, a warning
+// carries `severity`, and only a diagnostic whose span runs across lines carries `contextStart`. An
+// absent field reads as empty, so a row that has nothing to say about one is a row that does not
+// mention it — which is what keeps adding a field from rewriting every diagnostic in the repository.
 //
 // `packages/wacc/tools/wireDiagnostics.ts` turns it back into the reference's `DiagError`, which
 // `wacDiag` prints
@@ -16,7 +22,7 @@
 //        = help: use a cast if the conversion is meant: `as!` is checked, `as~` takes the nearest value
 //
 // while `example/wacc.wac` — the compiler as a program, and what the `wac` binary dispatches —
-// printed the wire itself: eight tab-separated fields, to a person. Both halves of the toolchain are
+// printed the wire itself: tab-separated fields, to a person. Both halves of the toolchain are
 // the compiler; only one of them was usable at the point where it matters most, which is when
 // something is wrong.
 //
@@ -114,6 +120,18 @@ export string renderDiagnostics(string wire, string[] paths, string[] sources) {
   return out;
 }
 
+/**
+ * A line number right-aligned in `digits` columns — `wacDiag`'s `String(ln).padStart(digits)`.
+ *
+ * Invisible until a diagnostic prints more than one line: the caret's own number is what `digits` was
+ * measured from, so padding it is a no-op. A context line above it can be shorter — line 9 above line
+ * 10 — and that is the case the padding is for.
+ */
+string gutter(i32 n, i32 digits) {
+  string t = numText(n);
+  return t.len() >= digits ? t : repeat(" ", digits - t.len()) + t;
+}
+
 /** One diagnostic, laid out the way `compiler/wacDiag.ts` lays one out. */
 string renderOne(string line, string[] paths, string[] sources) {
   string file = field(line, 0);
@@ -130,6 +148,12 @@ string renderOne(string line, string[] paths, string[] sources) {
   // from a genuine width of 1. Either way one caret is what gets drawn.
   i32 width = numOf(field(line, 7));
   if (width <= 0) { width = 1; }
+  // **Where to start printing, which is not how wide the span is.** `§wac-diag-multiline-ic7x2hq`
+  // shows the lines above the caret — a caret under `3.14` says nothing about which call it is an
+  // argument to — and only the checker knows which construct the diagnostic came from, so the number
+  // crosses the wire rather than being inferred here. `0` or absent means the caret's line alone,
+  // which is what `wacDiag` gets from an unset `contextStart`. `issues/lang/0232a`.
+  i32 from = numOf(field(line, 9));
 
   // The gutter is as wide as the line number: one space either side of the digits.
   i32 digits = numText(lineNo).len();
@@ -143,7 +167,12 @@ string renderOne(string line, string[] paths, string[] sources) {
   string out = (isWarning ? "warning: " : "error: ") + message + "\n";
   out = out + arrowPad + "--> " + file + ":" + numText(lineNo) + ":" + numText(col) + "\n";
   out = out + pad + "|\n";
-  out = out + " " + numText(lineNo) + " | " + text + "\n";
+  i32 firstLine = from > 0 && from < lineNo ? from : lineNo;
+  for (i32 ln = firstLine; ln < lineNo; ln++) {
+    string above = ln >= 1 && ln <= srcLines.len() ? srcLines[ln - 1] : "";
+    out = out + " " + gutter(ln, digits) + " | " + above + "\n";
+  }
+  out = out + " " + gutter(lineNo, digits) + " | " + text + "\n";
   out = out + pad + "| " + repeat(" ", col > 0 ? col - 1 : 0) + repeat("^", width);
   if (note != "") { out = out + " " + note; }
   if (hint != "") { out = out + "\n" + pad + "= help: " + hint; }

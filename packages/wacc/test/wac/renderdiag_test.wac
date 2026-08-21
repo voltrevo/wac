@@ -55,13 +55,27 @@ export string test_the_program_renders_a_diagnostic_as_the_reference_does(Core c
     "something unparseable",
     // A name that is not there: no operands recorded, so no annotation — the branch where the caret
     // line ends after the caret.
-    "an unresolved name");
+    "an unresolved name",
+    // A span that runs across lines: the argument is on a later line than the call opens on, so the
+    // block shows the call line above the caret's. `§wac-diag-multiline-ic7x2hq` exists for this and
+    // none of the five above reaches it — *"a gutter that has grown"* is the nearest, and it is about
+    // the gutter's width. `issues/lang/0232a`.
+    "an argument on a later line than its call",
+    // The same shape through the other two argument-checking paths, because wacc has three and the
+    // reference has one function that all of its calls reach.
+    "a method argument on a later line",
+    "a funcref argument on a later line");
   string[] src = string[](
     "export i32 f() { return \"no\"; }\n",
     filler() + "export i32 g() { return \"no\"; }\n",
     "export i32 a() { return \"no\"; }\nexport i32 b() { return \"no\"; }\n",
     "export i32 f( {\n",
-    "export i32 f() { return nope; }\n");
+    "export i32 f() { return nope; }\n",
+    "export i32 compute(i32 a) { return a; }\nexport i32 f() {\n  i32 result = compute(\n" +
+      "    3.14\n  );\n  return result;\n}\n",
+    "struct S {\n  i32 m(const this, i32 a) { return a; }\n}\nexport i32 f() {\n  S s = S();\n" +
+      "  return s.m(\n    3.14\n  );\n}\n",
+    "export i32 f(fn[i32(i32)] g) {\n  return g(\n    3.14\n  );\n}\n");
   t.eqI32(what.len(), src.len(), "a name per case");
   if (what.len() != src.len()) { return t.report(); }
 

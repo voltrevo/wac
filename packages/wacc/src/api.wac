@@ -10,8 +10,8 @@ import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHint
 import { P, parseProgram } from "./parse.wac";
 import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
-import { C, checkModule, checkProgram, declareModule, errorsOf, hintsOf, notesOf, warningsOf, widthsOf,
-         errNoSuchExport } from "./check.wac";
+import { C, checkModule, checkProgram, contextsOf, declareModule, errorsOf, hintsOf, notesOf,
+         warningsOf, widthsOf, errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -775,14 +775,29 @@ string diagnoseFilesWithIn(string[] paths, string[] sources, Res res, string ent
   // reader's expression, and two clauses in `spec/spec/errors.md` state hints that do — so a site with
   // the text in hand records one and everything else falls through to the table exactly as before.
   string[] hints = hintsOf(c);
+  // **The first line to print, where the caret's own line is not it.** `§wac-diag-multiline-ic7x2hq`
+  // shows the lines above the caret, and the renderer cannot know which construct the diagnostic came
+  // from — so the number crosses. `issues/lang/0232a`.
+  i32[] contexts = contextsOf(c);
   for (i32 e = 0; e + 2 < terrs.len(); e = e + 3) {
     string note = e / 3 < notes.len() ? notes[e / 3] : "";
     i32 w = e / 3 < widths.len() ? widths[e / 3] : 0;
     string own = e / 3 < hints.len() ? hints[e / 3] : "";
+    i32 from = e / 3 < contexts.len() ? contexts[e / 3] : 0;
     out = out + entry + "\t" + numText(terrs[e + 1]) + "\t" + numText(terrs[e + 2])
         + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note
         + "\t" + (own == "" ? hintFor(terrs[e]) : own)
-        + "\t" + numText(w) + "\n";
+        + "\t" + numText(w)
+        // **Only where there is one, which keeps every line that has none byte-identical.** The wire
+        // is positional and already asymmetric on purpose — an error carries eight fields and a
+        // warning nine, because *"a consumer that splits on tabs reads an absent ninth field as
+        // empty"*. A tenth appended unconditionally would rewrite every diagnostic in the repository
+        // for the sake of the few that have a context; appended here it changes only those.
+        //
+        // The empty ninth is the severity, which an error does not set: a tenth field cannot be
+        // reached past an absent ninth.
+        + (from > 0 ? "\t\t" + numText(from) : "")
+        + "\n";
   }
   // **Warnings after the errors, with a severity in a field of its own.**
   //
