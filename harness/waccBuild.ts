@@ -92,7 +92,10 @@ export type WaccRes = { readonly $ref?: unknown };
  * alone gives `/abs/p/src/lib.wac` for a file keyed `src/lib.wac`, which is not the file.
  */
 export function waccRes(
-  api: WaccApi,
+  // **Structurally, not `WaccApi`.** `harness/wacBind.ts` declares its own narrower api type — the
+  // two have coexisted since before either carried a `Res` — and a helper that names one of them
+  // cannot be called by the other. All this needs is the constructor.
+  api: { Res: WaccApi["Res"] },
   paths: string[],
   roots: Map<string, string>,
   base: string,

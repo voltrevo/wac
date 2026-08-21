@@ -114,6 +114,9 @@ ones green.
   `diagnoseGraphIn`, which is a *stricter* check than the entry-only walk that lane has always done, and
   swapping them while adding roots would have made every wac test file in the repository the subject of
   a second change nobody asked for.
-- `harness/wacBind.ts` was not. It threads `files` through four internal functions and a cache key, and
-  it binds this repository's own packages for Deno tests — no caller of it has a `@/` import today.
-  `issues/system/0230a` carries it.
+- `harness/wacBind.ts` was done a few hours later, and differently: instead of adding `roots` and
+  `base` beside the `files` parameter in four signatures, `files` **became** a `Graph` — files, roots
+  and base in one value — so a caller cannot construct one without saying how imports resolve. That is
+  the lesson of this issue turned into a type. Its cache key went to `bind 2` for the same reason the
+  others moved. It also needed `emitFilesIn`, the last member of the family that did not exist: the
+  non-coverage bind path emits through `emitFiles`, so there was nothing to emit *with* a `Res`.

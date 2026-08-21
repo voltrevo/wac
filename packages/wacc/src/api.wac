@@ -12,7 +12,7 @@ import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, hintsOf, notesOf, warningsOf, widthsOf,
          errNoSuchExport } from "./check.wac";
-import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
+import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedIn, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
@@ -134,6 +134,17 @@ export string names(u8[] src) {
  */
 export u8[] emitFiles(string[] paths, string[] sources, string entry) {
   return emitLinked(paths, sources, entry);
+}
+
+/**
+ * `emitFiles` with the project root each file sits in — `design/lang/0009` D7.
+ *
+ * The last member of the `In` family to be missing, which is why `harness/wacBind.ts` could not be
+ * given the roots when everything else was: the non-coverage bind path emits through here, and there
+ * was nothing to emit *with* a `Res`. `issues/system/0229a`.
+ */
+export u8[] emitFilesIn(string[] paths, string[] sources, Res res, string entry) {
+  return emitLinkedIn(paths, sources, res, entry);
 }
 
 /**
