@@ -276,3 +276,37 @@ conditions, which is the thing `check.wac`'s own comment says was untangled once
 The corpus's 19 are the initialiser and comparison shapes — `string x = 1; u32 y = 1; return x / y;`
 and its neighbours — and sorting which of those are ours needs the question this issue names, one program
 at a time.
+
+## The overlap shape is fixed too, and the recall number caught the first attempt
+
+Two rules were keyed on the same thing — a string beside a non-string in an arithmetic operator. The
+operand rule (*"a string is a number for exactly one operator"*) and the mismatch rule both fired, so
+`s % 2` drew two for one fault. The mismatch is suppressed where the operand rule spoke.
+
+**"Where it spoke" is narrower than "not `+`", and getting that wrong made a program compile.** The
+operand rule reads `typeOfExpr`, which is empty for a string *literal*, so it never fires for
+`n * "a"` — and the mismatch rule, reading `naturalTypeOf`, is the only thing that catches it. A first
+attempt keyed the suppression on the operator alone:
+
+| | before | first attempt | now |
+| --- | --- | --- | --- |
+| `s % 2` | 2 | 1 | 1 |
+| `s * 2` | 2 | 1 | 1 |
+| `s & 1` | 2 | 1 | 1 |
+| `n * "a"` | 1 | **0** | 1 |
+| `s + 1` | 1 | 1 | 1 |
+| `s + "b"` | 0 | 0 | 0 |
+
+**The mutation sweep's recall is what caught it**, dropping 1185 → 1183 with a new missed family — `2
+missed of 4  type mismatch in '…': i32 and string` — while its count-disagreement number moved 19 → 15
+and called the same change an improvement. Two instruments pointing opposite ways is what made the
+regression visible; either alone would have read as progress.
+
+There were two paths to guard, and they need different conditions. The literal branch needs "the operand
+rule actually spoke", for the reason above. The non-literal branch runs only when neither side is a
+literal, so `typeOfExpr` has answered for both and the operator alone is enough. Guarding only one of
+them left `string x = 1; u32 y = 1; return x / y;` at three, which is the corpus example this issue
+opened with.
+
+Final: **19 → 15** count disagreements, recall **1185 (100%)**, no new missed families. Pinned by exact
+counts in `illtyped_test.wac`, canaried with the too-broad condition, which fails on the `n * "a"` row.

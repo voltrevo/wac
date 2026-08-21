@@ -3565,7 +3565,22 @@ void checkExpr(C c, Expr e) {
         // Asked through `naturalTypeOf`, which is what fills a literal's own family in; two
         // literals are the rule further up, and a comparison is the reference-type rule's.
         bool oneString = (nl2 == "string") != (nr2 == "string");
-        if (sameType && !bothLit && oneString && nl2 != typeNone() && nr2 != typeNone()) {
+        // **Only for `+`, because that is the only one the operand rule leaves alone.** A string in
+        // any other arithmetic operator is already reported as an operand of the wrong kind — *"`+`
+        // concatenates and the comparisons order it, and the rest of the arithmetic family has nothing
+        // to do to one"* — so asking again here gave `s % 2` two diagnostics for one fault, where the
+        // reference gives one because its numeric check returns before the same-type check runs.
+        // `+` is where a string is legitimate and the mismatch is the whole of the complaint.
+        // `issues/lang/0238a`.
+        // **Suppressed only where the operand rule actually spoke, which is narrower than "not `+`".**
+        // That rule reads `typeOfExpr`, which is empty for a string *literal*, so it never fires for
+        // `n * "a"` — and this one, reading `naturalTypeOf`, is the only thing that catches it. A
+        // first attempt keyed the suppression on the operator alone and made `n * "a"` compile: the
+        // mutation sweep's recall caught it where its count-disagreement number called it an
+        // improvement, which is the argument for having both. `issues/lang/0238a`.
+        bool operandRuleSaid = k != kPlus() && (alt == "string" || art == "string");
+        if (sameType && !operandRuleSaid && !bothLit && oneString &&
+            nl2 != typeNone() && nr2 != typeNone()) {
           c.report(errOperandMismatch(), e.line, e.col);
         }
         return;
@@ -3573,6 +3588,12 @@ void checkExpr(C c, Expr e) {
       string a = typeOfExpr(c, left);
       string b = typeOfExpr(c, right);
       if (a == typeNone() || b == typeNone() || a == b) { return; }
+      // **The same suppression as the literal branch, and here the operator alone is enough.** This
+      // path runs only when neither side is a literal, so `typeOfExpr` has answered for both and
+      // cannot be blind the way it is for `"a"` — which is what made the literal branch above need
+      // the narrower condition. `string x = 1; u32 y = 1; return x / y;` drew three where the
+      // reference draws two. `issues/lang/0238a`.
+      if (sameType && k != kPlus() && (a == "string" || b == "string")) { return; }
       c.reportWith(errOperandMismatch(), e.line, e.col, a + " and " + b);
     }
     // A name that nothing declares. The most-missed family in the reference's own tests, and the last
