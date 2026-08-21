@@ -517,3 +517,44 @@ rebuild. Prefer appending to a message the build already prints.
 Unchanged by this: the 25 expression-level bails with no recorded reason, `""` as "I don't know", and
 the `emitFiles*` family having no channel to report through — the recommendation there is still to
 leave it until something in-process actually loses an export.
+
+## The negative corpus exists now — agent-a, 2026-08-21
+
+The section above calls it "probably the highest-yield single addition here", and it is
+`packages/wacc/test/wac/illtyped_test.wac`: all fourteen programs, with the refusal recorded.
+
+Re-measured before writing it rather than copied from the table above, because the export-parity net was
+widened underneath that table:
+
+    refused by the checker    14 of 14
+    declined by the emitter    7
+    silent in both             0
+
+So the four are fixed — a02 `s[0] - 1`, a03 `i32 n = s[0]`, a04 `b ? s : 1`, a08 `p.v()` all draw a
+diagnostic now. What the file adds is that they cannot go back to being silent without a test saying so,
+which nothing said before: the corpus is this repository's files plus `spec/cases/*.wac`, and **every one
+of those is meant to compile**, so a checker's corpus had no way to measure what the checker fails to
+refuse.
+
+Three tests rather than one loop:
+
+- every program is refused by the checker — the count and not the code, since several draw two and
+  which rule fires is the checker's business;
+- the four that used to build with the function missing, named one per line, because a loop failing on
+  "a02" says less than a name that is the reason;
+- **no program is accepted by both** the checker and the emitter, which is the durable one. Seven are
+  not declined by the emitter and that is right — the checker refuses them first and `example/wacc.wac`
+  checks before it emits. A row going silent in *both* is a module built with its exported function
+  missing and an exit code of 0, whatever mechanism did it.
+
+Canaried by putting a legal program (`return a + 1;`) into the ill-typed list: two of the three tests
+fail and name it. That is the harness being checked rather than the compiler — a list-driven test whose
+list is wrong reports nothing.
+
+### What is still open here, and the order is unchanged
+
+Steps 2 to 4 — `typeOfE` guessing on `Binary` and `Ternary`, `""` travelling through 38 unguarded call
+sites as if it were a type, and the missing cases. The reason the order was "report first, then tighten"
+still holds, and the reporting is in better shape than it was: the fourteen are refused, this file holds
+them there, and a tightening round that collapses self-hosting now has a negative corpus to calibrate
+against instead of a rebuild per guess.

@@ -1,0 +1,111 @@
+// The negative half of the corpus: fourteen ill-typed programs that must all be refused.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/illtyped_test.wac
+//
+// **Why this file exists at all.** `issues/lang/0170a` found four programs — `s[0] - 1`, `i32 n = s[0]`,
+// `b ? s : 1`, `p.v()` — that wacc checked clean, built with exit 0, and left their exported function
+// *out of the module*. The reference refuses all fourteen; wacc refused ten. That is exactly the
+// disagreement the corpus differential exists to find, and it never saw them, because the corpus is
+// this repository's own files plus `spec/cases/*.wac` and **every one of those is meant to compile**.
+// A checker's corpus with no ill-typed programs in it cannot measure what the checker fails to refuse.
+//
+// So the issue's own conclusion — "fourteen files like the ones above, with the expected refusal
+// recorded, would have caught all four and would catch the next one … probably the highest-yield
+// single addition here" — is this file. The four are fixed; what this adds is that they cannot go back
+// to being silent without a test saying so.
+//
+// **Two questions per program**, because the failure mode is passing one and failing the other: does
+// the checker refuse it, and does the emitter decline anything. A program answering no to both builds
+// with its exported function missing, which is the shape `issues/lang/0155` and the export-parity net
+// in `emit.wac` are the other guards against. Measured 2026-08-21: **14 of 14 refused by the checker**,
+// 7 of them also declined by the emitter, 0 silent in both.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { dumpTypeErrors, blockedFiles } from "../../src/api.wac";
+
+string[] names() {
+  return string[](
+    "a01 s - 1", "a02 s[0] - 1", "a03 i32 n = s[0]", "a04 b ? s : 1", "a05 p + 1 (struct)",
+    "a06 s < 1", "a07 a(1) (i32 called)", "a08 p.v() (field as method)", "a09 a[0] (i32 indexed)",
+    "a10 -s", "a11 a.nope", "a12 g(1,2) for g(i32)", "a13 b + 1 (bool)", "a14 return s from i32");
+}
+
+string[] programs() {
+  return string[](
+    "export i32 f(string s) { return s - 1; }\n",
+    "export i32 f(string s) { return s[0] - 1; }\n",
+    "export i32 f(string s) { i32 n = s[0]; return n; }\n",
+    "export i32 f(string s, bool b) { return b ? s : 1; }\n",
+    "struct P { i32 v; }\nexport i32 f(P p) { return p + 1; }\n",
+    "export i32 f(string s) { return s < 1 ? 1 : 0; }\n",
+    "export i32 f(i32 a) { return a(1); }\n",
+    "struct P { i32 v; }\nexport i32 f(P p) { return p.v(); }\n",
+    "export i32 f(i32 a) { return a[0]; }\n",
+    "export i32 f(string s) { return -s; }\n",
+    "export i32 f(i32 a) { return a.nope; }\n",
+    "i32 g(i32 x) { return x; }\nexport i32 f() { return g(1, 2); }\n",
+    "export i32 f(bool b) { return b + 1; }\n",
+    "export i32 f(string s) { return s; }\n");
+}
+
+export string test_every_ill_typed_program_here_is_refused_by_the_checker() {
+  T t = T.create();
+  string[] name = names();
+  string[] src = programs();
+  // The lists are parallel, and a case added to one and not the other would be skipped in silence —
+  // which is the failure this whole file is about.
+  t.eqI32(name.len(), src.len(), "the name and program lists disagree in length");
+  if (name.len() != src.len()) { return t.report(); }
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
+    // **The count, not the code.** Which rule fires is the checker's business and several of these
+    // draw two; that a wrongly-typed program is refused *at all* is the claim, and it is the one that
+    // was false for four of them.
+    t.isTrue(diags > 0, name[i] + ": accepted an ill-typed program");
+  }
+  return t.report();
+}
+
+/**
+ * The four that were silent, named for what they are.
+ *
+ * A loop failing on "a02" says less than a test whose name is the reason. These are the four the issue
+ * measured as `check` clean, `wac build` exit 0, and the exported function absent — two filed
+ * separately as `issues/lang/0159` and `0165`, and two never filed at all.
+ */
+export string test_the_four_that_used_to_build_with_the_function_missing() {
+  T t = T.create();
+  string[] name = string[]("indexing a string then subtracting (0159)",
+                           "initialising an i32 from a string index",
+                           "a ternary whose branches are a string and an i32",
+                           "calling a field as a method (0165)");
+  string[] all = programs();
+  string[] src = string[](all[1], all[2], all[3], all[7]);
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
+    t.isTrue(diags > 0, name[i] + ": silent again");
+  }
+  return t.report();
+}
+
+/**
+ * And the pair taken together, which is the durable claim.
+ *
+ * Not that every program is declined by the emitter — seven are not, and that is right: the checker
+ * refuses them first and `example/wacc.wac` checks before it emits. What this holds is weaker and
+ * harder to lose: **no program here is accepted by both.** A row that goes silent in both is a module
+ * built with its exported function missing and an exit code of 0, whatever the mechanism was.
+ */
+export string test_no_program_here_is_accepted_by_both_the_checker_and_the_emitter() {
+  T t = T.create();
+  string[] name = names();
+  string[] src = programs();
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
+    string blocked = blockedFiles(string[]("/m.wac"), string[](src[i]), "/m.wac");
+    t.isTrue(diags > 0 || blocked != "",
+        name[i] + ": the checker and the emitter both accepted it, so a build writes a module with "
+        + "no `f` in it and exits 0");
+  }
+  return t.report();
+}
