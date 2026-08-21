@@ -14,7 +14,7 @@
 // must not be.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
 import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 
@@ -56,8 +56,8 @@ bool writeEntry(Cli cli, T t, string path) {
 export string test_wac_app_builds_something_that_runs_itself(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "app-runs");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
 
   Exec made = build(cli, dir + "/hello.wac", "", dir + "/thing");
@@ -80,8 +80,8 @@ export string test_wac_app_builds_something_that_runs_itself(Core core, Cli cli)
 export string test_an_app_without_wac_on_the_path_says_so(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "app-nopath");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
   Exec made = build(cli, dir + "/hello.wac", "", dir + "/thing");
   t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));
@@ -104,8 +104,8 @@ export string test_an_app_without_wac_on_the_path_says_so(Core core, Cli cli) {
 export string test_the_grants_are_in_the_module_and_not_the_preamble(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "app-grants");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   // A program that reads, so that the grant is the difference between working and refused.
   Change wrote = cli.writeFile(dir + "/read.wac",
@@ -167,8 +167,8 @@ i32 magicAt(u8[] b) {
 export string test_an_app_built_by_another_version_is_refused(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "app-skew");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   if (!writeEntry(cli, t, dir + "/hello.wac")) { return t.report(); }
   Exec made = build(cli, dir + "/hello.wac", "", dir + "/thing");
   t.eqI32(made.status, 0, "wac app failed: " + string.fromBytes(made.stderr));

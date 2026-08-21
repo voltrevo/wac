@@ -20,7 +20,7 @@
 // `packages/sh` as a *library*; the subcommand had no test at all once that file went.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
 import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa, atoi } from "../../packages/fmt/src/itoa.wac";
 import { Core, Cli, Exec, Stat } from "std/platform.wac";
@@ -72,8 +72,8 @@ export string test_wac_sh_runs_a_pipeline_of_applets(Core core, Cli cli) {
 export string test_wac_sh_is_sealed_unless_it_is_granted(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "shsealed");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string probe = dir + "/written";
 
   // **Refused, and nothing written.** Checking only the message would pass for a shell that reported a

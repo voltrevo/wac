@@ -34,7 +34,7 @@
 // `issues/system/0214` — so this is the supported builder rather than a second one.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, nativeBinaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { binaryPath, freshDir, nativeBinaryPath, scratch } from "../../packages/wactest/src/host.wac";
 import { builtByDeno, copyBuilt } from "../../packages/wactest/src/built.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
@@ -59,8 +59,8 @@ string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.std
  */
 string programIn(Cli cli, T t, string name, string src) {
   string dir = scratch(cli, name);
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change w = cli.writeFile(dir + "/p.wac", src.toBytes()).wait();
   t.isTrue(w.ok(), "could not write the program — " + w.message);
   return dir;

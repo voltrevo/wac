@@ -32,7 +32,7 @@
 // always done. `covdump`'s two cases went to `covdump_test.wac`, which already owns that command.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
@@ -47,8 +47,8 @@ string said(Exec r) { return string.fromBytes(r.stdout) + string.fromBytes(r.std
 /** One passing test file and nothing else, so a summary is about the arguments. */
 string oneTestDir(Cli cli, T t, string name) {
   string dir = scratch(cli, name);
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change w = cli.writeFile(dir + "/x_test.wac",
     "export string test_passes() { return \"\"; }\n".toBytes()).wait();
   t.isTrue(w.ok(), "could not write the test file — " + w.message);
@@ -151,8 +151,8 @@ export string test_the_summary_says_how_many_tests_were_skipped_for_a_grant(Core
   // under `.cache`, because at the root it is walked by everything that reads this repository's own
   // files and disappears again a few milliseconds later. `scratch` puts it there.
   string dir = scratch(cli, "testcli-grantskip");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change a = cli.writeFile(dir + "/y_test.wac",
     ("import { Cli, Core } from \"std/platform.wac\";\n" +
      "export string test_needs_nothing() { return \"\"; }\n" +
@@ -178,8 +178,8 @@ export string test_the_summary_says_how_many_tests_were_skipped_for_a_grant(Core
 export string test_validate_takes_a_batch_and_names_only_what_it_rejected(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "testcli-validate");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change src = cli.writeFile(dir + "/m.wac", "export i32 main() { return 0; }\n".toBytes()).wait();
   t.isTrue(src.ok(), "could not write the source — " + src.message);
   Exec built = wac(cli, string[]("build", dir + "/m.wac", "-o", dir + "/m", "--quiet"));

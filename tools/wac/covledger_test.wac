@@ -21,7 +21,7 @@
 import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
 import { Point, Pin, Rule, ratchet, uncoveredLines } from "./covledger.wac";
-import { scratch } from "../../packages/wactest/src/host.wac";
+import { freshDir, scratch } from "../../packages/wactest/src/host.wac";
 import { Core, Cli, Change } from "std/platform.wac";
 
 /** Line 1 of the subject, which the covered point sits on. */
@@ -53,8 +53,8 @@ string[] nested() {
 
 string nestedSubject(Cli cli, T t, string name) {
   string dir = scratch(cli, name);
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string text = "";
   string[] ls = nested();
   for (i32 i = 0; i < ls.len(); i++) { text = text + ls[i] + "\n"; }
@@ -70,8 +70,8 @@ string nestedSubject(Cli cli, T t, string name) {
  */
 string subject(Cli cli, T t, string name) {
   string dir = scratch(cli, name);
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change w = cli.writeFile(dir + "/subject.wac",
     (COVERED_SNIPPET + "\n" + UNCOVERED_SNIPPET + "\n").toBytes()).wait();
   t.isTrue(w.ok(), "could not write the subject — " + w.message);

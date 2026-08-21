@@ -22,7 +22,7 @@
 // and not the routine. That cost a measurement before it was noticed.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
 import { contains, startsWith, trimmed, splitLines } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
@@ -115,8 +115,8 @@ export string test_a_secret_dependent_index_is_found_where_no_branch_differs_6kn
     Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "ctcompare-index");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string a = built(t, cli, dir, "a", indexed(1));
   string b = built(t, cli, dir, "b", indexed(2));
   if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
@@ -181,8 +181,8 @@ export string test_a_routine_that_does_not_look_at_its_secret_says_same_6knq4wp(
   // a check, and both of the leaks in this file are one line away from this program.
   T t = T.create();
   string dir = scratch(cli, "ctcompare-uniform");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string a = built(t, cli, dir, "a", uniform(0));
   string b = built(t, cli, dir, "b", uniform(255));
   if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
@@ -203,8 +203,8 @@ export string test_a_routine_that_does_not_look_at_its_secret_says_same_6knq4wp(
 export string test_a_secret_dependent_branch_parts_the_two_runs_6knq4wp(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "ctcompare-branch");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string a = built(t, cli, dir, "a", branching(1));
   string b = built(t, cli, dir, "b", branching(100));
   if (a == "" || b == "") { cli.remove(dir, true).wait(); return t.report(); }
@@ -225,8 +225,8 @@ export string test_a_module_with_no_journal_is_an_error_not_an_empty_comparison_
   // every routine in the repository as constant-time.
   T t = T.create();
   string dir = scratch(cli, "ctcompare-plain");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string entry = dir + "/p.wac";
   cli.writeFile(entry, "export i32 main() { return 0; }\n".toBytes()).wait();
   Exec b = cli.exec(binaryPath(cli),
@@ -256,8 +256,8 @@ export string test_tracestat_reports_what_a_run_wanted_so_the_next_one_can_fit_6
   // `wanted` says exactly how large the next attempt has to be. `--trace-slots` is the other half.
   T t = T.create();
   string dir = scratch(cli, "ctcompare-slots");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   // 40 iterations is more than eight slots can hold and far less than the default.
   const string SRC = "export i32 main() {\n" +
@@ -311,8 +311,8 @@ export string test_coverage_and_trace_cannot_be_asked_for_together_6knq4wp(Core 
   // whichever question was asked last — silently, and only when someone read the numbers.
   T t = T.create();
   string dir = scratch(cli, "ctcompare-both");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string entry = dir + "/p.wac";
   cli.writeFile(entry, "export i32 main() { return 0; }\n".toBytes()).wait();
   Exec r = cli.exec(binaryPath(cli),

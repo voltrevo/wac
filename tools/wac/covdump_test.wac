@@ -21,7 +21,7 @@
 // `Not granted`, and neither is the instantiation failure that used to happen.
 
 import { T } from "../../packages/wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { binaryPath, freshDir, scratch } from "../../packages/wactest/src/host.wac";
 import { contains, trimmed } from "../../packages/wactest/src/strings.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
@@ -103,8 +103,8 @@ i32 nonZero(string out) {
 export string test_covdump_builds_a_world_so_a_grant_is_refused_rather_than_absent(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "covdump-world");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change wrote = cli.writeFile(dir + "/reader.wac", READER.toBytes()).wait();
   t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
   if (!wrote.ok()) { return t.report(); }
@@ -141,8 +141,8 @@ export string test_covdump_builds_a_world_so_a_grant_is_refused_rather_than_abse
 export string test_covdump_calls_each_named_export_and_catches_its_trap(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "covdump-exports");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change wrote = cli.writeFile(dir + "/trapper.wac", TRAPPER.toBytes()).wait();
   t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
   if (!wrote.ok()) { return t.report(); }
@@ -186,8 +186,8 @@ export string test_covdump_calls_each_named_export_and_catches_its_trap(Core cor
 export string test_covdump_says_when_a_module_carries_no_counters(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "covdump-plain");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change wrote = cli.writeFile(dir + "/m.wac",
     "export i32 main() { return 0; }\n".toBytes()).wait();
   t.isTrue(wrote.ok(), "could not write the source — " + wrote.message);
@@ -229,8 +229,8 @@ export string test_covdump_says_when_a_module_carries_no_counters(Core core, Cli
 export string test_covdump_sweeps_one_export_across_a_range_of_cases(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "covdump-sweep");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change wrote = cli.writeFile(dir + "/sweeper.wac", SWEEPER.toBytes()).wait();
   t.isTrue(wrote.ok(), "could not write the entry — " + wrote.message);
   if (!wrote.ok()) { return t.report(); }
