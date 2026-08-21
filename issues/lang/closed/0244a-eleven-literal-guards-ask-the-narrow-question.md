@@ -1,7 +1,7 @@
 # 0244a — eleven literal guards ask `litKindOf` where the rule they call handles more
 
-- **Status:** open
-- **Claimed by:** agent-a, 2026-08-21
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-21 — all eleven guards, and the two rows that needed `0245a` first
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** bug
@@ -72,10 +72,15 @@ Change the guard at each verified site from `litKindOf(e) != litNone()` to
 `litFamily(c, e) != litNone()`, which is the question the callee already asks. `litFamily` needs a `C`
 and every one of these sites has one.
 
-Left as a decision rather than swept blind: the two **JSX** guards, because a change wants a failing
-case and the case I wrote did not compile for an unrelated reason. Whoever picks them up should write
-`Node`-in-scope programs first — `<div class={1 + 2}></div>` and `<div>{1 + 2}</div>` — and only then
-decide.
+The two **JSX** guards were held back at first, because a change wants a failing case and the case I
+wrote was refused for *"undefined type"* — `Node` was not in scope, which is not the question. Asked
+properly, with `import { Attr, Node } from "core";` as `spec/cases/0121` does, they have the same hole:
+
+    <div class={1}></div>       refused        <div class={1 + 2}></div>       accepted
+    <div>{1}</div>              refused        <div>{1 + 2}</div>              accepted
+
+Both closed by the same swap. `<div class={"a"}></div>` stays legal, and `<div>{"a"}</div>` stays
+refused — a child must be a `Node` and a string is not one, which is the guard doing its job.
 
 ## Measured after widening eight of them — 2026-08-21
 
@@ -94,3 +99,22 @@ operand's type on the grounds that a literal takes its type from the other side.
 
 `slice` is also worth a look on its own: its arguments go through `checkCountArg` rather than
 `reportLiteral`, so it is a twelfth guard in this family that this issue has not examined.
+
+## Closed — 2026-08-21
+
+All eleven guards ask `litFamily` now, and all twelve reproductions are refused with the eight legal
+compound literals still accepted. `packages/wacc/test/wac/compoundlit_test.wac` holds the four claims:
+the twelve compound faults, the ten *direct* faults — a rule that fires only on the compound form is
+not this rule — the eight legal ones, and that no row is accepted by the checker and the emitter both.
+Canaried by putting the guards back: eight failures in each claim-test with both controls green.
+
+**Two rows needed `0245a` rather than a guard.** `"ab".slice(1, "x" + "y")` and
+`string.fromCodepoint("a" + "b")` survived the widening — a string literal *pair* is not a literal to
+`litFamily`, whose `Binary` arm answers only for the integer and float families — and what refuses them
+is `0245a` giving `"a" + "b"` a type at all, so the guards' ordinary type comparison can see it. Worth
+keeping because it is the shape of the whole cluster: the guard was one of two things wrong, and fixing
+it alone would have left a reader thinking the slot was covered.
+
+Verified: `corpuscheck` over the repository, `cases` including the 103 executable spec cases,
+`typecheck` rung 3 with 0 false alarms and 0 contradicted, `specsingle` 371 silent, `specmulti` 42
+silent, `illtyped`, `binaryoperands`, `warnings`, `codes`.

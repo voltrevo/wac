@@ -1,6 +1,7 @@
 # 0245a — `"a" + "b"` has no type, because the rule assumes a literal takes one
 
-- **Status:** open — the slot half is fixed; the operand half is attempted, measured and reverted
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-21 — both halves, once the mirror moved with them
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** bug
@@ -126,7 +127,7 @@ branches next to it still ask `alt`/`art`. And the two-literals rule further dow
 *"Same family is silent, including `true + false`, which is the numeric rule's business and not this
 one's"* — true, and the numeric rule cannot see it.
 
-**Tried, and reverted — the third step is not enough either.** Both branches were pointed at `nl`/`nr`
+**Reverted once, and the reason was a fourth edit rather than a wrong idea.** Both branches were pointed at `nl`/`nr`
 and the arm was made to answer `typeNone()` when the operator rejected its operands, which is the
 `Unary` arm's rule in the same words. `true + false` and `"a" * "b"` then report once each, all of
 `corpuscheck`, `typecheck`, `cases`, `specsingle`, `specmulti` and `codes` stay green — and
@@ -138,3 +139,34 @@ visible from the `true + false` end of the problem at all.
 So the remaining work is narrower than "swap the identifiers": find which path already reports
 `n * "a"` and decide which of the two should own it. `issues/lang/0238a` is the same question for a
 different pair and closed by making one of them silent.
+
+## Closed — the mirror had to move too
+
+`illtyped_test`'s `n * a-literal` row went to two diagnostics because the suppression that keeps the
+mismatch rule quiet **mirrors** the operand rule's condition, and was written against `alt`/`art` for
+exactly the same reason the operand rule was:
+
+```wac
+bool operandRuleSaid = k != kPlus() && (alt == "string" || art == "string");
+```
+
+`issues/lang/0238a` says so in the comment above it — *"suppressed only where the operand rule actually
+spoke, which is narrower than 'not `+`'. That rule reads `typeOfExpr`, which is empty for a string
+literal, so it never fires for `n * "a"`"*. So the pair is not two uses of one fact, it is a rule and a
+model of that rule, and moving one without the other makes them disagree. Three edits, in lockstep:
+
+* the two operand branches read `nl`/`nr`;
+* `operandRuleSaid` reads `nl`/`nr`;
+* the `Binary` arm answers `typeNone()` when an arithmetic operator was given a `bool`, so the slot rule
+  does not speak second — the `Unary` arm's rule, which states it in the same words.
+
+Counts after, all at one where the reference gives one: `i32 n = true + false`, `i32 n = true * false`,
+`string s = "a" * "b"`, `bool b = true + false`, and `n * "a"` back to one. The chain
+`t.a + t.b + t.c` is still one. `corpuscheck`, `typecheck` rung 3, `cases`, `specsingle`, `specmulti`,
+`illtyped`, `binaryoperands`, `warnings` and `codes` are green.
+
+**What to take from it.** The first attempt was reverted on the strength of one row in one test, and the
+row was right — but the conclusion drawn from it, *"find which path already reports `n * "a"` and decide
+which should own it"*, was the wrong question. Both paths should report it, one at a time, and the code
+already had a mechanism for that. The comment naming the blindness was two lines above the thing that
+depended on it.

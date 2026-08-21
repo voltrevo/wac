@@ -12,22 +12,29 @@
 // **All eleven of its callers guarded with `litKindOf`**, which knows a direct literal and a sign in
 // front of one and nothing else. So the compound case it was built for could not reach it from
 // anywhere, and `g(1)` was refused while `g(1 + 2)` was accepted — in a function argument, an array
-// element, an array fill, a positional constructor argument, a variant payload and three builtin
-// argument positions. The reference refuses every one. `issues/lang/0244a`.
+// element, an array fill, a positional constructor argument, a variant payload, four builtin argument
+// positions, a JSX attribute value and a JSX child. The reference refuses every one, and each was a
+// module built with its exported function missing and an exit code of 0. `issues/lang/0244a`.
 //
 // **Both halves, in one file, because that is the whole risk.** Widening a guard is how a checker
 // starts refusing correct programs, and each row below has a twin one type away: `g(1 + 2)` into a
 // `string` is a fault and into an `i64` is ordinary. A fix that refused both would pass the first
 // test alone.
 //
-// Not here: `"ab".slice(1, "x" + "y")` and `string.fromCodepoint("a" + "b")`, which are still
-// accepted and are `issues/lang/0245a` — a string literal pair is not a literal to `litFamily` at
-// all, so those two say nothing about these guards.
+// **Two of the twelve are caught by a different fix and are here anyway.**
+// `"ab".slice(1, "x" + "y")` and `string.fromCodepoint("a" + "b")` survived the widening, because a
+// string literal *pair* is not a literal to `litFamily` — its `Binary` arm answers only for the
+// integer and float families. What refuses them is `issues/lang/0245a` giving `"a" + "b"` a type at
+// all, so the guards' ordinary type comparison can see it. They are rows here because what a reader
+// needs from this file is every slot, not the mechanism that happened to close each one.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { dumpTypeErrors, blockedFiles } from "../../src/api.wac";
 
 i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
+
+/** A JSX program needs core's tree in scope, as `spec/cases/0121` does. */
+const string JSX = "import { Attr, Node } from \"core\";\n";
 
 string[] refusedNames() {
   return string[](
@@ -38,7 +45,11 @@ string[] refusedNames() {
     "constructor, positional, into a string field",
     "variant payload, into a string payload",
     "builtin, indexOf wants a string",
-    "builtin, string.fromBytes wants a u8[]");
+    "builtin, string.fromBytes wants a u8[]",
+    "builtin, slice wants two i32s",
+    "builtin, string.fromCodepoint wants an i32",
+    "JSX attribute value",
+    "JSX child, which must be a Node");
 }
 
 string[] refusedPrograms() {
@@ -50,7 +61,11 @@ string[] refusedPrograms() {
     "struct S { string v; }\nexport i32 f() { S s = S(1 + 2); return s.v.len(); }\n",
     "enum E { A(string s), B }\nexport i32 f() { E e = E.A(1 + 2); return 0; }\n",
     "export i32 f() { return \"ab\".indexOf(1 + 2); }\n",
-    "export i32 f() { string s = string.fromBytes(1 + 2); return s.len(); }\n");
+    "export i32 f() { string s = string.fromBytes(1 + 2); return s.len(); }\n",
+    "export i32 f() { return \"ab\".slice(1, \"x\" + \"y\").len(); }\n",
+    "export i32 f() { string s = string.fromCodepoint(\"a\" + \"b\"); return s.len(); }\n",
+    JSX + "export i32 f() { Node n = <div class={1 + 2}></div>; return 0; }\n",
+    JSX + "export i32 f() { Node n = <div>{1 + 2}</div>; return 0; }\n");
 }
 
 /** Every slot, with a compound literal that cannot go there. */
@@ -69,7 +84,7 @@ export string test_a_compound_literal_is_refused_where_a_direct_one_is() {
 /**
  * The direct form of each, which is what says the slot was ever checked at all.
  *
- * Eight rows that were refused before `0244a` and after it. If one of these ever goes silent the
+ * Ten rows that were refused before `0244a` and after it. If one of these ever goes silent the
  * guard has been removed rather than widened, and the test above would still pass — a rule that fires
  * only on the compound form is not the rule this file is about.
  */
@@ -77,7 +92,8 @@ export string test_the_direct_form_of_each_slot_is_still_refused() {
   T t = T.create();
   string[] name = string[](
     "argument", "array element", "array fill", "constructor positional",
-    "variant payload", "indexOf", "fromBytes", "fromCodepoint");
+    "variant payload", "indexOf", "fromBytes", "fromCodepoint",
+    "JSX attribute", "JSX child");
   string[] src = string[](
     "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(1); }\n",
     "export i32 f() { string[] a = string[](1); return a.len(); }\n",
@@ -86,7 +102,9 @@ export string test_the_direct_form_of_each_slot_is_still_refused() {
     "enum E { A(string s), B }\nexport i32 f() { E e = E.A(1); return 0; }\n",
     "export i32 f() { return \"ab\".indexOf(1); }\n",
     "export i32 f() { string s = string.fromBytes(1); return s.len(); }\n",
-    "export i32 f() { string s = string.fromCodepoint(\"a\"); return s.len(); }\n");
+    "export i32 f() { string s = string.fromCodepoint(\"a\"); return s.len(); }\n",
+    JSX + "export i32 f() { Node n = <div class={1}></div>; return 0; }\n",
+    JSX + "export i32 f() { Node n = <div>{1}</div>; return 0; }\n");
   for (i32 i = 0; i < src.len(); i++) {
     t.isTrue(diagsFor(src[i]) > 0, name[i] + ": the direct form went silent");
   }
@@ -108,7 +126,7 @@ export string test_the_same_compound_literals_where_they_fit() {
     "an integer sum into an i64", "a ternary of integers into an i32",
     "a float sum into an f64", "an integer sum into an i32[]",
     "an integer sum into a u8[]", "a string sum into a string argument",
-    "a ternary of integers into a u8[] element");
+    "a ternary of integers into a u8[] element", "a string literal as a JSX attribute value");
   string[] src = string[](
     "i32 g(i64 v) { return 0; }\nexport i32 f() { return g(1 + 2); }\n",
     "i32 g(i32 v) { return v; }\nexport i32 f(bool b) { return g(b ? 1 : 2); }\n",
@@ -116,7 +134,8 @@ export string test_the_same_compound_literals_where_they_fit() {
     "export i32 f() { i32[] a = i32[](1 + 2); return a.len(); }\n",
     "export i32 f() { u8[] a = u8[](1 + 2); return a.len(); }\n",
     "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(\"a\" + \"b\"); }\n",
-    "export i32 f(bool b) { u8[] a = u8[](b ? 1 : 2); return a.len(); }\n");
+    "export i32 f(bool b) { u8[] a = u8[](b ? 1 : 2); return a.len(); }\n",
+    JSX + "export i32 f() { Node n = <div class={\"a\"}></div>; return 0; }\n");
   for (i32 i = 0; i < src.len(); i++) {
     t.eqI32(diagsFor(src[i]), 0, name[i] + ": refused a legal program");
   }
@@ -126,7 +145,7 @@ export string test_the_same_compound_literals_where_they_fit() {
 /**
  * And no row is accepted by the checker *and* the emitter, which is what the silence cost.
  *
- * `illtyped_test.wac`'s standing claim, asked of these eight: a program both halves accept builds a
+ * `illtyped_test.wac`'s standing claim, asked of these twelve: a program both halves accept builds a
  * module with its exported function missing and exits 0. That is what `g(1 + 2)` did.
  */
 export string test_no_refused_row_is_accepted_by_both() {

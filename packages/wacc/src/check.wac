@@ -3009,6 +3009,14 @@ export string typeOfExpr(C c, Expr e) {
       // `return` complain a second time, at a position the reference never mentions because it had
       // already said what was wrong.
       if (bk != kPlus() && (bl == "string" || br == "string")) { return typeNone(); }
+      // **And the same for a `bool` now that a bool literal has a type here.** Arithmetic on one is
+      // refused at the operator, so answering "bool" would let the slot rule speak a second time and
+      // `i32 n = true + false;` would draw two where the reference draws one. The `Unary` arm states
+      // this rule in the same words. `issues/lang/0245a`.
+      if ((bk == kPlus() || bk == kMinus() || bk == kStar() || bk == kSlash() || bk == kPercent())
+          && (bl == "bool" || br == "bool")) {
+        return typeNone();
+      }
       if (bl != typeNone()) { return bl; }
       return br;
     }
@@ -3475,7 +3483,7 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
     if (isComponent) {
       string want = c.fieldType(comp, tokenText(c, attrs[i].nameTok));
       if (want == typeNone() || want == "") { continue; }
-      if (litKindOf(attrs[i].value) != litNone()) {
+      if (litFamily(c, attrs[i].value) != litNone()) {
         reportLiteral(c, want, attrs[i].value, errFieldMismatch(),
                       attrs[i].value.line, attrs[i].value.col);
         continue;
@@ -3491,7 +3499,7 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
     // wants one — asking `typeOfExpr` gives nothing and the mismatch goes unreported, which is how
     // `<div id={7}/>` was accepted. Every other position in this file reaches for `reportLiteral`
     // first for exactly this reason.
-    if (litKindOf(attrs[i].value) != litNone()) {
+    if (litFamily(c, attrs[i].value) != litNone()) {
       reportLiteral(c, "string", attrs[i].value, errFieldMismatch(),
                     attrs[i].value.line, attrs[i].value.col);
       continue;
@@ -3505,7 +3513,7 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
   }
   for (i32 i = 0; i < kids.len(); i++) {
     checkExpr(c, kids[i]);
-    if (litKindOf(kids[i]) != litNone()) {
+    if (litFamily(c, kids[i]) != litNone()) {
       reportLiteral(c, "Node", kids[i], errFieldMismatch(), kids[i].line, kids[i].col);
       continue;
     }
@@ -3621,9 +3629,16 @@ void checkExpr(C c, Expr e) {
       // `anyref % anyref` were all accepted — forty-five cells of the sweep, and every one of them a
       // program the reference refuses. `+` on two strings is the exception and concatenates; every
       // other combination involving a string is caught by the rule below, which predates this.
-      bool lArith = alt != "string" && isReferenceName(c, alt);
-      bool rArith = art != "string" && isReferenceName(c, art);
-      if (arith && (alt == "bool" || art == "bool" || lArith || rArith)) {
+      // **`nl`/`nr`, not `alt`/`art`, or this cannot see a literal** — the correction the bitwise
+      // branch below records for `1.5 & 2.5`, in the branch beside it. `true + false` has two operands
+      // of a kind this rule refuses and neither had a type to refuse, so it was silent where the
+      // reference says *"'+' requires numeric type, got bool"*. Moved **in lockstep with
+      // `operandRuleSaid`** below, which mirrors this condition to decide whether the mismatch rule
+      // should stay quiet: pointing one at `nl`/`nr` and not the other gives `n * "a"` two
+      // diagnostics for one fault. `issues/lang/0245a`.
+      bool lArith = nl != "string" && isReferenceName(c, nl);
+      bool rArith = nr != "string" && isReferenceName(c, nr);
+      if (arith && (nl == "bool" || nr == "bool" || lArith || rArith)) {
         c.reportTok(errOperandMismatch(), op, "");
       }
       // **A `string` is a number for exactly one operator.** `+` concatenates and the comparisons
@@ -3631,7 +3646,7 @@ void checkExpr(C c, Expr e) {
       // numeric type, got string"*, at the operator. Read off the reference rather than assumed:
       // `==`, `<` and `+` are all accepted on two strings, so the rule is about the operator and not
       // about the type being a reference.
-      if (arith && k != kPlus() && (alt == "string" || art == "string")) {
+      if (arith && k != kPlus() && (nl == "string" || nr == "string")) {
         c.reportTok(errOperandKind(), op, "");
       }
       // **Two literals of different families**, which is the one case where neither side can take
@@ -3701,7 +3716,10 @@ void checkExpr(C c, Expr e) {
         // first attempt keyed the suppression on the operator alone and made `n * "a"` compile: the
         // mutation sweep's recall caught it where its count-disagreement number called it an
         // improvement, which is the argument for having both. `issues/lang/0238a`.
-        bool operandRuleSaid = k != kPlus() && (alt == "string" || art == "string");
+        // **`nl`/`nr` here too.** This mirrors the operand rule's condition, so the two have to be
+        // asked the same question — the note above about `typeOfExpr` being blind to a string literal
+        // described the state before `0245a` pointed both at the filled-in pair.
+        bool operandRuleSaid = k != kPlus() && (nl == "string" || nr == "string");
         if (sameType && !operandRuleSaid && !bothLit && oneString &&
             nl2 != typeNone() && nr2 != typeNone()) {
           c.report(errOperandMismatch(), e.line, e.col);

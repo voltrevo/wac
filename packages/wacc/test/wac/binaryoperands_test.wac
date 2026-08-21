@@ -91,8 +91,11 @@ export string test_a_string_or_bool_literal_pair_has_a_type_and_reports_once() {
     "a string literal alone", "a string literal beside a named string",
     "concatenation into a string is legal", "an integer sum into an i32",
     "an integer sum into an i64", "a float sum into an f64",
-    "a comparison of literals is a bool", "the logical operators on bool literals");
-  i32[] want = i32[](1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0);
+    "a comparison of literals is a bool", "the logical operators on bool literals",
+    "arithmetic on two bool literals", "a different operator on two bool literals",
+    "a non-plus operator on two string literals", "arithmetic on bools in a bool slot",
+    "a named integer times a string literal still reports once");
+  i32[] want = i32[](1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1);
   string[] src = string[](
     "export i32 f() { i32 n = \"a\" + \"b\"; return n; }\n",
     "export i32 f() { bool b = \"a\" + \"b\"; return b ? 1 : 0; }\n",
@@ -105,7 +108,12 @@ export string test_a_string_or_bool_literal_pair_has_a_type_and_reports_once() {
     "export i64 f() { i64 n = 1 + 2; return n; }\n",
     "export f64 f() { f64 d = 1.5 + 2.5; return d; }\n",
     "export bool f() { bool b = 1 == 2; return b; }\n",
-    "export bool f() { bool b = true && false; return b; }\n");
+    "export bool f() { bool b = true && false; return b; }\n",
+    "export i32 f() { i32 n = true + false; return n; }\n",
+    "export i32 f() { i32 n = true * false; return n; }\n",
+    "export i32 f() { string s = \"a\" * \"b\"; return s.len(); }\n",
+    "export i32 f() { bool b = true + false; return b ? 1 : 0; }\n",
+    "export i32 f(i32 n) { return n * \"a\"; }\n");
   t.eqI32(name.len(), src.len(), "the name and program lists disagree in length");
   t.eqI32(name.len(), want.len(), "the name and count lists disagree in length");
   if (name.len() != src.len() || name.len() != want.len()) { return t.report(); }
