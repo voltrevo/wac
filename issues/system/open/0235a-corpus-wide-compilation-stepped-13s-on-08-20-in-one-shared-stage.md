@@ -265,3 +265,21 @@ has a limit worth recording here because it misled me: **it prices the call site
 Doubling the resolve loop attributed 4.7s to it, and the real cause — `isBuiltinSpec`, reached from that
 loop *and* from elsewhere — was worth about 11s. A stage that is called from more than one place is
 undercounted by exactly the share the other callers hold.
+
+### Narrowed: the step is in the front end, not the graph
+
+The two optimisations that landed after this was filed were both in the graph and resolution path — the
+import-edge walk and the built-in membership test. They responded very differently:
+
+    corpuscheck_test   one `diagnoseGraph` over 1,003 files    26-31s → 8.2s   (3.3×)
+    describewac_test   four front ends over a few closures,
+                       one of them `boxsh.wac`'s 182 files     15-16s → 12.4s  (1.2×)
+
+`corpuscheck` is graph-bound and moved a lot; `describewac` is front-end-bound and barely moved. **So
+whatever stepped on 08-20 is in the front end — parse, check, settle — and not in the graph.** That is a
+real narrowing, and it comes free from a change made for another reason.
+
+It also sharpens the awkwardness: the two commits in the window that touch the front end are exactly the
+two already measured out against `describewac_test` itself (`setType`, 17704ms against 17515ms; and
+`declinedExport`, read). So the front end got slower in a window whose only front-end changes do not
+account for it.

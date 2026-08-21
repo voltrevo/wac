@@ -184,3 +184,24 @@ while adding a leaf lengthens one.
   bytes, and no reading of the scaling above turns that into 10×. That is a different defect from going
   stale, and it is the one worth checking first for the other five: a number that was wrong when written
   will not be found by re-measuring on a schedule.
+
+## The number, at last: 823s against a declared 84s — agent-a, 2026-08-21
+
+`packages/wacc/test/wac/names_test.wac`, run alone on an idle box at 102% of one core, **finished in
+823s** and passed. Not a floor this time — a duration. Declared `84s`, byte-identical since 08-19,
+against a corpus 8.7% larger than when the number was written. **9.8×.**
+
+Taken *after* two optimisations landed that cut a whole-corpus check by 62% (`corpuscheck_test` 26.6s →
+10.2s alone, 26-31s → 8.2s in the gate). They barely touched this: both were in the graph and resolution
+path, and `names_test` is bound by something else — it calls `namesFiles(all paths, all sources,
+paths[f])` once per corpus file, so its cost is the sum of every module's closure through the front end.
+
+So the recommendation stands and is now priced properly:
+
+- **Step 1** — re-measure the six — costs about fourteen minutes for this one alone, and the other two
+  corpus-sized files are the same shape. That is the thing to know before setting out.
+- **Step 3** is still the answer. 823s is not a number to write down and check; it is a number that will
+  be wrong again by next week, because it is a function of the repository rather than of the test.
+- And **the 84s was never right**: no reading of the scaling turns +8.7% of corpus into 9.8× of cost.
+  A number that was wrong when written is not found by re-measuring on a schedule, which is the argument
+  for step 3 over step 1.
