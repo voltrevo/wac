@@ -121,8 +121,31 @@ link once with the caller's tables and then calls `linkFailure`, which **re-link
 ones** — so the diagnosis can trip a different guard than the build did. Worth knowing before trusting
 any future message from this path to describe the run that actually failed.
 
-### What is left
+### What is left, measured rather than left as a question
 
-Nothing here, but the last section's question stands: `Env` is built with a dozen more fixed tables on
-four lines, and how many of *those* writes are guarded rather than checked is unmeasured. The linker's
-five were two-fifths wrong.
+The five guards above are the linker's. `emit.wac` has **five more** of the silent-skip shape, counted
+by `rg "\.len\(\)\) \{ continue; \}"`:
+
+| site | table | what it is |
+|---|---|---|
+| `frontOfRaw`, and its twin | `env.importFrom` (`i32[1024]`) | a **write** — the edge is dropped and the module built |
+| three in the coverage-name walk | `fnName` | **reads** of a looked-up index, where skipping is the answer |
+
+So two of the five matter, and both are the same site in two functions: `Env`'s import-edge table
+truncating silently at 1024.
+
+**They are unreachable today, and only by coincidence.** The linker's queue holds one entry per import
+edge *followed* — its own new message says so — and it is also 1024, so a program big enough to overflow
+`Env`'s table is refused by the queue first. Measured, 300 files with a fan-out of 4 (about 1200 edges,
+301 files):
+
+    fan 2, ~600 edges    →  clean, 20 130 bytes
+    fan 4, ~1200 edges   →  refused: "more files to visit than the linker's queue holds (at most 1024…)"
+    fan 6, ~1800 edges   →  the same
+
+**Which is a latent hazard rather than a non-problem:** raise `linkQueueSize()` and those two guards
+become live, silently, and the symptom is a module with a name resolved to nothing. The honest fix is to
+size `Env`'s import tables from `linkQueueSize()` so the relation is stated rather than coincidental —
+not done here because `Env`'s constructor is positional with a dozen `1024`s on four lines, and picking
+the right four by counting arguments is exactly the kind of edit that goes wrong quietly. Whoever gives
+`Env` named field initialisers should do it in the same change.
