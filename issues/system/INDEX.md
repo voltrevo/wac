@@ -63,7 +63,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-236 issues, 186 closed.
+237 issues, 186 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
