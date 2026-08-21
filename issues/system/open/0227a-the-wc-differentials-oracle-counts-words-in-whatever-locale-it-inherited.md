@@ -1,7 +1,7 @@
 # 0227a — the `wc` differential's oracle counts words in whatever locale it inherited
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b, 2026-08-21 — pinning the locale *and* stating what our `wc` implements
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
 - **Kind:** untested behaviour
