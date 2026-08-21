@@ -301,3 +301,64 @@ ambiguous name. This was never an ambiguity — there was one candidate, because
 exist yet — so it does not settle that. But it does remove the case that made `0154`'s recorded
 ingredient list wrong in four places, and the three-file reproduction recorded there is worth
 re-measuring against the fix by whoever picks it up.
+
+### The rest of the family, counted rather than assumed
+
+An omission like this recurs wherever the same arms were written by hand, so the fix is not done until
+the population is counted. Every `typeOfTyName` call inside the declaration walk:
+
+| line | what it resolves | needs deferral? |
+| --- | --- | --- |
+| 11276 | a struct's field | yes — has recorded a `Ty` since the pass existed |
+| 11327 | a **variant's payload** | yes — **this fix** |
+| 11356 | the deferred pass itself | — |
+| 11396 | a module constant's type | **no**: runs after the deferred pass |
+| 11411, 11414 | a function's parameters and return | **no**: same |
+
+The last three are in the same function body as the pass, *below* it, so by the time they run every
+struct and enum has been declared and the table is complete. That is why function signatures were never
+affected — worth stating, because "signature types are resolved eagerly" was one of the hypotheses this
+issue killed, and the reason it is wrong is an ordering that no comment mentions.
+
+So the family is two members and both are now covered. `structParentToks` is the third record of the
+same *kind* — a name that cannot be resolved yet — and it was already deferred, with the comment that
+made the family findable.
+
+### The fix is not a no-op for this repository: 35 bytes
+
+`native/v8/seed/wacc.wasm` goes from 987,645 to 987,680 bytes, and remains a fixed point. So a payload
+type inside wacc's own source did resolve differently before — and the reason the repository was never
+*broken* by it is worth stating, because it is why this sat here undetected:
+
+with only one declaration of `Arm` in the link, the early use at line 91 found **no** candidate and fell
+back to the bare name (`return found == "" ? name : found`), which is the key `ast.wac`'s own
+declaration was later registered under — the first declaration of a name keeps the bare form. Right
+answer, wrong route. Add a second file declaring the name and the bare form belongs to *that* file
+instead, and the fallback becomes a silent mis-resolution.
+
+So the bug needed an outside declaration to become visible, and the repository's own build was correct
+by a coincidence of naming rather than by resolution. The 35 bytes are that coincidence being replaced
+by an actual lookup.
+
+### The population, and a correction to "three of nine"
+
+Counted across `packages/` — a type named in a file earlier than its own declaration in that file:
+**51 pairs across 36 files**. Regex-derived, so approximate, but the control is exact: run against
+`ast.wac` it finds `Arm` 91/227, `Param` 164/281 and `Stmt` 164/188 — the three measured as broken — and
+two more.
+
+**Those two more are the correction.** `JsxAttr` (106/222) and `Lvalue` (142/173) are used before they
+are declared in `ast.wac` and were **not among the nine names tested**. Both earlier uses are enum
+variant payloads — `Jsx(i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids)` and
+`Incr(Lvalue target, i32 op, bool prefix)` — checked rather than assumed, so by this issue's own
+diagnosis they were affected too and the population was five rather than three. **`JsxAttr` is now tested**, by adding it beside `Arm` in `collide0234_test.wac` and re-running the
+canary: without the fix it declines through a different chain — `emitModule` → `emitModuleOf` →
+`emitModuleOfWith` → `emitModuleOfInto` → `frontOfRaw` → `findLambdasInProgram` → `findLambdasExpr` →
+`untyped member` — which is a second, independent confirmation of the rule, since nothing about that
+path resembles `Arm`'s. So the "three of nine" table above should be read as *three of the nine I
+happened to try*; the set is five, and `Lvalue`, `Param` and `Stmt` are the untested remainder.
+
+51 is an upper bound on the hazard rather than its size: only an earlier use inside an **enum variant
+payload** was ever mis-resolved, since a struct field was already re-resolved by the deferred pass. In
+`ast.wac` all five are payloads, which is why that file was the one this surfaced through — it is the
+repository's densest enum.

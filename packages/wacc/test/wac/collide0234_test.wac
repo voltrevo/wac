@@ -10,10 +10,11 @@
 // against a declaration table that did not hold the real one yet, and an unrelated file walked before
 // `ast.wac` won the name.
 //
-// **`Arm`, `Param` and `Stmt` were the three of nine `ast.wac` exports that did it**, and the reason
-// they and not the other six is exactly this: they are the three used earlier in the file than their
-// own declaration. That correlation is what identified the cause, and it is why one name is enough
-// here — `issues/lang/0234a` records the table.
+// **Five `ast.wac` exports did it, and the rule is what identified the cause**: a type used earlier in
+// the file than its own declaration, where the earlier use is an enum variant payload — the record
+// whose type was never re-resolved. `Arm` 91/227, `JsxAttr` 106/222, `Lvalue` 142/173, `Param`
+// 164/281, `Stmt` 164/188; the others are declared before first use, or never used as a type there.
+// `issues/lang/0234a` has the table and the count for the whole repository.
 //
 // **Why it writes files and runs the binary.** The in-process route cannot express it: a four-source
 // imitation — a library file declaring the struct, a second reading a member of it, the colliding
@@ -60,17 +61,28 @@ i32 runIn(Cli cli, string dir) {
   return out.indexOf("0") == 0 ? 0 : 1;
 }
 
-/** The name that used to break: it builds, and the library still answers correctly. */
-export string test_a_struct_named_like_one_the_library_uses_does_not_break_it(Core core, Cli cli) {
+/**
+ * The names that used to break: they build, and the library still answers correctly.
+ *
+ * Two of them, because the affected set was identified by a *rule* — a type used earlier in `ast.wac`
+ * than its own declaration — and a rule is worth two samples. `Arm` is used at line 91 and declared at
+ * 227; `JsxAttr` at 106 and 222. Both earlier uses are enum variant payloads, which is the record whose
+ * type was not re-resolved. The other three of the five are `Param`, `Stmt` and `Lvalue`.
+ */
+export string test_structs_named_like_ones_the_library_uses_do_not_break_it(Core core, Cli cli) {
   T t = T.create();
-  string dir = cli.cwd().wait() + "/.cache/collide0234";
-  cli.remove(dir, true).wait();
-  t.isTrue(writeTree(cli, dir, "Arm"), "wrote the tree");
-  string built = buildIn(cli, dir);
-  t.isTrue(built.indexOf("cannot emit") < 0,
-      "declaring `Arm` broke the library again — 0234a: " + built);
-  t.eqI32(runIn(cli, dir), 0, "it built but the library answered wrongly, which is worse");
-  cli.remove(dir, true).wait();
+  string[] names = string[]("Arm", "JsxAttr");
+  for (i32 i = 0; i < names.len(); i++) {
+    string dir = cli.cwd().wait() + "/.cache/collide0234-" + names[i];
+    cli.remove(dir, true).wait();
+    t.isTrue(writeTree(cli, dir, names[i]), "wrote the tree for " + names[i]);
+    string built = buildIn(cli, dir);
+    t.isTrue(built.indexOf("cannot emit") < 0,
+        "declaring `" + names[i] + "` broke the library again — 0234a: " + built);
+    t.eqI32(runIn(cli, dir), 0,
+        names[i] + ": it built but the library answered wrongly, which is worse");
+    cli.remove(dir, true).wait();
+  }
   return t.report();
 }
 
