@@ -22,9 +22,19 @@
 // else here, arrived at independently and for the same reason: `oracle_node.mjs` opens a socket per
 // case, and one process per case on top of that would have been unusable.
 //
-// What did change is how the nudge window is set. `Cli.exec` passes a program and its arguments and
-// no environment — a deliberate limit, since an inherited environment is a capability nobody declared
-// — so `--nudge-ms=` was added beside `WAC_HTTP_ORACLE_NUDGE_MS`. `oracle_test.wac` is what needs it.
+// What did change is how the nudge window is set: `--nudge-ms=` was added beside
+// `WAC_HTTP_ORACLE_NUDGE_MS`, and a flag is the better spelling for a number a caller chooses.
+//
+// **The reason recorded here for it has since inverted, which is worth correcting rather than
+// deleting.** It said `Cli.exec` "passes … no environment — a deliberate limit, since an inherited
+// environment is a capability nobody declared". Measured on 2026-08-18 in `packages/git`'s
+// `status_test.wac`: `exec` hands the child the host's **whole** environment, 37 variables —
+// `issues/system/0198`. So the limit that justified the flag does not exist, and the leak the old
+// sentence said could not happen is the one that can.
+//
+// The flag stays, and now for a reason that holds either way: a window this test chooses is an
+// argument, not an ambient variable, and `Cli.execWith(…, clearEnv: true, …)` is how a caller asks for
+// nothing else — which is what `issues/system/0182` argued for and what closed it.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Exec } from "std/platform.wac";
