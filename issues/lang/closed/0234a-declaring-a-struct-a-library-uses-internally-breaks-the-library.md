@@ -1,7 +1,10 @@
 # 0234a — declaring a struct whose name a library uses internally breaks the library, from one file
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — agent-a, 2026-08-21: one line. A variant payload's `Ty` was not recorded, so the
+  pass that re-resolves field types skipped it and the payload kept a type resolved against a partial
+  declaration table
+- **Fixed in:** `packages/wacc/src/emit.wac`, with `packages/wacc/test/wac/collide0234_test.wac`
+- **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** bug
@@ -216,3 +219,85 @@ refusal of a correct program.
 
 It is evidence about the path this entry exercises, not a proof about every path — but it is the
 cheapest check available and it rules out the worst reading.
+
+## Fixed: a variant payload did not record its `Ty`
+
+One line, in the enum branch of the declaration walk:
+
+```wac
+env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, variants[v].fields[i].type);
+env.fieldTys[env.fieldCount] = variants[v].fields[i].type;      // <- this
+env.fieldNullable[env.fieldCount] = isNullableTy(variants[v].fields[i].type);
+```
+
+A **struct** field has recorded its `Ty` since the deferred pass existed. A **variant payload** did
+not — and that pass skips what it cannot re-resolve:
+
+```wac
+for (i32 i = 0; i < env.fieldCount; i++) {
+  if (env.fieldTys[i] is null) { continue; }
+  env.fieldTypes[i] = typeOfTyName(env, src, lexed, env.fieldTys[i]!);
+}
+```
+
+So a payload's type was whatever the *partial* declaration table said when its enum was walked, for
+ever. Parents and struct fields were already deferred for exactly this reason, each with a comment
+saying so; the payload was the one member of that family nobody had added.
+
+### The evidence, and what settled it
+
+The accumulating probe — appending rather than declining, so the run finishes — recorded **two** asks
+for `Arm` and no more:
+
+    ask f=5 declCount=13 impCand=0 imported=[]     parse.wac
+    ask f=6 declCount=31 impCand=0 imported=[]     ast.wac
+    NO-FIELD o=[Arm] m=[variantTok]
+    NO-FIELD o=[Arm] m=[value]
+    NO-FIELD o=[Arm] m=[bindingToks]  …
+
+The second ask is the tell: **`ast.wac` asking for `Arm` and not finding its own**, because it uses the
+name at line 91 and declares it at line 227. And every failing lookup is on the *bare* key `Arm` — the
+unrelated declaration — for members that belong to the real one.
+
+That predicted the whole nine-name split, which had looked arbitrary. The three affected names are
+exactly the three used earlier in `ast.wac` than their own declaration:
+
+| name | declared | first use | |
+| --- | --- | --- | --- |
+| `Arm` | 227 | **91** | broken |
+| `Param` | 281 | **164** | broken |
+| `Stmt` | 188 | **164** | broken |
+| `Case` | 200 | 261 | fine |
+| `Expr` | 71 | 80 | fine |
+| `Decl` | 331 | 364 | fine |
+| `Method` | 294 | 351 | fine |
+| `Ty` | 31 | 47 | fine |
+| `Program` | 363 | never used | fine |
+
+Nine for nine, which is what turned a guess into a diagnosis.
+
+### The two caveats above are resolved
+
+Both were artefacts of reporting through `declineFor`, which keeps the first reason:
+
+- *"the first and only thing that asks"* — there are two askers, and the second is the important one;
+- *"the answer is never revisited"* — **true**, and now measured by an instrument that does not stop the
+  build: two asks, both during collection, none after.
+
+### Verified
+
+- `Arm`, `Param` and `Stmt` all build now, and the program **answers correctly** — six diagnostic ints,
+  the same as `Zork`, which collides with nothing. Building was never sufficient; the check is the
+  answer.
+- Canaried by removing the line: `Arm` declines again with the same seven-level cascade, and
+  `collide0234_test.wac` fails on it while its control keeps passing.
+- Seed a fixed point with all three payloads; `cases` 225 of 225; `illtyped` 5 of 5; `corpusMutate`,
+  `checkSweep`, `emitSweep` and `linkEmit` green.
+
+### What it says about `issues/lang/0154`
+
+`0154`'s remaining question is whether the linker should qualify further rather than refuse an
+ambiguous name. This was never an ambiguity — there was one candidate, because the other one did not
+exist yet — so it does not settle that. But it does remove the case that made `0154`'s recorded
+ingredient list wrong in four places, and the three-file reproduction recorded there is worth
+re-measuring against the fix by whoever picks it up.

@@ -1,41 +1,48 @@
-// Declaring a struct a library uses internally breaks the library. `issues/lang/0234a`.
+// Declaring a struct a library uses internally does not break the library. `issues/lang/0234a`.
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env \
 //       packages/wacc/test/wac/collide0234_test.wac
 //
-// **This pins a bug, deliberately.** One file declares `export struct Arm` and never uses it; a second
-// imports a function from it and also imports `packages/wacc/src/api.wac`. `wac check` reports the
-// program clean and `wac build` declines it, five levels from the cause. When the bug is fixed this
-// test fails and points here, which is the whole reason it asserts the broken answer rather than
-// hoping someone notices.
+// One file declares `export struct Arm` and never uses it; a second imports a function from it and
+// also imports `packages/wacc/src/api.wac`. That used to build a module the engine would not load —
+// `wac check` reported the program clean and `wac build` declined a member access five levels away —
+// because `ast.wac` uses `Arm` at line 91 and declares it at line 227, so the *earlier* use resolved
+// against a declaration table that did not hold the real one yet, and an unrelated file walked before
+// `ast.wac` won the name.
+//
+// **`Arm`, `Param` and `Stmt` were the three of nine `ast.wac` exports that did it**, and the reason
+// they and not the other six is exactly this: they are the three used earlier in the file than their
+// own declaration. That correlation is what identified the cause, and it is why one name is enough
+// here — `issues/lang/0234a` records the table.
 //
 // **Why it writes files and runs the binary.** The in-process route cannot express it: a four-source
-// imitation of the shape — a library file declaring the struct, a second reading a member of it, the
-// colliding declaration and an entry importing both — is clean on `dumpTypeErrorsFiles`,
-// `blockedFiles` and `emitDeclineFiles` alike, with and without the collision. The ingredient is
-// wacc's real graph, where `parse.wac` is walked before `ast.wac` and so resolves `Arm` against a
-// declaration table that does not contain the real one yet.
+// imitation — a library file declaring the struct, a second reading a member of it, the colliding
+// declaration and an entry importing both — is clean on `dumpTypeErrorsFiles`, `blockedFiles` and
+// `emitDeclineFiles` alike, with and without the collision. The ingredient is wacc's real graph.
 //
-// **And the control is the point**: the same program with the struct renamed builds and runs. Without
-// it this test would pass just as well against a compiler that refused everything.
+// **Building is not enough, so this checks the answer.** The entry asks the library how many
+// diagnostics a known-bad snippet has and exits 0 only if the count is right, which is what says the
+// library still *works* with the colliding name in the link rather than merely compiling.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
 
-/** The two files, with `name` as the colliding struct. Returns false if anything could not be written. */
+/** The two files, with `name` as the colliding struct. */
 bool writeTree(Cli cli, string dir, string name) {
   cli.mkdir(dir, true).wait();
   Change a = cli.writeFile(dir + "/one.wac",
       ("export struct " + name + " { i32 x; }\nexport i32 one() { return 1; }\n").toBytes()).wait();
   if (a.fault != 0) { return false; }
   // `../..` from `.cache/<dir>/` back to the repository root, then into the compiler's own source.
+  // The entry answers 0 when the library gave the right count, so the exit status is the assertion.
   return cli.writeFile(dir + "/agg.wac",
       ("import { one } from \"./one.wac\";\n" +
        "import { dumpTypeErrors } from \"../../packages/wacc/src/api.wac\";\n" +
-       "export i32 main() { return one() + " +
-       "dumpTypeErrors(\"export i32 g() { return 1; }\".toBytes()).len(); }\n").toBytes())
-      .wait().fault == 0;
+       "export i32 main() {\n" +
+       "  i32 n = dumpTypeErrors(\"export i32 f(string s) { return s - 1; }\".toBytes()).len();\n" +
+       "  return n == 6 && one() == 1 ? 0 : 1;\n" +
+       "}\n").toBytes()).wait().fault == 0;
 }
 
 string buildIn(Cli cli, string dir) {
@@ -45,52 +52,42 @@ string buildIn(Cli cli, string dir) {
   return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
 }
 
-string checkIn(Cli cli, string dir) {
+i32 runIn(Cli cli, string dir) {
   Exec r = cli.exec("/bin/sh",
-    string[]("-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' check agg.wac 2>&1"),
+    string[]("-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' run agg.wac > /dev/null 2>&1; echo $?"),
     u8[0]()).wait();
-  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  string out = string.fromBytes(r.stdout);
+  return out.indexOf("0") == 0 ? 0 : 1;
 }
 
-/**
- * The bug, asserted as it behaves today.
- *
- * `Arm` is one of three `ast.wac` exports that do this — `Param` and `Stmt` are the others, and the
- * six that do not are `Case`, `Expr`, `Ty`, `Decl`, `Method` and `Program`. One name is enough here:
- * what is being pinned is that the class exists, not its membership, which `issues/lang/0234a`
- * records.
- */
-export string test_a_colliding_struct_name_breaks_the_library_it_never_names(Core core, Cli cli) {
+/** The name that used to break: it builds, and the library still answers correctly. */
+export string test_a_struct_named_like_one_the_library_uses_does_not_break_it(Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/collide0234";
   cli.remove(dir, true).wait();
   t.isTrue(writeTree(cli, dir, "Arm"), "wrote the tree");
-
-  // The checker sees nothing, which is half of why this is hard to diagnose in the wild.
-  string checked = checkIn(cli, dir);
-  t.isTrue(checked.indexOf("no diagnostics") >= 0,
-      "the checker reported something — has 0234a been fixed? " + checked);
-
   string built = buildIn(cli, dir);
-  t.isTrue(built.indexOf("cannot emit") >= 0,
-      "the build succeeded — 0234a may be fixed, in which case delete this test and close it: " + built);
-  // The cascade is what makes it diagnosable at all; it arrived with `issues/lang/0170a`.
-  t.isTrue(built.indexOf("untyped member") >= 0,
-      "the decline no longer ends at `untyped member` — the cause may have moved: " + built);
+  t.isTrue(built.indexOf("cannot emit") < 0,
+      "declaring `Arm` broke the library again — 0234a: " + built);
+  t.eqI32(runIn(cli, dir), 0, "it built but the library answered wrongly, which is worse");
   cli.remove(dir, true).wait();
   return t.report();
 }
 
-/** The control: rename the struct and the identical program builds. */
-export string test_the_same_program_with_the_struct_renamed_builds(Core core, Cli cli) {
+/**
+ * The control, and it is the reason this test can fail for the right reason.
+ *
+ * A name the compiler does not declare anywhere. If this ever fails the harness is broken rather than
+ * the compiler, and the test above would have been passing for no reason.
+ */
+export string test_the_same_program_with_a_name_the_compiler_never_declares(Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/collide0234-ok";
   cli.remove(dir, true).wait();
   t.isTrue(writeTree(cli, dir, "Zork"), "wrote the tree");
   string built = buildIn(cli, dir);
-  t.isTrue(built.indexOf("cannot emit") < 0,
-      "a name the compiler does not declare was refused too, so the collision is not what matters: "
-      + built);
+  t.isTrue(built.indexOf("cannot emit") < 0, "the control did not build: " + built);
+  t.eqI32(runIn(cli, dir), 0, "the control answered wrongly, so the harness is what is wrong");
   cli.remove(dir, true).wait();
   return t.report();
 }

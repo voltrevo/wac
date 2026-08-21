@@ -119,3 +119,52 @@ The terminal form — `then` returning nothing — is landed and useful, and `dr
 without chaining. But `Pending<T>` is how every capability in this repository answers, so "a
 continuation that produces a value" is the first thing anyone will reach for after the first one, and
 today it is a refusal with no workaround short of a free function.
+
+## What a caller sees today — agent-a, 2026-08-21
+
+This note says calling such a method is *"refused by name"*. Measured, it is refused in two different
+places depending on how the call is written, and neither message is the one that phrase suggests.
+
+**The inference form**, which is what the note is about:
+
+```wac
+struct Box<T> {
+  T v;
+  Box<U> map<U>(const this, fn[U(T)] f) { return Box<U>(f(this.v)); }
+}
+Box<i32> c = b.map((i32 x) => x + 1);
+```
+
+    error: nothing here wants a function, so this lambda has no type
+      --> n.wac:7:22
+       |
+     7 |   Box<i32> c = b.map((i32 x) => x + 1);
+       |                      ^
+
+That is this note's own analysis arriving from the argument's side: `U` is unknown, so the parameter
+type `fn[U(T)]` is unknown, so the lambda has no slot to take a type from. Worth having in the note
+because **option A has to reach back to it** — binding `U` from the wanted type of the call means the
+lambda's type becomes known *after* the point where this diagnostic fires, so whatever implements A has
+to arrange the slot before typing the argument, not merely record it.
+
+**The explicit form** is refused somewhere else entirely, and this is the part worth knowing before the
+decision:
+
+```wac
+Box<i32> c = b.map<i32>((i32 x) => x + 1);
+```
+
+    error: initialiser does not match the declared type
+      --> m.wac:7:25
+       |
+     7 |   Box<i32> c = b.map<i32>((i32 x) => x + 1);
+       |                         ^ expected Box<i32>, found bool
+
+`found bool` because the parse is a comparison chain — `(b.map < i32) > (…)` — which is exactly what
+`spec/spec/generics.md` says angle brackets are: *"type syntax only — the same ambiguity with
+less-than"*. So the message is not wrong. It is also the message a person gets for writing the thing
+this note's option C would introduce, and it names neither the rule nor the intent; `issues/lang/0235a`.
+
+**Neither refusal is the "a method with its own type parameters" decline** that `emit.wac` records for
+these methods (`issues/lang/0160`'s guards). That one is the *emitter* declining to emit the method at
+all; both refusals above happen in the checker first, so a reader chasing this will not see it.

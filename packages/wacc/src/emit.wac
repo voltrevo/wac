@@ -11325,6 +11325,14 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
             env.fieldNames[env.fieldCount] = vname + "." +
               tokenTextOf(src, lexed, variants[v].fields[i].nameTok);
             env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, variants[v].fields[i].type);
+            // **And the `Ty`, so the pass that re-resolves field types covers a payload too.** Struct
+            // fields have recorded one since that pass existed; a variant's payload did not, so its
+            // type was whatever the *partial* declaration table said at this point — and a name used
+            // earlier in a file than its own declaration is not in that table yet. `ast.wac` uses
+            // `Arm` at line 91 and declares it at 227, so a program that declared an `Arm` of its own
+            // in a file walked earlier won the name, permanently and silently: `wac check` reported
+            // nothing and the build declined a member access five levels away. `issues/lang/0234a`.
+            env.fieldTys[env.fieldCount] = variants[v].fields[i].type;
             env.fieldNullable[env.fieldCount] = isNullableTy(variants[v].fields[i].type);
             env.fieldCount = env.fieldCount + 1;
           }
