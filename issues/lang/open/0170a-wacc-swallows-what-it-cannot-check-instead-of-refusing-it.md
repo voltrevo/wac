@@ -558,3 +558,48 @@ sites as if it were a type, and the missing cases. The reason the order was "rep
 still holds, and the reporting is in better shape than it was: the fourteen are refused, this file holds
 them there, and a tightening round that collapses self-hosting now has a negative corpus to calibrate
 against instead of a rebuild per guess.
+
+## And the instrument the tightening needs, which now exists — agent-a, 2026-08-21
+
+The section above ends *"there is no way to find round 4 from here. The compiler that would tell you
+which expression it declined is the compiler that no longer builds."* That is true of a **seed** and
+only of a seed. Two instruments were built instead, and neither installs anything:
+
+**1. `packages/wacc/test/wac/tighten_probe.wac`** — a `wac test` file importing `../../src/api.wac`
+compiles the *working tree* with whatever seed is installed, so a tightened emitter can be asked what it
+declines while the seed stays the last good one. It runs `blockedFiles` over wacc's own closure and
+prints each decline by file and reason. Baseline: **0 of 17**, in seconds. It reports through
+`core.warn` and passes, because an instrument that reports by failing is a red test for whoever runs it
+next — and in this toolchain a probe that reports by failing a build installs itself as the seed.
+
+**2. `packages/wacc/test/emitSweep.test.ts` now asserts its decline count is zero.** That sweep runs
+4501 generated programs through both compilers and compares answers, and it had `declined++` as a bare
+number in a `console.log`. Every one of those is a program the reference **just accepted** — the check
+is three lines below `r.ok` — so "declining is honest and measured elsewhere" was doing a lot of work
+for a counter nobody read. Measured: **0 declined of 4102 compared.** Zero is assertable, so it is
+asserted, and a failure now lists up to ten programs with the decline reason and the source.
+
+Canaried by forcing a decline on the `as@` cells: 4054 still compared, 48 declined, and the message is
+
+    48 program(s) the reference compiled were declined by this emitter:
+      cast as@ i32->u32: CANARY a forced decline in export u32 f() { i32 x = 0; return x as@ u32; }
+
+The first attempt at that canary inverted the condition instead, which stopped *all* comparisons and
+tripped the older `compared < 1000` guard — so it proved the wrong assertion. Worth recording: the two
+guards protect different things and only a subset-canary tells them apart.
+
+### Which changes the order again, in a useful direction
+
+Step 2 was "`typeOfE` must not guess", and the reason it has not been done is no longer the missing
+report. It is that **there is no failing case for it**: all fourteen programs are refused, the rung 3
+differential already grids every operator against every type against the reference
+(`typecheck_test.wac`, 50-odd slices including `test_rung3_every_operator_against_every_type`), and the
+emit sweep declines nothing. So a tightening today would be a change with no reproduction, which is the
+one thing this repository's rules are firmest about.
+
+What is missing is a case, not a fix. The place to look is where the two differentials do *not* meet:
+rung 3 compares the **checker** against the reference, and the sweep compares **answers** for programs
+both accept. A program the checker accepts, the emitter emits, and whose *result* differs only in a
+type the guess got wrong would be caught by the sweep only if the generator emits that shape — and
+`generateEmit.ts` is a cast cross-product. Extending it to mixed-type binary and ternary operands is the
+next concrete step, and it is a generator change rather than a compiler one.
