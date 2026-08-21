@@ -123,6 +123,14 @@ i32 chunkSize() { return 12; }
  *   4      259s    7893MB    5158MB    5905MB   3377 passed      <- the default
  *   5      231s    7672MB    5359MB         -   3377 passed
  *
+ * **The `3377 passed` column is the *Deno lane alone*, and that is now less than half the suite.**
+ * `tools/jobsSweep.sh` runs `deno test` at each width and does not run the `wac test` lane at all,
+ * so the table times a half that has been shrinking — 3,377 tests when this was measured, 1,690
+ * on 2026-08-21, because `issues/system/0161` keeps moving tests to the other lane, where there
+ * are now 2,387 of them. The *memory* argument below is the one the cap rests on and it is
+ * unaffected, since the peak is the machine's rather than a lane's. The wall-clock column should
+ * be re-measured over both lanes before anybody moves the number on its strength.
+ *
  * **Every width is 18–27% faster than before the heavy lane**, which is what that lane was for: the
  * ten files it takes out of this pass are about a gigabyte resident each. 893s at one worker is now
  * 689s, and 317s at four is 259s.
@@ -455,6 +463,38 @@ string secs(i64 ms) {
   }
   i64 tenths = (ms + (50 as i64)) / (100 as i64);
   return itoa((tenths / (10 as i64)) as! i32) + "." + itoa((tenths % (10 as i64)) as! i32) + "s";
+}
+
+/**
+ * The tests `wac test` reported, from its per-file `N passed, M failed` lines.
+ *
+ * **The lane counted *files* and not tests until 2026-08-21, and the suite's output was misleading
+ * for it.** One lane printed `1690 passed` and the other `375 wac test files`, so no line anywhere
+ * said what the suite had run — and 1,690 reads like a suite that shrank when it is one lane of a
+ * suite that grew: the Deno half was 3,377 tests when the worker-cap table below was measured and is
+ * now 1,690, because `issues/system/0161` keeps moving tests to the other lane. Somebody reading the
+ * footer had to know that to not be alarmed, which is a thing the footer should say instead.
+ */
+i32 testsReported(string block) {
+  i32 total = 0;
+  u8[] b = block.toBytes();
+  i32 at = 0;
+  for (i32 k = 0; k <= b.len(); k++) {
+    if (k != b.len() && b[k] != '\n') { continue; }
+    string line = block.slice(at, k);
+    at = k + 1;
+    i32 mark = line.indexOf(" passed, ");
+    if (mark <= 0) { continue; }
+    // The count is the digits before it, and a line that starts with anything else is not a summary.
+    i32 from = mark;
+    while (from > 0) {
+      string c = line.slice(from - 1, from);
+      if (c < "0" || c > "9") { break; }
+      from = from - 1;
+    }
+    if (from == 0 && mark > 0) { total = total + atoi(line.slice(0, mark)); }
+  }
+  return total;
 }
 
 /**
@@ -859,6 +899,7 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
   Took[] took = Took[queue.len() + f.alone.len() + 1](fill: Took("", 0 as i64));
   i32 tookN = 0;
   i32 files = 0;
+  i32 tests = 0;
   i32 summaries = 0;
 
   // The queue. Each slot holds one ticket; when any of them answers, its block is printed whole and
@@ -909,6 +950,7 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
     i32 said = filesReported(block);
     if (said > 0) { summaries = summaries + 1; }
     files = files + said;
+    tests = tests + testsReported(block);
     core.log(trimEnd(block));
     if (!r.ran()) {
       core.warn("   " + done.label + " did not start — " + r.error);
@@ -949,8 +991,10 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
                             string[0](fill: ""), false, false).wait();
       took[tookN] = Took(serial[i] + " (alone)", nowMs(core) - started);
       tookN = tookN + 1;
-      core.log(trimEnd(string.fromBytes(r.stdout) + string.fromBytes(r.stderr)));
+      string alone = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+      core.log(trimEnd(alone));
       files = files + 1;
+      tests = tests + testsReported(alone);
       if (r.ran() && r.status != 0 && wacCode == 0) { wacCode = r.status; }
       if (!r.ran() && wacCode == 0) { wacCode = 1; }
     }
@@ -986,9 +1030,17 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
   // each saying "6 files: 6 ok" is how a lane that stopped running half its directories would read
   // as fine. If the arithmetic does not add up, that is said rather than papered over.
   core.log(summaries == queue.len()
-    ? "   " + itoa(files) + " wac test files across " + itoa(f.dirs.len()) + " directories"
-    : "   " + itoa(files) + " wac test files, but " + itoa(summaries) + " of " + itoa(queue.len()) +
-      " runs reported a summary — the count above is short by whatever the silent ones hold");
+    ? "   " + itoa(tests) + " tests in " + itoa(files) + " wac test files across " +
+      itoa(f.dirs.len()) + " directories"
+    : "   " + itoa(tests) + " tests in " + itoa(files) + " wac test files, but " + itoa(summaries) +
+      " of " + itoa(queue.len()) + " runs reported a summary — both counts are short by whatever " +
+      "the silent ones hold");
+  // **The two lanes are not added up here, and the reason is the inherited stream.** The Deno pass
+  // writes straight to this terminal so that it can be watched, which means nothing here reads its
+  // summary; adding the halves would need that lane captured, and a three-minute silence is the
+  // price. So the total is named rather than computed, and a reader can add the two lines.
+  core.log("   the Deno pass prints its own count above — the suite is the two together, and " +
+           "neither lane is the suite");
 
   // **Said here, because nothing else says it.** This lane's failures are not in either summary
   // above, so a run where it alone fails prints two `0 failed` lines and then exits non-zero.
