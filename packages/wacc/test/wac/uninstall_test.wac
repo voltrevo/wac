@@ -18,7 +18,7 @@
 // nobody finds.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -131,8 +131,8 @@ export string test_removing_nothing_says_so_rather_than_failing(Core core, Cli c
   // first one worked — so the second must not be an error, and must not read like one either.
   T t = T.create();
   string dir = scratch(cli, "uninstall-twice");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Exec r = withEnv(cli, string[]("WAC_HOME", "HOME"), string[](dir + "/.wac", dir),
                    binaryPath(cli), string[]("uninstall"));
   t.isTrue(r.ran(), "the command did not run — " + r.error);
@@ -151,8 +151,8 @@ export string test_the_two_uninstallers_leave_the_same_tree(Core core, Cli cli) 
   // somebody's home directory.
   T t = T.create();
   string root = scratch(cli, "uninstall-both");
-  cli.remove(root, true).wait();
-  cli.mkdir(root, true).wait();
+  string whyDir = freshDir(cli, root);
+  t.isTrue(whyDir == "", whyDir);
   string taskHome = fixture(cli, t, root + "/task");
   string binHome = fixture(cli, t, root + "/bin");
 

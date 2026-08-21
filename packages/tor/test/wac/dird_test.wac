@@ -26,6 +26,7 @@ import { decoded } from "../../../codec/src/hex.wac";
 import { encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 string DESCRIPTOR(Cli cli) {
   return strOf(jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"), "descriptor");
@@ -133,8 +134,8 @@ i32 portFrom(string log) {
 export string test_dird_publishes_and_serves_an_onion_service_descriptor(Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/dird";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string bin = dir + "/dird";
 
   Exec built = cli.exec("deno",

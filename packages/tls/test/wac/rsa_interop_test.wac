@@ -38,6 +38,7 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { have } from "./openssl.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string BODY = "hello from wac over TLS 1.3 with an RSA certificate\n";
 
@@ -118,8 +119,8 @@ string oneSize(Core core, Cli cli, i32 bits) {
   if (!have(cli, "openssl")) { return t.report(); }
 
   string dir = cli.cwd().wait() + "/.cache/tls/rsa" + itoa(bits);
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   string why = identity(t, cli, dir, bits);
   t.eqStr(why, "", "openssl made an identity");

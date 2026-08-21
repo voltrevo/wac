@@ -33,6 +33,7 @@ import { Kind } from "../../src/object.wac";
 import { Indexed, indexPack, writePack, completePack } from "../../src/pack.wac";
 import { Reply, wantRequest, findPack } from "../../src/fetch.wac";
 import { Completion, RepoAt, Stored, completeThin, openRepo, writeObject } from "../../src/repo.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -244,8 +245,8 @@ export string test_a_pack_we_wrote_is_one_git_indexes_verifies_and_unpacks(Core 
 
   // ── 1. `git index-pack`, which verifies the pack and writes an index for it ──
   string into = workDir(cli, "packw-idx");
-  cli.remove(into, true).wait();
-  cli.mkdir(into, true).wait();
+  string whyDir = freshDir(cli, into);
+  t.isTrue(whyDir == "", whyDir);
   cli.writeFile(into + "/ours.pack", bytes).wait();
   Exec indexed = g.at(into, string[]("index-pack", "-v", "ours.pack"), u8[0]());
   t.eqI32(indexed.status, 0, "git index-pack: " + string.fromBytes(indexed.stderr));
@@ -281,8 +282,8 @@ export string test_a_pack_we_wrote_is_one_git_indexes_verifies_and_unpacks(Core 
 
   // ── 3. `git unpack-objects` into an empty repository, and `git fsck` on the result ──
   string out = workDir(cli, "packw-out");
-  cli.remove(out, true).wait();
-  cli.mkdir(out, true).wait();
+  string whyDir = freshDir(cli, out);
+  t.isTrue(whyDir == "", whyDir);
   g.at(out, string[]("init", "-q", "-b", "main"), u8[0]());
   Exec unpacked = g.at(out, string[]("unpack-objects", "-q"), bytes);
   t.eqI32(unpacked.status, 0, "git unpack-objects: " + string.fromBytes(unpacked.stderr));

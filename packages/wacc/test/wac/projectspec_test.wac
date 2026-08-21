@@ -19,7 +19,7 @@
 //      directory nobody named, so the program would compile against the wrong file.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { binaryPath, scratch } from "../../../wactest/src/host.wac";
+import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Change, Cli, Core, Exec } from "std/platform.wac";
@@ -85,8 +85,8 @@ export string test_the_root_is_the_importing_files_project_not_the_entrys(Core c
   // 999 + 2. Taking the importing file's gives 5 + 2.
   T t = T.create();
   string dir = scratch(cli, "atspec-two");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   t.isTrue(put(cli, dir + "/appA/wac.json5", "{}\n"), "appA manifest");
   t.isTrue(put(cli, dir + "/libB/wac.json5", "{}\n"), "libB manifest");
@@ -128,8 +128,8 @@ export string test_a_project_specifier_with_no_manifest_is_refused(Core core, Cl
   // to add rather than that a file is missing.
   T t = T.create();
   string dir = scratch(cli, "atspec-none");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   t.isTrue(put(cli, dir + "/src/lib.wac", "export i32 answer() { return 42; }\n"), "wrote lib");
   t.isTrue(put(cli, dir + "/src/main.wac",
                "import { answer } from \"@/src/lib.wac\";\n" +
@@ -179,8 +179,8 @@ export string test_one_file_reached_two_ways_is_one_module(Core core, Cli cli) {
   // belong here too, and cannot be written until D9-D11 exist.
   T t = T.create();
   string dir = scratch(cli, "atspec-one-module");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   t.isTrue(put(cli, dir + "/wac.json5", "{}\n"), "the manifest");
   t.isTrue(put(cli, dir + "/src/point.wac",

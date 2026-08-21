@@ -18,6 +18,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string BOX = "packages/box/src/box.wac";
 const i32 MB = 1048576;
@@ -53,8 +54,8 @@ string firstDifference(u8[] got, u8[] want) {
 export string test_the_bridge_chunks_in_both_directions(Core core, Cli cli) {
   T t = T.create();
   string dir = root(cli) + "/.cache/chunking";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string app = dir + "/box";
   string src = dir + "/src.bin";
   string dst = dir + "/dst.bin";

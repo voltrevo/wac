@@ -30,6 +30,7 @@ import { encode as hexEncode } from "../../../codec/src/hex.wac";
 import { attr } from "./sdp_probe.wac";
 import { check as iceCheck, hostPref, priorityOf, reportedAddress, tidOf } from "./ice_probe.wac";
 import { checkIntegrity, kindOf } from "./stun_probe.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string ORACLE = "packages/webrtc/test/sdp_oracle.py";
 const string SOURCE = "packages/webrtc/example/answer.wac";
@@ -50,8 +51,8 @@ string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release
 export string test_the_example_runs_as_a_program(Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/answer";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   string stem = dir + "/answer";
 
   Exec built = cli.exec(wacBinary(cli),

@@ -14,6 +14,7 @@ import { Core, Cli, Datagram, Pending, Socket } from "std/platform.wac";
 import { Daemon, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string CLIENT = "packages/quic/test/quicclient.ts";
 
@@ -25,8 +26,8 @@ const string CLIENT = "packages/quic/test/quicclient.ts";
  */
 export u8[] anInitial(T t, Core core, Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/quic/" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
   if (sock.handle < 0) {

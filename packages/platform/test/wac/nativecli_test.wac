@@ -29,7 +29,7 @@
 // So one test, for the one thing that is unambiguous: a flag nobody meant is refused.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { scratch } from "../../../wactest/src/host.wac";
+import { freshDir, scratch } from "../../../wactest/src/host.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { Cli, Core, Exec } from "std/platform.wac";
 
@@ -70,8 +70,8 @@ export string test_the_deno_host_refuses_a_flag_it_does_not_know(Core core, Cli 
   T t = T.create();
   string repo = cli.cwd().wait();
   string dir = scratch(cli, "nativecli-flag");
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   t.isTrue(put(cli, dir + "/p.wac", "export i32 main() { return 5; }\n"), "wrote the fixture");
 
   Exec bad = host(cli, repo, dir, dir + "/p.wac", dir + "/bad", "--allow-bogus");

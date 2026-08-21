@@ -23,12 +23,13 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 export string test_a_program_the_checker_refuses_does_not_build(Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/buildchecks";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   // A type error the emitter would happily guess past: the name resolves to nothing, and an emitter
   // that skipped the function would still produce a module.

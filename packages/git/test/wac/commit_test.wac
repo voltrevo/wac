@@ -26,6 +26,7 @@ import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { withEnv, quoted } from "../../../wactest/src/childenv.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string DATE = "1700000000 +0000";
 
@@ -151,8 +152,8 @@ struct Repo {
 
 Repo repo(T t, Cli cli, string name) {
   string dir = "/tmp/wac-git-" + name + agentSuffix(cli);
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Repo r = Repo(cli, dir);
   Exec init = r.git(string[]("init", "-q", "-b", "main"));
   t.eqI32(init.status, 0, "git init — " + string.fromBytes(init.stderr));

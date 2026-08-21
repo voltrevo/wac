@@ -19,6 +19,7 @@ import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { leb, name } from "./section.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
@@ -60,8 +61,8 @@ string[] producedBy(u8[] b) {
 /** Build a program with `WAC_APP_FROM` set as given, and read the marker back. */
 string builtBy(T t, Cli cli, string label, string from) {
   string dir = root(cli) + "/.cache/producer-" + label;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   // **A program with no imports**, written here rather than an example from the tree.
   //

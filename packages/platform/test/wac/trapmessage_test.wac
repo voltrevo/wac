@@ -32,6 +32,7 @@ import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 /** Write `program` to `.cache` and run it through `wac run`, both streams together. */
 struct Said {
@@ -102,8 +103,8 @@ export string test_a_built_app_reports_the_message_the_program_gave(Core core, C
   // but not at the root where every walker over this repository's files sees it appear and vanish. See
   // the note in `tools/wac/roottemp_test.wac` for what that cost.
   string dir = cli.cwd().wait() + "/.cache/trapmsg-app";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
   Change wrote = cli.writeFile(dir + "/p.wac",
     ("import { Cli, Core } from \"std/platform.wac\";\n\n" +
      "export i32 main(Core core, Cli cli) {\n" +

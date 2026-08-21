@@ -26,6 +26,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { jsonFile, objectOf, strOf, arrayOf } from "../../../wactest/src/jsonfile.wac";
 import { customSection } from "./section.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
@@ -66,8 +67,8 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
     Core core, Cli cli) {
   T t = T.create();
   string dir = root(cli) + "/.cache/nativemanifest";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   Exec r = cli.exec(root(cli) + "/native/v8/target/release/wac",
     string[]("build", "packages/platform/example/wc.wac",
@@ -195,8 +196,8 @@ export string test_the_manifest_resolves_its_own_funcref_fields_and_names_what_t
 export string test_a_program_declaring_a_name_platform_also_declares_still_runs(Core core, Cli cli) {
   T t = T.create();
   string dir = root(cli) + "/.cache/nameclash";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   string src = "import { Core, Cli } from \"std/platform.wac\";\n" +
                "struct Stat { i32 n; }\n" +

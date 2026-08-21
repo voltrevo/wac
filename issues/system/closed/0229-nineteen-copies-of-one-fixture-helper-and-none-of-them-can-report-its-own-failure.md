@@ -151,6 +151,29 @@ tests that were never part of the nineteen. Each throws the same answer away. Th
 than this issue scoped and it is now a one-line change per site, since the helpers exist — worth doing
 incrementally rather than filed as one job, and worth knowing the number.
 
+### Swept since, and what is left — agent-a, 2026-08-21
+
+Two batches, both the `remove`-then-`mkdir` shape, which is `freshDir`'s:
+
+    43 sites converted   21 in tools/wac tests, then 22 across 17 package tests
+    100 remain           91 bare `mkdir` (the `madeDir` shape) and 9 pairs with no `T` in scope
+
+The 91 are the harder half and not a regex job: a bare `mkdir` is the *non-destructive* shape, and most of
+them sit in `bool`-returning helpers — `put`, `writeTree` — that have no `T` to report through. Each needs
+a decision about how the reason reaches the reader, which is the question this issue answered once and
+would have to answer again in a different shape.
+
+The 9 skipped pairs are named rather than silently left: `crypto/tools/ct.wac` and `tools/wac/covledger.wac`
+are tools with no `T` at all, and the rest are sites inside helpers that do not take one —
+`platform/test/wac/arrival_test.wac`, `frame_test.wac` (mixed, so left whole), `native_examples_test.wac`,
+`quic/test/wac/peer.wac`, `server_test.wac`, `tls/test/wac/interop_test.wac`.
+
+**Two things the batches taught, both about the checking rather than the editing.** A `T` can arrive as a
+*parameter* rather than an assignment, so a file-level check passes where a site-level one is needed —
+three of batch one's sites were that shape. And an import inserted after "the last line starting with
+`import`" lands in the middle of a multi-line import list: `webrtc/test/wac/ice_test.wac` stopped
+compiling, which is how I found out.
+
 Verified: the 21 rewritten files all compile; `pipeline`, `inside`, `optimize`, `node_net`, `bindgenwac`,
 `privatekey` and `echod` run green. The heavy ones — `tor` on real ports, `ssh` against real OpenSSH,
 `tls`, `v8host`, `world` — go through the gate.

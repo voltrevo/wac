@@ -36,6 +36,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
 import { Consent } from "../../src/ice.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 import { check as iceCheck, consentAnswered, consentDue, consentLive, consentSent,
          hostPref, isNomination, lineFor, newConsent, pairPriorityOf, prflxPref, priorityOf,
          rejected, relayPref, reportedAddress, srflxPref, success, tidOf }
@@ -55,8 +56,8 @@ void ask(T t, Cli cli, Lines lines, string what) {
 export string test_aioice_completes_ice_against_us(Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/ice";
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   // **Bound to every interface, and advertised on the one aioice actually gathered.** aioice gathers
   // host candidates from the container's real interface — not loopback — and a datagram from there

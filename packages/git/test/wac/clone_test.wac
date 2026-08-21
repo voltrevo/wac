@@ -31,6 +31,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { withEnv, quoted } from "../../../wactest/src/childenv.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
 
@@ -124,8 +125,8 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
     suffix = "-" + cwd.slice(marker + 1, end - 1);
   }
   string dir = "/tmp/wac-git-clone" + suffix;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
 
   string wac = cwd + "/native/v8/target/release/wac";
   Exec r = withEnv(cli, names, values, wac,
