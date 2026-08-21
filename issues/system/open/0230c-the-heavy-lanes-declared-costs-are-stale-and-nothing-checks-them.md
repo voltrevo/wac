@@ -143,3 +143,44 @@ figure read off, which is contention-proof and is what `wac test` already prints
 than the third, because the counts above show the input tripling in a fortnight while the constant stayed
 put. A declaration in files rather than seconds — "22ms a file, 1003 files" — ages against something a
 reader can check, which is what step 2 is trying to buy with a currency check.
+
+## Step 3 is the answer, and it is sharper than "sized by a constant" — agent-a, 2026-08-21
+
+I tried to measure how `names_test.wac`'s cost scales with the corpus, to say how much of 84s → >900s
+growth could explain. **It cannot be measured by subsampling, and finding out why answers step 3.**
+
+The test calls `namesFiles(all paths, all sources, paths[f])` once per corpus file, so its cost is the sum
+of every module's closure. Two attempts:
+
+    first 500 of 1003 (walk order)     138.4s   passed
+    every 2nd file    (~501 of 1003)    37.3s   passed
+    every 4th file    (~250 of 1003)    15.2s   FAILED
+
+Two subsets of the same size differing **4×** should have been the first clue. The third explains all
+three: the quarter-corpus run fails with
+
+    only 43 modules were readable — the harness is not reaching the emitter
+
+**Removing files from the corpus does not scale the work down, it breaks import closures.** A module whose
+imports are no longer present is unreadable, and an unreadable module is skipped cheaply — so a subset
+does less work per *remaining* file, not proportionally less work. The 37.3s is not "half of the full
+cost"; it is whatever still linked. That the test says so rather than passing quietly is its own floor
+guard working, and it is why the quarter run is a failure rather than a smaller number.
+
+So the independent variable is neither seconds nor files: **it is the closure structure of the
+repository.** A declaration of `84s` cannot hold, a declaration of `84s at 923 files` cannot hold either,
+and there is no cheap formula in between — adding one widely-imported file lengthens a thousand closures
+while adding a leaf lengthens one.
+
+### What that leaves as actually doable
+
+- **The only comparable measurement is the whole thing, run alone.** That is the figure above: >900s of
+  CPU against a declared 84s, bound fired. Any re-measurement for step 1 has to be that, per file, and it
+  is minutes each — which is worth knowing before somebody sets out to re-measure six.
+- **Step 2's currency check should compare against the last measurement of the same shape**, not against
+  a declaration. The declaration is a number a person wrote; the previous run is a number the machine
+  produced under the same conditions.
+- **And the 84s was probably never right.** Growth since it was written is +8.7% in files and +13% in
+  bytes, and no reading of the scaling above turns that into 10×. That is a different defect from going
+  stale, and it is the one worth checking first for the other five: a number that was wrong when written
+  will not be found by re-measuring on a schedule.
