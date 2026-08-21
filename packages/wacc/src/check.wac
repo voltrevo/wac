@@ -2484,9 +2484,17 @@ void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   c.reportWith(errFloatRange(), inner.line, inner.col, "out of range for " + want);
 }
 
-/** A literal that stands for a value — so not `null`, which stands for the absence of one. */
-bool isPlainLiteral(Expr e) {
-  i32 k = litKindOf(e);
+/**
+ * A literal that stands for a value — so not `null`, which stands for the absence of one.
+ *
+ * **`litFamily`, so a compound literal counts.** `1 + 1` is an integer literal exactly as `1` is, and
+ * asking `litKindOf` here meant the two were different programs to every rule that gated on this:
+ * `b ? 1 + 1 : "a"` was accepted while `b ? 1 : "a"` was refused, in all six shapes of that pair.
+ * Takes a `C` for the same reason `litFamily` does — an operator's kind is a token, and a token needs
+ * the source. `issues/lang/0246a`.
+ */
+bool isPlainLiteral(C c, Expr e) {
+  i32 k = litFamily(c, e);
   return k != litNone() && k != litNull();
 }
 
@@ -3074,8 +3082,8 @@ export string typeOfExpr(C c, Expr e) {
       // an `i64` slot still answers `i64` and `cond ? 1.5 : x` where `x` is an `i32` still answers
       // nothing. `null` is excluded: it is not a value of any type, and whether it belongs in a slot is
       // a rule of its own.
-      if (t != typeNone() && t != "" && isPlainLiteral(els) && literalFits(c, t, els)) { return t; }
-      if (other != typeNone() && other != "" && isPlainLiteral(then) && literalFits(c, other, then)) {
+      if (t != typeNone() && t != "" && isPlainLiteral(c, els) && literalFits(c, t, els)) { return t; }
+      if (other != typeNone() && other != "" && isPlainLiteral(c, then) && literalFits(c, other, then)) {
         return other;
       }
       return typeNone();
@@ -3985,18 +3993,25 @@ void checkExpr(C c, Expr e) {
       // conditional answered unknown, which took the return rule with it: the function was declined
       // and `wac build` exited 0. `literalFits` is the question the typing walk above already asks
       // for the same pair, so the two now agree. `issues/lang/0170a`.
-      if (isPlainLiteral(els) && !isPlainLiteral(then)) {
+      if (isPlainLiteral(c, els) && !isPlainLiteral(c, then)) {
         string lt = typeOfExpr(c, then);
         if (lt != typeNone() && lt != "" && concreteShape(lt) && !literalFits(c, lt, els)) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
-      } else if (isPlainLiteral(then) && !isPlainLiteral(els)) {
+      } else if (isPlainLiteral(c, then) && !isPlainLiteral(c, els)) {
         string rt2 = typeOfExpr(c, els);
         if (rt2 != typeNone() && rt2 != "" && concreteShape(rt2) && !literalFits(c, rt2, then)) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
       }
-      if (litKindOf(then) == litNone() && litKindOf(els) == litNone()) {
+      // **`litFamily` in both of these, and it had to change with `isPlainLiteral` above.** Widening
+      // that predicate alone fixes **two of the six** pairs and leaves four, measured by reverting
+      // exactly these two lines: a pair like `b ? 1 + 1 : "a"` now has two literal branches, so it
+      // goes past the two arms above and into the second arm here, which was still asking
+      // `litKindOf` and declined as well. For those four, fixing one guard changed which guard was
+      // silent rather than the answer.
+      // `issues/lang/0246a`; `issues/lang/0245a` is the same lesson about a rule and its mirror.
+      if (litFamily(c, then) == litNone() && litFamily(c, els) == litNone()) {
         string tt = typeOfExpr(c, then);
         string et = typeOfExpr(c, els);
         // **Reference branches take their closest common ancestor**, which `spec/spec/control.md`
@@ -4007,12 +4022,12 @@ void checkExpr(C c, Expr e) {
             !assignable(c, et, tt) && !shareAncestor(c, tt, et)) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
-      } else if (litKindOf(then) != litNone() && litKindOf(els) != litNone()) {
+      } else if (litFamily(c, then) != litNone() && litFamily(c, els) != litNone()) {
         // Two literals of different families — `c ? 1 : true` — have nothing to take a type from.
         // **Except a `null`**, which takes the other branch's type: `c ? 1 : null` in an `i32?` slot
         // is the shape the spec writes for a nullable primitive.
-        if (litKindOf(then) != litKindOf(els) &&
-            litKindOf(then) != litNull() && litKindOf(els) != litNull()) {
+        if (litFamily(c, then) != litFamily(c, els) &&
+            litFamily(c, then) != litNull() && litFamily(c, els) != litNull()) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
       }
