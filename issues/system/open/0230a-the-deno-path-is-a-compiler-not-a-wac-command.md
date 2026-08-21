@@ -103,17 +103,17 @@ a few months.
   there — a capability answers a `Pending` because the call leaves the module, and it deals in bytes
   because what crosses is not guaranteed to be text — rather than presenting them as ceremony. The
   example was run both ways before it went in.
-- ~~**`harness/wacBind.ts` still calls the roots-dropping walk.**~~ Done 2026-08-21 — see 0229a. The
-  paragraph below is kept because it is the argument that was made for deferring it, and it was wrong
-  about the cost: replacing the `files` parameter with a `Graph` was the same size as threading two
-  more arguments and cannot be dropped by a later caller.
+- ~~**`harness/wacBind.ts` still calls the roots-dropping walk.**~~ **Done 2026-08-21** — see 0229a.
+  It was filed here rather than fixed on the argument that it threads `files` through four internal
+  functions and a cache key, that this repository has no `@/` import for it to matter to, and that it
+  was therefore "the same edit, four times over, for a case no caller has yet". **The cost estimate
+  was wrong, and in an instructive direction:** the edit that fixes it is not four repetitions of
+  adding two arguments — that is the edit that *caused* the bug twenty times over. Replacing the
+  `files` parameter with a `Graph` of files, roots and base is the same size and cannot be dropped by
+  a later caller, which is the difference between fixing an omission and re-enabling it.
 
-- (as filed) **`harness/wacBind.ts` still calls the roots-dropping walk.** `wacTestRun.ts` and `wacCoverage.ts`
-  were done with 0229a — a test file in somebody's project imports through `@/` as readily as any other
-  file, and `wac test` is one of the six subcommands above. `wacBind` was left: it threads `files`
-  through four internal functions and a cache key, and it binds *this* repository's packages for Deno
-  tests, none of whose graphs contain a `@/` import. So it is the same edit, four times over, for a
-  case no caller has yet.
+  `wacTestRun.ts` and `wacCoverage.ts` went with 0229a itself, since `wac test` is one of the six
+  subcommands above and a test file in somebody's project imports through `@/` like any other file.
 
   Doing `wacTestRun` needed one new entry point, `diagnoseFilesIn`, rather than reaching for
   `diagnoseGraphIn`, which was the only `In` variant that existed: the whole-graph walk is a *stricter*
