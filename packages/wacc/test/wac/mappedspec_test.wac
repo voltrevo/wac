@@ -355,6 +355,89 @@ export string test_a_mapped_subdir_cannot_import_outside_itself(Core core, Cli c
 }
 
 /**
+ * A confined dependency may still import a built-in — GitHub `voltrevo/wac#24`.
+ *
+ * **The other half of the case above, and it was open.** Confinement is a rule about the *filesystem*:
+ * a dependency may not reach source outside what you mapped. `core` and `std` are not on the
+ * filesystem at all — the compiler carries their text — so the containment test was being asked of a
+ * path in the compiler's embedded base against a directory in the Git cache, which cannot pass. The
+ * report is a real external one: `packages/json` was unusable as a Git dependency because
+ * `value.wac` imports `core/map.wac`, while `packages/crypto` worked, so whether a package could be
+ * *used* depended on whether its own import closure happened to cross a provider boundary.
+ *
+ * **Four combinations, because the issue asks for both providers from both mapping kinds** and the two
+ * mapping kinds do different path arithmetic — `whole/lib/x.wac` appends the suffix to nothing,
+ * `part/x.wac` appends it to `lib`. Distinct values summing to 15, so a file that did not run is named
+ * by the arithmetic rather than by a bare failure.
+ *
+ * `core/result.wac` is one of the two deliberately: it imports `./option.wac`, *relatively*, from
+ * inside the embedded tree. A fix that skipped the check for a built-in specifier but let the built-in
+ * file inherit the importer's confinement would pass the `core/option.wac` row and fail this one, and
+ * that is the fix I wrote first.
+ */
+export string test_a_mapped_dependency_may_import_a_builtin(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "mapped-builtin");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  t.isTrue(put(cli, dir + "/wac.json5",
+               "{\n  imports: {\n" +
+               "    \"whole/\": { git: \"" + REPO + "\", ref: \"main\" },\n" +
+               "    \"part/\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"lib\" },\n" +
+               "  },\n}\n"), "one whole-repository mapping and one subdir mapping");
+  t.isTrue(put(cli, dir + "/wac.lock",
+               "{\n  imports: {\n" +
+               "    \"whole/\": { git: \"" + REPO + "\", ref: \"main\", commit: \"" + COMMIT + "\" },\n" +
+               "    \"part/\": { git: \"" + REPO + "\", ref: \"main\", subdir: \"lib\", commit: \"" +
+               COMMIT + "\" },\n" +
+               "  },\n}\n"), "both pinned to one commit");
+
+  // `core/result.wac` reaches `./option.wac` from inside the embedded tree; `core/option.wac` does
+  // not reach anything. Both rows are needed and they fail for different reasons.
+  t.isTrue(checkoutFile(cli, home, COMMIT, "lib/c1.wac",
+                        "import { Result } from \"core/result.wac\";\n" +
+                        "export i32 c1() { Result<i32, bool> r = Result.Ok(1); return r.orElse(0); }\n"),
+           "a dependency file importing core/result.wac");
+  t.isTrue(checkoutFile(cli, home, COMMIT, "lib/c2.wac",
+                        "import { Option } from \"core/option.wac\";\n" +
+                        "export i32 c2() { Option<i32> o = Option.Some(2); return o.orElse(0); }\n"),
+           "a dependency file importing core/option.wac");
+  t.isTrue(checkoutFile(cli, home, COMMIT, "lib/s1.wac",
+                        "import { Cli } from \"std/platform.wac\";\n" +
+                        "export i32 s1(Cli c) { return 4; }\n"),
+           "a dependency file importing std/platform.wac");
+  t.isTrue(checkoutFile(cli, home, COMMIT, "lib/s2.wac",
+                        "import { Cli } from \"std/platform.wac\";\n" +
+                        "export i32 s2(Cli c) { return 8; }\n"),
+           "a second dependency file importing std/platform.wac");
+
+  // `c1` and `s1` through the whole repository; `c2` and `s2` through the subdir.
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { c1 } from \"whole/lib/c1.wac\";\n" +
+               "import { s1 } from \"whole/lib/s1.wac\";\n" +
+               "import { c2 } from \"part/c2.wac\";\n" +
+               "import { s2 } from \"part/s2.wac\";\n" +
+               "import { Cli, Core } from \"std/platform.wac\";\n" +
+               "export i32 main(Core core, Cli cli) { return c1() + c2() + s1(cli) + s2(cli); }\n"),
+           "an entry reaching both providers through both mapping kinds");
+
+  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    t.eqI32(r.status, 15,
+            "answered " + itoa(r.status) + ", want 15 — a mapped dependency may import core and " +
+            "std, from a whole-repository mapping and from a subdir one: " +
+            string.fromBytes(r.stderr));
+  }
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}
+
+/**
  * A whole-repository mapping and a `subdir` one land on the same file, and it is one module — D8.
  *
  * **The spelling the existing case cannot reach.** `test_two_mappings_at_one_commit_are_one_module`
