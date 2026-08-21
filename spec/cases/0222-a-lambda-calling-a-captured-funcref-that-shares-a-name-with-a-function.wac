@@ -1,0 +1,29 @@
+// expect: answers f2 = 3
+// why: inside a hoisted lambda, a captured `fn[void(i32)] f` is called while a *file-level* function
+//      of the same name exists with a different type and arity. Which `f` the call means decides
+//      whether the module is valid at all: the emitter reads the capture and emits `call_ref`, which
+//      returns nothing, while `typeOfE` read the file-level `i32 f(string)` and reported `i32` — so the
+//      statement emitted a `drop` after a void call and the engine refused the module with
+//      *"not enough arguments on the stack for drop (need 1, got 0)"*. Two resolvers for one name, one
+//      of them capture-blind.
+//      The answer is the file-level `f` doing its own job — `f("abc")` is 3 — which is what says the
+//      collision was resolved rather than avoided. Renaming either `f` makes this compile and proves
+//      nothing, which is why both keep the name.
+//      `issues/lang/0160`, found by agent-b while porting a test that had nothing to do with lambdas:
+//      `Pending<T>.then` in `std/platform.wac` captures a parameter called `f`, so
+//      any file importing it that declared a top-level `f` produced a module the engine rejected.
+
+struct Box {
+  i32 v;
+  void then(this, fn[void(i32)] f) { run((i32 id) => { f(id + this.v); }); }
+}
+
+void run(fn[void(i32)] g) { g(1); }
+
+i32 f(string s) { return s.len(); }
+
+export i32 f2() {
+  Box b = Box(2);
+  b.then((i32 n) => {});
+  return f("abc");
+}

@@ -9,7 +9,6 @@ has been fixed and why.
 | [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | bindgen refuses a nullable primitive at the host boundary, so `export i32 read(i32? x)` — the accessor the spec prescribes — gets no glue; the emitter half is done | decision | no glue for a signature the spec shows |
 | [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | the standing one: the emitter has 25 lookup failures that bail without a reason, and `typeOfE` still guesses on `Binary` and `Ternary`. The 14 programs are all refused and `illtyped_test.wac` now holds them there — the corpus had no ill-typed half at all | bug | a decline with no cause, or none at all |
 | [0163](open/0163-one-file-under-two-keys-is-silent-in-the-reference-and-an-invalid-module-in-wacc.md) | refused now, naming both keys, instead of an invalid module the checker was silent about — what is left is D8 deciding whether refusing is right, with a recommendation that it is | decision | no error |
-| [0160](open/0160-a-lambda-capturing-a-parameter-loses-it-to-a-top-level-function-of-the-same-name.md) | a lambda's captured parameter resolves to a same-named top-level function instead — so any file importing `platform.wac` and declaring `f` builds an invalid module | bug | invalid wasm |
 | [0157](open/0157-an-import-of-a-file-nobody-supplied-is-caught-by-the-emitter-not-the-checker.md) | the single-file half is fixed; the files-based half was attempted with the `Res` 0175a threaded and **refuses three correct programs** — membership in `paths` cannot tell "nobody supplied it" from "I cannot resolve it", and the linker already knows. Two options, recommending the linker | decision | no error |
 | [0158](open/0158-the-checker-is-superlinear-in-one-files-import-count.md) | one file importing 600 others type-checks in 19.7s where the emitter takes 86ms — the cost is import edges in a single file, not files (1200 files with 10 imports: 8ms) | performance | no error |
 | [0156](open/0156-the-specs-parse-messages-match-neither-compiler.md) | the spec quotes `expected ';'` as a parse message, wacc says `unexpected token` with it in the annotation, the reference says a third thing — and the differentials compare positions, not text | diagnostic | wrong answer |
@@ -34,7 +33,7 @@ has been fixed and why.
 
 ## Closed
 
-176 issues, 150 closed.
+176 issues, 151 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

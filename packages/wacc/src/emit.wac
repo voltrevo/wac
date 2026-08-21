@@ -7651,7 +7651,22 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case Construct(ctype, args, named): {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
-          string lt3 = env.localType(tokenTextOf(src, lexed, tok));
+          string nm3 = tokenTextOf(src, lexed, tok);
+          string lt3 = env.localType(nm3);
+          // **And a captured funcref, which this did not ask about** — the same two lines the emitter's
+          // own `Construct` arm has, and the whole of `issues/lang/0160`. Inside a hoisted lambda a
+          // captured name has no local, so `localType` answered nothing, this fell through to
+          // `funcAt`, and a *file-level function of the same name* supplied the type. With
+          // `void then(this, fn[void(i32)] f)` beside a top-level `i32 f(string)`, the call
+          // `f(id + this.v)` inside the lambda typed as `i32` — so the statement emitted a `drop`
+          // after a `call_ref` that returns nothing, and the engine refused the module with
+          // *"not enough arguments on the stack for drop"*. The emitter had the capture right; only
+          // its type did not, and the two answers have to be the same one. `captureAt` guards
+          // `li < 0`, so outside a lambda this asks and gets -1.
+          if (!isFuncrefType(lt3)) {
+            i32 cap3 = env.captureAt(env.emittingLambda, nm3);
+            if (cap3 >= 0) { lt3 = env.capTypes[env.emittingLambda * capsPerLambda() + cap3]; }
+          }
           if (isFuncrefType(lt3)) { return sigReturn(lt3); }
           string n2 = typeOfTyName(env, src, lexed, ctype);
           if (env.isStructName(n2)) { return n2; }

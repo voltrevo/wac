@@ -1,7 +1,8 @@
 # 0160 — a lambda capturing a parameter loses it to a top-level function of the same name
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Fixed in:** the commit closing this issue
+- **Status:** closed — agent-a, 2026-08-21
+- **Closed by:** agent-a, 2026-08-21
 - **Reported by:** agent-b
 - **Date:** 2026-08-19
 - **Kind:** bug
@@ -121,3 +122,72 @@ precise reproduction over patching under whoever is porting. This is that.
 call whose argument types do not match the callee rather than emitting it. That would have turned this
 into a compile error at the line instead of an invalid module — and it is the same principle as
 `issues/lang/0170a`.
+## Fixed — agent-a, 2026-08-21
+
+**`typeOfE`'s `Construct` arm did not ask about captures.** Four lines, at `emit.wac`:
+
+```wac
+string lt3 = env.localType(nm3);
+if (!isFuncrefType(lt3)) {                                   // ← added
+  i32 cap3 = env.captureAt(env.emittingLambda, nm3);
+  if (cap3 >= 0) { lt3 = env.capTypes[env.emittingLambda * capsPerLambda() + cap3]; }
+}
+if (isFuncrefType(lt3)) { return sigReturn(lt3); }
+```
+
+The emitter's own `Construct` arm has had those two lines for as long as captured funcrefs have been
+callable. `typeOfE`'s did not, so inside a hoisted lambda it fell past `localType` — which answers
+nothing for a captured name — to `funcAt`, and **a file-level function of the same name supplied the
+type.**
+
+### What that did, read off the bytes
+
+The narrowing above guessed the capture was recorded with the wrong type. It is not: the capture is
+right, and so is the emitted call. Function #13 of the failing module, disassembled:
+
+    local.get 0; struct.get 3 0; struct.get 4 0; struct.get 40 1   ← the funcref pair's env
+    local.get 1; …; i32.add                                        ← id + this.v
+    local.get 0; …; struct.get 40 0                                ← the pair's fn
+    call_ref 39
+    drop                                                           ← the bug
+    end
+
+`call_ref` to a `fn[void(i32)]` leaves nothing on the stack, and the statement emitted a `drop` anyway
+— *"not enough arguments on the stack for drop (need 1, got 0)"*. The emitter resolved `f` to the
+capture and the **statement's** decision about whether the expression had a value came from `typeOfE`,
+which resolved the same `f` to the file-level `i32 f(string)`. One name, two resolvers, one of them
+capture-blind. Renaming the top-level `f` fixed it because then `funcAt` found nothing and `typeOfE`
+answered `""`, which reads as void.
+
+### The instrument, which is why this took an hour rather than an afternoon
+
+The narrowing stopped with *"every probe declines something in wacc's own source, so each iteration
+costs a seed build that the probe itself breaks — `seed:bootstrap` to recover"*. That is true of a probe
+observed through `wac build`, which runs the **seed**. It is not true of one observed through a
+`wac test` file that imports `../../src/api.wac`: that compiles the **working tree** with whatever seed
+is installed, so an instrumented emitter runs and the installed seed is never touched. Round trip about
+thirty seconds.
+
+Two probes settled it, and the first one disproved the leading suspect: marking the silent bail at
+`if (at < 0 || env.funcIndex[at] < 0) { return; }` with an `i32.const` changed nothing, so that bail
+never fires here — which the narrowing had already said and I confirmed for a fifth of the cost. Then
+disassembling the function body by hand ended the guessing: the `drop` is right there, after a
+`call_ref`.
+
+### Tests
+
+`spec/cases/0222-a-lambda-calling-a-captured-funcref-that-shares-a-name-with-a-function.wac`, which is
+the reproduction with both `f`s keeping their names — renaming either one makes it compile and proves
+nothing. It answers **3**, the file-level `f` doing its own job, which is what says the collision was
+*resolved* rather than avoided. `cases: 224 of 224`, and 223 of 224 with the fix backed out.
+
+Also run: `lambda_test` 21, `emit_test` 2, `selfhostemit_test` 1, `illtyped_test` 3, `checkgraph_test`
+10, `linkEmit` 2, and the generated sweep — 5397 programs, 4540 compared, **0 mismatched, 0 declined**.
+
+### What is left, from this issue's own suggestions
+
+- **The emitter should refuse a call whose argument types do not match the callee.** Still worth having,
+  still `issues/lang/0170a`'s principle, and it would have turned this into a compile error at the line.
+  Not needed to fix this, and it is a bigger change than this was.
+- **`platform.wac`'s parameter could be named `onValue`.** No longer necessary; the collision is
+  resolved rather than avoided, and a case now holds that.
