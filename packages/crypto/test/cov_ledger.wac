@@ -83,7 +83,7 @@ Pin[] pins() {
         "guard is what makes the shift correct *as written* rather than by the caller's " +
         "arithmetic — the reason it stays is that the alternative is a silent out-of-bounds " +
         "write into whatever follows."),
-    Pin("packages/crypto/src/field25519.wac", 223, "if (geP == 1)", false,
+    Pin("packages/crypto/src/field25519.wac", 228, "if (geP == 1)", false,
         "feToBytes' final conditional subtraction, for a value that is still in [p, 2^255) " +
         "after carrying. No input reaches it, and the likely reason is that feCarry's " +
         "round-to-nearest pass already folds anything at or above about 2^254 back down, so " +
@@ -93,10 +93,10 @@ Pin[] pins() {
         "encoding for those nineteen values, which is the kind of defect that shows up as an " +
         "interop failure years later. If someone proves it dead, delete it and this entry " +
         "together."),
-    Pin("packages/crypto/src/field25519.wac", 225, "for (i32 i = 0; i < 10; i++) { h[i] = t[i]; }", false,
+    Pin("packages/crypto/src/field25519.wac", 230, "for (i32 i = 0; i < 10; i++) { h[i] = t[i]; }", false,
         "The copy inside that same conditional. Unreached for the one reason above, not a " +
         "second one."),
-    Pin("packages/crypto/src/field25519.wac", 237, "if (byteIdx < 32)", true,
+    Pin("packages/crypto/src/field25519.wac", 242, "if (byteIdx < 32)", true,
         "The same shape as `ed25519.wac:259`: the ten limb widths sum to 255 bits, so the " +
         "last bit written is 254 and `byteIdx` is 31. The guard bounds a loop whose total is " +
         "fixed by the limb layout above it, and it would start firing the day that layout " +

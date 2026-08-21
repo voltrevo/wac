@@ -237,6 +237,44 @@ export string test_a_negative_representation_encodes_as_its_positive_residue() {
   return t.report();
 }
 
+/**
+ * The input that makes `feToBytes`' two round-to-nearest passes observable — solved, not searched.
+ *
+ * `issues/system/0179` measured that deleting both `feCarry` calls changes no answer anywhere in this
+ * repository, and asked for the bound rather than another measurement. This is the bound as a witness:
+ * an input `feCarryFloor` alone gets **wrong**.
+ *
+ * Two floor passes are not always enough, and here is the shape that defeats them. Pass one leaves
+ * limb 0 at `3 * 2^26 - 1`, so pass two reduces it to `2^26 - 1` *and* carries 2 upward; limbs 1..8 at
+ * their maxima pass that carry along; limb 9 ends pass one at `2^25 - 1`, so the carry tips it over and
+ * the fold puts another 19 onto limb 0 — which is already at `2^26 - 1`. The final limb 0 is
+ * `2^26 + 18`, out of range, and the encoder packs it as if it were not.
+ *
+ * `limb0 = 7` and a pass-one carry out of limb 9 of `10596136` satisfy `7 + 19*c = 3 * 2^26 - 1`, which
+ * is solvable because 19 is invertible mod `2^26`.
+ *
+ * **The oracle is the encoder against itself**: the same value written two ways — these limbs raw, and
+ * these limbs through `feMul(., 1)`, which carries on the way out. Canaried by removing the two passes:
+ * the raw encoding becomes `...0400...` where the multiplied one stays `...0800...`.
+ */
+i64[] needsTheCarries() {
+  i64[] h = i64[10]();
+  h[0] = 7;
+  for (i32 i = 1; i < 9; i++) {
+    h[i] = (1 as i64 << (((i % 2) == 0 ? 26 : 25) as i64)) - 1;
+  }
+  h[9] = 10596136 as i64 * (1 as i64 << 25) + (1 as i64 << 25) - 1;
+  return h;
+}
+
+export string test_the_input_that_needs_the_round_to_nearest_passes() {
+  T t = T.create();
+  // Built twice rather than copied: `feMul` is free to carry its argument in place.
+  t.eqBytes(feToBytes(needsTheCarries()), feToBytes(feMul(needsTheCarries(), feOne())),
+            "the encoder disagrees with itself on one value written two ways");
+  return t.report();
+}
+
 export string test_conditional_swap_is_conditional() {
   // The ladder's constant-time primitive. Swapping on 0, or failing to on 1, breaks
   // X25519 for half its inputs — and the failure looks like a wrong shared secret rather

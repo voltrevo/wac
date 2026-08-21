@@ -192,11 +192,16 @@ export u8[] feToBytes(i64[] hIn) {
   // `test_a_negative_representation_encodes_as_its_positive_residue` pins it.
   //
   // What `feCarryFloor` needs is that **two floor passes are enough**, which is its own comment's
-  // claim: the wrap can push limb 0 out of range again, and the second pass settles it *provided the
-  // excursion is small*. That is a claim about the input's magnitude. Pass two can itself carry out of
-  // limb 9 if the ripple reaches that far, and the 19 it folds back arrives at limb 0 after limb 0 was
-  // reduced. So the guarantee is not unconditional, and these two passes are what make its precondition
-  // hold: they bring any input down to limb magnitudes where the ripple cannot reach limb 9.
+  // claim, and it is conditional on the input's magnitude. There is a witness: with limb 0 at 7, limbs
+  // 1..8 at their maxima and limb 9 at `10596136 * 2^25 + 2^25 - 1`, pass one leaves limb 0 at
+  // `3 * 2^26 - 1`; pass two reduces that to `2^26 - 1` and carries 2 upward; the maximal limbs pass the
+  // carry along; limb 9 tips over and folds another 19 onto a limb 0 that is already maximal, leaving
+  // `2^26 + 18` — out of range, and packed as if it were not. `feToBytes` gets that input wrong without
+  // the two passes and right with them, which
+  // `test_the_input_that_needs_the_round_to_nearest_passes` pins.
+  //
+  // So these two passes are what make `feCarryFloor`'s precondition hold: they bring any input down to
+  // limb magnitudes where the pass-two ripple cannot reach limb 9.
   //
   // Which is why they stay. This function is **exported and takes a raw `i64[]`** — a caller can hand
   // it an accumulation that has never been carried, and every value the field's own operations produce

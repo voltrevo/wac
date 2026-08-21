@@ -1,6 +1,8 @@
 # 0179 — `feToBytes` carries three times, and nothing in the repository observes two of them
 
-- **Status:** open
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-21 — the bound is proved by a constructed witness, and the passes now have a test
+- **Fixed in:** `packages/crypto/src/field25519.wac` (the derivation, in `feToBytes`) and `packages/crypto/test/wac/field25519_test.wac` (two tests)
 - **Claimed by:** agent-a, 2026-08-21 — derived; the passes stay and the reason is in the code
 - **Reported by:** agent-b
 - **Date:** 2026-08-17
@@ -113,9 +115,45 @@ values that are already small is a cheap precondition to buy, and constant-time 
 way. The comment in `feToBytes` states the derivation so the next person who measures "deleting them
 changes nothing" finds out why that is true and not sufficient.
 
-**What is still not proved**, stated because the issue is right to insist on it: I have not shown the
-exact magnitude at which the pass-two ripple reaches limb 9, only that the round-to-nearest passes put
-the input well below it. A bound of the form "limbs below 2^k are safe for `feCarryFloor` alone" would
-let the passes go; deriving it is the remaining work, and it is now a bounded arithmetic question rather
-than an open-ended one about the whole field.
+## Proved, with a witness — and my own "not proved" paragraph was one solve away
 
+The paragraph above said the remaining work was to show the magnitude at which the pass-two ripple
+reaches limb 9. It is constructible, so here it is.
+
+Pass one must leave limb 0 at `3 * 2^26 - 1`, so pass two reduces it to `2^26 - 1` **and** carries 2
+upward. Limbs 1..8 at their maxima pass that carry along. Limb 9 must end pass one at `2^25 - 1`, so the
+carry tips it over and the fold puts another 19 onto a limb 0 that is already maximal — final limb 0 is
+`2^26 + 18`, out of range, and the encoder packs it as if it were not.
+
+Solving `r0 + 19 * c = 3 * 2^26 - 1` needs only that 19 is invertible mod `2^26`: `r0 = 7`,
+`c = 10596136`, so limb 9 is `10596136 * 2^25 + 2^25 - 1` — about `2^49`, comfortably inside `i64`.
+
+    with the two passes      raw 1200000800…  mul 1200000800…   agree
+    with them removed        raw 1200000400…  mul 1200000800…   disagree
+
+The oracle is the encoder against itself: the same value written two ways, these limbs raw and these
+limbs through `feMul(., 1)`, which carries on the way out. So no external reference is needed to state
+it, which is why it can live in the wac test rather than in the BigInt differential.
+
+**Three failed attempts first, and they are the reason to write this down.** Powers of two for limb 9
+all agreed, with and without the passes — because `2^k mod 2^25 = 0` leaves limb 9 at *zero* after pass
+one, so it absorbs the ripple instead of carrying. `2^k - 1` gets limb 9 to its maximum but leaves limb
+0 small after its own reduction, so the extra 19 lands harmlessly. Only limb 0 *and* limb 9 tuned
+together reach it. A search over either alone finds nothing, which is why the issue's measurement — and
+mine — kept coming back clean.
+
+## Closing it
+
+- The two `feCarry` passes **stay**, and are no longer "not shown to be dead": they are shown to be
+  load-bearing, for an input `feCarryFloor` alone gets wrong.
+- `test_the_input_that_needs_the_round_to_nearest_passes` pins it. Canaried by removing both passes:
+  that test fails on byte 3 and the other eleven still pass, which is also the sharpest statement of
+  how narrow the case is.
+- `test_a_negative_representation_encodes_as_its_positive_residue` pins the other thing nothing
+  observed — the fold running with a negative carry, which is how a below-zero representation becomes
+  its positive residue.
+- `feToBytes` carries the derivation, so the next person who measures "deleting them changes nothing"
+  finds the witness rather than repeating the search.
+
+The `feCarryFloor` comment's own claim — two passes settle it "provided the excursion is small" — was
+right, and is now quantified rather than asserted.
