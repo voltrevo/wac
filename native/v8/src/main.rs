@@ -771,10 +771,20 @@ fn closure_of(entry: &std::path::Path) -> (Vec<(String, Vec<u8>)>, bool) {
             if !spec.ends_with(".wac") {
                 continue;
             }
-            // The embedded tree. Joining it to the importing directory would name a file that has
+            // The embedded trees. Joining one to the importing directory would name a file that has
             // never existed, and treating that as a hole would make every program in the repository
             // uncacheable — almost all of them import `std/platform.wac`.
-            if spec.starts_with("std/") {
+            //
+            // **`core/` as well as `std/`, and leaving it out made the cache cover nothing.** They are
+            // the same kind of thing — `tools/genCore.ts` generates both into `coretext.wac`, and
+            // `isBuiltinSpec` answers for both — but only `std/` was skipped here. So a file importing
+            // `core/option.wac` sent the scan looking for `packages/<pkg>/src/core/option.wac`, which
+            // has never existed, `whole` went false, and the caller passed `None` as the key. 75 files
+            // in this repository import a `core/…` specifier, so the directories that missed were most
+            // of them: `packages/json`, `url`, `fmt` and `bytes` each wrote no cache entry at all for a
+            // perturbed source, and a cold run and a warm one timed the same because both compiled.
+            // `issues/system/0204`.
+            if spec.starts_with("std/") || spec.starts_with("core/") {
                 continue;
             }
             // Normalised here rather than by `canonicalize`, which would follow symlinks and answer a
@@ -891,8 +901,21 @@ const KEEP_MODULES: usize = 200;
 ///
 /// The artefact is the wasm; the manifest is read back out of it exactly as after a fresh build, so a
 /// hit and a miss answer the same four things.
+/// Where built aggregates are remembered.
+///
+/// `$WAC_TESTMOD_DIR` overrides it, which is the only way to *test* the cache: its behaviour is
+/// visible solely as entries appearing in a directory, and the default one is shared by every agent on
+/// the box — so a test asserting "an entry appeared" against `/tmp/wac-testmod` would be asserting
+/// something about the other agents' runs as much as its own. `issues/system/0204`.
+fn testmod_dir() -> std::path::PathBuf {
+    match std::env::var_os("WAC_TESTMOD_DIR") {
+        Some(d) if !d.is_empty() => std::path::PathBuf::from(d),
+        _ => std::env::temp_dir().join("wac-testmod"),
+    }
+}
+
 fn cached_module(key: u64) -> Option<Vec<u8>> {
-    let path = std::env::temp_dir().join("wac-testmod").join(format!("{key:016x}.wasm"));
+    let path = testmod_dir().join(format!("{key:016x}.wasm"));
     let bytes = std::fs::read(&path).ok()?;
     // Touched so that sweeping drops what is genuinely unused rather than what was built first.
     let now = std::time::SystemTime::now();
@@ -902,7 +925,7 @@ fn cached_module(key: u64) -> Option<Vec<u8>> {
 
 /// Remember a built aggregate, and bound the directory.
 fn remember_module(key: u64, wasm: &[u8]) {
-    let dir = std::env::temp_dir().join("wac-testmod");
+    let dir = testmod_dir();
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }

@@ -1,0 +1,83 @@
+// The `wac test` build cache covers a directory whose graph reaches the embedded trees.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env tools/wac/testmodcache_test.wac
+//
+// `issues/system/0204` gave `wac test` a content-keyed cache for the aggregate module it compiles per
+// directory. `closure_of` walks the graph to build that key and marks the closure **incomplete** when
+// an import names a `.wac` it cannot read — which is right, because a key standing for less than it
+// claims is a stale hit waiting to happen, and the callers pass `None` rather than such a key.
+//
+// The two **embedded** trees have no files to read, so they are skipped instead: their content is
+// inside the seed, and the key already hashes the seed. Only `std/` was skipped. So a file importing
+// `core/option.wac` sent the scan looking for `packages/<pkg>/src/core/option.wac`, which has never
+// existed, the closure went incomplete, and the directory recompiled on every run — silently, because
+// a cache that is never consulted looks exactly like one that always misses. Measured before the fix:
+// `packages/json`, `url`, `fmt` and `bytes` each wrote **no entry at all** for a perturbed source, and
+// a cold run and a warm one timed the same because both compiled. 75 files here import a `core/…`
+// specifier.
+//
+// **Why this points the cache at a directory of its own.** Its only observable is an entry appearing,
+// and the default location — `/tmp/wac-testmod` — is shared by every agent on this box and swept as it
+// grows. Asserting "an entry appeared" there would be asserting something about other agents' runs as
+// much as about this one, and would go flaky the moment the sweep fired. `$WAC_TESTMOD_DIR` makes the
+// claim exact: *this* run wrote *this* entry.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { wacBinary } from "../../packages/wactest/src/built.wac";
+import { freshDir } from "../../packages/wactest/src/host.wac";
+
+/**
+ * A directory that **does** reach `core/`, which is the whole point of the subject choice.
+ *
+ * `packages/bytes` was the first pick and could not fail: measured on both binaries with a private
+ * cache directory, it writes an entry either way, because nothing in its graph names a `core/…`
+ * specifier. `packages/json` and `packages/url` write **no entry** without the fix and one with it.
+ * A subject that is cacheable regardless makes this test green whatever `closure_of` does.
+ */
+const string SUBJECT = "packages/json/test/wac";
+
+i32 entriesIn(Cli cli, string dir) {
+  string[]? names = cli.readDir(dir).wait();
+  if (names is null) { return 0; }
+  i32 n = 0;
+  for (i32 i = 0; i < names!.len(); i++) {
+    if (names![i].indexOf(".wasm") > 0) { n = n + 1; }
+  }
+  return n;
+}
+
+/** One `wac test` of the subject directory, with the cache pointed at `dir`. */
+i32 runWith(Cli cli, string dir) {
+  Exec r = cli.execWith(wacBinary(cli),
+      string[]("test", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net",
+               SUBJECT),
+      u8[0](), string[]("WAC_TESTMOD_DIR=" + dir), false, false).wait();
+  return r.ran() ? r.status : 0 - 1;
+}
+
+export string test_a_directory_that_imports_core_is_cached(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/testmod-probe";
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+
+  // First run: an empty cache, so this compiles and remembers.
+  i32 first = runWith(cli, dir);
+  t.eqI32(first, 0, "the subject directory did not pass, so the cache claim is about a broken run");
+  i32 cold = entriesIn(cli, dir);
+  t.isTrue(cold > 0,
+      "no entry was written — the closure scan is calling " + SUBJECT + " uncacheable, which is what "
+      + "`core/` missing from the skip in `closure_of` does");
+
+  // Second run: the same sources, so the same key, so no *additional* entry.
+  i32 second = runWith(cli, dir);
+  t.eqI32(second, 0, "the subject directory did not pass on the second run");
+  t.eqI32(entriesIn(cli, dir), cold,
+      "a second run of unchanged sources wrote another entry, so the key is not stable — an mtime, or "
+      + "a path with a pid in it, has got into it");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
