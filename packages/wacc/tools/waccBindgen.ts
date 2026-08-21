@@ -527,10 +527,10 @@ export function generate(
       }
       const params = c.params.map((p, i) => `a${i}${ann(p)}`).join(", ");
       const fwd = c.params.map((p, i) => fromWasm(p, `a${i}`)).join(", ");
-      // **`annRaw`, like every other annotation in this file.** Spelled out, this was the one that
-      // did not respect JavaScript mode, so `bindgen --js` on any module with a function at its
-      // boundary wrote a `.js` that did not parse — `const $cbd0 = ($slot, a0: unknown) =>`, where
-      // `$slot` one expression to the left was already handled. GitHub `voltrevo/wac#23`.
+      // `annRaw`, like every other annotation in this file: it answers "" in JavaScript mode.
+      // Built by hand here, this wrote `($slot, a0: unknown) =>` into a `.gen.js` and no
+      // JavaScript runtime would parse the file — GitHub issue 23. The parameter was unused too,
+      // which is the tell: nothing about the type reached the text it produced.
       const raw = c.params.map((_, i) => `a${i}${annRaw("unknown")}`).join(", ");
       lines.push(`const $cbs${c.index}${annRaw(`((${params}) => ${tsType(c.ret)})[]`)} = [];`);
       lines.push(`const $cbd${c.index} = ($slot${annRaw("number")}${raw ? ", " + raw : ""}) =>`);

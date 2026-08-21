@@ -444,14 +444,6 @@ Sources gather(Fs fs, Cli cli, string entry) {
       if (specs[i] == "std") {
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", noStdRoot());
       }
-      // **A built-in is a different provider, and confinement is a rule about the filesystem.** `core`
-      // and `std` are text the compiler carries; their resolved paths live in the embedded base rather
-      // than in anybody's checkout, so asking the containment test about one compares a path under the
-      // compiler to a directory in the Git cache and can only fail. A mapped dependency importing
-      // `core/map.wac` was refused as if it had escaped — which made `packages/json` unusable as a Git
-      // dependency while `packages/crypto` worked, the difference being only whether the package's own
-      // import closure happened to cross into a built-in. GitHub `voltrevo/wac#24`.
-      bool builtin = isBuiltinSpec(specs[i]);
       string next = resolveFromAt(path, specs[i], roots[at], base);
       // **A `@/` with no project stops the walk, and saying so is the whole point.** D7 makes it a
       // compile error. Skipping the import instead is the outcome that looks like success: the
@@ -466,7 +458,19 @@ Sources gather(Fs fs, Cli cli, string entry) {
       // rather than in the `@/` branch because `@/outside/x.wac` and `../outside/x.wac` are the same
       // escape: when this was found both reached, so a fix aimed at one would have looked finished.
       // This is the single point every resolved specifier passes through.
-      if (!builtin && !withinDir(confine[at], next)) {
+      //
+      // **A built-in is not a path and confinement has nothing to say about it.** `resolveFromAt`
+      // answers a built-in specifier unchanged, so `core/map.wac` was compared against the
+      // dependency's checkout and read as an escape — GitHub issue 24. It cannot reach the
+      // filesystem to escape *to*: the walk above serves `core/` and `std/` from the text embedded
+      // in this compiler, which is the whole point of `design/lang/0009` D3/D4.
+      //
+      // Outside a mapping the same import always worked, because `confine` is empty there and
+      // `withinDir` answers true for everything — so the rule was invisible until a package was
+      // consumed through Git, and then it made usability depend on whether that package's own
+      // closure happened to name a built-in. `packages/crypto` and `packages/codec` were fine;
+      // `packages/json` was not, because `value.wac` imports `core/map.wac`.
+      if (!isBuiltinSpec(specs[i]) && !withinDir(confine[at], next)) {
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "",
                        leavesMapping(specs[i], path, confine[at]));
       }
@@ -487,13 +491,15 @@ Sources gather(Fs fs, Cli cli, string entry) {
       paths[n] = next;
       askedBy[n] = path;
       askedAs[n] = specs[i];
-      // Inherited: a file a confined file reaches is as confined as the file that reached it — but a
-      // built-in inherits nothing, because it is not in the confined tree to begin with. Skipping only
-      // the check above and letting the built-in stay confined moves the failure one file along rather
-      // than fixing it: `core/result.wac` imports `./option.wac` *relatively* from inside the embedded
-      // tree, so it would resolve under the compiler's base and be refused for leaving a Git checkout
-      // it was never in.
-      confine[n] = builtin ? "" : confine[at];
+      // Inherited: a file a confined file reaches is as confined as the file that reached it — **but a
+      // built-in inherits nothing**, because it was never in the confined tree. Skipping the check above
+      // and leaving this line alone moves the refusal one file along rather than lifting it:
+      // `core/result.wac` imports `./option.wac` *relatively*, from inside the embedded text, so it
+      // resolves under the compiler's base and is refused for leaving a Git checkout it was never in.
+      // Measured that way — with only the check skipped, a mapped file reaching `core/result.wac` gets
+      // *"./option.wac leaves the mapped subdirectory"*. It is the one built-in with a relative import,
+      // which is why the reported case (`core/map.wac`) does not show it. GitHub `voltrevo/wac#24`.
+      confine[n] = isBuiltinSpec(specs[i]) ? "" : confine[at];
       n = n + 1;
     }
     at = at + 1;

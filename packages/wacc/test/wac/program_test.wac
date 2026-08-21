@@ -190,14 +190,23 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   string program = buildProgram(t, cli);
   if (program == "") { return t.report(); }
 
+  // **A callback with a parameter, because that branch was the one JavaScript mode got wrong.**
+  // `apply` makes the generator emit a dispatcher — `$cbd0` — and the dispatcher was the only place
+  // that built its parameter annotations by hand instead of through the mode-aware helper, so
+  // `--js` wrote `($slot, a0: unknown) =>` and Node refused the file. GitHub issue 23. Everything
+  // else here already exercised structs, strings and methods, and none of them reach that branch.
+  //
+  // **Three arities, because that issue's acceptance criteria ask for them and because the bug lived
+  // in a `join`:** one parameter, two, and none. The nilary case is the one that would pass either
+  // way — `raw` is empty, so there is no annotation to get wrong — and it is here so that the next
+  // person changing this loop finds out whether they broke the empty case as well.
   cli.writeFile(dir + "/m.wac",
     ("struct Point { i32 x; i32 y; i32 sum(const this) { return this.x + this.y; } }\n" +
      "export Point origin(i32 x, i32 y) { return Point(x, y); }\n" +
      "export string greet(string who) { return \"hi \" + who; }\n" +
-     // **A function across the boundary**, which is the one shape this sample did not have and the
-     // reason `bindgen --js` emitted TypeScript for a year: the callback dispatcher's parameters were
-     // annotated unconditionally, so the generated `.js` did not parse. GitHub `voltrevo/wac#23`.
-     "export i32 apply(fn[i32(i32)] f, i32 x) { return f(x); }\n").toBytes()).wait();
+     "export i32 apply(fn[i32(i32)] f, i32 x) { return f(x); }\n" +
+     "export i32 pair(fn[i32(i32, i32)] g, i32 a, i32 b) { return g(a, b); }\n" +
+     "export i32 nilary(fn[i32()] h) { return h(); }\n").toBytes()).wait();
 
   Exec js = runProgram(cli, program, string[]("bindgen", dir + "/m.wac", "--js"));
   t.eqI32(js.status, 0, "bindgen failed: " + string.fromBytes(js.stderr) +
@@ -214,8 +223,21 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   FileResult text = cli.readFile(dir + "/m.gen.ts").wait();
   t.isTrue(text.ok, "the TypeScript glue was written — " + text.error);
   if (text.ok) {
-    t.isTrue(string.fromBytes(text.bytes).indexOf(": number") >= 0,
-             "the TypeScript mode emitted no annotations");
+    string tsGlue = string.fromBytes(text.bytes);
+    t.isTrue(tsGlue.indexOf(": number") >= 0, "the TypeScript mode emitted no annotations");
+    // And the dispatcher's own parameters are still annotated there, which is the half of the fix
+    // that is easy to lose: making `--js` stop emitting a type must not stop `--ts` emitting one.
+    t.isTrue(tsGlue.indexOf("a0: unknown") >= 0,
+             "the TypeScript mode dropped the callback dispatcher's annotation");
+  }
+  // The JavaScript glue must carry no type at all — asserted on the text as well as by running it,
+  // because a runtime that tolerated the annotation would leave the file wrong for the others.
+  FileResult jsText = cli.readFile(dir + "/m.gen.js").wait();
+  t.isTrue(jsText.ok, "the JavaScript glue was written — " + jsText.error);
+  if (jsText.ok) {
+    t.isTrue(string.fromBytes(jsText.bytes).indexOf(": unknown") < 0,
+             "the JavaScript mode emitted a TypeScript annotation: " +
+             string.fromBytes(jsText.bytes).slice(0, 400));
   }
   cli.remove(dir, true).wait();
   return t.report();

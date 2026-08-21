@@ -187,6 +187,13 @@ export u8[] rsaRecoverPkcs1(u8[] n, u8[] e, u8[] sig) {
   if (cmp(s, modulus) >= 0) { return u8[0](); }
 
   u8[] em = toBytes(modPow(s, fromBytes(e), modulus), n.len());
+  // **Two bytes before reading two bytes.** `em` is as long as the modulus, and a one-byte modulus
+  // is a legal argument that this function documents an answer for — empty. Without this the `||`
+  // short-circuit is no protection: `em[0] != 0x00` is *false* for the one-byte block `[0]`, so
+  // evaluation continues to `em[1]` and traps, from a function whose contract is that malformed
+  // input comes back empty. GitHub issue 15. A real modulus is hundreds of bytes; the point is that
+  // "real" is not something this can assume about an argument.
+  if (em.len() < 2) { return u8[0](); }
   if (em[0] != 0x00 || em[1] != 0x01) { return u8[0](); }
 
   // Walk the 0xFF run to its terminator. Anything other than 0xFF or the single 0x00 that
@@ -240,6 +247,13 @@ u8[] mgf1(u8[] seed, i32 length, i32 hashLen) {
  * `saltLen` is the salt length the signer used, which for TLS is always the hash length.
  */
 export bool rsaVerifyPss(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen, i32 saltLen) {
+  // **Both lengths are non-negative, and the size check below cannot stand in for saying so.** It
+  // reads `emLen < hashLen + saltLen + 2`, so a `saltLen` of -1 weakens it to `emLen < hashLen + 1`
+  // and an ordinary modulus sails through; the delimiter index computed from it then falls beyond
+  // the decoded data block and a *boolean verifier* traps on an out-of-bounds read instead of
+  // answering. GitHub issue 17. `hashLen` is checked with it because the same arithmetic carries it
+  // and a negative one is no more meaningful.
+  if (hashLen < 0 || saltLen < 0) { return false; }
   if (sig.len() != n.len()) { return false; }
   Big modulus = fromBytes(n);
   if (isZero(modulus)) { return false; }

@@ -199,21 +199,44 @@ bool onCurve(Curve c, i64[] x, i64[] y) {
  * skipping the validation is how implementations fall to it.
  */
 export Jac curveDecode(Curve c, u8[] s) {
+  if (!curveDecodes(c, s)) { trap; }
   i32 len = byteLen(c);
-  if (s.len() != 1 + 2 * len) { trap; }
-  if (s[0] != 4) { trap; }
   u8[] xb = u8[len]();
   u8[] yb = u8[len]();
   for (i32 i = 0; i < len; i++) { xb[i] = s[1 + i]; yb[i] = s[1 + len + i]; }
-  if (!fpInRange(xb)) { trap; }
-  if (!fpInRange(yb)) { trap; }
-  i64[] x = fpFromBytes(xb);
-  i64[] y = fpFromBytes(yb);
+  return jacFromAffine(c, fpFromBytes(xb), fpFromBytes(yb));
+}
+
+/**
+ * Every check `curveDecode` makes, asked as a question instead of enforced as a trap.
+ *
+ * **Because a `bool` verifier must answer, and a trap is not an answer.** `p256Verify`,
+ * `p256VerifyDigest`, `p384Verify` and `p384VerifyDigest` return `bool` and take a public key from
+ * whoever sent the signature; the signature's own shape and the scalar ranges were treated as
+ * ordinary verification failures, and then the *key* went to `curveDecode`, whose failures trap.
+ * A 65-byte key with no `0x04` prefix took a verifier down instead of being rejected. GitHub 14.
+ *
+ * The rules live here and `curveDecode` calls them, rather than being written twice: two copies of
+ * an invalid-curve check are two chances to fix one and not the other, and this is the check that
+ * stands between ECDH and an attacker-chosen group.
+ *
+ * ECDH keeps the trap, deliberately. There the point comes from a key exchange this side chose to
+ * enter and a malformed one is a protocol error worth stopping on; a verifier is handed untrusted
+ * bytes by definition and its whole contract is to say yes or no about them.
+ */
+export bool curveDecodes(Curve c, u8[] s) {
+  i32 len = byteLen(c);
+  if (s.len() != 1 + 2 * len) { return false; }
+  if (s[0] != 4) { return false; }
+  u8[] xb = u8[len]();
+  u8[] yb = u8[len]();
+  for (i32 i = 0; i < len; i++) { xb[i] = s[1 + i]; yb[i] = s[1 + len + i]; }
+  if (!fpInRange(xb)) { return false; }
+  if (!fpInRange(yb)) { return false; }
   // No separate check for (0, 0): the curve equation already rejects it, since 0 = b is
   // false for both curves' b. An explicit one was here and coverage showed it could not
   // be reached — the range check above always fires first.
-  if (!onCurve(c, x, y)) { trap; }
-  return jacFromAffine(c, x, y);
+  return onCurve(c, fpFromBytes(xb), fpFromBytes(yb));
 }
 
 /** Encode a point uncompressed: 0x04 ++ x ++ y. */
@@ -347,6 +370,11 @@ export bool ecdsaVerify(Curve c, u8[] publicKey, u8[] digest, u8[] sig) {
   u8[] u1 = scnToBytes(scnLeave(o, scnMont(o, scnEnter(o, e), sInv)));
   u8[] u2 = scnToBytes(scnLeave(o, scnMont(o, scnEnter(o, scnFromBytes(r)), sInv)));
 
+  // The public key is untrusted input like everything else here, so a malformed one is `false`
+  // rather than a trap — GitHub issue 14. Asked before decoding rather than folded into it: the
+  // checks run twice on the way through, which is two field operations against the two scalar
+  // multiplications below, and it keeps one implementation of the invalid-curve rules.
+  if (!curveDecodes(c, publicKey)) { return false; }
   Jac pub = curveDecode(c, publicKey);
   Jac point = jacAdd(c, jacMul(c, u1, curveBase(c)), jacMul(c, u2, pub));
   if (jacIsInfinity(point)) { return false; }

@@ -72,7 +72,7 @@ string[] grants() {
  * (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`), and a case past the end returns rather than
  * trapping, so a width may be an upper bound.
  */
-string[] cases() { return string[]("trapCase:130", "trapProbe:35"); }
+string[] cases() { return string[]("trapCase:145", "trapProbe:35"); }
 
 /** Points nothing here reaches, each with the argument for it. */
 Pin[] pins() {
@@ -137,7 +137,7 @@ Pin[] pins() {
         "toBytes' overflow guard. Every caller passes a length taken from the modulus and a " +
         "value already reduced below it, so the value always fits. Defensive against a future " +
         "caller that computes the length some other way."),
-    Pin("packages/crypto/src/rsa.wac", 272, "if (unusedBits > 0)", false,
+    Pin("packages/crypto/src/rsa.wac", 286, "if (unusedBits > 0)", false,
         "**`unusedBits` is never zero for a modulus anyone has.** `emBits = bitLen(n) - 1` " +
         "and `emLen = ceil(emBits / 8)`, so `unusedBits = 8*emLen - emBits` is zero exactly " +
         "when `emBits` is a multiple of eight — that is, when the modulus is 1 bit more than " +
@@ -145,26 +145,26 @@ Pin[] pins() {
         "else produces a multiple of eight. Reachable, not unreachable: a caller may pass " +
         "such a modulus, and then this masks nothing because there is nothing to mask. " +
         "issues/lang/0112."),
-    Pin("packages/crypto/src/rsa.wac", 465, "if (unusedBits > 0)", false,
+    Pin("packages/crypto/src/rsa.wac", 479, "if (unusedBits > 0)", false,
         "The signing side of the same arithmetic — see the entry for `rsa.wac:272`. Both are " +
         "the `else`: the mask *is* applied on every key anyone uses, and the branch that " +
         "skips it needs a modulus of 8k+1 bits."),
-    Pin("packages/crypto/src/weierstrass.wac", 294, "if (jacIsInfinity(shared)) { trap; }", true,
+    Pin("packages/crypto/src/weierstrass.wac", 317, "if (jacIsInfinity(shared)) { trap; }", true,
         "An ECDH result at infinity. P-256 has prime order, so the only point of small order " +
         "is the identity itself, and p256Decode rejects anything not on the curve — so a " +
         "validated peer point times a scalar in [1, n) cannot be the identity. Kept because " +
         "that argument depends on the validation above it staying correct."),
-    Pin("packages/crypto/src/weierstrass.wac", 352, "if (jacIsInfinity(point)) { return false; }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 380, "if (jacIsInfinity(point)) { return false; }", false,
         "u1*G + u2*Q landing on the identity during verification. Constructible by an " +
         "attacker choosing r and s together, which is exactly why the check is here; not " +
         "constructible by accident, which is why no test drives it."),
-    Pin("packages/crypto/src/weierstrass.wac", 375, "if (jacIsInfinity(point)) { return u8[0](); }", true,
+    Pin("packages/crypto/src/weierstrass.wac", 403, "if (jacIsInfinity(point)) { return u8[0](); }", true,
         "k*G at infinity during signing, which needs k = 0 mod n — already rejected above. " +
         "FIPS 186-4 specifies the retry anyway."),
-    Pin("packages/crypto/src/weierstrass.wac", 381, "if (scnIsZero(rN)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 409, "if (scnIsZero(rN)) { return u8[0](); }", false,
         "r = 0 during signing. FIPS 186-4 requires the retry; the probability is about 2^-256 " +
         "and no test can produce it without solving for k."),
-    Pin("packages/crypto/src/weierstrass.wac", 392, "if (scnIsZero(sN)) { return u8[0](); }", false,
+    Pin("packages/crypto/src/weierstrass.wac", 420, "if (scnIsZero(sN)) { return u8[0](); }", false,
         "s = 0 during signing. As above."),
     Pin("packages/crypto/src/scalarn.wac", 79, "if (be.len() % 4 != 0) { trap; }", true,
         "`scnFromBytes` given a byte count that is not a whole number of 32-bit limbs. Every " +

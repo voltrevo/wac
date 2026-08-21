@@ -653,9 +653,10 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
         if (i > 0) { params = params + ", "; fwd = fwd + ", "; raw = raw + ", "; }
         params = params + "a" + itoa(i) + ann(g, ps[i]);
         fwd = fwd + fromWasm(g, ps[i], "a" + itoa(i));
-        // **`annRaw`, like every other annotation here.** This was the one that ignored JavaScript
-        // mode, so `--js` on a module with a function at its boundary wrote a `.js` that did not
-        // parse. `$slot` on the line below was already handled. GitHub `voltrevo/wac#23`.
+        // `annRaw`, like every other annotation here: empty in JavaScript mode. Written out by
+        // hand, this put `($slot, a0: unknown) =>` in a `.gen.js` that no runtime would parse —
+        // GitHub issue 23, and `test/wac/bindgenwac_test.wac` holds this and the TypeScript port
+        // to the same bytes, so the two had to move together.
         raw = raw + "a" + itoa(i) + annRaw(g, "unknown");
       }
       line(o, "const $cbs" + itoa(c) + annRaw(g, "((" + params + ") => " + tsType(g, g.cRet[c])
