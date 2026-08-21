@@ -753,3 +753,138 @@ Two things that came out of proving it, both worth more than the proof:
   `import { Attr, Node } from "core";` compiles clean and emits — intrinsic tags are open-ended, so an
   unknown tag is an element rather than an error. Worth knowing before anyone writes a test expecting
   a refusal there.
+
+## Item 2's rule, read out of the reference rather than calibrated by rebuilding — agent-a, 2026-08-21
+
+The 2026-08-20 attempt tightened `typeOfE(Binary)` and calibrated against the reference in four rounds,
+each round finding a legal case the previous one refused, and round 4 collapsed self-hosting
+undiagnosably. The rounds were **discovering, one rebuild at a time, a rule that is written down**:
+`compiler/wacTypeCheck.ts`'s `checkBinaryOp`. Here it is, which is the calibration table the attempt
+was reconstructing:
+
+| operator | left | right | result |
+| --- | --- | --- | --- |
+| `+` with a `string` left | `string` | must be `string` | `string` |
+| `== != < <= > >=` with a `string` left | `string` | must be `string` | `bool` |
+| `+ - * / %` | must be numeric | **must equal the left** | the left's |
+| `== != < <= > >=` | not a reference type | **must equal the left** | `bool` |
+| `&& \|\|` | `bool` | `bool` | `bool` |
+| `& \| ^` | must be an integer | **must equal the left** | the left's |
+| `<< >> >>>` | must be an integer | any integer — **need not match** | the left's |
+
+**The shift row is the one worth having in advance.** A rule of "the operands must agree" refuses
+`u64 << i32`, and the reference says exactly why it must not: *"A count is not an operand. It is never
+the thing being widened and has no lossy case — wasm masks it to the operand width regardless."* It
+also records that this used to be two short lists that disagreed, and `u64 << i32` type-checked and
+emitted `i64.shl` with an i32 on the stack. So a naive tightening reintroduces a fixed bug rather than
+finding a new one, and it would have been a later round.
+
+### What the guess is actually doing, and the one case that is not a guess
+
+    string lt = typeOfE(src, lexed, env, left);
+    if (lt != "") { return lt; }
+    string rt = typeOfE(src, lexed, env, right);
+    if (rt != "") { return rt; }
+
+Two wrong answers in there — `return lt` when `rt` is known and *different*, and `return rt` when the
+left is the one that could not be worked out. But **`bytes[i] - 48` depends on this and is legal**:
+`lt` is `u8`, `rt` is an untyped integer literal, and `u8` is the right answer for the expression. The
+reference never faces it because a literal has already been given the slot's type by the time
+`checkBinaryOp` runs.
+
+So `""` is carrying two facts again — *this is an untyped literal, take the other side* and *I could
+not work this out* — which is the same conflation as `issues/lang/0180a`, where `isDeclaredName`
+answered both "does this name exist" and "what is this local's type". The discriminator exists:
+`isLiteral`, already used two hundred lines below.
+
+    if (k is a shift)                             return lt;      // the amount need not match
+    if (isLiteral(right) && !isLiteral(left)  && lt != "") return lt;   // the other operand is an
+    if (isLiteral(left)  && !isLiteral(right) && rt != "") return rt;   //   expectation, either order
+    if (lt == "" || rt == "")                     return floatLiteralEither ? "f64" : "";
+    if (lt != rt)                                 return "";       // a disagreement is not an answer
+    return lt;
+
+Six lines, every one citing a written source rather than a round of calibration.
+
+**The literal rows are keyed on `isLiteral`, not on the literal's answer, and that distinction is a
+spec clause.** `spec/spec/types.md` says a literal *"keeps the width its own notation gives it —
+including as an operand of an operator, so an `i64` literal stays `i64` rather than narrowing"* — and
+then: *"The **other operand counts as an expectation**, in either order and whether or not the literal
+is negated"*, with `§wac-int-context-9wkq4mz` showing `f(i32 x) { return -2147483648 <= x; }` compiling
+with the literal as an **i32**, even though `2147483648` needs 64 bits.
+
+**Measured before trusting that reasoning, and it cuts the other way for this function.** `typeOfE`
+answers `""` for `IntLit` and `FloatLit` — a numeric literal is context-typed and has no type of its
+own here — so `-2147483648` does *not* come back as `i64`, and the clause's own example is a
+comparison, which returns `bool` two lines earlier and never reaches any of this. The clause is about
+the **checker**, where slot typing has already run; it does not constrain this arm.
+
+So the `isLiteral` rows are right for the reason `bytes[i] - 48` gives and not for the reason the
+clause gives — worth writing down, because the wrong reason justifies the same code today and the
+wrong thing next time. `BoolLit` and `StrLit` do answer real types (`bool`, `string`), so those rows
+only ever fire for the numeric literals they are about.
+
+Two legitimate cases found by reading, then — the shift row and `bytes[i] - 48` — plus one that looked
+like a third and was not. All before writing a line, where the 2026-08-20 attempt found its three by
+collapsing the build.
+
+### Why this is now attemptable when it was not yesterday
+
+The attempt's own conclusion was *"make declines reportable, then tighten"*, and two things have
+changed since it was written:
+
+- **24 of the 25 emitter bails name what they could not find** (this issue, above), and
+  `emitDeclineFiles` reports it.
+- **`tools/seed.sh` checks all three payloads** and says which one is missing — added 2026-08-20 for
+  `issues/system/0216a`. That is the check whose absence made round 4 undiagnosable: the collapse
+  showed up as a size printed and an exit code of 0. It caught a real failure today, when a first
+  attempt at `0180a` broke `packages/box/example/boxsh.wac` and the seed said so by name.
+
+So the loop the attempt asked for exists: tighten, reseed, read the named decline, decide whether the
+case is legal, repeat. The four rounds are still four rounds — but each one now names its expression
+instead of costing a guess.
+
+### Done, and the reporting paid for itself within the hour
+
+Applied. The first reseed **failed**, and the failure is the argument for having landed the bail
+messages first:
+
+    wacc: cannot emit packages/box/example/boxsh.wac — the exported function `main` is not in the
+    module the emitter produced — a reference to boxRun, declined: a call to dispatch, declined: a call
+    to gunzip, declined: a call to gunzipStream, declined: a method BitReader.readByte, declined: a
+    method BitReader.readBits, declined: a method BitReader.peek, declined: untyped binary
+
+Seven levels, ending at the expression. `BitReader.peek` is
+`return this.bitBuf & ((1 << count) - 1);`, and the rule above types the shift as its **left** operand
+— which here is the literal `1`, with no type of its own. So the shift came back unknown, that made
+the subtraction unknown, that made the `&` unknown, and the method declined. The previous code
+answered `i32` by falling through to the *amount*.
+
+So the shift row keeps that fallback: `return lt != "" ? lt : rt;`. Taking the amount's type is not
+obviously right — `i64 x = 1 << count;` is refused by both compilers, `expected i64, found i32` — but
+it is a clean refusal rather than 32-bit arithmetic in a 64-bit slot, and repairing it needs the slot,
+which a context-free `typeOfE` cannot see. Filed as `issues/lang/0233a` rather than guessed at.
+
+**And `untyped binary` was made to name the cause**, since that leaf is where a seven-deep cascade
+lands: it now says *"whose operands disagree: i32 and i64"*, *"whose left operand is untyped, the right
+being i32"*, or *"whose operands are both untyped"*. Three causes wanting three different fixes, which
+one string could not distinguish.
+
+Second reseed: a fixed point with all three payloads. `cases_test` 225 of 225, `illtyped` 5 of 5,
+`corpusMutate`, `checkSweep` and `emitSweep` all green.
+
+**It is defence in depth, and the tests say so.** wacc's checker already refuses mismatched operands —
+`error: operands have mismatched types` — so no program reaches the guess by this route today, and
+`packages/wacc/test/wac/binaryoperands_test.wac` asserts *both* halves: that the emitter now has no
+type for them and names both, and that the checker refuses them first. If the second test ever fails,
+the first stops being a second line of defence.
+
+Canaried twice, because there are two things to lose:
+
+- removing `if (lt != rt) { return ""; }` — the disagreement test fails, both operand pairs unblocked;
+- removing the shift exemption — `b << a` is blocked with *"untyped binary whose operands disagree:
+  i64 and i32"*, which is the failure mode that collapsed the 2026-08-20 attempt, reproduced on
+  purpose in one run instead of four rebuilds.
+
+`spec/cases/0223` pins the runtime answer for the shift (`k` answers 8), so the exemption is held by a
+case in the corpus as well as by a test.

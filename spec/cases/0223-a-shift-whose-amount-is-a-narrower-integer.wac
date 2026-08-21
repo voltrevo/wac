@@ -1,0 +1,22 @@
+// expect: answers k = 8
+// why: **a shift's amount is not an operand**, so it does not have to match the value's width. Both
+//      compilers accept `b << a` for an `i64 b` and an `i32 a` and nothing pinned it, which makes it
+//      the case a tightening breaks rather than the case a tightening catches.
+//      `compiler/wacTypeCheck.ts` states the rule and why: *"It is never the thing being widened and
+//      has no lossy case — wasm masks it to the operand width regardless — so requiring a cast here
+//      would be asking for one that could not mean anything else"*. It also records what happened
+//      when the checker's list and the emitter's list disagreed: `u64 << i32` type-checked and then
+//      emitted `i64.shl` with an i32 on the stack, and the module failed to validate.
+//      The reason to pin it now: `issues/lang/0170a` item 2 wants `typeOfE(Binary)` to stop answering
+//      with one operand's type when the two disagree. Every rule of that shape has to exempt shifts,
+//      because here the operands *do* disagree and the answer *is* the left one — so a tightening
+//      without the exemption gives this legal program no type, and an expression with no type is one
+//      the emitter declines. That failure mode is a refusal of working code, and whether this
+//      repository's own files would catch it depends on whether any of them shifts by a narrower
+//      integer — which is exactly the sort of thing to measure rather than assume, by removing the
+//      exemption and seeing whether the seed still builds. `issues/lang/0170a`.
+export i64 k() {
+  i32 a = 3;
+  i64 b = 1;
+  return b << a;
+}

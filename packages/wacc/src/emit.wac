@@ -7747,15 +7747,50 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         return "bool";
       }
       string lt = typeOfE(src, lexed, env, left);
-      if (lt != "") { return lt; }
       string rt = typeOfE(src, lexed, env, right);
-      if (rt != "") { return rt; }
+      // **A shift's amount is not an operand**, so it does not have to match: the reference states it
+      // — *"It is never the thing being widened and has no lossy case — wasm masks it to the operand
+      // width regardless"* — and records that this was once two short lists that disagreed, so
+      // `u64 << i32` type-checked and then emitted `i64.shl` with an i32 on the stack. Asking the two
+      // sides to agree here would put that back.
+      // The result is the left operand's type — **falling back to the amount's when the left is a
+      // bare literal**, which is what this answered before and is load-bearing:
+      // `this.bitBuf & ((1 << count) - 1)` in `BitReader.peek` types `1 << count` from `count`, and
+      // answering unknown there made the whole expression unknown, the method decline, and the seed's
+      // `sh` payload fail to build — through a seven-deep cascade that named every step, which is the
+      // reporting `issues/lang/0170a` landed for exactly this.
+      //
+      // Taking the amount's type is not obviously *right*, and it is measurable rather than a worry:
+      // `i64 x = 1 << count;` is **refused by both compilers** — `expected i64, found i32`, with the
+      // cast help — because the shift is typed from `count` and never from the slot. A clean refusal
+      // rather than 32-bit arithmetic in a 64-bit slot, so nothing is silently wrong; but the spec
+      // says a literal takes its type from what is expected of it, and a slot is an expectation.
+      // `issues/lang/0233a`, because a context-free `typeOfE` cannot see the slot and `emitExprAt` is
+      // the function that can.
+      if (k == kShl() || k == kShr() || k == kShrU()) { return lt != "" ? lt : rt; }
+      // **The other operand counts as an expectation**, in either order — `§wac-int-context-9wkq4mz`,
+      // which compiles `f(i32 x) { return -2147483648 <= x; }` with that literal as an **i32** even
+      // though its magnitude needs 64 bits. So this is keyed on `isLiteral` rather than on what the
+      // literal *answers*: asking "did the literal side come back empty" gets `i64` for that case,
+      // sees two types disagree, and refuses a program the spec pins. A literal keeps its notation's
+      // width only when nothing is expected of it, and the other operand is something expected.
+      if (isLiteral(right) && !isLiteral(left) && lt != "") { return lt; }
+      if (isLiteral(left) && !isLiteral(right) && rt != "") { return rt; }
       // **Two literals still have a family, even with no type.** `(0.0 / 0.0) as@ i32` answered ""
       // here, so the cast took its own target as the operand's type and converted `i32` to `i32` —
       // nothing — over an `f64` the emitter had just produced. A float literal is an `f64` unless a
       // slot narrows it, and that is as true inside an arithmetic expression as outside one.
       // `issues/lang/0117`, `§wac-raw-truncf-nan-w9fk2xq`.
-      return isFloatLiteral(left) || isFloatLiteral(right) ? "f64" : "";
+      if (lt == "" || rt == "") {
+        return isFloatLiteral(left) || isFloatLiteral(right) ? "f64" : "";
+      }
+      // **Two types that disagree are not an answer, and answering anyway is what defeated every
+      // guard downstream.** `checkBinaryOp` requires the operands to match for arithmetic, for
+      // bitwise and for comparison; returning one of them regardless is how an ill-typed expression
+      // reached the emitter wearing a type. Unknown declines with a reason now, which is the whole
+      // point of the bail messages this issue landed first. `issues/lang/0170a` item 2.
+      if (lt != rt) { return ""; }
+      return lt;
     }
     case Is(left, target, other, negated): { return "bool"; }
     case Incr(target, op, prefix): { return typeOfLv(src, lexed, env, peelLv(target)); }
@@ -10120,8 +10155,32 @@ string unsupportedValue(u8[] src, Lexed lexed, Env env, Expr e) {
   // A literal has no type of its own and takes the slot's, which is the one thing that is *meant* to
   // come back empty here.
   if (isLiteral(e)) { return ""; }
-  if (typeOfE(src, lexed, env, e) == "") { return "untyped " + kindOfExpr(e); }
+  if (typeOfE(src, lexed, env, e) == "") { return "untyped " + kindOfExpr(e) + operandNote(src, lexed, env, e); }
   return "";
+}
+
+/**
+ * For a binary expression with no type, which side is to blame — appended to `untyped binary`.
+ *
+ * **`untyped binary` on its own costs a rebuild per guess**, which is the whole complaint
+ * `issues/lang/0170a` makes about declines with no cause. There are three ways a binary has no type
+ * and they want different fixes: the left had none, the right had none, or the two disagreed and
+ * neither is an answer. The cascade that reports this can be seven levels deep — `main` to a
+ * reference to a call to a call to three methods, in the seed's own `sh` payload — so the leaf saying
+ * which of the three it is decides whether the next step is a read or a rebuild.
+ */
+string operandNote(u8[] src, Lexed lexed, Env env, Expr e) {
+  match (e.kind) {
+    case Binary(op, left, right): {
+      string lt = typeOfE(src, lexed, env, left);
+      string rt = typeOfE(src, lexed, env, right);
+      if (lt != "" && rt != "") { return " whose operands disagree: " + lt + " and " + rt; }
+      if (lt == "" && rt == "") { return " whose operands are both untyped"; }
+      return lt == "" ? " whose left operand is untyped, the right being " + rt
+                      : " whose right operand is untyped, the left being " + lt;
+    }
+    else: { return ""; }
+  }
 }
 
 /** Whether a literal is a float one, which cannot share a slot with an integer one. */

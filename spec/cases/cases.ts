@@ -1,8 +1,14 @@
 // Reading the case corpus. See README.md for the format.
 //
-// Deliberately not a test: `compiler/wacCases.test.ts` runs these against the reference and
-// `packages/wacc/test/wac/cases_test.wac` runs the same files against wacc, and neither should own the
+// Deliberately not a test: `compiler/wacCases.test.ts` checks that every case states what it wants,
+// `packages/wacc/test/wac/cases_test.wac` runs the files against wacc, and neither should own the
 // parsing. A third consumer — a compiler nobody has written yet — should need only this file.
+//
+// **The reference does not run them, deliberately**, and this sentence used to say it did.
+// `wacCases.test.ts` explains why at length: asking it to run the cases made it a second
+// implementation of the language and so a constraint on the language, with every lambda case needing
+// a `// only: wacc` marker. The cases are run by wacc, which is the compiler the spec targets —
+// `design/lang/0003`.
 
 export type Expectation =
   | { kind: "emits" }

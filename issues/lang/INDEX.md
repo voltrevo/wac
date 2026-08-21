@@ -5,9 +5,10 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0233a](open/0233a-a-shift-by-a-variable-is-typed-from-the-amount-not-the-slot.md) | `i64 x = 1 << count;` is refused by both compilers: a shift is typed from its left operand, which for a literal has no type, so the only type in reach is the amount's — the one the result is explicitly not supposed to follow | decision | compile error |
 | [0232a](open/0232a-the-diagnostic-wire-cannot-carry-contextstart.md) | the diagnostic wire has no `contextStart`, so wacc renders `§wac-diag-multiline-ic7x2hq` two source lines shorter than the reference — and `renderdiag_test.wac` cannot see it, because both renderers are fed wacc's own wire | decision | wrong answer |
 | [0171a](open/0171a-unwrapping-a-nullable-primitive-loses-the-function.md) | bindgen refuses a nullable primitive at the host boundary, so `export i32 read(i32? x)` — the accessor the spec prescribes — gets no glue; the emitter half is done | decision | no glue for a signature the spec shows |
-| [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | the standing one: `typeOfE` still guesses on `Binary`. The 25 reasonless emitter bails are named now — 24 of them decline with the name they could not find, and the 25th is not a failed lookup. `writeValType` refuses a bare unresolved name now that 0173a is closed | bug | a decline with no cause, or none at all |
+| [0170a](open/0170a-wacc-swallows-what-it-cannot-check-instead-of-refusing-it.md) | the standing one, and items 1 and 2 are done: the 25 reasonless emitter bails name what they could not find, and `typeOfE(Binary)` no longer answers with one operand's type when the two disagree. What is left is item 3 — `""` as an ordinary value — and item 4's missing cases. `writeValType` refuses a bare unresolved name now that 0173a is closed | bug | a decline with no cause, or none at all |
 | [0163](open/0163-one-file-under-two-keys-is-silent-in-the-reference-and-an-invalid-module-in-wacc.md) | refused now, naming both keys, instead of an invalid module the checker was silent about — what is left is D8 deciding whether refusing is right, with a recommendation that it is | decision | no error |
 | [0157](open/0157-an-import-of-a-file-nobody-supplied-is-caught-by-the-emitter-not-the-checker.md) | the single-file half is fixed and the emitter's sentence **names the file** now; what is left is the checker reporting it at the import's token, for which the linker already has the key | diagnostic | no error |
 | [0156](open/0156-the-specs-parse-messages-match-neither-compiler.md) | the spec quotes `expected ';'` as a parse message, wacc says `unexpected token` with it in the annotation, the reference says a third thing — and the differentials compare positions, not text | diagnostic | wrong answer |
@@ -32,7 +33,7 @@ has been fixed and why.
 
 ## Closed
 
-179 issues, 155 closed.
+180 issues, 155 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

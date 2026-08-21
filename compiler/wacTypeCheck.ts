@@ -2912,7 +2912,6 @@ function checkBinaryOp(
       return null;
     }
     return lt;
-    return lt;
   }
 
   errAt(ctx, `unknown binary operator '${op}'`, line, col);

@@ -1,0 +1,83 @@
+// A binary operator whose operands disagree has no type, and the refusal says which two.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env \
+//       packages/wacc/test/wac/binaryoperands_test.wac
+//
+// `issues/lang/0170a` item 2: `typeOfE(Binary)` answered with *one operand's type* whenever it had
+// one — `return lt` if the left was known, otherwise `return rt`. Returning an answer for an
+// expression that has none is the mechanism that defeats every guard downstream of it, which is how
+// that issue's four original programs built modules with their exported function missing.
+//
+// **This is defence in depth and the tests say so.** wacc's checker already refuses mismatched
+// operands — `error: operands have mismatched types` — so no program reaches the emitter's guess by
+// this route today. The point is what happens when the checker and the emitter disagree, which is the
+// standing shape of `0170a`: the gate decides emittability, the doer emits, and where they disagreed
+// the answer used to be silence. Both halves are asserted below, because "the checker refuses it" is
+// the reason this is not reachable and would be the first thing to change.
+//
+// **The shift row is the one that must *not* refuse.** `b << a` for an `i64 b` and an `i32 a` is legal
+// — a shift's amount is not an operand and need not match the width — so a rule of "the operands must
+// agree" refuses working code. The reference says why, and records that when its list and the
+// emitter's disagreed, `u64 << i32` type-checked and then emitted `i64.shl` with an i32 on the stack.
+// `spec/cases/0223` pins the runtime answer; this pins that nothing blocks it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { blockedFiles, dumpTypeErrors } from "../../src/api.wac";
+
+string blockedFor(string src) {
+  return blockedFiles(string[]("/m.wac"), string[](src), "/m.wac");
+}
+
+i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
+
+const string MIXED_INT = "export i64 f(i32 a, i64 b) { return a + b; }\n";
+const string MIXED_FLOAT = "export f64 g(f32 a, f64 b) { return a * b; }\n";
+const string SHIFT = "export i64 k(i32 a, i64 b) { return b << a; }\n";
+
+/**
+ * The emitter's own answer, which is the half that used to be a guess.
+ *
+ * Naming both types is the part worth asserting rather than just "blocked": the message this
+ * replaced was `untyped binary`, and the cascade that carries it can be seven levels deep — in the
+ * seed's `sh` payload it ran `main` → a reference → two calls → three methods before reaching the
+ * expression. A leaf that does not say which side was wrong costs a rebuild per guess.
+ */
+export string test_operands_that_disagree_have_no_type_and_the_refusal_names_them() {
+  T t = T.create();
+  string ints = blockedFor(MIXED_INT);
+  t.isTrue(ints != "", "i32 + i64 was not blocked");
+  t.isTrue(ints.indexOf("i32") >= 0 && ints.indexOf("i64") >= 0,
+      "the refusal did not name both types — " + ints);
+  string floats = blockedFor(MIXED_FLOAT);
+  t.isTrue(floats != "", "f32 * f64 was not blocked");
+  t.isTrue(floats.indexOf("f32") >= 0 && floats.indexOf("f64") >= 0,
+      "the refusal did not name both types — " + floats);
+  return t.report();
+}
+
+/**
+ * And the checker refuses them too, which is why the rule above is a second line rather than the
+ * first. If this test ever fails, the one above stops being defence in depth and starts being the
+ * only thing standing between an ill-typed program and the emitter.
+ */
+export string test_the_checker_refuses_them_first() {
+  T t = T.create();
+  t.isTrue(diagsFor(MIXED_INT) > 0, "the checker was silent about i32 + i64");
+  t.isTrue(diagsFor(MIXED_FLOAT) > 0, "the checker was silent about f32 * f64");
+  return t.report();
+}
+
+/**
+ * The control, and the case a careless tightening breaks.
+ *
+ * Both compilers accept a shift by a narrower integer, so a rule requiring the operands to agree
+ * refuses a legal program — the failure direction no differential over this repository's own files
+ * would report as a disagreement, because it makes wacc *stricter* than the reference rather than
+ * looser.
+ */
+export string test_a_shift_by_a_narrower_integer_is_not_blocked() {
+  T t = T.create();
+  t.eqI32(diagsFor(SHIFT), 0, "the checker refused a legal shift");
+  t.eqStr(blockedFor(SHIFT), "", "the emitter blocked a legal shift");
+  return t.report();
+}
