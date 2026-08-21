@@ -13,7 +13,8 @@
 // front of one and nothing else. So the compound case it was built for could not reach it from
 // anywhere, and `g(1)` was refused while `g(1 + 2)` was accepted — in a function argument, an array
 // element, an array fill, a positional constructor argument, a variant payload, four builtin argument
-// positions, a JSX attribute value and a JSX child. The reference refuses every one, and each was a
+// positions, a JSX attribute value, a JSX child, an array size, an array index read and write, and a
+// `switch` case value. The reference refuses every one, and each was a
 // module built with its exported function missing and an exit code of 0. `issues/lang/0244a`.
 //
 // **Both halves, in one file, because that is the whole risk.** Widening a guard is how a checker
@@ -49,7 +50,11 @@ string[] refusedNames() {
     "builtin, slice wants two i32s",
     "builtin, string.fromCodepoint wants an i32",
     "JSX attribute value",
-    "JSX child, which must be a Node");
+    "JSX child, which must be a Node",
+    "array size, a ternary of strings",
+    "array index read, a ternary of strings",
+    "array index written, a ternary of strings",
+    "a switch case value, a string sum — caught by another rule, kept as coverage");
 }
 
 string[] refusedPrograms() {
@@ -65,7 +70,11 @@ string[] refusedPrograms() {
     "export i32 f() { return \"ab\".slice(1, \"x\" + \"y\").len(); }\n",
     "export i32 f() { string s = string.fromCodepoint(\"a\" + \"b\"); return s.len(); }\n",
     JSX + "export i32 f() { Node n = <div class={1 + 2}></div>; return 0; }\n",
-    JSX + "export i32 f() { Node n = <div>{1 + 2}</div>; return 0; }\n");
+    JSX + "export i32 f() { Node n = <div>{1 + 2}</div>; return 0; }\n",
+    "export i32 f(bool b) { i32[] a = i32[b ? \"x\" : \"y\"](); return a.len(); }\n",
+    "export i32 f(i32[] a, bool b) { return a[b ? \"x\" : \"y\"]; }\n",
+    "export i32 f(i32[] a, bool b) { a[b ? \"x\" : \"y\"] = 1; return 0; }\n",
+    "export i32 f(i32 x) { switch (x) { case \"a\" + \"b\": { return 1; } default: { return 0; } } }\n");
 }
 
 /** Every slot, with a compound literal that cannot go there. */
@@ -84,7 +93,7 @@ export string test_a_compound_literal_is_refused_where_a_direct_one_is() {
 /**
  * The direct form of each, which is what says the slot was ever checked at all.
  *
- * Ten rows that were refused before `0244a` and after it. If one of these ever goes silent the
+ * Fourteen rows that were refused before `0244a` and after it. If one of these ever goes silent the
  * guard has been removed rather than widened, and the test above would still pass — a rule that fires
  * only on the compound form is not the rule this file is about.
  */
@@ -93,7 +102,8 @@ export string test_the_direct_form_of_each_slot_is_still_refused() {
   string[] name = string[](
     "argument", "array element", "array fill", "constructor positional",
     "variant payload", "indexOf", "fromBytes", "fromCodepoint",
-    "JSX attribute", "JSX child");
+    "JSX attribute", "JSX child", "array size", "array index read",
+    "array index written", "switch case value");
   string[] src = string[](
     "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(1); }\n",
     "export i32 f() { string[] a = string[](1); return a.len(); }\n",
@@ -104,7 +114,11 @@ export string test_the_direct_form_of_each_slot_is_still_refused() {
     "export i32 f() { string s = string.fromBytes(1); return s.len(); }\n",
     "export i32 f() { string s = string.fromCodepoint(\"a\"); return s.len(); }\n",
     JSX + "export i32 f() { Node n = <div class={1}></div>; return 0; }\n",
-    JSX + "export i32 f() { Node n = <div>{1}</div>; return 0; }\n");
+    JSX + "export i32 f() { Node n = <div>{1}</div>; return 0; }\n",
+    "export i32 f() { i32[] a = i32[\"a\"](); return a.len(); }\n",
+    "export i32 f(i32[] a) { return a[\"a\"]; }\n",
+    "export i32 f(i32[] a) { a[\"a\"] = 1; return 0; }\n",
+    "export i32 f(i32 x) { switch (x) { case \"a\": { return 1; } default: { return 0; } } }\n");
   for (i32 i = 0; i < src.len(); i++) {
     t.isTrue(diagsFor(src[i]) > 0, name[i] + ": the direct form went silent");
   }
@@ -126,7 +140,9 @@ export string test_the_same_compound_literals_where_they_fit() {
     "an integer sum into an i64", "a ternary of integers into an i32",
     "a float sum into an f64", "an integer sum into an i32[]",
     "an integer sum into a u8[]", "a string sum into a string argument",
-    "a ternary of integers into a u8[] element", "a string literal as a JSX attribute value");
+    "a ternary of integers into a u8[] element", "a string literal as a JSX attribute value",
+    "an integer sum as an array size", "a ternary of integers as an index",
+    "an integer sum as a switch case value");
   string[] src = string[](
     "i32 g(i64 v) { return 0; }\nexport i32 f() { return g(1 + 2); }\n",
     "i32 g(i32 v) { return v; }\nexport i32 f(bool b) { return g(b ? 1 : 2); }\n",
@@ -135,7 +151,10 @@ export string test_the_same_compound_literals_where_they_fit() {
     "export i32 f() { u8[] a = u8[](1 + 2); return a.len(); }\n",
     "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(\"a\" + \"b\"); }\n",
     "export i32 f(bool b) { u8[] a = u8[](b ? 1 : 2); return a.len(); }\n",
-    JSX + "export i32 f() { Node n = <div class={\"a\"}></div>; return 0; }\n");
+    JSX + "export i32 f() { Node n = <div class={\"a\"}></div>; return 0; }\n",
+    "export i32 f() { i32[] a = i32[1 + 1](); return a.len(); }\n",
+    "export i32 f(i32[] a, bool b) { return a[b ? 1 : 2]; }\n",
+    "export i32 f(i32 x) { switch (x) { case 1 + 1: { return 1; } default: { return 0; } } }\n");
   for (i32 i = 0; i < src.len(); i++) {
     t.eqI32(diagsFor(src[i]), 0, name[i] + ": refused a legal program");
   }
@@ -145,7 +164,7 @@ export string test_the_same_compound_literals_where_they_fit() {
 /**
  * And no row is accepted by the checker *and* the emitter, which is what the silence cost.
  *
- * `illtyped_test.wac`'s standing claim, asked of these twelve: a program both halves accept builds a
+ * `illtyped_test.wac`'s standing claim, asked of these sixteen: a program both halves accept builds a
  * module with its exported function missing and exits 0. That is what `g(1 + 2)` did.
  */
 export string test_no_refused_row_is_accepted_by_both() {

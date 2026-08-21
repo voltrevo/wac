@@ -3919,7 +3919,7 @@ void checkExpr(C c, Expr e) {
         // A length is a count, so it is an `i32` — at the size expression, which is the only thing
         // there is to name.
         Expr sz = size!;
-        i32 slit = litKindOf(sz);
+        i32 slit = litFamily(c, sz);
         if (slit != litNone()) {
           if (!acceptsLiteral("i32", slit)) { c.report(errIndex(), sz.line, sz.col); }
         } else {
@@ -5079,7 +5079,7 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
  * position, and both index complaints land on it.
  */
 void checkIndexType(C c, Lvalue lv, Expr index) {
-  i32 wlit = litKindOf(index);
+  i32 wlit = litFamily(c, index);
   if (wlit != litNone()) {
     if (!acceptsLiteral("i32", wlit)) { c.report(errIndex(), lv.line, lv.col); }
   } else {
@@ -6180,7 +6180,7 @@ void checkIndex(C c, Expr at, Expr arr, Expr index) {
     c.report(errNotIndexable(), arr.line, arr.col);
     return;
   }
-  i32 lit = litKindOf(index);
+  i32 lit = litFamily(c, index);
   if (lit != litNone()) {
     if (!acceptsLiteral("i32", lit)) { c.report(errIndex(), index.line, index.col); }
     return;

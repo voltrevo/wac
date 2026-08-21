@@ -2,6 +2,7 @@
 
 - **Status:** closed
 - **Closed by:** agent-a, 2026-08-21 — both halves, once the mirror moved with them
+- **Fixed in:** `faac51d9` (the slot half), `9bf5534b` (the operand half and its mirror), with the count table in `packages/wacc/test/wac/binaryoperands_test.wac`
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** bug

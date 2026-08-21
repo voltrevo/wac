@@ -2,6 +2,7 @@
 
 - **Status:** closed
 - **Closed by:** agent-a, 2026-08-21 — all eleven guards, and the two rows that needed `0245a` first
+- **Fixed in:** `5994244e` (eight guards), `faac51d9` (the two rows that needed a type), `9bf5534b` (the JSX pair), with `packages/wacc/test/wac/compoundlit_test.wac`
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** bug
@@ -118,3 +119,25 @@ it alone would have left a reader thinking the slot was covered.
 Verified: `corpuscheck` over the repository, `cases` including the 103 executable spec cases,
 `typecheck` rung 3 with 0 false alarms and 0 contradicted, `specsingle` 371 silent, `specmulti` 42
 silent, `illtyped`, `binaryoperands`, `warnings`, `codes`.
+
+## And three more guards, of the same shape and not among the eleven — 2026-08-21
+
+An **array size**, an **array index read** and an **array index write** each ask
+`acceptsLiteral("i32", …)` off a `litKindOf`, which is the same blindness in a rule that does not go
+through `reportLiteral` at all. So the compound form slipped there too, and the reference refuses all
+three:
+
+    a[b ? "x" : "y"]            accepted     ← reference: array index must be i32, got string
+    i32[b ? "x" : "y"]()        accepted     ← reference: array size must be i32, got string
+    a[b ? "x" : "y"] = 1        accepted     ← reference: array index must be i32, got string
+
+The *binary* form of each was already refused, because `0245a` gives `"a" + "b"` a type and the
+non-literal path then compares types — which is why a ternary was needed to see the hole at all. Three
+rows added, three legal ones beside them (`i32[1 + 1]()`, `a[b ? 1 : 2]`, `case 1 + 1:`), and the
+canary shows exactly those three failing with the guards put back.
+
+**A fourth was reverted for want of a failing case.** A `switch` case value takes the same shape, and
+widening it changes nothing: `case "a" + "b":` is refused either way, by some other rule. The row stays
+as coverage of the slot and the source change does not, because a change with no failing case is a
+change nobody can check. That row is labelled in the test for what it is.
+
