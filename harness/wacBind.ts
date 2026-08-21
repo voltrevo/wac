@@ -38,7 +38,7 @@ import { wacBindgen } from "wac/wacBindgen.ts";
 import { wacFilesWithRoots } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
 import { cached, compilerKeyParts, contentKey, filesParts, harnessKeyParts, hashDir } from "./buildCache.ts";
-import { type CovPoint, parseCovTable, type WaccApi as WaccBuildApi, waccRes, type WaccRes } from "./waccBuild.ts";
+import { type CovPoint, parseCovTable, type WaccApi, waccRes, type WaccRes } from "./waccBuild.ts";
 import {
   generate as waccGenerate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs,
   unsupported,
@@ -165,25 +165,19 @@ async function waccWasm(
 }
 
 /**
- * **The `In` variants throughout, because a bind resolves a real graph.**
+ * **This file calls the `In` variants throughout, because a bind resolves a real graph.**
  *
- * This declared the root-less half and called it, so binding a package whose graph reaches through a
- * `@/` import produced glue built from a file the compiler never saw — the same fault
- * `issues/system/0229a` fixed a layer over, and the last caller of it. Nothing in *this* repository
- * has such an import, which is why it cost nothing here and would cost an outsider everything.
+ * It called the root-less half once, so binding a package whose graph reaches through a `@/` import
+ * produced glue built from a file the compiler never saw — the same fault `issues/system/0229a` fixed a
+ * layer over, and the last caller of it. Nothing in *this* repository has such an import, which is why
+ * it cost nothing here and would cost an outsider everything.
+ *
+ * The argument used to sit on a `WaccApi` declared here, listing the eight calls this file makes.
+ * `issues/system/0231a` is why there is one declaration now, in `waccBuild.ts`: two lists of one
+ * object's methods meant the `0229a` fix had to be found twice, and a reader of either could not see
+ * that the other family existed. Choosing the `In` variants is a fact about this file, so it stays
+ * here; which methods exist is a fact about `api.wac`, so that lives with the type.
  */
-type WaccApi = {
-  Res: WaccBuildApi["Res"];
-  emitFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => Uint8Array;
-  /** Every file's diagnostics, not just the entry's — `issues/lang/0118`. */
-  diagnoseGraphIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
-  blockedFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
-  exportSigsFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
-  bindTypesFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
-  /** The instrumented build and the table that says what each of its counters is. */
-  emitFilesCoveredIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => Uint8Array;
-  covTableFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
-};
 let waccCached: WaccApi | null = null;
 
 /** wacc itself, built by the reference — the bootstrap has to start somewhere. */

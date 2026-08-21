@@ -16,7 +16,24 @@ import {
   generate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, unsupported,
 } from "../packages/wacc/tools/waccBindgen.ts";
 
-/** The half of wacc's API a build uses. */
+/**
+ * The methods of wacc's API that this repository's hosts call — **one list, and that is the point.**
+ *
+ * `harness/wacBind.ts` declared a second `WaccApi` of its own with eight members, seven of them `In`
+ * variants. Neither list was wrong about the calls it named and neither said what it left out, so a
+ * type listing a subset of an interface read as the whole of it. `issues/system/0229a`'s fix — the
+ * resolution context, which every `In` entry point takes — had to be found twice, on two days, because
+ * `blockedFilesIn` and `emitFilesIn` were in one list and the other seventeen members in the other.
+ * `issues/system/0231a`.
+ *
+ * **Both families are here on purpose**: the root-less calls, which resolve `@/` against nothing, and
+ * the `In` calls, which take a `Res`. A caller that cannot see both cannot know it had a choice, and
+ * that is exactly how the root-less half came to be called by a bind that needed the other.
+ *
+ * It is still a subset of what `api.wac` exports — 49 of those against the members below — and the ones
+ * missing are single-file entry points a graph-shaped caller has no use for. That gap is silent, which
+ * `0231a` records as its remaining risk.
+ */
 export type WaccApi = {
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
   emitFilesCovered: (paths: string[], sources: string[], entry: string) => Uint8Array;
@@ -66,6 +83,9 @@ export type WaccApi = {
   };
   diagnoseGraphIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
   diagnoseFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  /** The two `harness/wacBind.ts` had and this did not, which is what `issues/system/0231a` cost. */
+  blockedFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => string;
+  emitFilesIn: (paths: string[], sources: string[], res: WaccRes, entry: string) => Uint8Array;
   buildFilesIn: (
     paths: string[],
     sources: string[],
@@ -92,11 +112,7 @@ export type WaccRes = { readonly $ref?: unknown };
  * alone gives `/abs/p/src/lib.wac` for a file keyed `src/lib.wac`, which is not the file.
  */
 export function waccRes(
-  // **Structurally, not `WaccApi`.** `harness/wacBind.ts` declares its own narrower api type — the
-  // two have coexisted since before either carried a `Res` — and a helper that names one of them
-  // cannot be called by the other. All this needs is the constructor. That duplication is
-  // `issues/system/0231a`, and this signature is the workaround it names.
-  api: { Res: WaccApi["Res"] },
+  api: WaccApi,
   paths: string[],
   roots: Map<string, string>,
   base: string,

@@ -1,7 +1,8 @@
 # 0231a — two declarations of one compiler API, and only one of them had a `Res`
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-21 — one declaration, and `harness/waccApi.test.ts` guards the pairs
+- **Fixed in:** `harness/waccBuild.ts` and `harness/wacBind.ts`, with `harness/waccApi.test.ts`
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** decision
@@ -60,3 +61,49 @@ the problem currently justifies.
 
 Worth doing while `0229a` is fresh: the reason it is a decision rather than a chore is that option 1
 makes `wacBind.ts` depend on a 20-member type to use 7, and somebody deliberately did the opposite.
+
+## Closed — one declaration and a guard, 2026-08-21
+
+Option 1 then option 3, as recommended. **And the measurement corrected the recommendation's own framing
+on the way**, which is the part worth keeping.
+
+### "20 members and 7" was wrong about the relationship
+
+Counted properly — and the first count was wrong too, because a member whose signature spans lines puts
+`paths:` and `entry:` at brace depth zero, so counting braces alone read parameter names as members:
+
+    harness/waccBuild.ts   23 members
+    harness/wacBind.ts      8 members
+    in the narrow, not in the wide:  2 — `blockedFilesIn`, `emitFilesIn`
+    in the wide, not in the narrow: 17
+
+So it was never a 20-member type against a 7-member subset. The wide one already had six of the narrow
+one's eight — `0229a`'s morning fix put them there — and the narrow one had exactly **two** it lacked.
+Option 1 cost "add two members, delete the duplicate, drop the alias", not "make `wacBind` depend on
+twenty to use seven". The objection recorded above as the reason this was a decision does not survive its
+own numbers.
+
+`waccRes`'s structural parameter — `{ Res: WaccApi["Res"] }`, which said in its comment that it was this
+issue's workaround — is `api: WaccApi` now.
+
+**The argument on the deleted declaration was moved, not dropped.** It said the `In` variants are what a
+bind must call because a bind resolves a real graph; that is a fact about `wacBind.ts`, so it stays there,
+attached to the cache that holds the api. Which methods *exist* is a fact about `api.wac`, so it lives
+with the type.
+
+### The guard asks the narrow question, and that is a choice
+
+`harness/waccApi.test.ts` asserts that for every entry point `api.wac` exports **both ways**, `WaccApi`
+names both halves — and, weakly, that it names nothing `api.wac` no longer exports. Canaried both ways:
+removing `emitFilesIn` fails the first, planting an `emitFilesNope` fails the second.
+
+The broad question — does `WaccApi` name everything `api.wac` exports — is **49 exports against 25
+members**, and it is not asked. Most of the 24 missing are single-file entry points (`dump`, `emit`,
+`names`, `blocked`, `dumpTypeErrors`) that a graph-shaped caller has no use for, so asking it means 24
+exemption lines, each a judgement about whether a build should want that call. That is the remaining risk
+and it is now priced rather than described. The pair check needs no exemptions and catches the failure
+that actually happened.
+
+Both extractors are text scans, so a declaration written in a shape the regex does not expect is invisible
+to them — the same caveat `tools/benchCompile.test.ts` carries, and the reason option 2 (generate the
+declaration from the wire) is still the honest end state.
