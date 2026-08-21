@@ -1,7 +1,8 @@
 # 0160 — the binary's compiler is whatever you last built, and nothing says when
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-21 — canaried against the issue's own reproduction date
+- **Fixed in:** `tools/seedFresh.test.ts`
 - **Reported by:** agent-b
 - **Date:** 2026-08-15
 - **Kind:** bug
@@ -123,3 +124,33 @@ by moving the file away and back.
 
 The general shape is worth keeping: **a guard that explains why it is safe to skip is making a claim
 about the rest of the tree**, and that claim ages without anyone editing the guard.
+
+## Closed — canaried on the reproduction's own date, 2026-08-21
+
+The stale half is covered, and by the guard whose *absent* half this issue already recorded as done.
+`tools/seedFresh.test.ts` compares the seed's mtime against the newest of everything it is built from,
+and its name is the claim: *"the seed inside `wac` is there, and not older than anything it is built
+from"*.
+
+Canaried by putting the seed back to **2026-08-13 06:11** — the timestamp in the reproduction above —
+and running it:
+
+    normal                                    ok | 3 passed | 0 failed
+    seed dated 2026-08-13 06:11               the seed inside `wac` is there, and not older than
+                                              anything it is built from ... FAILED
+    mtime restored                            ok | 3 passed | 0 failed
+
+So the exact state that produced *"227 coverage points against 367, same twelve files, same compiler by
+name"* is now a named test failure rather than a plausible number. The mtime was captured with `stat`
+before the canary and restored to the same nanosecond after, because the seed is an input to every
+build in this checkout and a guard that has to be *believed* about freshness is the last thing to leave
+in an uncertain state.
+
+Two things this issue got right that are worth keeping, since they outlive it:
+
+* **A guard that explains why it is safe to skip is making a claim about the rest of the tree**, and
+  that claim ages without anyone editing the guard. That is what happened to the absent-seed skip, and
+  it cost an hour of chasing an artefact three steps downstream.
+* The general symptom — *a plausible number, 40% short, from a tool that looks like it worked* — is the
+  reason freshness is a test rather than a habit.
+
