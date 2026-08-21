@@ -253,3 +253,42 @@ compiling, which is how I found out.
 Verified: the 21 rewritten files all compile; `pipeline`, `inside`, `optimize`, `node_net`, `bindgenwac`,
 `privatekey` and `echod` run green. The heavy ones — `tor` on real ports, `ssh` against real OpenSSH,
 `tls`, `v8host`, `world` — go through the gate.
+
+## What the residue actually is — 2026-08-21, and it is not 25 judgements
+
+Grouping the remaining sites by their **helper's return type** rather than by its name says the thing
+the earlier note missed. 26 sites, 19 distinct return types:
+
+    Boundary  Built  Daemon  Identity  Journal  Measured  Node  Ours  Programs  SClient
+    Said×2  Server  Shells  Turn  World  i32×2  string×5  string[]×2  void
+
+Exactly **one** was the `writeTree`/`put` shape — a `bool` saying whether the fixture worked — and it
+is done: `filecap_test.wac`'s `writeProgram` wrote 512 files and answered one `bool` for all of them,
+so a failure anywhere reached the reader as *"wrote the over-cap program"* failing, naming neither the
+file nor the reason. It returns the reason now and has no `mkdir`, `putFile` making each directory.
+
+**Every one of the other 26 is a factory whose return type is the thing it makes.** `Server`,
+`Daemon`, `Turn`, `Built`, `Identity` — and the five `string`s are paths, not reasons:
+`scratchDir(cli, name)` answers *where*, `builtProgram(...)` answers the built path. There is no spare
+channel in any of them, which is why they discard the `mkdir` answer: not carelessness, no place to put
+it.
+
+So the remaining work is one decision, not twenty-six:
+
+* **Return `""` for failure and check at the call sites.** Convention-conforming — `wactest/src/fixtures.wac`
+  says a helper should hand back what *"the caller should fail on with its own message, and a trap says
+  only where it happened"*. Measured cost: `scratchDir` has 40 call sites, `builtProgram` 21,
+  `workspace` 13, `builtByDeno` 8. About eighty, across every package's tests.
+* **Take the `T` and assert inside.** Cheapest at the call sites and against the grain:
+  `wactest/src/host.wac` records that these helpers deliberately take neither `Core` nor the harness.
+* **Trap.** Also written down, and the convention says when: `wactest/src/repo.wac` traps deliberately
+  because *"a guard whose corpus came back empty reports a clean"* result — silence that looks like
+  success. A fixture directory that cannot be made does **not** look clean, because the assertions after
+  it fail. So the rule the repo already follows says not here.
+* **Leave them.** The failure is misattributed rather than silent: the next `writeFile` or `wac build`
+  fails and says so, just about the wrong step.
+
+No recommendation, because the first option's eighty call sites are a real cost against a real but
+small benefit, and that trade is the operator's. What is settled is the shape: the cheap half of this
+issue is finished, and what remains is a single question asked twenty-six times.
+

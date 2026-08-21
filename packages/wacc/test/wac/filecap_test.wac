@@ -23,23 +23,30 @@
 // `wac check`, so this writes files and runs the command.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
+import { putFile } from "../../../wactest/src/host.wac";
 
-/** One file per function plus an entry importing every one of them, written under `dir`. */
-bool writeProgram(Cli cli, string dir, i32 n) {
-  cli.mkdir(dir, true).wait();
+/**
+ * One file per function plus an entry importing every one of them, written under `dir`.
+ *
+ * Answers the reason rather than a `bool`, and has no `mkdir` of its own — `putFile` makes the
+ * directory above each file and names whichever step failed. This wrote 512 files and reported one
+ * `bool` for all of them, so a failure at any point reached the reader as "wrote the over-cap
+ * program" failing, which says nothing about which file or why. `issues/system/0229`.
+ */
+string writeProgram(Cli cli, string dir, i32 n) {
   string entry = "";
   for (i32 i = 0; i < n; i++) {
     string name = "f" + itoa(i) + ".wac";
-    Change w = cli.writeFile(dir + "/" + name,
-        ("export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n").toBytes()).wait();
-    if (w.fault != 0) { return false; }
+    string why = putFile(cli, dir + "/" + name,
+        "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n");
+    if (why != "") { return why; }
     entry = entry + "import { g" + itoa(i) + " } from \"./" + name + "\";\n";
   }
   entry = entry + "export i32 main() { return g0(); }\n";
-  return cli.writeFile(dir + "/main.wac", entry.toBytes()).wait().fault == 0;
+  return putFile(cli, dir + "/main.wac", entry);
 }
 
 string checkIn(Cli cli, string dir) {
@@ -54,7 +61,8 @@ export string test_a_program_past_the_file_cap_is_refused_and_names_the_file(Cor
   string dir = cli.cwd().wait() + "/.cache/filecap-over";
   cli.remove(dir, true).wait();
   // One past the cap, because the cap counts the entry: 512 sources plus `main.wac` is 513.
-  t.isTrue(writeProgram(cli, dir, 512), "wrote the over-cap program");
+  string whyOver = writeProgram(cli, dir, 512);
+  t.isTrue(whyOver == "", whyOver);
   string said = checkIn(cli, dir);
   // **The limit and the file, not just a refusal.** A message that says only "too many files" leaves
   // the reader counting; the file that did not fit is the one to look at.
@@ -72,7 +80,8 @@ export string test_and_a_program_within_the_cap_still_checks_clean(Core core, Cl
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/filecap-under";
   cli.remove(dir, true).wait();
-  t.isTrue(writeProgram(cli, dir, 40), "wrote the under-cap program");
+  string whyUnder = writeProgram(cli, dir, 40);
+  t.isTrue(whyUnder == "", whyUnder);
   string said = checkIn(cli, dir);
   t.isTrue(said.indexOf("no diagnostics") >= 0, "a 41-file program was refused — " + said);
   t.isTrue(said.indexOf("at most") < 0, "the cap fired under the cap — " + said);
