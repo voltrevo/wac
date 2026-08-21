@@ -4393,7 +4393,11 @@ string foundType(C c, Expr e) {
 }
 
 bool notBool(C c, Expr e) {
-  i32 lit = litKindOf(e);
+  // **`litFamily`, so a compound literal is asked the same question.** `if (1)` was refused and
+  // `if (1 + 1)` was not — an integer literal sum has no type of its own, so the fallback below saw
+  // `typeNone()` and stayed quiet. The reference says *"condition must be bool"* for both.
+  // `issues/lang/0248a`.
+  i32 lit = litFamily(c, e);
   if (lit != litNone()) { return lit != litBool(); }
   string t = typeOfExpr(c, e);
   return t != typeNone() && t != "bool";
@@ -6268,7 +6272,9 @@ string builtinReturnType(string recv, string name) {
  * is, and nothing is said about a type this checker cannot name.
  */
 void checkCountArg(C c, Expr e) {
-  i32 lit = litKindOf(e);
+  // `litFamily` for the same reason: `slice(1, "x")` was refused and `slice(1, b ? "x" : "y")` was
+  // not. `issues/lang/0248a`.
+  i32 lit = litFamily(c, e);
   if (lit != litNone()) {
     if (!acceptsLiteral("i32", lit)) {
       c.reportWith(errBuiltinArg(), e.line, e.col, expectedFound("i32", foundType(c, e)));
