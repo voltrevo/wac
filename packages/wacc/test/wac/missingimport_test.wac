@@ -28,17 +28,21 @@ export string test_an_import_of_a_file_nobody_supplied_is_refused_when_checked_a
   string main = "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n";
   i32[] single = dumpTypeErrors(main.toBytes());
   t.isTrue(nOf(single) > 0, "single-source: " + itoa(nOf(single)) + " diagnostics");
-  // **And the files-based entry point too, which is the other half of `issues/lang/0157`.**
-  // It was silent because resolving a specifier there cannot be `resolveFrom` against the path map: a
-  // *mapped* or *project* specifier resolves through a `Res` the checker did not carry, and neither
-  // does a plain `./a.wac` *inside* a mapped subdirectory. `issues/lang/0175a` threaded the `Res`, so
-  // the resolution is now the linker's own and the membership test means something.
+  // **The files-based entry point is still silent, and the second half of `issues/lang/0157` is still
+  // open — but no longer for the reason the issue gave.** `issues/lang/0175a` threaded the `Res`, so
+  // the resolution here *is* the linker's own now, and the obvious rule — resolve, then refuse a
+  // specifier whose key no supplied file has — was written, tested, and reverted the same day.
+  //
+  // It false-alarms, and on the cases the issue named: `mappedspec_test.wac` lost
+  // `a_mapped_subdir_cannot_import_outside_itself` and `projectspec_test.wac` lost two, with
+  // *"no file was supplied at that path"* about imports that are fine. A plain `./a.wac` **inside** a
+  // mapped checkout has no entry in the mapping table — the table is keyed by importer and specifier,
+  // and the reader only recorded the mapping that got it there — so it resolves by path arithmetic to
+  // a key the graph does not hold. Membership in `paths` is therefore not a sound test for "nobody
+  // supplied this", and that is a design question rather than a missing line.
   i32[] files = dumpTypeErrorsFiles(string[]("/main.wac"), string[](main), "/main.wac");
-  t.isTrue(nOf(files) > 0, "the files-based entry point is still silent about a missing import");
-  t.eqI32(firstCode(files), 77, "the files-based entry point refused it for another reason");
-  // The same code from both, because it is one rule: `checkProgram`'s report site does the reporting
-  // for either, and the files path only tells it which specifiers had no file.
-  t.eqI32(firstCode(single), firstCode(files), "the two entry points refuse it differently");
+  t.eqI32(nOf(files), 0, "the files-based entry point now reports this — if that is deliberate, read " +
+                         "issues/lang/0157 first: the same change refused three correct programs");
   return t.report();
 }
 
@@ -94,25 +98,5 @@ export string test_a_mistyped_builtin_path_is_refused() {
   i32[] std = dumpTypeErrors(
     ("import { Core } from \"std/nope.wac\";\nexport i32 f() { return 1; }\n").toBytes());
   t.isTrue(nOf(std) > 0, "a std path with no file behind it is accepted");
-  return t.report();
-}
-
-/**
- * A `@/` import with no project supplied — which is refused, and by this rule rather than D7's.
- *
- * `resolveVia` on an empty `Res` answers `""` for a project specifier, which no supplied file is keyed
- * by, so the membership test above catches it and reports `errMissingImportFile`. The reference says
- * something more specific — *"`@/x.wac` needs a project: no `wac.json5` above main.wac"* — so the two
- * refuse the same program for the same reason under two different names.
- *
- * Asserted as it stands rather than left to be discovered: refusing it is right, and *which* code it
- * is refused under is a separate, smaller question than the one `issues/lang/0157` was about.
- */
-export string test_a_project_import_with_no_project_is_refused_as_a_missing_file() {
-  T t = T.create();
-  string main = "import { foo } from \"@/lib.wac\";\nexport i32 f() { return foo(); }\n";
-  i32[] out = dumpTypeErrorsFiles(string[]("/main.wac"), string[](main), "/main.wac");
-  t.isTrue(nOf(out) > 0, "a `@/` import with no project was accepted");
-  t.eqI32(firstCode(out), 77, "refused under a different code than a missing file");
   return t.report();
 }

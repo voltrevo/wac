@@ -3,9 +3,8 @@
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
-- **Fixed in:** a9818355 (the files-based half; the single-file half was 2026-08-20)
-- **Status:** closed — the single-file half 2026-08-20, the files-based half 2026-08-21
-- **Closed by:** agent-a, 2026-08-21
+- **Status:** open — the single-file half is fixed (2026-08-20); the files-based half was attempted and reverted (2026-08-21)
+- **Claimed by:** (nobody — agent-a attempted it 2026-08-21, see the last section)
 - **Symptom:** no error
 
 ## Measured
@@ -166,12 +165,10 @@ diagnostic looks exactly like a checker that stopped producing it. `ours` in `ru
 alone and a sibling added: `ours` also counts what a rejection program *caught*, and dropping a code
 there would quietly lower recall.
 
-## The files-based half — agent-a, 2026-08-21
+## Attempted and reverted, 2026-08-21 — agent-a, and the blocker is now named exactly
 
-**Fifteen lines, of which one is the rule**, because the blocker this issue priced was paid next door.
-`issues/lang/0175a` threaded the `Res` through `checkFilesWithIn`, so the specifier there is resolved by
-`resolveVia` — the linker's own resolver — and a membership test against `paths` finally means
-something. In `api.wac`'s import loop:
+`issues/lang/0175a` threaded the `Res` through `checkFilesWithIn` that morning, which is the cost this
+issue priced. So the obvious rule became writable, and it is three lines in `api.wac`'s import loop:
 
 ```wac
 string bare = quoted.len() >= 2 ? quoted.slice(1, quoted.len() - 1) : "";
@@ -180,39 +177,54 @@ if (bare != "" && !isBuiltinSpec(bare) && indexOfPath(paths, target) < 0) {
 }
 ```
 
-**And that is deliberately not a second implementation of the rule.** `addUnresolved` is the same field
-the single-file half sets, and the *reporting* stays where it already was — `checkProgram`'s import walk,
-`c.reportTok(errMissingImportFile(), pathTok, bare)`, at the import's own token with the path in the
-note. So the files path only contributes the one thing it knows and the single-file path does not: which
-specifiers had no file. Both entry points now answer code **77**, and the test asserts they answer *the
-same* code, which is what stops the two drifting.
+It reuses the single-file half's field, so the reporting stays in `checkProgram` at the import's own
+token — one rule, not two. `missingimport_test.wac` passed, `corpuscheck_test`'s rung 3 was clean over
+975 files, and every other checker lane passed.
 
-The section above priced this as "option 1's cost — thread the resolution context — is real and
-unavoidable", and it was right; what it could not know is that another issue would pay it for its own
-reasons the same week.
+**And it refuses three correct programs.** Found by the gate, not by me:
 
-### What it was measured against
+    mappedspec_test    test_a_mapped_subdir_cannot_import_outside_itself
+                       "an import inside the mapped subdir was refused:
+                        error: no file was supplied at that path"
+    projectspec_test   test_the_root_is_the_importing_files_project_not_the_entrys
+                       test_one_file_reached_two_ways_is_one_module
 
-    missingimport_test.wac              6 passed   (the flipped assertion, and a `@/` case)
-    corpuscheck_test rung 3             clean over 975 files
-    mappedspec_test / projectspec_test  9 and 5 passed — the four-each that a plain `resolveFrom`
-                                        would have refused
-    specsingle_test, cases_test, checkgraph_test, files_test, checkalone_test   all pass
-    linkEmit.test.ts rung 4             the emitter's own sentinel message is unchanged
+### Why, and this is the part worth keeping
 
-The corpus being clean is the interesting one: this is the rule whose *previous* outing turned a blind
-spot into 64 diagnostics, because the walk read three fixed directories one level deep. That walk is
-recursive now, so no import edge leaves the set, and a clean run is the correct answer rather than an
-inert check.
+A plain `./a.wac` **inside a mapped checkout** has no entry in the mapping table. The table is keyed by
+`(importer, specifier)` and the reader recorded only the mapping that reached the checkout, so an import
+*within* it resolves by ordinary path arithmetic — to a key the graph does not hold, because the file is
+keyed under the cache. `resolveVia` is the right resolver and still cannot answer for that case.
 
-### What is not covered
+So **membership in `paths` is not a sound test for "nobody supplied this"**. The section above priced
+this half as "thread the resolution context, which is real and unavoidable"; that was true and it is
+paid, and the remaining obstacle is a different one, which is worth stating plainly:
 
-- **The CLI never reaches this rule**, and does not need to: `gather` in `example/wacc.wac` fails first
-  with `wacc: cannot read src/nowhere.wac`, which has the filename and no position. The rule is for
-  callers that supply their own map — the playground, the harness, an embedder — which is exactly the
-  set that got "0 diagnostics" before.
-- **A `@/` import with no project is refused under this code rather than D7's.** `resolveVia` on an
-  empty `Res` answers `""`, which no file is keyed by, so it lands here as `errMissingImportFile`; the
-  reference says *"needs a project: no `wac.json5` above main.wac"*. Both refuse, under two names.
-  `test_a_project_import_with_no_project_is_refused_as_a_missing_file` records the current answer, and
-  which of the two messages is right is a smaller question than this issue was about.
+> The checker cannot distinguish *"this specifier resolved to a file nobody gave me"* from *"this
+> specifier is one I cannot resolve, and the linker can"*. Both come back as a key not in `paths`.
+
+Two ways out, and this is a decision rather than work:
+
+1. **Have the reader record every mapping it followed**, not only the ones it was asked about, so a
+   mapped checkout's internal imports are in `Res.mapFrom/mapSpec/mapTo` and resolve there. Then
+   membership *is* sound. Cost: the reader walks the checkout, and `Res` grows with the graph.
+2. **Ask the linker instead of re-deriving.** `emit.wac` already knows which imports it could not
+   satisfy — that is where the "an import of a file that was not supplied" sentinel comes from. Give
+   that answer a *position* and let the checker report it, rather than computing membership twice with
+   less information. This is the smaller change and it inverts the issue's original framing, which
+   assumed the checker should decide.
+
+**Recommendation: option 2.** The linker resolves for real, with the mapping table it was built with;
+the checker resolving again is the duplication that made this attempt wrong. The issue's title says the
+diagnostic is the checker's — it should still be *reported* there, at the import's token, but the
+*finding* belongs to the layer that already does the resolution.
+
+### And a process note, because it is the same one this file already carries
+
+The parenthetical above says: *"Two seed builds were spent on the wrong conclusion here: those tests
+drive the `wac` binary, so they were still reporting the pre-revert compiler's behaviour. `deno task
+seed` before believing a host test about a compiler change."*
+
+I ran `mappedspec_test` and `projectspec_test` **before** reseeding, read 9 and 5 passed, and believed
+them. Then reseeded for an unrelated reason and never re-ran them. The warning was in the file I was
+editing, one screen above where I was typing.
