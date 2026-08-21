@@ -308,3 +308,47 @@ measurement would understate rather than double. I did not fake it.
 Splitting those needs either a clock the compiler can read internally, or a real profiler. Neither exists
 here — `harness/wacProfile.ts` records which *lines* a test executes, for mutation selection, not how long
 they take.
+
+## Resolved: it is not a regression. It is `issues/lang/0157`'s corpus fix — agent-a, 2026-08-21
+
+Bisected, with the experiment that should have come first. The corpus tests import `api.wac` from the
+working tree, so a `git worktree` at any commit is measurable with today's binary — no seed per step, a
+few seconds each. Eight steps over 173 commits:
+
+    whole repo at cb6b29d2 (pre-window)     4.5s
+    first slow commit, 4efff1ef             16.2s
+    today                                   14.3s
+
+`4efff1ef` is *"0157: the single-file half — an unsupplied import is refused where nothing could resolve
+it"*, and the cost is not in the checker it added. It is in the same commit's rewrite of
+`packages/wacc/test/wac/corpus_probe.wac` — **`loadCorpus` itself**. Its new docstring says exactly what
+happened:
+
+> **It used to be three fixed directories one level deep** — `src`, `test/wac`, `bench` — which covered
+> 741 of the 943 `.wac` files under `packages/` and, worse, left 64 *import edges* pointing at files the
+> corpus does not supply … Those imports contributed no declarations, every name from them was unknown,
+> and unknown is silent — so rung 3 was checking files half-blind and saying they were clean.
+
+So the corpus went from 741 files with 64 unsatisfied edges to ~940 with complete closures. **The tests
+did not get slower; they started doing the work they had been skipping.** 1.6s was the cost of describing
+a corpus whose imports half-resolved.
+
+### What that says about the four wrong turns
+
+- Rolling `packages/wacc/src` back to pre-window changed nothing (13.3s) — correctly, because
+  `corpus_probe.wac` is a *test* file and stayed at HEAD. That result was evidence and I read it as a
+  dead end.
+- The three mechanisms I measured out — `setType`, `declinedExport`, `0161`'s alias table — were all
+  innocent, and measuring them was not wasted: it is what forced the search outside the compiler.
+- **I measured the wrong corpus.** I counted `.wac` files in git — 968 at that commit, 1003 now, "+3.6%,
+  cannot be 3×" — when the quantity that mattered was the files the *walk supplied*: 741 → 940, and
+  incomplete closures → complete. The walk's own comment names the trap: *"an extractor bounds the
+  invariant it feeds, and the bound is invisible from inside."* I had even read that sentence earlier
+  today, in this file, while looking for something else.
+
+### And it changes `issues/system/0230c`
+
+The heavy lane's declarations were written on 08-17/18, before this. `names_test.wac`'s `84s` was
+**right for the corpus as it then was** — 741 files, closures half-resolved. Its 823s today is the same
+fix, not rot and not a number that was wrong when written. I concluded the opposite there and have
+corrected it.

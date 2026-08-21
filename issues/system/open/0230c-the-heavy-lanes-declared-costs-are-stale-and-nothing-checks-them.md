@@ -202,6 +202,12 @@ So the recommendation stands and is now priced properly:
   corpus-sized files are the same shape. That is the thing to know before setting out.
 - **Step 3** is still the answer. 823s is not a number to write down and check; it is a number that will
   be wrong again by next week, because it is a function of the repository rather than of the test.
-- And **the 84s was never right**: no reading of the scaling turns +8.7% of corpus into 9.8× of cost.
-  A number that was wrong when written is not found by re-measuring on a schedule, which is the argument
-  for step 3 over step 1.
+- And I said **the 84s was never right**. That was wrong, and the correction is `issues/system/0235a`:
+  these declarations were written on 08-17/18, and `issues/lang/0157` then rewrote `loadCorpus` on 08-20
+  — from three fixed directories covering **741 of 943** files with **64 unsatisfied import edges** to a
+  full recursive walk with complete closures. So `84s` was right for the corpus as it then was, and 823s
+  is the cost of the work that fix stopped skipping. Not rot, and not a number wrong when written.
+
+  Which makes step 3 the answer for a better reason than I gave: the declaration did not drift, the
+  *corpus definition* changed underneath it. A constant cannot survive that, and no re-measuring schedule
+  would have predicted it.
