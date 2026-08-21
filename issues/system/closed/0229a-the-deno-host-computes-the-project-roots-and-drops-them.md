@@ -69,8 +69,8 @@ runtime surface was complete; nothing called it. So this is wiring, not new mech
   the compile together, because the alternative was the same four-line edit at seven call sites and
   that is how the omission spread. `tools/emitgen.ts`, `check.ts`, `validate.ts`, `coverage.ts` and
   `bindcheck.ts` call it and can no longer omit an argument they do not know exists.
-- `packages/wacc/src/api.wac` — `describeFilesIn`, the one member of the family that was missing, three
-  lines beside `buildFilesIn`.
+- `packages/wacc/src/api.wac` — `describeFilesIn` and `diagnoseFilesIn`, the two members of the family
+  that were missing, three lines each beside `buildFilesIn`.
 
 **Two cache keys had to move**, and this is the part a reader should not skip. `wacc-artifacts` went to
 `2` and `native-wire` to `3`: an entry written before the roots holds an artefact whose `@/` imports
@@ -86,10 +86,19 @@ rather than the `In` entry points, which the compiler's own lanes already prove 
 say whether anything calls them.
 
 - a project built from three entry depths, all of which failed before;
-- and the module *running*, `four()` answering 4, because a resolution bug that put the **wrong** file
-  in the graph would also have built.
+- the module *running*, `four()` answering 4, because a resolution bug that put the **wrong** file in
+  the graph would also have built;
+- and the same three entries spelled **relatively**, from inside the project, in a subprocess.
 
-Canaried by restoring the root-less calls in `compileArtifacts`: both tests fail.
+That third one was added after the first two passed, and it is the one worth keeping in mind: **an
+absolute entry never exercises `base`.** The `@/` join is mapped back through it only when the importing
+file's key is relative, so an absolutely-keyed fixture leaves that branch untaken — and it is the branch
+that cost a cycle earlier the same day. It has to be a subprocess, because a relative entry is relative
+to the working directory and `Deno.chdir` is process-wide.
+
+Canaried twice, each against the arm it covers: restoring the root-less calls in `compileArtifacts`
+fails the first two, and passing `""` as the base fails only the relative one and leaves the absolute
+ones green.
 
 ## What this does not cover
 
@@ -97,7 +106,14 @@ Canaried by restoring the root-less calls in `compileArtifacts`: both tests fail
   sources, built with the same relative entry from different working directories, key the same — and
   produce identical bytes, since the sources and the manifest's `entry` string are identical. Named
   because it is a real gap in the key rather than a proof there is none.
-- The other ~13 `wacFiles` callers are sweeps, size reports, benchmarks and stamp checks over *this*
+- The other ~12 `wacFiles` callers are sweeps, size reports, benchmarks and stamp checks over *this*
   repository, which has no `@/` imports in the graphs they walk. They are not fixed and not broken.
-  `harness/wacBind.ts`, `wacTestRun.ts` and `wacCoverage.ts` are the ones that would matter to an
-  outsider running tests, and they are the next piece of work — see `issues/system/0230a`.
+- `harness/wacTestRun.ts` and `wacCoverage.ts` **were** done here, because `wac test` is one of the
+  subcommands an outsider is told about and a test file imports through `@/` like any other file.
+  `wacTestRun` needed a new `diagnoseFilesIn`: the only `In` variant that existed was the whole-graph
+  `diagnoseGraphIn`, which is a *stricter* check than the entry-only walk that lane has always done, and
+  swapping them while adding roots would have made every wac test file in the repository the subject of
+  a second change nobody asked for.
+- `harness/wacBind.ts` was not. It threads `files` through four internal functions and a cache key, and
+  it binds this repository's own packages for Deno tests — no caller of it has a `@/` import today.
+  `issues/system/0230a` carries it.
