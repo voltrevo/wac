@@ -21,36 +21,36 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 131212,
+  lines: 131312,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2607,
+  tests: 2612,
   programs: 81,
   pages: 11,
   /**
-   * The whole repository: the packages (2607), and the compiler, harness and tooling
-   * around them (1374).
+   * The whole repository: the packages (2612), and the compiler, harness and tooling
+   * around them (1380).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3981,
+  testsAll: 3992,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 508,
+  wacTests: 509,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
 export const BUILT: BuiltPackage[] = [
-  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 361, tests: 40 },
+  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 366, tests: 40 },
   { name: "unicode", what: "UTF-8 as code points, simple case mapping, and whether a code point is printable.", lines: 251, tests: 13 },
   { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 50 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 368, tests: 10 },
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 12 },
   { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 25 },
-  { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2024, tests: 128 },
+  { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2036, tests: 128 },
   { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1550, tests: 26 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 496, tests: 8 },
@@ -59,7 +59,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1311, tests: 46 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 59 },
-  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4305, tests: 222 },
+  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4312, tests: 227 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1084, tests: 28 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 10 },
   { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3286, tests: 42 },
@@ -76,10 +76,10 @@ export const BUILT: BuiltPackage[] = [
   { name: "quic", what: "QUIC version 1 — RFC 9000 and RFC 9001 — in wac.", lines: 3259, tests: 86 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4132, tests: 58 },
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
-  { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 185 },
+  { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4207, tests: 185 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17363, tests: 313 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34768, tests: 290 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 34831, tests: 290 },
   { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 1749, tests: 48 },
-  { name: "wactest", what: "Assertions for tests written in wac.", lines: 2103, tests: 34 },
+  { name: "wactest", what: "Assertions for tests written in wac.", lines: 2112, tests: 34 },
   { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3711, tests: 73 },
 ];

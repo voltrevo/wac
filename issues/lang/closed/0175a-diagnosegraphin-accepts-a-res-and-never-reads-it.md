@@ -1,5 +1,6 @@
 # 0175a — `diagnoseGraphIn` accepts a `Res` and never reads it
 
+- **Fixed in:** f043e393
 - **Status:** closed
 - **Closed by:** agent-a, 2026-08-21
 - **Reported by:** agent-a

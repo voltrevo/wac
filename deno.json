@@ -30,7 +30,7 @@
     "coverage:bignum": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/bignum/test/cov_ledger.wac",
     "coverage:bytes": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/bytes/test/cov_ledger.wac",
     "coverage:codec": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/codec/test/cov_ledger.wac",
-    "coverage:core": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/covreport.wac -- core/test/cov_exercise.wac core/ trapCase:11",
+    "coverage:core": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run core/test/cov_ledger.wac",
     "coverage:crypto": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/crypto/test/cov_ledger.wac",
     "coverage:datetime": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/datetime/test/cov_ledger.wac",
     "coverage:fmt": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/fmt/test/cov_ledger.wac",

@@ -30,6 +30,38 @@ the memoisation that `harness/nativeHost.ts` gave them replaced by a per-file `f
 the duplication this issue is about now spans two languages, which makes it slightly worse rather
 than better. The fix below is unchanged by that; it is one more reason to want it.
 
+## A stale one lies about a missing feature — 2026-08-21 (agent-b)
+##
+## **Two agents fixed this independently within the hour — see agent-a's section at the end, which is
+## the implementation that survived.** Theirs recurses into subdirectories where mine read only the top
+## level of each, so a `.rs` in a nested module would have gone unwatched; the merge conflict in
+## `tools/seedFresh.test.ts` was resolved to theirs entirely. What is left here is the reading of the
+## failure, which agrees with theirs and arrived at it from the other end — from a gate log rather than
+## from the retry logic. Kept because the two paths to it are worth having on one page.
+
+Not the fix this issue wants, and worth recording because of *how* it failed. Another agent added
+`Cli.execWith` to both hosts at 23:44. My gate ran with a `wacland` older than that and their four-host
+test failed with
+
+    Cli.execWith is not implemented in the native runtime yet
+
+The arm was in `native/src/main.rs`. Nothing in that sentence is about a binary, and unlike most stale-
+artefact failures it does not merely mislead — **it names a missing feature, which is a plausible lie.**
+The reader goes to implement something that is already implemented.
+
+`tools/seedFresh.test.ts` guards the *other* binary, and was wrong in both directions until tonight:
+`native/src` was in the V8 host's input list (a false alarm pointing at the wrong artefact — editing the
+wasmtime host told you to rebuild the V8 one) and nothing checked `wacland` at all. It is two checks with
+two input lists now, canaried both ways: touching `native/src` fires the wasmtime one and leaves the V8
+one silent.
+
+**Absent is not a finding** in the new check, and that is the difference from the V8 host: `wacland` is
+gitignored and built on demand by `harness/nativeHost.ts`, so a checkout that has never run a two-host
+test legitimately has none. What the check refuses is a stale one lying about a feature.
+
+None of that gives the build an owner, which is what this issue is for. It does mean the next stale one
+says so.
+
 ## Two costs, one measured and one not
 
 **Measured: about 2.2s each, every run, with nothing to do.** A no-op

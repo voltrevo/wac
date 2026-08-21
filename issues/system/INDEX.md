@@ -6,6 +6,7 @@ record of what has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0230a](open/0230a-the-deno-path-is-a-compiler-not-a-wac-command.md) | six of the seven documented subcommands exist as separate Deno entry points and none of them is `wac`; `deno task check` is the *TypeScript* check, and 0229a is what the arrangement already cost | decision | not implemented |
+| [0229](open/0229-nineteen-copies-of-one-fixture-helper-and-none-of-them-can-report-its-own-failure.md) | twenty functions named `scratch`, nineteen of them the same four lines, and every one of those throws away what `mkdir` and `remove` answered — so a fixture that cannot make its directory is reported as sixteen shells failing to `cd` into it. One is fixed; eighteen can still do it | bug | no error |
 | [0217](open/0217-a-shell-is-compiled-six-times-per-test-file-and-any-wac-edit-triggers-it.md) | `v8host_test.wac` is 1.9s of CPU with its shells built and 42.5s after any `.wac` in the tree is touched, which the gate's own pull does; three files pay it, six compiles each, and three of the six differ only in grants that live in a manifest section | performance | not implemented |
 | [0216](open/0216-a-daemon-outlives-the-test-that-started-it-and-a-later-file-pays-for-it.md) | the suite charged `v8host_test.wac` 49.1s of CPU and 49.6s of wall where it costs 1.6s alone; a child's CPU lands on whichever file *reaps* it, and `echod_test.wac` two files earlier leaves Deno peers running — the wall moved too, so something also waits for them | performance | wrong answer |
 | [0213](open/0213-the-two-host-tests-moved-to-wac-and-the-javascript-half-became-a-process-again.md) | the three two-host tests are the lane's largest items — 31.0s, 16.3s, 14.6s — because a wac test cannot call `appRunner`, so the JavaScript half is a 133ms process per script where a worker is 1.25ms; `harness/appRunMany.ts` is the same harness behind one `exec` | performance | no error |
@@ -62,7 +63,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-238 issues, 188 closed.
+239 issues, 188 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

@@ -1,0 +1,71 @@
+// core's coverage, which was already complete and could not fail.
+//
+//   deno task coverage:core
+//   deno task coverage:core --verbose
+//
+// **159 of 159**, and both lists below are empty: every branch point is expected to be covered and the
+// first one that is not fails by name. `issues/system/0205`.
+//
+// ## Nothing was uncovered; nothing was holding it there either
+//
+// Unlike the thirteen packages before it, this one needed no new test and no rewiring. All 50 of its
+// tests were already called from `cov_exercise.wac`, and every branch point in all five files with
+// executable code was already reached. What it did not have was a *floor*: the task ran
+// `tools/wac/covreport.wac`, which prints and exits 0 whatever it measured, so a change that dropped
+// `core/map.wac` to half would have been reported in a block that reads like a gate and passed.
+//
+// That is the whole of what this file adds, and it is the case `issues/system/0205` was filed about —
+// "a package that lost half its coverage was reported as passing".
+//
+// ## Two of the seven files are not in the table, and that is right
+//
+// `core/jsx.wac` and `core/read.wac` do not appear. They declare types and nothing else — `Read` is an
+// enum of three variants, `Node` and `Attr` are the tree JSX builds — so they hold no branch points at
+// all, and a file with no executable code contributes nothing to cover.
+//
+// Worth writing down because it looks exactly like the failure this issue has now found twice:
+// `packages/http`'s `proxy.wac` was absent from its report with eighty-six branch points in it, and
+// `tools/coverageAll.ts` counted twenty-one packages while thirty-eight existed. Both were the
+// denominator being quietly short. This one is not, and the way to tell is to open the file rather
+// than to count the rows.
+//
+// ## The eleven trap cases
+//
+// `core/test/traps_test.wac` is the package's bounds-checking half, and every one of its tests expects
+// a trap — a `Vec` indexed past its length, an `Option` unwrapped when it is `None`. A trap in `main`
+// ends the run, so they go through `trapCase`, which `covdump` calls one at a time with the trap
+// caught (`spec/cli/wac.md`, `[§wac-cli-covdump-sweep-4tn8mr6]`).
+//
+// **Dropping the sweep costs eight points, not eleven** — measured, after writing eleven here from the
+// number of tests. Eleven tests reach eight branch points that nothing else reaches, which is what a
+// bounds-checking suite looks like: several of them enter the same guard from different call sites, and
+// the guard is one point. The count of tests is not the count of what they reach, and only the canary
+// knows which.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../tools/wac/covledger.wac";
+
+const string EXERCISE = "core/test/cov_exercise.wac";
+const string PREFIX = "core/";
+
+/** The eleven tests that expect a trap, called one at a time with the trap caught. */
+string[] cases() { return string[]("trapCase:11"); }
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  // No grants: `core` is the layer everything else stands on and its tests touch nothing outside the
+  // program — no file, no process, no socket. A driver given a capability it does not need is one
+  // whose exercises could quietly start using it.
+  Measured m = measure(core, cli, EXERCISE, string[0](fill: ""), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX,
+                 Pin[0](fill: Pin("", 0, "", true, "")),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

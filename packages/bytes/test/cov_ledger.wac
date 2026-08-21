@@ -19,6 +19,18 @@
 // one; this was never in that set. It was simply never wired — as sixteen of nineteen exercises still
 // were when this was written.
 //
+// ## The pin moved, and the ratchet is why anyone noticed
+//
+// It said line 83 and the line is 88. Nothing about `buf.wac`'s behaviour changed — a correction to its
+// *header comment* on 2026-08-21 added five lines above everything, and a pin keyed by line number
+// drifted. I had reasoned at the time that the pin sat above the edit; it sat below it, and I did not
+// check.
+//
+// **That is the failure mode the snippet is for.** The ratchet does not say "83 is uncovered", it says
+// *`buf.wac:83` no longer holds "if (cap > 2147483647) …"* and prints what the line holds instead — so
+// the fix is one number rather than a re-derivation. A ledger keyed on line numbers alone would have
+// gone quietly green about the wrong line.
+//
 // ## The mistake that made the first attempt look like a no-op
 //
 // Wiring all 39 into `main` changed the number **not at all** — 73 of 80 before and after, with no
@@ -49,7 +61,7 @@ string[] cases() { return string[]("trapCase:12"); }
 
 Pin[] pins() {
   return Pin[](
-    Pin("packages/bytes/src/buf.wac", 83, "if (cap > 2147483647) { cap = 2147483647; }", false,
+    Pin("packages/bytes/src/buf.wac", 88, "if (cap > 2147483647) { cap = 2147483647; }", false,
         "**Reachable, and nobody is going to build the input.** `Buf` doubles its capacity until it " +
         "covers what is needed, and this clamps the doubling at `i32.MAX` so the `as! i32` below it " +
         "cannot trap on a checked conversion. Getting here needs a buffer already past a gigabyte " +

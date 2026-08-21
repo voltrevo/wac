@@ -3,6 +3,7 @@
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
+- **Fixed in:** a9818355 (the files-based half; the single-file half was 2026-08-20)
 - **Status:** closed — the single-file half 2026-08-20, the files-based half 2026-08-21
 - **Closed by:** agent-a, 2026-08-21
 - **Symptom:** no error

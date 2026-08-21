@@ -13,15 +13,39 @@ got the order wrong twice from reasoning about it.
 
 ## Where this stands — 2026-08-20
 
-**17,325 lines of `.test.ts` under `packages/`**, and every one accounted for — not "looked at": each
-has a determination here.
+**17,244 lines of `.test.ts` under `packages/`, in 64 files**, and every one accounted for — not
+"looked at": each has a determination here.
 
-| where | lines | what it is |
-|---|---|---|
-| `box`, `sh` | 5,697 + 1,574 | another agent's packages |
-| `platform` | 6,411 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20 |
-| `wacc` | 2,091 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
-| `webrtc`, `raster`, `stream` | 899 + 218 + 297 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
+| where | lines | files | what it is |
+|---|---|---|---|
+| `box`, `sh` | 5,680 + 1,570 | 17 + 4 | another agent's packages |
+| `platform` | 6,382 | 29 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20 |
+| `wacc` | 2,190 | 11 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
+| `webrtc`, `raster`, `stream` | 909 + 217 + 296 | 1 + 1 + 1 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
+
+**The classification is checked now, and the arithmetic is deliberately not.**
+`tools/wac/testtsclassified_test.wac` fails if a package under `packages/` holds a `.test.ts` and this
+table does not name it — the event that makes the sentence above quietly false. It does *not* check the
+numbers, for the reason below, and it does not check that a determination is right: a row saying
+"`newpkg` | 40 | 1 | —" satisfies it, because the judgement is the operator's to make and mine to argue
+here, and a guard that graded it would be asserting the conclusion.
+
+It reads the table rather than the file. The first version searched the whole document and could not be
+made to fail by deleting a row, because `raster` is mentioned six other times in prose — a check passing
+on evidence unrelated to what it says.
+
+**Re-measured 2026-08-20, and the arithmetic is the part that rots.** The headline above read 17,325
+while its own rows added to 17,187 and the tree held 17,244 — three numbers, no two alike, and none of
+them wrong when it was written. `wacc` had grown by 99 against its recorded figure; over the last
+eighteen hours its `.test.ts` lost 173 lines and gained 146, which is what a package being actively
+worked in looks like.
+
+So the durable part of this table is the **last column**, and it is complete: every package on disk with
+a `.test.ts` in it appears here, and each has a determination rather than a count. A file count is added
+beside the lines because it moves less and because "29 files" is the number that says why `platform` is
+the row it is. Anyone quoting the totals should re-derive them:
+
+    find packages -name '*.test.ts' | xargs wc -l | tail -1
 
 `tor` came off that last row on 2026-08-20. Its entry read "a C tor this machine has not got", and
 there is one at `$HOME/tor-build/…/src/app/tor` dated 3 August — the claim was about this machine and
@@ -1794,6 +1818,50 @@ Two things came out of it that were not the port:
     `packages/platform`; wac has had both for a while. The accept loop could be wac now. Not done
     here — it is a rewrite of working code rather than a port of a test — but the sentence is the
     kind of comment that reads as a constraint and is a date.
+
+    **Swept 2026-08-20, and it was four sentences rather than one.** The same expired claim sat in
+    `packages/server/host/serve.ts`, `packages/tls/host/serve.ts` and `packages/tls/src/server.wac`;
+    all three are corrected, and none of the servers moved, for the reason above. Verified rather than
+    assumed: `Cli.listen`/`accept`, `Core.nowMillis`, `monotonicNanos`, `sleepMillis` and
+    `randomBytes` all exist, and **ten wac files already run accept loops** — `ssh`'s `sshd`, `tor`'s
+    `relayd`, `dird` and `socks`, `box`'s `nc`, `wactest`'s `daemon` among them.
+
+    Grepping for the shape found two more dated constraints, both load-bearing enough to be worth the
+    measurement:
+
+    - **`packages/gzip/src/tables.wac`: "wac has no top-level constants".** It has them, arrays
+      included, and they are hoisted — 200,000 reads of a 29-entry file-scope `const i32[]` measured
+      0 ms against 6 ms for 200,000 constructions of the equivalent struct. Measured *before* changing
+      anything and then nothing changed: `Tables.create()` has three call sites, one per compress or
+      decompress, so the workaround costs about thirty nanoseconds per operation and threading the
+      struct explicitly is the better shape anyway. The comment was the defect, not the code.
+    - **`packages/bytes/src/buf.wac`: "wac has no generics, so a container cannot be written once over
+      its element type".** `core/vec.wac` is `Vec<T>` and both `Vec<i32>` and `Vec<u8[]>` compile. The
+      real answer to "why is this not `Vec<u8>`" was already two lines below it — `len` is a public
+      field read once per pushed byte in gzip's inner loops, and `reserve()` checks for one byte to
+      keep `push` to a single comparison. The structure stands; its stated reason did not.
+
+    A second pass over the same grep, probing each claim rather than reading it — **three of six were
+    false, one was accurate, and two were narrower than they looked**, which is the useful spread:
+
+    | claim | probe | verdict |
+    |---|---|---|
+    | `hostfs.wac`: no escape for a NUL in a string literal | `"a\0b".toBytes()` | **false** — three bytes, zero in the middle, and `spec/spec/strings.md` lists `\0` in a tagged example `[§wac-str-esc-h9qm3v7]` |
+    | `gzip/tables.wac`: no top-level constants | `const i32[] T = i32[](…)` at file scope | **false**, and hoisted — measured above |
+    | `bytes/buf.wac`: no generics | `Vec<i32>`, `Vec<u8[]>` | **false** — `core/vec.wac` is `Vec<T>` |
+    | `json/stringify.wac`: no `\b` or `\f` character escape | `"a\bb"` | **accurate** — *unknown escape*, and the spec's list is `\n \t \0 \\ \"` |
+    | `quic/packet.wac`: no unsigned shift by a variable amount "to spare here" | `u32 >> u32` compiles | **narrower than it reads** — the sentence is about the i64 context it sits in, and stands |
+    | `platform/stream.wac`: no nullable struct fields "worth using" | `i32[]?` field compiles | **a judgement, not a capability** — left alone |
+
+    Two lessons rather than one. The first is that probing is cheap: six claims, five one-file builds
+    and a benchmark. The second is that **an expired constraint does not condemn the code that followed
+    from it** — all three false claims sit above structures that are right for other reasons, and in
+    two cases the better reason was already written two lines below the wrong one.
+
+    The general form is worth stating because this is now the third time today a recorded constraint
+    turned out to have expired — `packages/url`'s seed sensitivity and `packages/fmt`'s were the
+    others. **A comment explaining why something cannot be done is evidence about the day it was
+    written**, and the cheap check is to try the thing.
 
 ### `packages/platform`, swept — 2026-08-19
 

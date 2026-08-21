@@ -1,8 +1,13 @@
 // A TLS 1.3 server you can point openssl at.
 //
-// The socket and the randomness live here because wasm has neither. Everything else —
-// what a record means, what to answer, when the handshake is done — is decided in wac by
-// `tlsServerFeed`, which is a pure function from (state, bytes) to (state, bytes).
+// The socket and the randomness live here because this file is TypeScript, **not because wasm has
+// neither** — `std/platform.wac` has `Cli.listen`/`accept` and `Core.randomBytes`, and
+// `packages/ssh`'s `sshd` uses both. The old sentence was true when written; the same dated claim in
+// `packages/server/host/serve.ts` is corrected there at more length.
+//
+// What holds regardless is the split: everything else — what a record means, what to answer, when the
+// handshake is done — is decided in wac by `tlsServerFeed`, a pure function from (state, bytes) to
+// (state, bytes).
 //
 //   deno run -A packages/tls/host/serve.ts [port]
 //   openssl s_client -connect 127.0.0.1:8443 -tls1_3 -servername wac.test

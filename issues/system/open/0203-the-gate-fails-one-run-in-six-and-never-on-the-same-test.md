@@ -8,6 +8,122 @@
 - **Note:** filed as "a wide, load-sensitive tail" and corrected twice as the failures were read. Two of
   the five were real defects. Read the table before quoting the rate.
 
+## A sixth failure, read rather than counted — 2026-08-20 (agent-b)
+
+`packages/box/test/sealing.test.ts` turned a gate red on *a program nobody spawned still gets the host*,
+and passed on its own immediately afterwards — the shape this issue warns about quoting as a rate. The
+log named the cause exactly:
+
+    assertEquals failed — /usr/bin/timeout: failed to run command
+      ‘/tmp/wac-sealing-…/box’: Text file busy
+      got: ""  want: "on the host\n"
+
+**It is ETXTBSY — wac-mono 0074 — and the retry written for it could not fire.** `harness/spawnRetry.ts`
+wraps `Deno.Command` and retries when `spawn`, `output` or `outputSync` *throws* "Text file busy".
+`harness/bounded.ts` does not spawn the target: it spawns `timeout` and passes the target as an
+argument. Deno's spawn succeeds, `timeout`'s `execve` fails, the message arrives on stderr with exit
+126, and nothing throws. `isBusy` is never asked.
+
+The import was present — `tools/spawnretry.test.ts` checks that every build-and-spawn file has it, and
+this one does. **A guard that keys on an exception is a guard on the exec staying inside the process**,
+and the bound moved it one process out. The diagnostic would also have looked in the wrong place: the
+wrapper records the path it spawned, which is `"timeout"`.
+
+Fixed, and made checkable rather than waited for: `harness/boundedBusy.test.ts` holds a binary open for
+writing on purpose, so the window is arranged instead of raced. Four cases — held throughout (the answer
+must say `busy`, not `out: ""`), released mid-retry (must get through), a program that prints those words
+itself (must *not* be called busy — the status is checked as well as the text), and an undisturbed run.
+The ETXTBSY policy is one module now, `harness/etxtbsy.ts`, because it is recognised two ways and two
+copies of the message and the budget is how they drift.
+
+**So this one was neither a defect in the code under test nor a race in it**, which makes three
+categories in this issue rather than two: real defects, load-sensitive bounds, and a guard that was
+looking in the wrong place. All 47 tests across the thirteen files that stand on `bounded` pass.
+
+## An eighth: the retry covers a different failure from the one that happens — 2026-08-21 (agent-b)
+
+`packages/platform/test/wac/arrival_users_test.wac` failed with ten assertions of the form
+
+    ada did not land in her own home: got "", want "/home/ada\nada\n"
+
+and the cause is in the eighth of them: `ssh: connect to host 127.0.0.1 port 44723: Connection refused`.
+It passes on its own. Ten sentences about home directories for one about a port — the same
+consequence-not-cause shape as the two entries below it.
+
+**What the code actually does**, read rather than reconstructed. `Held.take(cli)` binds a port to prove
+it is free and must `release` it before the child can bind the same number, so there is an unavoidable
+window between the reservation ending and sshd's own `bind`. That is inherent to "find a free port, hand
+the number to a child", and the loop around it is the mitigation: three attempts, each waiting 20s for
+the daemon to log `listening on port N`.
+
+**The mitigation covers a different failure from the observed one.** The loop retries when the daemon
+*never announces itself*. Tonight it announced itself and the client could not reach it — and no attempt
+retries that, because the loop has already returned `Server(d, port, "")` by then. So the one failure
+the window can produce late is the one the retry cannot catch.
+
+Not fixed here, and deliberately: `packages/platform` had commits from two other agents tonight, and
+`issues/system/README.md` says a package someone else is working in gets filed rather than fixed. The
+shape a fix would take is in the shared list below — assert the daemon is still reachable *before* the
+ten assertions that assume it, so the failure is one sentence about a port.
+
+## `reqbuf` again, and this time its bound was the defect — 2026-08-21 (agent-b)
+
+`packages/platform/test/reqbuf.test.ts` is the first row of the table below, and it failed again:
+
+    the call reaching the handler did not happen within 10s (load 4.45 5.62 5.46)
+
+Five cores, three agents, load 5.6 — and **the message is the test reporting the evidence against its
+own bound**. `loadNow()` is in there because somebody already suspected this.
+
+Its `until()` helper carries the right argument and the wrong number. The comment says "the bound is
+generous for `harness/bounded.ts`'s reason: it exists to turn a wedge into a readable failure, not to
+police latency" — and then waits ten seconds, where the constant that argument belongs to is sixty,
+set at sixty precisely because "what takes a minute is a machine at three times its core count". Ten is
+six times tighter than the doctrine it cites.
+
+It takes `DEFAULT_SECONDS` now rather than a bigger number of its own, so the next person to re-argue how
+long is long enough has one place to do it. On an idle machine the file passes in 61ms, which is the
+proof the bound only ever mattered under load.
+
+**This is the load-sensitive-bound category, and the fix is not "retry".** A bound whose failure prints
+its own load average was measuring the machine. The three other tests in that file use the same helper
+and were one bad moment away from the same failure.
+
+Not swept further: `browser_live.test.ts`'s thirty-second waits are Playwright's own timeouts on a real
+browser, a different mechanism with a different argument, and `bounded.ts` itself names two callers whose
+*subject* is a hang and which must keep a short bound.
+
+## A seventh, and it is the third category again — 2026-08-20 (agent-b)
+
+`packages/platform/test/wac/native_shell_test.wac` failed the gate with **sixteen** failures, every one
+of them
+
+    native echo [$HOME] [$PATH] [$USER]: /bin/sh: 1: cd: can't cd to
+      …/.cache/hostshell-seal
+
+and passed on its own afterwards. Sixteen shells blaming themselves for a directory that was not there.
+
+`scratch()` built it and **threw away both answers**: `cli.remove(dir, true).wait()` and
+`cli.mkdir(dir, true).wait()`, neither result read. A `mkdir` that failed left every script in the test
+running with a cwd that did not exist, and what reached the screen was the *consequence* sixteen times
+over with no mention of the fixture.
+
+It reads both now. The `remove` is allowed to fail for exactly one reason — the directory not being
+there, which is the ordinary first run and is what `Change.absent()` asks — and anything else is
+reported with the host's own words. Canaried by pointing the path at a child of a regular file:
+
+    native_shell: could not create …/.cache/_bad.wasm/hostshell-seal — Not a directory
+    0 passed, 3 failed
+
+**What this does not do is explain why the `mkdir` failed**, and that is the honest state: three tests
+in that file use three distinct scratch names, nothing else in the repository names that path, and it
+did not reproduce. What has changed is that the next occurrence names its own cause instead of costing a
+diagnosis — which is the same argument `harness/spawnRetry.ts` makes for keeping its diagnostic on.
+
+So the categories in this issue are now: real defects, load-sensitive bounds, a guard looking in the
+wrong place, and **a fixture whose failure was reported as its consequence**. The common thread in the
+last two is that neither was a race in the code under test.
+
 ## The measurement
 
 Twenty-eight `tools/push.sh` runs on 2026-08-18, one machine, one agent, nothing else pushing:
