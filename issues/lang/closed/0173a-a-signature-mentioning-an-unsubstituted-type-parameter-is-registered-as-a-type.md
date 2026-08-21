@@ -1,7 +1,8 @@
 # 0173a — a signature mentioning an unsubstituted type parameter is registered as a type
 
-- **Status:** open
-- **Claimed by:** agent-a, 2026-08-20
+- **Fixed in:** the commit closing this issue
+- **Status:** closed — agent-a, 2026-08-21, third attempt
+- **Closed by:** agent-a, 2026-08-21
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
 - **Kind:** cleanliness — a wrong entry that is currently harmless
@@ -118,3 +119,60 @@ of 28 type entries in a program with one ordinary generic struct are template-le
 mentioning `T`. That suggests the general shape is "template-level signatures should never reach the
 type section at all", which is a bigger and more valuable change than the `U` case that opened this
 issue — and it is measurable on any program with a generic in it.
+
+## Fixed — agent-a, 2026-08-21, and the two failures were halves of one fix
+
+    type entries   22 extra  ->  0
+    functions       9 extra  ->  0
+    exports         3 extra  ->  0
+    bytes         467 extra  ->  0 (the two modules differ only where the manifest embeds the filename)
+
+`deno task seed` is a **fixed point after 2 rounds**, which is where both earlier attempts died. The
+program at the top still answers 42, and calling the method is still refused by name — *"no
+`Box<i32>.map` without its type arguments"*.
+
+### Why each half failed alone
+
+The two recorded attempts are not two ideas; they are the two ends of one, and each is broken without
+the other:
+
+- **Not instantiating** (attempt 1) leaves `Box<U>` spelled but unbuilt — and emission carries on and
+  looks the name up, so "something references a struct that was never built".
+- **Refusing the signature** (attempt 2) reaches parity and hands out index 0, which is a real type.
+
+Together, they work: `typeOfTyName`'s `Named` arm answers the *spelled* name and does not instantiate
+when any type argument `isUnresolvedBareName` — that predicate already existed for exactly this shape —
+**and** the method is declined where it is registered, so nothing emitted ever asks for the name.
+
+### The three things that made it safe, all read before writing
+
+1. **`addFunc` declines a function whose return type is `""`.** So answering nothing is not an option
+   and the spelled name is: registration needs a non-empty type, and only *emission* would try to
+   resolve it.
+2. **`funcIndex` starts at `-1`** and the renumbering skips anything not `funcOk`. So declining the
+   method is enough to keep it out of the module — and `methodLines`, which writes the bindgen wire,
+   already refuses to describe a method without an index. That is where the 3 exports went, with no
+   guard added.
+3. **The registration must stay.** Its own comment says why: *"a call resolves to **this** entry, so a
+   flag set only on the template is a flag the refusal never sees."* Removing it would turn a named
+   refusal into "no method Box.map". So the method is registered, flagged, and declined — three facts
+   about the same entry.
+
+Four `registerFuncTypes` calls on methods also had to skip a generic one, which is where the last 9 of
+the 22 type entries were: a signature whose return type names the method's own letter is the entry this
+issue is titled after.
+
+### What it buys, beyond the bytes
+
+The payoff this issue named: **`writeValType` can now refuse a bare unresolved name outright**, and
+`isUnresolvedBareName` — which the issue says "exists only to make room for this entry" — has one real
+caller instead of being a tolerance. Not done here, deliberately: that is `issues/lang/0170a`'s
+territory and it wants its own fixpoint run.
+
+`genericsig_test.wac` is the equality now rather than a ledger, as this issue asked. Its sharper half is
+the name assertion: three counts can return to zero by two errors cancelling, and an export called
+`$bind$sm_Box___main$U_of` cannot.
+
+Verified: genericsig 2, lambda 21 (it is the file whose *"nothing is emitted for a method nobody calls"*
+was untrue until now), cases 224, emit 2, selfhostemit 1, genericenum 3, downcast 2, corpuscheck clean,
+linkEmit 2, and the generated sweep at 4540 compared, 0 mismatched, 0 declined.

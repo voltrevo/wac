@@ -4344,6 +4344,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         if (typeParams.len() > 0) { continue; }
         string owner2 = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
+          if (methods[m].typeParams.len() > 0) { continue; }   // see the instance walk below
           registerFuncTypes(env, src, lexed, methods[m].returnType, methods[m].params,
                                  methods[m].hasThis ? owner2 : "");
         }
@@ -4352,6 +4353,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         if (typeParams.len() > 0) { continue; }
         string eowner2 = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
+          if (methods[m].typeParams.len() > 0) { continue; }
           registerFuncTypes(env, src, lexed, methods[m].returnType, methods[m].params,
                                  methods[m].hasThis ? eowner2 : "");
         }
@@ -4387,6 +4389,11 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                          env.instOf[ii]);
           for (i32 m = 0; m < methods.len(); m++) {
+            // **A method with its own letters has no signature yet.** Its return type names them, so
+            // registering one puts an entry in the type section whose element type is a name nothing
+            // declares — which is what `issues/lang/0173a` is titled after. It is declined where it is
+            // registered, so nothing asks for this signature.
+            if (methods[m].typeParams.len() > 0) { continue; }
             registerFuncTypes(env, src, lexed, methods[m].returnType, methods[m].params,
                                    methods[m].hasThis ? env.instName[ii] : "");
           }
@@ -4398,6 +4405,11 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
           i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                         env.instOf[ii]);
           for (i32 m = 0; m < methods.len(); m++) {
+            // **A method with its own letters has no signature yet.** Its return type names them, so
+            // registering one puts an entry in the type section whose element type is a name nothing
+            // declares — which is what `issues/lang/0173a` is titled after. It is declined where it is
+            // registered, so nothing asks for this signature.
+            if (methods[m].typeParams.len() > 0) { continue; }
             registerFuncTypes(env, src, lexed, methods[m].returnType, methods[m].params,
                                    methods[m].hasThis ? env.instName[ii] : "");
           }
@@ -5251,15 +5263,27 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
         // only where a `?` was erased, and that difference is the one a host can see: it asks for
         // `Pending$u8ArrOpt`, which this emitter would otherwise have no name for at all.
         string spelled = raw + "<";
+        // **A type argument that is still a letter is not a type.** `Box<U> map<U>(…)` names `Box<U>`
+        // in its own signature, where `U` is the *method's* parameter and no substitution binds it —
+        // so resolving it here instantiated a `Box<U>` struct, emitted its methods and gave them
+        // bindgen names, for a method nothing can call. `issues/lang/0173a`.
+        bool unbound = false;
         for (i32 i = 0; i < typeArgs.len(); i++) {
           string at = typeOfTyName(env, src, lexed, typeArgs[i]);
           if (at == "") { return ""; }
+          if (isUnresolvedBareName(env, at)) { unbound = true; }
           if (i > 0) { inst = inst + ","; spelled = spelled + ","; }
           inst = inst + at;
           spelled = spelled + at + (isNullableTy(typeArgs[i]) ? "?" : "");
         }
         inst = inst + ">";
         spelled = spelled + ">";
+        // **Spelled back, not registered.** The name is still answered so the signature this came from
+        // has a non-empty type — `addFunc` declines a function whose return type is `""` — but nothing
+        // is built for it, and the method that mentions it is declined where it is registered, so no
+        // emitted code ever looks the name up. Both halves are needed: skipping the instantiation
+        // alone leaves a reference to a struct nobody built, which is how the first attempt failed.
+        if (unbound) { return inst; }
         env.instantiate(inst, raw);
         env.noteAlias(inst, spelled);
         return inst;
@@ -10858,6 +10882,21 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               // refusal never sees. See `Env.funcMethodGeneric`.
               if (env.funcCount - 1 < env.funcMethodGeneric.len()) {
                 env.funcMethodGeneric[env.funcCount - 1] = methods[m].typeParams.len() > 0;
+              }
+              // **Registered, and declined.** A method with its own type parameters cannot be called —
+              // the emittability walk refuses the call by name, and `funcMethodGeneric` above exists
+              // for that message — so emitting one is work for something unreachable. Declining it here
+              // is what keeps its signature out of the type section and its name off the bindgen wire:
+              // `methodLines` describes only methods with an index, and the renumbering gives none to a
+              // function that is not `funcOk`. `issues/lang/0173a`.
+              if (methods[m].typeParams.len() > 0) {
+                i32 gat = env.funcCount - 1;
+                env.funcOk[gat] = false;
+                if (gat < env.funcWhy.len()) {
+                  env.funcWhy[gat] = "a method with its own type parameters, whose type arguments are "
+                                   + "not inferred yet";
+                }
+                continue;
               }
               string savedM = env.blocked;
               canEmit(src, lexed, env, methods[m].params, methods[m].body,
