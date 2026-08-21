@@ -207,3 +207,71 @@ generated things. `packages/wacc/test/lambda.test.ts` does that now.
 
 So whatever rule this issue settles on, it wants a sentence about *where* as well as *who removes it*:
 a test that must write inside the repo writes under `.cache/`.
+
+## It happened again, by a new route — agent-a, 2026-08-21
+
+Found by checking the disk rather than by a failure: **99% full, 2.0G free of 155G**, and `/tmp` holding
+**20,394 entries**. The two leakers this issue fixed are gone from the table; five new prefixes are in
+it, and one dominates.
+
+    prefix                          total   per-day, day 0 = today
+    hspub-probe*                     2119   505  451  537  313  180    0    0
+    gitst / gitpush / gitci-chain      403     0    0    0   ~10  ~29  ~35  ~60
+    tunnel                             125     0    0    0    11   28   31   55
+    push-suite                         123    36   40   37     5    3    0    2
+    playwright*                        212    51   42   42    19   18   11   29
+
+Two things that table says. `hspub-probe` **started five days ago** — zero on days 5 and 6 — so it is a
+regression, not a long-standing cost. And `gitst`, `gitpush`, `gitci-chain` and `tunnel` have **stopped**
+in the last three days, so somebody fixed those and this issue's list is out of date in both directions.
+
+### The new leak, and it is ours
+
+`packages/tor/tools/hspub-probe.c` ran tor's descriptor cache out of a scratch `DataDirectory`:
+
+```c
+char dir[] = "/tmp/hspub-probe-XXXXXX";
+if (!mkdtemp(dir)) { fprintf(stderr, "mkdtemp failed\n"); return 2; }
+options->DataDirectory = tor_strdup(dir);
+```
+
+and never removed it. The probe is built and run **once per question the capture asks**, so the count is
+the number of questions ever asked on this box: **12,447** directories, every one of them empty.
+
+Fixed with a static path and an `atexit` handler calling `rmdir`, which covers the error returns as well
+as the success path. `rmdir` rather than a recursive delete on purpose: measured over 12,447 of them,
+**not one had any contents** — tor writes nothing there on this path — and a probe that shells out to
+`rm -rf` on a path it assembled from a template is a worse thing to own than a leak. If a future tor does
+write there, `rmdir` fails and we are where we started.
+
+**Canaried by building both versions against `libtor.a` and counting**, which is also what establishes
+the one-per-invocation rate:
+
+    old   12446 -> 12447  (+1)
+    new   12447 -> 12447  (+0)
+
+### Swept, and what the sweep says about the rule
+
+    /tmp entries   20394 -> 5008
+    free space     2.15G -> 4.02G
+
+3,109 entries older than seven days (1.85G, including an abandoned 834 MB cargo `target/` from
+2026-08-12 and 44 eighteen-day-old `mktemp` directories), then 12,278 empty `hspub-probe` directories
+older than an hour. Agent scratchpads under `/tmp/claude-*` were left alone, and so were the 169 probe
+directories younger than an hour, in case a capture was running.
+
+**This is the argument for the rule this issue is still open for.** The leaks were fixed and swept in
+August and the count is back to 20,000 four months' worth of entries later, because nothing *checks*.
+A new tool arrived, leaked 500 a day for five days, and the only reason it was noticed is that somebody
+looked at `df`. Two shapes of rule would each have caught it: a test that fails when `/tmp` holds more
+than N entries attributable to this repository, or a sweep in the gate. The first is a measurement and
+the second is a habit; the issue's own history suggests the measurement.
+
+### And a number this repository cannot fix
+
+Of the 146G used, **about 120G is not visible from inside the container** — `/home/claude` is 12G,
+`/tmp` was 6.4G, `/usr` and `/var` together 2.2G. The rest is host-side overlay: other containers, image
+layers, or deleted-but-open files. So sweeping ours bought 1.85G of a 155G disk that is 99% full, and the
+remaining headroom is the operator's to look at. Worth stating plainly because the failure mode is
+everyone's push failing at once with `No space left on device`, which is how this issue opened.
+

@@ -40,6 +40,12 @@
 #include "app/config/config.h"
 #include "app/main/subsysmgr.h"
 #include <unistd.h>
+
+/* The scratch DataDirectory this probe runs tor's cache out of, so `atexit` can take it away. */
+static char probe_dir[64];
+static void remove_probe_dir(void) {
+  if (probe_dir[0] != '\0') { rmdir(probe_dir); }
+}
 #include <sys/stat.h>
 
 static char *
@@ -90,6 +96,15 @@ main(int argc, char **argv)
     options->command = CMD_RUN_UNITTESTS;
     char dir[] = "/tmp/hspub-probe-XXXXXX";
     if (!mkdtemp(dir)) { fprintf(stderr, "mkdtemp failed\n"); return 2; }
+    /* Removed on the way out, however we leave. This probe is invoked once per question the capture
+     * asks, and the directory it made was never removed — 2,119 of them in five days on the shared
+     * box, which is `issues/system/0136`'s failure mode arriving by a new route. `rmdir` and not a
+     * recursive delete on purpose: tor writes nothing into it on this path, so an empty directory is
+     * the whole of the leak, and a probe that shells out to `rm -rf` on a path it built from a
+     * template is a worse thing to have than a leak. If a future tor does write there, `rmdir` fails
+     * and we are exactly where we started. */
+    snprintf(probe_dir, sizeof probe_dir, "%s", dir);
+    atexit(remove_probe_dir);
     options->DataDirectory = tor_strdup(dir);
     options->DataDirectory_option = tor_strdup(dir);
     tor_asprintf(&options->KeyDirectory, "%s/keys", dir);
