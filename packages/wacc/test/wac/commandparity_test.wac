@@ -1,0 +1,143 @@
+// The `wac` command through two hosts, compared on stdout, stderr and exit code.
+//
+// **The first thing `issues/system/0230a` asks for, and the reason it asks for it first.** The
+// operator ruled option 2 on 2026-08-21: the shared thing is the *wac program*, and Deno, Node and
+// the native binary are hosts that hand it argv and capabilities. Under that ruling the two hosts
+// cannot drift by construction — but "cannot drift" is a claim about a build, and this is the
+// measurement. That issue's own words: *"Without it, 'shared semantics' is a claim, and the two
+// loaders in 0229a are what a claim like that looks like after a few months."*
+//
+// `packages/wacc/example/wacc.wac` is the program. The native binary embeds it as a payload; the Deno
+// host gets it through `packages/platform/build.ts`. Both parse the same argv in the same wac code, so
+// what this file can still catch is the part *outside* the program: how a host reports an exit status,
+// what it does with a stream, and whether a capability answers the same way.
+//
+// ## What is compared, and what is deliberately not
+//
+// Six invocations covering the four subcommands the program has, each side's stdout and stderr
+// concatenated, and the exit code. Not compared: timing, and the module bytes `build` writes — those
+// have their own tests (`bindgenwac_test.wac` holds the two *generators* to the same bytes, which is a
+// different claim from two hosts running one generator).
+//
+// ## What it costs, measured 2026-08-21
+//
+// **2–3s warm, and the Deno host is 123ms against the native binary's 20ms per invocation** — twelve
+// invocations is under two seconds of it. The build is the only expensive part and is paid by
+// `builtByDeno`, which keys on the closure of `wacc.wac` *and* `compiler/` *and* `build.ts`; under it,
+// `packages/platform/build.ts` keys its own work on the content of every file it reads, so a rebuild
+// after an unrelated change is a copy and a Deno start. The first run after `wacc.wac` changes pays a
+// real build, which was about 40s when this was written. No lane declaration at that cost — and the
+// number is dated because `issues/system/0230c` is what happens to costs that are not.
+//
+// **The canary is a successful invocation**, and it is not decoration. Writing this by hand first, in
+// a shell that does not word-split an unquoted variable, every case became `wac "check src/main.wac"`
+// — one unknown command, six times — and all six "agreed" on exit 2 with identical output. A
+// differential whose cases have collapsed into one reports perfect agreement. So the first row must be
+// exit 0, and a run where every row is the same non-zero code is a broken harness rather than a green
+// result.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Change, Cli, Core, Exec, FileResult, Stat } from "std/platform.wac";
+import { builtByDeno, wacBinary } from "../../../wactest/src/built.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+
+const string ENTRY = "packages/wacc/example/wacc.wac";
+
+string scratch(Cli cli, string name) {
+  string dir = cli.cwd().wait() + "/.cache/parity-" + name;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir + "/src", true).wait();
+  return dir;
+}
+
+/** One file, and the write is checked: a fixture that failed to appear is not a disagreement. */
+bool put(T t, Cli cli, string path, string text) {
+  Change c = cli.writeFile(path, text.toBytes()).wait();
+  t.isTrue(c.ok(), "could not write " + path + " — " + c.message);
+  return c.ok();
+}
+
+/** What one host said. */
+struct Said {
+  i32 status;
+  string out;
+}
+
+/**
+ * Run `argv` through a host, from `dir`, and take everything it said.
+ *
+ * A shell line because the working directory has to be the project's — `Cli.execWith` passes argv and
+ * an environment and not a cwd, which `issues/system/0231c` prices — and `exec` at the front so the
+ * status is the command's own rather than a shell's copy of it.
+ */
+Said say(Cli cli, string dir, string command, string[] argv) {
+  string line = "cd " + dir + " && exec " + command;
+  for (i32 i = 0; i < argv.len(); i++) { line = line + " " + argv[i]; }
+  Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  if (!r.ran()) { return Said(-1, "the host did not start: " + r.error); }
+  return Said(r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
+}
+
+/** The invocations, as argument vectors. */
+string[][] cases() {
+  return string[][](
+    string[]("check", "src/main.wac"),        // the canary: this one must succeed
+    string[]("check", "src/bad.wac"),         // a type error, with a span and a caret
+    string[]("check", "src/missing.wac"),     // a file that is not there
+    string[]("nonsense", "src/main.wac"),     // an unknown subcommand, so the usage line
+    string[]("bindgen", "src/lib.wac"),       // TypeScript glue
+    string[]("bindgen", "src/lib.wac", "--js"));
+}
+
+/**
+ * The two hosts answer the same thing for the same command line.
+ *
+ * `@/` is in the fixture on purpose: it is what `issues/system/0229a` was about, and the resolution it
+ * needs happens in the wac program rather than in either host — so a host that handed the program a
+ * different view of the project would show up here rather than in a report from outside.
+ */
+export string test_the_native_and_deno_hosts_answer_the_same_command_the_same_way(
+    Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "hosts");
+  bool wrote = put(t, cli, dir + "/wac.json5", "{}\n")
+    && put(t, cli, dir + "/src/lib.wac", "export i32 two() { return 2; }\n")
+    && put(t, cli, dir + "/src/main.wac",
+           "import { two } from \"@/src/lib.wac\";\nexport i32 main() { return two(); }\n")
+    && put(t, cli, dir + "/src/bad.wac", "export i32 f() { return \"no\"; }\n");
+  if (!wrote) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string native = wacBinary(cli);
+  t.isTrue(cli.stat(native).wait().isFile, "the native binary is built: " + native);
+  string deno = builtByDeno(cli, ENTRY, "wac-deno-cli",
+                            string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env",
+                                     "--allow-net"),
+                            "deno", false);
+  t.isTrue(cli.stat(deno).wait().isFile, "the Deno-hosted command was built: " + deno);
+  if (!cli.stat(deno).wait().isFile || !cli.stat(native).wait().isFile) {
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+
+  string[][] table = cases();
+  i32 agreed = 0;
+  i32 zeroes = 0;
+  for (i32 i = 0; i < table.len(); i++) {
+    Said n = say(cli, dir, native, table[i]);
+    Said d = say(cli, dir, deno, table[i]);
+    string what = joined(table[i], " ");
+    t.eqI32(d.status, n.status, "exit codes differ for `wac " + what + "`");
+    t.eqStr(d.out, n.out, "output differs for `wac " + what + "`");
+    if (d.status == n.status && d.out == n.out) { agreed = agreed + 1; }
+    if (n.status == 0) { zeroes = zeroes + 1; }
+  }
+
+  // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
+  // header. `zeroes` counts more than the first row, because two of the six succeed.
+  t.eqI32(zeroes, 3, "three of these six succeed on the native host; a different count means the " +
+                     "argument vectors did not arrive as vectors");
+  t.eqI32(agreed, table.len(), "the hosts agreed on " + itoa(agreed) + " of " + itoa(table.len()));
+  cli.remove(dir, true).wait();
+  return t.report();
+}

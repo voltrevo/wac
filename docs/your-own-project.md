@@ -259,11 +259,21 @@ wacfetch: wac.json5 is not valid: code 11 (std/)
 ```sh
 wac check   src/main.wac              # diagnostics, nothing written
 wac run     src/main.wac [args…]      # compile to a temporary file and run
-wac build   src/main.wac -o hello     # hello.wasm, and hello.json beside it
+wac build   src/main.wac -o hello     # hello.wasm — one file, nothing beside it
 wac hello.wasm                        # run a built artefact — the manifest says what it needs
 wac test    src/math_test.wac         # or a directory
 wac bindgen src/main.wac [--js]       # src/main.gen.ts — the glue a JS host calls it through
 ```
+
+**The manifest is inside the module**, in a `wac.manifest` custom section — not a file beside it.
+That is what makes a built artefact one file you can hand to somebody: `wac hello.wasm` reads the
+grants out of the module and refuses what the module did not ask for, and there is nothing to keep
+in step or lose in transit. A module with no such section is refused by name rather than run with
+guessed authority.
+
+*(This paragraph replaced a sentence saying `wac build` writes `hello.json` beside the wasm. It does
+not, and nothing in the tree ever wrote one — verified by building with and without a grant, and by
+looking for a writer.)*
 
 ### Reading those `[args…]`
 

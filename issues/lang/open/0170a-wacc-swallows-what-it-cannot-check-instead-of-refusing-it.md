@@ -4,8 +4,10 @@
 - **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-08-20
-- **Kind:** bug
-- **Symptom:** no error — an ill-typed program builds successfully and loses a function
+- **Kind:** decision — it was a bug, and the bug is fixed; see the 2026-08-21 section at the end
+- **Symptom:** none — all four reproductions are refused, verified through the binary on 2026-08-21
+  by agent-c as well as agent-a: `s[0] - 1`, `i32 n = s[0]`, `b ? s : 1` and `p.v()` each name what
+  is wrong with them. What is left is two choices, not a defect.
 
 ## The principle this is measured against
 

@@ -1,7 +1,7 @@
 # 0230a — the Deno path is a compiler, not a `wac` command
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-c, 2026-08-21, on the operator's ruling below
 - **Reported by:** agent-a, from GitHub issue 22 finding 3 and its acceptance criteria
 - **Kind:** decision
 - **Symptom:** not implemented — every subcommand exists somewhere, and none of them is `wac`
@@ -217,3 +217,57 @@ each importing through `@/`), plus a build carrying `--allow-read --allow-env`:
   diagnostic. The binary refuses that — but accepts a bare specifier *no* mapping declares, resolving it
   as though it were relative, which the spec does not define either. Fixing one side alone trades a gap
   for a gap, so it is a decision.
+
+## Ruled: option 2 — the operator, 2026-08-21
+
+> option 2 for sure
+
+So the shared thing is **the wac program**, and Deno, Node and the native binary are hosts that hand
+it argv and capabilities. Taken with the recommendation above, that means the first step is not a
+TypeScript dispatcher at all: parse in wac from the start, and let each host contribute argv,
+capabilities and a process exit.
+
+**And the differential comes first**, which is this issue's own strongest advice and the thing that
+makes the ruling checkable rather than aspirational: one table of invocations through every host,
+compared on stdout, stderr and exit code. Anything else built before it is a claim about agreement.
+
+### What the ruling changes about the cost estimate above — corrected by building it
+
+**First estimate, and it was wrong.** I wrote here that `Cli.spawn` makes `run` expressible in the wac
+program "on every host that has the capability — which is the native binary, Deno and Node". Then I
+implemented `run` that way — 124 lines, compiles, spawns the emitted module, pumps both streams
+through `waitAny` and forwards the exit code — and it is reachable on **no host at all**:
+
+| host | `spawn(moduleBytes, …)` | `run` reaches the program? |
+|---|---|---|
+| the `wac` binary (V8) | **works** — measured with a probe: child ran, exit 7 came back | no: Rust answers `run` before the payload sees it |
+| `wacland` (wasmtime) | *"spawning a program from its source is not implemented in the native runtime; spawnSelf works"* | yes, and then it cannot spawn |
+| Deno | *"this host starts JavaScript worker bundles, and cannot start a wasm module here"* | yes, and then it cannot spawn |
+| Node | same host code as Deno | same |
+
+So the code was reverted rather than landed. Unreachable code that compiles is the shape this
+repository keeps finding — a capability wired in and never executed — and it would have sat here
+looking done.
+
+### The real first step is a host gap, and it already has an issue
+
+`issues/system/0144` — *"a wasm program can be spawned on the native hosts and not on the JavaScript
+ones"* — is the prerequisite for option 2 reaching Deno or Node **at all**, not just for `run`: every
+subcommand the JS hosts are missing is an instantiate-a-module command. It was filed by agent-b on
+2026-08-12 and claimed by me on 2026-08-15, and it is still open, which is worth saying plainly since
+the ruling now depends on it.
+
+The wasmtime host has the same gap from the other side: it takes a module as its *argument* and cannot
+start one from bytes, so `spawnSelf` works and `spawn` does not.
+
+So the order under the ruling is:
+
+1. **the differential** — done, `packages/wacc/test/wac/commandparity_test.wac`, six invocations
+   through the native binary and the Deno host agreeing on exit code and both streams;
+2. **0144, and the wasmtime half beside it** — the JS hosts and `wacland` able to start a module from
+   bytes. Until then option 2 cannot move a single non-compiler subcommand;
+3. **`run` into the program** — the implementation is written and known to work against a V8 spawn;
+   it becomes reachable the moment step 2 lands, and its first host is whichever gets there first;
+4. **delete the Rust `run`**, with the differential as the proof that the two agreed before the swap;
+5. `update` the same way; `test` last or never — its chunking, worker scheduling, module caching and
+   CPU ranking belong to `tools/runTests.wac`, not to the compiler.
