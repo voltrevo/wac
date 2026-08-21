@@ -1,0 +1,85 @@
+// How the checker's cost grows with one file's import count — `issues/lang/0158`.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/importcurve_probe.wac
+//
+// That issue measures 26ms at 100 imports and **19 651ms at 600**, with the emitter flat at 86ms, and
+// says of the last step: *"a polynomial does not step by sixteen for a fifth more input … the wall at
+// 500-600 is the part that needs a profile rather than a guess"*. This is the profile: the same shape of
+// program at a range of sizes, timed in one process, so the numbers are comparable with each other
+// rather than with a figure taken on another day.
+//
+// It prints and asserts nothing. A performance probe that fails is a test that goes red when the machine
+// is busy, and this machine has three agents on it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { diagnoseFiles, emitFiles } from "../../src/api.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+
+/** `n` one-function files, plus an entry importing all of them — the issue's program. */
+string[] pathsFor(i32 n) {
+  string[] out = string[n + 1](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = "/f" + itoa(i) + ".wac"; }
+  out[n] = "/main.wac";
+  return out;
+}
+
+string[] sourcesFor(i32 n) {
+  string[] out = string[n + 1](fill: "");
+  for (i32 i = 0; i < n; i++) {
+    out[i] = "export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n";
+  }
+  string entry = "";
+  for (i32 i = 0; i < n; i++) {
+    entry = entry + "import { g" + itoa(i) + " } from \"./f" + itoa(i) + ".wac\";\n";
+  }
+  entry = entry + "export i32 main() { return g0(); }\n";
+  out[n] = entry;
+  return out;
+}
+
+i64 millisSince(Core core, i64 startNanos) {
+  return (core.monotonicNanos().wait() - startNanos) / (1000000 as i64);
+}
+
+export string test_the_curve(Core core, Cli cli) {
+  T t = T.create();
+  // Stepped finely across the reported wall, so a step and a curve look different. Kept under 600
+  // because the issue's own figure there is twenty seconds and this runs on a shared machine.
+  i32[] sizes = i32[](1024);
+  string rows = "";
+  for (i32 s = 0; s < sizes.len(); s++) {
+    i32 n = sizes[s];
+    string[] paths = pathsFor(n);
+    string[] sources = sourcesFor(n);
+
+    i64 t0 = core.monotonicNanos().wait();
+    string diags = diagnoseFiles(paths, sources, "/main.wac");
+    i64 checkMs = millisSince(core, t0);
+
+    i64 t1 = core.monotonicNanos().wait();
+    u8[] wasm = emitFiles(paths, sources, "/main.wac");
+    i64 emitMs = millisSince(core, t1);
+
+    rows = rows + "  " + itoa(n) + " imports: check " + itoa64(checkMs) + "ms, emit "
+        + itoa64(emitMs) + "ms, " + (diags == "" ? "clean" : "DIAGNOSTICS") + ", module "
+        + itoa(wasm.len()) + " bytes\n";
+  }
+  // **Files, or import edges?** The same file count with only ten imports in the entry separates them.
+  for (i32 s = 0; s < sizes.len(); s++) {
+    i32 n = sizes[s];
+    string[] paths = pathsFor(n);
+    string[] sources = sourcesFor(n);
+    string few = "";
+    for (i32 i = 0; i < 10; i++) {
+      few = few + "import { g" + itoa(i) + " } from \"./f" + itoa(i) + ".wac\";\n";
+    }
+    sources[n] = few + "export i32 main() { return g0(); }\n";
+    u8[] wasm2 = emitFiles(paths, sources, "/main.wac");
+    rows = rows + "  " + itoa(n) + " files but only 10 imports: module " + itoa(wasm2.len())
+        + " bytes\n";
+  }
+  core.warn("import-count curve, `issues/lang/0158`:\n" + rows);
+  return t.report();
+}

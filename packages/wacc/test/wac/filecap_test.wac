@@ -1,0 +1,81 @@
+// A program with more files than the reader will hold is refused, and told which file did not fit.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/filecap_test.wac
+//
+// `gather` in `packages/wacc/example/wacc.wac` reads a program breadth first into tables of
+// `maxFiles()` — 512 — and its docstring says what it is for: *"A file that cannot be read stops the
+// walk and is named: the alternative is compiling a program with a hole in it and reporting whatever
+// the hole makes the checker say, which points at the wrong file."*
+//
+// Twelve lines below that, `if (seen || n >= maxFiles()) { continue; }` did exactly what the docstring
+// refuses. Measured before the fix:
+//
+//     513 files   →  `main.wac: 512 file(s), no diagnostics`     ← a clean bill of health on half of it
+//     1025 files  →  `main.wac: 512 file(s), no diagnostics`, and then `wac build` failed with
+//                    "an import of a file that was not supplied" — naming neither the limit nor a file
+//
+// So the checker approved a program it had only half read, and the build's reason pointed at the
+// program rather than at the reader. `issues/lang/0158`.
+//
+// **Why the binary and not the API.** The cap is the *reader's*, and the reader is
+// `example/wacc.wac`; `packages/wacc/test/wac/manyfiles_test.wac` covers the linker's own tables with
+// an in-memory graph and never goes near this. What is under test here is what a person gets from
+// `wac check`, so this writes files and runs the command.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { wacBinary } from "../../../wactest/src/built.wac";
+
+/** One file per function plus an entry importing every one of them, written under `dir`. */
+bool writeProgram(Cli cli, string dir, i32 n) {
+  cli.mkdir(dir, true).wait();
+  string entry = "";
+  for (i32 i = 0; i < n; i++) {
+    string name = "f" + itoa(i) + ".wac";
+    Change w = cli.writeFile(dir + "/" + name,
+        ("export i32 g" + itoa(i) + "() { return " + itoa(i) + "; }\n").toBytes()).wait();
+    if (w.fault != 0) { return false; }
+    entry = entry + "import { g" + itoa(i) + " } from \"./" + name + "\";\n";
+  }
+  entry = entry + "export i32 main() { return g0(); }\n";
+  return cli.writeFile(dir + "/main.wac", entry.toBytes()).wait().fault == 0;
+}
+
+string checkIn(Cli cli, string dir) {
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' check main.wac 2>&1"),
+    u8[0]()).wait();
+  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+export string test_a_program_past_the_file_cap_is_refused_and_names_the_file(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/filecap-over";
+  cli.remove(dir, true).wait();
+  // One past the cap, because the cap counts the entry: 512 sources plus `main.wac` is 513.
+  t.isTrue(writeProgram(cli, dir, 512), "wrote the over-cap program");
+  string said = checkIn(cli, dir);
+  // **The limit and the file, not just a refusal.** A message that says only "too many files" leaves
+  // the reader counting; the file that did not fit is the one to look at.
+  t.isTrue(said.indexOf("at most 512 files") >= 0, "did not name the limit — " + said);
+  t.isTrue(said.indexOf(".wac") >= 0, "did not name a file — " + said);
+  t.isTrue(said.indexOf("no diagnostics") < 0,
+      "reported a clean program it had only half read — " + said);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_and_a_program_within_the_cap_still_checks_clean(Core core, Cli cli) {
+  // The control, and it is the point: a cap that refuses everything is not a cap. Small rather than
+  // 511, because what is being asked is whether the *guard* fires, and 511 files cost a real compile.
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/filecap-under";
+  cli.remove(dir, true).wait();
+  t.isTrue(writeProgram(cli, dir, 40), "wrote the under-cap program");
+  string said = checkIn(cli, dir);
+  t.isTrue(said.indexOf("no diagnostics") >= 0, "a 41-file program was refused — " + said);
+  t.isTrue(said.indexOf("at most") < 0, "the cap fired under the cap — " + said);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
