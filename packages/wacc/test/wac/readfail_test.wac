@@ -1,0 +1,74 @@
+// A file the reader cannot open is named *and* attributed to the import that asked for it.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/readfail_test.wac
+//
+// This is the message a person actually gets, and it said less than the compiler knew:
+//
+//     before   wacc: cannot read shared/gone.wac
+//     after    wacc: cannot read shared/gone.wac (app/lib.wac imports it as "../shared/gone.wac")
+//
+// The importer and the specifier are in scope where `gather` queues a path and gone by the time the
+// read fails two hundred lines later, so the walk carries them — the same shape as `linkFiles`'s queue
+// and for the same reason. `issues/lang/0157`.
+//
+// **The emitter's version of this refusal was fixed first and is the one nobody sees.** `wac build`
+// reaches it only when `gather` succeeded and the linker resolved to a different key; the common case
+// fails here, in the reader, which is why this message was worth more than that one.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { wacBinary } from "../../../wactest/src/built.wac";
+
+/** A two-file project whose *second* file imports something that is not there. */
+bool writeTree(Cli cli, string dir) {
+  cli.mkdir(dir + "/app", true).wait();
+  Change a = cli.writeFile(dir + "/app/main.wac",
+      ("// A comment naming \"../shared/gone.wac\" before the real import, so a search for the text\n" +
+       "// cannot take the easy one.\n" +
+       "import { helper } from \"./lib.wac\";\nexport i32 f() { return helper(); }\n").toBytes()).wait();
+  if (a.fault != 0) { return false; }
+  return cli.writeFile(dir + "/app/lib.wac",
+      ("import { missing } from \"../shared/gone.wac\";\n" +
+       "export i32 helper() { return missing(); }\n").toBytes()).wait().fault == 0;
+}
+
+string checkIn(Cli cli, string dir, string entry) {
+  Exec r = cli.exec("/bin/sh",
+    string[]("-c", "cd '" + dir + "' && '" + wacBinary(cli) + "' check " + entry + " 2>&1"),
+    u8[0]()).wait();
+  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+export string test_a_file_that_cannot_be_read_names_the_import_that_asked(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/readfail";
+  cli.remove(dir, true).wait();
+  t.isTrue(writeTree(cli, dir), "wrote the tree");
+  string said = checkIn(cli, dir, "app/main.wac");
+  t.isTrue(said.indexOf("cannot read") >= 0, "did not refuse — " + said);
+  t.isTrue(said.indexOf("shared/gone.wac") >= 0, "did not name the file — " + said);
+  // **The importer is the second file, not the entry** — so naming it cannot be an accident of
+  // printing whatever was being compiled.
+  t.isTrue(said.indexOf("app/lib.wac") >= 0, "did not name the importer — " + said);
+  t.isTrue(said.indexOf("../shared/gone.wac") >= 0, "did not name the specifier — " + said);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * And the entry file itself, which has no importer to name.
+ *
+ * The control: a sentence that always appends "(x imports it as …)" would be wrong here, and this is
+ * the one file in any program that nothing asked for.
+ */
+export string test_the_entry_file_itself_is_named_alone(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/readfail-entry";
+  cli.remove(dir, true).wait();
+  t.isTrue(writeTree(cli, dir), "wrote the tree");
+  string said = checkIn(cli, dir, "app/nosuch.wac");
+  t.isTrue(said.indexOf("cannot read") >= 0, "did not refuse — " + said);
+  t.isTrue(said.indexOf("imports it as") < 0, "invented an importer for the entry — " + said);
+  cli.remove(dir, true).wait();
+  return t.report();
+}

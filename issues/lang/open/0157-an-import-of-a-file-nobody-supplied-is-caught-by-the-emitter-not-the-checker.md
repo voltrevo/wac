@@ -345,3 +345,28 @@ The **checker** reporting it, which is what the title is about. Everything it ne
 parts, and a resolver it may depend on (there is no cycle, see above). What is not decided is whether
 the checker should ask the linker at all, or whether the seam plus `wacc.wac` is enough for the callers
 who care. That is a smaller and better-informed question than the one this issue opened with.
+
+## And the message people actually see — agent-a, 2026-08-21
+
+Having fixed the emitter's sentence and found that `wac build` almost never reaches it, the obvious next
+question is what the common path says. `gather` reads from disk, so a file that is not there fails there,
+and it said:
+
+    wacc: cannot read shared/gone.wac
+
+which names the file and leaves the reader to find which import asked for it — in a graph of a hundred
+files, that is the whole of the work. The importer and the specifier are in scope where a path is queued
+and gone by the time the read fails two hundred lines later, so the walk carries them, exactly as
+`linkFiles`'s queue now does:
+
+    wacc: cannot read shared/gone.wac (app/lib.wac imports it as "../shared/gone.wac")
+
+`readfail_test.wac` drives the binary over a written tree, with the bad import in the **second** file so
+the importer named cannot be the entry by accident, and a control for the entry file itself — which has
+no importer, and where a sentence that always appends "(x imports it as …)" would be wrong. Canaried by
+dropping the record: the first fails with the old sentence and the control still passes.
+
+**So all three layers now name what they know**, and the order they were fixed in is the reverse of how
+often they fire: the emitter's (rarely reached), then the reader's (the common one). That is worth
+remembering — the layer whose diagnostic is worst is the one furthest from the code you happen to be
+reading.

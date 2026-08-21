@@ -352,6 +352,13 @@ Sources gather(Fs fs, Cli cli, string entry) {
   // arrived through a mapping with a `subdir` may not reach the rest of its checkout, and a file it
   // imports inherits the same bound — `issues/lang/0169a`.
   string[] confine = string[maxFiles()](fill: "");
+  // **Who asked for each file, and how they spelled it.** A file that cannot be read is named on its
+  // own today — `cannot read shared/gone.wac` — and the reader is then left to find which import asked
+  // for it, which in a graph of a hundred files is the whole of the work. The importer and the
+  // specifier are both in scope where a path is queued, two hundred lines above where the read fails.
+  // The same shape as `linkFiles`'s queue, for the same reason. `issues/lang/0157`.
+  string[] askedBy = string[maxFiles()](fill: "");
+  string[] askedAs = string[maxFiles()](fill: "");
   // **Where the upward search for a `@/` root starts from, and where its answer comes back to.**
   // `candidateRoots` walks the components of the path it is given, so a relative entry could climb
   // only as far as it was spelled — `wac run main.wac` from a subdirectory reported *no wac.json5
@@ -385,7 +392,13 @@ Sources gather(Fs fs, Cli cli, string entry) {
     u8[] bytes = builtin.toBytes();
     if (builtin == "") {
       FileResult r = fs.readFile(path);
-      if (!r.ok) { return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, path, ""); }
+      if (!r.ok) {
+        // `why` carries the whole sentence when there is an importer to name; `missing` stays set
+        // either way, so the entry file's own failure still reads `cannot read <entry>`.
+        string said = askedBy[at] == "" ? ""
+            : "cannot read " + path + " (" + askedBy[at] + " imports it as \"" + askedAs[at] + "\")";
+        return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, path, said);
+      }
       bytes = r.bytes;
     }
     texts[at] = string.fromBytes(bytes);
@@ -464,6 +477,8 @@ Sources gather(Fs fs, Cli cli, string entry) {
       }
       if (seen) { continue; }
       paths[n] = next;
+      askedBy[n] = path;
+      askedAs[n] = specs[i];
       // Inherited: a file a confined file reaches is as confined as the file that reached it.
       confine[n] = confine[at];
       n = n + 1;
