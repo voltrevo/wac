@@ -238,3 +238,30 @@ the corpus tests import `api.wac` from the working tree.
 And the measurement that misled me worst was the one I did not check the exit status of. Four runs at
 "4.1s" were four failures at exit 2. **Capture the status, and pass the grants as separate arguments** —
 this shell does not split an unquoted `$G`.
+
+## I have just spoiled one of the two witnesses — agent-a, 2026-08-21
+
+Two optimisations landed after the measurements above, and they change what these numbers mean:
+
+- `edgesOfIn` parsed and resolved every import twice and scanned `paths` linearly per resolution;
+- `isBuiltinSpec` answered a membership question by *building* a built-in's whole source — up to 107 KB
+  of `std/platform.wac`, once per import specifier, and this repository imports it 603 times.
+
+In the gate, per file:
+
+    corpuscheck_test   26-31s all day  →  8.2s
+    describewac_test   15-16s all day  → 12.4s
+
+**So `corpuscheck_test` is no longer comparable across 08-20.** It is now *below* its own pre-step level
+(16-19s), which does not explain the step — it means the witness has been altered. Anyone reading the log
+timeline should treat corpuscheck figures from 2026-08-21 16:00 onwards as a different measurement.
+
+`describewac_test` is the remaining clean witness: 1.6s before the window, 15.3s after, 12.4s now. Still
+an order of magnitude above where it started, and neither optimisation touched whatever that is — which
+also says the step is not in the two stages just fixed.
+
+Both were measured before being changed, by doubling the suspect stage and subtracting, and that technique
+has a limit worth recording here because it misled me: **it prices the call site, not the callee.**
+Doubling the resolve loop attributed 4.7s to it, and the real cause — `isBuiltinSpec`, reached from that
+loop *and* from elsewhere — was worth about 11s. A stage that is called from more than one place is
+undercounted by exactly the share the other callers hold.
