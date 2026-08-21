@@ -2495,6 +2495,35 @@ export struct Env {
     return found == "" ? name : found;
   }
 
+  /**
+   * The files that export a declaration of `name`, as `a.wac and b.wac` — or `""` if fewer than two.
+   *
+   * Exported only, matching what the ambiguity itself is computed over: a private declaration is not
+   * a candidate for anyone else, so listing it would name a file that is not part of the problem.
+   */
+  string filesDeclaring(const this, string name) {
+    // `declFiles` holds the file *index*; `filePaths` is what that file was called.
+    string[] seen = string[16](fill: "");
+    i32 n = 0;
+    for (i32 i = 0; i < this.declCount; i++) {
+      if (this.declNames[i] != name || !this.declExported[i]) { continue; }
+      i32 f = this.declFiles[i];
+      string path = f >= 0 && f < this.filePaths.len() ? this.filePaths[f] : "";
+      if (path == "") { continue; }
+      bool have = false;
+      for (i32 j = 0; j < n; j++) { if (seen[j] == path) { have = true; } }
+      if (have || n >= seen.len()) { continue; }
+      seen[n] = path;
+      n = n + 1;
+    }
+    if (n < 2) { return ""; }
+    string out = "";
+    for (i32 i = 0; i < n; i++) {
+      out = i == 0 ? seen[i] : (i == n - 1 ? out + " and " + seen[i] : out + ", " + seen[i]);
+    }
+    return out;
+  }
+
   /** The enum a variant belongs to, or `""` — which is also the question "is this a variant". */
   string enumOf(const this, string variant) {
     for (i32 i = 0; i < this.variantCount; i++) {
@@ -3444,6 +3473,22 @@ string twoKeysForOneFile(string[] paths) {
   return "";
 }
 
+/**
+ * ` — declared by a.wac and b.wac`, or `""` when the table cannot say.
+ *
+ * **The name alone leaves the reader grepping**, and grepping is the expensive part here: the file
+ * that *reaches* for an ambiguous name is typically none of the ones that declare it, so the message
+ * points at a program the reader then has to search. `issues/lang/0154`'s smallest reproduction is two
+ * files each exporting `struct Case` and an entry that also imports this compiler's API — three files
+ * written by hand, and the resolution that fails belongs to a fourth nobody typed.
+ *
+ * `declFiles` has held the answer the whole time; nothing asked it. `issues/lang/0154`.
+ */
+string declaredByNote(Env env) {
+  string files = env.filesDeclaring(env.ambiguousName);
+  return files == "" ? "" : " — declared by " + files;
+}
+
 export Built buildLinked(string[] paths, string[] sources, Res res, string entry) {
   Front? f = frontOf(paths, sources, res, entry);
   if (f is null) {
@@ -3469,6 +3514,7 @@ export Built buildLinked(string[] paths, string[] sources, Res res, string entry
     string said = blockedOf(f!);
     return Built(bareModule(),
                  (said == "" ? "the name " + f!.env.ambiguousName + ", which more than one file declares"
+                                 + declaredByNote(f!.env)
                              : said) + describeSep() + sigs + describeSep() + types);
   }
   // **The dry run only happens when the real one failed.** `blockedOf` asks `canEmit` of every
@@ -10879,7 +10925,10 @@ string blockedOf(Front f) {
   }
   // Asked last, because it is discovered by the walk above rather than before it: a name only turns
   // out to be a guess when something reaches for it.
-  if (env.ambiguous) { return "the name " + env.ambiguousName + ", which more than one file declares"; }
+  if (env.ambiguous) {
+    return "the name " + env.ambiguousName + ", which more than one file declares"
+           + declaredByNote(env);
+  }
   if (env.full) { return "more declarations than this emitter has room for"; }
   if (env.blocked == "" && grewTypesWhileEmitting(src, entryDecls, starts, edges, names)) {
     return "a type this emitter names only while emitting";

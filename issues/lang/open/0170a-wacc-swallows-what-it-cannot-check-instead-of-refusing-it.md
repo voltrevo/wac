@@ -888,3 +888,49 @@ Canaried twice, because there are two things to lose:
 
 `spec/cases/0223` pins the runtime answer for the shift (`k` answers 8), so the exemption is held by a
 case in the corpus as well as by a test.
+
+## Where this stands: the bug is fixed, and what is left is two decisions — agent-a, 2026-08-21
+
+**All four reproductions behave.** Re-measured today, through the binary:
+
+| | program | now |
+|---|---|---|
+| a02 | `return s[0] - 1;` | `error: this operator does not take an operand of that kind` |
+| a03 | `i32 n = s[0];` | `error: initialiser does not match the declared type` |
+| a04 | `return b ? s : 1;` | `error: the two branches of a ternary have unrelated types` |
+| a08 | `return p.v();` | `error: this is not something that can be called` |
+
+They are pinned by `packages/wacc/test/wac/illtyped_test.wac`, which holds all fourteen and was
+canaried today when its two-file half went in.
+
+**Three of the four items in "what to do" are done, and item 4 was already done before this pass** —
+which is worth saying plainly, because reading the list top to bottom does not reveal it:
+
+1. **A declared export missing from the module is an error** — landed for `wac build`. What remains is
+   the in-process API, and that is a decision this issue already states three options for.
+2. **`typeOfE` must not guess** — done today. The rule came out of `checkBinaryOp` and
+   `spec/spec/types.md` rather than out of calibration; `binaryoperands_test.wac` and
+   `spec/cases/0223` hold it, canaried both ways.
+3. **Give `""` a meaning callers cannot ignore** — open, and the only item that is still open. Its
+   stated basis was already corrected above: the "38 unguarded call sites" figure counted an idiom, and
+   sampling four of them found one real hole.
+4. **Add the missing cases and rules** — **already done, and stale as written.** `typeOfE`'s `Index`
+   arm answers `string` for `s[i]` (with a comment about why it is not a byte), and `issues/lang/0165`
+   is closed. Both halves of the item, verified by running the programs rather than by reading.
+
+### So this is a decision issue now, not a bug
+
+The symptom in the index — *"a decline with no cause, or none at all"* — is no longer true: 24 of the
+25 emitter bails name what they could not find, and `untyped binary` names which operand. Nothing here
+is currently silent.
+
+What is left is two questions, both already written up above with options and costs:
+
+- **the in-process API has no export-parity net** while `wac build` does (three options: return `Built`
+  from the `emitFiles*` family, add a `buildFiles*` family beside it, or leave the in-process path to
+  the code that is itself under test);
+- **`""` as an ordinary value** meaning "I don't know" (item 3).
+
+Neither is work waiting to be done; both are choices where picking wrong costs a sweep. Left filed
+rather than split into two new issues, because splitting would move this text rather than add anything
+— but the **kind** is `decision` from here, and anyone looking for a bug to fix should look elsewhere.

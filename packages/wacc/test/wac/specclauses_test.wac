@@ -258,3 +258,107 @@ bool contains(string haystack, string needle) {
   }
   return false;
 }
+
+// ── The five parse clauses nothing pinned ──────────────────────────────────────────────────────
+//
+// **These record what wacc says today, and the spec says something different for every one of them.**
+// That is deliberate and it is not an endorsement: `issues/lang/0156` holds the decision about whose
+// wording is right — the spec's, the reference's, or the practice both compilers share — and this file
+// is not the place to take it. What these tests buy is that the answer cannot *drift* while the
+// decision is open, and that whoever takes it gets a list of exactly what changes.
+//
+// Measured 2026-08-21. Six parse clauses exist; `§wac-diag-parse-bad-type-n7qm3xf` is pinned above,
+// and it is the only one whose annotation the spec states in prose rather than only drawing in a
+// block — which is the whole reason it was the one already checked.
+//
+// The pattern in four of the five: the spec puts the specific thing in the **message**
+// (`expected ';'`) and wacc puts `unexpected token` there and the specific thing in the annotation.
+// The reference puts both in the message. Nobody is missing information; they disagree about which
+// field it goes in, and no differential compares text — `parse_errors.test.ts` compares by count and
+// position, and says so.
+
+/**
+ * `§wac-diag-parse-unexpected-q3kn8wp` — the spec's own program, `i32 x = ;`.
+ *
+ * The one clause where wacc and the spec have the two halves *swapped*: the spec's message is
+ * `unexpected token` with `expected expression` in the annotation, and wacc says `expected an
+ * expression` with `found ';'`. Note the article — `an expression` where the spec and the reference
+ * both say `expression`. If this row is ever reconciled, that is the word to reconcile, and it would
+ * otherwise survive the reconciliation unnoticed.
+ */
+export string test_current_wording_for_an_unexpected_token() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export i32 f() {\n  i32 x = ;\n  return x;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for a missing expression");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "expected an expression", "the message wacc uses today — spec: `unexpected token`");
+  t.eqStr(d[1], "found ';'", "the annotation wacc uses today — spec: `expected expression`");
+  return t.report();
+}
+
+/** `§wac-diag-parse-missing-semi-r7jm4xf` — spec message `expected ';'`. */
+export string test_current_wording_for_a_missing_semicolon() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export i32 f() { i32 x = 1\n  i32 y = 3;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for a missing semicolon");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "unexpected token", "the message wacc uses today — spec: `expected ';'`");
+  t.eqStr(d[1], "expected ';', found 'i32'", "the annotation, which carries the spec's message");
+  return t.report();
+}
+
+/** `§wac-diag-parse-missing-paren-k8fn3qp` — spec message `expected ')'`. */
+export string test_current_wording_for_a_missing_paren() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export i32 f() { i32 x = add(1, 2; return x; }");
+  t.isTrue(d.len() == 4, "wacc reported nothing for a missing paren");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "unexpected token", "the message wacc uses today — spec: `expected ')'`");
+  t.eqStr(d[1], "expected ')', found ';'", "the annotation, which carries the spec's message");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-parse-missing-brace-w5hd2jk` — and the two things this clause has that no other does.
+ *
+ * The spec's block for it is **the only place in `errors.md` with a secondary label** — `- block
+ * opened here`, on the line that opened the block, above a `...` elision. Neither compiler emits it
+ * and wacc's diagnostic wire has one position per diagnostic, so it cannot: `issues/lang/0232a`.
+ *
+ * And it is the one clause where the two compilers disagree with **each other** rather than only with
+ * the spec: wacc says `found 'eof'` and the reference says `found ''`. The README's parity row claims
+ * *"the wording agrees where both speak"*; here it does not, and one of the two spellings is a token
+ * name leaking into prose.
+ */
+export string test_current_wording_for_a_missing_brace() {
+  T t = T.create();
+  string[] d = firstDiagnostic("// a comment\nexport i32 foo() {\n  i32 x = 1;\n  return x;\n");
+  t.isTrue(d.len() == 4, "wacc reported nothing for an unclosed brace");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "unexpected token", "the message wacc uses today — spec: `expected '}'`");
+  t.eqStr(d[1], "expected '}', found 'eof'",
+      "the annotation — the reference says `found ''` for the same thing");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-parse-bad-struct-h9pd5wn` — where the disagreement is also about *how many*.
+ *
+ * The spec's block draws **one** diagnostic. Both compilers answer three, all at the same position:
+ * the reference says `expected type, found '='`, then `expected member name`, then `expected ';' or
+ * '(' after member '?'`. So the count is not a disagreement between the compilers — it is both of
+ * them against the block, which is a different question from the wording and wants its own answer.
+ */
+export string test_current_wording_and_count_for_a_bad_struct_member() {
+  T t = T.create();
+  string src = "struct P {\n  i32 v;\n  = 5;\n}\nexport i32 f() { return 0; }";
+  string[] d = firstDiagnostic(src);
+  t.isTrue(d.len() == 4, "wacc reported nothing for a bad struct member");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[0], "expected a type", "the message wacc uses today — spec: `expected field or method declaration`");
+  t.eqStr(d[1], "found '='", "the annotation wacc uses today — spec: `expected type name`");
+  // The cascade, which the spec's single-diagnostic block does not describe.
+  string wire = diagnoseFiles(string[]("err.wac"), string[](src), "err.wac");
+  t.eqI32(wireLines(wire).len(), 3, "the number of diagnostics one bad struct member produces");
+  return t.report();
+}

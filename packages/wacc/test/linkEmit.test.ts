@@ -174,9 +174,13 @@ Deno.test("rung 4: the two ways linking fails say which one it was", () => {
     ],
     "/main.wac",
   );
-  // **And says which name**, because "a name" sent the reader back to the file to find out which one
-  // — and the five corpus files this decline covered took one grep each to diagnose once it said.
-  if (ambiguous !== "the name enc, which more than one file declares") {
-    throw new Error(`an ambiguous name was reported as ${JSON.stringify(ambiguous)}`);
+  // **And says which name, and which files declare it.** "A name" sent the reader back to the file to
+  // find out which one; the name alone then sent them looking for the declarations, and the file that
+  // *reaches* for an ambiguous name is typically none of the ones that declare it — in
+  // `issues/lang/0154`'s smallest reproduction the third declaration is `packages/wacc/src/ast.wac`,
+  // which the reader never typed. `declFiles` had the answer and nothing asked it.
+  const want = "the name enc, which more than one file declares — declared by /a.wac and /b.wac";
+  if (ambiguous !== want) {
+    throw new Error(`an ambiguous name was reported as ${JSON.stringify(ambiguous)}, want ${JSON.stringify(want)}`);
   }
 });

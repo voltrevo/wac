@@ -222,3 +222,71 @@ validator noticing the wreckage afterwards.
 Worth knowing which shapes reach it, because two of the three do not any more. Two exported structs of
 one name in a link, *unreferenced*, build fine. Referencing one of them builds fine. It takes **two
 files each importing a different `Dup`** — the third case above — to produce the invalid module.
+
+## 2026-08-21: the message names the declarations now, and the reproduction is three files
+
+**The ask above is done.** *"What this issue asks for is a diagnostic naming the two declarations, at
+the collision"* — the naming half:
+
+    before  wacc: cannot emit agg.wac — the name Case, which more than one file declares
+    after   wacc: cannot emit agg.wac — the name Case, which more than one file declares
+                  — declared by one.wac, two.wac and packages/wacc/src/ast.wac
+
+`Env.declFiles` has held the answer since the table existed and nothing asked it; `filesDeclaring`
+maps those indices through `filePaths` and `blockedOf` appends the list. Canaried by making the note
+return `""`, which fails `linkEmit.test.ts`'s equality. Not the *position* half — that still points at
+the program rather than at a declaration — but the reader no longer has to find the files by grep, and
+the third one is usually a file they never typed.
+
+### The reproduction is three files, and four of this issue's own ingredients are wrong
+
+Re-derived from scratch, and the negatives above sent me down every path they list before I found the
+one that works. What actually reproduces it:
+
+```wac
+// one.wac                        // two.wac                        // agg.wac
+export struct Case { i32 x; }     export struct Case { i32 y; }     import { one } from "./one.wac";
+export i32 one() {                export i32 two() {                import { two } from "./two.wac";
+  Case c = Case { x: 1 };           Case c = Case { y: 2 };         import { dumpTypeErrors }
+  return c.x;                       return c.y;                      from ".../wacc/src/api.wac";
+}                                 }                                 export i32 main() { … }
+```
+
+    wacc: cannot emit agg.wac — the name Case, which more than one file declares — declared by
+          one.wac, two.wac and …/packages/wacc/src/ast.wac
+
+Corrections, each measured today:
+
+- **It is not about scale.** *"Somewhere between 2 and 23 files in one link"* is not the variable: 24
+  files with three declarations of the name and no API import build fine, and three files with the
+  API import do not. What the aggregate supplied was never the file count — it was a **third
+  declaration in a graph the reader did not write**, which is what `import … from api.wac` brings
+  (`ast.wac` exports `struct Case`).
+- **The private declaration is not necessary.** This issue lists three ingredients as *"each
+  necessary in the real case"*, one of them `diagnosticgap_test.wac`'s private `struct Case`. Two
+  *exported* locals plus `ast.wac`'s is enough; adding a private third changes nothing.
+- **Two declarations really are fine**, which this issue has right: one local `export struct Case`
+  plus the API's builds a 626 KB module from 19 files and runs.
+- **A hand-made imitation of the API does not reproduce it.** Two files where the second uses the
+  first's `Case` through an imported function's return type, plus the two colliding locals, builds
+  fine. So something about how wacc's own graph reaches that name matters and is still unaccounted
+  for — the one thing on this page still worth narrowing.
+- **A three-file in-memory reproduction was already here**, in `linkEmit.test.ts`, using two
+  functions called `enc` rather than two structs. That is why the struct-shaped attempts all needed
+  the API graph: a bare name in *call* position resolves through the permissive module-wide lookup,
+  while a bare *type* name that nothing imported is refused first as `undefined type`. Anyone
+  narrowing this should start from the function-shaped case, which needs no API at all.
+
+### The invalid module did not reproduce
+
+The 2026-08-20 note says it takes *"two files each importing a different `Dup`"*. Built and **ran**
+correctly today: two files exporting `struct Dup`, two more each importing a different one, an entry
+importing both — 4580 bytes from five files, answering 3. The same with the entry importing the two
+`Dup`-exporting files directly, and with an explicitly-imported `Dup` alongside a second exporter:
+all correct.
+
+So every shape reachable by hand now either builds and runs, or is refused with the named message.
+That is **not** evidence the emitter can no longer produce an invalid module for a collision — it is
+evidence that the shapes recorded here do not, and the aggregate that started this is a lane, not a
+file anyone can write down. What is left of this issue is the decision it already names: whether the
+linker should qualify further rather than refuse.
