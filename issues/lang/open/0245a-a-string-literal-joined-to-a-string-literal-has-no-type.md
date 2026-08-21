@@ -1,7 +1,6 @@
 # 0245a — `"a" + "b"` has no type, because the rule assumes a literal takes one
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** open — the slot half is fixed; the operand half is attempted, measured and reverted
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** bug
@@ -68,3 +67,74 @@ reproductions started being refused; two did not — `"ab".slice(1, "x" + "y")` 
 `string.fromCodepoint("a" + "b")` — because `litFamily`'s `Binary` arm answers only for the integer
 and float families, deliberately, and a string pair is therefore not a literal to it either. Chasing
 why left this. `0244a` records those two rows as belonging here.
+
+## Fixed, and measured by count rather than by refusal — 2026-08-21
+
+A string or bool literal now contributes its type, where an integer or float literal still does not:
+
+```wac
+i32 lk = litKindOf(left);
+bool lLit = lk == litInteger() || lk == litFloat();
+string bl = lLit ? typeNone()
+          : lk == litString() ? "string" : lk == litBool() ? "bool" : typeOfExpr(c, left);
+```
+
+**The canary is the count, not the refusal**, because every comment in that arm is about not reporting
+twice. Fifteen programs, diagnostics before and after:
+
+| program | before | after |
+|---|---:|---:|
+| `i32 n = "a" + "b";` | 0 | **1** |
+| `bool b = "a" + "b";` | 0 | **1** |
+| `i32 n = true + false;` | 0 | **1** |
+| `t.a + t.b + t.c` on three strings | 1 | 1 |
+| `i32 n = "a";` | 1 | 1 |
+| `i32 n = "a" + s;` | 1 | 1 |
+| `i32 n = s * 1000;` | 1 | 1 |
+| `string s = "a" + "b";` | 0 | 0 |
+| `i32 n = 1 + 2;` / `i64 n = 1 + 2;` / `f64 d = 1.5 + 2.5;` | 0 | 0 |
+| `bool b = 1 == 2;` / `bool b = true && false;` | 0 | 0 |
+| `bool b = true + false;` | 0 | 0 |
+| `string s = "a" * "b";` | 0 | 0 |
+
+Three rows improve and twelve are untouched. The chain row is the one that mattered: `t.a + t.b + t.c`
+stays at **one** diagnostic, which is what the arm's comments are protecting and what `0238a` is about.
+
+`corpuscheck`, `typecheck` (rung 3), `illtyped`, `cases` and `specsingle` are green with it.
+
+## What the last two rows are, and why they are not this
+
+`bool b = true + false;` and `string s = "a" * "b";` stay silent, and the reference refuses both — with
+an **operand** complaint rather than a slot one: *"'+' requires numeric type, got bool"* and *"'*'
+requires numeric type, got string"*. So they are a different rule, and this fix was never going to
+reach them.
+
+That rule is in `checkExpr`'s `Binary` arm and the gap is one identifier wide:
+
+```wac
+string alt = typeOfExpr(c, left);          // line ~3560 — blind to a literal
+string nl = alt != typeNone() ? alt : naturalTypeOf(c, left);   // ~3591 — fills one in
+...
+bool lArith = alt != "string" && isReferenceName(c, alt);        // ~3624 — uses the blind one
+if (arith && (alt == "bool" || art == "bool" || lArith || rArith)) { … }
+```
+
+`nl`/`nr` exist thirty lines above and were introduced for exactly this reason — the bitwise branch
+beside it says so: *"`nl`/`nr`, not `typeOfExpr` alone, or this cannot see a literal … which left
+`1.5 & 2.5`, `x & 1.5` and `x << "a"` checking clean"* (`issues/lang/0236a`). The arithmetic and string
+branches next to it still ask `alt`/`art`. And the two-literals rule further down says it deliberately:
+*"Same family is silent, including `true + false`, which is the numeric rule's business and not this
+one's"* — true, and the numeric rule cannot see it.
+
+**Tried, and reverted — the third step is not enough either.** Both branches were pointed at `nl`/`nr`
+and the arm was made to answer `typeNone()` when the operator rejected its operands, which is the
+`Unary` arm's rule in the same words. `true + false` and `"a" * "b"` then report once each, all of
+`corpuscheck`, `typecheck`, `cases`, `specsingle`, `specmulti` and `codes` stay green — and
+`illtyped_test`'s **`n * a-literal`** row goes from one diagnostic to **two**. A *named* integer times a
+string literal is already reported by another path, so filling the literal in makes the operator branch
+a second voice for a fault that was already named. That row is the one to work against; it is not
+visible from the `true + false` end of the problem at all.
+
+So the remaining work is narrower than "swap the identifiers": find which path already reports
+`n * "a"` and decide which of the two should own it. `issues/lang/0238a` is the same question for a
+different pair and closed by making one of them silent.

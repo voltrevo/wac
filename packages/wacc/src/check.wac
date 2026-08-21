@@ -2977,10 +2977,20 @@ export string typeOfExpr(C c, Expr e) {
           bk == kAndAnd() || bk == kOrOr()) {
         return "bool";
       }
-      bool lLit = litKindOf(left) != litNone();
-      bool rLit = litKindOf(right) != litNone();
-      string bl = lLit ? typeNone() : typeOfExpr(c, left);
-      string br = rLit ? typeNone() : typeOfExpr(c, right);
+      // **A string or bool literal is not polymorphic, so it does have a type to offer.** The
+      // sentence above is about `1`, which is an `i32`, an `i64`, a `u32` or a `u64` depending on
+      // where it is going and therefore cannot give one. `"a"` is a `string` and `true` is a `bool`,
+      // and folding them into unknown left `i32 n = "a" + "b";` accepted while `i32 n = "a";` and
+      // `i32 n = "a" + s;` were both refused — the rule worked whenever *one* side was not a
+      // literal. `naturalTypeOf` in this file already draws the line here. `issues/lang/0245a`.
+      i32 lk = litKindOf(left);
+      i32 rk = litKindOf(right);
+      bool lLit = lk == litInteger() || lk == litFloat();
+      bool rLit = rk == litInteger() || rk == litFloat();
+      string bl = lLit ? typeNone()
+                : lk == litString() ? "string" : lk == litBool() ? "bool" : typeOfExpr(c, left);
+      string br = rLit ? typeNone()
+                : rk == litString() ? "string" : rk == litBool() ? "bool" : typeOfExpr(c, right);
       // **Unknown from a literal and unknown from an error are the same value and not the same
       // thing.** `x + 1` takes its type from `x`, because the literal has none of its own; `(s * 2) +
       // t` has an operand that was *reported* and therefore has no type to offer, and answering with
