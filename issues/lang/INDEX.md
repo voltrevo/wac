@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0238a](open/0238a-one-fault-two-diagnostics-at-one-position.md) | where the two compilers disagree about *how much* is wrong — 19 of 1,189 mutants report more than the reference; some are ours (a slot rule comparing a type invented for a refused expression) and some are the reference stopping early. A queue, not an invariant: two stronger framings were measured and refuted | diagnostic | wrong answer |
 | [0235a](open/0235a-written-type-arguments-parse-as-a-comparison.md) | the silent half is fixed — a type name in value position was refused only for structs, so `x < i32`, `x < E` and `x < string` checked clean; what is left is that `found bool` is still the first of three lines | diagnostic | wrong answer |
 | [0233a](open/0233a-a-shift-by-a-variable-is-typed-from-the-amount-not-the-slot.md) | `i64 x = 1 << count;` is refused by both compilers: a shift is typed from its left operand, which for a literal has no type, so the only type in reach is the amount's — the one the result is explicitly not supposed to follow | decision | compile error |
 | [0232a](open/0232a-the-diagnostic-wire-cannot-carry-contextstart.md) | the diagnostic wire has no `contextStart`, so wacc renders `§wac-diag-multiline-ic7x2hq` two source lines shorter than the reference — and `renderdiag_test.wac` cannot see it, because both renderers are fed wacc's own wire | decision | wrong answer |
@@ -13,7 +14,7 @@ has been fixed and why.
 | [0163](open/0163-one-file-under-two-keys-is-silent-in-the-reference-and-an-invalid-module-in-wacc.md) | refused now, naming both keys, instead of an invalid module the checker was silent about — what is left is D8 deciding whether refusing is right, with a recommendation that it is | decision | no error |
 | [0157](open/0157-an-import-of-a-file-nobody-supplied-is-caught-by-the-emitter-not-the-checker.md) | the single-file half is fixed and the emitter's sentence **names the file** now; what is left is the checker reporting it at the import's token, for which the linker already has the key | diagnostic | no error |
 | [0156](open/0156-the-specs-parse-messages-match-neither-compiler.md) | the spec quotes `expected ';'` as a parse message, wacc says `unexpected token` with it in the annotation, the reference says a third thing — and the differentials compare positions, not text | diagnostic | wrong answer |
-| [0155](open/0155-a-build-that-emitted-no-code-reports-success.md) | a build whose emit produced no code writes a manifest-only module and exits 0 | diagnostic | no error |
+| [0155](open/0155-a-build-that-emitted-no-code-reports-success.md) | the CLI guard is in place and every route to it reports something better first — enumerated by *return site* rather than by input, six of seven covered; the seventh is `emitFiles`, which answers `u8[]` and returns 8 bytes for a failed link with the reason one `blockedFiles` call away | diagnostic | no error |
 | [0154](open/0154-an-exported-struct-name-that-collides-in-a-link-breaks-other-modules-exports.md) | the refusal names the declaring files now, and the reproduction is three files rather than a lane; what is left is whether the linker should qualify rather than refuse | bug | invalid wasm |
 | [0153](open/0153-a-build-cost-two-emits-and-five-front-ends-and-what-is-left.md) | a build cost two emits and five front ends; what is left after fixing that | performance | no error |
 | [0151](open/0151-the-reference-refuses-an-identity-test-the-spec-allows.md) | the reference refuses an identity test the spec allows, so a sweep row cannot be closed | bug | compile error |
@@ -34,7 +35,7 @@ has been fixed and why.
 
 ## Closed
 
-184 issues, 158 closed.
+187 issues, 160 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

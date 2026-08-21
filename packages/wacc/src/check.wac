@@ -121,6 +121,14 @@ export i32 errIndex() { return 41; }
 export i32 errTernaryBranches() { return 42; }
 /** `is` or `!` applied to something the question does not make sense for. */
 export i32 errReferenceOp() { return 43; }
+/**
+ * `!` applied to something that is not nullable.
+ *
+ * Split from `errReferenceOp`, which says *"this operator needs a reference"* — true for `is` on a
+ * primitive, and false for `p!` on a non-nullable `P`, which **is** a reference. A message that denies
+ * something the program has sends the reader to the wrong place. `issues/lang/0237a`.
+ */
+export i32 errNeedsNullable() { return 203; }
 /** A `switch` on something it cannot switch on. */
 export i32 errSwitchSubject() { return 44; }
 /** A named construction naming a field the struct does not have, or leaving one out. */
@@ -587,6 +595,26 @@ string dropLast(string s, i32 n) {
  * working code until it was corrected. Naming the distinction is cheaper than remembering it.
  */
 bool isValueType(string n) { return isPrimitiveName(n) && n != "string"; }
+
+/**
+ * Whether the unary operator `uk` takes an operand of type `ut` at all.
+ *
+ * **One predicate, two readers.** `checkExpr` reports when the answer is no, and `typeOfExpr` answers
+ * *unknown* for the expression — because an operator that rejects its operand produces something with
+ * no type, not something of the operand's type. Answering the operand's type made a slot rule
+ * downstream disagree with a type this checker had invented for an expression it had just refused, so
+ * `export i32 f(string s) { return ~s; }` reported two faults where there is one. `issues/lang/0238a`.
+ *
+ * The `u32`/`u64` row is negation: an unsigned integer has none, and the reference says so.
+ */
+bool unaryAccepts(C c, i32 uk, string ut) {
+  if (uk == kBang()) { return ut == "bool"; }
+  if (uk == kMinus()) {
+    return !(ut == "bool" || ut == "u32" || ut == "u64" || isReferenceName(c, ut));
+  }
+  if (uk == kTilde()) { return isIntegerName(ut); }
+  return true;
+}
 
 /** Whether a type is one of the integers, which is what the bitwise operators and `~` demand. */
 bool isIntegerName(string n) {
@@ -2912,8 +2940,14 @@ export string typeOfExpr(C c, Expr e) {
     }
     // `!x` is a boolean; `-x` and `~x` are whatever `x` is.
     case Unary(op, operand): {
-      if (tokenKind(c, op) == kBang()) { return "bool"; }
-      return typeOfExpr(c, operand);
+      i32 uk = tokenKind(c, op);
+      if (uk == kBang()) { return "bool"; }
+      string ut3 = typeOfExpr(c, operand);
+      // **A rejected operand leaves the expression with no type**, rather than with the operand's.
+      // Unknown is silence here, which is what stops a slot rule reporting a second time for the one
+      // fault the operand rule already named. `issues/lang/0238a`.
+      if (ut3 != typeNone() && !unaryAccepts(c, uk, ut3)) { return typeNone(); }
+      return ut3;
     }
     // Both branches or nothing. A conditional whose arms disagree has a type the reference works out
     // by unification, which this slice cannot do — and guessing one branch would be worse than
@@ -3386,11 +3420,14 @@ void checkExpr(C c, Expr e) {
       // `>>>` is an unsigned shift, so on a type that is already unsigned it says nothing that `>>`
       // does not — the language calls that redundant rather than harmless. On a float it has no
       // meaning at all. Both name the operator, so both are one code here.
+      // **Only the redundancy here.** `>>>` on a float is not an integer question this rule can
+      // answer better than the operand rule below, which says exactly that — and reporting both gave
+      // *two* diagnostics for `d >>> 1` where the reference gives one. So this narrows to the case
+      // that is its own: an unsigned operand, where `>>>` asks for something `>>` already does.
+      // `issues/lang/0237a`.
       if (k == kShrU()) {
         string st = typeOfExpr(c, left);
-        if (st == "u32" || st == "u64" || st == "f32" || st == "f64") {
-          c.reportTok(errShiftOp(), op, "");
-        }
+        if (st == "u32" || st == "u64") { c.reportTok(errShiftOp(), op, ""); }
       }
       bool arith = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
                    k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
@@ -3492,10 +3529,14 @@ void checkExpr(C c, Expr e) {
       bool bitwise = k == kAnd() || k == kOr() || k == kCaret();
       bool shift = k == kShl() || k == kShr() || k == kShrU();
       if (bitwise || shift) {
-        string lt2 = typeOfExpr(c, left);
-        string rt2 = typeOfExpr(c, right);
-        bool badL = lt2 != typeNone() && !isIntegerName(lt2);
-        bool badR = rt2 != typeNone() && !isIntegerName(rt2);
+        // **`nl`/`nr`, not `typeOfExpr` alone, or this cannot see a literal.** A literal has no type
+        // until something gives it one, so asking `typeOfExpr` about `1.5` answers unknown and the
+        // guard below skipped it — which left `1.5 & 2.5`, `x & 1.5` and `x << "a"` checking clean,
+        // and the last two emitting a module the engine refuses. `naturalTypeOf` fills a literal in,
+        // and the pair computed above is exactly "whichever of the two questions can answer it".
+        // `issues/lang/0236a`.
+        bool badL = nl != "" && !isIntegerName(nl);
+        bool badR = nr != "" && !isIntegerName(nr);
         if (badL || badR) { c.reportTok(errOperandKind(), op, ""); }
       }
       bool sameType = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
@@ -3644,7 +3685,7 @@ void checkExpr(C c, Expr e) {
       string ut2 = typeOfExpr(c, operand);
       if (withoutNull(ut2) == "" &&
           (isPrimitiveName(ut2) || ut2 == "bool" || isReferenceName(c, ut2))) {
-        c.report(errReferenceOp(), e.line, e.col);
+        c.report(errNeedsNullable(), e.line, e.col);
       }
     }
     case Unary(op, operand): {
@@ -3657,21 +3698,16 @@ void checkExpr(C c, Expr e) {
       // fill it in. Asking `typeOfExpr` answered unknown and stayed silent on every one of them.
       string ut = naturalTypeOf(c, operand);
       if (ut != typeNone()) {
-        if (uk == kBang() && ut != "bool") {
-          c.reportTok(errOperandKind(), op, "");
-        // **Negating a reference**, which listed `bool`, `string` and structs — so `-someEnum`,
-        // `-someArray`, `-someFn` and `-someAnyref` all compiled. The list is the same one that
-        // forgot enums twice elsewhere today, which is why the question is now asked of one
-        // predicate instead of being spelled out per rule.
-        // **And an unsigned integer has no negation.** `-a` on a `u32` or a `u64` compiled; the
-        // reference answers *"unary '-' is not defined on u32"*, at the operator, which is where
-        // this reports. `u8` and `u16` are packed rather than unsigned-arithmetic types and the
-        // reference complains about them three times over — this catches one of the three, which
-        // rung 3 permits, because a subset at the right position is the contract.
-        } else if (uk == kMinus() &&
-                   (ut == "bool" || ut == "u32" || ut == "u64" || isReferenceName(c, ut))) {
-          c.reportTok(errOperandKind(), op, "");
-        } else if (uk == kTilde() && !isIntegerName(ut)) {
+        // **All three ask `unaryAccepts`**, which `typeOfExpr` also reads so that a rejected
+        // operand leaves the expression with no type. The lists that were spelled out here are the
+        // ones that forgot enums twice; one predicate is the answer to that as well.
+        //
+        // `-a` on a `u32` or `u64` is included because an unsigned integer has no negation — the
+        // reference answers *"unary '-' is not defined on u32"*. `u8` and `u16` are packed rather
+        // than unsigned-arithmetic types and the reference complains about them three times over;
+        // this catches one of the three, which rung 3 permits, because a subset at the right
+        // position is the contract.
+        if (!unaryAccepts(c, uk, ut)) {
           c.reportTok(errOperandKind(), op, "");
         }
       }

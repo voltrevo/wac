@@ -129,6 +129,8 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
   const cat = new Map<string, { seen: number; caught: number }>();
   const contradictions: string[] = [];
   let contradicted = 0;
+  let louder = 0;
+  const louderExamples: string[] = [];
   let broken = 0;
   let caught = 0;
   for (let i = 0; i < cells.length; i++) {
@@ -146,6 +148,30 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
     broken++;
 
     const mine = ours(mutated);
+    // **Saying more than the reference is a disagreement too, and nothing else here measures it.**
+    // Every other assertion in this file is about saying *less*: the contradiction check is a subset
+    // relation, and recall counts what we miss. `issues/lang/0237a` was the other direction — two
+    // diagnostics where the reference gives one, for one fault — and it was found by hand.
+    //
+    // **A queue, not a verdict, and the sorting is by hand.** Some hits are ours: `~s` in an `i32`
+    // function draws the operand rule *and* a slot rule that compares a type this checker invented for
+    // an expression it had just refused. Others are the reference stopping early —
+    // `i32 x; u32 y; return x != y;` in an `i32` function has two independent faults, and its
+    // `checkBinaryOp` answers null for the comparison so it never reaches the second. Counting cannot
+    // tell those apart; `issues/lang/0238a` says what distinguishes them.
+    //
+    // **Counted, not asserted, and it is a count rather than a position test.** An earlier version of
+    // this looked for two of our diagnostics sharing a position, on the theory that one fault cannot
+    // be at one place twice. That measures co-location, not duplication: `return x as i32` in a
+    // `string` function is a redundant cast *and* a return-type mismatch, two independent faults at
+    // one position, and the reference reports both there too. All 24 hits were of that kind.
+    if (mine.length > theirs.length) {
+      louder++;
+      if (louderExamples.length < 4) {
+        louderExamples.push(`${mine.length} ours vs ${theirs.length} theirs in:\n    ` +
+          mutated.replace(/\n/g, " ⏎ ").slice(0, 300));
+      }
+    }
     const key = family(theirs[0].message);
     const e = cat.get(key) ?? { seen: 0, caught: 0 };
     e.seen++;
@@ -166,6 +192,10 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
     }
   }
 
+  if (louder > 0) {
+    console.log(`    ${louder} program(s) where we report more diagnostics than the reference:`);
+    for (const d of louderExamples) console.log(`      ${d}`);
+  }
   const missing = [...cat].sort((a, b) => (b[1].seen - b[1].caught) - (a[1].seen - a[1].caught))
     .filter(([, v]) => v.seen > v.caught);
   const worst = missing.slice(0, 6);

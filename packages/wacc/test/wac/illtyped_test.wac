@@ -1,4 +1,4 @@
-// The negative half of the corpus: 25 ill-typed programs that must all be refused — 18 single-file,
+// The negative half of the corpus: 29 ill-typed programs that must all be refused — 22 single-file,
 // and 7 that are only ill-typed across an import boundary.
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env packages/wacc/test/wac/illtyped_test.wac
@@ -18,7 +18,7 @@
 // **Two questions per program**, because the failure mode is passing one and failing the other: does
 // the checker refuse it, and does the emitter decline anything. A program answering no to both builds
 // with its exported function missing, which is the shape `issues/lang/0155` and the export-parity net
-// in `emit.wac` are the other guards against. Measured 2026-08-21: **18 of 18 refused by the checker**,
+// in `emit.wac` are the other guards against. Measured 2026-08-21: **22 of 22 refused by the checker**,
 // 0 silent in both. The last four are a *type name* where a value belongs, and three of them were
 // silent until `issues/lang/0235a`: only a struct was refused, so `x < i32`, `x < E` and `x < string`
 // checked clean and the emitter caught them later as `unresolved name i32`, without a position.
@@ -34,7 +34,10 @@ string[] names() {
     // A **type name** where a value belongs. Only the struct case was refused: the other three
     // checked clean and the emitter caught them later as `unresolved name i32`, with no position.
     // The reference refuses all four. `issues/lang/0235a`.
-    "a15 x < i32 (primitive)", "a16 x < E (enum)", "a17 x < string", "a18 x < P (struct)");
+    "a15 x < i32 (primitive)", "a16 x < E (enum)", "a17 x < string", "a18 x < P (struct)",
+    // Bitwise and shift on something that is not an integer. All four checked clean; two of them
+    // emitted a module the engine refuses. `issues/lang/0236a`.
+    "a19 1.5 & 2.5", "a20 x & 1.5", "a21 \"a\" << 1", "a22 x << \"a\"");
 }
 
 string[] programs() {
@@ -56,7 +59,11 @@ string[] programs() {
     "export bool f(i32 x) { return x < i32; }\n",
     "enum E { A, B }\nexport bool f(i32 x) { return x < E; }\n",
     "export bool f(i32 x) { return x < string; }\n",
-    "struct P { i32 v; }\nexport bool f(i32 x) { return x < P; }\n");
+    "struct P { i32 v; }\nexport bool f(i32 x) { return x < P; }\n",
+    "export f64 f() { return 1.5 & 2.5; }\n",
+    "export i32 f(i32 x) { return x & 1.5; }\n",
+    "export string f() { return \"a\" << 1; }\n",
+    "export i32 f(i32 x) { return x << \"a\"; }\n");
 }
 
 export string test_every_ill_typed_program_here_is_refused_by_the_checker() {
@@ -118,6 +125,37 @@ export string test_no_program_here_is_accepted_by_both_the_checker_and_the_emitt
         name[i] + ": the checker and the emitter both accepted it, so a build writes a module with "
         + "no `f` in it and exits 0");
   }
+  return t.report();
+}
+
+/**
+ * A refused unary reports **once**, not once per rule that notices the consequence.
+ *
+ * `~s` in an `i32` function drew two diagnostics: the operand rule that refused it, and a slot rule
+ * comparing the `i32` return type against the type `typeOfExpr` had handed back for `~s` — its
+ * *operand's* type, invented for an expression already refused. Moving the same expression into a
+ * `string` function dropped it to one, which is what identified the mechanism. `issues/lang/0238a`.
+ *
+ * **The count is the assertion, and it has to be.** Every other test in this file asks `diags > 0`,
+ * which was true before the fix and after it, so nothing here could hold this. The mutation corpus
+ * cannot either: its 19 count-disagreements are binary and initialiser shapes, and re-running it after
+ * this fix moved the number not at all — it contains no unary in a mismatched slot.
+ */
+export string test_a_refused_unary_reports_once() {
+  T t = T.create();
+  string[] name = string[]("~ on a string", "unary - on a bool", "unary - on a string");
+  string[] src = string[](
+    "export i32 f(string s) { return ~s; }\n",
+    "export i32 f(bool b) { return -b; }\n",
+    "export i32 f(string s) { return -s; }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
+    t.eqI32(diags, 1, name[i] + ": one fault, and this many diagnostics");
+  }
+  // The control: the same expression where the slot agrees was always one, so a fix that simply
+  // silenced the second rule everywhere would pass the rows above and fail nothing.
+  i32 ok = dumpTypeErrors("export string f(string s) { return ~s; }\n".toBytes()).len() / 3;
+  t.eqI32(ok, 1, "the matching-slot control");
   return t.report();
 }
 

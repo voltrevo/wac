@@ -75,3 +75,65 @@ route anybody has recorded — which is a good state and not a demonstrated one.
 To close this properly somebody needs an input that still makes the emitter produce nothing at all.
 If no such input exists, the honest close is "the guard is here, and nothing can reach it" — but that
 is a claim about every input, and this issue exists because a claim like that was wrong once.
+
+## 2026-08-21: the claim is about return sites, not inputs — agent-a
+
+This issue hesitates to close because *"the guard is here, and nothing can reach it"* is a claim about
+every input, and it exists because such a claim was wrong once. That is the right instinct and the wrong
+quantifier: the guard fires on an **eight-byte module**, and a module is eight bytes only if the emitter
+returned `bareModule()`. There are seven such returns and they can be read.
+
+| site | when | does it say why? |
+| --- | --- | --- |
+| `emitModuleOfFront`, `env.ambiguous \|\| env.full` | a guessed name, or a decline | yes — `buildLinked` reads both and reports, since `issues/lang/0154` |
+| `emitModuleOf…`, `env.full` | a decline | yes — same reader |
+| the type-section-grew guard | a type registered mid-body | yes — `declineFor` with the counts and the names |
+| four `Built(bareModule(), …)` returns | link failure, ambiguity, missing import | yes — the reason is the second half of the `Built` |
+| `emitLinkedTracedSlots`, `blob == ""` | the link failed | **no**, and see below |
+| `emitLinkedWith2`, `blob == ""` | the link failed | **no**, and see below |
+
+So for `wac build` every route is covered, and the two that are not are the *in-process* `emitFiles`
+family: they answer `u8[]` and have nowhere to put a reason, so a caller whose link fails gets eight
+bytes and no explanation. That is `issues/lang/0170a`'s known gap — *"the export-parity net covers `wac
+build` and not the in-process API"* — with three options already written up there, and it is the same
+two functions.
+
+### The eight-byte module still exists, in-process, and it is measured
+
+`waccApi()` driven directly, on a program whose import names a file nobody supplied:
+
+    missing import: emitFiles -> 8 bytes,    blockedFiles -> "an import of a file that was not
+                                             supplied: /gone.wac (/m.wac imports it as "./gone.wac")"
+    fine:           emitFiles -> 1065 bytes, blockedFiles -> ""
+
+So the input this issue asks for does exist — it is just not reachable through `wac build`, because the
+CLI's `gather` reads from disk and a missing file fails there first. And the reason is one call away and
+a good one: `blockedFiles` names the key, the importing file *and* the specifier as written.
+
+**Which makes this issue's close a smaller question than it looks.** Not "does an input exist" but
+"should the `emitFiles` family be able to say why it produced nothing". The build path answers; the
+library path does not, and its callers are code that is itself under test. `blockedFiles` and
+`missingImportFiles` are the seams a caller can already ask, so nothing is unable to find out — the
+family just does not volunteer it.
+
+The enumeration is worth more than the reproduction hunt: an input demonstrates one route, and the
+return sites are all of them. If a later change adds an eighth, this table is what makes it visible.
+
+### What a close would need
+
+Not an input any more — there is one above. What is missing is the thing the tracker asks for: a
+reproduction that *behaves*, canaried by reverting the fix. The CLI guard cannot be demonstrated
+because every route to it now reports something better first, and that is exactly the state this issue
+distrusts. So the honest options are:
+
+- **close it on the enumeration** — seven return sites, six covered, and the seventh is a library
+  function with nowhere to put a reason — accepting that the guard itself is untested;
+- **make the `emitFiles` family able to say why** (`issues/lang/0170a`'s three options), which turns
+  the seventh site into a covered one and leaves the guard as dead code to delete;
+- **leave it open** as the standing reminder that an eight-byte module is possible.
+
+Recommended: the second, and **keep the guard**. Deleting it once the family reports would be the usual
+move here — a belt beside a fixed brace — but this belt is the only thing that catches an *eighth*
+return site, and the enumeration above is a claim about today's code rather than a property of it. A
+guard that costs one line and fires on a byte count is cheaper than the sweep that would otherwise be
+needed after every change to the emitter's early exits.
