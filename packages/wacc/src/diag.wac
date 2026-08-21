@@ -83,8 +83,8 @@ export string checkMessage(i32 code) {
   if (code == 21) { return "this method overrides one and does not say `override`"; }
   if (code == 22) { return "this method says `override` and overrides nothing"; }
   if (code == 23) { return "increment needs an integer"; }
-  if (code == 24) { return "shift needs integer operands"; }
-  if (code == 203) { return "a bitwise or shift operator needs integer operands"; }
+  if (code == 24) { return "`>>>` is redundant on an unsigned type"; }
+  if (code == 203) { return "this needs a nullable value"; }
   if (code == 25) { return "wrong number of arguments to the constructor"; }
   if (code == 26) { return "a packed type cannot be used in this position"; }
   if (code == 27) { return "a string's characters cannot be written to"; }
@@ -186,8 +186,8 @@ export string hintFor(i32 code) {
   if (code == 15) { return "take a copy, or declare the destination `const` too"; }
   if (code == 19) { return "check the builtin's parameters — they are fixed"; }
   if (code == 20) { return "check the builtin's parameters — they are fixed"; }
-  if (code == 24) { return "shift a whole number by a whole number"; }
-  if (code == 203) { return "these operators take i32, i64, u32 or u64"; }
+  if (code == 24) { return "`>>` on an unsigned type is already a logical shift — write `>>`"; }
+  if (code == 203) { return "a `T?`, which is what there is something to unwrap from"; }
   if (code == 32) { return "check the declaration for how many it takes"; }
   if (code == 34) { return "build it from literals, or move it into a function"; }
   if (code == 38) { return "check what the operand is — the operator wants another kind"; }

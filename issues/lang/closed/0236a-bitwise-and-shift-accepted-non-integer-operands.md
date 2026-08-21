@@ -89,3 +89,86 @@ where the operand **is** an integer and the real complaint is that `>>>` says no
 One code, two faults; the message names the half that does not apply to the commoner case. Not fixed
 here because it wants its own wording decision, and it is now the only meaning of that code that is
 misdescribed.
+
+## Correction: the rule already existed, and the fix is two lines in it
+
+The section above describes adding a rule and a diagnostic code. **That was wrong, and it was
+duplication.** The rule was already there, forty lines below where I stopped reading:
+
+```wac
+// The bitwise operators want *integers*, which is a narrower demand than "numeric": `a & b` on
+// two `f64`s is refused although the two agree, so the same-type rule below never sees it. A
+// shift asks it of both sides separately — the value being shifted and the amount to shift by.
+bool bitwise = k == kAnd() || k == kOr() || k == kCaret();
+bool shift = k == kShl() || k == kShr() || k == kShrU();
+if (bitwise || shift) {
+  string lt2 = typeOfExpr(c, left);
+  string rt2 = typeOfExpr(c, right);
+  bool badL = lt2 != typeNone() && !isIntegerName(lt2);
+  ...
+```
+
+Its comment states the intended rule exactly. What it could not do is **see a literal**: `typeOfExpr`
+answers unknown for `1.5`, so `badL`/`badR` stayed false and the guard skipped the very cases this issue
+is about. The two lines beside it already solved that problem for the comparison rules —
+
+    string nl = alt != typeNone() ? alt : naturalTypeOf(c, left);
+
+— with a comment saying why. So the fix is to use `nl`/`nr` in the guard, and nothing else: no new code,
+no new message, no new hint.
+
+**And the duplicate had a cost that showed up immediately.** With both rules live, `d >>> 1` on an `f64`
+reported *three* diagnostics for one fault — mine, the pre-existing operand rule, and `errShiftOp` — in
+a file whose own comment records that this was fixed once already: *"nine diagnostics over six lines
+where the reference gives six … a list that says it twice disagrees about how many things are wrong."*
+Each of the four cases now reports exactly one.
+
+Two lessons, and the second is the one I keep paying for:
+
+- **Read to the end of the construct before adding to it.** I read the `Binary` arm from its start to
+  the string rule and stopped about forty lines short. The rule I wanted was in view of a longer scroll.
+- **A rule that does not fire is not a missing rule.** Three programs were silent, and I concluded the
+  check was absent when it was present and blind. The distinguishing question — *is there a guard here
+  that cannot see my case* — costs one grep for the operator kinds and would have found it.
+
+`f64 >>> 1` still reports two, and that pair is pre-existing: `errShiftOp` lists `f32`/`f64` alongside
+`u32`/`u64`, so it fires beside the operand rule for floats. That overlap is `issues/lang/0237a`.
+
+## The rest of the table, walked
+
+The lesson above is only worth stating if I then did the second step, so here it is: one program per
+remaining row of `checkBinaryOp` and the unary rules beside it.
+
+| row | program | wacc |
+| --- | --- | --- |
+| `+` with a string and a non-string | `"a" + 1` | `operands have mismatched types` |
+| comparison, string against non-string | `"a" < 1` | `these types cannot be compared` |
+| comparison on a reference | `a == b` on two `P` | `these types cannot be compared` |
+| `&&` on a non-bool | `1 && true` | `condition must be bool` |
+| `\|\|` on a non-bool | `x \|\| true` | `condition must be bool` |
+| bitwise on mismatched widths | `a & b`, `i32` and `i64` | `operands have mismatched types` |
+| `>>>` on an unsigned | `x >>> 1`, `u32` | refused — but see the note below |
+| `%` on a string | `s % 2` | `this operator does not take an operand of that kind` |
+| `!` on a non-bool | `!x`, `i32` | `this operator does not take an operand of that kind` |
+| `~` on a bool | `~b` | `this operator does not take an operand of that kind` |
+| `~` on a string or float | `~s`, `~d` | same, once the return type does not mask it |
+| **control** | `a % b == 0`, `6 & 3`, `b[0] & 15` | clean |
+
+And four more clusters beside the operators, one program per row:
+
+| cluster | rows tried | result |
+| --- | --- | --- |
+| structural | a struct holding itself non-null, a duplicate field, an override without `override` | all three refused, wording equivalent to the reference's |
+| nullable | a field on a `P?`, returning `P?` as `P`, `i32?` as `i32`, `!` on a non-nullable | all four refused |
+| call and construction | too few arguments, no such method, too many arguments to a method, a named construction with an unknown field, one with a field missing | all five refused |
+| casts | `x as i32` (redundant), `s as i32` (a reference), `x as~ i64` (lossy not needed), `p as! Q` (no shared ancestor) | all four answered, the last as a warning as the reference does |
+
+So every other row is enforced, and the two this issue fixed were the only silent ones. Worth the
+twenty minutes: without the walk, "I read the reference's table" would have been the last word, and it
+was the thing that hid these.
+
+One row is enforced by accident of ordering rather than by its own rule: `~s` inside a function whose
+return type disagrees is reported as *"return type does not match the function's"*, and only when the
+return type matches does the operand rule speak. Both refuse the program, so nothing is silent — but a
+reader gets pointed at the return type for a fault in the operand, which is worth knowing if anyone is
+ordering these diagnostics later.

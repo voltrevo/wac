@@ -121,6 +121,14 @@ export i32 errIndex() { return 41; }
 export i32 errTernaryBranches() { return 42; }
 /** `is` or `!` applied to something the question does not make sense for. */
 export i32 errReferenceOp() { return 43; }
+/**
+ * `!` applied to something that is not nullable.
+ *
+ * Split from `errReferenceOp`, which says *"this operator needs a reference"* — true for `is` on a
+ * primitive, and false for `p!` on a non-nullable `P`, which **is** a reference. A message that denies
+ * something the program has sends the reader to the wrong place. `issues/lang/0237a`.
+ */
+export i32 errNeedsNullable() { return 203; }
 /** A `switch` on something it cannot switch on. */
 export i32 errSwitchSubject() { return 44; }
 /** A named construction naming a field the struct does not have, or leaving one out. */
@@ -200,14 +208,6 @@ export i32 errOverrideSpurious() { return 22; }
 export i32 errIncrType() { return 23; }
 /** `>>>` on a type where it says nothing, or on a non-integer. */
 export i32 errShiftOp() { return 24; }
-/**
- * A bitwise or shift operator on something that is not an integer.
- *
- * Separate from `errShiftOp` because that code answers two questions already — `>>>` on an unsigned
- * type, which *is* an integer and is merely redundant, and `>>>` on a float, which is not one. Adding
- * a third meaning to it would make the message unable to name any of them.
- */
-export i32 errBitwiseInt() { return 203; }
 /** Positional construction with the wrong number of arguments. */
 export i32 errCtorArity() { return 25; }
 /** A packed type in a position that has no slot for one. */
@@ -3394,11 +3394,14 @@ void checkExpr(C c, Expr e) {
       // `>>>` is an unsigned shift, so on a type that is already unsigned it says nothing that `>>`
       // does not — the language calls that redundant rather than harmless. On a float it has no
       // meaning at all. Both name the operator, so both are one code here.
+      // **Only the redundancy here.** `>>>` on a float is not an integer question this rule can
+      // answer better than the operand rule below, which says exactly that — and reporting both gave
+      // *two* diagnostics for `d >>> 1` where the reference gives one. So this narrows to the case
+      // that is its own: an unsigned operand, where `>>>` asks for something `>>` already does.
+      // `issues/lang/0237a`.
       if (k == kShrU()) {
         string st = typeOfExpr(c, left);
-        if (st == "u32" || st == "u64" || st == "f32" || st == "f64") {
-          c.reportTok(errShiftOp(), op, "");
-        }
+        if (st == "u32" || st == "u64") { c.reportTok(errShiftOp(), op, ""); }
       }
       bool arith = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
                    k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
@@ -3482,27 +3485,6 @@ void checkExpr(C c, Expr e) {
       if (arith && k != kPlus() && (alt == "string" || art == "string")) {
         c.reportTok(errOperandKind(), op, "");
       }
-      // **Bitwise and shift want an integer, which is narrower than "a number".** `arith` above
-      // includes `& | ^` and asks only that the operands are not bool, a reference or a string — so a
-      // float slipped through, and shifts are not in `arith` at all and were asked nothing. The
-      // reference states both: *"'&' requires i32 or i64"* and *"'<<' requires an integer type"*, with
-      // the shift amount checked separately because it need not match the width.
-      //
-      // Measured before writing it: `1.5 & 2.5`, `x & 1.5` and `x << "a"` all checked clean, and the
-      // last two emitted a module the engine refuses — *"type mismatch: expected i32, found (ref
-      // $type)"* — which is the compiler emitting something invalid rather than refusing the program.
-      // `"a" << 1` was declined by the emitter instead. `issues/lang/0236a`.
-      //
-      // `isIntegerName` is the whole set: a packed type cannot be a parameter or a field, and reading
-      // one out of an array yields an `i32`, so every integer *expression* in the language is one of
-      // the four this names. `nl`/`nr` rather than `alt`/`art` so that a literal, which has no type
-      // until something gives it one, is filled in by `naturalTypeOf` instead of reading as unknown.
-      bool bitwise = k == kAnd() || k == kOr() || k == kCaret();
-      bool shifty = k == kShl() || k == kShr() || k == kShrU();
-      if ((bitwise || shifty) && nl != "" && nr != "" &&
-          (!isIntegerName(nl) || !isIntegerName(nr))) {
-        c.reportTok(errBitwiseInt(), op, "");
-      }
       // **Two literals of different families**, which is the one case where neither side can take
       // its type from the other: `1 + "é"` has nothing to infer from and is a mismatch whatever the
       // slot wants. Measured across the ten pairs — an integer with a float, a string with a bool
@@ -3521,10 +3503,14 @@ void checkExpr(C c, Expr e) {
       bool bitwise = k == kAnd() || k == kOr() || k == kCaret();
       bool shift = k == kShl() || k == kShr() || k == kShrU();
       if (bitwise || shift) {
-        string lt2 = typeOfExpr(c, left);
-        string rt2 = typeOfExpr(c, right);
-        bool badL = lt2 != typeNone() && !isIntegerName(lt2);
-        bool badR = rt2 != typeNone() && !isIntegerName(rt2);
+        // **`nl`/`nr`, not `typeOfExpr` alone, or this cannot see a literal.** A literal has no type
+        // until something gives it one, so asking `typeOfExpr` about `1.5` answers unknown and the
+        // guard below skipped it — which left `1.5 & 2.5`, `x & 1.5` and `x << "a"` checking clean,
+        // and the last two emitting a module the engine refuses. `naturalTypeOf` fills a literal in,
+        // and the pair computed above is exactly "whichever of the two questions can answer it".
+        // `issues/lang/0236a`.
+        bool badL = nl != "" && !isIntegerName(nl);
+        bool badR = nr != "" && !isIntegerName(nr);
         if (badL || badR) { c.reportTok(errOperandKind(), op, ""); }
       }
       bool sameType = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
@@ -3673,7 +3659,7 @@ void checkExpr(C c, Expr e) {
       string ut2 = typeOfExpr(c, operand);
       if (withoutNull(ut2) == "" &&
           (isPrimitiveName(ut2) || ut2 == "bool" || isReferenceName(c, ut2))) {
-        c.report(errReferenceOp(), e.line, e.col);
+        c.report(errNeedsNullable(), e.line, e.col);
       }
     }
     case Unary(op, operand): {
