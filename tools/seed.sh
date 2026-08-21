@@ -271,10 +271,19 @@ if [ "$converged" -ne 0 ]; then
   cargoBuild
   echo "seed: $(stat -c %s "$SEED/wacc.wasm") bytes, and it is a fixed point after $rounds round(s)"
   echo "      sh $(stat -c %s "$SEED/sh.wasm") bytes, update $(stat -c %s "$SEED/update.wasm") bytes"
-  # **And the other binary, so a checkout that ran this task has both.** The alternative is nine test
-  # files skipping on a fresh clone with a message about a task nobody ran, which is a coverage loss
-  # that reads as a pass. `--native-only` is the way to do just this half.
-  buildNativeHost
+  # **And the other binary — but only if it is already there.** Measured: `cargo build --release` in
+  # `native/` is 7s of CPU and about 10s of wall with *nothing to do*, and this task runs after every
+  # `packages/wacc` edit, for three agents. Paying that on every seed to keep a binary fresh that this
+  # checkout may never run is the same waste `issues/system/0208` was filed about, one level up.
+  #
+  # So: refresh what exists, and let `deno task seed:native` be how it comes to exist. A checkout with
+  # no `wacland` is not silently short of coverage — the six callers warn with the reason and name the
+  # task, and `tools/seedFresh.test.ts` fails if the binary is present and stale.
+  if [ -f native/target/release/wacland ]; then
+    buildNativeHost
+  else
+    stage "no wasmtime host to refresh (\`deno task seed:native\` builds one)"
+  fi
   exit 0
 fi
 

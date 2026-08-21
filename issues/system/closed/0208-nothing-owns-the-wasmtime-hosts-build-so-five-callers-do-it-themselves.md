@@ -137,9 +137,17 @@ All three things the section above asked for, and the count was wrong: **six** c
 
 **1. A task owns the build.** `tools/seed.sh` grew `buildNativeHost`, and `cargoBuild` takes a crate
 directory instead of hard-coding `native/v8` — one script owns every cargo invocation here, which is why
-this went there rather than into a second script that would duplicate the cargo preflight. `deno task
-seed` now builds `wacland` after the seed, so a checkout that ran the documented task has both
-binaries; `deno task seed:native` does that crate alone.
+this went there rather than into a second script that would duplicate the cargo preflight.
+`deno task seed:native` builds that crate alone.
+
+**And `deno task seed` refreshes it only if it is already there**, which was the second answer. The
+first was to build it unconditionally, so that a checkout running the documented task had both
+binaries — then I timed it: **7s of CPU, about 10s of wall, with nothing to do**, on a task that runs
+after every `packages/wacc` edit for three agents. That is the same waste this issue was filed about
+(*"2.6s of every run of this test"*), moved one level up and multiplied. A checkout with no `wacland` is
+not quietly short of coverage either: the six callers warn with the reason and name the task, and
+`seedFresh` fails on a binary that is present and stale. Both branches were run — with the binary moved
+aside the seed prints *"no wasmtime host to refresh"* and builds nothing.
 
 **2. The freshness check exists** — `tools/seedFresh.test.ts`, added earlier the same day, fails when
 `wacland` is older than the Rust it is built from.

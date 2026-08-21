@@ -80,11 +80,14 @@ rather than asserting it, and puts the previous seed back rather than keep one t
 (`tools/seed.sh`, `design/lang/0009` D2). `deno task` is only the task runner here; nothing in
 that command needs a JavaScript host.
 
-**And since 2026-08-21 it builds `wacland` too**, the wasmtime host in `native/` — a separate crate
-that had no owner, so six test files each ran their own `cd native && cargo build --release` with their
-own skip message and their own freshness check. They ask now; `deno task seed` makes it so, and
-`deno task seed:native` does that crate alone when it is the only thing you touched.
-`issues/system/0208`.
+**And since 2026-08-21 it refreshes `wacland`**, the wasmtime host in `native/` — a separate crate that
+had no owner, so six test files each ran their own `cd native && cargo build --release` with their own
+skip message and their own freshness check. They ask now rather than build. `deno task seed:native` is
+how the binary first comes to exist; `deno task seed` rebuilds it **only if it is already there**,
+because cargo costs 7s of CPU and about 10s of wall in that crate with nothing to do, and paying it on
+every seed for a binary this checkout may never run is the waste `issues/system/0208` is about. A
+checkout without one is not quietly short of coverage: the six callers warn with the reason and name the
+task. `issues/system/0208`.
 
 **It builds all three payloads, and costs about 34s.** The binary carries a compiler, a shell and a
 fetcher — `wac build`/`run`/`test`, `wac sh`, `wac update` — and until 2026-08-20 this script wrote
