@@ -16,7 +16,7 @@
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
 import { waccArtifacts } from "../../harness/waccBuild.ts";
-import { wacFiles, wacFilesWithRoots } from "../../harness/wacFiles.ts";
+import { wacFiles } from "../../harness/wacFiles.ts";
 // Imported for its side effect as much as for `COV_DUMP_DIR`'s twin: under `WAC_PROFILE` it wraps
 // `Deno.test` so that what a *built* program executes is attributed to whichever test ran it. Every
 // subprocess-based test file reaches this module — that is how it builds the binary it runs — and none
@@ -414,10 +414,7 @@ export async function buildApp(
     throw new Error("a coverage build cannot be optimised: wasm-opt may renumber the branches its counters index");
   }
   const optimize = opts.optimize ?? false;
-  // **With the project roots**, for the reason `native.ts` gives beside its own: without them wacc
-  // gets an empty `Res` and a `@/` specifier answers "an import of a file that was not supplied".
-  // Both builders walk the files themselves, so both had to be told. GitHub issue 21.
-  const { files, roots } = await wacFilesWithRoots(entry);
+  const files = await wacFiles(entry);
   // A page and a worker bundle are not runnable by themselves, so neither gets the execute bit.
   const executable = !workerOnly && target !== "browser";
 
@@ -426,14 +423,14 @@ export async function buildApp(
     const artifact = await cached("app", key, "", async (tmp) => {
       await Deno.writeTextFile(
         tmp,
-        await produceApp(entry, files, roots, grants, target, workerOnly, coverage, optimize, key),
+        await produceApp(entry, files, grants, target, workerOnly, coverage, optimize, key),
       );
     });
     await place(await Deno.readTextFile(artifact), out, executable);
     return;
   }
   await place(
-    await produceApp(entry, files, roots, grants, target, workerOnly, coverage, optimize),
+    await produceApp(entry, files, grants, target, workerOnly, coverage, optimize),
     out,
     executable,
   );
@@ -563,8 +560,6 @@ async function optimized(wasm: Uint8Array): Promise<Uint8Array> {
 async function produceApp(
   entry: string,
   files: Map<string, string>,
-  /** The project root each path sits in, so `@/` resolves — GitHub issue 21. */
-  roots: Map<string, string>,
   grants: Grants,
   target: Target,
   workerOnly: boolean,
@@ -591,11 +586,7 @@ async function produceApp(
   let covLines: string[];
   let exportNames: string[];
   if (Deno.env.get("WAC_APP_FROM") !== "reference") {
-    const a = await waccArtifacts(files, entry, {
-      coverage,
-      optimize: optimize ? optimized : undefined,
-      roots,
-    });
+    const a = await waccArtifacts(files, entry, { coverage, optimize: optimize ? optimized : undefined });
     ({ wasm, glue, covLines } = a);
     exportNames = a.exports;
   } else {

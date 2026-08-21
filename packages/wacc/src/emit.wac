@@ -2968,6 +2968,18 @@ export u8[] emitLinkedCovered(string[] paths, string[] sources, string entry) {
 }
 
 /**
+ * The same, with the resolution context — so a coverage build of a project resolves `@/`.
+ *
+ * `emitLinkedWith2` has taken a `Res` all along; what was missing was any way for a caller to hand
+ * one in on the coverage path, so `api.wac`'s `emitFilesCoveredIn` accepted a `Res` and dropped it —
+ * its body was character-for-character the root-less one, under a comment promising the opposite.
+ * `issues/lang/0157`, found while fixing GitHub issue 21.
+ */
+export u8[] emitLinkedCoveredIn(string[] paths, string[] sources, Res res, string entry) {
+  return emitLinkedWith2(paths, sources, res, entry, false, true, false);
+}
+
+/**
  * The same module instrumented for a *trace*: an ordered journal of branches and array indices.
  *
  * Coverage answers "was this reached"; this answers "in what order, and with what index" — which is

@@ -130,31 +130,41 @@ tasks are correct as they stand for anyone with a warm cache.
 native.ts` had a fourth as a constant. `harness/programs.ts` already exports a `ROOT` derived from
 `import.meta.url`; all four use it now, and the constant is a `new URL(…, import.meta.url)`.
 
-### 5. `@/` from an external project — the root never reached wacc
+### 5. `@/` from an external project — the same cause as item 4, and I got this wrong first
 
-`waccBuild.ts` bound only the **root-less** API variants (`buildFiles`, `blockedFiles`), so wacc got an
-empty `Res` and could not resolve `@/`. `wac build` passes a root, which is why the binary was fine.
+**Corrected 2026-08-20, later the same day.** This section originally said the project root never
+reached wacc, and that threading it was the fix. That was wrong, and the roots machinery it describes
+has been removed.
 
-Fixed by adding `buildFilesRooted` to `api.wac` — a thin wrapper over the existing `buildFilesIn`,
-taking two string arrays rather than a `Res`, because a host caller cannot construct one across
-bindgen — and threading the roots `wacFilesWithRoots` already computes through `waccArtifacts` into
-both builders.
+The real cause is item 4. With `WACC_API` still spelled relatively, the Deno-hosted path could not read
+the compiler's own `api.wac`, and what came out of *that* was **"an import of a file that was not
+supplied"** — a sentence about the user's import, produced by a failure to read the compiler's. One
+cause wearing two faces: I fixed the `NotFound`, saw the second message, and attributed it to a
+different mechanism. Fixing `WACC_API` fixed both.
 
-*I wrote a `blockedFilesRooted` beside it and deleted it: nothing calls `blockedFiles` on a path that
-has a project, so the pair was symmetry rather than a need.* `tools/benchCompile.test.ts` is what said
-so — it refuses both an untimed compiler call **and** a stale `bench-exempt` line, so exempting the
-unused one was not available either. A guard that fails in both directions is worth more than one that
-only notices additions.
+**What settled it was a canary that could tell the two apart, and my first one could not.** The test
+project had `main.wac` at the project root, so `@/src/stats.wac` and `./src/stats.wac` are the same
+path and no amount of root information changes the answer. A second project with the entry in `app/`
+— so the two genuinely differ — built with the roots removed; and so did the same project with an
+absolute entry from a third directory, where the graph's base is neither the repo nor the project.
+Three removals, three successes: the roots were not load-bearing.
 
-**`Res.of(roots)` was not enough, and the reason is worth keeping.** With relative graph keys and an
-absolute project root, `@/src/stats.wac` resolves to `/…/proj/src/stats.wac` while the graph holds
-`src/stats.wac` — *one file under two keys*, reported as "an import of a file that was not supplied".
-`Res.base` exists for exactly that ("the directory every relative key in this graph is measured from"),
-so the wrappers take a base and the harness passes `Deno.cwd()`.
+So `buildFilesRooted`, `emitFilesCoveredRooted` and `resFor` are gone from `api.wac`, the `roots`
+parameter is out of `waccArtifacts`, `native.ts` and `build.ts`, and `tools/benchCompile.ts` is back to
+timing what it timed before. What remains of that afternoon is one thing worth keeping, below.
 
-*A warm cache nearly hid this.* The non-`--optimize` build passed while `--optimize` failed, which
-looks like a binaryen problem and is not: `optimize` is part of the artefact cache key, so the
-optimising build was the first one that actually compiled. Cold-cache runs of both were what settled it.
+### 5a. `emitFilesCoveredIn` accepted a `Res` and ignored it
+
+Found while chasing the above, and true regardless of it. Its body was **character-for-character**
+`emitFilesCovered`'s — `return emitLinkedCovered(paths, sources, entry)`, with the `res` parameter
+dropped — under a doc comment reading *"with the project root each file sits in — `design/lang/0009`
+D7"*. A documented promise the body did not keep.
+
+`emit.wac` now exports `emitLinkedCoveredIn`, which passes the `Res` to `emitLinkedWith2` — a function
+that has taken one all along. Counted across the family: **2 of the 8 `Res`-taking entry points in
+`api.wac` ignored theirs.** The other is `diagnoseGraphIn`, whose 39-line body mentions `res` zero
+times, so it is identical to `diagnoseGraph`; filed separately as `issues/lang/0175a` because this
+issue is closed.
 
 ### 6. TypeScript stacks — a compiler reports, it does not throw
 

@@ -464,10 +464,22 @@ for attempt in 1 2 3; do
   # they are built from — and answering it costs about 200ms. So the condition is that test, and it
   # cannot drift from the definition because it *is* the definition.
   if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
-    echo "   the merge aged the seed or the host — rebuilding"
+    echo "   the merge aged the seed or a host — rebuilding"
     if ! deno task seed >/dev/null 2>&1; then
       echo "== the seed would not rebuild after the merge: not retrying =="
       echo "   Run \`deno task seed\` by hand to see why; every later failure would be downstream of it."
+      exit 1
+    fi
+    # **And the wasmtime host, which `deno task seed` does not build.** It builds `native/v8` only, so
+    # a merge touching `native/src/` left `native/target/release/wacland` behind — and the retry then
+    # failed with `Cli.execWith is not implemented in the native runtime yet`, from a host that
+    # predated the merge that added it. `issues/system/0208` is that it has no owner; this is the gate
+    # not needing one. Only when it exists: a checkout that has never built it has nothing to age, and
+    # whichever test wants it builds it.
+    if [ -f native/target/release/wacland ] && ! (cd native && cargo build --release >/dev/null 2>&1); then
+      echo "== the wasmtime host would not rebuild after the merge: not retrying ==" >&2
+      echo "   Run \`cd native && cargo build --release\` by hand; every two-host test would be" >&2
+      echo "   comparing against the older one." >&2
       exit 1
     fi
   fi
