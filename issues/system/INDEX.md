@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0234a](open/0234a-a-bare-specifier-means-two-things-and-the-two-hosts-pick-differently.md) | `dep/lib.wac` is a mapping name per the spec and not a relative path, but the Deno walk joins it to the importing file's directory — with `dep/` mapped and a real `src/dep/lib.wac` it compiles the local file and the program answers 99, exit 0, no diagnostic; and the binary resolves a bare specifier no mapping declares as though it were relative, which the spec does not define either | bug | wrong answer |
 | [0233c](open/0233c-three-github-design-issues-were-not-captured-anywhere.md) | GitHub 8, 18 and 19 had no record in this tracker: 19's bootstrap rule is already met and checked by `tools/seed.sh`, 18's first question is answered by 0009's D8/D9 — two commits are two modules, so versions can coexist — and 8 is untouched | decision | not implemented |
 | [0231c](open/0231c-a-lane-can-be-watched-or-counted-and-not-both.md) | the suite's Deno pass is inherited so it can be watched and is therefore uncountable; its wac lane is buffered so its 2,387 tests can be counted and is therefore unwatchable — one chunk held 66s of output — because `Cli.execWith` has two modes and no incremental read. Not a blocker: a shell redirect plus a bounded `waitAny` and a tail does both today, measured — the capability would make it one process and one read instead of two and a re-read | missing feature | no error |
 | [0230c](open/0230c-the-heavy-lanes-declared-costs-are-stale-and-nothing-checks-them.md) | `checked_test.wac` declares `140s, measured` and ran past **1,166s** without finishing; the heavy lane's six files declare 412s and had spent 9m20s of CPU on the first four, and `tools/lane.test.ts` checks that a reason names a number rather than that the number is true | performance | wrong answer |
@@ -64,7 +65,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-244 issues, 192 closed.
+245 issues, 192 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

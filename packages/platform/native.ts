@@ -495,9 +495,30 @@ if (import.meta.main) {
   const at = args.indexOf("-o");
   const out = at >= 0 && at + 1 < args.length ? args[at + 1] : null;
   if (entry === undefined || out === null) {
-    console.error("usage: deno task app:native <entry.wac> -o <stem> [--allow-read] [--allow-write]");
-    console.error("        [--allow-env] [--allow-net] [--allow-run]");
+    // **`deno task app:native` is not a task**, and this line told the reader to run it. It was one
+    // once; `deno.json` has `app:build` and nothing else in that family. So the first thing somebody
+    // gets wrong here was answered with a command that does not exist — and GitHub issue 22 is a case
+    // study of exactly that reader, who reached for this path because the documented one needed Cargo.
+    // The spelling below is `docs/your-own-project.md`'s, which is the one that works from outside the
+    // checkout. `issues/system/0230a`.
+    console.error("usage: deno run -A --import-map <wac>/deno.json <wac>/packages/platform/native.ts");
+    console.error("        <entry.wac> -o <stem> [--allow-read] [--allow-write] [--allow-net]");
+    console.error("        [--allow-env] [--allow-run]");
     console.error("  writes <stem>.wasm — one artefact, manifest inside, for a non-JavaScript host");
+    Deno.exit(2);
+  }
+  // **A flag this does not know is refused, not ignored.** Every grant below is an `args.includes(…)`,
+  // so nothing looked at the arguments left over: `--allow-network` for `--allow-net` built a program
+  // with no network grant and said nothing, and the failure arrived later as a capability refusal at
+  // run time with nothing pointing back at the spelling. `wac build` answers *"unknown flag '…' —
+  // --allow-read, …"* with exit 2 and no artefact; this now agrees, and quotes the word, because the
+  // reason to have typed it was a mistake in it. `issues/system/0230a`.
+  //
+  // Everything that is not the entry, `-o`, or the name after `-o` has to be one of the five.
+  const grants = ["--allow-read", "--allow-write", "--allow-net", "--allow-env", "--allow-run"];
+  for (let i = 1; i < args.length; i++) {
+    if (i === at || i === at + 1 || grants.includes(args[i])) continue;
+    console.error(`unknown flag '${args[i]}' — ${grants.join(", ")}`);
     Deno.exit(2);
   }
   // **`--allow-run` was missing here and nowhere else**, which made `Cap::Exec` in the wasmtime host

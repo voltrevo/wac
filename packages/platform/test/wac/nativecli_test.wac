@@ -1,0 +1,94 @@
+// What the Deno host does with arguments and specifiers it does not understand — `issues/system/0230a`.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env \
+//       packages/platform/test/wac/nativecli_test.wac
+//
+// `packages/platform/native.ts` is the Cargo-free path `docs/your-own-project.md` documents, and GitHub
+// issue 22 is a case study of somebody reaching for it. Two things it did quietly rather than loudly,
+// both found by driving it from outside rather than by reading it:
+//
+//   - **an unrecognised flag was accepted.** Every grant is an `args.includes(…)` and nothing looked at
+//     the arguments left over, so `--allow-network` for `--allow-net` built a program with no network
+//     grant and said nothing. The failure then arrived at run time as a capability refusal, with
+//     nothing pointing back at the spelling;
+//   - **a Git mapping is resolved as a relative path**, which is `issues/system/0234a` rather than a
+//     row here: it is a decision, because refusing every bare specifier is what the spec says
+//     (*"import paths are relative, using `./` or `../` prefixes"*) and is *not* what the binary does,
+//     so tightening one host alone trades this gap for a new one. The reproduction is in the issue —
+//     with `dep/` mapped and a real `src/dep/lib.wac`, the program compiles and answers 99.
+//
+// **Not a differential against `wac build`.** The two would disagree here, and comparing them is what
+// `issues/system/0214` closed and what the deleted `nativeBinary.test.ts` did: holding the Deno path up
+// as an oracle for the binary, or the reverse, is the arrangement rather than evidence about it. These
+// are assertions about one host — that it refuses what it cannot do — which is what the operator's rule
+// asks for anyway: *approximating is worst, erroring is middle, saying it is unsupported is best.*
+//
+// Resolving mappings properly is not this file's business either: it means a second copy of the
+// resolver, which is the decision `0230a` is holding open.
+//
+// So one test, for the one thing that is unambiguous: a flag nobody meant is refused.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { scratch } from "../../../wactest/src/host.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { Cli, Core, Exec } from "std/platform.wac";
+
+/** One file, with its directory made first. */
+bool put(Cli cli, string path, string text) {
+  i32 cut = -1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
+  if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }
+  return cli.writeFile(path, text.toBytes()).wait().ok();
+}
+
+/**
+ * `native.ts <entry> -o <out> <extra…>`, from `at`.
+ *
+ * `--import-map` always, not only when `at` is outside the checkout: `site/` puts a subtree in an npm
+ * resolution scope, so a bare `wac/` specifier is looked up as a package there and a script that works
+ * from the root and nowhere else is a shape this repository has already paid for —
+ * `issues/system/0146`.
+ */
+Exec host(Cli cli, string repo, string at, string entry, string out, string extra) {
+  return cli.exec("/bin/sh",
+    string[]("-c", "cd " + at + " && exec deno run -A --import-map " + repo + "/deno.json " +
+                   repo + "/packages/platform/native.ts " + entry + " -o " + out +
+                   (extra == "" ? "" : " " + extra)),
+    u8[0]()).wait();
+}
+
+/**
+ * A flag it does not know is refused, and named.
+ *
+ * Named because the reason to have typed it was a spelling mistake, and a refusal that does not quote
+ * the word leaves the reader comparing their command against a usage line.
+ *
+ * **The control is half the test.** A host that refused every flag would satisfy the first half on its
+ * own, and `--allow-read` is one it is supposed to take.
+ */
+export string test_the_deno_host_refuses_a_flag_it_does_not_know(Core core, Cli cli) {
+  T t = T.create();
+  string repo = cli.cwd().wait();
+  string dir = scratch(cli, "nativecli-flag");
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  t.isTrue(put(cli, dir + "/p.wac", "export i32 main() { return 5; }\n"), "wrote the fixture");
+
+  Exec bad = host(cli, repo, dir, dir + "/p.wac", dir + "/bad", "--allow-bogus");
+  t.isTrue(bad.ran(), "deno did not run — " + bad.error);
+  if (bad.ran()) {
+    string said = string.fromBytes(bad.stderr) + string.fromBytes(bad.stdout);
+    t.isTrue(bad.status != 0, "an unknown flag was accepted — " + said);
+    t.isTrue(!cli.readFile(dir + "/bad.wasm").wait().ok, "it built the program anyway");
+    t.isTrue(contains(said, "--allow-bogus"), "the refusal did not name the flag — " + said);
+  }
+
+  Exec ok = host(cli, repo, dir, dir + "/p.wac", dir + "/ok", "--allow-read");
+  t.isTrue(ok.ran(), "deno did not run the control — " + ok.error);
+  if (ok.ran()) {
+    t.eqI32(ok.status, 0, "a grant it is supposed to take was refused — " +
+                          string.fromBytes(ok.stderr));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}

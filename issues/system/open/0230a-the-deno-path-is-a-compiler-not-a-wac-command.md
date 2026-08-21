@@ -155,3 +155,65 @@ since the fetcher is already a wac program the host merely instantiates.
 Not done here, because which commands belong in the shared program and which stay host-specific is
 this issue's decision rather than a patch — and `test` genuinely is not in that class, since its
 chunking, ranking and module caching are the host's.
+
+## Measured: how far apart the two hosts are, and why the differential above is not the next step
+
+agent-a, 2026-08-21. The recommendation above says the criterion to build **first** is a differential —
+one table of invocations through both hosts, compared on stdout, stderr and exit code. **I started
+building it and stopped, and the reason is worth more than the test would have been.**
+
+### The differential already existed and was deleted on purpose
+
+`issues/system/0214` closed on exactly this comparison: `native.ts` and `wac build` emit **byte-identical
+artefacts, module and manifest both**, on `example/wc.wac` and `example/wacc.wac`. `tools/seed.sh`'s
+header records it too. Its own trap is the one I then walked into independently — two different `-o`
+stems, because the output name is inside the manifest, and the artefacts came out one byte apart.
+
+And the test that compared them, `packages/wacc/test/nativeBinary.test.ts`, was **deleted, on the
+operator's call**, with the reason stated in 0214: *"Deno-driven testing is being removed, not kept on as
+the oracle that validates what replaces it."* `CLAUDE.md` says the same thing generally — a differential
+that exists to prove the old thing still agrees with the new one goes when the old thing stops being
+used, because keeping it makes the retiree an oracle.
+
+So the differential this issue asked for would have re-created a deleted test to re-measure a closed
+issue. **What the criterion is actually short of is a second command surface to compare** — comparing
+`build` alone is comparing the one thing that was never in question.
+
+That is worth having settled before choosing an option: option 2's argument is that the two hosts cannot
+drift, and for the compiler they have not drifted at all. Whatever is chosen, the thing to test is
+dispatch — argument parsing, exit codes, which subcommand exists — not compilation.
+
+### What the measurement did find
+
+Driving the host from outside rather than reading it, on the four entry spellings the criteria name
+(absolute, absolute two directories down, relative from the project root, relative from inside `src/`,
+each importing through `@/`), plus a build carrying `--allow-read --allow-env`:
+
+- **All of them agree, byte for byte** — as 0214 says. The grants are in the manifest, so a host that
+  dropped one would change the bytes; they do not.
+- **Diagnostics agree on more than they look like.** Same headline, same help line, same
+  `file:line:col`. Only the binary renders the source frame and the note on the caret — *"expected i32,
+  found string"*. The difference is the renderer, not the diagnostic.
+- **Both exit 1 on an entry that is not there** and name the file; **both exit 2 on `-o` with no value**
+  and print a usage line. So argument handling does not diverge generally — which makes the two places
+  it does much cheaper to state.
+
+### Three defects, two fixed here
+
+- **An unrecognised flag was accepted.** `native.ts … --allow-bogus` exited **0 and wrote the module**,
+  because every grant is an `args.includes(…)` and nothing looked at the leftovers. `--allow-network`
+  for `--allow-net` therefore produced a program with no network grant and no complaint, and the failure
+  arrived at run time as a capability refusal with nothing pointing back at the spelling. `wac build`
+  refuses with exit 2 and names the five. **Fixed**, held by
+  `packages/platform/test/wac/nativecli_test.wac` — a test about this host refusing what it cannot do,
+  not a differential.
+- **The usage line named a task that does not exist.** It said `deno task app:native`; `deno.json` has
+  `app:build` and nothing else in that family. The first thing a reader gets wrong here was answered
+  with a command that does not run, which for an onboarding case study is the worst possible place for
+  it. **Fixed** — it now prints the `deno run … --import-map` spelling `docs/your-own-project.md` gives.
+- **A bare specifier resolves differently in the two hosts, and one of them compiles the wrong file.**
+  `issues/system/0234a`, filed rather than fixed: with `dep/` mapped and a real `src/dep/lib.wac`, the
+  Deno walk joins the mapping name to the importing directory and the program answers 99, exit 0, no
+  diagnostic. The binary refuses that — but accepts a bare specifier *no* mapping declares, resolving it
+  as though it were relative, which the spec does not define either. Fixing one side alone trades a gap
+  for a gap, so it is a decision.
