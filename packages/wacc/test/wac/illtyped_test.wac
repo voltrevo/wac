@@ -37,7 +37,12 @@ string[] names() {
     "a15 x < i32 (primitive)", "a16 x < E (enum)", "a17 x < string", "a18 x < P (struct)",
     // Bitwise and shift on something that is not an integer. All four checked clean; two of them
     // emitted a module the engine refuses. `issues/lang/0236a`.
-    "a19 1.5 & 2.5", "a20 x & 1.5", "a21 \"a\" << 1", "a22 x << \"a\"");
+    "a19 1.5 & 2.5", "a20 x & 1.5", "a21 \"a\" << 1", "a22 x << \"a\"",
+    // `++`/`--` in value position. The *operand* was checked — `q++` on a bool is refused — and the
+    // expression's own type was never computed, so what it produced could go anywhere. Four spellings
+    // because the missing arm served all four: postfix, prefix, decrement, and an argument rather than
+    // an initialiser. `issues/lang/0242a`.
+    "a23 string s = x++", "a24 string s = ++x", "a25 string s = x--", "a26 g(x++) for g(string)");
 }
 
 string[] programs() {
@@ -63,7 +68,11 @@ string[] programs() {
     "export f64 f() { return 1.5 & 2.5; }\n",
     "export i32 f(i32 x) { return x & 1.5; }\n",
     "export string f() { return \"a\" << 1; }\n",
-    "export i32 f(i32 x) { return x << \"a\"; }\n");
+    "export i32 f(i32 x) { return x << \"a\"; }\n",
+    "export i32 f(i32 x) { string s = x++; return s.len(); }\n",
+    "export i32 f(i32 x) { string s = ++x; return s.len(); }\n",
+    "export i32 f(i32 x) { string s = x--; return s.len(); }\n",
+    "i32 g(string s) { return s.len(); }\nexport i32 f(i32 x) { return g(x++); }\n");
 }
 
 export string test_every_ill_typed_program_here_is_refused_by_the_checker() {

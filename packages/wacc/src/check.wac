@@ -3115,6 +3115,20 @@ export string typeOfExpr(C c, Expr e) {
       string el = typeOfTy(c, elem);
       return el == "" || el == typeNone() ? typeNone() : el + "[]";
     }
+    /**
+     * `x++` and `++x` are the type of what they increment — `spec/tour.wac`: *"`++`/`--` ARE
+     * expressions, prefix and postfix, on i32/i64 lvalues. As in C, `i32 old = x++;`"*.
+     *
+     * **The operand had a rule and the result had no type.** `checkIncr` refuses a bool, a float, a
+     * string, a struct — everything that is not an integer — so what was missing was never *whether*
+     * the operand was right but what the expression then produced. Unknown is silence, so
+     * `string s = x++;` was accepted by the checker and the emitter both, and a build wrote a module
+     * with the exported function missing and exited 0. All four spellings, since one arm serves them:
+     * postfix, prefix, `--`, and an argument rather than an initialiser. `issues/lang/0242a`.
+     *
+     * `typeOfLvalue` is what `checkIncr` already asks, so the answer is the one the guard used.
+     */
+    case Incr(target, op, prefix): { return typeOfLvalue(c, target); }
     else: { return typeNone(); }
   }
 }
