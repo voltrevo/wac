@@ -324,6 +324,41 @@ void writeValType(B out, Env env, string t) {
 }
 
 /**
+ * Whether a helper an expression is emitted as a call to is there — **declining the module with a
+ * reason when it is not, rather than emitting nothing.**
+ *
+ * `"a" + "b"` is emitted as a call to ` str_concat`, and fifteen sites that need one of these wrote
+ * the same guard: `if (at < 0 || env.funcIndex[at] < 0) { return; }`. That `return` left the operands
+ * unemitted and the body short a value, and recorded nothing — so a program reaching one built a
+ * module with a function missing and said why about neither. `issues/lang/0170a` counts 25 such bails
+ * in this file and observes that *none of them records a reason*; they are where **the gate and the
+ * doer disagreeing turns into silence**, since `canEmit`/`unsupportedIn` decides emittability before
+ * emitting and anything arriving here was supposed to be emittable.
+ *
+ * They are still not meant to be reachable, and that is the argument for naming them rather than for
+ * leaving them alone: a branch that stays silent when it is wrong cannot be told from one that is
+ * right, and these had been both.
+ */
+bool haveRequired(Env env, i32 at, string shown) {
+  // Internal helpers are spelled with a leading space so that no source name can collide with them.
+  // The space is an implementation detail and does not belong in a sentence a person reads.
+  string named = shown.len() > 0 && shown.slice(0, 1) == " " ? shown.slice(1, shown.len()) : shown;
+  if (at < 0) {
+    env.declineFor("a call to `" + named + "`, which this expression is emitted as and which is not "
+                   + "in the program");
+    return false;
+  }
+  if (env.funcIndex[at] < 0) {
+    string why = at < env.funcWhy.len() && env.funcWhy[at] != ""
+        ? env.funcWhy[at] : "and nothing recorded why";
+    env.declineFor("a call to `" + named + "`, which this expression is emitted as and which was "
+                   + "itself declined: " + why);
+    return false;
+  }
+  return true;
+}
+
+/**
  * The result type of a static on a *primitive* — `f64.toBits(x)` and its three siblings — or `""`.
  *
  * These are not methods on a value and not calls to anything declared: the receiver is a type name,
@@ -2185,6 +2220,12 @@ export struct Env {
     for (i32 i = this.walkCount - 1; i >= 0; i--) {
       if (this.walkNames[i] == name) { at = i; break; }
     }
+    // **The one bail of this shape that is not a failed lookup**, so it does not decline. A name that
+    // is not on the walk stack was not declared in any scope this walk has entered — a module
+    // constant, a function, a type — and there is no enclosing lambda that could need to capture it.
+    // Nothing to note is the answer, not a lookup that came back empty. The other nine of the ten
+    // `issues/lang/0170a` counts do decline, and the difference is worth stating because the shape is
+    // identical.
     if (at < 0) { return; }
     bool captured = false;
     for (i32 d = 0; d < this.walkLambdaDepth; d++) {
@@ -5559,7 +5600,10 @@ void emitDefault(B fb, Env env, string t) {
 /** `Shape.Circle(2.0)` — the tag, the payload in its own slots, and a default in everyone else's. */
 void emitVariantNew(B fb, u8[] src, Lexed lexed, Env env, string vname, Expr?[] args) {
   i32 vi = env.variantAt(vname);
-  if (vi < 0) { return; }
+  if (vi < 0) {
+    env.declineFor("the enum variant `" + vname + "`, which this emitter could not find");
+    return;
+  }
   string en = env.variantOwners[vi];
   i32 n = env.fieldCountOf(en);
   fb.byte(65);
@@ -5646,7 +5690,7 @@ void emitJsxComponent(B fb, u8[] src, Lexed lexed, Env env, string comp,
   fb.u32leb(env.structType(comp));
   emitJsxKids(fb, src, lexed, env, kids);
   i32 at = env.methodAt(comp, "render");
-  if (at < 0 || env.funcIndex[at] < 0) { return; }
+  if (!haveRequired(env, at, comp + ".render")) { return; }
   fb.byte(16);    // call
   fb.u32leb(env.funcIndex[at]);
 }
@@ -5656,7 +5700,10 @@ void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, 
   // **A fragment**: no tag, no attributes, and its children where an element's would be.
   if (tagTok < 0) {
     i32 fi = jsxFragmentVariant(env);
-    if (fi < 0) { return; }
+    if (fi < 0) {
+      env.declineFor("core's JSX fragment variant, which this program does not have");
+      return;
+    }
     string fen = env.variantOwners[fi];
     i32 nfrag = env.fieldCountOf(fen);
     fb.byte(65);
@@ -5678,7 +5725,11 @@ void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, 
     emitJsxComponent(fb, src, lexed, env, comp, attrs, kids);
     return;
   }
-  if (vi < 0) { return; }
+  if (vi < 0) {
+    env.declineFor("the JSX tag `" + tokenTextOf(src, lexed, tagTok) + "`, which is neither an "
+                   + "element core declares nor a struct in scope with a `render` method");
+    return;
+  }
   string en = env.variantOwners[vi];
   i32 n = env.fieldCountOf(en);
   fb.byte(65);
@@ -5738,7 +5789,10 @@ void emitJsxText(B fb, u8[] src, Env env, i32 startOff, i32 endOff) {
   i32 from = span.from;
   i32 to = span.to;
   i32 vi = jsxTextVariant(env);
-  if (vi < 0) { return; }
+  if (vi < 0) {
+    env.declineFor("core's JSX text variant, which this program does not have");
+    return;
+  }
   string en = env.variantOwners[vi];
   i32 n = env.fieldCountOf(en);
   fb.byte(65);
@@ -5808,7 +5862,10 @@ void emitTagOf(B fb, Env env, i32 subj, string en) {
 void emitArmNames(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string vn, i32[] bindingToks,
                   Expr subject) {
   i32 vi = env.variantAt(vn);
-  if (vi < 0) { return; }
+  if (vi < 0) {
+    env.declineFor("the enum variant `" + vn + "`, which this emitter could not find");
+    return;
+  }
   string en = env.variantOwners[vi];
   for (i32 b = 0; b < bindingToks.len(); b++) {
     if (b >= env.variantArity[vi]) { continue; }
@@ -6145,7 +6202,11 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
             return;
           }
           i32 at = env.localAt(name);
-          if (at < 0) { return; }
+          if (at < 0) {
+            env.declineFor("`" + name + "`, which is assigned to here and is not a local this "
+                           + "emitter can find");
+            return;
+          }
           i32 k = lexed.tokens[op * tokenStride()];
           string at2 = env.localTypes[at];
           // **A promoted local is written through its cell**, so the slot is pushed first and the
@@ -6353,7 +6414,11 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
             return;
           }
           i32 at = env.localAt(tokenTextOf(src, lexed, tok));
-          if (at < 0) { return; }
+          if (at < 0) {
+            env.declineFor("`" + tokenTextOf(src, lexed, tok) + "`, which is incremented here "
+                           + "inside a lambda and is not a local this emitter can find");
+            return;
+          }
           string t = env.localTypes[at];
           // `i++` on a promoted local reads through the cell and writes back through it — the same
           // shape as the compound assignment above, and the reason a `for` counter that a lambda
@@ -6503,7 +6568,7 @@ void emitCompound(B fb, Env env, i32 k, string t) {
   // expression form uses, so the two spellings cannot drift apart.
   if (t == "string" && k == kPlusEq()) {
     i32 cc = env.funcAt(" str_concat");
-    if (cc < 0 || env.funcIndex[cc] < 0) { return; }
+    if (!haveRequired(env, cc, " str_concat")) { return; }
     fb.byte(16);
     fb.u32leb(env.funcIndex[cc]);
     return;
@@ -6547,7 +6612,11 @@ void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op
     case LUnwrap(base): { emitIncrExpr(fb, src, lexed, env, base, op, prefix); }
     case LIdent(tok): {
       i32 at = env.localAt(tokenTextOf(src, lexed, tok));
-      if (at < 0) { return; }
+      if (at < 0) {
+        env.declineFor("`" + tokenTextOf(src, lexed, tok) + "`, which is incremented here and is "
+                       + "not a local this emitter can find");
+        return;
+      }
       string t = env.localTypes[at];
       fb.byte(32); fb.u32leb(at);
       if (prefix) {
@@ -6779,7 +6848,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // A module-level constant, substituted. A local wins a name clash because it is nearer, which
       // is why this is asked second.
       i32 ci = env.constAt(nm);
-      if (ci < 0) { return; }
+      if (ci < 0) {
+        env.declineFor("`" + nm + "`, which is read here and is neither a local nor a module "
+                       + "constant this emitter can find");
+        return;
+      }
       // A constant with identity lives in a global and is *read*; a scalar has none and is
       // substituted. One array shared by every use is the whole difference between the two.
       if (env.constGlobal[ci] >= 0) {
@@ -6848,7 +6921,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       string ot0 = operandType(src, lexed, env, left, right);
       if (ot0 == "string" && k == kPlus()) {
         i32 cc = env.funcAt(" str_concat");
-        if (cc < 0 || env.funcIndex[cc] < 0) { return; }
+        if (!haveRequired(env, cc, " str_concat")) { return; }
         emitExpr(fb, src, lexed, env, left);
         emitExpr(fb, src, lexed, env, right);
         fb.byte(16);
@@ -6860,7 +6933,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       if (ot0 == "string" &&
           (k == kLt() || k == kLe() || k == kGt() || k == kGe())) {
         i32 cc2 = env.funcAt(" str_cmp");
-        if (cc2 < 0 || env.funcIndex[cc2] < 0) { return; }
+        if (!haveRequired(env, cc2, " str_cmp")) { return; }
         emitExpr(fb, src, lexed, env, left);
         emitExpr(fb, src, lexed, env, right);
         fb.byte(16);
@@ -6875,7 +6948,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       if (ot0 == "string" && (k == kEq() || k == kNe())) {
         i32 eq = env.funcAt(" str_eq");
-        if (eq < 0 || env.funcIndex[eq] < 0) { return; }
+        if (!haveRequired(env, eq, " str_eq")) { return; }
         emitExpr(fb, src, lexed, env, left);
         emitExpr(fb, src, lexed, env, right);
         fb.byte(16);
@@ -7008,7 +7081,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           i32 at = env.funcAt(cname);
           if (at < 0) { at = env.funcAt(genericCallInstance(env, src, lexed, tok, args)); }
-          if (at < 0 || env.funcIndex[at] < 0) { return; }
+          if (!haveRequired(env, at, cname)) { return; }
           for (i32 i = 0; i < args.len(); i++) {
             emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(at, i));
           }
@@ -7112,7 +7185,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // A string index is a decode and so a call, not an `array.get`.
       if (at2 == "string") {
         i32 si = env.funcAt(" str_idx");
-        if (si < 0 || env.funcIndex[si] < 0) { return; }
+        if (!haveRequired(env, si, " str_idx")) { return; }
         emitExpr(fb, src, lexed, env, arr);
         emitExprAt(fb, src, lexed, env, index, "i32");
         fb.byte(16);
@@ -7145,7 +7218,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // A static takes no receiver: the owner came from the *name*, so there is nothing to push.
           if (isStringTypeName(src, lexed, env, obj) && mname == "fromCodepoint" && args.len() == 1) {
             i32 cp = env.funcAt(" str_fromcp");
-            if (cp < 0 || env.funcIndex[cp] < 0) { return; }
+            if (!haveRequired(env, cp, " str_fromcp")) { return; }
             emitExprAt(fb, src, lexed, env, args[0], "i32");
             fb.byte(16);
             fb.u32leb(env.funcIndex[cp]);
@@ -7153,7 +7226,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           if (isStringTypeName(src, lexed, env, obj) && mname == "fromBytes" && args.len() == 1) {
             i32 fb2 = env.funcAt(" str_from_bytes");
-            if (fb2 < 0 || env.funcIndex[fb2] < 0) { return; }
+            if (!haveRequired(env, fb2, " str_from_bytes")) { return; }
             emitExpr(fb, src, lexed, env, args[0]);
             fb.byte(16);
             fb.u32leb(env.funcIndex[fb2]);
@@ -7199,7 +7272,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           string towner = templateStatic(env, src, lexed, obj, want);
           if (towner != "") {
             i32 ta = env.funcAt(towner + "." + mname);
-            if (ta < 0 || env.funcIndex[ta] < 0) { return; }
+            if (!haveRequired(env, ta, towner + "." + mname)) { return; }
             for (i32 i = 0; i < args.len(); i++) {
               emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(ta, i));
             }
@@ -7210,7 +7283,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           string sowner = staticOwner(src, lexed, env, obj);
           if (sowner != "") {
             i32 sa = env.funcAt(sowner + "." + mname);
-            if (sa < 0 || env.funcIndex[sa] < 0) { return; }
+            if (!haveRequired(env, sa, sowner + "." + mname)) { return; }
             for (i32 i = 0; i < args.len(); i++) {
               emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(sa, i));
             }
@@ -7224,7 +7297,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // shape, which is a helper rather than an instruction — the reference's own bytes say so.
           if (ot == "string" && mname == "slice" && args.len() == 2) {
             i32 sl = env.funcAt(" str_slice");
-            if (sl < 0 || env.funcIndex[sl] < 0) { return; }
+            if (!haveRequired(env, sl, " str_slice")) { return; }
             emitExpr(fb, src, lexed, env, obj);
             emitExprAt(fb, src, lexed, env, args[0], "i32");
             emitExprAt(fb, src, lexed, env, args[1], "i32");
@@ -7234,7 +7307,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           if (ot == "string" && mname == "indexOf" && args.len() == 1) {
             i32 io = env.funcAt(" str_index_of");
-            if (io < 0 || env.funcIndex[io] < 0) { return; }
+            if (!haveRequired(env, io, " str_index_of")) { return; }
             emitExpr(fb, src, lexed, env, obj);
             emitExprAt(fb, src, lexed, env, args[0], "string");
             fb.byte(16);
@@ -7243,7 +7316,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           if (ot == "string" && mname == "toBytes") {
             i32 tb = env.funcAt(" str_to_bytes");
-            if (tb < 0 || env.funcIndex[tb] < 0) { return; }
+            if (!haveRequired(env, tb, " str_to_bytes")) { return; }
             emitExpr(fb, src, lexed, env, obj);
             fb.byte(16);
             fb.u32leb(env.funcIndex[tb]);
@@ -7298,7 +7371,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // A method call pushes the receiver first and is otherwise a call. The receiver *is* the
           // first parameter, which is the whole of what a method is here.
           i32 at = methodOn(env, ot, mname);
-          if (at < 0 || env.funcIndex[at] < 0) { return; }
+          if (!haveRequired(env, at, ot + "." + mname)) { return; }
           emitExpr(fb, src, lexed, env, obj);
           for (i32 i = 0; i < args.len(); i++) {
             emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(at, i));

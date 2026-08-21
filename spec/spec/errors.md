@@ -157,7 +157,7 @@ error: return: expected i32, found bool
 
 ```
 error: incompatible argument type
-   --> algo.wac:12:5
+   --> algo.wac:14:7
     |
  12 |     i32 result = compute(
  13 |       x,

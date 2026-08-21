@@ -677,3 +677,79 @@ empty answer, 38 carrying on. Today, with the same shape of heuristic — a test
 lines of the call — it is **58 / 18 / 40**. The ratio is unchanged: the number tracked the file growing,
 not any fix. (A three-line window is a heuristic and the original count was too; what it supports is
 "unchanged", not an exact figure.)
+
+## The 25 broken down again, because "three of those 25" is 15 — agent-a, 2026-08-21
+
+The measurement above says *"three of those 25 are guarded on `env.funcIndex[at] < 0` — a callee that
+was declined — which is the cascade working as designed and should be declining the caller through
+`unsupportedExpr` instead."* Counted rather than sampled, it is **fifteen**:
+
+| | |
+|---:|---|
+| 15 | `if (X < 0 \|\| env.funcIndex[X] < 0) { return; }` — a helper missing **or itself declined** |
+| 10 | `if (X < 0) { return; }` — a plain failed lookup |
+| 25 | the total this issue already had right |
+
+So the form this issue treats as a footnote is the **majority** of them, and the recommendation
+attached to it — decline the caller instead of returning — is most of the work rather than a corner.
+That matters for the order: it is one uniform change to fifteen sites, not three special cases.
+
+What they look up is uniform too. Ten are internal string helpers (` str_concat`, ` str_cmp`,
+` str_eq`, ` str_idx`, ` str_fromcp`, ` str_from_bytes`, ` str_slice`, ` str_index_of`,
+` str_to_bytes`), two are `owner + "." + mname` method lookups, one is `methodAt(comp, "render")` for
+JSX, one is a generic instantiation, and one is ` str_concat` again in `emitCompound`, for `s += x`
+— the same helper as the expression form, deliberately, *"so the two spellings cannot drift apart"*.
+
+**And returning is worse than declining, not equivalent to it.** At the expression sites the operands
+have not been emitted yet:
+
+```wac
+i32 cc = env.funcAt(" str_concat");
+if (cc < 0 || env.funcIndex[cc] < 0) { return; }
+emitExpr(fb, src, lexed, env, left);      // <- never runs
+emitExpr(fb, src, lexed, env, right);
+fb.byte(16);
+fb.u32leb(env.funcIndex[cc]);
+```
+
+So the `return` does not skip a call, it leaves the enclosing function body **short a value** — an
+expression that was supposed to push one pushes nothing. At `emitCompound` it fails the other way
+round: the caller has already pushed both operands, so returning leaves two values on the stack with
+nothing to consume them. Either way the result is a malformed body rather than a missing feature, and
+it is recorded nowhere.
+
+### The change: `haveRequired`
+
+One guard for all fifteen, which declines the module with a sentence naming what was looked for and,
+when the callee was itself declined, quoting that callee's own `funcWhy`. The variable keeps meaning
+"the callee's slot", so every later `env.funcIndex[var]` stays correct — making it hold the *index*
+instead would double-index and emit a call to the wrong function, which is the obvious refactor and is
+wrong.
+
+These are still not meant to be reachable, and that is the argument for naming them rather than for
+leaving them: `canEmit`/`unsupportedIn` decides emittability before emitting, so a program arriving
+here means the gate and the doer disagree — and a branch that stays silent when it is wrong cannot be
+told from one that is right. The ten plain-lookup bails are the remaining half.
+
+### Verified by forcing one, because none of them is reachable
+
+`deno task seed` is a fixed point with all 24 declines in place, so not one fires while building a
+182-file program — which is what "defence in depth" means and is the right outcome. It also means the
+sentence they record had never been printed, and **a decline that cannot report is the defect being
+fixed**, so the wiring was proved rather than assumed: forcing `haveRequired` to answer false gives
+
+    a call to `str_concat`, which this expression is emitted as and which is not in the program
+
+with the internal leading space stripped, as intended.
+
+Two things that came out of proving it, both worth more than the proof:
+
+- **`blockedFiles` answers `""` for every one of these**, forced or not. Its own API neighbour says
+  why — *"the two walk different `Env`s, so a decline raised during emission reaches `blockedFiles`
+  only as the fallback"* — so `emitDeclineFiles` is the instrument for anything in this family, and
+  reaching for the obvious one costs a wrong conclusion. `emitDeclineFiles` exists because that
+  already happened once: *"an instrument nothing can call is not an instrument."*
+- **The JSX tag decline cannot be reached from a program either.** `<nosuchtag />` with
+  `import { Attr, Node } from "core";` compiles clean and emits — intrinsic tags are open-ended, so an
+  unknown tag is an element rather than an error. Worth knowing before anyone writes a test expecting
+  a refusal there.

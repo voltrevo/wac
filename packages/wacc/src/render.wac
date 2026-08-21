@@ -1,8 +1,12 @@
 // A diagnostic a person can read, from the wire a program can parse.
 //
-// `diagnoseFiles` answers `file\tline\tcol\tphase\tmessage\tnote\thint\twidth` per line, because a
-// boundary carries strings rather than structures. `packages/wacc/tools/wireDiagnostics.ts` turns it
-// back into the reference's `DiagError`, which `wacDiag` prints
+// `diagnoseFiles` answers `file\tline\tcol\tphase\tmessage\tnote\thint\twidth\tseverity` per line,
+// because a boundary carries strings rather than structures. Nine fields — the `severity` one was
+// added after this sentence first said eight, and counting them is how `issues/lang/0232a` found that
+// there is nowhere to put the reference's `contextStart`.
+//
+// `packages/wacc/tools/wireDiagnostics.ts` turns it back into the reference's `DiagError`, which
+// `wacDiag` prints
 //
 //     error: return type does not match the function's
 //       --> main.wac:1:28
