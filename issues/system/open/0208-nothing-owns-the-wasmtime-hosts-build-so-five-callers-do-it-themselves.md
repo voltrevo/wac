@@ -60,3 +60,41 @@ call sites is right to say so out loud rather than fail. What they should not ea
 Found while asking where a 9s test went — `packages/raster/test/wac/hosts_test.wac`, whose other
 four seconds were a compiled-module cache it deleted every run (`612c947a`). The cargo step is what
 is left, and it is not that test's to fix.
+
+## It cost a gate run, and the two freshness checks were both wrong — agent-a, 2026-08-21
+
+Not fixed here — the wasmtime host still has no owner — but two things next to it are, and the cost is
+now measured rather than predicted.
+
+**The cost.** `tools/push.sh` decides whether to rebuild after a merge by running
+`tools/seedFresh.test.ts` (2026-08-20). That file knew about `native/v8/seed/wacc.wasm` and
+`native/v8/target/release/wac`, and nothing about `native/target/release/wacland` — so a merge that
+brought another agent's `Cli.execWith` rebuilt the v8 host, left the wasmtime host behind, and the
+retry failed after **413 seconds** with
+
+    Caused by: Cli.execWith is not implemented in the native runtime yet
+
+from a host binary that predated the merge that added it. The message names itself, which is the only
+reason this took minutes rather than an afternoon: a two-host differential says *the host lacks
+something the tree has*, and that is exactly what a stale host is.
+
+`seedFresh.test.ts` now has a third check — *the wasmtime host, if built, is not older than the Rust it
+is built from* — and `push.sh` rebuilds it after a merge when it exists. **Absent is fine; stale is
+not**: a fresh clone has no `wacland` and the five callers below build it, so asking anything stronger
+would fail a perfectly good checkout.
+
+**And the v8 check was over-reaching, unclearably.** Its input list was
+`["native/v8/src", "native/manifest/src", "native/src"]` plus `native/Cargo.toml`, `native/Cargo.lock`
+and `native/build.rs`. But `native/v8` is the crate `wac` and `native/` is the crate `wacland`; they
+share a path dependency on `manifest` and nothing else. So touching the *wasmtime* host's source failed
+the *v8* binary's check — and `cd native/v8 && cargo build --release`, which that failure recommends,
+does nothing, because nothing that binary is built from changed. An unclearable freshness failure, and
+with `push.sh` now trusting this file it meant a guaranteed 34-second reseed after any merge touching
+`native/src`.
+
+Each check owns its own crate now. Canaried both ways: touching `native/v8/src/main.rs` fails the seed
+and v8 checks and not the wasmtime one; touching `native/src/main.rs` fails only the wasmtime one.
+
+**What this does not fix.** The five callers below still each build it, and a parallel suite can still
+have two of them building the same binary at once — which is the shape of a transient two-host failure
+and is what this issue is for.
