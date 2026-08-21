@@ -47,16 +47,21 @@ The sentence continues, and this is the half that is missing:
 > The cost is that a genuine mistake involving another template inside a template body is also
 > **deferred to instantiation**.
 
-Deferred to instantiation, not to never. `Opt<i32>` is instantiated here. wacc has no instantiation-time
-pass over a generic's method bodies, and `check.wac` records the same fact from the other side, at the
-line where it declines to compare argument types in a generic call:
+Deferred to instantiation, not to never. `Opt<i32>` is instantiated here, and wacc has no
+instantiation-time pass over a generic's method bodies — so the opaque pass is the whole of what a body
+gets, and any fault that exists only for a particular `T` is invisible to the checker.
+
+**What is missing is the pass, not the ability to substitute.** `substituteType(c, owner, written)` turns
+a written `T` into the type it has at a given instance, and has 16 call sites — `checkMethodArgs` uses it
+on every generic method's parameter types. There is a nearby comment that reads like a statement of the
+opposite, and it is worth not being misled by it as I first was:
 
 > Arity applies to a generic function; the *types* do not, until the parameters are bound. Binding them
 > is what this asks about — not whether each argument fits, **which needs the substitution this checker
 > does not perform**.
 
-So the opaque pass is the whole of what a generic body gets, and any fault that only exists for a
-particular `T` is invisible to the checker.
+That is about comparing **argument types at a call to a generic function**, where the instance is not
+known from the call site. It is not a statement that the checker cannot substitute.
 
 ## How it was found, which is the part worth keeping
 
@@ -76,9 +81,11 @@ is worth saying that reaching for it beat both guessing and adding a second one.
 ## The decision, and a recommendation
 
 - **Check each instantiated generic's methods under substitution.** What the spec says, and the end
-  state. The cost is the substitution the checker does not perform, and it is not only machinery: a pass
-  that suddenly checks every generic body in the seed app's graph will find things, which is good and is
-  also a red suite for everyone until they are fixed.
+  state. The cost is a second body pass per (generic, instantiation) pair — the substitution itself
+  already exists — and the real expense is not machinery: a pass that suddenly checks every generic body
+  in the seed app's graph will find things, which is good and is also a red suite for everyone until they
+  are fixed. That is the number to get before starting, and it is measurable without landing anything: a
+  probe importing `../../src/api.wac` compiles the working tree while the seed stays the last good one.
 - **Let `wac check` report the emitter's declines.** The emitter already knows — *"a method
   Opt<i32>.orElse, declined: a call to v"* — and giving that answer a position is much less work than
   deriving it a second time with less information. It makes `check` and `build` agree, which is the
@@ -89,16 +96,52 @@ is worth saying that reaching for it beat both guessing and adding a second one.
   check` answering "no diagnostics" about a program that does not build, which is the thing a reader
   will report again.
 
-**Recommended: the second, then the first.** Making `check` and `build` agree is the defect anybody
-actually hits, and it is the smaller change; the substitution pass is the correct answer and is better
-attempted when it is the only thing changing.
+**Recommended: the first.** This paragraph recommended the second, and both halves of the argument for
+it turned out to be wrong when priced instead of assumed.
 
-**This is the second instance of one shape**, which is the argument for doing it once properly:
-`issues/lang/0157`'s remaining half is the same trade for imports — *"Ask the linker instead of
-re-deriving. `emit.wac` already knows which imports it could not satisfy… Give that answer a position and
-let the checker report it, rather than computing membership twice with less information."* Two issues, two
-subsystems, one seam: **the emitter knows something the checker does not, and the checker is what the
-reader asked.**
+**The second costs `check` its reason for existing.** A decline is discovered while emitting a function
+body, so reporting declines means emitting — and `wac check` exists because it does not. Measured on
+`packages/json/src/json.wac`, 12 files:
+
+    wac check    88ms
+    wac build   245ms
+
+2.8×, and the only part that is not shared is writing the module. A fast loop that is 2.8× slower is not
+a fast loop, and `issues/lang/0153` is already about a build costing two emits.
+
+**And the first's blocker was overstated — by me, quoting a comment about something else.** The line
+above from `check.wac` — *"which needs the substitution this checker does not perform"* — is about
+comparing **argument types at a generic call**, which is a different question. `substituteType(c, owner,
+written)` exists and has **16 call sites**; it is what `checkMethodArgs` already uses to turn a written
+`T` into the type it has at this instance. So the missing thing is not the substitution primitive. It is
+a *pass*: re-walk an instantiated generic's method bodies with its parameters bound, where `0043`'s pass
+walks them once with the parameters opaque. That is a smaller and much better-founded change than "the
+checker cannot substitute" suggested, and it is what the spec asks for.
+
+**So the `0157` link is weaker than stated too.** That one proposes asking the linker about *imports* —
+which the checker already walks, and which needs no emission at all. The shape rhymes; the price does
+not, and pricing them as one was the same mistake in miniature.
+
+## The red suite is the thing to be afraid of, and it is measurable now
+
+The first option's real cost is not the pass — it is what a pass that suddenly checks every generic body
+finds in code that currently compiles. **That is answerable without writing it**, because the reference
+already does this checking, so anything the pass would newly report is something the reference reports
+today. Run over unmutated sources, 2026-08-21:
+
+    packages/wacc/src/api.wac      17 file(s), no errors
+    packages/json/src/json.wac      8 file(s), no errors
+    packages/url/src/url.wac        4 file(s), no errors
+    packages/crypto/src/sha256.wac  2 file(s), no errors
+
+So for 31 files including the compiler's own sources — the largest wac program here, and the one whose
+breakage would stop the seed — a per-instantiation pass has nothing to report. **The feared red suite is
+not there**, at least not in what the reference can be asked about.
+
+The scope of that claim is exactly the reference's own: it cannot compile everything here — the app
+imports `packages/platform`, whose `Pending<T>.then` is a lambda, and the reference has none, which is
+why `WAC_APP_FROM=reference` stopped working. So the packages whose graphs reach `platform` are not
+covered by the measurement above and would need the pass itself to answer for them.
 
 ## Notes
 
