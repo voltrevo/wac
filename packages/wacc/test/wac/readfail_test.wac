@@ -16,20 +16,28 @@
 // fails here, in the reader, which is why this message was worth more than that one.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
+import { putFile } from "../../../wactest/src/host.wac";
 
-/** A two-file project whose *second* file imports something that is not there. */
-bool writeTree(Cli cli, string dir) {
-  cli.mkdir(dir + "/app", true).wait();
-  Change a = cli.writeFile(dir + "/app/main.wac",
-      ("// A comment naming \"../shared/gone.wac\" before the real import, so a search for the text\n" +
-       "// cannot take the easy one.\n" +
-       "import { helper } from \"./lib.wac\";\nexport i32 f() { return helper(); }\n").toBytes()).wait();
-  if (a.fault != 0) { return false; }
-  return cli.writeFile(dir + "/app/lib.wac",
-      ("import { missing } from \"../shared/gone.wac\";\n" +
-       "export i32 helper() { return missing(); }\n").toBytes()).wait().fault == 0;
+/**
+ * A two-file project whose *second* file imports something that is not there.
+ *
+ * **The reason, not a `bool`.** This built `dir + "/app"` with an unchecked `mkdir` and answered
+ * whether the *write* worked, so a directory that could not be made was reported to the reader as
+ * "wrote the tree" failing — the wrong half of the fixture, on a test whose whole subject is a
+ * message naming the right thing. `putFile` makes the directory above and names either cause, which
+ * is why there is no `mkdir` here any more rather than a checked one. `issues/system/0229`.
+ */
+string writeTree(Cli cli, string dir) {
+  string why = putFile(cli, dir + "/app/main.wac",
+      "// A comment naming \"../shared/gone.wac\" before the real import, so a search for the text\n" +
+      "// cannot take the easy one.\n" +
+      "import { helper } from \"./lib.wac\";\nexport i32 f() { return helper(); }\n");
+  if (why != "") { return why; }
+  return putFile(cli, dir + "/app/lib.wac",
+      "import { missing } from \"../shared/gone.wac\";\n" +
+      "export i32 helper() { return missing(); }\n");
 }
 
 string checkIn(Cli cli, string dir, string entry) {
@@ -43,7 +51,8 @@ export string test_a_file_that_cannot_be_read_names_the_import_that_asked(Core c
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/readfail";
   cli.remove(dir, true).wait();
-  t.isTrue(writeTree(cli, dir), "wrote the tree");
+  string whyTree = writeTree(cli, dir);
+  t.isTrue(whyTree == "", whyTree);
   string said = checkIn(cli, dir, "app/main.wac");
   t.isTrue(said.indexOf("cannot read") >= 0, "did not refuse — " + said);
   t.isTrue(said.indexOf("shared/gone.wac") >= 0, "did not name the file — " + said);
@@ -65,7 +74,8 @@ export string test_the_entry_file_itself_is_named_alone(Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/readfail-entry";
   cli.remove(dir, true).wait();
-  t.isTrue(writeTree(cli, dir), "wrote the tree");
+  string whyTree = writeTree(cli, dir);
+  t.isTrue(whyTree == "", whyTree);
   string said = checkIn(cli, dir, "app/nosuch.wac");
   t.isTrue(said.indexOf("cannot read") >= 0, "did not refuse — " + said);
   t.isTrue(said.indexOf("imports it as") < 0, "invented an importer for the entry — " + said);

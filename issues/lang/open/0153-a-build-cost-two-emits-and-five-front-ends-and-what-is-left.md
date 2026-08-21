@@ -102,3 +102,31 @@ left to remove there.
   out — so a diagnosis is cacheable by content hash. Nothing in the CLI or the host caches anything today.
 * **Make the checker itself faster**, which needs profiling inside `C` rather than around it.
 * The front end at ~720 ms for 180 files is ~4 ms a file and has not been looked at at all.
+
+## What the front end's ~720 ms is made of — 2026-08-21, agent-a
+
+There is still no profiler, but a *pure* function's whole cost can be priced by wrapping it so its body
+runs twice and subtracting. On `describewac_test` (14.1 s, four front ends over closures up to 182 files):
+
+| | |
+|---|---:|
+| `lex` | 2.5% |
+| `parseProgram` | 18% |
+| everything after — check, settle, emit | ~80% |
+
+So the bullet above is right about where to look, and it is the *semantic* phases rather than the
+front end in the narrow sense.
+
+**One candidate inside them is now ruled out.** `C.findName` is a linear scan of the names table run
+once per name resolved, which is the shape that had just been worth indexing twice elsewhere in a day
+(`edgesOfIn`'s path lookup, and `isBuiltinSpec`). Priced the same way it is **51 ms of 14 150 ms —
+0.4%**, so a hash index there buys nothing. Recorded because the scan is conspicuous and looks like
+the answer.
+
+**What the technique cannot price.** Doubling a *call site* prices that site, not the callee — it
+undercounted `isBuiltinSpec` by more than half, because the loop doubled was one of several callers.
+Body-doubling prices the callee but only where the function is pure: `lex` and `parseProgram` qualify
+(the latter if the wrapper builds a second `P` from `p.src`/`p.toks`/`p.tokCount`), while `checkModule`
+and `settleEmittable` mutate pre-populated state, so a second run does *less* work and the subtraction
+means nothing. That is why the 80% is one row rather than three — pricing inside it needs either a real
+profiler or a pure seam that does not exist yet.

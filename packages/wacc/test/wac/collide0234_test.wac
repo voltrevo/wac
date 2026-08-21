@@ -26,15 +26,23 @@
 // still *works* with the colliding name in the link rather than merely compiling.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
 import { wacBinary } from "../../../wactest/src/built.wac";
+import { putFile } from "../../../wactest/src/host.wac";
 
-/** The two files, with `name` as the colliding struct. */
-bool writeTree(Cli cli, string dir, string name) {
-  cli.mkdir(dir, true).wait();
-  Change a = cli.writeFile(dir + "/one.wac",
-      ("export struct " + name + " { i32 x; }\nexport i32 one() { return 1; }\n").toBytes()).wait();
-  if (a.fault != 0) { return false; }
+/**
+ * The two files, with `name` as the colliding struct.
+ *
+ * Answers the reason rather than a `bool`, and has no `mkdir` of its own — `putFile` makes the
+ * directory above each file and names whichever step failed. Before that a `.cache` that could not be
+ * created reached the reader as "wrote the tree for Arm" failing, which points at the fixture's
+ * *writes* and at this issue's subject, neither of which would be what was wrong.
+ * `issues/system/0229`.
+ */
+string writeTree(Cli cli, string dir, string name) {
+  string why = putFile(cli, dir + "/one.wac",
+      "export struct " + name + " { i32 x; }\nexport i32 one() { return 1; }\n");
+  if (why != "") { return why; }
   // `../..` from `.cache/<dir>/` back to the repository root, then into the compiler's own source.
   // The entry answers 0 when the library discriminated, so the exit status is the assertion.
   //
@@ -43,14 +51,14 @@ bool writeTree(Cli cli, string dir, string name) {
   // test about the *linker*. What this file needs of the library is that it can tell a broken program
   // from a clean one, so that is what it asks: some diagnostics for one, none for the other. A library
   // that returned a constant, or an empty array, fails both halves.
-  return cli.writeFile(dir + "/agg.wac",
-      ("import { one } from \"./one.wac\";\n" +
-       "import { dumpTypeErrors } from \"../../packages/wacc/src/api.wac\";\n" +
-       "export i32 main() {\n" +
-       "  i32 bad = dumpTypeErrors(\"export i32 f(string s) { return s - 1; }\".toBytes()).len();\n" +
-       "  i32 ok = dumpTypeErrors(\"export i32 f(i32 x) { return x - 1; }\".toBytes()).len();\n" +
-       "  return bad > 0 && ok == 0 && one() == 1 ? 0 : 1;\n" +
-       "}\n").toBytes()).wait().fault == 0;
+  return putFile(cli, dir + "/agg.wac",
+      "import { one } from \"./one.wac\";\n" +
+      "import { dumpTypeErrors } from \"../../packages/wacc/src/api.wac\";\n" +
+      "export i32 main() {\n" +
+      "  i32 bad = dumpTypeErrors(\"export i32 f(string s) { return s - 1; }\".toBytes()).len();\n" +
+      "  i32 ok = dumpTypeErrors(\"export i32 f(i32 x) { return x - 1; }\".toBytes()).len();\n" +
+      "  return bad > 0 && ok == 0 && one() == 1 ? 0 : 1;\n" +
+      "}\n");
 }
 
 string buildIn(Cli cli, string dir) {
@@ -82,7 +90,8 @@ export string test_structs_named_like_ones_the_library_uses_do_not_break_it(Core
   for (i32 i = 0; i < names.len(); i++) {
     string dir = cli.cwd().wait() + "/.cache/collide0234-" + names[i];
     cli.remove(dir, true).wait();
-    t.isTrue(writeTree(cli, dir, names[i]), "wrote the tree for " + names[i]);
+    string whyTree = writeTree(cli, dir, names[i]);
+    t.isTrue(whyTree == "", whyTree);
     string built = buildIn(cli, dir);
     t.isTrue(built.indexOf("cannot emit") < 0,
         "declaring `" + names[i] + "` broke the library again — 0234a: " + built);
@@ -103,7 +112,8 @@ export string test_the_same_program_with_a_name_the_compiler_never_declares(Core
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/collide0234-ok";
   cli.remove(dir, true).wait();
-  t.isTrue(writeTree(cli, dir, "Zork"), "wrote the tree");
+  string whyTree = writeTree(cli, dir, "Zork");
+  t.isTrue(whyTree == "", whyTree);
   string built = buildIn(cli, dir);
   t.isTrue(built.indexOf("cannot emit") < 0, "the control did not build: " + built);
   t.eqI32(runIn(cli, dir), 0, "the control answered wrongly, so the harness is what is wrong");

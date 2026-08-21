@@ -155,8 +155,9 @@ incrementally rather than filed as one job, and worth knowing the number.
 
 Two batches, both the `remove`-then-`mkdir` shape, which is `freshDir`'s:
 
-    120 sites converted  21 in tools/wac tests, 22 across 17 package tests, then 77 bare in 37 more
-    29 remain            28 on their own line with no `T` at the site, and one `put` helper (see below)
+    122 sites converted  21 in tools/wac tests, 22 across 17 package tests, 77 bare in 37 more,
+                         then the two `writeTree` fixtures by hand
+    27 remain            on their own line, in helpers with no `T` at the site
 
 ### The count, wrong twice, and the second time was mine correcting the first
 
@@ -195,10 +196,48 @@ the right helper for a bare `mkdir` because it creates without emptying, so the 
 where a `remove` of the same path happened a line earlier. `mappedspec_test.wac` is that case: it removes
 `home` between the remove and the mkdir, which is why batch two's same-variable match skipped all nine.
 
-What is left really is the harder kind: 69 sites with no `T` at the site, most in `bool`-returning helpers
-— `put`, `writeTree` — that have nothing to report through. Each needs a decision about how the reason
+What is left really is the harder kind: **29** sites with no `T` at the site, in `bool`-returning helpers
+like `writeTree` that have nothing to report through. Each needs a decision about how the reason
 reaches the reader, which is the question this issue answered once and would have to answer again in a
-different shape.
+different shape. (This paragraph said 69 while the sweep was still running, and contradicted the table
+above it for half a day — a count written mid-sweep in a second place is a count that goes stale in one
+of them.)
+
+### And there is no third `put` — checked, 2026-08-21
+
+The two wins here were both *duplication*: one helper copied nineteen times, then another copied five
+times, each fixed once for every copy. So the residue is worth the same question before anyone starts
+on it one site at a time — and the answer is no. Grouping the 29 by enclosing function gives **25
+distinct names**, each appearing once or twice, and the only pair with an identical body is `populate`
+twice *in the same file*. `scratchDir`, `writeTree`, `builtProgram`, `startTor`, `serveOnce`,
+`builtByDeno`, `measure` — different fixtures for different packages that happen to share one bad habit.
+
+That is the useful thing to know: the cheap form of this issue is finished, and what remains is 25
+separate judgements rather than one more helper waiting to be found. Whoever picks it up should expect
+to change signatures, not to delete copies.
+
+### What one of those judgements looks like — the two `writeTree` fixtures
+
+Done rather than described, because the shape is worth more than the advice. `readfail_test.wac` and
+`collide0234_test.wac` each had `bool writeTree(Cli cli, …)` — an unchecked `mkdir`, then writes whose
+answer was the return value — called as `t.isTrue(writeTree(…), "wrote the tree")`.
+
+Three changes, and the third is the one to copy:
+
+* **`bool` becomes `string`**, empty for success, and the call site asserts `whyTree == ""` with
+  `whyTree` as the message. The reason now crosses the boundary the `bool` stopped at.
+* **The `mkdir` disappears** rather than becoming a checked one, because `putFile` already makes the
+  directory above the file it writes. Two sites left the residue by being deleted.
+* **`cli.writeFile(...).wait().fault == 0` goes with it.** Every one of these fixtures had hand-rolled
+  what `putFile` does, which is why the helper existing is what makes the judgement small.
+
+Canaried by pointing the fixture at `/proc/nowhere/readfail`, which no `mkdir` can create:
+
+    before   FAIL … wrote the tree: expected true
+    after    FAIL … could not create /proc/nowhere/readfail/app — No such file or directory
+
+The old message names the fixture's *writes* on a test whose entire subject is a message naming the
+right file. That is the cost being paid 27 more times.
 
 The 9 skipped pairs are named rather than silently left: `crypto/tools/ct.wac` and `tools/wac/covledger.wac`
 are tools with no `T` at all, and the rest are sites inside helpers that do not take one —
