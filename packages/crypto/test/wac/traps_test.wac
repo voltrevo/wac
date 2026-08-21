@@ -960,8 +960,22 @@ export string test_traps_sha1_loadstate_refuses_a_pending_of_64() {
 }
 
 export string test_traps_sha1_loadstate_refuses_a_pending_that_disagrees_with_total() {
-  // pending = 1, total = 0: no sequence of updates produces that, and the digest it would answer
-  // has a length field for zero bytes over one buffered byte.
+  // **`total` is 64 and `pending` is 1, and both parts of that matter.** The state has to get *past*
+  // the `total < pending` guard to reach the consistency one, so `total = 0, pending = 1` — the
+  // obvious spelling, and the one this was written with — never tested the line it names. Coverage
+  // said so: the branch stayed uncovered while the test passed. 64 bytes absorbed leaves `pending`
+  // at 0, so 1 is a state no sequence of updates produces.
+  u8[] raw = u8[96]();
+  raw[87] = 1;
+  raw[94] = 64;
+  Sha1.loadState(raw);
+  return "";
+}
+
+export string test_traps_sha1_loadstate_refuses_a_total_below_its_pending() {
+  // The other half, and the reason the consistency case above had to move: `total = 0` with
+  // `pending = 1` claims one byte buffered out of none absorbed, which fails *this* guard rather
+  // than the modular one. Two states, two lines — coverage is what said the second line had no case.
   u8[] raw = u8[96]();
   raw[87] = 1;
   Sha1.loadState(raw);
