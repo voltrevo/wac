@@ -125,6 +125,8 @@ export string checkMessage(i32 code) {
   if (code == 57) { return "undefined type"; }
   if (code == 58) { return "match does not cover every variant"; }
   if (code == 59) { return "duplicate case for the same variant"; }
+  if (code == 204) { return "a match has more than one else arm"; }
+  if (code == 205) { return "this case binds the same name twice"; }
   if (code == 60) { return "else arm is unreachable — all variants are covered"; }
   if (code == 61) { return "binding collides with the matched subject"; }
   if (code == 62) { return "match requires a non-null value"; }

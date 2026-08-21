@@ -1,0 +1,89 @@
+// Every rule the reference has about a `match`, asked of wacc one program at a time.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env \
+//       packages/wacc/test/wac/matcharms_test.wac
+//
+// `compiler/wacTypeCheck.ts`'s `checkMatchArms` has nine. wacc enforced seven; the two it did not were
+// found by walking the table rather than by any differential, and both were worse than a missing
+// message:
+//
+//   - **two `else` arms** — `check` said nothing and `wac build` **trapped the compiler**, `array
+//     element access out of bounds` and then a null dereference, naming `example/wacc.wac` rather than
+//     the program. The loop asked *whether* there was an `else`, so a second one was invisible and
+//     reached an emitter that indexed past the end of an array;
+//   - **`case A(n, n)`** — compiled, and the *second* binding silently won: `A(7, 9)` answered 9.
+//
+// `issues/lang/0239a`. The rest of the table was already enforced, which is the reason to pin all nine
+// here rather than only the two: a cluster where two of nine were missing is one where the next
+// omission is likelier than average, and a ledger makes it visible.
+//
+// **Why this is a file of its own.** `illtyped_test.wac` is expression-level — every row is one
+// `return` — and these are statement shapes with arms, bindings and exhaustiveness. Its `programs()`
+// list would have to grow a second grammar.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { dumpTypeErrors } from "../../src/api.wac";
+
+i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
+
+const string ENUM = "enum E { A(i32 x, i32 y), B }\n";
+
+/** The nine rules, each as the smallest program that breaks it. */
+export string test_every_match_rule_the_reference_has_is_enforced() {
+  T t = T.create();
+  string[] name = string[](
+    "a nullable subject", "a non-enum subject", "two else arms", "a case naming no variant",
+    "one variant cased twice", "an else that nothing reaches", "a match missing a variant",
+    "a case binding one name twice", "a binding taking the subject's name");
+  string[] src = string[](
+    "enum E { A, B }\nexport i32 f(E? e) { match (e) { case A: { return 1; } case B: { return 2; } } }\n",
+    "export i32 f(i32 x) { match (x) { case A: { return 1; } else: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } else: { return 3; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case Nope: { return 1; } else: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } case A: { return 9; } else: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } else: { return 3; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } } }\n",
+    ENUM + "export i32 f(E e) { match (e) { case A(n, n): { return n; } else: { return 2; } } }\n",
+    "enum E { A(i32 x), B }\nexport i32 f(E e) { match (e) { case A(e): { return 1; } else: { return 2; } } }\n");
+  t.eqI32(name.len(), src.len(), "the name and program lists disagree in length");
+  if (name.len() != src.len()) { return t.report(); }
+  for (i32 i = 0; i < src.len(); i++) {
+    t.isTrue(diagsFor(src[i]) > 0, name[i] + ": accepted");
+  }
+  return t.report();
+}
+
+/**
+ * The controls, and they are why the rows above mean anything.
+ *
+ * A rule that refused every `match` would satisfy all nine. Each of these is the same shape one edit
+ * away from legal: one `else` instead of two, two different binding names instead of one twice, and an
+ * exhaustive match with no `else` at all.
+ */
+export string test_the_ordinary_matches_are_accepted() {
+  T t = T.create();
+  string[] name = string[]("one else arm", "two distinct bindings", "exhaustive with no else");
+  string[] src = string[](
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } } }\n",
+    ENUM + "export i32 f(E e) { match (e) { case A(p, q): { return p + q; } else: { return 2; } } }\n",
+    "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } case B: { return 2; } } }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    t.eqI32(diagsFor(src[i]), 0, name[i] + ": refused an ordinary match");
+  }
+  return t.report();
+}
+
+/**
+ * And the one that trapped, asked of the count rather than of the refusal.
+ *
+ * Two `else` arms took the compiler down, so "is it refused" is the wrong question to leave this on: a
+ * fix that reported *and* still reached the emitter would pass the table above. One diagnostic, and the
+ * program the checker refuses never gets emitted.
+ */
+export string test_two_else_arms_report_exactly_once() {
+  T t = T.create();
+  string src = "enum E { A, B }\nexport i32 f(E e) { match (e) { case A: { return 1; } " +
+               "else: { return 2; } else: { return 3; } } }\n";
+  t.eqI32(diagsFor(src), 1, "two else arms");
+  return t.report();
+}

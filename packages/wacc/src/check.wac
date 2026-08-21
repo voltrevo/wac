@@ -185,6 +185,17 @@ export i32 errMatchInexhaustive() { return 58; }
 export i32 errDuplicateCase() { return 59; }
 /** An `else` on a `match` whose arms already cover every variant. */
 export i32 errElseUnreachable() { return 60; }
+/**
+ * A `match` with more than one `else` arm.
+ *
+ * A code of its own rather than `errDuplicateCase`, whose message names a *variant* — an `else` is not
+ * one, and the reference keeps them apart too (`duplicate else arm`). Before this the checker said
+ * nothing and the build **trapped**: `array element access out of bounds`, then a null dereference,
+ * naming `packages/wacc/example/wacc.wac` rather than the program. `issues/lang/0239a`.
+ */
+export i32 errDuplicateElse() { return 204; }
+/** A `case` that binds one name twice, where the later binding silently won. `issues/lang/0239a`. */
+export i32 errDuplicateBinding() { return 205; }
 /** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
 export i32 errBindingCollision() { return 61; }
 /** A `match` on a nullable value — there is no variant for the null. */
@@ -7569,10 +7580,26 @@ string subjectName(C c, Expr subject) {
  */
 void checkBindingCollision(C c, Expr subject, Arm arm) {
   string nm = subjectName(c, subject);
-  if (nm == "") { return; }
+  if (nm != "") {
+    for (i32 b = 0; b < arm.bindingToks.len(); b++) {
+      if (tokenText(c, arm.bindingToks[b]) != nm) { continue; }
+      c.reportTok(errBindingCollision(), arm.bindingToks[b], "");
+    }
+  }
+  // **And against each other, which is the same rule with both names from the payload.** `case A(n, n)`
+  // compiled, and the *second* binding won: `A(7, 9)` answered 9. The reference refuses it — *"duplicate
+  // binding 'n' in case 'A'"* — and silently choosing one of two meanings is what the collision rule
+  // above exists to prevent. Reported at the later binding, which is the one to rename.
+  // `issues/lang/0239a`.
+  //
+  // The subject check returns early on an unnamed subject and this must not, so the two are separate
+  // loops rather than one: `match (f())` has no name to collide with and can still bind twice.
   for (i32 b = 0; b < arm.bindingToks.len(); b++) {
-    if (tokenText(c, arm.bindingToks[b]) != nm) { continue; }
-    c.reportTok(errBindingCollision(), arm.bindingToks[b], "");
+    for (i32 d = 0; d < b; d++) {
+      if (tokenText(c, arm.bindingToks[d]) == tokenText(c, arm.bindingToks[b])) {
+        c.reportTok(errDuplicateBinding(), arm.bindingToks[b], "");
+      }
+    }
   }
 }
 
@@ -8310,8 +8337,14 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
   // it quiet about every other name it cannot resolve.
   if (total == 0) { return; }
 
-  bool hasElse = false;
-  for (i32 i = 0; i < arms.len(); i++) { if (arms[i].variantTok < 0) { hasElse = true; } }
+  // **Counted, not merely noticed.** This asked *whether* there was an `else`, so a second one was
+  // invisible here and reached the emitter, which indexed past the end of an array and trapped the
+  // compiler. One `else` is the ordinary case and builds; two is a program nobody writes on purpose and
+  // is refused now. `issues/lang/0239a`.
+  i32 elseCount = 0;
+  for (i32 i = 0; i < arms.len(); i++) { if (arms[i].variantTok < 0) { elseCount = elseCount + 1; } }
+  bool hasElse = elseCount > 0;
+  if (elseCount > 1) { c.report(errDuplicateElse(), subject.line, subject.col); }
 
   if (!hasElse && covered < total) {
     c.report(errMatchInexhaustive(), subject.line, subject.col);
