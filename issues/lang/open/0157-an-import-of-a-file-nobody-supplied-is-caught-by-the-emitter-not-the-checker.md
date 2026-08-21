@@ -257,10 +257,25 @@ This came out of `issues/lang/0179a`, which gave the same function's five *room*
 sentinels; the missing-file case was the sixth refusal in the same function and the only one that could
 name what was wrong.
 
-### What is still open, and it is the position
+### What is still open, and why the obvious version of it is unsound
 
-The checker half. `0179a`'s recommendation stands and is now cheaper: the linker knows the key, so the
-checker does not have to re-derive membership — which is what the reverted attempt above got wrong.
-What is missing is the *token*, and the linker has no position for it: it knows `/b.wac`, not the import
-that asked. A caller holding both — `diagnoseFilesWithIn` has the paths and the parse — can match the
-key against its own import list and report there, which is a smaller job than resolving again.
+The checker half — a diagnostic at the import's own token. The linker now knows *which key* was missing,
+so the checker does not have to re-derive membership, which is what the reverted attempt got wrong. But
+"the checker matches that key against its own import list" **is the same mistake in a smaller place**:
+to know which import produced `/b.wac`, the checker has to resolve its specifiers, and resolution is
+exactly what it cannot do soundly — a plain `./a.wac` *inside a mapped checkout* resolves to a key the
+graph does not hold, which is how the attempt above refused three correct programs.
+
+So matching by key is out. What is sound is matching by **specifier text**: if the linker records the
+importing file and the specifier as written, the checker can find that import in that file by string
+comparison and report at its token, resolving nothing.
+
+The linker does not record it today, and the reason is worth stating rather than discovering: the
+failure is detected while *loading a queued path*, and the queue holds resolved targets. The specifier
+that queued it was in the importer's source, two loop iterations earlier. So this needs the queue to
+carry `(specifier, importer)` alongside each target — two parallel arrays in `linkFiles`, sized like
+`queue`, written where the target is queued and read where the load fails.
+
+That is a contained change and the cheapest sound route to a position. It is *not* the one this issue
+originally proposed, and the difference matters: this issue asked the checker to decide, and the answer
+turned out to be that the checker cannot, and does not have to.
