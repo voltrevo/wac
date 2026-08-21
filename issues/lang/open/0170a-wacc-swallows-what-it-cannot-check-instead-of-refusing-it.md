@@ -603,3 +603,41 @@ both accept. A program the checker accepts, the emitter emits, and whose *result
 type the guess got wrong would be caught by the sweep only if the generator emits that shape — and
 `generateEmit.ts` is a cast cross-product. Extending it to mixed-type binary and ternary operands is the
 next concrete step, and it is a generator change rather than a compiler one.
+
+## Root cause 2 is bounded, measured — agent-a, 2026-08-21
+
+The step named above ("extend `generateEmit.ts` to mixed-type binary and ternary operands") is done, and
+the result says something about the fix rather than finding a bug.
+
+**Every operator family in that generator declared `T x` and `T y`.** So the sweep — 4501 programs —
+had never handed a binary operator two different types, nor an operator a bare literal, in its whole
+existence. Four families added; the reference's verdict on each is the interesting part:
+
+| family | accepted | refused | what it says |
+|---|---:|---:|---|
+| mixed-width binary (`i32 x; f64 y; x + y`) | **0** | 420 | wac has no valid mixed-width binary |
+| a typed operand and a bare literal (`x + 3`) | **324** | 0 | entirely legal, and was untested |
+| a packed element as an operand (`b[1] - 3`) | 80 | 0 | round 2's case, legal, now covered |
+| ternaries, same-type and mixed branches | 54 | 30 | mixed refused, same-type fine |
+
+Sweep after: **5397 programs, 4540 compared, 0 mismatched, 0 declined.** Everything agrees.
+
+### Which changes what step 2 is
+
+`typeOfE(Binary)` returns whichever operand it could type first. **It cannot produce a wrong answer for
+a valid program**, because there is no valid program whose operands have different types — the reference
+refuses all 420. So the guess is not a wrong-answer bug at all: it is a *diagnostic* bug, and the harm
+recorded at the top of this issue is exactly that shape — the safety net asks "do I know the type?",
+gets a confident answer, and does not fire.
+
+That also names the calibration set a tightening has to satisfy, which the four rounds were discovering
+one at a time by rebuilding:
+
+- **324 literal-operand programs** — where the guess is load-bearing and *correct*: one side genuinely
+  has no type of its own, and answering with the other side's is the rule, not a guess.
+- **80 packed programs** — `isNumericTy` does not name `u8`/`i16`, which is what round 2 tripped on.
+- string concatenation, round 1, which the generator does not reach because `f` must return a number.
+
+All 404 are in the sweep now, so a round that refuses them fails in 48 seconds with the programs named,
+instead of after a seed rebuild. The remaining unknown is round 4, which was never diagnosed — and the
+first thing to do with it is no longer to guess, but to run `tighten_probe.wac` and read the list.
