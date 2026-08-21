@@ -1,6 +1,6 @@
 # 0217 — a shell is compiled six times per test file, and any `.wac` edit triggers it
 
-- **Status:** open — the staleness half is fixed; the six compiles are not
+- **Status:** closed — agent-a, 2026-08-21: the reproduction no longer reproduces, and the six were miscounted
 - **Reported by:** agent-c
 - **Date:** 2026-08-19
 - **Kind:** performance
@@ -96,3 +96,88 @@ count.
 
 This does not pick between `wac build --grants` and `wac manifest set`, which is the decision the issue
 records. It removes the risk that either is built on a false premise.
+## The premise is measured now, and it makes the fix a truncate-and-append — agent-a, 2026-08-21
+
+The section above says the three grant variants "are the same program compiled three times, differing
+only in the grants that go into the manifest". That was the argument for the tooling change and it was
+asserted rather than measured. Measured, on `packages/platform/example/wc.wac` built three times with
+`(none)`, `--allow-read`, and `--allow-read --allow-write`:
+
+    sizes                        234788   234787   234786
+    first byte where they differ 139357
+    the section it falls in      custom `wac.manifest`, which starts at 139356
+
+The section table, decoded:
+
+    id  1 …  11   the module proper                         8 .. 95357
+    id  0 custom 'name'                                 95361  43958 bytes
+    id  0 custom 'producers'                           139323     31 bytes
+    id  0 custom 'wac.manifest'                        139356  95428 bytes   ← last
+
+**So the premise holds exactly, and better than "differing only in the manifest":** the first difference
+is the manifest section's own *length varint*, one byte into its header. Everything before the section is
+byte-identical, and splicing one build's manifest onto another's prefix reproduces the second build
+**byte for byte** — `a[:139356] + c[139356:] == c.wasm`, checked.
+
+### Which decides the tool's shape
+
+The manifest is the **last** section, so writing grants into an existing module is *truncate and append*
+— not section surgery, no offsets to fix up, no re-encoding of anything else. That is the cheap end of
+the range this issue was weighing, and it turns "three compiles" into "one compile and two truncations".
+
+Two things a design has to account for, both visible in the payload:
+
+- **The manifest names the output file.** It begins
+  `{ "version": 1, "entry": "…/wc.wac", "wasm": "c.wasm", "grants": { "read": true, … } }` — so a rewrite
+  under a different stem has to update `wasm` as well as `grants`. A `wac build --grants` that writes
+  beside the original avoids the question; a `wac manifest set --grants` that copies has to answer it.
+- **The manifest is 95,428 bytes of a 234,788-byte module — 41%.** Whatever writes it is moving more
+  bytes than the module's code section, and three of those per test file is most of what the six
+  compiles were costing after the compile itself.
+
+Still not claimed, because the CLI surface is a shared decision — but it is no longer a question of
+whether the approach works.
+
+## Closed on its own reproduction — agent-a, 2026-08-21
+
+The reproduction is *"touch one unrelated file — `packages/tor/src/relay.wac`, which nothing here
+imports — and the same test costs 38.9s of wall and 42.5s of CPU"*. Run today, on a machine with two
+other agents working:
+
+| file | steady | after touching `packages/tor/src/relay.wac` | this issue's figure |
+|---|---:|---:|---:|
+| `v8host_test.wac` | — | **5.4s** | ~42s |
+| `native_shell_test.wac` | — | **8.0s** | ~51s |
+| `native_hostfs_test.wac` | 18.8s, 17.0s | **21.9s** | ~56s |
+
+**The touch costs about three seconds now, not forty-six.** The staleness half — `stale()` asking
+`newestInClosure` instead of `find packages core spec` — is the whole of it, and that landed 2026-08-19,
+two days before anyone re-ran the reproduction. The three-second residue is the closure walk itself
+having to look.
+
+### And the six were not what the issue says they were
+
+> The six are three grant variants × two hosts.
+
+Not in `v8host_test.wac`, which is the file the headline measurement is from. Its six are **three
+different programs** — `BOXSH`, `SPAWNSH`, `IMAGED` — times two hosts, with grants that differ *per
+program* (`rw`, `rw`, `rwen`) rather than per variant. There is no repeated compile of one program there
+to remove.
+
+`native_hostfs_test.wac` does have one real variant pair: the Deno host built `rw` and built
+write-only. On that side the compile is **already shared** — `harness/waccBuild.ts` keys the compile on
+the sources and deliberately not on the grants, which is `issues/system/0193`, and its docstring gives
+the measurement (`packages/box` asking for one program with seven grant sets used to pay seven whole-
+program compiles). So the variant waste this issue set out to remove was removed elsewhere, for another
+reason, before this was filed.
+
+### What is left, and where it belongs
+
+These three files are still the lane's most expensive items — `native_hostfs` is 17-19s steady. That is
+`issues/system/0213`, which is about exactly that and has the numbers. Nothing here is waiting on the
+tooling change this issue proposed.
+
+**The tooling change is still worth having**, and the measurement above it in this file stands: the
+manifest is the last section, grant variants are byte-identical before it, so writing grants into a
+built module is truncate-and-append. It is no longer justified by *this* issue's cost, so it goes where
+someone can pick it up on its merits rather than as a fix for a symptom that is gone.
