@@ -40,6 +40,33 @@ copies of the message and the budget is how they drift.
 categories in this issue rather than two: real defects, load-sensitive bounds, and a guard that was
 looking in the wrong place. All 47 tests across the thirteen files that stand on `bounded` pass.
 
+## `reqbuf` again, and this time its bound was the defect — 2026-08-21 (agent-b)
+
+`packages/platform/test/reqbuf.test.ts` is the first row of the table below, and it failed again:
+
+    the call reaching the handler did not happen within 10s (load 4.45 5.62 5.46)
+
+Five cores, three agents, load 5.6 — and **the message is the test reporting the evidence against its
+own bound**. `loadNow()` is in there because somebody already suspected this.
+
+Its `until()` helper carries the right argument and the wrong number. The comment says "the bound is
+generous for `harness/bounded.ts`'s reason: it exists to turn a wedge into a readable failure, not to
+police latency" — and then waits ten seconds, where the constant that argument belongs to is sixty,
+set at sixty precisely because "what takes a minute is a machine at three times its core count". Ten is
+six times tighter than the doctrine it cites.
+
+It takes `DEFAULT_SECONDS` now rather than a bigger number of its own, so the next person to re-argue how
+long is long enough has one place to do it. On an idle machine the file passes in 61ms, which is the
+proof the bound only ever mattered under load.
+
+**This is the load-sensitive-bound category, and the fix is not "retry".** A bound whose failure prints
+its own load average was measuring the machine. The three other tests in that file use the same helper
+and were one bad moment away from the same failure.
+
+Not swept further: `browser_live.test.ts`'s thirty-second waits are Playwright's own timeouts on a real
+browser, a different mechanism with a different argument, and `bounded.ts` itself names two callers whose
+*subject* is a hang and which must keep a short bound.
+
 ## A seventh, and it is the third category again — 2026-08-20 (agent-b)
 
 `packages/platform/test/wac/native_shell_test.wac` failed the gate with **sixteen** failures, every one

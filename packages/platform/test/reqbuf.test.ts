@@ -9,7 +9,7 @@
 import { attached, BUF_BYTES, BUFS, newBridge, REQ_FREE_AT, S_REQ_BUF, SLOTS, slotAt } from "../host/layout.ts";
 import { serveHostCalls } from "../host/respond.ts";
 import { newScheduler } from "../host/schedule.ts";
-import { loadNow } from "../../../harness/bounded.ts";
+import { DEFAULT_SECONDS, loadNow } from "../../../harness/bounded.ts";
 
 /**
  * Wait until `cond()` holds, or fail saying which condition and how busy the machine was.
@@ -23,11 +23,23 @@ import { loadNow } from "../../../harness/bounded.ts";
  * Polling for the condition the assertion is about cannot change what the test exercises, because it is
  * the same predicate. The bound is generous for `harness/bounded.ts`'s reason: it exists to turn a wedge
  * into a readable failure, not to police latency.
+ *
+ * **And it is `DEFAULT_SECONDS`, not a number of its own.** This said ten seconds while citing that
+ * reason, and ten is six times tighter than the constant the argument belongs to — which
+ * `harness/bounded.ts` sets at sixty precisely because "what takes a minute is a machine at three times
+ * its core count". On 2026-08-21 this failed a gate at `load 4.45 5.62 5.46` on five cores, which is
+ * that machine, and the message it printed was its own load average. A bound that reports the evidence
+ * against itself is a bound that was policing latency.
+ *
+ * Taking the constant rather than picking a bigger number is the point: the next person to re-argue how
+ * long is long enough should have one place to do it.
  */
 async function until(cond: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + DEFAULT_SECONDS * 1000;
   while (!cond()) {
-    if (Date.now() > deadline) throw new Error(`${what} did not happen within 10s (${loadNow()})`);
+    if (Date.now() > deadline) {
+      throw new Error(`${what} did not happen within ${DEFAULT_SECONDS}s (${loadNow()})`);
+    }
     await new Promise((r) => setTimeout(r, 5));
   }
 }
