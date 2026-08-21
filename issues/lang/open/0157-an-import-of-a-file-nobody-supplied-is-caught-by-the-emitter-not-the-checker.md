@@ -315,3 +315,33 @@ So both routes are open, and the choice is about what each layer should know rat
 Recommendation: the first, then the second if an embedder ever wants it. The reason is not the dependency
 graph — it is that the first needs no new resolution and cannot reintroduce the unsoundness that got the
 original attempt reverted.
+
+## The parts are answerable, and the CLI route is a fallback — agent-a, 2026-08-21
+
+`missingImportFiles` / `missingImportFilesIn` answer `key\tfrom\tspec`, and `""` for any other reason a
+link failed — so a caller can tell *this* cause from any other refusal without matching on English, and
+has the three things a position needs. `example/wacc.wac` consumes it: it finds the specifier in the
+importing file's source by **quoted string comparison** (so the same path written in a comment above the
+import cannot win), counts to it for a line and column, and renders through `render.wac` — a diagnostic
+with a caret instead of a sentence.
+
+**And the honest part: `wac build` almost never reaches it.** The CLI's `gather` reads from disk, so a
+file that is not there fails there first, with `wacc: cannot read shared/gone.wac`. The emitter's
+"not supplied" means the map lacks the *key*, which for the CLI means gather succeeded and the linker
+resolved to something else — a real case (it is what `twoKeysForOneFile` and `issues/lang/0163` are
+about) but not the common one. So the renderer is a fallback for the CLI and the *seam* is the main
+delivery: the callers that supply their own map get the parts, and they are the ones this issue was filed
+about.
+
+Tested at the seam rather than through the CLI, for that reason: `missingimport_test.wac` asserts the
+exact three fields for a bad import in the second of two files, and `""` for a program that links. The
+renderer is verified by construction and by the lanes staying green; a test that could drive it needs a
+program where gather succeeds and the linker disagrees about the key, which is `0163`'s territory rather
+than this issue's.
+
+### What is actually left
+
+The **checker** reporting it, which is what the title is about. Everything it needs now exists — the
+parts, and a resolver it may depend on (there is no cycle, see above). What is not decided is whether
+the checker should ask the linker at all, or whether the seam plus `wacc.wac` is enough for the callers
+who care. That is a smaller and better-informed question than the one this issue opened with.

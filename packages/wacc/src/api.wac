@@ -12,7 +12,7 @@ import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, hintsOf, notesOf, warningsOf, widthsOf,
          errNoSuchExport } from "./check.wac";
-import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedIn, emitLinkedChecked, emitLinkedCovered,
+import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedIn, missingImportParts, emitLinkedChecked, emitLinkedCovered,
   emitLinkedCoveredIn,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
@@ -234,6 +234,21 @@ export Built buildFilesIn(string[] paths, string[] sources, Res res, string entr
 /** `describeFiles` with the project root each file sits in — `design/lang/0009` D7. */
 export string describeFilesIn(string[] paths, string[] sources, Res res, string entry) {
   return describeLinked(paths, sources, res, entry);
+}
+
+/**
+ * Where a missing import was written: `key\tfrom\tspec`, or `""` when that is not why a link failed.
+ *
+ * For a caller that wants to point at the import rather than print a sentence about it — see
+ * `example/wacc.wac`, which turns this into a diagnostic with a line and a caret. `issues/lang/0157`.
+ */
+export string missingImportFiles(string[] paths, string[] sources, string entry) {
+  return missingImportParts(paths, sources, Res.empty(), entry);
+}
+
+/** The same with the project root each file sits in — `design/lang/0009` D7. */
+export string missingImportFilesIn(string[] paths, string[] sources, Res res, string entry) {
+  return missingImportParts(paths, sources, res, entry);
 }
 
 /** The line `describeFiles` puts between its two halves. */

@@ -15,7 +15,7 @@
 // this rule needed no new notion of what a built-in is.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles } from "../../src/api.wac";
+import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles, missingImportFiles } from "../../src/api.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** The code of the first diagnostic, or -1 — a row is `code, line, col`. */
@@ -153,5 +153,36 @@ export string test_and_it_names_a_nested_one() {
       "import { foo } from \"./sub/deep/gone.wac\";\nexport i32 f() { return foo(); }\n"),
       "/main.wac");
   t.isTrue(why.indexOf("/sub/deep/gone.wac") >= 0, "did not name the nested file — " + why);
+  return t.report();
+}
+
+// ── The three parts, answered separately from the sentence ───────────────────────────────────────
+//
+// A caller that wants to *point* at the import needs the parts, not the prose: the key, the file that
+// asked, and the specifier as written. `missingImportFiles` answers `key\tfrom\tspec`, and `""` for any
+// other reason a link failed — so a caller can tell "this is that cause" from "this is some other
+// refusal" without matching on English. `example/wacc.wac` turns it into a diagnostic with a line and a
+// caret. `issues/lang/0157`.
+export string test_the_parts_of_a_missing_import_are_answerable() {
+  T t = T.create();
+  string parts = missingImportFiles(
+      string[]("/app/main.wac", "/app/lib.wac"),
+      string[]("import { x } from \"./lib.wac\";\nexport i32 f() { return x(); }\n",
+               "import { y } from \"../shared/util.wac\";\nexport i32 x() { return y(); }\n"),
+      "/app/main.wac");
+  // Tab-separated, in the order a reader needs them: what to look for, where to look, what to find.
+  t.eqStr(parts, "/shared/util.wac\t/app/lib.wac\t../shared/util.wac", "the parts");
+  return t.report();
+}
+
+/** And `""` for a program that links, so a caller can tell this cause from any other. */
+export string test_and_nothing_when_the_link_is_fine() {
+  T t = T.create();
+  string parts = missingImportFiles(
+      string[]("/main.wac", "/b.wac"),
+      string[]("import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n",
+               "export i32 foo() { return 1; }\n"),
+      "/main.wac");
+  t.eqStr(parts, "", "a program that links reported a missing import");
   return t.report();
 }

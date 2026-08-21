@@ -10583,6 +10583,26 @@ export string blockedLinked(string[] paths, string[] sources, Res res, string en
  * links a second time to tell them apart — which is free in the only case it runs, the case where
  * there is nothing else to do.
  */
+/**
+ * The three parts of a missing-import refusal: `key\tfrom\tspec`, or `""` for any other cause.
+ *
+ * **A caller wanting a *position* needs the parts, not the sentence.** `linkFailure` composes an
+ * English message; a reader that wants to point at the import has to find it, and the only sound way
+ * to find it is the specifier as written — resolving again is what cannot be redone inside a mapped
+ * checkout. So the parts are answered separately rather than parsed back out of the prose.
+ * `issues/lang/0157`.
+ */
+export string missingImportParts(string[] paths, string[] sources, Res res, string entry) {
+  i32[] starts = i32[1024]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
+  string[] filePaths = string[1024]();
+  linkFiles(paths, sources, res, entry, starts, edges, names, filePaths);
+  if (starts[0] != 4) { return ""; }
+  if (filePaths.len() < 3 || filePaths[1] == "" || filePaths[2] == "") { return ""; }
+  return filePaths[0] + "\t" + filePaths[1] + "\t" + filePaths[2];
+}
+
 string linkFailure(string[] paths, string[] sources, Res res, string entry) {
   i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();

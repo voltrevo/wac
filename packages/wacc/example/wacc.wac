@@ -24,7 +24,7 @@ import { Change, Cli, Core, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
-         covTableFilesIn, describeSeparator, diagnoseGraphIn, exportSigsFilesIn,
+         covTableFilesIn, describeSeparator, diagnoseGraphIn, exportSigsFilesIn, missingImportFilesIn,
          wireHasErrors,
          emitFilesCoveredIn, emitFilesTraced, emitFilesTracedSlots, traceTableFiles,
          manifestWire } from "../src/api.wac";
@@ -473,6 +473,56 @@ Sources gather(Fs fs, Cli cli, string entry) {
   return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "", "");
 }
 
+/**
+ * A missing import rendered where it was written, or `""` when it cannot be located.
+ *
+ * `parts` is `key\tfrom\tspec` from `missingImportFilesIn`. The specifier is found in the importing
+ * file's source **by string comparison** — quoted, so a word appearing in prose cannot match — and the
+ * line and column come from counting to it. Nothing is resolved here, which is the whole reason this is
+ * possible at all. `issues/lang/0157`.
+ */
+string positionedMissingImport(string parts, string[] paths, string[] texts) {
+  string key = fieldOf(parts, 0);
+  string from = fieldOf(parts, 1);
+  string spec = fieldOf(parts, 2);
+  if (key == "" || from == "" || spec == "") { return ""; }
+  i32 at = -1;
+  for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == from) { at = i; } }
+  if (at < 0) { return ""; }
+  string src = texts[at];
+  // Quoted, so `./b.wac` written in a comment above the import does not win the search.
+  i32 hit = src.indexOf("\"" + spec + "\"");
+  if (hit < 0) { return ""; }
+  i32 line = 1;
+  i32 col = 1;
+  for (i32 i = 0; i < hit; i++) {
+    if (src.slice(i, i + 1) == "\n") { line = line + 1; col = 1; } else { col = col + 1; }
+  }
+  // The wire `render.wac` reads: file, line, col, phase, message, note, hint, width.
+  string wire = from + "\t" + itoa(line) + "\t" + itoa(col) + "\tlink\t"
+      + "no file was supplied at that path\t" + key + "\t"
+      + "supply the file, or check the path — `core` and `std` are the only trees that need none\t"
+      + itoa(spec.len() + 2) + "\n";
+  return renderDiagnostics(wire, paths, texts);
+}
+
+/** One tab-separated field of `line`, or `""`. */
+string fieldOf(string line, i32 n) {
+  i32 seen = 0;
+  string cur = "";
+  for (i32 i = 0; i < line.len(); i++) {
+    string ch = line.slice(i, i + 1);
+    if (ch == "\t") {
+      if (seen == n) { return cur; }
+      seen = seen + 1;
+      cur = "";
+      continue;
+    }
+    cur = cur + ch;
+  }
+  return seen == n ? cur : "";
+}
+
 /** The arrays the API wants: exactly `n` long, since it walks their whole length. */
 string[] exactly(string[] xs, i32 n) {
   string[] out = string[n](fill: "");
@@ -771,6 +821,15 @@ export i32 main(Core core, Cli cli) {
   // end rather than from one of its own; the module beside it is discarded unread when this fires,
   // which is the one case where folding the walks does work that used to be skipped.
   if (blocked != "") {
+    // **One decline can be pointed at, so it is.** A missing import is the one refusal the linker can
+    // locate: it knows the key, the file that asked and the specifier as written — and the specifier is
+    // what makes a position findable *by comparison*, without resolving anything, which is the step
+    // that cannot be redone soundly inside a mapped checkout. `issues/lang/0157`.
+    string parts = missingImportFilesIn(paths, texts, res, entry);
+    if (parts != "") {
+      string shown = positionedMissingImport(parts, paths, texts);
+      if (shown != "") { core.warn(shown); return 1; }
+    }
     core.warn("wacc: cannot emit " + entry + " — " + blocked);
     return 1;
   }
