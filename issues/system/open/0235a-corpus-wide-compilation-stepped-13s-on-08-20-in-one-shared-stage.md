@@ -283,3 +283,28 @@ It also sharpens the awkwardness: the two commits in the window that touch the f
 two already measured out against `describewac_test` itself (`setType`, 17704ms against 17515ms; and
 `declinedExport`, read). So the front end got slower in a window whose only front-end changes do not
 account for it.
+
+### The front end, decomposed — and the syntax half is not where the time is
+
+Measured on `describewac_test` (14.2s, four front ends over large closures including `boxsh.wac`'s 182
+files), by **doubling each function's body** rather than a call site — the fix for the flaw noted above,
+since a wrapper makes every caller pay:
+
+    lex            354ms of 14190ms    2.5%
+    parseProgram  2576ms of 14190ms     18%
+    the rest                          ~80%   — check, settle, emit
+
+So the syntax phases are a fifth of it and the semantic phases are the rest. That is where the 08-20 step
+must be, and it is consistent with the differential response to the two graph optimisations: `corpuscheck`
+(graph) moved 3.3×, `describewac` (front end) 1.2×.
+
+**Why the last row is not split, which is a limit of the instrument.** Doubling works only on a *pure*
+function. `lex(src)` is one, and `parseProgram(P p)` becomes one if the wrapper builds a second `P` from
+`p.src`, `p.toks` and `p.tokCount` — the spare's errors are then discarded, so no diagnostic is reported
+twice. `checkModule(C c, …)` and `settleEmittable(Env env, …)` mutate state that arrives already
+populated: a spare `C` has none of the module's imports declared, so it would do *less* work and the
+measurement would understate rather than double. I did not fake it.
+
+Splitting those needs either a clock the compiler can read internally, or a real profiler. Neither exists
+here — `harness/wacProfile.ts` records which *lines* a test executes, for mutation selection, not how long
+they take.
