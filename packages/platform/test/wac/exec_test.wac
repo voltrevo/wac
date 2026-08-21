@@ -6,11 +6,18 @@
 // `capture-*.py` tools that produce this repository's committed vectors. Nine of those spawn, and
 // every one of them does it the same way: run it to completion, hand it stdin, read stdout.
 //
-// **Buffered only, and that is a measurement rather than a simplification.** Of the 107 host-side
-// test files that spawn a process, none reads a child's output while still writing to it. The
-// fifteen that keep a child alive start a *server* and then talk to it over a socket, which is
+// **Buffered by default, and that is a measurement rather than a simplification.** Of the 107
+// host-side test files that spawn a process, none reads a child's output while still writing to it.
+// The fifteen that keep a child alive start a *server* and then talk to it over a socket, which is
 // `connect` and already exists. So `exec` runs to completion and answers the three things a caller
 // can act on.
+//
+// **`execWith` is the same capability with the three things a runner needs**, added 2026-08-20: an
+// environment for the child, `clearEnv` to make that environment the whole of what it gets
+// (`issues/system/0198`), and `inherit` to send its output to this program's own streams instead of
+// collecting it. `Cli.exec` is a method that calls it with none of them. The last is the nearest
+// thing here to streaming and is not the pipe surface `issues/system/0165` ruled out: the bytes
+// arrive as they are written, and nothing in wac reads them.
 //
 // The status is the exit code and **not** a fault: a program that ran and failed is a different fact
 // from a program that could not be started, and a differential oracle asserts on the first
@@ -19,6 +26,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Pending } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 
 string text(u8[] b) { return string.fromBytes(b); }
 
@@ -190,5 +198,122 @@ export string test_three_children_run_at_once(Core core, Cli cli) {
   t.isTrue(submitMs < (900 as i64),
            "taking three tickets took " + itoa(submitMs as! i32) +
            "ms, so `exec` blocked at the call rather than at the wait");
+  return t.report();
+}
+
+/**
+ * The child is handed variables, and keeps the ones it was already going to get.
+ *
+ * `exec` had no way to say this, and the caller that wants it is a test runner: `tools/runTests.ts`
+ * passes the worker count to `deno test` as `DENO_JOBS`, which is a thing you can only say in an
+ * environment. Every child until now got the host process's environment and nothing else, so a
+ * caller who needed one variable different had no way to ask.
+ *
+ * **Added to, not replacing.** A child that lost `PATH` and `HOME` because its parent wanted to set
+ * one variable would be a worse default than the one it replaces: `git`, `deno` and `openssl` all
+ * read the environment for things a caller of an oracle is not thinking about. So the third
+ * assertion is the one that pins the semantics, and the fourth is that a name handed over wins over
+ * an inherited value of the same name.
+ */
+export string test_the_child_is_handed_an_environment(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.execWith("/bin/sh", string[]("-c", "printf %s \"$WAC_EXEC_PROBE\""), u8[0](),
+                        string[]("WAC_EXEC_PROBE=handed over"), false, false).wait();
+  t.isTrue(r.ran(), "sh ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "it exited zero");
+  t.isTrue(text(r.stdout) == "handed over",
+           "the variable reached the child, not \"" + text(r.stdout) + "\"");
+
+  // The other direction, and the one a replacing implementation would fail: a name nobody mentioned
+  // is still there. `PATH` rather than a variable of our own, because it is the one whose absence
+  // makes a plain `sh -c "grep …"` stop working while an absolute path still runs.
+  Exec keep = cli.execWith("/bin/sh", string[]("-c", "printf %s \"$PATH\""), u8[0](),
+                           string[]("WAC_EXEC_PROBE=irrelevant"), false, false).wait();
+  t.isTrue(keep.ran() && keep.stdout.len() > 0,
+           "and the environment it would have had anyway survived: PATH is " +
+           itoa(keep.stdout.len()) + " bytes");
+
+  Exec over = cli.execWith("/bin/sh", string[]("-c", "printf %s \"$WAC_EXEC_PROBE\""), u8[0](),
+                           string[]("WAC_EXEC_PROBE=first", "WAC_EXEC_PROBE=second"), false,
+                           false).wait();
+  t.isTrue(text(over.stdout) == "second",
+           "a name given twice takes the last value, not \"" + text(over.stdout) + "\"");
+  return t.report();
+}
+
+/**
+ * `clearEnv` hands the child exactly what it was given, which is `issues/system/0198`.
+ *
+ * The over-grant that issue is about: a program refused `--allow-env` cannot read `HOME`, and could
+ * until now run `printenv` and be told. This is the parameter that lets a caller stop it, and
+ * `issues/system/0182` is the argument for making it the default — a sweep of 342 call sites, each
+ * of which has to answer "which of these did it actually need", rather than anything this test does.
+ *
+ * **`printenv` rather than a shell, and that is a measurement.** The first version of this asked
+ * `/bin/sh -c 'printf %s "$PATH"'` and read back
+ * `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` from a child whose environment had
+ * been cleared: a POSIX shell *assigns* `PATH` a default when it starts without one. The clearing had
+ * worked — the inherited value begins `/home/claude/.cargo/bin` and that was gone — but the oracle
+ * could not see it, because the thing being measured was replaced by the instrument. `printenv` is
+ * the whole environment as the child received it, with nothing in between.
+ */
+export string test_a_cleared_environment_is_only_what_was_passed(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.execWith("/usr/bin/printenv", string[](), u8[0](),
+                        string[]("WAC_EXEC_PROBE=only this"), true, false).wait();
+  t.isTrue(r.ran(), "printenv ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.isTrue(text(r.stdout) == "WAC_EXEC_PROBE=only this\n",
+           "the child's whole environment is what it was passed, not \"" + text(r.stdout) + "\"");
+
+  // The canary, and it is the one that makes the assertion above mean something: the same program,
+  // not cleared, sees the environment this process has. Without it a host that started nothing —
+  // or one that cleared unconditionally — would print one line or none and read as correct.
+  Exec had = cli.execWith("/usr/bin/printenv", string[](), u8[0](),
+                          string[]("WAC_EXEC_PROBE=only this"), false, false).wait();
+  t.isTrue(had.stdout.len() > r.stdout.len() + 100,
+           "and the uncleared run sees this process's own environment: " + itoa(had.stdout.len()) +
+           " bytes against " + itoa(r.stdout.len()));
+  t.isTrue(text(had.stdout).indexOf("WAC_EXEC_PROBE=only this") >= 0,
+           "with the passed name still in it");
+  return t.report();
+}
+
+/**
+ * An inherited stream goes to this program's own output, and not into the answer.
+ *
+ * The caller is the same one: a suite runner shows the lanes it is running as they run, which is
+ * `stdout: "inherit"` in `tools/runTests.ts` today. Through a buffered `exec` a three-minute suite is
+ * silent until it ends.
+ *
+ * **Three levels, because two cannot see it.** A program cannot read its own stdout, so the program
+ * that asks for inheritance cannot check where the output went. `inherit_probe.wac` asks, this test
+ * runs *it* buffered, and what the probe's stdout turns out to contain is the claim.
+ *
+ * The probe prints the two lengths as well, which is what separates "inherited" from "buffered and
+ * also printed": a host that ignored the flag would still let the echoed line reach here, in the
+ * answer rather than on the stream.
+ */
+export string test_an_inherited_stream_reaches_our_own_output(Core core, Cli cli) {
+  T t = T.create();
+  string mod = builtProgram(cli, "packages/platform/test/wac/exec_probe.wac", "exec-probe",
+                            string[]("--allow-run"));
+  Exec r = cli.exec(wacBinary(cli), string[](mod), u8[0]()).wait();
+  t.isTrue(r.ran(), "the probe ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  string out = text(r.stdout);
+  string log = text(r.stderr);
+  t.eqI32(r.status, 0, "the probe exited zero: " + out + log);
+  t.isTrue(out.indexOf("from the grandchild") >= 0,
+           "the grandchild's line arrived on the probe's own stdout: \"" + out + "\"");
+  t.isTrue(log.indexOf("inherit: ran=yes status=0 buffered=0/0") >= 0,
+           "and the probe's own answer carried none of it: " + log);
+  // The other two parameters, from the same program, because the probe reports all three and a test
+  // that read one of its lines would leave the other two to a host nothing runs.
+  t.isTrue(log.indexOf("env: ran=yes handed=yes kept-others=yes") >= 0,
+           "the environment reached a child of the probe too: " + log);
+  t.isTrue(log.indexOf("cleared: ran=yes only-what-was-passed=yes") >= 0,
+           "and clearing it reached one: " + log);
   return t.report();
 }

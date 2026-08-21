@@ -33,12 +33,13 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { quoted } from "../../../wactest/src/childenv.wac";
 import { jsonFile } from "../../../wactest/src/jsonfile.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { customSection } from "./section.wac";
 
 const string ENTRY = "packages/platform/example/wacland.wac";
+/** The `Cli.execWith` transcript, for the comparison `conformance_test.wac` asks for. */
+const string EXEC_PROBE = "packages/platform/test/wac/exec_probe.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
@@ -51,15 +52,17 @@ struct Ran {
 /**
  * Run it with the machine's environment plus one name.
  *
- * Stage 6's environment half reads `WACLAND_PROBE`. Added rather than replacing the environment, so
- * the two hosts are asked the same question whatever the shell happened to export — and through a
- * shell line, because `Cli.exec` takes a program and arguments and not a world.
+ * Stage 6's environment half reads `WACLAND_PROBE`. Added rather than replacing, so the two hosts
+ * are asked the same question whatever the shell happened to export.
+ *
+ * **No shell since 2026-08-20.** This went through `/bin/sh -c` with every word quoted, because
+ * "`Cli.exec` takes a program and arguments and not a world" — and `Cli.execWith` now takes the
+ * world (`issues/system/0182`). One process instead of two, no quoting to get wrong, and a path
+ * containing a space is no longer a thing this has to be careful about.
  */
 Ran runIt(Cli cli, string cmd, string[] args) {
-  string line = "WACLAND_PROBE=seen exec " + quoted(cmd);
-  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
-  Exec r = cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
-  if (!r.ran()) { return Ran(-1, "", "the shell did not run — " + r.error); }
+  Exec r = cli.execWith(cmd, args, u8[0](), string[]("WACLAND_PROBE=seen"), false, false).wait();
+  if (!r.ran()) { return Ran(-1, "", cmd + " did not run — " + r.error); }
   return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
 }
 
@@ -79,11 +82,11 @@ string nativeBinary(Core core, Cli cli) {
   return path;
 }
 
-string buildOne(Cli cli, bool native, string out, string[] grants) {
+string buildOne(Cli cli, string entry, bool native, string out, string[] grants) {
   if (native) {
     string[] args = string[4 + grants.len()](fill: "");
     args[0] = "build";
-    args[1] = ENTRY;
+    args[1] = entry;
     for (i32 i = 0; i < grants.len(); i++) { args[2 + i] = grants[i]; }
     args[2 + grants.len()] = "-o";
     args[3 + grants.len()] = out;
@@ -93,7 +96,7 @@ string buildOne(Cli cli, bool native, string out, string[] grants) {
     }
     return "";
   }
-  string[] head = string[]("run", "-A", "packages/platform/build.ts", ENTRY);
+  string[] head = string[]("run", "-A", "packages/platform/build.ts", entry);
   string[] args = string[head.len() + grants.len() + 2](fill: "");
   for (i32 i = 0; i < head.len(); i++) { args[i] = head[i]; }
   for (i32 i = 0; i < grants.len(); i++) { args[head.len() + i] = grants[i]; }
@@ -235,7 +238,7 @@ export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_tha
   string denoProgram = dir + "/wacland-deno";
   // **With reading**, which stage 6 needs: it hands a child `GRANT_NONE` and then `GRANT_READ`, and a
   // parent that could not read either way would prove nothing about the ceiling.
-  string why = buildOne(cli, false, denoProgram, string[]("--allow-read", "--allow-env"));
+  string why = buildOne(cli, ENTRY, false, denoProgram, string[]("--allow-read", "--allow-env"));
   t.eqStr(why, "", "the Deno half built");
   if (why != "") { return t.report(); }
   Ran js = runIt(cli, denoProgram, string[]("one", "two"));
@@ -245,7 +248,7 @@ export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_tha
 
   string native = nativeBinary(core, cli);
   if (native == "") { cli.remove(dir, true).wait(); return t.report(); }
-  why = buildOne(cli, true, dir + "/wacland", string[]("--allow-read", "--allow-env"));
+  why = buildOne(cli, ENTRY, true, dir + "/wacland", string[]("--allow-read", "--allow-env"));
   t.eqStr(why, "", "the native half built");
   if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
   Ran rs = runIt(cli, native, string[](dir + "/wacland.wasm", "one", "two"));
@@ -323,7 +326,7 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
   // previous field's function. Every call would go somewhere plausible.
   T t = T.create();
   string dir = scratch(cli, "order");
-  string why = buildOne(cli, true, dir + "/order", string[0](fill: ""));
+  string why = buildOne(cli, ENTRY, true, dir + "/order", string[0](fill: ""));
   t.eqStr(why, "", "the manifest built");
   if (why != "") { return t.report(); }
 
@@ -395,6 +398,46 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
       else: { }
     }
   }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * Running a host program agrees between the two hosts, which nothing had ever asked.
+ *
+ * `conformance_test.wac`'s ledger carried `EXEC` as a gap for a reason worth quoting: *"one host, and
+ * the cost of that came due twice"* — the arithmetic is written three times, and both a deadlock and
+ * a ticket that came back already answered were found by writing programs that needed the capability
+ * rather than by comparing the implementations. The wasmtime host's copy had never run a host program
+ * in any test at all.
+ *
+ * One module, built once, run by both binaries. The probe reports three verdicts on stderr and lets
+ * its grandchild write to stdout, so what is compared is two streams that cannot interleave — and
+ * every verdict is a thing the probe could only reach by running something, which is what keeps this
+ * from being two hosts agreeing about having lost the capability.
+ */
+export string test_running_a_host_program_agrees_between_the_two_native_hosts(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "exec");
+  string out = dir + "/probe";
+  string why = buildOne(cli, EXEC_PROBE, true, out, string[]("--allow-run"));
+  t.eqStr(why, "", "the probe built");
+  if (why != "") { cli.remove(dir, true).wait(); return t.report(); }
+
+  // The V8 host first, and asserted on its own, so a skipped native half still tests something.
+  Ran v8 = runIt(cli, root(cli) + "/native/v8/target/release/wac", string[](out + ".wasm"));
+  t.eqI32(v8.code, 0, "the probe exited zero on the V8 host: " + v8.out + v8.err);
+  t.isTrue(contains(v8.err, "inherit: ran=yes status=0 buffered=0/0"), v8.err);
+  t.isTrue(contains(v8.err, "env: ran=yes handed=yes kept-others=yes"), v8.err);
+  t.isTrue(contains(v8.err, "cleared: ran=yes only-what-was-passed=yes"), v8.err);
+  t.isTrue(contains(v8.out, "from the grandchild"), "the inherited stream: " + v8.out);
+
+  string native = nativeBinary(core, cli);
+  if (native == "") { cli.remove(dir, true).wait(); return t.report(); }
+  Ran rs = runIt(cli, native, string[](out + ".wasm"));
+  t.eqI32(rs.code, 0, "and on the wasmtime host: " + rs.out + rs.err);
+  t.eqStr(rs.err, v8.err, "the two hosts disagree about `execWith`");
+  t.eqStr(rs.out, v8.out, "the two hosts disagree about the inherited stream");
   cli.remove(dir, true).wait();
   return t.report();
 }

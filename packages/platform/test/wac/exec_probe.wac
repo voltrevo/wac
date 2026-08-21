@@ -1,0 +1,45 @@
+// What `Cli.execWith`'s three parameters do, from inside a program, as a transcript.
+//
+// Two callers, for two reasons that need the same program. `exec_test.wac` runs it because the
+// *inherited* case cannot be checked by the program that asks for it — a child writes to this
+// program's stdout, and a program cannot read its own, so the claim needs three levels and the test
+// is the one that reads the outcome. `runtimes_test.wac` runs it because a capability implemented
+// once per host is a capability implemented four times, and two of those are only ever reached from
+// a program built for them.
+//
+// **The verdicts go to stderr and the inherited bytes to stdout**, which is what makes the two
+// streams comparable between hosts. An inherited child writes to the real descriptor whenever it
+// gets there and this program's own writes are buffered by whatever is underneath; on one stream
+// their order is a race, and on two there is nothing to race.
+//
+// Each line is a verdict rather than a measurement, for the same reason: the *number* of inherited
+// variables differs between a program launched by `deno` and one launched by `node`, and neither
+// number is the claim. "Did the name we passed arrive" is.
+
+import { Cli, Core, Exec } from "std/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+string yn(bool b) { return b ? "yes" : "no"; }
+
+export i32 main(Core core, Cli cli) {
+  // Inherited: the line below arrives on *this* program's stdout, and the answer carries none of it.
+  Exec a = cli.execWith("/bin/echo", string[]("from the grandchild"), u8[0](), string[](),
+                        false, true).wait();
+  cli.writeErr(("inherit: ran=" + yn(a.ran()) + " status=" + itoa(a.status) +
+                " buffered=" + itoa(a.stdout.len()) + "/" + itoa(a.stderr.len()) + "\n").toBytes());
+
+  // Handed a name, and the environment it would have had anyway is still there.
+  Exec b = cli.execWith("/usr/bin/printenv", string[](), u8[0](),
+                        string[]("WAC_EXEC_PROBE=handed over"), false, false).wait();
+  string had = string.fromBytes(b.stdout);
+  cli.writeErr(("env: ran=" + yn(b.ran()) +
+                " handed=" + yn(had.indexOf("WAC_EXEC_PROBE=handed over") >= 0) +
+                " kept-others=" + yn(had.indexOf("PATH=") >= 0) + "\n").toBytes());
+
+  // Cleared: exactly what was passed, which is `issues/system/0198`'s end state.
+  Exec c = cli.execWith("/usr/bin/printenv", string[](), u8[0](),
+                        string[]("WAC_EXEC_PROBE=only this"), true, false).wait();
+  cli.writeErr(("cleared: ran=" + yn(c.ran()) + " only-what-was-passed=" +
+                yn(string.fromBytes(c.stdout) == "WAC_EXEC_PROBE=only this\n") + "\n").toBytes());
+  return 0;
+}

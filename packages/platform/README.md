@@ -65,7 +65,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 | | `spawn`, `spawnSelf`, `closeFeed`, `exitCode` | — (the child gets what you pass, never more) |
 | | `cwd` | — (a read; there is no `chdir`) |
 | | `pushChild`, `popChild` | — (a child *inside* this program, with this program's authority) |
-| | `exec` | `--allow-run` — a **host program**, which `spawn` is not; a page has no form of it |
+| | `execWith` | `--allow-run` — a **host program**, which `spawn` is not; a page has no form of it. `Cli.exec` is the short form: no environment, nothing cleared, output buffered |
 | `Page` | `render`, `setText`, `setValue`, `setStyle`, `getValue`, `on`, `nextEvent`, `title` | browser only |
 | | `drawPixels`, `drawPixelsIn`, `nextFile`, `offerDownload` | browser only |
 

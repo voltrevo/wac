@@ -176,8 +176,12 @@ export string test_env_distinguishes_unset_from_empty(Core core, Cli cli) {
   // An empty value is still *set*, so the timing line appears. A nullable string is what makes the
   // difference expressible at all — it is why `string?` had to cross.
   //
-  // Through `/bin/sh` because `Cli.exec` passes no environment of its own: the child inherits this
-  // process's, and `VAR= exec prog` is how one variable is added to that without a second capability.
+  // Through `/bin/sh`, and since 2026-08-20 that is for the *unset* half only. `Cli.execWith` takes
+  // an environment now — `issues/system/0182` — so the set-but-empty run could hand over
+  // `WC_VERBOSE=` directly. Removing a name still has no spelling but `unset`, and the two runs have
+  // to differ in the variable and in nothing else, so both stay on a shell line. `clearEnv: true`
+  // would express the second run exactly and break both: the built program's shebang is
+  // `/usr/bin/env -S … deno run`, which needs a `PATH` to find `deno` with.
   T t = T.create();
   string dir = scratch(cli, "env");
   string app = dir + "/wc";

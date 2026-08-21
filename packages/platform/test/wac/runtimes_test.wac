@@ -23,6 +23,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 
 const string WC = "packages/platform/example/wc.wac";
 const string ROUNDTRIP = "packages/platform/example/roundtrip.wac";
+const string PROBE = "packages/platform/test/wac/exec_probe.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
@@ -266,6 +267,61 @@ export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_tak
   // It got that far, which is what makes the line above a statement about `stat` rather than about
   // whichever capability happened to fail first.
   t.isTrue(contains(dOut, "wrote roundtrip.txt"), dOut);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * The two runtimes agree about running a *host program* — `Cli.execWith` on each.
+ *
+ * The one capability in this file's list that had never been reached from a program built for either
+ * of these hosts. Every caller of `exec` in the repository runs under the `wac` binary, so the Deno
+ * and Node handlers were code that type-checked: `issues/system/0165` added the capability with four
+ * implementations and three of them are exercised by a test somewhere, this being the two that were
+ * not. It was worth writing when the parameters changed, because a payload the caller and the host
+ * disagree about is a silent misread rather than an error — the environment would arrive as the head
+ * of stdin.
+ *
+ * `exec_probe.wac` reports three verdicts on stderr and lets its grandchild write to stdout, so what
+ * is compared here is two streams that cannot interleave. What is *not* compared is the number of
+ * variables either child inherited: `deno` and `node` each add their own, and neither count is the
+ * claim.
+ */
+export string test_the_two_runtimes_agree_about_running_a_host_program(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "exec");
+  string denoOut = dir + "/probe-deno";
+  string nodeOut = dir + "/probe-node";
+  bool okD = build(t, cli, PROBE, denoOut, "deno", string[]("--allow-run"));
+  bool okN = build(t, cli, PROBE, nodeOut, "node", string[]("--allow-run"));
+  if (!okD || !okN) { cli.remove(dir, true).wait(); return t.report(); }
+
+  Exec d = cli.exec(denoOut, string[](), u8[0]()).wait();
+  Exec n = cli.exec("node", string[](nodeOut), u8[0]()).wait();
+  t.isTrue(d.ran() && n.ran(), "both builds ran — " + d.error + n.error);
+  if (!d.ran() || !n.ran()) { cli.remove(dir, true).wait(); return t.report(); }
+
+  string dLog = string.fromBytes(d.stderr);
+  string nLog = string.fromBytes(n.stderr);
+  t.eqStr(nLog, dLog, "Deno and Node told different stories about `execWith`");
+  t.eqI32(n.status, d.status, "exit " + itoa(d.status) + " against " + itoa(n.status));
+
+  // The transcript as well as the agreement: two hosts that had both lost the capability would
+  // agree perfectly, and every one of these lines is a verdict the probe could only reach by
+  // running something.
+  t.isTrue(contains(dLog, "inherit: ran=yes status=0 buffered=0/0"),
+           "an inherited stream carried the bytes and the answer carried none:\n" + dLog);
+  t.isTrue(contains(dLog, "env: ran=yes handed=yes kept-others=yes"),
+           "a handed variable arrived and the inherited ones stayed:\n" + dLog);
+  t.isTrue(contains(dLog, "cleared: ran=yes only-what-was-passed=yes"),
+           "a cleared environment was only what was passed:\n" + dLog);
+
+  // And the inherited bytes themselves, which are on the other stream: the grandchild wrote to the
+  // probe's stdout, which is this pipe, on both hosts.
+  t.eqStr(trimmed(string.fromBytes(n.stdout)), trimmed(string.fromBytes(d.stdout)),
+          "the inherited stream differed between the runtimes");
+  t.eqStr(trimmed(string.fromBytes(d.stdout)), "from the grandchild",
+          "the grandchild's line reached the probe's own stdout");
   cli.remove(dir, true).wait();
   return t.report();
 }

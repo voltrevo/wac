@@ -1911,8 +1911,51 @@ export struct Cli {
    * keep a child alive start a *server* and then talk to it over a socket, which is `connect`. So
    * there is no streaming form here, and adding one should wait for a caller that needs it.
    * `issues/system/0165` records the count.
+   *
+   * `env` is `NAME=value` strings, and a name given twice takes the last value. A string with no
+   * `=` in it is ignored rather than being a fault: there is nothing it could mean.
+   *
+   * **`clearEnv` is the whole of `issues/system/0198`**, which is why this parameter exists at all
+   * rather than only the four the runner wanted. False — what `Cli.exec` passes — *adds* `env` to
+   * everything this process holds, and that inheritance is an authority nobody declared: a program
+   * refused `--allow-env` can still read `HOME` by running `printenv`, so `--allow-run` confers
+   * `--allow-env`. True hands the child exactly `env` and nothing else, which is the shape
+   * `issues/system/0182` argued for — total, so that what you pass is what it gets and passing
+   * nothing means nothing.
+   *
+   * It is not the default **yet**, and the reason is a count rather than a doubt: 342 call sites,
+   * many of them oracles that read `PATH` or reach the network through a proxy variable, and every
+   * one of them needs its own answer to "which of these did it actually need". Flipping the default
+   * is that sweep, not this parameter. `Cli.exec` is where it flips.
+   *
+   * **Removing a named variable is still not expressible**, and `clearEnv` is not it: a caller who
+   * wants everything *except* one name has to name what stays, and nothing here can enumerate the
+   * environment — `Cli.env` answers one name at a time. `packages/wactest/src/childenv.wac`'s
+   * `withoutEnv` uses a shell's `unset` for that, and has to.
+   *
+   * `inherit` sends the child's stdout and stderr to this program's own, and then `Exec.stdout` and
+   * `Exec.stderr` come back **empty**: the bytes went somewhere else, and reporting them in both
+   * places would be a copy the caller cannot ask not to have. `status` still arrives. It is what a
+   * runner wants — a lane that shows its output as it runs, rather than three minutes of silence and
+   * then everything — and it is the nearest thing here to streaming: incremental output, without a
+   * caller having to read it. What it is *not* is capturable — an inherited stream goes to the real
+   * file descriptor, so `pushChild`'s capture does not see it.
    */
-  fn[Pending<Exec>(string, string[], u8[])] exec;
+  fn[Pending<Exec>(string, string[], u8[], string[], bool, bool)] execWith;
+
+  /**
+   * `execWith` with nothing added, nothing cleared and buffered output — what almost every caller
+   * wants: 342 call sites in 154 files, and the ones that do not are a test runner and the fixtures
+   * that need a child's environment to be theirs rather than the machine's.
+   *
+   * A method rather than a second capability, so that there is one thing for a host to implement and
+   * one payload on the bridge. It is also **where the default flips** when `issues/system/0198` is
+   * closed: the second `false` below becomes `true`, and the call sites that were relying on
+   * inheritance fail here rather than in six hosts.
+   */
+  Pending<Exec> exec(const this, string path, string[] args, u8[] stdin) {
+    return this.execWith(path, args, stdin, string[](), false, false);
+  }
 
 
   Cli of(
@@ -1952,14 +1995,14 @@ export struct Cli {
     fn[Pending<string>()] cwd,
     fn[Pending<bool>(string[], u8[], string, bool)] pushChild,
     fn[Pending<Captured>()] popChild,
-    fn[Pending<Exec>(string, string[], u8[])] exec
+    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool)] execWith
   ) {
     return Cli(
       argCount, arg, env, readStdin, write, writeErr, readFile, writeFile, stat, linkStat, readDir,
       mkdir, remove, rename, setExecutable, openInput, readChunk, outputError, openOutput,
       connect, listen, accept, recv, send, closeSocket, closeSend, bindDatagram, receiveFrom, sendTo,
       spawn, spawnSelf, closeFeed, exitCode, cwd,
-      pushChild, popChild, exec
+      pushChild, popChild, execWith
     );
   }
 }

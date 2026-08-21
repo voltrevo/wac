@@ -84,22 +84,28 @@ Cover[] coverage() {
       "but runs on one of them. Worth pairing when native_hostfs next grows a case: the arithmetic is " +
       "duplicated three times (Deno, Node, Rust) and only the Deno copy is exercised, so a wrong mask " +
       "in the other two would not be caught here. issues/system/0132"),
-    gap("EXEC",
-      "one host, and the cost of that came due twice. `packages/platform/test/wac/exec_test.wac` " +
-      "drives it on the V8 host — cases run *twice*, once with `--allow-run` where they pass and once " +
-      "without where they fail, which is what says the grant gates rather than decorates. Nothing " +
-      "runs it on the wasmtime host, and the arithmetic is written three times (Rust twice, Deno " +
-      "once). **All three had the same deadlock**: stdin was written to the end before either output " +
-      "pipe was read, so a child that answers while it is being fed — `cat`, `grep`, any filter — " +
-      "blocked on its own output past the pipe buffer while the host blocked on the write. Two " +
-      "megabytes through `cat` hung every one of them. " +
-      "**And both Rust hosts then ran the child inside the call**, so the ticket came back already " +
-      "answered and two `exec` calls could not overlap however they were written — three one-second " +
-      "sleeps submitted together took 3012ms to submit and 1ms to wait, against the Deno host's 8ms " +
-      "and 1001ms. Neither of those was found by a row here; the first came from batching a corpus " +
-      "through `grep`, the second from porting a test that ran its cases three at a time. That is " +
-      "twice that a difference between the three implementations was found by writing a program that " +
-      "needed the capability, and never by comparing them. issues/system/0165, 0173, 0211"),
+    where("EXEC_WITH",
+      "native: one module built once and run by both native binaries — `native_test.wac`'s " +
+      "`test_running_a_host_program_agrees_between_the_two_native_hosts`, which compares the three " +
+      "verdicts `exec_probe.wac` prints (an inherited stream, an added environment, a cleared one) " +
+      "and the grandchild's line on the other stream. `exec_test.wac` drives the V8 host on its own, " +
+      "with cases run *twice* — once with `--allow-run` where they pass and once without where they " +
+      "fail, which is what says the grant gates rather than decorates — and `runtimes_test.wac` runs " +
+      "the same probe on the Deno and Node hosts and compares those two with each other, so all four " +
+      "implementations are now reached. " +
+      "**This was a gap until 2026-08-20 and it cost twice.** The arithmetic is written three times " +
+      "(Rust twice, Deno once) and all three had the same deadlock: stdin was written to the end " +
+      "before either output pipe was read, so a child that answers while it is being fed — `cat`, " +
+      "`grep`, any filter — blocked on its own output past the pipe buffer while the host blocked on " +
+      "the write, and two megabytes through `cat` hung every one of them. Then both Rust hosts ran " +
+      "the child inside the capability call, so the ticket came back already answered and two `exec` " +
+      "calls could not overlap however they were written — three one-second sleeps took 3012ms to " +
+      "submit and 1ms to wait, against the Deno host's 8ms and 1001ms. Neither was found by a row " +
+      "here; the first came from batching a corpus through `grep`, the second from porting a test " +
+      "that ran its cases three at a time. **A third arrived the day the row was closed**: the Node " +
+      "host raised EPIPE as an unhandled event when `/bin/echo` exited without reading its stdin, " +
+      "which killed the host — nothing had run `echo` through it before. issues/system/0165, 0173, " +
+      "0182, 0198, 0211"),
     where("OPEN_INPUT", "native_hostfs: `cat < f`, refused with no grant"),
     where("OPEN_OUTPUT", "native_hostfs: `echo new > made`"),
     where("READ_CHUNK",

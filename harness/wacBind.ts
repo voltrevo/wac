@@ -29,6 +29,11 @@
 // its output.
 
 import { wacCompile } from "wac/wacCompile.ts";
+// **`ROOT`, because these paths are the *compiler's own* and not the caller's.** They were bare
+// relative strings, so the Deno-hosted path only worked with the wac checkout as the working
+// directory: from a project of your own it died with `NotFound … readfile
+// 'packages/wacc/src/api.wac'` and a ten-frame stack. GitHub issue 21, `issues/system/0228a`.
+import { ROOT } from "./programs.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
 import { wacFiles } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
@@ -79,8 +84,8 @@ async function bindKey(
   // `packages/wacc/tools/waccBindgen.ts`, which none of the parts above cover: a fix to it was
   // served the previous run's broken artifact and looked like no fix at all.
   const wacc = from === "reference/reference" ? [] : [
-    ...await hashDir("packages/wacc/src", ".wac"),
-    ...await hashDir("packages/wacc/tools", ".ts"),
+    ...await hashDir(`${ROOT}/packages/wacc/src`, ".wac"),
+    ...await hashDir(`${ROOT}/packages/wacc/tools`, ".ts"),
   ];
   return await contentKey(["bind", entry, from, ...wacc, ...compiler, ...harness, ...filesParts(files)]);
 }
@@ -151,7 +156,7 @@ async function waccApi(): Promise<WaccApi> {
     // **Asked for, not announced.** The seed builds wacc — the bootstrap has to start somewhere —
     // and saying so through the process environment told every concurrent bind the same thing. See
     // `bindFrom`.
-    waccCached = (await wacBind("packages/wacc/src/api.wac", {
+    waccCached = (await wacBind(`${ROOT}/packages/wacc/src/api.wac`, {
       from: "reference",
       wasmFrom: "reference",
     })) as unknown as WaccApi;

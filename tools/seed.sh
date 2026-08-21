@@ -47,6 +47,41 @@
 # silently uses it.
 set -euo pipefail
 
+# **Cargo, checked first and named as what it is.** The seed is a wasm module the `wac` binary carries,
+# so building it means building the binary — and `native/v8` is Rust. Without cargo the build below
+# failed with status 127 after about six seconds, with its stderr sent to /dev/null and `set -e`
+# aborting the script, so what an outsider saw was a command that stopped for no stated reason and
+# looked like a hang. Reported from a fresh checkout by somebody following `docs/your-own-project.md`,
+# which did not list cargo either. GitHub issue 21.
+if ! command -v cargo >/dev/null 2>&1; then
+  echo 'seed: cargo is not on PATH, and this needs it.' >&2
+  echo '   The seed is a wasm module the wac binary carries, so building it means building the' >&2
+  echo '   binary, and native/v8 is Rust. Install Rust — https://rustup.rs — and run this again.' >&2
+  echo '   Nothing has been changed.' >&2
+  exit 1
+fi
+
+# **And its failures are shown.** Both call sites were `cargo build --release >/dev/null 2>&1`, whose
+# status `set -e` acted on and whose message nobody ever saw. A compiler toolchain that stops without
+# saying why is worse than one that fails loudly: the seed is installed by this point, so the state to
+# report is "the module is in place and the binary is not rebuilt from it".
+# **Says which stage it is in, to stderr.** This printed one line at the end and nothing while it
+# worked, so a bootstrap that takes minutes looked like a hang — which is exactly how a missing cargo
+# was read. Their own suggestion 4. stderr, so stdout stays the one parseable line it was.
+stage() { echo "seed: $*" >&2; }
+
+cargoBuild() {
+  local out
+  if out=$(cd native/v8 && cargo build --release 2>&1); then
+    return 0
+  fi
+  echo 'seed: cargo build failed, so the wac binary was not rebuilt.' >&2
+  echo '   The seed module is installed; the binary beside it is older than it. Fix the build below' >&2
+  echo '   and run this again — every `wac` command until then compiles with the previous compiler.' >&2
+  printf '%s\n' "$out" | tail -25 >&2
+  exit 1
+}
+
 cd "$(dirname "$0")/.."
 
 BIN=./native/v8/target/release/wac
@@ -85,7 +120,7 @@ fi
 # written once after it converges and are left alone by these builds.
 install_seed() {   # $1 is a directory holding wacc.wasm
   cp "$1/wacc.wasm" "$SEED/wacc.wasm"
-  (cd native/v8 && cargo build --release >/dev/null 2>&1)
+  cargoBuild
 }
 
 # **The other two payloads, and they are not optional here.**
@@ -122,6 +157,7 @@ payload() {   # $1 entry, $2 stem
 # artefacts the binary produced.
 if [ "$bootstrap" -eq 1 ]; then
   mkdir -p "$tmp/0"
+  stage "bootstrapping: compiling wacc with the reference compiler (Deno, the slow one, once)"
   deno run --allow-read --allow-write --allow-env --allow-run \
     packages/platform/native.ts "$ENTRY" --allow-read --allow-write --allow-env -o "$tmp/0/wacc" >/dev/null
   install_seed "$tmp/0"
@@ -184,12 +220,14 @@ buildRound() {   # $1 output dir
   exit 1
 }
 
+stage "round 1: compiling wacc with the seed we have"
 buildRound "$tmp/1"
 install_seed "$tmp/1"
 
 converged=0
 for n in $(seq 2 "$MAX_ROUNDS"); do
   mkdir -p "$tmp/$n"
+  stage "round $n of at most $MAX_ROUNDS: compiling wacc with the previous round's wacc"
   buildRound "$tmp/$n"
   if cmp -s "$tmp/$((n - 1))/wacc.wasm" "$tmp/$n/wacc.wasm"; then
     converged=$n
@@ -201,9 +239,11 @@ done
 if [ "$converged" -ne 0 ]; then
   rounds=$((converged - 1))
   mkdir -p "$tmp/p"
+  stage "fixed point reached; building the other two payloads (wac sh, wac update)"
   payload "$SH_ENTRY" sh
   payload "$UPDATE_ENTRY" update
-  (cd native/v8 && cargo build --release >/dev/null 2>&1)
+  stage "linking the binary (cargo build --release)"
+  cargoBuild
   echo "seed: $(stat -c %s "$SEED/wacc.wasm") bytes, and it is a fixed point after $rounds round(s)"
   echo "      sh $(stat -c %s "$SEED/sh.wasm") bytes, update $(stat -c %s "$SEED/update.wasm") bytes"
   exit 0

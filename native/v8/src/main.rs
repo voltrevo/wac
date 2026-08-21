@@ -255,7 +255,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "mkdir") => Cap::Mkdir,
         ("Cli", "setExecutable") => Cap::SetExecutable,
-        ("Cli", "exec") => Cap::Exec,
+        ("Cli", "execWith") => Cap::Exec,
         _ => Cap::Unsupported,
     }
 }
@@ -5168,6 +5168,12 @@ fn dispatch(
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
                 .collect();
             let stdin = read_bytes(scope, args.get(3));
+            let env: Vec<String> = read_string_array_bytes(scope, args.get(4))
+                .into_iter()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .collect();
+            let clear_env = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+            let inherit = args.get(6).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.run));
             if !granted {
                 let refused =
@@ -5187,7 +5193,10 @@ fn dispatch(
                 // position is a packet lost (`issues/system/0207`); a finished process is not — it
                 // ran, its effects happened, and its output is a computation the caller stopped
                 // wanting. There is nothing to hand back to.
-                let _ = worker.complete(id, run_host_program(path, argv, stdin));
+                let _ = worker.complete(
+                    id,
+                    run_host_program(path, argv, stdin, env, clear_env, inherit),
+                );
             });
             match ticket_pending(scope, "Exec", id) {
                 Some(p) => rv.set(p),
@@ -6254,14 +6263,56 @@ fn slots_of(_m: &Manifest) -> HashMap<String, usize> {
 ///
 /// Lifted out so the ticket can be handed back before any of this happens; see the note there and
 /// issue 0211. Nothing in here touches the v8 heap, which is what makes it liftable at all.
-fn run_host_program(path: String, argv: Vec<String>, stdin: Vec<u8>) -> Answer {
+fn run_host_program(
+    path: String,
+    argv: Vec<String>,
+    stdin: Vec<u8>,
+    env: Vec<String>,
+    clear_env: bool,
+    inherit: bool,
+) -> Answer {
     let mut cmd = std::process::Command::new(&path);
-    cmd.args(&argv)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    cmd.args(&argv).stdin(std::process::Stdio::piped());
+    // **`inherit` is the real file descriptor**, so the child's output reaches this process's own
+    // stdout and stderr and there is nothing here to collect.
+    if inherit {
+        cmd.stdout(std::process::Stdio::inherit()).stderr(std::process::Stdio::inherit());
+    } else {
+        cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    }
+    // `Command` inherits this process's environment unless it is told not to, which is
+    // `issues/system/0198`: the authority to run a program has been carrying the authority to read
+    // the environment, because a child can print it. `clear_env` is what a caller says to stop that,
+    // and the pairs below are then the whole of what the child gets.
+    if clear_env {
+        cmd.env_clear();
+    }
+    for pair in &env {
+        // Split at the *first* `=`: a value may contain one and a name may not. A string with no
+        // `=` is dropped rather than being a fault — there is nothing it could mean.
+        if let Some(at) = pair.find('=') {
+            if at > 0 {
+                cmd.env(&pair[..at], &pair[at + 1..]);
+            }
+        }
+    }
     match cmd.spawn() {
         Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+        Ok(mut child) if inherit => {
+            // No drain, because there are no pipes to drain: the deadlock the buffered path below
+            // is careful about is a property of reading a child's output, and this one's output is
+            // not coming here. Stdin is still ours to close.
+            if let Some(mut w) = child.stdin.take() {
+                use std::io::Write;
+                let _ = w.write_all(&stdin);
+            }
+            match child.wait() {
+                Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+                // Empty rather than what was printed: the bytes went to a descriptor this process
+                // shares, and reporting them here as well would be a copy the caller cannot refuse.
+                Ok(status) => Answer::Exec(status.code().unwrap_or(-1), Vec::new(), Vec::new(), String::new()),
+            }
+        }
         Ok(mut child) => {
             // **Draining starts before the write, not after.** A child that answers
             // while it is still being fed — `cat`, `grep`, any filter — blocks on its

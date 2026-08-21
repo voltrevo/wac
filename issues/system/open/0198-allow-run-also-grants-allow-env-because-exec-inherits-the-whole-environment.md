@@ -136,3 +136,54 @@ Take the fourth parameter, as `0182` proposes, and in this order:
    or make it explicit too and have all ~180 call sites pass it.
 
 Step 3 is the only remaining decision, and it is now a small one: everything else is measured.
+## The mechanism exists — 2026-08-20, agent-c
+
+`issues/system/0182`'s parameter landed and is closed. `Cli.execWith(path, args, stdin, env,
+clearEnv, inherit)` with `clearEnv: true` hands a child exactly what it was passed and nothing else,
+on all four hosts — `env_clear()` on the two Rust ones, `clearEnv` on Deno's `Command`, and an
+explicit `envRecord(env)` instead of `{...process.env, ...}` on Node's `spawn`.
+
+**This issue is still open, and what is left of it is the sweep rather than the mechanism.**
+`Cli.exec` — the three-argument method 342 call sites use — passes `false`, so the over-grant is
+exactly as it was. Closing this means flipping that one `false` to `true` and then answering, per
+call site, which inherited variable it was relying on.
+
+The question this issue said had to be answered first — how a program names an interpreter without an
+absolute path — has an answer that is now measured rather than argued:
+`packages/ssh/test/wac/wacsshd.wac` runs a bare `ssh` under `clearEnv: true`, with `PATH` among the
+`NAME=value` strings it hands over, and its twelve tests pass. So the shape of every fixed call site
+is "read what you need with `cli.env`, pass it on" — which needs `--allow-env`, which is the
+principle rather than a wrinkle. A caller granted `run` and not `env` cannot pass `PATH` on, and
+should be naming its program absolutely.
+
+**What the sweep is likely to cost, so whoever takes it can price it.** Not measured, and worth
+measuring before starting: the callers that spawn `deno`, `node`, `git`, `python3` and `openssl` by
+name are the population, and the ones reaching the network need `HTTP_PROXY` as well as `PATH`. A
+first pass could flip the default and let the suite name the sites, which is cheap to run and reads
+as a hundred failures rather than a list — or `execWith(..., clearEnv: true, ...)` could be adopted
+one package at a time under the current default, which is slower and never red for anyone else.
+
+## Both halves, and what is left — agent-c, 2026-08-20
+
+The two sections above were written the same day from opposite ends and they meet: agent-a's
+measurement is the caller discovery this issue said had to happen *with* the decision, and the
+parameter it recommends as step 1 now exists.
+
+Against that recommendation, in its own order:
+
+1. **Done, as an option rather than as the semantics.** `clearEnv: true` inherits nothing. It is not
+   the default, so nothing has moved yet — which is what makes step 2 a sweep somebody can do a
+   package at a time without going red for everyone else.
+2. **Cheap now, and the list is the three directories above.** `packages/wactest/src/childenv.wac`'s
+   `onlyEnv` is the shape they take: `execWith(prog, args, stdin, pairs, true, false)` with the names
+   it needs. `packages/ssh` already runs a bare `ssh` that way, with `PATH` handed over.
+3. **Still the only open decision, and the measurement makes it smaller than it was.** With `PATH`
+   alone 21 of 24 pass and with `PATH` and `HOME` 23 of 24, so "supply `PATH`" is worth about three
+   call sites of convenience against being explicit — and being explicit is what the principle says.
+
+The seal canary settles one thing worth restating: it is why the parameter had to exist *first*.
+`packages/platform/test/wac/native_shell_test.wac` proves a sealed application cannot read the
+environment by spawning an open one that can, and with the leak closed and no parameter it would have
+had no way to give that shell a `HOME`. It has one now, on all four hosts rather than the two this
+issue names — the JavaScript hosts serve the same opcode and had never run a host program at all
+until `runtimes_test.wac` started comparing them.

@@ -156,3 +156,15 @@ guards a bug that passed 5 of 8 runs against a real server and now fails every r
 connection test checks accounting a real server cannot observe at all. Reaching for a subprocess
 where an in-process check exists trades that away. The category this is for is the one where the
 external program *is* the independent implementation.
+
+## The capability grew three parameters — 2026-08-20, agent-c
+
+`Cli.exec(path, args, stdin)` is now a method over `Cli.execWith(path, args, stdin, env, clearEnv,
+inherit)`, which is what the four hosts implement. `env` and `clearEnv` are `issues/system/0182`
+(closed) and `issues/system/0198`; `inherit` sends the child's stdout and stderr to this program's
+own, and answers with `Exec.stdout` and `Exec.stderr` empty.
+
+**`inherit` is not the streaming pipe surface this issue ruled out**, and the reasoning above still
+holds: nothing in wac reads the bytes incrementally. They go to a file descriptor as the child writes
+them, which is what a test runner wants — a lane that shows its output while it runs — and it needs
+no new type and no read loop. The `start`/`stop` half of this issue is untouched.
