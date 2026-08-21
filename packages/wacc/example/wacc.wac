@@ -458,7 +458,19 @@ Sources gather(Fs fs, Cli cli, string entry) {
       // rather than in the `@/` branch because `@/outside/x.wac` and `../outside/x.wac` are the same
       // escape: when this was found both reached, so a fix aimed at one would have looked finished.
       // This is the single point every resolved specifier passes through.
-      if (!withinDir(confine[at], next)) {
+      //
+      // **A built-in is not a path and confinement has nothing to say about it.** `resolveFromAt`
+      // answers a built-in specifier unchanged, so `core/map.wac` was compared against the
+      // dependency's checkout and read as an escape — GitHub issue 24. It cannot reach the
+      // filesystem to escape *to*: the walk above serves `core/` and `std/` from the text embedded
+      // in this compiler, which is the whole point of `design/lang/0009` D3/D4.
+      //
+      // Outside a mapping the same import always worked, because `confine` is empty there and
+      // `withinDir` answers true for everything — so the rule was invisible until a package was
+      // consumed through Git, and then it made usability depend on whether that package's own
+      // closure happened to name a built-in. `packages/crypto` and `packages/codec` were fine;
+      // `packages/json` was not, because `value.wac` imports `core/map.wac`.
+      if (!isBuiltinSpec(specs[i]) && !withinDir(confine[at], next)) {
         return Sources(paths, texts, roots, confine, base, mapFrom, mapSpec, mapTo, mapN, n, "",
                        leavesMapping(specs[i], path, confine[at]));
       }

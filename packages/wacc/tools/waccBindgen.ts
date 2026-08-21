@@ -527,7 +527,11 @@ export function generate(
       }
       const params = c.params.map((p, i) => `a${i}${ann(p)}`).join(", ");
       const fwd = c.params.map((p, i) => fromWasm(p, `a${i}`)).join(", ");
-      const raw = c.params.map((p, i) => `a${i}: unknown`).join(", ");
+      // `annRaw`, like every other annotation in this file: it answers "" in JavaScript mode.
+      // Built by hand here, this wrote `($slot, a0: unknown) =>` into a `.gen.js` and no
+      // JavaScript runtime would parse the file — GitHub issue 23. The parameter was unused too,
+      // which is the tell: nothing about the type reached the text it produced.
+      const raw = c.params.map((_, i) => `a${i}${annRaw("unknown")}`).join(", ");
       lines.push(`const $cbs${c.index}${annRaw(`((${params}) => ${tsType(c.ret)})[]`)} = [];`);
       lines.push(`const $cbd${c.index} = ($slot${annRaw("number")}${raw ? ", " + raw : ""}) =>`);
       lines.push(`  ${toWasm(c.ret, `$cbs${c.index}[$slot](${fwd})`)};`);

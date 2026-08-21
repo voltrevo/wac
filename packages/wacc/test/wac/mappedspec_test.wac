@@ -355,6 +355,71 @@ export string test_a_mapped_subdir_cannot_import_outside_itself(Core core, Cli c
 }
 
 /**
+ * A mapped dependency may import the embedded `core` and `std` — GitHub issue 24.
+ *
+ * **Confinement was applied to a source that is not on the filesystem at all.** `resolveFromAt`
+ * answers a built-in specifier unchanged, so `core/map.wac` was compared against the checkout path
+ * and read as an escape: *"core/map.wac leaves the mapped subdirectory"*. Outside a mapping the same
+ * import works, because `confine` is empty there and every path is inside nothing — so the rule was
+ * invisible until somebody consumed a package through Git.
+ *
+ * What it cost is the shape worth keeping: **a package's usability depended on an implementation
+ * detail of its own import closure.** `packages/crypto` and `packages/codec` worked as Git
+ * dependencies because their closures happen to use only relative imports; `packages/json` did not,
+ * because `value.wac` reaches for `core/map.wac`. Nothing in a manifest or a lock said so.
+ *
+ * Both built-in trees are checked, because `std` was added to the walk's built-in serving a day after
+ * `core` and in a different line — `wacc.wac` records that omission — so one passing says little
+ * about the other.
+ */
+export string test_a_mapped_dependency_may_import_the_builtins(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "builtin");
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "could not make " + dir + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+  string home = dir + "/home";
+  project(cli, t, dir);
+  t.isTrue(lockAt(cli, dir, COMMIT), "the lock");
+  t.isTrue(checkoutFile(cli, home, COMMIT, "wac.json5", "{}\n"), "the dependency's manifest");
+
+  // `core/map.wac` is what `packages/json` reaches for, so this is the reported case rather than a
+  // built-in chosen for being convenient.
+  // `hashString` rather than `Map` itself: `core/map.wac` is what `packages/json` reaches for and is
+  // the import this is about, and `core/hash.wac` is one of the three the issue names — so importing
+  // both proves the resolution without the fixture having to build a generic container correctly.
+  // What is being tested is whether a mapped file may *reach* a built-in, not what it does with one.
+  t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
+                        "import { Map } from \"core/map.wac\";\n" +
+                        "import { hashString } from \"core/hash.wac\";\n" +
+                        "export i32 two() { return hashString(\"a\") == 0 ? 0 : 2; }\n"),
+           "lib importing core/map.wac and core/hash.wac");
+  Exec r = wacc(cli, home, dir, "run", "src/main.wac");
+  t.isTrue(r.ran(), "wac did not run — " + r.error);
+  if (r.ran()) {
+    t.eqI32(r.status, 7, "a mapped file could not import `core/map.wac`: " +
+                         string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+  }
+
+  // And `std`, whose serving arrived separately.
+  t.isTrue(checkoutFile(cli, home, COMMIT, "src/lib.wac",
+                        "import { Read } from \"core\";\n" +
+                        "import { Stat } from \"std/platform.wac\";\n" +
+                        "export i32 two() { Read r = Read.End; match (r) { case End: return 2; " +
+                        "else: return 0; } }\n"),
+           "lib importing std/platform.wac and core's root");
+  Exec std = wacc(cli, home, dir, "run", "src/main.wac");
+  t.isTrue(std.ran(), "wac did not run — " + std.error);
+  if (std.ran()) {
+    t.eqI32(std.status, 7, "a mapped file could not import `std/platform.wac`: " +
+                           string.fromBytes(std.stderr) + string.fromBytes(std.stdout));
+  }
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
  * A whole-repository mapping and a `subdir` one land on the same file, and it is one module — D8.
  *
  * **The spelling the existing case cannot reach.** `test_two_mappings_at_one_commit_are_one_module`
