@@ -114,3 +114,117 @@ above exists.
 
 It is also a differential disagreement in a direction nothing measures: wacc says more than the
 reference here, and every check we have is built to catch it saying *less*.
+
+## Correction: 24 of those were not duplicates, and the instrument measured the wrong thing
+
+Everything above about the corpus is wrong, and the mistake is instructive: I checked the reference for
+the *hand-made* cases and then generalised its answer to the corpus ones without asking.
+
+    export string f() { i32 x = -1; return x as i32; }
+
+    wacc       1:42  return type does not match the function's
+               1:42  this cast is between one type and itself
+    reference  1:42  cast from 'i32' to 'i32' is redundant
+               1:42  return: expected string, found i32
+
+**The reference reports two as well, at the same position.** And it is right to: the cast is redundant
+whatever the function returns, and the return type is wrong whatever the cast does. Two independent
+faults that happen to share a position — not a fault and its consequence, which is what I wrote. All 24
+corpus hits are of that shape.
+
+So *"no two diagnostics at one position"* is not an invariant. The reference violates it, deliberately,
+and a checker that suppressed the second would be hiding a real fault to satisfy a rule nobody stated.
+The `check.wac` comment I quoted is about **one fault** reported twice, and co-location is not evidence
+of that.
+
+### What the real invariant is, and the instrument that measures it
+
+`issues/lang/0237a` was a **count** disagreement: two diagnostics where the reference gives one, for one
+fault. That is the measurable thing, and the parse phase already has it — `parse_errors.test.ts`
+compares *"by count and position, not by message"*. The typecheck phase had no equivalent, which is why
+`0237a` had to be found by reading output.
+
+So the counter counts the right thing now: programs where **we report more diagnostics than the
+reference does**. It flags `0237a`'s shape and leaves the cast cases alone, because there the two agree
+at two.
+
+Still printed rather than asserted, for the reason the first version should have been: the number is
+whatever it is, and a threshold that starts red is a threshold nobody can land.
+
+### What the real population looks like
+
+Measured, wacc against the reference, one program each:
+
+| program | wacc | reference |
+| --- | --- | --- |
+| `export i32 f(string s) { return ~s; }` | 2 | 1 |
+| `export i32 f(bool b) { return -b; }` | 2 | 1 |
+| `export i32 f(string s) { return -s; }` | 2 | 1 |
+| `export i32 f(string s) { return s % 2; }` | 2 | 1 |
+| `export bool f(string s) { return !s; }` | **1** | 1 |
+| `export string f(string s) { return ~s; }` | **1** | — |
+
+The last two rows name the mechanism. `!s` agrees because `!s`'s result is a `bool` and the function
+returns `bool`, so no slot check fires; and moving `~s` into a `string` function drops wacc to one
+diagnostic. So **a refused unary expression keeps its operand's type**, and the slot check then compares
+that type and complains again. One fault, reported once by the rule that caught it and once by the rule
+downstream of it.
+
+That is `issues/lang/0170a`'s principle from the other side. Item 2 there stopped `typeOfE` answering for
+a binary whose operands disagree, because *"returning an answer for an expression that has none is the
+mechanism that defeats every downstream guard"*. Here the same answer does not defeat a guard — it
+**wakes** one that has nothing to say.
+
+Two shapes, then:
+
+- **a fault and its consequence**: a unary the operand rule refused, still carrying a type for the slot
+  check to disagree with (`~s`, `-s`, `-b`);
+- **two operand rules for one operand**: `s % 2` draws `this operator does not take an operand of that
+  kind` *and* `operands have mismatched types`, which is the overlap this file's comment says was fixed
+  once already.
+
+The first has an obvious repair — a refused expression has no type — and it is the same one-line
+principle as item 2, in `checkExpr`'s unary arm rather than `typeOfE`'s binary one. Not done here
+because it changes what a population of programs reports and wants its own measurement, which the
+counter now provides.
+
+### And the count comparison is a lead, not a law either
+
+The rewritten counter reports **19 of 1,189**. Reading them shows it has the same problem in the other
+direction, so this is the second framing I have had to weaken:
+
+    export i32 f() { i32 x = 1; u32 y = 1; return x != y; }
+
+    wacc       1:49  operands have mismatched types
+               1:49  return type does not match the function's
+    reference  1:49  type mismatch in '!=': i32 and u32
+
+Here **wacc is arguably right and the reference stops early.** `x != y` would be a `bool` even with the
+operands fixed, and returning a `bool` from an `i32` function is a second, independent fault. The
+reference's `checkBinaryOp` answers `null` for the mismatched comparison, so it has no type to check the
+slot with and never gets there. wacc reports both faults.
+
+Contrast `~s` in an `i32` function, where the second diagnostic rests on a type wacc **invented** for an
+expression it had just refused — the operand's own type. Fix the operand and there is no second fault;
+fix the operands of `x != y` and there still is.
+
+So the distinguishing question is not "how many" and not "at what position". It is *does the extra
+diagnostic rest on a type the checker made up for something it refused* — which is `issues/lang/0170a`'s
+question, and is not a thing a count can answer.
+
+**What the counter is, then:** a queue of 19 programs where the two compilers disagree about how much is
+wrong, each worth one look. Some are ours to fix, some are the reference stopping early, and the
+sorting is by hand. That is worth having — nothing else here looks in this direction at all — and it is
+not the invariant I twice claimed it was.
+
+### The lesson
+
+Two framings, both too strong, and each was falsified by reading the very examples the instrument had
+just handed me — which took one command each time. First *"no two diagnostics at one position"*, refuted
+by the reference doing exactly that for two independent faults. Then *"never more than the reference"*,
+refuted by the reference stopping early where wacc is right.
+
+The rule I keep re-learning: **an oracle answers the case you gave it.** *"The reference
+reports one"* was true of `~s` and `s % 2` and false of every cast in the corpus, and I had no business
+carrying it across without a second run — least of all into an issue whose whole point was that
+something had gone unmeasured.
