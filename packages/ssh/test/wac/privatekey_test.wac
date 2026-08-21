@@ -18,7 +18,7 @@ import { ALPHABET_STANDARD, decode as b64Decode, encode as b64Encode }
   from "../../../codec/src/base64.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { KeyError, PrivateKey, readEd25519 } from "../../src/privatekey.wac";
-import { scratch } from "./fixture.wac";
+import { freshScratch } from "./fixture.wac";
 import { copyPreserving, keygen, restrict } from "../../../wactest/src/keys.wac";
 import { u32be, u32At, slice } from "./build.wac";
 
@@ -42,7 +42,7 @@ string statusOf(u8[] pem, string passphrase) {
 
 export string test_an_openssh_private_key_reads_encrypted_or_not(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "ssh-privatekey");
+  string dir = freshScratch(t, cli, "ssh-privatekey");
   if (!keygen(t, cli, dir + "/k")) { return t.report(); }
 
   FileResult plain = cli.readFile(dir + "/k").wait();
@@ -116,7 +116,7 @@ export string test_a_key_whose_two_public_halves_disagree_is_refused(Core core, 
   // argument for mutation testing in one line: the trap was flagged as untested, and the reason
   // it was untested is that nothing could reach it *through a valid file*.
   T t = T.create();
-  string dir = scratch(cli, "ssh-badkey");
+  string dir = freshScratch(t, cli, "ssh-badkey");
   if (!keygen(t, cli, dir + "/k")) { return t.report(); }
   FileResult pem = cli.readFile(dir + "/k").wait();
   t.isTrue(pem.ok, "the generated key could not be read — " + pem.error);

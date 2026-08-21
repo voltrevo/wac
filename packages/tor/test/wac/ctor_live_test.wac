@@ -46,6 +46,7 @@ import { builtProgram } from "../../../wactest/src/built.wac";
 import { quoted, withoutEnv } from "../../../wactest/src/childenv.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 /**
  * Where the C tor lives if it has been built.
@@ -78,10 +79,10 @@ string inDir(string dir, string line) {
 }
 
 /** A fresh directory per case, under `.cache` so nothing walking this repository's own files sees it. */
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/ctor-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -278,7 +279,7 @@ bool announceMissing(Core core, Cli cli) {
 export string test_a_c_tor_bootstraps_from_our_authority_and_through_our_relays(Core core, Cli cli) {
   T t = T.create();
   if (announceMissing(core, cli)) { return t.report(); }
-  string dir = scratch(cli, "bootstrap");
+  string dir = freshScratch(t, cli, "bootstrap");
 
   Net net = standUpNetwork(core, cli, dir);
   t.isTrue(net.ok, net.why);
@@ -330,7 +331,7 @@ export string test_a_c_tor_bootstraps_from_our_authority_and_through_our_relays(
 export string test_a_c_tor_carries_a_stream_through_our_relays_both_directions(Core core, Cli cli) {
   T t = T.create();
   if (announceMissing(core, cli)) { return t.report(); }
-  string dir = scratch(cli, "stream");
+  string dir = freshScratch(t, cli, "stream");
 
   // `INTEROP.md` marks streams **live** in both directions on a run somebody did by hand. This is that
   // run, in the suite — and it exercises more than the stream: a SOCKS request makes tor build a real

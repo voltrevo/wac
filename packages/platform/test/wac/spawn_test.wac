@@ -21,13 +21,14 @@ import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/spawn-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -99,7 +100,7 @@ string firstLine(string s) {
 
 export string test_a_wac_program_runs_another_wac_program_as_a_worker(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "worker");
+  string dir = freshScratch(t, cli, "worker");
   string runner = dir + "/runner";
   string child = dir + "/wc.worker.js";
 
@@ -132,7 +133,7 @@ export string test_a_source_that_is_not_a_program_is_a_failed_child_not_a_dead_p
   // contained by default — it reached the parent, which died with Deno's own message on stderr before
   // it could call the child failed. wac-mono issue 0021.
   T t = T.create();
-  string dir = scratch(cli, "notaprogram");
+  string dir = freshScratch(t, cli, "notaprogram");
   string runner = dir + "/runner";
   string bad = dir + "/bad.worker.js";
 
@@ -170,7 +171,7 @@ export string test_a_program_runs_itself_with_no_file_to_read_and_nothing_to_fin
   // bundles there — and it is the same capability everywhere, so this checks it where it is easiest
   // to see. The child is this program with different arguments, which is what a multi-call binary is.
   T t = T.create();
-  string dir = scratch(cli, "twin");
+  string dir = freshScratch(t, cli, "twin");
   string twin = dir + "/twin";
   string nodeTwin = dir + "/twin-node";
 
@@ -206,7 +207,7 @@ export string test_node_spawns_the_same_way_from_the_same_code(Core core, Cli cl
   // blob URL), which is why that is an argument rather than a third copy of the queues, the load
   // notice and the grace period.
   T t = T.create();
-  string dir = scratch(cli, "node");
+  string dir = freshScratch(t, cli, "node");
   string runner = dir + "/runner";
   string child = dir + "/wc.worker.js";
 
@@ -241,7 +242,7 @@ export string test_a_child_is_granted_nothing_even_by_a_parent_that_has_it(Core 
   // a sandbox against arbitrary JavaScript — see the note in platform.wac — but for a wac child the
   // language makes it hold, because wac cannot reach past what it was handed.
   T t = T.create();
-  string dir = scratch(cli, "grant");
+  string dir = freshScratch(t, cli, "grant");
   string runner = dir + "/runner";
   string direct = dir + "/probe";
   string child = dir + "/probe.worker.js";
@@ -282,7 +283,7 @@ export string test_a_parent_hands_a_child_a_subset_of_its_own_grants_and_cannot_
   // *allowed* to exceed is deliberate, so a parent forwarding a request it received does not have to
   // vet it first.
   T t = T.create();
-  string dir = scratch(cli, "subset");
+  string dir = freshScratch(t, cli, "subset");
   string readOnly = dir + "/parent-r";
   string readNet = dir + "/parent-rn";
   string child = dir + "/probe.worker.js";
@@ -326,7 +327,7 @@ export string test_a_bundle_that_parses_and_never_speaks_the_protocol_is_a_faile
   // Five seconds of waiting by design: the grace is what this is about, and the number is in
   // `children.ts` beside the reasoning for it.
   T t = T.create();
-  string dir = scratch(cli, "mute");
+  string dir = freshScratch(t, cli, "mute");
   string runner = dir + "/runner";
   string real = dir + "/real.worker.js";
   string mute = dir + "/mute.worker.js";

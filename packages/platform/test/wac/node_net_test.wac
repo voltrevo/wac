@@ -27,6 +27,7 @@ import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { Held } from "../../../wactest/src/daemon.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
@@ -35,10 +36,10 @@ bool haveNode(Cli cli) {
   return r.ran() && r.status == 0;
 }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/nodenet-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -246,7 +247,7 @@ export string test_a_wac_server_on_node_says_the_same_as_one_on_deno_to_a_real_c
     core.warn("node_net: skipped — no node on this machine, so there is no second runtime");
     return t.report();
   }
-  string dir = scratch(cli, "greet");
+  string dir = freshScratch(t, cli, "greet");
   string denoOut = dir + "/greet-deno";
   string nodeOut = dir + "/greet-node";
   string why = build(cli, denoOut, "deno") + build(cli, nodeOut, "node");
@@ -282,7 +283,7 @@ export string test_and_a_loopback_bind_on_node_is_a_loopback_bind_not_every_inte
     core.warn("node_net: skipped — no node on this machine");
     return t.report();
   }
-  string dir = scratch(cli, "bind");
+  string dir = freshScratch(t, cli, "bind");
   string nodeOut = dir + "/greet-node";
   string why = build(cli, nodeOut, "node");
   t.eqStr(why, "", "greet built for node");

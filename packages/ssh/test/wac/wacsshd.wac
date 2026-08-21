@@ -38,7 +38,7 @@ import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wa
 import { onlyEnv, onlyEnvLine, quoted } from "../../../wactest/src/childenv.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { atoi, itoa } from "../../../fmt/src/itoa.wac";
-import { scratch } from "./fixture.wac";
+import { freshScratch } from "./fixture.wac";
 import { copyPreserving, keygen, restrict } from "../../../wactest/src/keys.wac";
 
 /** Our server, running, with a host key and one authorized client key. */
@@ -132,7 +132,7 @@ export Wacsshd startWacsshd(T t, Core core, Cli cli, string name, string[] extra
 }
 
 Wacsshd startOnce(T t, Core core, Cli cli, string name, string[] extra, string binary) {
-  string dir = scratch(cli, name);
+  string dir = freshScratch(t, cli, name);
   cli.mkdir(dir + "/.ssh", true).wait();
   if (!keygen(t, cli, dir + "/.ssh/ssh_host_ed25519_key")) {
     return Wacsshd(false, "ssh-keygen failed for the host key", dir, -1, Daemon(-1, "", ""));

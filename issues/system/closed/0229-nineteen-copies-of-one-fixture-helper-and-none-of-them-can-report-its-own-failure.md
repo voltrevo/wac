@@ -1,7 +1,9 @@
 # 0229 — nineteen copies of one fixture helper, and none of them can report its own failure
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-21
+- **Fixed in:** `packages/wactest/src/host.wac` — `freshDir` and `madeDir` — with 21 test files rewritten
+  onto them and the `scratch` collision resolved by renaming the directory-making one
 - **Reported by:** agent-b
 - **Date:** 2026-08-21
 - **Kind:** bug
@@ -105,3 +107,50 @@ ordinary first run and is what `Change.absent()` asks. That distinction is alrea
 `ssh`, `tls`, `wacc`, `http` and `platform`, and three agents were committing to those tonight. Nineteen
 files half-converted is worse than nineteen unconverted, so it wants one pass by whoever can do it
 uninterrupted.
+
+## Closed — `freshDir` and `madeDir`, and the name collision is gone, 2026-08-21
+
+**The reason is returned, and that answers the open question.** `core.warn` needs a `Core` the nineteen
+helpers do not take; a `trap` takes the rest of the file's cases down and loses the message, which is the
+thing being fixed. A returned reason becomes one `t.isTrue` in the caller, which has a `T` — so the
+fixture's failure is a *named test failure*, in front of the consequences rather than absent from them.
+
+Canaried by making `freshDir` fail unconditionally and running `pipeline_test`:
+
+    FAIL test_stdin_through_two_children_and_out_again — 3 failed:
+      CANARY could not create …/.cache/pipeline-pipe — no such device: expected true;
+      pipe.wac built — error: Uncaught NotFound: No such file or directory …
+
+The fixture is the first line. Before, that program produced only the second kind, once per case.
+
+**The collision is resolved by renaming, which turned out to be the load-bearing part.** `scratch` meant
+"a path" in `wactest/src/host.wac` and "a fresh directory, made now" in nineteen files, and **thirty files
+call one or the other** — so a mechanical rewrite of `scratch(cli, …)` would have hit both. The
+directory-making one is `freshScratch(T t, Cli cli, string name)` now; the path-only one keeps the name
+and its ten-plus importers are untouched. 67 call sites across 21 files, including five in `packages/ssh`
+that import the helper rather than declare it — those are not in the table above, and a sweep driven by
+the table alone would have broken them.
+
+### Two of them must not be emptied, which is why there are two functions
+
+`echod_test`'s build directory and `network_test`'s `shared` are created and deliberately *not* cleared —
+the second has a comment saying the first case builds and "the other twelve reuse". Both were listed
+above and neither had the four-line shape; both `mkdir` at the point of use. Putting them on `freshDir`
+would have wiped a build cache on every case, turning twelve reuses into twelve rebuilds — silently, and
+looking like a slow test rather than a wrong one. So `madeDir` creates and keeps, `freshDir` empties
+first, and the destructive one has to be asked for by name.
+
+`startPeer` in `echod_test` has no `T` and returns a `Peer`, so its fixture reason goes **in front of the
+daemon's error** rather than returning early with a `Daemon` the function would have to invent — a `start`
+into a directory that is not there fails anyway, and what was missing was any mention of the directory.
+
+### What is left, named rather than implied
+
+**144 bare `cli.mkdir(…).wait();` calls remain** across `packages/` and `tools/`, in probes, tools and
+tests that were never part of the nineteen. Each throws the same answer away. That is a much larger sweep
+than this issue scoped and it is now a one-line change per site, since the helpers exist — worth doing
+incrementally rather than filed as one job, and worth knowing the number.
+
+Verified: the 21 rewritten files all compile; `pipeline`, `inside`, `optimize`, `node_net`, `bindgenwac`,
+`privatekey` and `echod` run green. The heavy ones — `tor` on real ports, `ssh` against real OpenSSH,
+`tls`, `v8host`, `world` — go through the gate.

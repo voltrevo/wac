@@ -41,6 +41,7 @@ import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 /** How long a network gets before the bound is called a wedge, in seconds. */
 const i32 BOUND_SECONDS = 330;
@@ -62,10 +63,10 @@ string loadNow(Cli cli) {
   return "load " + (nl < 0 ? text : text.slice(0, nl));
 }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/tornet-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -172,7 +173,7 @@ void describe(Cli cli, string dir, string[] lines) {
 
 export string test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "network");
+  string dir = freshScratch(t, cli, "network");
   string why = common(cli, dir) +
                build(cli, "packages/tor/src/app.wac", dir + "/torapp.worker.js", none(), true);
   t.eqStr(why, "", "the network's programs built");
@@ -225,7 +226,7 @@ export string test_an_onion_service_published_on_that_network_and_a_page_fetched
   // The service logs it as the first thing it says, so a `wait` on `hsserviced: ` captures it — a
   // marker it has long since printed by the time the wait runs.
   T t = T.create();
-  string dir = scratch(cli, "onion");
+  string dir = freshScratch(t, cli, "onion");
   string why = common(cli, dir) +
                build(cli, "packages/tor/src/hsserviced.wac", dir + "/hsserviced.worker.js",
                      none(), true) +

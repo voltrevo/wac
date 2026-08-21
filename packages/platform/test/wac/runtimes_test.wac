@@ -20,6 +20,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string WC = "packages/platform/example/wc.wac";
 const string ROUNDTRIP = "packages/platform/example/roundtrip.wac";
@@ -27,10 +28,10 @@ const string PROBE = "packages/platform/test/wac/exec_probe.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/runtimes-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -78,7 +79,7 @@ export string test_an_application_builds_to_one_executable_file_and_runs_repeate
   // top-level `await WebAssembly.instantiate`, and was dropped. A single run would have called that
   // a pass.
   T t = T.create();
-  string dir = scratch(cli, "exe");
+  string dir = freshScratch(t, cli, "exe");
   string app = dir + "/wc";
   if (!build(t, cli, WC, app, "deno", string[]("--allow-read"))) {
     cli.remove(dir, true).wait();
@@ -136,7 +137,7 @@ export string test_an_application_builds_to_one_executable_file_and_runs_repeate
 export string test_the_same_application_builds_for_node_and_agrees_with_the_deno_build(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "node");
+  string dir = freshScratch(t, cli, "node");
   string denoOut = dir + "/wc-deno";
   string nodeOut = dir + "/wc-node";
   bool okD = build(t, cli, WC, denoOut, "deno", string[]("--allow-read"));
@@ -195,7 +196,7 @@ export string test_the_two_runtimes_agree_about_the_whole_filesystem_not_just_re
   // `roundtrip` is the example that exercises all of them and prints what each answered, which makes
   // it an oracle for itself: the two runtimes have to produce the same transcript.
   T t = T.create();
-  string dir = scratch(cli, "fs");
+  string dir = freshScratch(t, cli, "fs");
   string denoOut = dir + "/rt-deno";
   string nodeOut = dir + "/rt-node";
   bool okD = build(t, cli, ROUNDTRIP, denoOut, "deno", string[]("--allow-read", "--allow-write"));
@@ -241,7 +242,7 @@ export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_tak
   // stats at all — which is how the first version of this test passed while checking the *write*
   // denial and claiming to check the stat.
   T t = T.create();
-  string dir = scratch(cli, "statdenied");
+  string dir = freshScratch(t, cli, "statdenied");
   string denoOut = dir + "/rtd-deno";
   string nodeOut = dir + "/rtd-node";
   bool okD = build(t, cli, ROUNDTRIP, denoOut, "deno", string[]("--allow-write"));
@@ -289,7 +290,7 @@ export string test_and_they_agree_about_a_stat_neither_of_them_is_allowed_to_tak
  */
 export string test_the_two_runtimes_agree_about_running_a_host_program(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "exec");
+  string dir = freshScratch(t, cli, "exec");
   string denoOut = dir + "/probe-deno";
   string nodeOut = dir + "/probe-node";
   bool okD = build(t, cli, PROBE, denoOut, "deno", string[]("--allow-run"));

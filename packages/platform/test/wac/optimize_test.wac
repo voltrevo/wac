@@ -19,15 +19,16 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Stat } from "std/platform.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string WC = "packages/platform/example/wc.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/optimize-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -59,7 +60,7 @@ i32 fieldCount(string s) {
 
 export string test_optimize_makes_a_smaller_artifact_that_answers_the_same(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "smaller");
+  string dir = freshScratch(t, cli, "smaller");
   string plain = dir + "/wc-plain";
   string opt = dir + "/wc-opt";
 
@@ -101,7 +102,7 @@ export string test_an_optimised_build_is_a_different_artifact_not_a_cache_hit_on
   // other hands back whichever was built first, which is the stale-artifact failure `buildCache`
   // exists to prevent and would read here as "--optimize does nothing".
   T t = T.create();
-  string dir = scratch(cli, "cachekey");
+  string dir = freshScratch(t, cli, "cachekey");
   string a = dir + "/key-plain";
   string b = dir + "/key-opt";
   Exec ba = build(cli, a, false);
@@ -124,7 +125,7 @@ export string test_a_coverage_build_refuses_to_be_optimised(Core core, Cli cli) 
   // so a dump would be renumbered underneath the table that names them — a wrong answer rather than a
   // missing one. Refused at the call rather than discovered in a report nobody could explain.
   T t = T.create();
-  string dir = scratch(cli, "refusal");
+  string dir = freshScratch(t, cli, "refusal");
   Exec r = cli.exec("/bin/sh",
     string[]("-c", "WAC_PROFILE=1 exec deno run -A packages/platform/build.ts '" + WC +
              "' --allow-read --optimize -o '" + dir + "/never'"), u8[0]()).wait();

@@ -11,7 +11,7 @@
 // mismatch in whatever it was actually testing. That is the worst kind of red — a true failure
 // message about the wrong thing.
 
-import { Core, Cli, Exec } from "std/platform.wac";
+import { Change, Core, Cli, Exec } from "std/platform.wac";
 import { nativeHost, nativeHostWhyNot } from "./built.wac";
 
 /** Where `deno task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
@@ -77,4 +77,52 @@ export string nativeBinaryPath(Core core, Cli cli, string who) {
     return "";
   }
   return nativeHost(cli);
+}
+
+/**
+ * Create `dir` if it is not there — `""` when that worked, and why not when it did not.
+ *
+ * **Nineteen test files had these four lines each and every one threw the answer away.**
+ * `mkdir` and `remove` both answer a `Change` carrying a fault and the host's own words, and a `mkdir`
+ * that failed leaves every script in the file running with a working directory that does not exist. What
+ * reaches the screen then is the *consequence*, once per case: `native_shell_test.wac` failed a gate with
+ * sixteen shells each saying `/bin/sh: 1: cd: can't cd to …/.cache/hostshell-seal`, and nothing in the
+ * output named the fixture. The diagnosis starts from the wrong end. `issues/system/0229`.
+ *
+ * **The path stays the caller's and only this is shared.** `.cache/world-`, `.cache/tls/`, `/tmp/wac-` —
+ * each test's directory is legitimately its own, and what was identical nineteen times is *make it
+ * fresh, and say so if you cannot*.
+ *
+ * **The reason is returned rather than warned, because the caller is a test.** A `core.warn` needs a
+ * `Core` these helpers do not take, and a `trap` takes the rest of the file's cases down with it and
+ * loses the message — which is the thing being fixed. A returned reason becomes one `t.isTrue` in the
+ * caller, which has a `T`, and the failure then names the directory and the host's words.
+ */
+export string madeDir(Cli cli, string dir) {
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) { return "could not create " + dir + " — " + made.message; }
+  return "";
+}
+
+/**
+ * `madeDir`, and **empty it first** — for a directory whose contents must not survive the last run.
+ *
+ * The two are separate because the difference is destructive in one direction. Two of the sites this
+ * was written for create a directory and deliberately do *not* clear it: `echod_test`'s build output and
+ * `network_test`'s `shared`, whose neighbouring comment says the first case builds and "the other twelve
+ * reuse". Sweeping those onto this function would have emptied a build cache on every case and turned
+ * twelve reuses into twelve rebuilds — silently, and looking like a slow test rather than a wrong one.
+ *
+ * **`remove` is allowed to fail for exactly one reason**, which is the directory not being there: that is
+ * the ordinary first run, and `Change.absent` is the question `rm -f` asks. Anything else means the
+ * directory is about to be reused with something in it, which is the case worth a message.
+ */
+export string freshDir(Cli cli, string dir) {
+  Change gone = cli.remove(dir, true).wait();
+  if (!gone.ok() && !gone.absent()) {
+    return "could not empty " + dir + " — " + gone.message;
+  }
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) { return "could not create " + dir + " — " + made.message; }
+  return "";
 }

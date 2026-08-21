@@ -24,7 +24,7 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains, trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Said, Wacsshd, buildServer, realSsh, startWacsshd, stopWacsshd } from "./wacsshd.wac";
-import { haveSshd, scratch } from "./fixture.wac";
+import { haveSshd, freshScratch } from "./fixture.wac";
 import { keygen, publicBlobText, restrict } from "../../../wactest/src/keys.wac";
 
 Wacsshd imageServer(T t, Core core, Cli cli, string name, string image) {
@@ -40,7 +40,7 @@ Wacsshd imageServer(T t, Core core, Cli cli, string name, string image) {
 export string test_a_server_booted_on_an_image_serves_every_session_from_it(Core core, Cli cli) {
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  string holder = scratch(cli, "wacsshd-image-holder");
+  string holder = freshScratch(t, cli, "wacsshd-image-holder");
   string image = holder + "/home.wacimg";
   Wacsshd s = imageServer(t, core, cli, "wacsshd-image", image);
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
@@ -96,7 +96,7 @@ export string test_a_session_on_an_image_shows_its_own_pipeline_in_ps(Core core,
   // `ps` looks. A sequential shell answers this with one row however long the first stage takes.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  string holder = scratch(cli, "wacsshd-ps-holder");
+  string holder = freshScratch(t, cli, "wacsshd-ps-holder");
   Wacsshd s = imageServer(t, core, cli, "wacsshd-ps", holder + "/ps.wacimg");
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
   string key = s.dir + "/clientkey";
@@ -138,7 +138,7 @@ export string test_an_image_the_server_cannot_read_stops_it_before_it_binds(Core
   string binary = buildServer(t, cli, true);
   if (binary == "") { return t.report(); }
 
-  string dir = scratch(cli, "wacsshd-badimage");
+  string dir = freshScratch(t, cli, "wacsshd-badimage");
   string image = dir + "/bad.wacimg";
   cli.mkdir(dir + "/.ssh", true).wait();
   if (!keygen(t, cli, dir + "/.ssh/ssh_host_ed25519_key")) { return t.report(); }
@@ -175,7 +175,7 @@ export string test_a_server_that_cannot_write_its_image_says_so(Core core, Cli c
   if (!haveSshd(cli)) { return t.report(); }
   string binary = buildServer(t, cli, false);        // the read-only binary, deliberately
   if (binary == "") { return t.report(); }
-  string holder = scratch(cli, "wacsshd-nowrite-holder");
+  string holder = freshScratch(t, cli, "wacsshd-nowrite-holder");
   string image = holder + "/home.wacimg";
 
   Wacsshd s = startWacsshd(t, core, cli, "wacsshd-nowrite", string[]("-i", image), binary);
@@ -207,7 +207,7 @@ export string test_a_session_on_an_image_has_its_own_environment(Core core, Cli 
   // environment, which is the same rule as not spawning its stages.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  string holder = scratch(cli, "wacsshd-env-holder");
+  string holder = freshScratch(t, cli, "wacsshd-env-holder");
   Wacsshd s = imageServer(t, core, cli, "wacsshd-env", holder + "/env.wacimg");
   if (!s.ok) { stopWacsshd(cli, s); return t.report(); }
 
@@ -240,7 +240,7 @@ export string test_two_keys_land_in_two_homes_and_neither_reads_the_others_file(
   // write one, and that is the point: the system builds its own world with the tools it ships.
   T t = T.create();
   if (!haveSshd(cli)) { return t.report(); }
-  string keys = scratch(cli, "wacsshd-users-keys");
+  string keys = freshScratch(t, cli, "wacsshd-users-keys");
   string image = keys + "/system.wacimg";
   string[] none = string[0](fill: "");
 

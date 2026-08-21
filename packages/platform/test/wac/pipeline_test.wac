@@ -29,19 +29,20 @@ import { Core, Cli, Exec, Socket } from "std/platform.wac";
 import { trimmed } from "../../../wactest/src/strings.wac";
 import { Daemon, start, stop, freePort, waitForLogWithin, logOf } from "../../../wactest/src/daemon.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/pipeline-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
 export string test_stdin_through_two_children_and_out_again(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "pipe");
+  string dir = freshScratch(t, cli, "pipe");
   string pipe = dir + "/pipe";
   // A worker rather than an executable: `pipe.wac` spawns this path, and what `spawnSelf` and
   // `spawn` take is the worker module. The suffix is what the builder keys the bundle form off.
@@ -85,7 +86,7 @@ export string test_stdin_through_two_children_and_out_again(Core core, Cli cli) 
  */
 export string test_a_child_serves_a_socket_it_cannot_see(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "inetd");
+  string dir = freshScratch(t, cli, "inetd");
   string inetd = dir + "/inetd";
   string child = dir + "/wc.worker.js";
 

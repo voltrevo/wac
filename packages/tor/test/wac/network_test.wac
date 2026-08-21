@@ -35,6 +35,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Stat, FileResult } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
 /** One built launcher and its child bundles, built once and reused. */
 struct Fixture {
@@ -103,7 +104,8 @@ bool copyOver(Cli cli, string from, string to) {
  * case rebuilds and the other twelve reuse, which is the shape that matters here.
  */
 bool built(T t, Cli cli, string shared) {
-  cli.mkdir(shared, true).wait();
+  // `madeDir`, not `freshDir`: `shared` is the build cache the other twelve cases reuse.
+  t.isTrue(madeDir(cli, shared) == "", "the shared build directory");
   Stat have = cli.stat(shared + "/network").wait();
   i64 newest = newestUnder(cli, "packages/tor/src");
   i64 platform = newestUnder(cli, "packages/platform/src");
@@ -146,8 +148,8 @@ Fixture fixture(T t, Cli cli, string name) {
     return Fixture(false, "the shared build failed", scratch(cli) + "/" + name, "");
   }
   string dir = scratch(cli) + "/" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  if (why != "") { return Fixture(false, why, dir, ""); }
   string launcher = dir + "/network";
 
   string[] parts = string[]("network", "waiter.worker.js", "wc.worker.js", "stages.worker.js");

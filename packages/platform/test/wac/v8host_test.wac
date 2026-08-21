@@ -43,6 +43,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
 import { stale, newestFor } from "./hostfs.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string BOXSH = "packages/box/example/boxsh.wac";
 const string SPAWNSH = "packages/box/src/bin/sh.wac";
@@ -139,10 +140,10 @@ string buildOne(Cli cli, bool native, string entry, string out, string[] grants)
   return "";
 }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/v8host-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -298,7 +299,7 @@ export string test_the_spawning_shell_answers_the_same_on_deno_and_on_the_rust_h
 export string test_an_image_survives_a_process_and_is_readable_by_a_spawned_child(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "imaged");
+  string dir = freshScratch(t, cli, "imaged");
   const string ENTRY = "packages/box/src/bin/imaged.wac";
   const string READ = "cat /data/n | sort -nr | head -1\n";
   // The images stay in a per-case directory — they are what this writes — while the programs come

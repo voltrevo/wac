@@ -37,6 +37,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { jsonFile } from "../../../wactest/src/jsonfile.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { customSection } from "./section.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string ENTRY = "packages/platform/example/wacland.wac";
 /** The `Cli.execWith` transcript, for the comparison `conformance_test.wac` asks for. */
@@ -108,10 +109,10 @@ string buildOne(Cli cli, string entry, bool native, string out, string[] grants)
   return "";
 }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/native-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -235,7 +236,7 @@ void assertConformant(T t, Ran r, string host) {
 export string test_the_same_program_says_the_same_thing_on_a_js_host_and_one_that_is_not(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "wacland");
+  string dir = freshScratch(t, cli, "wacland");
   string denoProgram = dir + "/wacland-deno";
   // **With reading**, which stage 6 needs: it hands a child `GRANT_NONE` and then `GRANT_READ`, and a
   // parent that could not read either way would prove nothing about the ceiling.
@@ -326,7 +327,7 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
   // `platform.wac`, and a runtime with its own idea of the order builds a `Core` whose `log` is the
   // previous field's function. Every call would go somewhere plausible.
   T t = T.create();
-  string dir = scratch(cli, "order");
+  string dir = freshScratch(t, cli, "order");
   string why = buildOne(cli, ENTRY, true, dir + "/order", string[0](fill: ""));
   t.eqStr(why, "", "the manifest built");
   if (why != "") { return t.report(); }
@@ -419,7 +420,7 @@ export string test_the_manifest_carries_the_field_order_rather_than_the_runtime_
  */
 export string test_running_a_host_program_agrees_between_the_two_native_hosts(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "exec");
+  string dir = freshScratch(t, cli, "exec");
   string out = dir + "/probe";
   string why = buildOne(cli, EXEC_PROBE, true, out, string[]("--allow-run"));
   t.eqStr(why, "", "the probe built");

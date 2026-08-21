@@ -31,7 +31,7 @@ import { Incoming, Window, channelClose, defaultMaxPacket, execRequest, extended
          msgChannelOpenFailure, msgChannelRequest, openSession, parse, windowAdjust }
   from "../../src/channel.wac";
 import { Session, handshake } from "./handshake.wac";
-import { Sshd, haveSshd, reapSelects, scratch, startSshd, stopSshd } from "./fixture.wac";
+import { Sshd, haveSshd, reapSelects, freshScratch, startSshd, stopSshd } from "./fixture.wac";
 import { keygen, publicBlobText, restrict } from "../../../wactest/src/keys.wac";
 import { flipped, ramp, slice } from "./build.wac";
 
@@ -334,7 +334,7 @@ export string test_the_orphan_reaper_selects_a_server_of_this_shape(Core core, C
   // what re-parent it to init, which is the other half of what the reaper selects on — a canary
   // whose parent were still alive would be rejected for the right reason and prove nothing.
   T t = T.create();
-  string dir = scratch(cli, "ssh-reap-canary");
+  string dir = freshScratch(t, cli, "ssh-reap-canary");
   string config = dir + "/sshd_config";
   cli.writeFile(config, ("# not a real server\n").toBytes()).wait();
   cli.writeFile(dir + "/sshd", ("#!/bin/sh\nsleep 30\n").toBytes()).wait();

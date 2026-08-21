@@ -24,15 +24,16 @@ import { Store } from "../../src/roots.wac";
 import { ClientStep } from "../../src/client.wac";
 import { Reply, request, rootsFrom, noRoots, fixedFirstFlight } from "./tlsclient.wac";
 import { Server, startServer, stopServer, have, openssl35 } from "./openssl.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string DATA = "packages/tls/test/data";
 const string REQ = "GET / HTTP/1.1\r\nHost: wac.test\r\n\r\n";
 const string BODY = "hello from the wac server";
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/tls/" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -72,7 +73,7 @@ i64 nowSeconds(Core core) { return core.nowMillis().wait() / (1000 as i64); }
 
 export string test_client_talks_to_the_wac_server_end_to_end(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "roundtrip");
+  string dir = freshScratch(t, cli, "roundtrip");
   Ours s = ourServer(t, cli, core, dir);
   t.eqStr(s.error, "", "our server is up");
   if (s.port <= 0) { return t.report(); }
@@ -94,7 +95,7 @@ export string test_client_talks_to_openssls_s_server(Core core, Cli cli) {
   T t = T.create();
   t.isTrue(have(cli, "openssl"), "openssl is on the path");
   if (!have(cli, "openssl")) { return t.report(); }
-  string dir = scratch(cli, "ossl");
+  string dir = freshScratch(t, cli, "ossl");
   Server s = startServer(core, cli, "openssl", DATA + "/leaf.pem", DATA + "/leaf.key",
                          string[0](fill: ""), dir + "/log");
   t.eqStr(s.error, "", "s_server is up");
@@ -117,7 +118,7 @@ export string test_client_refuses_a_certificate_that_does_not_cover_the_host_ask
   // simply for a different name. A client that checks only the signature accepts it, and an attacker
   // who can get a certificate for any domain can then impersonate every domain.
   T t = T.create();
-  string dir = scratch(cli, "wrongname");
+  string dir = freshScratch(t, cli, "wrongname");
   Ours s = ourServer(t, cli, core, dir);
   t.eqStr(s.error, "", "our server is up");
   if (s.port <= 0) { return t.report(); }
@@ -136,7 +137,7 @@ export string test_client_refuses_a_certificate_from_an_issuer_it_does_not_trust
   // The same server, and a root that did not sign its certificate. Nothing about the certificate has
   // changed; what changed is whether we have a reason to believe it.
   T t = T.create();
-  string dir = scratch(cli, "wrongissuer");
+  string dir = freshScratch(t, cli, "wrongissuer");
   Ours s = ourServer(t, cli, core, dir);
   t.eqStr(s.error, "", "our server is up");
   if (s.port <= 0) { return t.report(); }
@@ -159,7 +160,7 @@ export string test_client_refuses_when_the_certificate_is_outside_its_validity_w
   // Time is passed in rather than read, so this needs no clock trickery: ask the client to evaluate
   // the same handshake as though it were 1990.
   T t = T.create();
-  string dir = scratch(cli, "expired");
+  string dir = freshScratch(t, cli, "expired");
   Ours s = ourServer(t, cli, core, dir);
   t.eqStr(s.error, "", "our server is up");
   if (s.port <= 0) { return t.report(); }
@@ -201,7 +202,7 @@ string againstOpenSsl(Core core, Cli cli, string kind, string[] extra, string na
   T t = T.create();
   t.isTrue(have(cli, "openssl"), "openssl is on the path");
   if (!have(cli, "openssl")) { return t.report(); }
-  string dir = scratch(cli, name);
+  string dir = freshScratch(t, cli, name);
   Server s = startServer(core, cli, "openssl",
                          DATA + "/" + kind + "_leaf.pem", DATA + "/" + kind + "_leaf.key",
                          extra, dir + "/log");
@@ -259,7 +260,7 @@ export string test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_
               "`tools/openssl35.sh` builds one.");
     return t.report();
   }
-  string dir = scratch(cli, "mlkem");
+  string dir = freshScratch(t, cli, "mlkem");
   Server s = startServer(core, cli, binary, DATA + "/ec_leaf.pem", DATA + "/ec_leaf.key",
                          string[]("-groups", "X25519MLKEM768"), dir + "/log");
   t.eqStr(s.error, "", "s_server is up");

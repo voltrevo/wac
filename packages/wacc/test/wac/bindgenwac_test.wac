@@ -25,15 +25,16 @@ import { contains, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Graph, graphOf } from "./graph.wac";
 import { emitFiles, bindgenFiles, bindgenWire } from "../../src/api.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string ORACLE = "packages/wacc/test/bindgenOracle.ts";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/bindgenwac-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -187,7 +188,7 @@ void compare(T t, Cli cli, string dir, string what, string entry, string[] paths
 
 export string test_the_two_generators_write_the_same_glue_for_each_shape(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "cases");
+  string dir = freshScratch(t, cli, "cases");
   Program[] all = cases();
   for (i32 i = 0; i < all.len(); i++) {
     // Both generators are pointed at the *same path*, because the module's own name is in the output:
@@ -220,7 +221,7 @@ export string test_the_two_generators_write_the_same_glue_for_a_linker_keyed_enu
   const string WASM_HEX = "0061736d01000000";
   u8[] wasm = u8[](0, 0x61, 0x73, 0x6d, 1, 0, 0, 0);
 
-  string dir = scratch(cli, "keyed");
+  string dir = freshScratch(t, cli, "keyed");
   cli.writeFile(dir + "/sigs", SIGS.toBytes()).wait();
   cli.writeFile(dir + "/wire", WIRE.toBytes()).wait();
 

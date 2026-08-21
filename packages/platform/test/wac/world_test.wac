@@ -17,16 +17,17 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string WC = "packages/platform/example/wc.wac";
 const string HEXDUMP = "packages/platform/example/hexdump.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/world-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -81,7 +82,7 @@ string[] fields(string s) {
 export string test_an_application_written_entirely_in_wac_runs_and_agrees_with_wc(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "wc");
+  string dir = freshScratch(t, cli, "wc");
   string app = dir + "/wc";
   if (!build(t, cli, WC, app, string[]("--allow-read"))) {
     cli.remove(dir, true).wait();
@@ -136,7 +137,7 @@ export string test_a_capability_the_build_withholds_is_a_failure_the_application
   // Built with no grants, so the world has no filesystem. The application gets an ordinary failed
   // FileResult rather than an exception, and decides what to do.
   T t = T.create();
-  string dir = scratch(cli, "nogrant");
+  string dir = freshScratch(t, cli, "nogrant");
   string app = dir + "/wc";
   if (!build(t, cli, WC, app, none())) { cli.remove(dir, true).wait(); return t.report(); }
 
@@ -155,7 +156,7 @@ export string test_a_capability_the_build_withholds_is_a_failure_the_application
 
 export string test_a_missing_file_reaches_the_application_as_its_hosts_message(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "missing");
+  string dir = freshScratch(t, cli, "missing");
   string app = dir + "/wc";
   if (!build(t, cli, WC, app, string[]("--allow-read"))) {
     cli.remove(dir, true).wait();
@@ -173,7 +174,7 @@ export string test_a_missing_file_reaches_the_application_as_its_hosts_message(C
 
 export string test_no_arguments_means_standard_input_as_wc_has_always_meant_it(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "stdin");
+  string dir = freshScratch(t, cli, "stdin");
   string app = dir + "/wc";
   if (!build(t, cli, WC, app, none())) { cli.remove(dir, true).wait(); return t.report(); }
   Exec r = cli.exec(app, none(), "one two\nthree\n".toBytes()).wait();
@@ -196,7 +197,7 @@ export string test_env_distinguishes_unset_from_empty(Core core, Cli cli) {
   // would express the second run exactly and break both: the built program's shebang is
   // `/usr/bin/env -S … deno run`, which needs a `PATH` to find `deno` with.
   T t = T.create();
-  string dir = scratch(cli, "env");
+  string dir = freshScratch(t, cli, "env");
   string app = dir + "/wc";
   if (!build(t, cli, WC, app, string[]("--allow-read", "--allow-env"))) {
     cli.remove(dir, true).wait();
@@ -231,7 +232,7 @@ export string test_a_program_can_be_a_filter_stdin_in_exact_bytes_out(Core core,
   // `readStdin` and `write` are what change that, and neither needs a grant: what the user pipes in
   // and what the program prints are the user's own doing.
   T t = T.create();
-  string dir = scratch(cli, "filter");
+  string dir = freshScratch(t, cli, "filter");
   string app = dir + "/hexdump";
   if (!build(t, cli, HEXDUMP, app, none())) { cli.remove(dir, true).wait(); return t.report(); }
 
@@ -259,7 +260,7 @@ export string test_a_program_can_be_a_filter_stdin_in_exact_bytes_out(Core core,
 
 export string test_wc_reads_standard_input_when_given_no_file(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "wcstdin");
+  string dir = freshScratch(t, cli, "wcstdin");
   string app = dir + "/wc";
   if (!build(t, cli, WC, app, none())) { cli.remove(dir, true).wait(); return t.report(); }
 
@@ -292,7 +293,7 @@ export string test_stat_and_readdir_reach_the_application_and_are_gated(Core cor
   // this package — `stream.wac` — failed a test about `readDir`. A fixture that changes when the
   // source tree changes is testing the source tree.
   T t = T.create();
-  string dir = scratch(cli, "readdir");
+  string dir = freshScratch(t, cli, "readdir");
   string app = dir + "/hexdump";
   if (!build(t, cli, HEXDUMP, app, string[]("--allow-read"))) {
     cli.remove(dir, true).wait();

@@ -28,14 +28,15 @@ import { Core, Cli, Exec, Change, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles } from "../../src/api.wac";
 import { Graph, graphOf } from "./graph.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string SOURCE = "packages/wacc/example/wacc.wac";
 const string GLUERUN = "packages/wacc/test/gluerun.ts";
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -106,7 +107,7 @@ Exec runProgram(Cli cli, string program, string[] args) {
 export string test_the_program_compiles_what_the_library_compiles_byte_for_byte(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "waccprog");
+  string dir = freshScratch(t, cli, "waccprog");
   string program = buildProgram(t, cli);
   if (program == "") { return t.report(); }
 
@@ -146,7 +147,7 @@ export string test_it_names_the_file_it_cannot_read(Core core, Cli cli) {
   // A missing import used to be discoverable only as whatever the checker said about the hole it
   // left, which points at the file that *imported* it. The walk stops and says which path.
   T t = T.create();
-  string dir = scratch(cli, "waccprog-missing");
+  string dir = freshScratch(t, cli, "waccprog-missing");
   string program = buildProgram(t, cli);
   if (program == "") { return t.report(); }
 
@@ -163,7 +164,7 @@ export string test_it_names_the_file_it_cannot_read(Core core, Cli cli) {
 
 export string test_check_refuses_a_program_the_checker_refuses_and_says_where(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "waccprog-bad");
+  string dir = freshScratch(t, cli, "waccprog-bad");
   string program = buildProgram(t, cli);
   if (program == "") { return t.report(); }
 
@@ -186,7 +187,7 @@ export string test_bindgen_the_program_writes_glue_and_the_glue_runs(Core core, 
   // would still look like JavaScript. `.js` and imported as such, which is the browser's rule and the
   // reason the JavaScript mode exists at all.
   T t = T.create();
-  string dir = scratch(cli, "waccprog-glue");
+  string dir = freshScratch(t, cli, "waccprog-glue");
   string program = buildProgram(t, cli);
   if (program == "") { return t.report(); }
 

@@ -38,6 +38,7 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
+import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
 const string ENTRY = "packages/platform/example/echod.wac";
 const string PEER = "packages/platform/test/udppeer.ts";
@@ -54,7 +55,8 @@ bool haveNode(Cli cli) {
 /** Build the example for `target`, with or without the net grant. Empty on failure. */
 string build(T t, Cli cli, string name, string target, bool net) {
   string dir = scratch(cli);
-  cli.mkdir(dir, true).wait();
+  // `madeDir`, not `freshDir`: this directory holds the built output the other cases reuse.
+  t.isTrue(madeDir(cli, dir) == "", "the build directory");
   string out = dir + "/" + name;
   string[] args = net
     ? string[]("run", "-A", "packages/platform/build.ts", ENTRY, "--allow-net", "--target", target,
@@ -122,11 +124,16 @@ struct Peer {
 
 Peer startPeer(Cli cli, string name) {
   string dir = scratch(cli) + "/peer-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  // **The fixture's own failure goes in front of the daemon's**, rather than returning early with a
+  // `Daemon` this function would have to invent. A `start` into a directory that is not there fails
+  // anyway; what was missing was any mention of the directory. `issues/system/0229`.
+  string why = freshDir(cli, dir);
   Daemon d = start(cli, "deno run -A --unstable-net " + quoted(PEER) + " " + quoted(dir),
                    dir + "/peer.log");
-  if (!d.ok()) { return Peer(false, "the UDP peer did not start — " + d.error, dir, d, 0); }
+  if (!d.ok()) {
+    return Peer(false, (why == "" ? "" : why + "; ") + "the UDP peer did not start — " + d.error,
+                dir, d, 0);
+  }
   for (i32 i = 0; i < 400; i++) {
     if (cli.stat(dir + "/ready.json").wait().isFile) { return Peer(true, "", dir, d, 0); }
     cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait();

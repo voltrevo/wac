@@ -32,13 +32,14 @@ import { Daemon, start, stop, logOf, waitForLogWithin } from "../../../wactest/s
 import { Fetched, request } from "../../src/client.wac";
 import { Incoming } from "../../src/incoming.wac";
 import { jsonFile, numOf, strOf } from "../../../wactest/src/jsonfile.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/httpinterop-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -127,7 +128,7 @@ export string test_wac_client_to_node_server_the_response_parser_against_a_real_
     Core core, Cli cli) {
   // The diagonal that tests the parser. None of these responses was written to please it.
   T t = T.create();
-  string dir = scratch(cli, "parser");
+  string dir = freshScratch(t, cli, "parser");
   Peer node = startNode(core, cli, dir);
   t.eqStr(node.error, "", "the node server is up");
   if (node.port <= 0) { return t.report(); }
@@ -172,7 +173,7 @@ export string test_wac_client_to_node_server_head_has_no_body_however_long_the_h
   // The trap this parser exists to avoid. Node answers HEAD with `Content-Length: 4` and no bytes; a
   // client that waits for four is stuck, and one that reads four takes them from the next response.
   T t = T.create();
-  string dir = scratch(cli, "head");
+  string dir = freshScratch(t, cli, "head");
   Peer node = startNode(core, cli, dir);
   t.eqStr(node.error, "", "the node server is up");
   if (node.port <= 0) { return t.report(); }
@@ -196,7 +197,7 @@ export string test_wac_client_to_wac_server_the_loop_closes(Core core, Cli cli) 
   // Both ends mine, so this proves less on its own — but it is the whole stack in one call, and it is
   // what "a server and a client written in wac" actually means.
   T t = T.create();
-  string dir = scratch(cli, "loop");
+  string dir = freshScratch(t, cli, "loop");
   Peer wac = startWac(core, cli, dir);
   t.eqStr(wac.error, "", "the wac server is up");
   if (wac.port <= 0) { return t.report(); }
@@ -225,7 +226,7 @@ export string test_fetch_to_wac_server_the_response_writer_against_a_strict_clie
     Core core, Cli cli) {
   // The other diagonal. `fetch` rejects a malformed response outright rather than coping.
   T t = T.create();
-  string dir = scratch(cli, "fetch");
+  string dir = freshScratch(t, cli, "fetch");
   Peer wac = startWac(core, cli, dir);
   t.eqStr(wac.error, "", "the wac server is up");
   if (wac.port <= 0) { return t.report(); }
@@ -255,7 +256,7 @@ export string test_the_same_request_bytes_are_accepted_by_both_servers(Core core
   // The writer, checked by sending its output to two independent servers. A request only one accepts
   // is a request with something wrong in it.
   T t = T.create();
-  string dir = scratch(cli, "both");
+  string dir = freshScratch(t, cli, "both");
   Peer node = startNode(core, cli, dir);
   Peer wac = startWac(core, cli, dir);
   t.eqStr(node.error, "", "the node server is up");

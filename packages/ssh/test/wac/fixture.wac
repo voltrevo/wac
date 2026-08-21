@@ -33,6 +33,7 @@ import { quoted } from "../../../wactest/src/childenv.wac";
 import { copyPreserving, keygen, publicBlobText, restrict }
   from "../../../wactest/src/keys.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 /** Everything a test needs from a running sshd, so the setup is written once. */
 export struct Sshd {
@@ -47,10 +48,10 @@ export struct Sshd {
 export bool haveSshd(Cli cli) { return cli.stat("/usr/sbin/sshd").wait().isFile; }
 
 /** A scratch directory of our own, emptied first so a previous run cannot supply a file. */
-export string scratch(Cli cli, string name) {
+export string freshScratch(T t, Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -145,7 +146,7 @@ export bool wouldReap(Cli cli, string line) {
  */
 export Sshd startSshd(T t, Core core, Cli cli, string name) {
   reapAbandoned(cli);
-  string dir = scratch(cli, name);
+  string dir = freshScratch(t, cli, name);
 
   Held held = Held.take(cli);
   if (held.port < 0) { return Sshd(false, "no port could be bound", dir, -1, Daemon(-1, "", "")); }

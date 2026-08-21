@@ -16,16 +16,17 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
 
 const string INSIDE = "packages/platform/example/inside.wac";
 
 string root(Cli cli) { return cli.cwd().wait(); }
 
 /** A directory of this test's own, under `.cache` so no walker over the repository sees it appear. */
-string scratch(Cli cli, string name) {
+string freshScratch(T t, Cli cli, string name) {
   string dir = root(cli) + "/.cache/inside-" + name;
-  cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
   return dir;
 }
 
@@ -42,7 +43,7 @@ bool build(T t, Cli cli, string out) {
 export string test_a_childs_output_comes_back_to_its_caller_and_goes_nowhere_else(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "quiet");
+  string dir = freshScratch(t, cli, "quiet");
   string app = dir + "/inside";
   if (!build(t, cli, app)) { cli.remove(dir, true).wait(); return t.report(); }
 
@@ -75,7 +76,7 @@ export string test_a_childs_output_comes_back_to_its_caller_and_goes_nowhere_els
 export string test_a_child_reads_what_it_was_fed_not_the_terminals_standard_input(
     Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli, "stdin");
+  string dir = freshScratch(t, cli, "stdin");
   string app = dir + "/inside";
   if (!build(t, cli, app)) { cli.remove(dir, true).wait(); return t.report(); }
 
