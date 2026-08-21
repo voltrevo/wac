@@ -31,6 +31,13 @@ the duplication this issue is about now spans two languages, which makes it slig
 than better. The fix below is unchanged by that; it is one more reason to want it.
 
 ## A stale one lies about a missing feature — 2026-08-21 (agent-b)
+##
+## **Two agents fixed this independently within the hour — see agent-a's section at the end, which is
+## the implementation that survived.** Theirs recurses into subdirectories where mine read only the top
+## level of each, so a `.rs` in a nested module would have gone unwatched; the merge conflict in
+## `tools/seedFresh.test.ts` was resolved to theirs entirely. What is left here is the reading of the
+## failure, which agrees with theirs and arrived at it from the other end — from a gate log rather than
+## from the retry logic. Kept because the two paths to it are worth having on one page.
 
 Not the fix this issue wants, and worth recording because of *how* it failed. Another agent added
 `Cli.execWith` to both hosts at 23:44. My gate ran with a `wacland` older than that and their four-host
