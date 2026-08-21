@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0238a](open/0238a-one-fault-two-diagnostics-at-one-position.md) | one fault reported twice at one position — 24 of 1,189 mutants, every example a cast reported alongside the return-type mismatch it caused; `mutateCheck` asserts a *subset* of the reference's positions, which a duplicate satisfies twice over | diagnostic | wrong answer |
 | [0235a](open/0235a-written-type-arguments-parse-as-a-comparison.md) | the silent half is fixed — a type name in value position was refused only for structs, so `x < i32`, `x < E` and `x < string` checked clean; what is left is that `found bool` is still the first of three lines | diagnostic | wrong answer |
 | [0233a](open/0233a-a-shift-by-a-variable-is-typed-from-the-amount-not-the-slot.md) | `i64 x = 1 << count;` is refused by both compilers: a shift is typed from its left operand, which for a literal has no type, so the only type in reach is the amount's — the one the result is explicitly not supposed to follow | decision | compile error |
 | [0232a](open/0232a-the-diagnostic-wire-cannot-carry-contextstart.md) | the diagnostic wire has no `contextStart`, so wacc renders `§wac-diag-multiline-ic7x2hq` two source lines shorter than the reference — and `renderdiag_test.wac` cannot see it, because both renderers are fed wacc's own wire | decision | wrong answer |
@@ -34,7 +35,7 @@ has been fixed and why.
 
 ## Closed
 
-184 issues, 158 closed.
+185 issues, 158 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

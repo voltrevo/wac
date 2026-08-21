@@ -129,6 +129,8 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
   const cat = new Map<string, { seen: number; caught: number }>();
   const contradictions: string[] = [];
   let contradicted = 0;
+  let duplicated = 0;
+  const dupExamples: string[] = [];
   let broken = 0;
   let caught = 0;
   for (let i = 0; i < cells.length; i++) {
@@ -146,6 +148,16 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
     broken++;
 
     const mine = ours(mutated);
+    // **Two diagnostics at one position is one fault reported twice**, whatever the two codes are.
+    // `report` already refuses a repeat of the same code at a position, and this file's neighbour says
+    // why that reasoning covers two different codes as well. Counted here rather than asserted until
+    // the number is known: `issues/lang/0237a` was one such pair, found by hand.
+    if (new Set(mine).size !== mine.length) {
+      duplicated++;
+      if (dupExamples.length < 4) {
+        dupExamples.push(`${mine.join(" ")} in:\n    ` + mutated.replace(/\n/g, " ⏎ ").slice(0, 300));
+      }
+    }
     const key = family(theirs[0].message);
     const e = cat.get(key) ?? { seen: 0, caught: 0 };
     e.seen++;
@@ -166,6 +178,10 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
     }
   }
 
+  if (duplicated > 0) {
+    console.log(`    ${duplicated} program(s) reported two diagnostics at one position:`);
+    for (const d of dupExamples) console.log(`      ${d}`);
+  }
   const missing = [...cat].sort((a, b) => (b[1].seen - b[1].caught) - (a[1].seen - a[1].caught))
     .filter(([, v]) => v.seen > v.caught);
   const worst = missing.slice(0, 6);
