@@ -1,7 +1,7 @@
 # 0241a — a generic method's body is never checked under substitution, so `wac check` passes what `wac build` refuses
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a, 2026-08-21 — priced; trying the call-site option
 - **Reported by:** agent-a
 - **Date:** 2026-08-21
 - **Kind:** diagnostic
@@ -169,3 +169,91 @@ Two things that would keep it down, if it is taken:
 The recall row this came from cannot close until the checker reports, so it will keep reading as `2
 missed of 7` — a permanent entry of the same kind `issues/lang/0151` describes for its own 1, and worth
 knowing about before somebody tries to fix the number rather than the cause.
+
+## Priced — agent-a, 2026-08-21
+
+The recommendation above says the machinery exists and the expense is the blast radius. Half right.
+Read rather than assumed, the pass needs three things and the checker has two of them.
+
+**1. Making `T` resolve to `i32` is one place, four lines.** `typeOfTy`'s `Named` case has exactly one
+point where a written type parameter becomes unknown:
+
+```wac
+for (i32 i = 0; i < c.activeParamCount; i++) {
+  if (c.activeParams[i] == base) { return typeNone(); }   // check.wac, the only opaque point
+}
+```
+
+With a "current instance" on `C`, that becomes `substituteType(c, thatOwner, base)` — the function that
+already exists and has 16 call sites. Nothing else in the file resolves a type parameter, so nothing
+else needs touching.
+
+**2. The body walk already takes the owner as an argument.** `checkMethodBodies(c, owner, parent,
+methods)` declares `this` with `c.declareConst("this", owner, …)`, so passing `Opt<i32>` instead of
+`Opt` types the receiver at the instance and every member access on it goes through the substitution
+machinery that already handles instances. There is no second walk to write.
+
+**3. And the checker does not know which instances exist.** This is the part that was assumed. The list
+is discovered in **`emit.wac`** — `collectInstances`, *"which instances exist is discovered here"* — and
+the emitter runs after the checker. `check.wac` has `genericArgs` and `substituteType`, which *read* an
+instance name it is handed, and nothing that enumerates them. So "check each instantiated generic's
+methods" has no set to iterate.
+
+That is why the pass does not exist, and it moves the cost from "a second body pass" to "discovery in
+the checker, or a way to reach the emitter's".
+
+### Which reopens the options, with a fourth nobody had
+
+* **Discover instances in the checker.** A walk over every written type and every expression type,
+  collecting names that match `X<…>`. Straightforward, and a second implementation of something
+  `collectInstances` already does — the thing `CLAUDE.md` says to avoid, and the two would drift.
+* **Give the checker the emitter's list.** Cheapest in code and wrong in layering: it makes the fast
+  loop depend on the slow one, and `wac check` exists precisely to run without emitting.
+* **Check at the call site instead.** `checkMethodCall` already computes the receiver's instance —
+  `methodInst` is in hand at the call — so a body check could run there, with no list at all and no new
+  discovery. **Known limitation, and it is this issue's own reproduction:** the fault is reported when
+  the method is *called*, and the reproduction says wacc should report `orElse` even when only
+  `isSome()` is. So this closes the common case — the reader who calls the method and gets a clean
+  check — and leaves an uncalled generic method unchecked. Strictly better than today, materially
+  cheaper than the other two, and honest about what it does not do if written down.
+* **Record it as a known limitation.** As above.
+
+**Recommended now: the third**, and the recommendation above stands only if somebody wants to pay for
+discovery. The blast-radius number the first option needs is still unmeasured, and it cannot be measured
+without building discovery first — which is the circularity worth naming: the cheap option is the one
+that can be *tried* without first paying for the thing that makes it expensive.
+
+Two bounds on that number while it is unmeasured, neither tight:
+
+* The repository **builds**, and the emitter refuses exactly this class with a named method and reason.
+  So every instance of this fault in our own corpus that stops a module emitting is already zero — what
+  a substituted pass would add is faults that type-check wrong and still emit.
+* `mutateCheck.test.ts`'s recall table carried **2 missed of 7** for *"is not callable"*, which is where
+  this issue came from. Two programs, in a corpus of mutations rather than of real code.
+
+### And the call-site option has one obstacle of its own: the table has no parameter names
+
+`checkMethodCall` has the instance (`methodInst`) and the method's index, and `C` stores each method's
+body (`methodBodies`), its parameter **types** (`methodParamTypes`), its return type and its arity. It
+does not store the parameter **names**. So a body re-walk driven from the table cannot declare `d` in
+`T orElse(const this, T d)`, and every mention of it would be reported as an undefined name — a false
+diagnostic worse than the silence.
+
+That is one parallel array and its writer, beside the four that already exist. So the honest total for
+the call-site option:
+
+| | |
+|---|---|
+| a `instanceOwner` field on `C`, consulted at the one opaque point | ~4 lines |
+| `methodParamNames`, beside `methodParamTypes` | ~6 lines |
+| a checked-already table, so a method called twice is checked once | ~6 lines |
+| the re-walk: declare `this` at the instance, declare the parameters substituted, walk the body | ~25 lines |
+
+About forty lines, no new concepts, and the substitution and the body are both already stored. What it
+buys is `wac check` agreeing with `wac build` for any generic method that is *called*; what it does not
+buy is the uncalled one, which is this issue's second reproduction and which needs the instance
+discovery the checker does not have.
+
+Written down so the next person starts from the obstacle rather than finding it: the tables know what a
+method's parameters *are*, and not what they are *called*.
+
