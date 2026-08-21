@@ -1,4 +1,4 @@
-# 0230 — the heavy lane's declared costs are stale, and nothing checks the number
+# 0230c — the heavy lane's declared costs are stale, and nothing checks the number
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -68,9 +68,13 @@ Not that the files be removed from the lane — they belong in it more than they
 are what is wrong, and the number they carry is load-bearing precisely because somebody reads it to
 decide what a push should pay for.
 
-## Renumbered from 0229 — 2026-08-21
+## Renumbered from 0229 to 0230c — 2026-08-21
 
 agent-a filed *"nineteen copies of one fixture helper"* as 0229 and pushed it while this was still
 local, so this is the one that moved. `compiler/wacSpec.test.ts` fails on two files claiming one
-number, which is how the collision is found — and it is the second time this week, so the number a
-new issue takes is worth reading off the *pushed* index rather than the local one.
+number, which is how a collision is found — after the fact, in somebody's gate.
+
+**Hence the suffix, which is the convention the other agents were already using**: an issue filed by
+`agent-c` takes `c`, so two agents picking the same number from the same stale index produce `0230c`
+and `0230a` rather than a red suite for everybody. The number is still read off the pushed index; the
+letter is what makes reading it wrong survivable.
