@@ -46,7 +46,7 @@ import { builtProgram } from "../../../wactest/src/built.wac";
 import { quoted, withoutEnv } from "../../../wactest/src/childenv.wac";
 import { contains, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { freshDir } from "../../../wactest/src/host.wac";
+import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
 /**
  * Where the C tor lives if it has been built.
@@ -365,7 +365,8 @@ export string test_a_c_tor_carries_a_stream_through_our_relays_both_directions(C
   // with a body that fits in one.
   string body = "";
   for (i32 i = 0; i < 300; i++) { body = body + "wac relay carried this\n"; }
-  cli.mkdir(dir + "/www", true).wait();
+  string whyDir1 = madeDir(cli, dir + "/www");
+  t.isTrue(whyDir1 == "", whyDir1);
   cli.writeFile(dir + "/www/body.txt", body.toBytes()).wait();
   Daemon target = start(cli, inDir(dir + "/www", "python3 -m http.server " + itoa(targetPort) +
                                             " --bind 127.0.0.1"), dir + "/target.log");

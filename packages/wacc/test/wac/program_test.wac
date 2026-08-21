@@ -28,7 +28,7 @@ import { Core, Cli, Exec, Change, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles } from "../../src/api.wac";
 import { Graph, graphOf } from "./graph.wac";
-import { freshDir } from "../../../wactest/src/host.wac";
+import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
 const string SOURCE = "packages/wacc/example/wacc.wac";
 const string GLUERUN = "packages/wacc/test/gluerun.ts";
@@ -81,7 +81,8 @@ string buildProgram(T t, Cli cli) {
   // there was deleted by the first test and rebuilt by it every run — which is what the first
   // version of this did, silently and at full price.
   string dir = cli.cwd().wait() + "/.cache/waccprog-built";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
   string stem = dir + "/wacc";
   string wasm = stem + ".wasm";
   Stat have = cli.stat(wasm).wait();

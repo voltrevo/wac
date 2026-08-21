@@ -18,7 +18,7 @@
 // nobody finds.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { binaryPath, freshDir, scratch } from "../../../wactest/src/host.wac";
+import { binaryPath, freshDir, madeDir, scratch } from "../../../wactest/src/host.wac";
 import { withEnv } from "../../../wactest/src/childenv.wac";
 import { joined } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -27,8 +27,10 @@ import { Change, Cli, Core, Exec, FileResult } from "std/platform.wac";
 /** `$WAC_HOME` as `tools/install.test.ts`'s `fakeInstall` leaves it, plus a profile that sources it. */
 string fakeInstall(Cli cli, T t, string dir) {
   string home = dir + "/.wac";
-  cli.mkdir(home + "/bin", true).wait();
-  cli.mkdir(home + "/cache/git", true).wait();
+  string whyDir1 = madeDir(cli, home + "/bin");
+  t.isTrue(whyDir1 == "", whyDir1);
+  string whyDir2 = madeDir(cli, home + "/cache/git");
+  t.isTrue(whyDir2 == "", whyDir2);
   cli.writeFile(home + "/bin/wac", "#!/bin/sh\n".toBytes()).wait();
   cli.writeFile(home + "/env", "# env\n".toBytes()).wait();
   cli.writeFile(home + "/install.json5", "{}\n".toBytes()).wait();

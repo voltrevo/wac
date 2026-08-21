@@ -26,6 +26,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
@@ -63,7 +64,8 @@ export string test_the_image_is_a_different_thing_from_the_memory_it_agrees_with
     Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/backings";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
 
   string sealed = dir + "/sealedsh";
   string imaged = dir + "/imaged";
@@ -93,7 +95,8 @@ export string test_the_image_is_a_different_thing_from_the_memory_it_agrees_with
   // The host mount is a third thing again: what it wrote is on the real disk, where the other two
   // cannot see it and this test can.
   string work = dir + "/persist";
-  cli.mkdir(work, true).wait();
+  string whyDir2 = madeDir(cli, work);
+  t.isTrue(whyDir2 == "", whyDir2);
   cli.remove(work + "/here", false).wait();
   run(cli, host, string[0](fill: ""), "cd " + work + "; echo ondisk > here");
   FileResult wrote = cli.readFile(work + "/here").wait();

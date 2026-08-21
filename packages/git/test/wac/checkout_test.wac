@@ -17,6 +17,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { Core, Cli, Exec, Change, Stat, FileResult } from "std/platform.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -140,7 +141,8 @@ Git repo(T t, Cli cli, string name, bool withExecutable, bool withSymlink, bool 
   if (!made.ok()) { return g; }
 
   g.run(string[]("init", "-q"));
-  cli.mkdir(dir + "/sub/deep", true).wait();
+  string whyDir1 = madeDir(cli, dir + "/sub/deep");
+  t.isTrue(whyDir1 == "", whyDir1);
   cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
   cli.writeFile(dir + "/sub/b.txt", "two\n".toBytes()).wait();
   cli.writeFile(dir + "/sub/deep/c.txt", "three\n".toBytes()).wait();

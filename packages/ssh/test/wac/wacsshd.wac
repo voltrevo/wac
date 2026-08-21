@@ -40,6 +40,7 @@ import { contains, splitLines, trimmed } from "../../../wactest/src/strings.wac"
 import { atoi, itoa } from "../../../fmt/src/itoa.wac";
 import { freshScratch } from "./fixture.wac";
 import { copyPreserving, keygen, restrict } from "../../../wactest/src/keys.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** Our server, running, with a host key and one authorized client key. */
 export struct Wacsshd {
@@ -64,7 +65,8 @@ string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release
  */
 export string buildServer(T t, Cli cli, bool writable) {
   string dir = cli.cwd().wait() + "/.cache/wacsshd";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
   string stem = dir + (writable ? "/sshd-writable" : "/sshd");
 
   // Reused when it is already there and no older than its own source. `wac build` rewrites it, so a
@@ -133,7 +135,8 @@ export Wacsshd startWacsshd(T t, Core core, Cli cli, string name, string[] extra
 
 Wacsshd startOnce(T t, Core core, Cli cli, string name, string[] extra, string binary) {
   string dir = freshScratch(t, cli, name);
-  cli.mkdir(dir + "/.ssh", true).wait();
+  string whyDir2 = madeDir(cli, dir + "/.ssh");
+  t.isTrue(whyDir2 == "", whyDir2);
   if (!keygen(t, cli, dir + "/.ssh/ssh_host_ed25519_key")) {
     return Wacsshd(false, "ssh-keygen failed for the host key", dir, -1, Daemon(-1, "", ""));
   }
@@ -265,7 +268,8 @@ export Said rawSsh(Cli cli, Wacsshd s, string[] args) {
  */
 export string buildClient(T t, Cli cli, bool writable) {
   string dir = cli.cwd().wait() + "/.cache/wacsshd";
-  cli.mkdir(dir, true).wait();
+  string whyDir3 = madeDir(cli, dir);
+  t.isTrue(whyDir3 == "", whyDir3);
   string stem = dir + (writable ? "/ssh-writable" : "/ssh");
   Stat built = cli.stat(stem + ".wasm").wait();
   Stat source = cli.stat("packages/ssh/src/ssh.wac").wait();

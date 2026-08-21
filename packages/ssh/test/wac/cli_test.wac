@@ -21,11 +21,13 @@ import { Said, buildClient, ourSsh, ourSshEnv } from "./wacsshd.wac";
 import { Sshd, haveSshd, startSshd, stopSshd } from "./fixture.wac";
 import { copyPreserving, publicBlobText, restrict } from "../../../wactest/src/keys.wac";
 import { ramp } from "./build.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** A HOME with an `.ssh` the program will find by its own defaults. */
 string makeHome(T t, Cli cli, Sshd s, bool knownHost) {
   string home = s.dir + "/home";
-  cli.mkdir(home + "/.ssh", true).wait();
+  string whyDir1 = madeDir(cli, home + "/.ssh");
+  t.isTrue(whyDir1 == "", whyDir1);
   copyPreserving(cli, s.dir + "/clientkey", home + "/.ssh/id_ed25519");
   restrict(cli, home + "/.ssh/id_ed25519");
   if (knownHost) {

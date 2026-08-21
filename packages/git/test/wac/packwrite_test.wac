@@ -33,7 +33,7 @@ import { Kind } from "../../src/object.wac";
 import { Indexed, indexPack, writePack, completePack } from "../../src/pack.wac";
 import { Reply, wantRequest, findPack } from "../../src/fetch.wac";
 import { Completion, RepoAt, Stored, completeThin, openRepo, writeObject } from "../../src/repo.wac";
-import { freshDir } from "../../../wactest/src/host.wac";
+import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -194,7 +194,8 @@ export string test_a_pack_we_wrote_is_one_git_indexes_verifies_and_unpacks(Core 
   string big = "";
   for (i32 i = 0; i < 300; i++) { big = big + "a line that repeats\n"; }
   cli.writeFile(g.dir + "/big.txt", big.toBytes()).wait();
-  cli.mkdir(g.dir + "/sub", true).wait();
+  string whyDir1 = madeDir(cli, g.dir + "/sub");
+  t.isTrue(whyDir1 == "", whyDir1);
   cli.writeFile(g.dir + "/sub/small.txt", "one\n".toBytes()).wait();
   g.run(string[]("add", "-A"));
   g.run(string[]("commit", "-qm", "one", "--date", "1700000000 +0000"));

@@ -31,6 +31,7 @@ import { Pack, Indexed, indexPack, openIndexed, rawAt, objectAt,
 import { PackIndex } from "../../src/idx.wac";
 import { Kind, nameOf } from "../../src/object.wac";
 import { Parsed, parseCommit } from "../../src/commit.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -166,7 +167,8 @@ Git served(T t, Cli cli, string name) {
   if (!made.ok()) { return g; }
 
   g.run(string[]("init", "-q", "-b", "main"), u8[0]());
-  cli.mkdir(dir + "/sub", true).wait();
+  string whyDir1 = madeDir(cli, dir + "/sub");
+  t.isTrue(whyDir1 == "", whyDir1);
   cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
   cli.writeFile(dir + "/sub/b.txt", "two\n".toBytes()).wait();
   g.run(string[]("add", "-A"), u8[0]());

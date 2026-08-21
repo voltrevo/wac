@@ -31,6 +31,7 @@ import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { emitFiles } from "../../src/api.wac";
 import { allExportNames } from "./wasm_probe.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** Two files, one name, both with a `u32` method — and both crossing the bind boundary. */
 string[] fixturePaths() {
@@ -88,7 +89,8 @@ export string test_two_files_declaring_one_struct_name_export_their_helpers_once
   // **The engine is the assertion.** Written out and compiled by V8 through `wac validate`, because
   // a duplicate export name is a module that will not load rather than one that answers wrongly.
   string dir = cli.cwd().wait() + "/.cache/dupexports";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
   string path = dir + "/mod.wasm";
   Change wrote = cli.writeFile(path, wasm).wait();
   t.eqI32(wrote.fault, 0, "wrote the module");

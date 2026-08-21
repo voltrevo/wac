@@ -26,6 +26,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
 import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 const string ENTRY = "packages/raster/example/deskshot.wac";
 const i32 WIDTH = 320;
@@ -47,7 +48,8 @@ export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_java
   // hosts. `wac build` is deterministic, so an unchanged program produces the same bytes, the same
   // cache key and a hit. The images are removed below; the artefacts older than this build are too.
   string dir = cwd + "/.cache/raster-hosts";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
   string stem = dir + "/deskshot";
   // **The directory is not emptied, and that is worth four seconds.** `wacland` caches the compiled
   // module beside the `.wasm` as `deskshot.cwasm-<key>`, keyed by content — 4.8 MB that cranelift

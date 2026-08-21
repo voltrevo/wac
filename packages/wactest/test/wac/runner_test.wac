@@ -21,6 +21,7 @@ import { T } from "../../src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../src/strings.wac";
 import { Core, Cli, Exec, Change } from "std/platform.wac";
+import { madeDir } from "../../src/host.wac";
 
 /** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
@@ -54,7 +55,8 @@ export string test_a_file_with_no_tests_is_an_error_not_a_silent_pass(Core core,
   // The failure mode worth guarding: a misnamed export means zero tests run and everything "passes".
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
   string path = dir + "/_runner_empty_test.wac";
   Change wrote = cli.writeFile(path, "export i32 notATest() { return 1; }\n".toBytes()).wait();
   t.eqI32(wrote.fault, 0, "wrote the fixture");

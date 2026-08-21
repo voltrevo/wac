@@ -15,6 +15,7 @@ import { shellMain } from "../../src/entry.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { T } from "../../../wactest/src/assert.wac";
 import { Vector, Vectors, load } from "./vectors.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 struct Ran {
   string out;
@@ -63,7 +64,8 @@ export string test_every_scripted_expectation_still_holds(Core core, Cli cli) {
     // one would assert that a program is missing rather than anything about the language.
     if (vec.needsProgram) { continue; }
     string dir = caseDir(cli, i);
-    cli.mkdir(dir, true).wait();
+    string whyDir1 = madeDir(cli, dir);
+    t.isTrue(whyDir1 == "", whyDir1);
     Ran r = runScript(core, cli, dir, vec.script);
     cli.remove(dir, true).wait();
     ran = ran + 1;
@@ -122,7 +124,8 @@ export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli)
     }
     checked = checked + 1;
     string dir = cli.cwd().wait() + "/.cache/wac-shcanary/c" + itoa(i);
-    cli.mkdir(dir, true).wait();
+    string whyDir2 = madeDir(cli, dir);
+    t.isTrue(whyDir2 == "", whyDir2);
     Ran ours = runScript(core, cli, dir, script);
     cli.remove(dir, true).wait();
     t.eqStr(ours.out, string.fromBytes(r.stdout), "live oracle disagrees: " + script);

@@ -44,6 +44,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Held } from "../../../wactest/src/daemon.wac";
 import { stale } from "./hostfs.wac";
 import { builtProgram, builtByDeno, copyBuilt } from "../../../wactest/src/built.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 const string BUILT = ".cache/hostexamples";
 
@@ -268,7 +269,8 @@ export string test_the_capability_examples_answer_the_same_on_both_hosts(Core co
   T t = T.create();
   string native = nativeBinary(cli);
   string tmp = root(cli) + "/" + BUILT;
-  cli.mkdir(tmp, true).wait();
+  string whyDir1 = madeDir(cli, tmp);
+  t.isTrue(whyDir1 == "", whyDir1);
 
   Case[] all = cases();
   for (i32 base = 0; base < all.len(); base = base + AT_ONCE) {

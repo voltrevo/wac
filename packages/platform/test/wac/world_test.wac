@@ -17,7 +17,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "std/platform.wac";
 import { contains, startsWith, splitLines, trimmed } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { freshDir } from "../../../wactest/src/host.wac";
+import { freshDir, madeDir } from "../../../wactest/src/host.wac";
 
 const string WC = "packages/platform/example/wc.wac";
 const string HEXDUMP = "packages/platform/example/hexdump.wac";
@@ -300,10 +300,12 @@ export string test_stat_and_readdir_reach_the_application_and_are_gated(Core cor
     return t.report();
   }
   string listing = dir + "/listing";
-  cli.mkdir(listing, true).wait();
+  string whyDir1 = madeDir(cli, listing);
+  t.isTrue(whyDir1 == "", whyDir1);
   cli.writeFile(listing + "/one.txt", "1".toBytes()).wait();
   cli.writeFile(listing + "/two.txt", "2".toBytes()).wait();
-  cli.mkdir(listing + "/sub", true).wait();
+  string whyDir2 = madeDir(cli, listing + "/sub");
+  t.isTrue(whyDir2 == "", whyDir2);
 
   Exec r = cli.exec(app, string[](listing), u8[0]()).wait();
   t.isTrue(r.ran(), "the built program ran — " + r.error);

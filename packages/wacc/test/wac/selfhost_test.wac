@@ -26,6 +26,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change, FileResult, Stat, Pending } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 const string ENTRY = "packages/wacc/example/wacc.wac";
 
@@ -120,8 +121,10 @@ export string test_the_compiler_builds_itself_to_a_fixed_point(Core core, Cli cl
   if (!made.ok()) { return t.report(); }
 
   // Same name, two directories: `wacc` either way, which is what the manifest records.
-  cli.mkdir(work + "/one", true).wait();
-  cli.mkdir(work + "/two", true).wait();
+  string whyDir1 = madeDir(cli, work + "/one");
+  t.isTrue(whyDir1 == "", whyDir1);
+  string whyDir2 = madeDir(cli, work + "/two");
+  t.isTrue(whyDir2 == "", whyDir2);
   Pending<Exec> pOne = submitBuild(cli, work + "/one/wacc");
   Pending<Exec> pTwo = submitBuild(cli, work + "/two/wacc");
   string first = built(pOne);

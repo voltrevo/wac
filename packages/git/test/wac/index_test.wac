@@ -36,6 +36,7 @@ import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 import { Staged, GitIndex, IndexEntry, parseIndex, writeIndex } from "../../src/index.wac";
 import { Vec } from "core/vec.wac";
 import { sha1 } from "../../../crypto/src/sha1.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -113,7 +114,8 @@ Git staged(T t, Cli cli, string name) {
   if (!made.ok()) { return g; }
 
   g.run(string[]("init", "-q"));
-  cli.mkdir(dir + "/sub", true).wait();
+  string whyDir1 = madeDir(cli, dir + "/sub");
+  t.isTrue(whyDir1 == "", whyDir1);
   cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
   cli.writeFile(dir + "/sub/b.txt", "two\n".toBytes()).wait();
   cli.writeFile(dir + "/exec.sh", "#!/bin/sh\n".toBytes()).wait();

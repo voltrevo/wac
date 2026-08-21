@@ -16,6 +16,7 @@ import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForPort,
 import { quoted } from "../../src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli } from "std/platform.wac";
+import { madeDir } from "../../src/host.wac";
 
 export string test_a_started_server_answers_and_a_stopped_one_does_not(Core core, Cli cli) {
   T t = T.create();
@@ -30,7 +31,8 @@ export string test_a_started_server_answers_and_a_stopped_one_does_not(Core core
            "something is already listening on the port we were told was free");
 
   string log = cli.cwd().wait() + "/.cache/daemon_test.log";
-  cli.mkdir(cli.cwd().wait() + "/.cache", true).wait();
+  string whyDir1 = madeDir(cli, cli.cwd().wait() + "/.cache");
+  t.isTrue(whyDir1 == "", whyDir1);
   Daemon d = start(cli, "python3 -m http.server " + itoa(port) + " --bind 127.0.0.1", log);
   t.isTrue(d.ok(), "the server started — " + d.error);
   if (!d.ok()) { return t.report(); }
@@ -56,7 +58,8 @@ export string test_a_command_that_cannot_start_is_reported(Core core, Cli cli) {
   // happens — which is why a caller has to check `waitForPort` and not just `ok()`.
   T t = T.create();
   string log = cli.cwd().wait() + "/.cache/daemon_missing.log";
-  cli.mkdir(cli.cwd().wait() + "/.cache", true).wait();
+  string whyDir2 = madeDir(cli, cli.cwd().wait() + "/.cache");
+  t.isTrue(whyDir2 == "", whyDir2);
   i32 port = freePort(cli);
   Daemon d = start(cli, "definitely-not-a-program-" + itoa(port), log);
 

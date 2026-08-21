@@ -25,6 +25,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "std/platform.wac";
 import { contains } from "../../../wactest/src/strings.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 const string HOST = "packages/platform/example/inside.wac";
 const string VALUE = "packages/platform/example/insideValue.wac";
@@ -49,7 +50,8 @@ struct Said {
 Said run(T t, Cli cli, string name, string entry, u8[] stdin) {
   string dir = root(cli) + "/.cache/frame-" + name;
   cli.remove(dir, true).wait();
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
   string app = dir + "/app";
   Exec built = cli.exec("deno",
     string[]("run", "-A", "packages/platform/build.ts", entry,

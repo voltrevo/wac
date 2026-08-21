@@ -39,6 +39,7 @@ import { slice, equal } from "../../../bytes/src/slice.wac";
 import { decode, encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 import { bcryptPbkdf } from "../../src/bcryptpbkdf.wac";
 import { aesCtr } from "../../src/aesctr.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 const string ORACLE = "packages/crypto/test/oracle.mjs";
 
@@ -109,7 +110,8 @@ export string test_an_openssh_key_encrypted_by_ssh_keygen_decrypts_with_our_bcry
   // `.cache` rather than a directory beside the tests: it is gitignored and the corpus walks do not
   // enter it, so a key left behind by an interrupted run is never mistaken for a source file.
   string dir = cli.cwd().wait() + "/.cache/bcryptpbkdf";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
 
   Lines lines = Lines.create();
   KeyCase[] all = cases();

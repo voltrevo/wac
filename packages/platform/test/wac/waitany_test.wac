@@ -25,6 +25,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Daemon, Port, freePortOr, freePort, logOf, start, stop, waitForLogWithin }
   from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 const string ENTRY = "packages/platform/example/whichever.wac";
 
@@ -77,7 +78,8 @@ Daemon serveOnce(Cli cli, i32 port, string delaySeconds, string message, string 
 export string test_waitany_parks_until_whichever_socket_speaks_first(Core core, Cli cli) {
   T t = T.create();
   string dir = cli.cwd().wait() + "/.cache/waitany";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
 
   // `quickFree`/`slowFree` rather than `quick`/`slow`: the daemons below want those names, and one
   // name standing for a `Port` up here and a `Daemon` down there is a name whose type depends on

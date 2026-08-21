@@ -26,6 +26,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Said, Wacsshd, buildServer, realSsh, startWacsshd, stopWacsshd } from "./wacsshd.wac";
 import { haveSshd, freshScratch } from "./fixture.wac";
 import { keygen, publicBlobText, restrict } from "../../../wactest/src/keys.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 Wacsshd imageServer(T t, Core core, Cli cli, string name, string image) {
   string binary = buildServer(t, cli, true);
@@ -140,7 +141,8 @@ export string test_an_image_the_server_cannot_read_stops_it_before_it_binds(Core
 
   string dir = freshScratch(t, cli, "wacsshd-badimage");
   string image = dir + "/bad.wacimg";
-  cli.mkdir(dir + "/.ssh", true).wait();
+  string whyDir1 = madeDir(cli, dir + "/.ssh");
+  t.isTrue(whyDir1 == "", whyDir1);
   if (!keygen(t, cli, dir + "/.ssh/ssh_host_ed25519_key")) { return t.report(); }
   restrict(cli, dir + "/.ssh/ssh_host_ed25519_key");
   cli.writeFile(dir + "/.ssh/authorized_keys", ("").toBytes()).wait();

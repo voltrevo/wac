@@ -34,6 +34,7 @@ import { Buf } from "../../../bytes/src/buf.wac";
 import { Kind, Object, nameOf, looseFile, readLoose } from "../../src/object.wac";
 import { Entry, Tree, parseTree, writeTree } from "../../src/tree.wac";
 import { Unzipped, adler32, zlibCompress, zlibDecompress } from "../../src/zlib.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -157,7 +158,8 @@ export string test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_
 
     // ── ours, read by git
     string name = nameOf(Kind.Blob, bytes);
-    cli.mkdir(g.dir + "/.git/objects/" + name.slice(0, 2), true).wait();
+    string whyDir1 = madeDir(cli, g.dir + "/.git/objects/" + name.slice(0, 2));
+    t.isTrue(whyDir1 == "", whyDir1);
     cli.writeFile(g.dir + "/.git/objects/" + name.slice(0, 2) + "/" + name.slice(2, name.len()),
                   looseFile(Kind.Blob, bytes)).wait();
     Exec back = g.run(string[]("cat-file", "blob", name), u8[0]());
@@ -192,7 +194,8 @@ export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes
   // subtree as though its name ended in `/`, so `a.b` comes before the directory `a` because `.` is
   // 0x2E and `/` is 0x2F. A parser that kept insertion order would pass on almost any other set of
   // names.
-  cli.mkdir(g.dir + "/a", true).wait();
+  string whyDir2 = madeDir(cli, g.dir + "/a");
+  t.isTrue(whyDir2 == "", whyDir2);
   cli.writeFile(g.dir + "/a.b", "dot\n".toBytes()).wait();
   cli.writeFile(g.dir + "/a/inner", "nested\n".toBytes()).wait();
   cli.writeFile(g.dir + "/zz", "last\n".toBytes()).wait();

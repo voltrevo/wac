@@ -27,6 +27,7 @@ import { Report, RefReport, readReport, noRefsIn, oldFor } from "../../src/recei
 import { Ad, parseAdvertisement } from "../../src/fetch.wac";
 import { writeText } from "../../src/pktline.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -150,13 +151,15 @@ export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core cor
   if (!made.ok()) { return t.report(); }
   string src = dir + "/src";
   string target = dir + "/target.git";
-  cli.mkdir(src, true).wait();
+  string whyDir1 = madeDir(cli, src);
+  t.isTrue(whyDir1 == "", whyDir1);
 
   // `-b main` so the bare repository's HEAD names the branch being pushed; otherwise `git fsck` adds
   // a notice about an unborn `master`, which is noise rather than a finding.
   cli.exec("git", string[]("init", "-q", "--bare", "-b", "main", target), u8[0]()).wait();
   git(cli, src, string[]("init", "-q", "-b", "main"), u8[0]());
-  cli.mkdir(src + "/sub", true).wait();
+  string whyDir2 = madeDir(cli, src + "/sub");
+  t.isTrue(whyDir2 == "", whyDir2);
   cli.writeFile(src + "/a.txt", "one\n".toBytes()).wait();
   cli.writeFile(src + "/sub/b.txt", "two\n".toBytes()).wait();
   git(cli, src, string[]("add", "-A"), u8[0]());

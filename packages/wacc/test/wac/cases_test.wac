@@ -34,6 +34,7 @@ import { blockedFiles, dumpErrors, dumpTypeErrorsFiles,
          emitFilesSelfDescribing } from "../../src/api.wac";
 import { CaseFile, loadCases } from "./cases.wac";
 import { Ran, runModule, scratchDir } from "./artifacts_probe.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
   T t = T.create();
@@ -48,7 +49,8 @@ export string test_cases_wacc_against_the_corpus(Core core, Cli cli) {
   // `.cache` is ninety files beside every other test's artefacts, and identifiable ones are worth more
   // than tidy ones only while a failure is being read.
   string dir = scratchDir(cli) + "/cases";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
   i32 met = 0;
   i32 missed = 0;
   i32 unreadable = 0;

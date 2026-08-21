@@ -21,6 +21,7 @@ import { Core, Cli, Exec, Change } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { Rule, parseIgnore, ignored } from "../../src/ignore.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -242,9 +243,11 @@ export string test_a_nested_gitignore_overrides_the_one_above_it(Core core, Cli 
   // and ignores something of its own. **The negation in the deeper file is the case that matters** —
   // it can only work if the deeper rules are applied after the shallower ones.
   cli.writeFile(dir + "/.gitignore", "*.log\nbuild/\n".toBytes()).wait();
-  cli.mkdir(dir + "/sub", true).wait();
+  string whyDir1 = madeDir(cli, dir + "/sub");
+  t.isTrue(whyDir1 == "", whyDir1);
   cli.writeFile(dir + "/sub/.gitignore", "!keep.log\nlocal\n".toBytes()).wait();
-  cli.mkdir(dir + "/other", true).wait();
+  string whyDir2 = madeDir(cli, dir + "/other");
+  t.isTrue(whyDir2 == "", whyDir2);
 
   Case[] all = Case[](
     Case("a.log", false), Case("sub/a.log", false), Case("sub/keep.log", false),

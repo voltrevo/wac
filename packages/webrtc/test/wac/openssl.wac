@@ -33,6 +33,7 @@ import { Core, Cli, Datagram, Exec, Pending, Socket } from "std/platform.wac";
 import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wac";
 import { quoted } from "../../../wactest/src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { madeDir } from "../../../wactest/src/host.wac";
 
 /** A running `s_server`, or `ok` false with the reason. */
 export struct Dtls {
@@ -94,7 +95,8 @@ void reapAbandoned(Cli cli) {
 export Dtls startServer(T t, Cli cli, string name) {
   reapAbandoned(cli);
   string dir = cli.cwd().wait() + "/.cache/dtls";
-  cli.mkdir(dir, true).wait();
+  string whyDir1 = madeDir(cli, dir);
+  t.isTrue(whyDir1 == "", whyDir1);
   Held held = Held.take(cli);
   if (held.port < 0) { return Dtls(false, "no port could be bound", -1, Daemon(-1, "", "")); }
   i32 port = held.port;

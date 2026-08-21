@@ -155,8 +155,16 @@ incrementally rather than filed as one job, and worth knowing the number.
 
 Two batches, both the `remove`-then-`mkdir` shape, which is `freshDir`'s:
 
-    74 sites converted   21 in tools/wac tests, 22 across 17 package tests, 31 bare in 6 more
-    69 remain            60 bare with no `T` at the site, and 9 pairs likewise
+    120 sites converted  21 in tools/wac tests, 22 across 17 package tests, then 77 bare in 37 more
+    101 remain           73 written inline, and 28 on their own line with no `T` at the site
+
+**And the 144 was my own extractor bounding its own count.** It came from
+`^\s*cli\.mkdir\(…\)\.wait\(\);\s*$` — a site on a *line of its own*. There are another **73**
+written inline, as `if (cut > 0) { cli.mkdir(path.slice(0, cut), true).wait(); }` and other one-liners,
+which that pattern cannot see. So the residue was about 217, not 144, and the corrected figures are above.
+That is the third time in a day that a count of mine was bounded by the regex that produced it —
+`issues/system/0235a` is two of the others, and the lesson each time is the one
+`corpus_probe.wac`'s docstring states: an extractor bounds the invariant it feeds.
 
 The bare ones split further than that. **31 of them had a `T` after all** and took `madeDir` — which is
 the right helper for a bare `mkdir` because it creates without emptying, so the behaviour is unchanged even

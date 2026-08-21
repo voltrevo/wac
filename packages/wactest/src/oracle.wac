@@ -21,6 +21,7 @@ import { T } from "./assert.wac";
 import { Cli, Exec, Stat, FileResult } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Buf } from "../../bytes/src/buf.wac";
+import { madeDir } from "host.wac";
 
 /** Lines to hand an oracle, accumulated as bytes. */
 export struct Lines {
@@ -188,7 +189,8 @@ export Answers askCached(T t, Cli cli, string program, string[] args, Lines line
 
   Answers a = askBytes(t, cli, program, args, payload, lines.n, what);
   if (!a.ok) { return a; }
-  cli.mkdir(".cache/oracle", true).wait();
+  string whyDir1 = madeDir(cli, ".cache/oracle");
+  t.isTrue(whyDir1 == "", whyDir1);
   string body = "";
   for (i32 i = 0; i < a.lines.len(); i++) { body = body + a.lines[i] + "\n"; }
   cli.writeFile(path, body.toBytes()).wait();
@@ -235,7 +237,8 @@ export string askArgvCached(T t, Cli cli, string program, string[] args, string 
   t.isTrue(r.ran() && r.status == 0, what + ": the oracle ran — " + string.fromBytes(r.stderr));
   if (!r.ran() || r.status != 0) { return ""; }
   string answer = string.fromBytes(r.stdout);
-  cli.mkdir(".cache/oracle", true).wait();
+  string whyDir2 = madeDir(cli, ".cache/oracle");
+  t.isTrue(whyDir2 == "", whyDir2);
   cli.writeFile(path, answer.toBytes()).wait();
   sweepOlder(cli, ".cache/oracle", name + "-", "-" + stamp + ".out");
   return answer;
