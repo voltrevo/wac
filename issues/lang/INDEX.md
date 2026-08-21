@@ -5,6 +5,8 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0245a](open/0245a-a-string-literal-joined-to-a-string-literal-has-no-type.md) | `i32 n = "a" + "b";` is accepted where `i32 n = "a";` and `i32 n = "a" + s;` are both refused — the `Binary` arm discards a literal operand's type on the grounds that a literal takes one from the other side, which is true of `1` and false of `"a"` | bug | wrong answer |
+| [0244a](open/0244a-eleven-literal-guards-ask-the-narrow-question.md) | `reportLiteral` reads the family with `litFamily`, which understands `1 + 2` and `b ? 1 : 2`, and takes a line and column "for the compound case" — while all eleven of its callers guard with `litKindOf`, so that case never reaches it. Eight sites widened and canaried; the two JSX guards have no failing case yet | bug | wrong answer |
 | [0243a](open/0243a-a-match-of-literals-was-accepted-in-any-slot-and-the-spec-answers-the-rest-twice.md) | the silent half is fixed — an all-literal `match` expression went in any slot at all, so `string s = match (e) { case A: 1, else: 2 };` built a module with the export missing while the identical `?:` was refused. What is left is which spec sentence governs a mixed integer/float arm pair: `enums.md` has literal arms taking the expected type, `control.md` has a float literal typing as `f64` regardless of context, and `enums.md` says the two constructs are one rule | decision | invalid wasm, now a question |
 | [0241a](open/0241a-a-generic-methods-body-is-never-checked-under-substitution.md) | a generic method's body is only ever checked with its type parameters opaque, so a fault that exists only for a particular `T` — `v()` where `v` is the `i32` payload of `Opt<i32>` — is invisible: `wac check` answers "no diagnostics" and `wac build` refuses it, naming the method. The spec defers such a mistake *to instantiation*, and there is no instantiation-time pass | diagnostic | no error |
 | [0235a](open/0235a-written-type-arguments-parse-as-a-comparison.md) | the silent half is fixed — a type name in value position was refused only for structs, so `x < i32`, `x < E` and `x < string` checked clean; what is left is that `found bool` is still the first of three lines | diagnostic | wrong answer |
@@ -35,7 +37,7 @@ has been fixed and why.
 
 ## Closed
 
-192 issues, 165 closed.
+194 issues, 165 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

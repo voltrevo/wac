@@ -1,0 +1,96 @@
+# 0244a — eleven literal guards ask `litKindOf` where the rule they call handles more
+
+- **Status:** open
+- **Claimed by:** agent-a, 2026-08-21
+- **Reported by:** agent-a
+- **Date:** 2026-08-21
+- **Kind:** bug
+- **Symptom:** wrong answer — a wrongly-typed argument, element or payload is accepted whenever it is
+  written as a *compound* literal
+
+## Reproduction
+
+```wac
+i32 g(string s) { return s.len(); }
+export i32 f() { return g(1 + 2); }
+```
+
+Expected: refused, exactly as `g(1)` is. The reference refuses both.
+
+Actual: `g(1)` is refused and `g(1 + 2)` is accepted. Same for a ternary — `g(b ? 1 : 2)` — and, until
+`issues/lang/0243a`, a `match` of literals.
+
+## The rule is written for this and is never handed it
+
+`reportLiteral` is the shared complaint for "a literal that cannot go in this slot". It reads the
+family with `litFamily`, which is the function that understands *compound* literal expressions —
+`1 + 2` is an integer literal sum, `b ? 1 : 2` is an integer literal, and since `0243a` so is
+`match (e) { case A: 1, else: 2 }`. Its own comment says so outright:
+
+> **At the literal's token where there is one** … The line and column arguments stay for the compound
+> case, where no single token holds the expression.
+
+So it takes line and column as arguments *specifically* to serve an expression with no single token.
+And **all eleven of its call sites guard with `litKindOf`**, which knows only a direct literal and a
+sign in front of one. The compound case it was built for cannot reach it from anywhere.
+
+Measured, wacc against the reference (`compiler/wacCompile.ts`), direct form beside compound:
+
+| slot | direct | compound |
+|---|---|---|
+| function argument | refused | **accepted** — `g(1 + 2)`, `g(b ? 1 : 2)` |
+| array element | refused | **accepted** — `string[](1 + 2)` |
+| array fill | — | **accepted** — `string[3](fill: 1 + 2)` |
+| constructor, positional | refused | **accepted** — `S(1 + 2)` |
+| variant construction | refused | **accepted** — `E.A(1 + 2)` |
+| builtin argument | refused | **accepted** — `"ab".indexOf(1 + 2)`, `"ab".slice(1, "x" + "y")` |
+| constructor, named | refused | refused — `S(v: 1 + 2)` |
+| JSX attribute, JSX child | not measured | not measured |
+
+The reference refuses every row of that table, both columns.
+
+Two rows deserve their own note. **The named constructor argument is already right**, so whatever it
+does is the model for the rest. And **the JSX rows measure nothing yet**: the programs I wrote were
+refused for *"undefined type"* because `Node` was not in scope, which is not the question — so the two
+JSX guards are unverified rather than sound, and the honest state is that nobody has asked them.
+
+## Why it is the same finding three times over
+
+`0242a` was a missing arm in `typeOfExpr`; `0243a` was a missing arm in `litFamily`; this is eleven
+callers asking the narrower of two functions. All three are *"the rule existed and could not see its
+input"*, which is what `issues/lang/0170a` named, and all three were found by enumerating a dispatch's
+arms rather than by any differential — the corpus is this repository's own files plus `spec/cases`, and
+nobody writes `g(1 + 2)` where a string belongs on purpose.
+
+`spec/cases/0172` is the near miss worth reading: *"every arm answers i32, so the match does, and a
+string cannot hold it — the rule a ternary already follows"*, with a **parameter** in the arm. One
+substitution away — `n` for `1` — and it would have caught `0243a` two months earlier.
+
+## What to do
+
+Change the guard at each verified site from `litKindOf(e) != litNone()` to
+`litFamily(c, e) != litNone()`, which is the question the callee already asks. `litFamily` needs a `C`
+and every one of these sites has one.
+
+Left as a decision rather than swept blind: the two **JSX** guards, because a change wants a failing
+case and the case I wrote did not compile for an unrelated reason. Whoever picks them up should write
+`Node`-in-scope programs first — `<div class={1 + 2}></div>` and `<div>{1 + 2}</div>` — and only then
+decide.
+
+## Measured after widening eight of them — 2026-08-21
+
+Done in a scratch worktree so the change could be measured before it touched anything. Eight of the
+ten reproductions flip to refused, and the six legal compound literals stay accepted — `g(1 + 2)` into
+an `i64`, `g(b ? 1 : 2)` into an `i32`, `g(1.5 + 2.5)` into an `f64`, `i32[](1 + 2)`, `u8[](1 + 2)`,
+`g("a" + "b")` into a `string`. That second half is the one that matters: widening a guard is how a
+checker starts refusing correct programs.
+
+**The two that did not flip are a different bug, now `issues/lang/0245a`.**
+`"ab".slice(1, "x" + "y")` and `string.fromCodepoint("a" + "b")` stay accepted because `litFamily`'s
+`Binary` arm answers only for the integer and float families — a *string* literal pair is not a
+literal to it, deliberately — and `typeOfExpr` then has nothing either, because it discards a literal
+operand's type on the grounds that a literal takes its type from the other side. True of `1`, false of
+`"a"`. Those two rows belong to `0245a` and are not evidence about the guards.
+
+`slice` is also worth a look on its own: its arguments go through `checkCountArg` rather than
+`reportLiteral`, so it is a twelfth guard in this family that this issue has not examined.

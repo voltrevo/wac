@@ -4508,7 +4508,7 @@ void checkFuncrefArgs(C c, string held, Expr[] args, i32 callLine) {
     // `callLine` is here only for `contextAt` — the same rule as `checkCall`'s, which is why it is one
     // method and not a condition written out per site. `issues/lang/0232a`.
     i32 before = c.errorCount;
-    i32 lit = litKindOf(args[i]);
+    i32 lit = litFamily(c, args[i]);
     if (lit != litNone()) {
       reportLiteral(c, want, args[i], errArgumentMismatch(), args[i].line, args[i].col);
       c.contextAt(before, args[i].line, callLine);
@@ -4958,7 +4958,7 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
     // before each report and applied after it, because `report` can decline and there is then no slot
     // — see `contextAt`. `issues/lang/0232a`.
     i32 before = c.errorCount;
-    i32 lit = litKindOf(args[i]);
+    i32 lit = litFamily(c, args[i]);
     if (lit != litNone()) {
       reportLiteral(c, want, args[i], errArgumentMismatch(), args[i].line, args[i].col);
       c.contextAt(before, args[i].line, call.line);
@@ -5033,7 +5033,7 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
     // a bare `Box(1)` has nothing to substitute from, so `T` comes back unknown and says nothing.
     string want = substituteType(c, name, c.constructFieldAt(name, i));
     if (want == typeNone()) { continue; }
-    i32 lit = litKindOf(args[i]);
+    i32 lit = litFamily(c, args[i]);
     if (lit != litNone()) {
       reportLiteral(c, want, args[i], errFieldMismatch(), args[i].line, args[i].col);
       continue;
@@ -5254,7 +5254,7 @@ bool constPath(C c, Lvalue lv) {
 
 /** One array element or fill against the element type. */
 void checkElement(C c, string want, Expr e) {
-  i32 lit = litKindOf(e);
+  i32 lit = litFamily(c, e);
   if (lit != litNone()) {
     reportLiteral(c, want, e, errArrayElement(), e.line, e.col);
     return;
@@ -5797,7 +5797,7 @@ bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, E
     c.report(errBuiltinArity(), call.line, call.col);
     return true;
   }
-  i32 lit = litKindOf(args[0]);
+  i32 lit = litFamily(c, args[0]);
   if (lit != litNone()) {
     reportLiteral(c, want, args[0], errBuiltinArg(), args[0].line, args[0].col);
     return true;
@@ -6376,7 +6376,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       for (i32 i = 0; i < args.len(); i++) {
         string vwant = substituteType(c, world, c.fieldTypeAtIndex(name, i));
         if (vwant == typeNone() || vwant == "") { continue; }
-        if (litKindOf(args[i]) != litNone()) {
+        if (litFamily(c, args[i]) != litNone()) {
           reportLiteral(c, vwant, args[i], errFieldMismatch(), args[i].line, args[i].col);
           continue;
         }
@@ -6404,7 +6404,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   }
   if (recv == "string" && name == "indexOf") {
     if (args.len() != 1) { c.report(errBuiltinArity(), call.line, call.col); return; }
-    if (litKindOf(args[0]) != litNone()) {
+    if (litFamily(c, args[0]) != litNone()) {
       reportLiteral(c, "string", args[0], errBuiltinArg(), args[0].line, args[0].col);
       return;
     }
@@ -6424,7 +6424,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       return;
     }
     for (i32 i = 0; i < args.len(); i++) {
-      if (litKindOf(args[i]) != litNone()) {
+      if (litFamily(c, args[i]) != litNone()) {
         reportLiteral(c, recv, args[i], errBuiltinArg(), args[i].line, args[i].col);
         continue;
       }

@@ -1,0 +1,144 @@
+// A literal *expression* in each slot that checks a literal, and the same slot when it fits.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env \
+//       packages/wacc/test/wac/compoundlit_test.wac
+//
+// `reportLiteral` is the shared complaint for "a literal that cannot go in this slot", and it reads
+// the family with `litFamily`, which understands a *compound* literal — `1 + 2` is an integer literal
+// sum, `b ? 1 : 2` is an integer literal, and since `issues/lang/0243a` so is an all-literal `match`.
+// Its own comment says the line and column arguments exist "for the compound case, where no single
+// token holds the expression".
+//
+// **All eleven of its callers guarded with `litKindOf`**, which knows a direct literal and a sign in
+// front of one and nothing else. So the compound case it was built for could not reach it from
+// anywhere, and `g(1)` was refused while `g(1 + 2)` was accepted — in a function argument, an array
+// element, an array fill, a positional constructor argument, a variant payload and three builtin
+// argument positions. The reference refuses every one. `issues/lang/0244a`.
+//
+// **Both halves, in one file, because that is the whole risk.** Widening a guard is how a checker
+// starts refusing correct programs, and each row below has a twin one type away: `g(1 + 2)` into a
+// `string` is a fault and into an `i64` is ordinary. A fix that refused both would pass the first
+// test alone.
+//
+// Not here: `"ab".slice(1, "x" + "y")` and `string.fromCodepoint("a" + "b")`, which are still
+// accepted and are `issues/lang/0245a` — a string literal pair is not a literal to `litFamily` at
+// all, so those two say nothing about these guards.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { dumpTypeErrors, blockedFiles } from "../../src/api.wac";
+
+i32 diagsFor(string src) { return dumpTypeErrors(src.toBytes()).len() / 3; }
+
+string[] refusedNames() {
+  return string[](
+    "argument, an integer sum into a string",
+    "argument, a ternary of integers into a string",
+    "array element, an integer sum into a string[]",
+    "array fill, an integer sum into a string[]",
+    "constructor, positional, into a string field",
+    "variant payload, into a string payload",
+    "builtin, indexOf wants a string",
+    "builtin, string.fromBytes wants a u8[]");
+}
+
+string[] refusedPrograms() {
+  return string[](
+    "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(1 + 2); }\n",
+    "i32 g(string s) { return s.len(); }\nexport i32 f(bool b) { return g(b ? 1 : 2); }\n",
+    "export i32 f() { string[] a = string[](1 + 2); return a.len(); }\n",
+    "export i32 f() { string[] a = string[3](fill: 1 + 2); return a.len(); }\n",
+    "struct S { string v; }\nexport i32 f() { S s = S(1 + 2); return s.v.len(); }\n",
+    "enum E { A(string s), B }\nexport i32 f() { E e = E.A(1 + 2); return 0; }\n",
+    "export i32 f() { return \"ab\".indexOf(1 + 2); }\n",
+    "export i32 f() { string s = string.fromBytes(1 + 2); return s.len(); }\n");
+}
+
+/** Every slot, with a compound literal that cannot go there. */
+export string test_a_compound_literal_is_refused_where_a_direct_one_is() {
+  T t = T.create();
+  string[] name = refusedNames();
+  string[] src = refusedPrograms();
+  t.eqI32(name.len(), src.len(), "the name and program lists disagree in length");
+  if (name.len() != src.len()) { return t.report(); }
+  for (i32 i = 0; i < src.len(); i++) {
+    t.isTrue(diagsFor(src[i]) > 0, name[i] + ": accepted");
+  }
+  return t.report();
+}
+
+/**
+ * The direct form of each, which is what says the slot was ever checked at all.
+ *
+ * Eight rows that were refused before `0244a` and after it. If one of these ever goes silent the
+ * guard has been removed rather than widened, and the test above would still pass — a rule that fires
+ * only on the compound form is not the rule this file is about.
+ */
+export string test_the_direct_form_of_each_slot_is_still_refused() {
+  T t = T.create();
+  string[] name = string[](
+    "argument", "array element", "array fill", "constructor positional",
+    "variant payload", "indexOf", "fromBytes", "fromCodepoint");
+  string[] src = string[](
+    "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(1); }\n",
+    "export i32 f() { string[] a = string[](1); return a.len(); }\n",
+    "export i32 f() { string[] a = string[3](fill: 1); return a.len(); }\n",
+    "struct S { string v; }\nexport i32 f() { S s = S(1); return s.v.len(); }\n",
+    "enum E { A(string s), B }\nexport i32 f() { E e = E.A(1); return 0; }\n",
+    "export i32 f() { return \"ab\".indexOf(1); }\n",
+    "export i32 f() { string s = string.fromBytes(1); return s.len(); }\n",
+    "export i32 f() { string s = string.fromCodepoint(\"a\"); return s.len(); }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    t.isTrue(diagsFor(src[i]) > 0, name[i] + ": the direct form went silent");
+  }
+  return t.report();
+}
+
+/**
+ * And the same expressions in a slot that accepts them.
+ *
+ * This is the half that fails when a guard is widened too far. `1 + 2` is an integer literal, and an
+ * integer literal goes in an `i64` and a `u8` as readily as an `i32` — `acceptsLiteral` is the rule
+ * and it has not changed. `1.5 + 2.5` is a float literal and belongs in an `f64`. `"a" + "b"` in a
+ * `string` argument is legal and stays so, which also pins that `0245a` did not make it a *refusal*
+ * by accident.
+ */
+export string test_the_same_compound_literals_where_they_fit() {
+  T t = T.create();
+  string[] name = string[](
+    "an integer sum into an i64", "a ternary of integers into an i32",
+    "a float sum into an f64", "an integer sum into an i32[]",
+    "an integer sum into a u8[]", "a string sum into a string argument",
+    "a ternary of integers into a u8[] element");
+  string[] src = string[](
+    "i32 g(i64 v) { return 0; }\nexport i32 f() { return g(1 + 2); }\n",
+    "i32 g(i32 v) { return v; }\nexport i32 f(bool b) { return g(b ? 1 : 2); }\n",
+    "i32 g(f64 v) { return 0; }\nexport i32 f() { return g(1.5 + 2.5); }\n",
+    "export i32 f() { i32[] a = i32[](1 + 2); return a.len(); }\n",
+    "export i32 f() { u8[] a = u8[](1 + 2); return a.len(); }\n",
+    "i32 g(string s) { return s.len(); }\nexport i32 f() { return g(\"a\" + \"b\"); }\n",
+    "export i32 f(bool b) { u8[] a = u8[](b ? 1 : 2); return a.len(); }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    t.eqI32(diagsFor(src[i]), 0, name[i] + ": refused a legal program");
+  }
+  return t.report();
+}
+
+/**
+ * And no row is accepted by the checker *and* the emitter, which is what the silence cost.
+ *
+ * `illtyped_test.wac`'s standing claim, asked of these eight: a program both halves accept builds a
+ * module with its exported function missing and exits 0. That is what `g(1 + 2)` did.
+ */
+export string test_no_refused_row_is_accepted_by_both() {
+  T t = T.create();
+  string[] name = refusedNames();
+  string[] src = refusedPrograms();
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 diags = diagsFor(src[i]);
+    string blocked = blockedFiles(string[]("/m.wac"), string[](src[i]), "/m.wac");
+    t.isTrue(diags > 0 || blocked != "",
+        name[i] + ": the checker and the emitter both accepted it, so a build writes a module "
+        + "with no `f` in it and exits 0");
+  }
+  return t.report();
+}
