@@ -270,7 +270,13 @@ So the order under the ruling is:
    bytes. Until then option 2 cannot move a single non-compiler subcommand;
 3. **`run` into the program** — the implementation is written and known to work against a V8 spawn;
    it becomes reachable the moment step 2 lands, and its first host is whichever gets there first;
-4. **delete the Rust `run`**, with the differential as the proof that the two agreed before the swap;
+4. ~~**delete the Rust `run`**, with the differential as the proof that the two agreed before the
+   swap;~~ **struck 2026-08-22 — this was never the ruling.** The operator ruled option 2 and I wrote
+   a deletion step into this order myself, then quoted it back as though it had been decided. Their
+   words: *"the goal is that they all work more or less the same way … I don't know why we're talking
+   about deleting wac run."* Nothing is being deleted; two implementations held to one output by
+   `commandparity_test.wac` is the arrangement, and the native binary's in-process `run` is the one
+   that does not pay a relay.
 5. `update` the same way; `test` last or never — its chunking, worker scheduling, module caching and
    CPU ranking belong to `tools/runTests.wac`, not to the compiler.
 
@@ -330,12 +336,72 @@ expressible in wac at all: a wac program's only way to start a module is `spawn`
 
 ### What is left
 
-- **Step 4**, deleting the Rust `run`, is now a decision rather than a blocked one. The differential
-  is the evidence it asked for. Not done here: `deno task test` goes through `wac run tools/runTests.wac`,
-  so the suite runs on the path being deleted, and the relay-versus-in-process difference above is the
-  thing to satisfy yourself about first.
 - **Step 5**: `update`, then `sh`; `test` last or never. `test` is the one whose Rust half does real
   work — collecting files, building an aggregate entry, `--filter` — rather than dispatching.
 - Still open and unclaimed by me: `issues/system/0239c`, which is `wac run <a module.wasm>` hanging.
   Now that `run` exists in two places, it hangs in both for the same reason: neither looks at the
-  magic bytes before handing the path to the compiler.
+  magic bytes before handing the path to the compiler. **And `wac <module.wasm>` now works on all
+  three**, so the fix is available and small: `run` could recognise the magic bytes and hand over.
+
+## 2026-08-22: `wac <module.wasm>` works on all three, and the goal is restated
+
+**The goal is parity, not migration.** The operator corrected the framing: *"the goal is that they all
+work more or less the same way. if that's not possible then talk to me about it."* Step 4 above is
+struck. Two implementations of `run` held to one output is fine; what is not fine is a host answering
+a question the others cannot.
+
+`wac <prog.wasm>` — "run that program", the most basic thing this command does — worked on the native
+binary alone until today. The other two printed the four-command usage block at somebody holding a
+built program. Sixteen cases now agree across native, Deno and Node.
+
+### The grant model is where this was interesting
+
+A module run as `wac <module.wasm>` gets the grants **its own manifest declares**. That is not
+`spawn`'s rule, where the parent decides — so the obvious implementation, ask for every grant and let
+the host narrow, is a **capability hole**: a JS-hosted command built with `--allow-read` would hand
+read to a module that declared none. It passes every other assertion in the differential, which is why
+`reader.wasm`/`reader-read.wasm` are in it — one program built twice, and with the hole in place the
+first prints `read ok` on a JS host and `read denied` on the native binary.
+
+So the wac program reads the section itself: `manifestIn` in `packages/wacc/src/manifest.wac`, the
+reader beside the writer, and `declaredGrants` parsing it with `packages/json` — which was already in
+this program's graph through `wacpkg`, so it cost a call rather than a dependency.
+
+### Two messages had to be made host-independent to get there
+
+- `cannot read` carried an errno: `No such file or directory (os error 2)` on the native, and Node's
+  `ENOENT: no such file or directory, open '…'`. `faultWords` on the wac side and the existing
+  `message_of` on the Rust side both give `No such file or directory`.
+- A manifest that is *present and not JSON* is still reported with the parser's own text on each side,
+  and no wording either could adopt would be the other's. That case is out of the differential rather
+  than approximated.
+
+### Where parity stands, measured 2026-08-22
+
+| | native | Deno | Node |
+|---|---|---|---|
+| `check` `compile` `build` `bindgen` | yes | yes | yes |
+| `run` | yes | yes | yes |
+| `wac <module.wasm>` | yes | yes | yes |
+| `test` `uninstall` `app` `app-run` | yes | no | no |
+| `sh` `update` | yes | no | no |
+| `validate` | yes | no | no |
+| `covdump` `tracestat` `ctcompare` | yes | no | no |
+
+**`test`, `uninstall`, `app` are work with no blocker.** `test` is the big one: collect `_test.wac`
+files, build an aggregate entry, spawn it, `--filter`. Nothing in it is host-specific.
+
+**`sh` and `update` need a decision, because the native binary embeds three modules** — the compiler,
+`packages/sh` and the fetcher — and a JS-hosted `wac` is built from `wacc.wac` alone, so `wac sh` has
+no shell to start. Either `build.ts` learns to embed extra modules, or those two move into the wac
+program, or they stay native-only by design. Raised with the operator; not decided.
+
+**`covdump`, `tracestat` and `ctcompare` cannot move at all today.** They read a module's *exports* —
+`__cov_get` for the counters, the journal for a trace — and `spawn` hands over a *program*: streams and
+an exit code. There is no capability for "instantiate this module and call that export", and adding one
+is a bigger decision than parity. The Rust says why nothing in wac can reach it: *"the instrumentation
+injects it, so no source names it."*
+
+**`validate` is the odd one and should not be made identical.** It answers whether *the engine* accepts
+a module, so three hosts giving three answers is the command working. "Each host answers for its own
+engine" is the right goal there.

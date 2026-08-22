@@ -31,17 +31,34 @@
 //
 // ## What is compared, and what is deliberately not
 //
-// Eleven invocations covering the five subcommands the program has, each side's stdout and stderr
-// concatenated, and the exit code. Not compared: timing, and the module bytes `build` writes — those
-// have their own tests (`bindgenwac_test.wac` holds the two *generators* to the same bytes, which is a
-// different claim from two hosts running one generator). **Worth adding and not here yet:** the three
-// hosts' `build` output is byte-identical for one entry, measured by hand 2026-08-22, and nothing
-// pins it.
+// Sixteen invocations covering the five subcommands the program has plus `wac <module.wasm>`, each
+// side's stdout and stderr concatenated, and the exit code. Not compared: timing, and the module bytes
+// `build` writes — those have their own tests (`bindgenwac_test.wac` holds the two *generators* to the
+// same bytes, which is a different claim from two hosts running one generator). **Worth adding and not
+// here yet:** the three hosts' `build` output is byte-identical for one entry, measured by hand
+// 2026-08-22, and nothing pins it.
+//
+// One case is deliberately absent. A module whose manifest section is *present and not JSON* is
+// reported with the parser's own text — `serde`'s on the native side, `packages/json`'s on the other
+// two — and no wording either could adopt would be the other's. Every other failure here says the same
+// sentence on all three, including "cannot read", which took `faultWords` on one side and
+// `message_of` on the other to stop being an errno.
+//
+// ## What the grant rows are for
+//
+// `reader.wasm` and `reader-read.wasm` are **one program built twice**, differing only in a flag at
+// *its* build. A module run as `wac <module.wasm>` gets what its own manifest declares — which is not
+// `spawn`'s rule, where the parent decides — so the wac implementation has to read the manifest rather
+// than ask for everything and let the host narrow. Asking for everything is the version that passes
+// every other assertion in this file: with `declaredGrants` returning all five bits, `reader.wasm`
+// prints `read ok` under a JS-hosted command built with `--allow-read` and `read denied` on the native
+// binary. That is a capability hole rather than a difference, and these two rows are what see it.
 //
 // ## What it costs, measured 2026-08-22
 //
-// **9.3s warm** — up from 2–3s, for three hosts instead of two and eleven cases instead of six, five of
-// which compile and run a program rather than only checking one. The build is the only expensive part
+// **13.4s warm** — up from 2–3s, for three hosts instead of two and sixteen cases instead of six,
+// eight of which compile or run a program rather than only checking one, plus three module builds in
+// the fixture. The build is the only expensive part
 // and is paid by `builtByDeno`, which keys on the closure of `wacc.wac`, `compiler/`, `build.ts` and
 // `packages/platform/host/`; under it, `build.ts` keys its own work on the content of every file it
 // reads, so a rebuild after an unrelated change is a copy and a runtime start. The first run after
@@ -117,7 +134,17 @@ string[][] cases() {
     string[]("run", "src/seven.wac"),         // ...and the exit code is the program's, not 0 or 1
     string[]("run", "src/hello.wac", "--", "--allow-read"),   // past `--`, a grant is an argument
     string[]("run", "--nonsense", "src/hello.wac"),           // an unknown flag, named
-    string[]("run"));                                         // no entry, so `run`'s own usage line
+    string[]("run"),                                          // no entry, so `run`'s own usage line
+    // **`wac <module.wasm>` — "run that program", the most basic thing the command does**, and it
+    // worked on the native binary alone until 2026-08-22: the other two printed the usage block at
+    // somebody holding a built program. The grants are the interesting part. A module run this way
+    // gets what **its own manifest** declares, which is not `spawn`'s rule — so the two rows below
+    // are one program built twice, and the only difference between them is a flag at *its* build.
+    string[]("hello.wasm"),                   // it runs, and its output is the program's
+    string[]("reader.wasm"),                  // built without the grant: denied on every host
+    string[]("reader-read.wasm"),             // built with it: allowed on every host
+    string[]("nosuch.wasm"),                  // a `.wasm` that is not there — a file, not a command
+    string[]("notamodule.wasm"));             // a file that is there and is not a program
 }
 
 /**
@@ -140,7 +167,17 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     && put(t, cli, dir + "/src/hello.wac",
            "import { Core } from \"std/platform.wac\";\n" +
            "export i32 main(Core core) { core.log(\"ran\"); return 0; }\n")
-    && put(t, cli, dir + "/src/seven.wac", "export i32 main() { return 7; }\n");
+    && put(t, cli, dir + "/src/seven.wac", "export i32 main() { return 7; }\n")
+    // For `wac <module.wasm>`: one that reads a file, so the grants its *own manifest* declares can be
+    // seen from outside, and a file whose name ends in `.wasm` and whose contents do not.
+    && put(t, cli, dir + "/src/reader.wac",
+           "import { Cli, Core, FAULT_NOT_GRANTED, FileResult } from \"std/platform.wac\";\n" +
+           "export i32 main(Core core, Cli cli) {\n" +
+           "  FileResult f = cli.readFile(\"src/lib.wac\").wait();\n" +
+           "  core.log(f.ok ? \"read ok\" : (f.fault == FAULT_NOT_GRANTED() ? \"read denied\"\n" +
+           "                                                                : \"read failed\"));\n" +
+           "  return 0;\n}\n")
+    && put(t, cli, dir + "/notamodule.wasm", "not a module\n");
   if (!wrote) { cli.remove(dir, true).wait(); return t.report(); }
 
   string native = wacBinary(cli);
@@ -158,6 +195,22 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   t.isTrue(cli.stat(node).wait().isFile, "the Node-hosted command was built: " + node);
   if (!cli.stat(deno).wait().isFile || !cli.stat(node).wait().isFile
       || !cli.stat(native).wait().isFile) {
+    cli.remove(dir, true).wait();
+    return t.report();
+  }
+
+  // **Built once, by the native binary, and handed to all three.** The same bytes everywhere, so a
+  // difference in what a host does with a module cannot be a difference in the module. Not
+  // `builtProgram`, which keys a cache by name under `.cache/` — these belong to this fixture, and one
+  // of them exists only to be denied.
+  Said mk = say(cli, dir, native, string[]("build", "src/hello.wac", "-o", "hello"));
+  Said mkR = say(cli, dir, native, string[]("build", "src/reader.wac", "-o", "reader"));
+  Said mkG = say(cli, dir, native,
+                 string[]("build", "--allow-read", "src/reader.wac", "-o", "reader-read"));
+  t.eqI32(mk.status, 0, "hello.wasm built: " + mk.out);
+  t.eqI32(mkR.status, 0, "reader.wasm built: " + mkR.out);
+  t.eqI32(mkG.status, 0, "reader-read.wasm built: " + mkG.out);
+  if (mk.status != 0 || mkR.status != 0 || mkG.status != 0) {
     cli.remove(dir, true).wait();
     return t.report();
   }
@@ -184,9 +237,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   }
 
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
-  // header. Five of these eleven exit 0: two `bindgen`s, one `check`, and the two `run`s of a program
-  // that returns 0.
-  t.eqI32(zeroes, 5, "five of these eleven succeed on the native host; a different count means the " +
+  // header. Eight of these sixteen exit 0: two `bindgen`s, one `check`, the two `run`s of a program
+  // that returns 0, and the three modules run directly.
+  t.eqI32(zeroes, 8, "eight of these sixteen succeed on the native host; a different count means the " +
                      "argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success

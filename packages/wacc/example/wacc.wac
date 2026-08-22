@@ -20,7 +20,7 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { Change, Child, Cli, Core, FileResult, Pending } from "std/platform.wac";
+import { Change, Child, Cli, Core, FileResult, Pending, faultWords } from "std/platform.wac";
 import { Read } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
@@ -30,7 +30,7 @@ import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, 
          emitFilesCoveredIn, emitFilesTraced, emitFilesTracedSlots, traceTableFiles,
          manifestWire } from "../src/api.wac";
 import { Built } from "../src/emit.wac";
-import { withManifestSection } from "../src/manifest.wac";
+import { manifestIn, withManifestSection } from "../src/manifest.wac";
 import { renderDiagnostics } from "../src/render.wac";
 import { importSpecs, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../src/files.wac";
 import { Res } from "../src/path.wac";
@@ -39,6 +39,8 @@ import { MANIFEST_NAME, candidateRoots, isProjectSpecifier } from "../../wacpkg/
 import { Manifest, Match, Located, readManifest, manifestWhy, matchSpecifier, locate,
          M_OK } from "../../wacpkg/src/manifest.wac";
 import { Lock, LockEntry, readLock } from "../../wacpkg/src/lock.wac";
+import { JsonObject, JsonValue } from "../../json/src/value.wac";
+import { parse } from "../../json/src/json.wac";
 import { cachePath } from "../../wacpkg/src/cache.wac";
 
 /** How many files one program may be made of. */
@@ -672,6 +674,98 @@ i32 grantsBefore(Cli cli, i32 argc, string entry) {
 }
 
 /**
+ * The grants a built module's own manifest declares, as the bitmask `spawn` takes.
+ *
+ * **`wac prog.wasm` runs a program with what it declared**, which is a different rule from `spawn`'s
+ * "what the parent hands you" — and reading it here is how the two can be the same. `platform.wac`
+ * puts the reason plainly: whoever packages the thing chooses what it may do, and the person running
+ * it cannot quietly widen that. Passing every grant instead and letting the host intersect would give
+ * a module more than it asked for whenever the *command* had been built with more, which is the one
+ * outcome that would be a hole rather than a difference.
+ *
+ * `-1` when the module carries no manifest, which the caller reports rather than treating as "none":
+ * a file that is not a wac program and a program that wants nothing are different answers.
+ *
+ * `packages/json` is already in this program's graph through `wacpkg`, so this costs a call.
+ */
+i32 declaredGrants(u8[] wasm) {
+  string text = manifestIn(wasm);
+  if (text == "") { return -1; }
+  JsonValue? doc = parse(text.toBytes());
+  if (doc is null) { return -1; }
+  JsonObject root = JsonObject.create();
+  match (doc!) {
+    case Object(o): { root = o; }
+    else: { return -1; }
+  }
+  JsonValue? g = root.getStr("grants");
+  if (g is null) { return 0; }
+  JsonObject table = JsonObject.create();
+  match (g!) {
+    case Object(o): { table = o; }
+    else: { return 0; }
+  }
+  return (declared(table, "read") ? 1 : 0) | (declared(table, "write") ? 2 : 0)
+       | (declared(table, "net") ? 4 : 0) | (declared(table, "env") ? 8 : 0)
+       | (declared(table, "run") ? 16 : 0);
+}
+
+/** One grant in a manifest's `grants` table. Absent and false are the same answer. */
+bool declared(JsonObject table, string name) {
+  JsonValue? v = table.getStr(name);
+  if (v is null) { return false; }
+  match (v!) {
+    case Bool(b): { return b; }
+    else: { return false; }
+  }
+}
+
+/**
+ * `wac <prog.wasm> [args…]` — run a built module, with the grants its own manifest declares.
+ *
+ * The whole argument vector after the module is the program's, verbatim: no flags of ours can appear
+ * there, because there is nothing here to configure. The native binary passes `args.skip(2)` and this
+ * is the same list.
+ *
+ * The two failure sentences are the native binary's, word for word, because
+ * `commandparity_test.wac` compares them. The third one it has — a manifest that is present and not
+ * JSON — carries `serde`'s own text there and cannot be reproduced from here, so that case is out of
+ * the differential rather than approximated. See `declaredGrants` for why the grants come from the
+ * module rather than from this command.
+ */
+i32 runModule(Core core, Cli cli, i32 argc, string path) {
+  FileResult f = cli.readFile(path).wait();
+  if (!f.ok) {
+    // **The fault's words, not the host's sentence.** `FileResult.error` is "No such file or directory
+    // (os error 2)" under Deno, "ENOENT: no such file or directory, open '…'" under Node and a third
+    // thing on a page — three spellings of one fact, which is what `FileResult.fault` exists to say and
+    // what `faultWords` turns into the one phrase every host uses. The host's own sentence is kept only
+    // for a fault with no category, where it is the only thing that knows.
+    string words = faultWords(f.fault);
+    core.warn("wac: cannot read " + path + " — " + (words == "" ? f.error : words));
+    return 1;
+  }
+  i32 grants = declaredGrants(f.bytes);
+  if (grants < 0) {
+    core.warn("wac: " + path + " carries no wac.manifest section — build it with "
+              + "packages/platform/native.ts");
+    return 1;
+  }
+  u8[][] args = u8[][argc - 1 < 0 ? 0 : argc - 1](fill: u8[0]());
+  for (i32 i = 1; i < argc; i++) { args[i - 1] = cli.arg(i).wait(); }
+  Child kid = cli.spawn(f.bytes, args, grants, "", true, false).wait();
+  if (kid.unavailable()) {
+    core.warn("wac: this host cannot run a module — it has no form of `spawn`");
+    return 1;
+  }
+  if (kid.handle < 0) {
+    core.warn("wac: cannot run " + path + " — " + kid.error);
+    return 1;
+  }
+  return relay(core, cli, kid);
+}
+
+/**
  * Relay a child's two streams until both end, then answer its exit code.
  *
  * **Both, in the order they arrive.** One `recv` in flight per open stream and `waitAny` over the
@@ -888,12 +982,32 @@ string wasmBeside(string entry) {
 
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
-  if (argc < 2) {
-    // The command is known even when nothing else is, so say what *it* takes.
-    core.warn(argc < 1 ? usage() : usageFor(string.fromBytes(cli.arg(0).wait())));
+  if (argc < 1) {
+    core.warn(usage());
     return 2;
   }
   string cmd = string.fromBytes(cli.arg(0).wait());
+
+  // **A module is a program, and that is decided by what the first argument *is*.** `wac prog.wasm`
+  // is the most basic thing this command does and it worked only on the native binary until
+  // 2026-08-22 — the other two printed the usage block at somebody holding a built program.
+  // `issues/system/0230a`: the hosts should differ in what they are, not in what they answer.
+  //
+  // Before the command check on purpose, exactly as the native binary orders it: a name ending in
+  // `.wasm` is a program *claim* whether or not the file is there, so a mistyped path is reported as
+  // a missing file rather than reaching the compiler and coming back as "unknown command
+  // 'prog.wasm'" — a message about the wrong thing entirely.
+  if (cmd.len() > 5 && cmd.slice(cmd.len() - 5, cmd.len()) == ".wasm") {
+    return runModule(core, cli, argc, cmd);
+  }
+
+  // **After the module check, because a module is a complete invocation on its own.** This guard was
+  // first, so `wac prog.wasm` — one argument — printed the usage block without ever looking at what
+  // that argument was. The command is known even when nothing else is, so say what *it* takes.
+  if (argc < 2) {
+    core.warn(usageFor(cmd));
+    return 2;
+  }
   // **Normalised once, here, because every later use has to agree with every other.** The map is
   // keyed by resolved paths and `resolveFrom` collapses `.` and `..`; the entry reached
   // `diagnoseGraphRendered` and the emitter as typed, so `wac test ./a/b.wac` built a map keyed

@@ -2049,7 +2049,11 @@ fn main() {
     // as one. Otherwise a mistyped path would reach the compiler and come back as **unknown command
     // 'prog.wasm'** — a message about the wrong thing entirely, for a file that is simply missing.
     if SEED.is_some() && stem.ends_with(".wasm") {
-        let e = std::fs::read(stem).err().map(|e| e.to_string()).unwrap_or_default();
+        // `message_of` rather than `to_string`, which is the difference between "No such file or
+        // directory" and "No such file or directory (os error 2)". The wac program answers this same
+        // sentence from `faultWords`, and `commandparity_test.wac` compares them — an errno is the one
+        // part of it no other host would spell the same way.
+        let e = std::fs::read(stem).err().map(|e| message_of(&e)).unwrap_or_default();
         eprintln!("wac: cannot read {stem} — {e}");
         std::process::exit(1);
     }

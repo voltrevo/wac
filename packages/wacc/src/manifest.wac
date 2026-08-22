@@ -24,6 +24,49 @@
  * reimplementing `mangleType` by eye. The method helpers (`$bind$m_`, `$bind$sm_`) are left out
  * because the manifest names those against the struct that owns them.
  */
+/**
+ * The text of the `wac.manifest` custom section inside `wasm`, or "" when there is none.
+ *
+ * **The reader beside the writer.** `withManifestSection` puts it in and nothing here took it out
+ * again, so the only readers were the hosts — `manifest_in` in Rust and `manifestIn` in
+ * `packages/platform/host/driver.ts` — and a *wac* program that wanted to know what a module declared
+ * had to be handed the answer. `wac prog.wasm` is what needs it: running a built module gives it the
+ * grants **its own manifest** names, which is a different rule from `spawn`'s "what the parent hands
+ * you", and the only way to keep it is to read them here.
+ *
+ * A custom section is id 0: a name, then the payload to the end of the section. The section walk is
+ * `bindExportsOf`'s, which is why this lives next to it.
+ */
+export string manifestIn(u8[] wasm) {
+  if (wasm.len() < 8) { return ""; }
+  i32 at = 8;
+  while (at < wasm.len()) {
+    i32 id = wasm[at];
+    at = at + 1;
+    i32 size = ulebAt(wasm, at);
+    at = at + ulebWidth(wasm, at);
+    i32 end = at + size;
+    if (end > wasm.len()) { return ""; }
+    if (id == 0) {
+      i32 p = at;
+      i32 len = ulebAt(wasm, p);
+      p = p + ulebWidth(wasm, p);
+      if (p + len <= end) {
+        u8[] name = u8[len]();
+        for (i32 k = 0; k < len; k++) { name[k] = wasm[p + k]; }
+        if (string.fromBytes(name) == "wac.manifest") {
+          i32 from = p + len;
+          u8[] body = u8[end - from]();
+          for (i32 k = 0; k < end - from; k++) { body[k] = wasm[from + k]; }
+          return string.fromBytes(body);
+        }
+      }
+    }
+    at = end;
+  }
+  return "";
+}
+
 export string[] bindExportsOf(u8[] wasm) {
   string[] out = string[4096](fill: "");
   i32 n = 0;
