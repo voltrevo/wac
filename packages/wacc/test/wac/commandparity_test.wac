@@ -1,4 +1,4 @@
-// The `wac` command through two hosts, compared on stdout, stderr and exit code.
+// The `wac` command through three hosts, compared on stdout, stderr and exit code.
 //
 // **The first thing `issues/system/0230a` asks for, and the reason it asks for it first.** The
 // operator ruled option 2 on 2026-08-21: the shared thing is the *wac program*, and Deno, Node and
@@ -8,26 +8,46 @@
 // loaders in 0229a are what a claim like that looks like after a few months."*
 //
 // `packages/wacc/example/wacc.wac` is the program. The native binary embeds it as a payload; the Deno
-// host gets it through `packages/platform/build.ts`. Both parse the same argv in the same wac code, so
-// what this file can still catch is the part *outside* the program: how a host reports an exit status,
-// what it does with a stream, and whether a capability answers the same way.
+// and Node hosts get it through `packages/platform/build.ts`. All three parse the same argv in the same
+// wac code, so what this file can still catch is the part *outside* the program: how a host reports an
+// exit status, what it does with a stream, and whether a capability answers the same way.
+//
+// ## Except for `run`, where it is comparing two implementations rather than one
+//
+// **`run` is the first subcommand to live in the wac program rather than in a host**, moved there on
+// 2026-08-22 under `issues/system/0230a` option 2 once `spawn` could start a module on every host
+// (`issues/system/0144`). The native binary still answers `run` in Rust, *before* the payload sees it —
+// so for those five rows the native column is `build_and_call` in `native/v8/src/main.rs` and the other
+// two are `cmd == "run"` in `wacc.wac`. Two implementations of one command, held to the same output.
+//
+// That is the evidence step 4 of that issue asks for before either is deleted, and it is why the two
+// were made to agree on their *usage* text as well: `wac run` with no entry says `run`'s own line on
+// all three, and an unknown flag is named rather than becoming the entry, which took a change on each
+// side. Four of the eleven rows exist only because the first attempt at each disagreed.
+//
+// **They still differ in one way no assertion here covers**: the Rust `run` instantiates the module in
+// its own process, so the program writes to the real streams, while the wac `run` spawns it and relays.
+// Same bytes on each stream and the same status; not the same thing to a program that wants a terminal.
 //
 // ## What is compared, and what is deliberately not
 //
-// Six invocations covering the four subcommands the program has, each side's stdout and stderr
+// Eleven invocations covering the five subcommands the program has, each side's stdout and stderr
 // concatenated, and the exit code. Not compared: timing, and the module bytes `build` writes — those
 // have their own tests (`bindgenwac_test.wac` holds the two *generators* to the same bytes, which is a
-// different claim from two hosts running one generator).
+// different claim from two hosts running one generator). **Worth adding and not here yet:** the three
+// hosts' `build` output is byte-identical for one entry, measured by hand 2026-08-22, and nothing
+// pins it.
 //
-// ## What it costs, measured 2026-08-21
+// ## What it costs, measured 2026-08-22
 //
-// **2–3s warm, and the Deno host is 123ms against the native binary's 20ms per invocation** — twelve
-// invocations is under two seconds of it. The build is the only expensive part and is paid by
-// `builtByDeno`, which keys on the closure of `wacc.wac` *and* `compiler/` *and* `build.ts`; under it,
-// `packages/platform/build.ts` keys its own work on the content of every file it reads, so a rebuild
-// after an unrelated change is a copy and a Deno start. The first run after `wacc.wac` changes pays a
-// real build, which was about 40s when this was written. No lane declaration at that cost — and the
-// number is dated because `issues/system/0230c` is what happens to costs that are not.
+// **9.3s warm** — up from 2–3s, for three hosts instead of two and eleven cases instead of six, five of
+// which compile and run a program rather than only checking one. The build is the only expensive part
+// and is paid by `builtByDeno`, which keys on the closure of `wacc.wac`, `compiler/`, `build.ts` and
+// `packages/platform/host/`; under it, `build.ts` keys its own work on the content of every file it
+// reads, so a rebuild after an unrelated change is a copy and a runtime start. The first run after
+// `wacc.wac` changes pays two real builds, about 40s each when this was written. No lane declaration at
+// that cost — and the number is dated because `issues/system/0230c` is what happens to costs that are
+// not.
 //
 // **The canary is a successful invocation**, and it is not decoration. Writing this by hand first, in
 // a shell that does not word-split an unquoted variable, every case became `wac "check src/main.wac"`
@@ -87,7 +107,17 @@ string[][] cases() {
     string[]("check", "src/missing.wac"),     // a file that is not there
     string[]("nonsense", "src/main.wac"),     // an unknown subcommand, so the usage line
     string[]("bindgen", "src/lib.wac"),       // TypeScript glue
-    string[]("bindgen", "src/lib.wac", "--js"));
+    string[]("bindgen", "src/lib.wac", "--js"),
+    // **`run`, which is the first subcommand to live in the wac program rather than in a host.**
+    // `issues/system/0230a` option 2 moved it there once `spawn` could start a module everywhere
+    // (`issues/system/0144`), and the native binary still answers it in Rust — so for `run` these
+    // rows compare *two implementations of one command*, not one implementation through two hosts.
+    // That is the evidence step 4 of that issue wants before either is deleted.
+    string[]("run", "src/hello.wac"),         // it runs, and its output is the program's
+    string[]("run", "src/seven.wac"),         // ...and the exit code is the program's, not 0 or 1
+    string[]("run", "src/hello.wac", "--", "--allow-read"),   // past `--`, a grant is an argument
+    string[]("run", "--nonsense", "src/hello.wac"),           // an unknown flag, named
+    string[]("run"));                                         // no entry, so `run`'s own usage line
 }
 
 /**
@@ -97,25 +127,37 @@ string[][] cases() {
  * needs happens in the wac program rather than in either host — so a host that handed the program a
  * different view of the project would show up here rather than in a report from outside.
  */
-export string test_the_native_and_deno_hosts_answer_the_same_command_the_same_way(
-    Core core, Cli cli) {
+export string test_the_three_hosts_answer_the_same_command_the_same_way(Core core, Cli cli) {
   T t = T.create();
   string dir = scratch(cli, "hosts");
   bool wrote = put(t, cli, dir + "/wac.json5", "{}\n")
     && put(t, cli, dir + "/src/lib.wac", "export i32 two() { return 2; }\n")
     && put(t, cli, dir + "/src/main.wac",
            "import { two } from \"@/src/lib.wac\";\nexport i32 main() { return two(); }\n")
-    && put(t, cli, dir + "/src/bad.wac", "export i32 f() { return \"no\"; }\n");
+    && put(t, cli, dir + "/src/bad.wac", "export i32 f() { return \"no\"; }\n")
+    // For `run`: one that says something and succeeds, and one whose exit code is neither 0 nor the
+    // 1 and 2 every failure here uses — so a forwarded status cannot be confused with a diagnosis.
+    && put(t, cli, dir + "/src/hello.wac",
+           "import { Core } from \"std/platform.wac\";\n" +
+           "export i32 main(Core core) { core.log(\"ran\"); return 0; }\n")
+    && put(t, cli, dir + "/src/seven.wac", "export i32 main() { return 7; }\n");
   if (!wrote) { cli.remove(dir, true).wait(); return t.report(); }
 
   string native = wacBinary(cli);
   t.isTrue(cli.stat(native).wait().isFile, "the native binary is built: " + native);
-  string deno = builtByDeno(cli, ENTRY, "wac-deno-cli",
-                            string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env",
-                                     "--allow-net"),
-                            "deno", false);
+  string[] grants = string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env",
+                             "--allow-net");
+  string deno = builtByDeno(cli, ENTRY, "wac-deno-cli", grants, "deno", false);
+  // **Node is the third host and not an afterthought.** It is the same wac program through a
+  // different runtime, and the only thing that differs underneath is how a worker is made — so if a
+  // difference between hosts is ever going to appear anywhere, this is a column that would show it
+  // at no extra risk of a false alarm. Its `run` goes through `host/childWasmNode.ts` where Deno's
+  // goes through `host/childWasm.ts`, which is the one place the two are not literally one file.
+  string node = builtByDeno(cli, ENTRY, "wac-node-cli", grants, "node", false);
   t.isTrue(cli.stat(deno).wait().isFile, "the Deno-hosted command was built: " + deno);
-  if (!cli.stat(deno).wait().isFile || !cli.stat(native).wait().isFile) {
+  t.isTrue(cli.stat(node).wait().isFile, "the Node-hosted command was built: " + node);
+  if (!cli.stat(deno).wait().isFile || !cli.stat(node).wait().isFile
+      || !cli.stat(native).wait().isFile) {
     cli.remove(dir, true).wait();
     return t.report();
   }
@@ -123,21 +165,35 @@ export string test_the_native_and_deno_hosts_answer_the_same_command_the_same_wa
   string[][] table = cases();
   i32 agreed = 0;
   i32 zeroes = 0;
+  i32 sevens = 0;
   for (i32 i = 0; i < table.len(); i++) {
     Said n = say(cli, dir, native, table[i]);
     Said d = say(cli, dir, deno, table[i]);
+    // A built Node program is not executable by itself; `node` runs it, as `spawn_test.wac` does.
+    Said j = say(cli, dir, "node " + node, table[i]);
     string what = joined(table[i], " ");
-    t.eqI32(d.status, n.status, "exit codes differ for `wac " + what + "`");
-    t.eqStr(d.out, n.out, "output differs for `wac " + what + "`");
-    if (d.status == n.status && d.out == n.out) { agreed = agreed + 1; }
+    t.eqI32(d.status, n.status, "exit codes differ, deno vs native, for `wac " + what + "`");
+    t.eqStr(d.out, n.out, "output differs, deno vs native, for `wac " + what + "`");
+    t.eqI32(j.status, n.status, "exit codes differ, node vs native, for `wac " + what + "`");
+    t.eqStr(j.out, n.out, "output differs, node vs native, for `wac " + what + "`");
+    if (d.status == n.status && d.out == n.out && j.status == n.status && j.out == n.out) {
+      agreed = agreed + 1;
+    }
     if (n.status == 0) { zeroes = zeroes + 1; }
+    if (n.status == 7) { sevens = sevens + 1; }
   }
 
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
-  // header. `zeroes` counts more than the first row, because two of the six succeed.
-  t.eqI32(zeroes, 3, "three of these six succeed on the native host; a different count means the " +
+  // header. Five of these eleven exit 0: two `bindgen`s, one `check`, and the two `run`s of a program
+  // that returns 0.
+  t.eqI32(zeroes, 5, "five of these eleven succeed on the native host; a different count means the " +
                      "argument vectors did not arrive as vectors");
-  t.eqI32(agreed, table.len(), "the hosts agreed on " + itoa(agreed) + " of " + itoa(table.len()));
+  // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
+  // value carried back through a spawn and out of the process. A `run` that reported its own success
+  // instead of the program's would read as 0 and every other assertion would still pass.
+  t.eqI32(sevens, 1, "`run src/seven.wac` forwards the program's exit code, not its own");
+  t.eqI32(agreed, table.len(),
+          "all three hosts agreed on " + itoa(agreed) + " of " + itoa(table.len()));
   cli.remove(dir, true).wait();
   return t.report();
 }

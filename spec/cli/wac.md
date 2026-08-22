@@ -23,9 +23,10 @@ The command is decided by what the first argument *is* rather than by a flag, be
 |---|---|
 | `prog.wasm` | run that program — the module carries its own manifest |
 | `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat`, `app`, `app-run` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
+| `run`, again | **also implemented in the wac program**, which is where every host but this one gets it. `issues/system/0230a` is moving the subcommands there one at a time; this binary answers `run` in Rust first, and `packages/wacc/test/wac/commandparity_test.wac` holds the two to the same output until one goes |
 | `uninstall` | remove what an install put under `$WAC_HOME`, and the line it added to each shell profile |
 | `update` | resolve and fetch what `wac.lock` does not cover, and write the lock |
-| anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` |
+| anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` — and `run`, which this binary intercepts above |
 
 A name ending in `.wasm` is a bundle *claim* whether or not the file exists, and is reported as a file
 that cannot be read — otherwise a mistyped path reaches the compiler and comes back as *unknown

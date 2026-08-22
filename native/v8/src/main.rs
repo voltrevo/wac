@@ -1795,6 +1795,19 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
         );
         return 2;
     }
+    // **An unknown flag is named, rather than becoming the entry.** The loop above stops at the first
+    // argument it does not recognise, so `wac run --nonsense p.wac` made `--nonsense` the entry and
+    // fell through to the top-level usage block — four commands' worth of flags, in answer to one
+    // misspelling. The wac program in `packages/wacc/example/wacc.wac` says this sentence, and the two
+    // have to agree while both exist: `commandparity_test.wac` is what checks that. `issues/system/0230a`.
+    if rest[i].starts_with("--") {
+        eprintln!(
+            "wac: unknown flag '{}' — --allow-read, --allow-write, --allow-net, --allow-env, \
+             --allow-run",
+            rest[i]
+        );
+        return 2;
+    }
     let entry = rest[i].clone();
 
     // **A grant after the entry was handed to the program, silently.** `wac run p.wac --allow-read`

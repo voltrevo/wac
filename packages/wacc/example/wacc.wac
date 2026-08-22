@@ -20,7 +20,8 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { Change, Cli, Core, FileResult } from "std/platform.wac";
+import { Change, Child, Cli, Core, FileResult, Pending } from "std/platform.wac";
+import { Read } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
@@ -573,10 +574,170 @@ string[] exactly(string[] xs, i32 n) {
  * `spec/cli/wac.md`; the host adds its own commands after these, since each side lists what it
  * implements.
  */
+/**
+ * The first thing before the entry that looks like a flag and is not one, or "".
+ *
+ * `unknownFlag`'s twin for `run`, and separate because `run` is the one command with a *tail*: past
+ * the entry the arguments are the program's, and `--` is one of them. Scanning the whole line rejected
+ * `wac run p.wac -- --allow-read` with "unknown flag '--'" on the JavaScript hosts while the native
+ * binary handed the string over as the program asked — found by running the same four command lines
+ * through all three, which is what `commandparity_test.wac` now does for this command.
+ */
+string unknownFlagBefore(Cli cli, i32 argc, string entry) {
+  for (i32 i = 1; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == entry) { return ""; }
+    if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
+    if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
+        && a != "--allow-run") {
+      return a;
+    }
+  }
+  return "";
+}
+
+/**
+ * Everything after the entry, verbatim, as the argument vector the program receives.
+ *
+ * **Flags before the entry are this command's; everything after it is the program's.** That is the
+ * split `issues/system/0177` settled and the reason this cannot go through `positionals`, which drops
+ * anything starting with `-`: `wac run prog.wac --verbose` has to hand `--verbose` over rather than
+ * swallow it as a grant this command does not know.
+ *
+ * The entry's own path is not passed on — argument 0 is the first argument to the *program*, as
+ * `docs/your-own-project.md` puts it, because a wac program reads its name from nowhere.
+ *
+ * A leading `--` is dropped, which is what makes a program able to receive the string `--allow-read`.
+ */
+u8[][] programArgs(Cli cli, i32 argc, string entry) {
+  i32 at = -1;
+  for (i32 i = 1; i < argc && at < 0; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == entry) { at = i; }
+  }
+  if (at < 0) { return u8[][](); }
+  i32 from = at + 1;
+  if (from < argc && string.fromBytes(cli.arg(from).wait()) == "--") { from = from + 1; }
+  i32 n = argc - from;
+  if (n < 0) { n = 0; }
+  u8[][] out = u8[][n](fill: u8[0]());
+  for (i32 i = 0; i < n; i++) { out[i] = cli.arg(from + i).wait(); }
+  return out;
+}
+
+/**
+ * A grant written *after* the entry, which is a program argument and almost never meant as one.
+ *
+ * `wac run p.wac --allow-read` built an artefact with no grants and passed the flag as `argv[0]`, so
+ * the program ran without the capability it asked for and its next sentence was about the bogus
+ * argument — `issues/system/0177`. Refused by name instead. The scan stops at `--`, because past that
+ * a program may legitimately want the string.
+ */
+string grantAfterEntry(Cli cli, i32 argc, string entry) {
+  i32 at = -1;
+  for (i32 i = 1; i < argc && at < 0; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == entry) { at = i; }
+  }
+  if (at < 0) { return ""; }
+  for (i32 i = at + 1; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--") { return ""; }
+    if (a == "--allow-read" || a == "--allow-write" || a == "--allow-net" || a == "--allow-env"
+        || a == "--allow-run") {
+      return a;
+    }
+  }
+  return "";
+}
+
+/**
+ * A grant this command asks for, from the arguments *before* the entry only.
+ *
+ * `grantsIn` scans the whole line, which is right for `build` — where everything on it is the
+ * command's — and wrong here: `wac run p.wac --allow-net` would build a networked program out of the
+ * program's own argument. Refused above rather than honoured, and this is the half that makes the
+ * refusal meaningful by not reading past the entry either.
+ */
+i32 grantsBefore(Cli cli, i32 argc, string entry) {
+  i32 bits = 0;
+  for (i32 i = 1; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == entry) { return bits; }
+    if (a == "--allow-read") { bits = bits | 1; }
+    if (a == "--allow-write") { bits = bits | 2; }
+    if (a == "--allow-net") { bits = bits | 4; }
+    if (a == "--allow-env") { bits = bits | 8; }
+    if (a == "--allow-run") { bits = bits | 16; }
+  }
+  return bits;
+}
+
+/**
+ * Relay a child's two streams until both end, then answer its exit code.
+ *
+ * **Both, in the order they arrive.** One `recv` in flight per open stream and `waitAny` over the
+ * pair, which is `packages/sh/src/exec.wac`'s shape: draining one to exhaustion first would put every
+ * complaint after every line of output, and a program that interleaves them — which is most of them,
+ * on failure — would be unreadable.
+ *
+ * The native binary's `run` does not relay at all: it instantiates the module in its own process, so
+ * the program writes to the real streams. This is the same bytes on each stream and the same status,
+ * which is what `commandparity_test.wac` compares, and it is not the same thing — a program wanting a
+ * terminal sees a pipe here. Said plainly because it is the one place the two implementations differ
+ * in kind rather than in code. `issues/system/0230a`.
+ */
+i32 relay(Core core, Cli cli, Child kid) {
+  Pending<Read> out = cli.recv(kid.handle);
+  Pending<Read> err = cli.recv(kid.errHandle);
+  bool reading = true;
+  bool readingErr = true;
+  while (reading || readingErr) {
+    i32[] live = i32[reading && readingErr ? 2 : 1]();
+    i32 n = 0;
+    if (reading) { live[n] = out.id; n = n + 1; }
+    if (readingErr) { live[n] = err.id; }
+    // No deadline: there is nothing to do between chunks, and a poll would only burn a core.
+    i32 which = core.waitAny(live, -1);
+    if (which < 0) { break; }
+    if (reading && which == 0) {
+      match (out.wait()) {
+        case Data(bytes): { cli.write(bytes); out = cli.recv(kid.handle); }
+        case End: { reading = false; }
+        case Failed(why): { core.warn("wac: " + why); reading = false; }
+      }
+    } else {
+      match (err.wait()) {
+        case Data(bytes): { cli.writeErr(bytes); err = cli.recv(kid.errHandle); }
+        case End: { readingErr = false; }
+        case Failed(why): { core.warn("wac: " + why); readingErr = false; }
+      }
+    }
+  }
+  return cli.exitCode(kid.handle).wait();
+}
+
 string usage() {
   return "usage: wac check|compile|bindgen <entry.wac> [out]   # --js for bindgen's glue\n"
        + "       wac build <entry.wac> -o <stem> [--coverage|--trace [--trace-slots n]] [--quiet]\n"
-       + "                [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]";
+       + "                [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
+       + "       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
+       + "                <entry.wac> [args…]   compile and run it, with no file in between;\n"
+       + "                a grant goes before the entry, and after `--` an argument is the\n"
+       + "                program's, whatever it looks like";
+}
+
+/**
+ * The usage for one command, for when the command is known and its entry is not.
+ *
+ * `wac run` on its own used to print the whole block, which is four commands' worth of flags to
+ * answer a question about one. The native binary already printed the single line; this is the same
+ * line, so the two hosts agree on it — `commandparity_test.wac` has the case.
+ */
+string usageFor(string cmd) {
+  if (cmd == "run") {
+    return "usage: wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] "
+         + "[--allow-run] <entry.wac> [args…]";
+  }
+  return usage();
 }
 
 /**
@@ -728,7 +889,8 @@ string wasmBeside(string entry) {
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   if (argc < 2) {
-    core.warn(usage());
+    // The command is known even when nothing else is, so say what *it* takes.
+    core.warn(argc < 1 ? usage() : usageFor(string.fromBytes(cli.arg(0).wait())));
     return 2;
   }
   string cmd = string.fromBytes(cli.arg(0).wait());
@@ -742,7 +904,7 @@ export i32 main(Core core, Cli cli) {
   // one that did not work.
   string[] pos = positionals(cli, argc);
   if (pos.len() < 1) {
-    core.warn(usage());
+    core.warn(usageFor(cmd));
     return 2;
   }
   string entry = normalisePath(pos[0]);
@@ -752,8 +914,8 @@ export i32 main(Core core, Cli cli) {
   // wrong one: `wacc chekc nope.wac` reported *cannot read nope.wac* and exited 1, diagnosing the
   // typo you did not make and giving a compile-failure code for a usage mistake. Whether a usage
   // error is reported as one should not depend on an unrelated path happening to exist.
-  if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen") {
-    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build or bindgen");
+  if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen" && cmd != "run") {
+    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build, bindgen or run");
     return 2;
   }
 
@@ -912,6 +1074,59 @@ export i32 main(Core core, Cli cli) {
   // which `$bind$` export builds `Core` and in what order its funcrefs go, so an application is a
   // module *and* a manifest — `deno task app:native` in one command, which is what lets this binary
   // produce the artefact it is itself made of.
+  // **`run`, and it lives here rather than in a host — `issues/system/0230a`, option 2.**
+  //
+  // The operator ruled that the shared thing is *this program* and that Deno, Node and the native
+  // binary are hosts handing it argv and capabilities. `run` was that issue's own example of what only
+  // a host could do — "the compiler writes a module and cannot instantiate one" — and it stopped being
+  // true when every host learnt to start a module from bytes on 2026-08-21 (`issues/system/0144`). So
+  // the *dispatch* is here and the *instantiation* is a capability, which is what lets one
+  // implementation serve three hosts instead of one host having a command the others lack.
+  //
+  // **The grants are a ceiling, not a request.** `spawn` intersects what is asked with what this
+  // process holds, so `wac run --allow-read` from a build without read gives the child a denied
+  // capability rather than an error — the same rule as every other spawn, and the reason a host cannot
+  // widen what a program may do.
+  //
+  // The native binary still answers `run` in Rust, before this program sees it, and that is deliberate
+  // for now: `commandparity_test.wac` compares the two, and agreement measured is what has to come
+  // before deleting either. Step 4 of that issue's order.
+  if (cmd == "run") {
+    string badFlag = unknownFlagBefore(cli, argc, entry);
+    if (badFlag != "") {
+      core.warn("wac: unknown flag '" + badFlag + "' — --allow-read, --allow-write, --allow-net, "
+                + "--allow-env, --allow-run");
+      return 2;
+    }
+    string misplaced = grantAfterEntry(cli, argc, entry);
+    if (misplaced != "") {
+      core.warn("wac: " + misplaced + " after the entry is a program argument, not a grant — write it "
+                + "before " + entry + ", or after `--` if the program wants the string");
+      return 2;
+    }
+    i32 grants = grantsBefore(cli, argc, entry);
+    // **With its manifest**, because that is what a host reads to build the world the module imports.
+    // The name inside it is the entry's own stem: nothing is written to disk, so there is no file for
+    // it to be wrong about, and a program that reports its own name should not report a temporary one.
+    u8[] whole = withManifestSection(
+      wasm, manifestWire(wasm, types, sigs, entry, baseName(stem(entry)) + ".wasm", grants));
+
+    // `true` for the input, so the program reads the terminal or the pipe this command was given —
+    // which is what the native `run` does by instantiating in its own process. `false` for the
+    // filesystem channel: this is not a program that answers `Fs.overParent` questions.
+    Child kid = cli.spawn(whole, programArgs(cli, argc, entry), grants, "", true, false).wait();
+    if (kid.unavailable()) {
+      core.warn("wac: this host cannot run a module — `wac run` needs `spawn`, which a page has no "
+                + "form of");
+      return 1;
+    }
+    if (kid.handle < 0) {
+      core.warn("wac: cannot run " + entry + " — " + kid.error);
+      return 1;
+    }
+    return relay(core, cli, kid);
+  }
+
   if (cmd == "build") {
     string bad = unknownFlag(cli, argc);
     if (bad != "") {

@@ -298,3 +298,44 @@ One thing found while doing it belongs to this issue rather than to 0144: **`wac
 — `issues/system/0239c`. It compiles whatever path it is given, so a `.wasm` goes to the lexer. Now
 that every host can *start* a module, `run` recognising the magic bytes and running it is a real option,
 and it is this issue that owns which subcommand does what.
+
+## 2026-08-22: step 3 is done — `run` is in the wac program, on all three hosts
+
+`cmd == "run"` in `packages/wacc/example/wacc.wac`: compile, wrap the module in its manifest, `spawn`
+it with the grants written before the entry, relay both streams, forward the exit code. The Deno- and
+Node-hosted commands answer `run` now, which no host but the native binary could do before.
+
+**Eleven invocations, three hosts, identical stdout+stderr and identical exit codes** —
+`commandparity_test.wac`, which grew Node as a third column and five `run` rows. Watched failing:
+breaking the exit-code forwarding turns `run src/seven.wac` into `got 0, want 7` on both JS hosts.
+
+### Four of the eleven rows exist because the first attempt disagreed
+
+Measuring found real differences rather than confirming a design, which is the reason the issue asked
+for the differential first:
+
+| the case | what differed | which side was wrong |
+|---|---|---|
+| `run p.wac -- --allow-read` | JS hosts said `unknown flag '--'` | **mine** — `unknownFlag` scans the whole line, right for `build` and wrong for the one command with a tail. `run` has `unknownFlagBefore` now, which stops at the entry |
+| `run --nonsense p.wac` | native printed the whole four-command usage block | **the Rust** — its flag loop stops at the first thing it does not know, so `--nonsense` became the entry. It names the flag now |
+| `run` with no entry | JS hosts printed the whole block | **mine** — the native already printed `run`'s own line. `usageFor(cmd)` says it on all three |
+| `run p.wac --allow-read` | agreed, both refusing | neither — and worth recording, because that is `issues/system/0177`'s rule arriving in a second implementation by being written down rather than by being copied |
+
+### One difference no assertion covers, stated because it is real
+
+The Rust `run` **instantiates the module in its own process**; the wac `run` spawns it and relays.
+Same bytes on each stream, same status — and not the same thing to a program that wants a terminal,
+or to one whose output is large enough for the relay to matter. That is the honest cost of `run` being
+expressible in wac at all: a wac program's only way to start a module is `spawn`.
+
+### What is left
+
+- **Step 4**, deleting the Rust `run`, is now a decision rather than a blocked one. The differential
+  is the evidence it asked for. Not done here: `deno task test` goes through `wac run tools/runTests.wac`,
+  so the suite runs on the path being deleted, and the relay-versus-in-process difference above is the
+  thing to satisfy yourself about first.
+- **Step 5**: `update`, then `sh`; `test` last or never. `test` is the one whose Rust half does real
+  work — collecting files, building an aggregate entry, `--filter` — rather than dispatching.
+- Still open and unclaimed by me: `issues/system/0239c`, which is `wac run <a module.wasm>` hanging.
+  Now that `run` exists in two places, it hangs in both for the same reason: neither looks at the
+  magic bytes before handing the path to the compiler.

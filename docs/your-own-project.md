@@ -53,6 +53,20 @@ same way. It is slower — it is the reference front end plus wacc running as wa
 a binary — and it is a developer fallback rather than the supported route, which is
 `deno task wac:install`.
 
+**And a Deno- or Node-hosted `wac` command is a thing you can build**, which is not the same as the
+line above: that one compiles, and this one is the command.
+
+```sh
+deno run -A <wac>/packages/platform/build.ts <wac>/packages/wacc/example/wacc.wac \
+  -o wac --target deno --allow-read --allow-write --allow-run --allow-env --allow-net
+./wac run main.wac                       # compile and run, no file in between
+```
+
+`--target node` gives the same thing for Node, run as `node wac`. It answers `check`, `compile`,
+`build`, `bindgen` and `run`; `test`, `sh` and `update` are still the native binary's alone, and
+`issues/system/0230a` is the plan for moving them. All three hosts are held to the same output for
+every command they share — `packages/wacc/test/wac/commandparity_test.wac`.
+
 **It did not work from outside this repository until 2026-08-20**, which is worth saying because
 somebody hit it: the compiler's own sources were named by relative path, so it read
 `packages/wacc/src/api.wac` from *your* directory and died with a `NotFound` and ten frames of
