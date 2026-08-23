@@ -67,8 +67,8 @@ export type AppModule = {
    * Not optional, unlike `Page`: `Cli`'s own field types name them, so a module with a `Cli` has both
    * classes whether or not the program ever loads anything.
    */
-  Loaded: { of(...a: unknown[]): unknown };
-  Called: { of(...a: unknown[]): unknown };
+  LoadedModule: { of(...a: unknown[]): unknown };
+  CallResult: { of(...a: unknown[]): unknown };
   Change: { of(...a: unknown[]): unknown };
   Pending$Change: { of(...a: unknown[]): unknown };
   Pending$Read: { of(...a: unknown[]): unknown };
@@ -175,7 +175,7 @@ export type Grants = {
 /**
  * The worker half: wait for the bridge, build the capabilities, run `main`.
  *
- * Called by the generated worker entry, which imports this module *before* the
+ * CallResult by the generated worker entry, which imports this module *before* the
  * application so the handler above is installed first.
  */
 export async function runAsWorkerEntry(app: AppModule, cov?: Coverage): Promise<void> {

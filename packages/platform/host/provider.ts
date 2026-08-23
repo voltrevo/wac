@@ -168,8 +168,8 @@ export function cliOf(
     Socket: { of(...a: unknown[]): unknown };
     Datagram: { of(...a: unknown[]): unknown };
     Child: { of(...a: unknown[]): unknown };
-    Loaded: { of(...a: unknown[]): unknown };
-    Called: { of(...a: unknown[]): unknown };
+    LoadedModule: { of(...a: unknown[]): unknown };
+    CallResult: { of(...a: unknown[]): unknown };
     Captured: { of(...a: unknown[]): unknown };
     Exec: { of(...a: unknown[]): unknown };
     Change: { of(...a: unknown[]): unknown };
@@ -678,7 +678,7 @@ export function cliOf(
       try {
         const manifest = manifestIn(module);
         if (manifest === null) {
-          return cls.Loaded.of(-1, "this module carries no wac.manifest section");
+          return cls.LoadedModule.of(-1, "this module carries no wac.manifest section");
         }
         const driven = drive(module, manifest);
         const app = asAppModule(driven);
@@ -693,23 +693,23 @@ export function cliOf(
           world: worldFor(b, app),
           exports: new Map(manifest.exports.map((e) => [e.name, e])),
         });
-        return cls.Loaded.of(handle, "");
+        return cls.LoadedModule.of(handle, "");
       } catch (e) {
         // A module that will not compile or instantiate is a value the caller acts on, exactly as a
         // child that would not start is. `Child` has the same shape for the same reason.
-        return cls.Loaded.of(-1, e instanceof Error ? e.message : String(e));
+        return cls.LoadedModule.of(-1, e instanceof Error ? e.message : String(e));
       }
     },
     /*= call */
     // The signature comes from the **manifest**, not from the caller: a module says what its exports
-    // take and answer, so nothing has to describe it twice. The set is closed — see `Called`.
+    // take and answer, so nothing has to describe it twice. The set is closed — see `CallResult`.
     (handle: number, name: string, arg: number) => {
       const m = loadedModules.get(handle);
-      if (m === undefined) return cls.Called.of(2, "no module on handle " + handle, 0);
+      if (m === undefined) return cls.CallResult.of(2, "no module on handle " + handle, 0);
       const sig = m.exports.get(name);
       const f = m.app[name];
       if (sig === undefined || typeof f !== "function") {
-        return cls.Called.of(2, "no export named " + name, 0);
+        return cls.CallResult.of(2, "no export named " + name, 0);
       }
       // What to hand it. `Core`/`Cli` in that order, or one `i32`, or nothing — and anything else is
       // refused rather than guessed at, which is what keeps `status == 3` meaningful.
@@ -726,25 +726,25 @@ export function cliOf(
         // — and calling an export that wants one with `undefined` would trap inside the module rather
         // than say why. `issues/lang/0107` is the rule this reads.
         if (args.length < sig.params.length) {
-          return cls.Called.of(3, "this module was built without " + sig.params.join(" and "), 0);
+          return cls.CallResult.of(3, "this module was built without " + sig.params.join(" and "), 0);
         }
-      } else return cls.Called.of(3, "cannot call " + name + "(" + sig.params.join(", ") + ")", 0);
+      } else return cls.CallResult.of(3, "cannot call " + name + "(" + sig.params.join(", ") + ")", 0);
       if (sig.ret !== "" && sig.ret !== "void" && sig.ret !== "i32" && sig.ret !== "string") {
-        return cls.Called.of(3, name + " answers " + sig.ret, 0);
+        return cls.CallResult.of(3, name + " answers " + sig.ret, 0);
       }
       try {
         const out = (f as CallableFunction)(...args);
         if (sig.ret === "string") {
-          return cls.Called.of(0, String(m.driven.fromWasm("string", out) ?? ""), 0);
+          return cls.CallResult.of(0, String(m.driven.fromWasm("string", out) ?? ""), 0);
         }
-        if (sig.ret === "i32") return cls.Called.of(0, "", Number(out) | 0);
-        return cls.Called.of(0, "", 0);
+        if (sig.ret === "i32") return cls.CallResult.of(0, "", Number(out) | 0);
+        return cls.CallResult.of(0, "", 0);
       } catch (e) {
         // **The whole point.** A `test_traps_*` export passes by trapping, and 389 of this
         // repository's test exports are one. The handle stays usable: wac has no module-level state
         // for a trap to leave behind, which is the same reason those tests have always been able to
         // run beside their neighbours.
-        return cls.Called.of(1, e instanceof Error ? e.message : String(e), 0);
+        return cls.CallResult.of(1, e instanceof Error ? e.message : String(e), 0);
       }
     },
     /*= unload */

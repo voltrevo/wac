@@ -43,7 +43,7 @@
 // anything unbounded — and `spawn_test.wac` holds the other half.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Called, Cli, Core, Exec, Loaded } from "std/platform.wac";
+import { CallResult, Cli, Core, Exec, LoadedModule } from "std/platform.wac";
 import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot }
   from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -92,21 +92,21 @@ export string test_this_host_loads_a_module_and_calls_every_shape(Core core, Cli
   t.isTrue(cli.stat(path).wait().isFile, "the module built: " + path);
   if (!cli.stat(path).wait().isFile) { return t.report(); }
 
-  Loaded m = cli.load(cli.readFile(path).wait().bytes);
+  LoadedModule m = cli.load(cli.readFile(path).wait().bytes);
   t.isTrue(!m.unavailable(), "this host can load a module — " + m.error);
   t.isTrue(m.handle >= 0, "it loaded: " + m.error);
   if (m.handle < 0) { return t.report(); }
 
-  Called pass = cli.call(m.handle, "test_passes", 0);
+  CallResult pass = cli.call(m.handle, "test_passes", 0);
   t.eqI32(pass.status, 0, "test_passes returned: " + pass.text);
   t.eqStr(pass.text, "", "a passing test's report is empty");
 
-  Called fail = cli.call(m.handle, "test_fails", 0);
+  CallResult fail = cli.call(m.handle, "test_fails", 0);
   t.eqStr(fail.text, "two of two assertions failed", "the failing report came back whole");
 
   // **The row the capability exists for**, and every assertion after it is also proof that the
   // caller survived: 389 of this repository's 2553 test exports pass by trapping.
-  Called trapped = cli.call(m.handle, "test_traps_on_purpose", 0);
+  CallResult trapped = cli.call(m.handle, "test_traps_on_purpose", 0);
   t.eqI32(trapped.status, 1, "a trap is a value, not the end");
   t.eqStr(trapped.text, "unreachable", "and it says what — the same word every host says");
 

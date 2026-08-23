@@ -268,7 +268,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         // than a wiring change — and until it is done, a program asking gets -2 and can fall through.
         //
         // Mapped rather than left to `Cap::Unsupported`, which *throws*: a capability a host does not
-        // have must be a value the caller reads, or `Loaded.unavailable()` can never be observed and
+        // have must be a value the caller reads, or `LoadedModule.unavailable()` can never be observed and
         // every portable program dies on the ask instead of taking its other route.
         ("Cli", "load") => Cap::Load,
         ("Cli", "call") => Cap::Call,
@@ -390,7 +390,7 @@ struct ModuleCtx {
 }
 
 /// A module `Cli.load` instantiated, and what is needed to call into it.
-struct LoadedModule {
+struct HeldModule {
     ctx: ModuleCtx,
     /// Its own manifest's export list, so `call` dispatches on the signature the *module* declares
     /// rather than on anything the caller says about it.
@@ -398,7 +398,7 @@ struct LoadedModule {
     /// `Core` and `Cli` built for it, in `main`'s order — kept because funcref slots are finite and a
     /// world rebuilt per call fails on the seventeenth. `entry.ts` learnt the same thing about `main`.
     world: Vec<v8::Global<v8::Value>>,
-    /// `Loaded.of` and `Called.of` as *this* module spells them, which is not the loader's spelling:
+    /// `LoadedModule.of` and `CallResult.of` as *this* module spells them, which is not the loader's spelling:
     /// a monomorphisation binds under a mangled name and only the module is the authority on it.
     loaded_of: Option<String>,
     called_of: Option<String>,
@@ -457,15 +457,15 @@ struct HostState {
     exec_of: Option<String>,
     /// `Child`'s.
     child_of: Option<String>,
-    /// `Loaded.of` and `Called.of`, for `Cli.load` and `Cli.call` — `issues/system/0240c`.
+    /// `LoadedModule.of` and `CallResult.of`, for `Cli.load` and `Cli.call` — `issues/system/0240c`.
     ///
     /// Cached like the rest, and `None` for a program that never named the type: a module that does
-    /// not load anything has no `Loaded` class, and building one would be inventing a type it never
+    /// not load anything has no `LoadedModule` class, and building one would be inventing a type it never
     /// declared. That is the same rule `worldFor` reads on the JavaScript side.
     loaded_of: Option<String>,
     called_of: Option<String>,
     /// The modules this program has loaded, by handle. From 1, so a zeroed field names nothing.
-    loaded: HashMap<i32, LoadedModule>,
+    loaded: HashMap<i32, HeldModule>,
     next_loaded: i32,
     /// **The frame stack.** `pushChild` runs an applet *in this program* rather than in a child
     /// process: box's dispatcher re-enters itself, reads the frame's argv, and its output is
@@ -3119,11 +3119,11 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             loaded: HashMap::new(),
             next_loaded: 1,
             loaded_of: m
-                .find_struct("Loaded")
+                .find_struct("LoadedModule")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             called_of: m
-                .find_struct("Called")
+                .find_struct("CallResult")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             captured_of: m
@@ -5266,7 +5266,7 @@ fn dispatch(
             };
             match build_loaded(scope, handle, &why) {
                 Some(v) => rv.set(v),
-                None => throw(scope, "could not build a Loaded for the answer"),
+                None => throw(scope, "could not build a LoadedModule for the answer"),
             }
             return;
         }
@@ -5280,7 +5280,7 @@ fn dispatch(
             let (status, text, value) = call_loaded(scope, handle, &name, arg);
             match build_called(scope, status, &text, value) {
                 Some(v) => rv.set(v),
-                None => throw(scope, "could not build a Called for the answer"),
+                None => throw(scope, "could not build a CallResult for the answer"),
             }
             return;
         }
@@ -6225,7 +6225,7 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8]) -> Result<i32, String> {
             .and_then(|st| st.methods.iter().find(|mm| mm.name == "of"))
             .map(|mm| mm.export_name.clone())
     };
-    let entry = LoadedModule {
+    let entry = HeldModule {
         ctx: ModuleCtx {
             exports: v8::Global::new(scope, exports),
             caps,
@@ -6233,8 +6233,8 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8]) -> Result<i32, String> {
         },
         exports: m.exports.clone(),
         world,
-        loaded_of: of("Loaded"),
-        called_of: of("Called"),
+        loaded_of: of("LoadedModule"),
+        called_of: of("CallResult"),
     };
     Ok(HOST.with(|h| {
         let mut b = h.borrow_mut();
@@ -6386,7 +6386,7 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
     outcome
 }
 
-/// `Loaded.of(handle, error)` — `issues/system/0240c`.
+/// `LoadedModule.of(handle, error)` — `issues/system/0240c`.
 fn build_loaded<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     handle: i32,
@@ -6401,7 +6401,7 @@ fn build_loaded<'s>(
     ctor.call(scope, exports.into(), &[a.into(), msg])
 }
 
-/// `Called.of(status, text, value)`.
+/// `CallResult.of(status, text, value)`.
 fn build_called<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     status: i32,

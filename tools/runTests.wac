@@ -447,6 +447,21 @@ string[] runArgs(string[] targets, string[] ignore) {
   return args.all();
 }
 
+/**
+ * What one of `wac test`'s exit codes means, for a chunk that printed no `FAIL` of its own.
+ *
+ * The words are `native/v8/src/main.rs`'s, where the codes are decided. 4 and 5 are the ones worth
+ * naming: neither prints anything a reader would recognise as a failure, and both make this lane
+ * exit non-zero.
+ */
+string statusWord(i32 code) {
+  if (code == 3) { return "a test failed"; }
+  if (code == 4) { return "a test wants a host oracle this run has not got"; }
+  if (code == 5) { return "no test matched, which for a whole directory is a discovery problem"; }
+  if (code == 1) { return "it did not get as far as running tests"; }
+  return "an exit code this runner has no word for";
+}
+
 /** How often the queue looks at its children's logs while waiting for one of them to finish. */
 i32 pollMs() { return 250; }
 
@@ -1113,7 +1128,17 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
       core.warn("   " + done.label + " did not start — " + r.error);
       if (wacCode == 0) { wacCode = 1; }
     }
-    if (r.ran() && r.status != 0 && wacCode == 0) { wacCode = r.status; }
+    // **A chunk that fails without a `FAIL` line has to name itself.** This took the status and said
+    // nothing, so a lane could print `N passed, 0 failed` for every chunk and still exit non-zero —
+    // and the summary's own note ("its failures are the `FAIL` lines above") then pointed at lines
+    // that were not there. `wac test` exits 3 for a failed test, 4 for one wanting a host oracle and
+    // 5 for a filter that matched nothing: only the first has anything to print, so the other two
+    // were invisible. Every one is named now, not only the first.
+    if (r.ran() && r.status != 0) {
+      core.warn("   " + done.label + " exited " + itoa(r.status) + " with no failure of its own — "
+                + statusWord(r.status));
+      if (wacCode == 0) { wacCode = r.status; }
+    }
 
     busy[slot] = false;
     if (next < queue.len()) {
@@ -1159,7 +1184,11 @@ i32 lanes(Core core, Cli cli, Opts o, Found f) {
       core.log(trimEnd(alone));
       files = files + 1;
       tests = tests + testsReported(alone);
-      if (r.ran() && r.status != 0 && wacCode == 0) { wacCode = r.status; }
+      if (r.ran() && r.status != 0) {
+        core.warn("   " + serial[i] + " (alone) exited " + itoa(r.status) + " — "
+                  + statusWord(r.status));
+        if (wacCode == 0) { wacCode = r.status; }
+      }
       if (!r.ran() && wacCode == 0) { wacCode = 1; }
     }
   }

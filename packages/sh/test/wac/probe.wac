@@ -23,7 +23,7 @@
 // picks an id from the path; `resolveFile` turns the id back into a `FileResult`. It reads
 // oddly and it is the only way to build a resolved ticket without state.
 
-import { Called, Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Loaded, Pending, Sched, Socket, Stat } from "std/platform.wac";
+import { CallResult, Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FileResult, LoadedModule, Pending, Sched, Socket, Stat } from "std/platform.wac";
 import { Read } from "core";
 import { Shell, builtinNames, isBuiltin, runScript } from "../../src/exec.wac";
 
@@ -357,14 +357,14 @@ Pending<Exec> fakeExec(string path, string[] args, u8[] stdin, string[] env, boo
 /**
  * `load` in a world that has none, which is the honest answer for a probe.
  *
- * -2 rather than -1: `Loaded.unavailable()` is how a caller tells "this host cannot" from "this module
+ * -2 rather than -1: `LoadedModule.unavailable()` is how a caller tells "this host cannot" from "this module
  * could not be", and a fake that said -1 would have every caller reporting a broken module. Same shape
  * as `fakeSpawnSelf` above and for the same reason. `issues/system/0240c`.
  */
-Loaded fakeLoad(u8[] module) { return Loaded(-2, "no load in this world"); }
+LoadedModule fakeLoad(u8[] module) { return LoadedModule(-2, "no load in this world"); }
 
 /** ...and so nothing is ever callable: 2 is "no such export", which is true of a module never loaded. */
-Called fakeCall(i32 handle, string name, i32 arg) { return Called(2, "", 0); }
+CallResult fakeCall(i32 handle, string name, i32 arg) { return CallResult(2, "", 0); }
 
 void fakeUnload(i32 handle) {}
 

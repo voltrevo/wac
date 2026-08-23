@@ -20,7 +20,7 @@ export string test_fails(Core core, Cli cli) { return "two of two assertions fai
  * A test that passes **by trapping**, which is why a trap has to be a value rather than the end.
  *
  * 389 of this repository's 2553 test exports are `test_traps_*`, and no wac program can catch one —
- * so without `Called.status == 1` a caller can only learn this by dying with it.
+ * so without `CallResult.status == 1` a caller can only learn this by dying with it.
  */
 export string test_traps_on_purpose(Core core, Cli cli) {
   trap;

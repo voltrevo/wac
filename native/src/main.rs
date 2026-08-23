@@ -806,7 +806,7 @@ fn run(m: Arc<Manifest>, wasm: &[u8], args: Vec<Vec<u8>>) -> Result<i32, wasmtim
 }
 
 /// Instantiate, build the capability structs, and call `main`. The half a child repeats.
-/// An engine trap in the words the JavaScript hosts use, so `Called.text` reads the same everywhere.
+/// An engine trap in the words the JavaScript hosts use, so `CallResult.text` reads the same everywhere.
 ///
 /// **Only `unreachable` is held to that, and deliberately.** A bare `trap` in wac compiles to
 /// `unreachable`, so it is the one every `test_traps_*` in this repository produces and the one
@@ -879,7 +879,7 @@ fn read_string_in(store: &mut Store<Host>, instance: &Instance, v: &Val) -> Stri
 /// one, and its `Host` *shares the caller's* `tickets`, `handles` and `grants` by `Arc`. That sharing
 /// is what makes a loaded module's `readFile` behave exactly as its loader's, and is why `Cli.load`
 /// takes no grant argument: there is nowhere for a narrowing to live.
-struct LoadedModule {
+struct HeldModule {
     store: Store<Host>,
     instance: Instance,
     manifest: Arc<Manifest>,
@@ -892,7 +892,7 @@ thread_local! {
     /// **Thread-local, like the V8 host's, and for the same reason**: this runtime is one program per
     /// thread — a spawned child gets a thread of its own — so a table here is a table per program.
     /// It cannot live in `Host` because a `Store<Host>` inside a `Host` is the store owning itself.
-    static LOADED: std::cell::RefCell<HashMap<i32, LoadedModule>> =
+    static LOADED: std::cell::RefCell<HashMap<i32, HeldModule>> =
         std::cell::RefCell::new(HashMap::new());
     static NEXT_LOADED: std::cell::Cell<i32> = const { std::cell::Cell::new(1) };
 }
@@ -901,7 +901,7 @@ thread_local! {
 fn load_module(caller: &mut Caller<'_, Host>, wasm: &[u8]) -> Result<i32, String> {
     let world = world_from(&caller.engine().clone(), wasm)?;
     let m = world.manifest.clone();
-    // The caller's own authority, by reference — see `LoadedModule`.
+    // The caller's own authority, by reference — see `HeldModule`.
     let mut host = Host::new(m.callbacks.len(), caller.data().args.clone(), caller.data().grants.clone());
     host.tickets = caller.data().tickets.clone();
     host.handles = caller.data().handles.clone();
@@ -918,12 +918,12 @@ fn load_module(caller: &mut Caller<'_, Host>, wasm: &[u8]) -> Result<i32, String
         h
     });
     LOADED.with(|t| {
-        t.borrow_mut().insert(handle, LoadedModule { store, instance, manifest: m, world: built })
+        t.borrow_mut().insert(handle, HeldModule { store, instance, manifest: m, world: built })
     });
     Ok(handle)
 }
 
-/// Call `name` on a loaded module: `(status, text, value)`, as `Called` carries them.
+/// Call `name` on a loaded module: `(status, text, value)`, as `CallResult` carries them.
 ///
 /// **A trap is a value.** `func.call` answers `Err` for one, and `test_traps_*` passes by trapping —
 /// 389 of this repository's 2553 test exports do. `$trap$message` carries what a `trap "…"` said, the
@@ -1692,12 +1692,12 @@ fn dispatch(
                 Err(e) => (-1, e),
             };
             let msg = make_string(caller, why.as_bytes())?;
-            let f = export_func(caller, "$bind$sm_Loaded_of")?;
+            let f = export_func(caller, "$bind$sm_LoadedModule_of")?;
             let built = call_dyn(caller, &f, &[Val::I32(handle), msg])?;
             results[0] = built
                 .into_iter()
                 .next()
-                .ok_or_else(|| wasmtime::Error::msg("Loaded.of answered nothing"))?;
+                .ok_or_else(|| wasmtime::Error::msg("LoadedModule.of answered nothing"))?;
             return Ok(());
         }
         Cap::Call => {
@@ -1712,12 +1712,12 @@ fn dispatch(
             };
             let (status, text, value) = call_loaded(handle, &name, n);
             let msg = make_string(caller, text.as_bytes())?;
-            let f = export_func(caller, "$bind$sm_Called_of")?;
+            let f = export_func(caller, "$bind$sm_CallResult_of")?;
             let built = call_dyn(caller, &f, &[Val::I32(status), msg, Val::I32(value)])?;
             results[0] = built
                 .into_iter()
                 .next()
-                .ok_or_else(|| wasmtime::Error::msg("Called.of answered nothing"))?;
+                .ok_or_else(|| wasmtime::Error::msg("CallResult.of answered nothing"))?;
             return Ok(());
         }
         Cap::Unload => {

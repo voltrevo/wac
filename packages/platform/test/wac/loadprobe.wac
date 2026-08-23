@@ -7,7 +7,7 @@
 //
 // One line per call, in a fixed order, so a diff says which shape moved.
 
-import { Called, Cli, Core, FileResult, Loaded } from "std/platform.wac";
+import { CallResult, Cli, Core, FileResult, LoadedModule } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** Every shape in the closed set, plus the two refusals — in the order the report prints them. */
@@ -28,7 +28,7 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
 
-  Loaded m = cli.load(f.bytes);
+  LoadedModule m = cli.load(f.bytes);
   if (m.unavailable()) {
     // Printed rather than failed: this is the answer on the native hosts, and a caller reading it is
     // the whole reason -2 is distinct from -1.
@@ -44,7 +44,7 @@ export i32 main(Core core, Cli cli) {
   for (i32 i = 0; i < names.len(); i++) {
     // `21` for every call, so `twice` answering 42 is the argument having arrived rather than a
     // constant that happens to match.
-    Called c = cli.call(m.handle, names[i], 21);
+    CallResult c = cli.call(m.handle, names[i], 21);
     core.log(names[i] + " " + itoa(c.status) + " " + itoa(c.value) + " " + c.text);
   }
   cli.unload(m.handle);
@@ -52,7 +52,7 @@ export i32 main(Core core, Cli cli) {
   // **After a trap, and after an unload.** Calling into a module that has been let go is a caller's
   // mistake rather than a crash, and the handle is gone rather than stale — 2, as for any name the
   // module does not have.
-  Called after = cli.call(m.handle, "answer", 0);
+  CallResult after = cli.call(m.handle, "answer", 0);
   core.log("after-unload " + itoa(after.status));
   return 0;
 }
