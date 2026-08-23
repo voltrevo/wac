@@ -1286,11 +1286,27 @@ Deno.test("bin/: one applet alone states only the grants it needs", async () => 
     }
 
     // The size of what you gave up: `box` carries every applet and every grant.
+    //
+    // **A difference, not a ratio, and that is the second version of this assertion.** It read
+    // `alone * 2 < all`, which compares two files that share ~550 KB of *identical host runtime* — so
+    // the ratio decays toward 1.0 as that runtime grows, whatever happens to the applets. Measured
+    // 2026-08-23, it had 3,795 bytes of headroom out of 1.1 MB: 0.3%, and the 7 KB that `Cli.load`
+    // added to every built program (`issues/system/0240c`) took it under. The number that moved was
+    // the runtime's, and the claim being made is about the *applets*.
+    //
+    // So: `box`'s 65 applets are their own content, and 400 KB of it is a floor with room to spare —
+    // the difference measured the same day was 560,264 bytes. This one does not move when the host
+    // gains a capability, which is the property the ratio was missing.
     const alone = (await Deno.stat(wc)).size;
     const all = await Deno.makeTempFile({ prefix: "wac-bin-box-" });
     built.push(all);
     await buildApp(BOX, all, { read: true, write: true });
-    assertEquals(alone * 2 < (await Deno.stat(all)).size, true, "box should be much larger");
+    const boxSize = (await Deno.stat(all)).size;
+    assertEquals(
+      boxSize - alone > 400_000,
+      true,
+      `box carries every applet: ${boxSize} - ${alone} = ${boxSize - alone}, wanted > 400000`,
+    );
   } finally {
     for (const b of built) await Deno.remove(b);
   }

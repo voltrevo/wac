@@ -157,3 +157,22 @@ spelling. `engine_trap_words` says so where a reader will find it.
 filed. `covdump`, `tracestat` and `ctcompare` become expressible too: they need `__cov_init`,
 `__cov_len` and `__cov_get`, which are `void f()`, `i32 f()` and `i32 f(i32)` — three of the four
 shapes in the closed set.
+
+### What it costs, measured
+
+**7 KB in every built program.** `provider.ts` imports `driver.ts`, so the module driver is in every
+worker bundle whether or not the program ever loads anything — `packages/box/src/bin/wc.wac` went from
+570,467 to 577,465 bytes. Most of `driver.ts` and `marshal.ts` is tree-shaken; a first guess of 37 KB,
+from the size of the separately-bundled wasm-child entry, was five times too high.
+
+It is not avoidable without giving the capability up on the JavaScript hosts. A loaded module's `Core`
+and `Cli` are built against the *caller's* bridge, which exists in the worker — putting `load` in the
+launcher instead would need a second implementation of the world with no bridge under it, and would
+need a thread to avoid the launcher serving itself.
+
+**It broke one assertion, and the assertion was the fragile thing.** `packages/box/test/box.test.ts`
+had `alone * 2 < all` — one applet against `box`'s sixty-five. Those two files share about 550 KB of
+identical host runtime, so the *ratio* decays toward 1.0 as the runtime grows however the applets
+change; measured, it had 3,795 bytes of headroom out of 1.1 MB. It asserts a difference now
+(> 400 KB, against 560,264 measured), which is the claim it was making and does not move when the
+host gains a capability.
