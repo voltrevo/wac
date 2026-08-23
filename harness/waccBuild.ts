@@ -11,7 +11,13 @@
 
 import { wacBind } from "./wacBind.ts";
 import { ROOT } from "./programs.ts";
-import { cached as cacheFile, compilerKeyParts, contentKey, filesParts } from "./buildCache.ts";
+import {
+  cached as cacheFile,
+  compilerKeyParts,
+  contentKey,
+  filesParts,
+  waccKeyParts,
+} from "./buildCache.ts";
 import {
   generate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, unsupported,
 } from "../packages/wacc/tools/waccBindgen.ts";
@@ -183,6 +189,18 @@ export type WaccArtifacts = {
   covPoints: CovPoint[];
   /** The names a host can call. */
   exports: string[];
+  /**
+   * The metadata wire from **the same compile as `wasm`** — `issues/system/0241c`.
+   *
+   * Handed back rather than left inside, because a caller that wants the boundary must not compile
+   * again to get it: `bindTypesFilesIn` is a second pass with its own signature table, and a
+   * capability signature that pass does not reach gets no `C` line while the emitter still emits its
+   * import. That is a manifest that does not describe its own module, and the only fix that cannot
+   * drift is one producer.
+   */
+  wire: string;
+  /** The export signatures, from that same compile. */
+  sigWire: string;
 };
 
 /**
@@ -244,6 +262,11 @@ async function compileKey(
 ): Promise<string | null> {
   const compiler = await compilerKeyParts();
   if (compiler === null) return null;
+  // **And wacc's own sources**, because wacc is what compiles this. `compilerKeyParts` covers the
+  // reference only, and `coretext.wac` under here is the embedding of `std/platform.wac` — so a
+  // capability added to `Cli` changed nothing this key could see. `issues/system/0241c`.
+  const wacc = await waccKeyParts();
+  if (wacc === null) return null;
   return await contentKey([
     // **2, because the roots below changed what a key means.** An entry written before them holds a
     // build whose `@/` imports resolved to nothing; served against a key that now includes them it
@@ -260,6 +283,7 @@ async function compileKey(
       .map(([p, r]) => `root ${p} ${r}`),
     `base ${base ?? ""}`,
     ...compiler,
+    ...wacc,
     ...filesParts(files),
   ]);
 }
@@ -270,6 +294,9 @@ type Stored = {
   covLines: string[];
   covPoints: CovPoint[];
   exports: string[];
+  /** The boundary, from the compile that made the module beside it — `WaccArtifacts.wire`. */
+  wire: string;
+  sigWire: string;
 };
 
 /**
@@ -300,6 +327,8 @@ async function writeCompiled(key: string, a: WaccArtifacts): Promise<void> {
     covLines: a.covLines,
     covPoints: a.covPoints,
     exports: a.exports,
+    wire: a.wire,
+    sigWire: a.sigWire,
   };
   // Through `cached`, which writes to a temporary name and renames: two runs missing the same key
   // write the same path at once, and the bytes are identical by construction so the only hazard is a
@@ -415,5 +444,8 @@ async function compileArtifacts(
     covLines,
     covPoints,
     exports: sigs.map((s) => s.name),
+    // From the compile above, which is the whole point — see `WaccArtifacts.wire`.
+    wire,
+    sigWire: described[1] ?? "",
   };
 }

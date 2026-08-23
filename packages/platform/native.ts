@@ -305,83 +305,14 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
  * `$bind$` names the module ended up exporting, and the module itself is the authority on that —
  * asking it beats keeping a second copy of the convention.
  */
-/**
- * The two wire answers a native build needs, per program — memoised, because grants do not change them.
- *
- * **`buildNative` is 1.9 seconds where `buildApp` is 0.3, and this is why.** `waccArtifacts` caches the
- * *wasm* on disk, so a repeat build fetches it; `bindTypesFiles` and `exportSigsFiles` are two more full
- * front-end passes over the same graph and were run every time. `packages/platform/test/wac/native_hostfs_test.wac`
- * builds `wacsh` four times for four grant sets — 7.6s, all of it re-deriving one program's bind tables.
- *
- * Keyed on the content of every file plus the entry, so a source that changed is a different key: the
- * hash is ~10ms against ~1.8s to recompute, and it is the same `contentKey` the artefact cache uses.
- * Grants are deliberately *not* in the key — they land in the manifest below, not in the wire.
- */
-const wireOf = new Map<string, { wire: string; sigWire: string }>();
+// **The wire is no longer derived here at all**, so the memo that used to hold it is gone with it.
+//
+// It existed because `bindTypesFiles` and `exportSigsFiles` were two more full front-end passes over
+// a graph `waccArtifacts` had already compiled — 1.9s against `buildApp`'s 0.3, and 7.6s for the four
+// grant sets `native_hostfs_test.wac` builds. Taking the boundary from the module's own compile costs
+// nothing at all instead of a memoised ~1.8s, and it cannot disagree with the module. Which is the
+// better reason: `issues/system/0241c` is what the disagreement looked like.
 
-/**
- * ...and on disk as well, because a test file is a process and the memo above dies with it.
- *
- * Measured: with the wasm already cached, a cold `buildNative` is 1.6-1.9s and **1.5s of it is these
- * two calls** — `waccArtifacts` is 44ms, `waccApi` 86ms, reading the module's exports 3ms. Nine test
- * files build a native app; several build two, and every one of them paid the 1.5s again.
- *
- * **The key has to name whatever *produced* the wire, not just what it was produced from.** These
- * answers come out of wacc, which `waccApi` builds with the reference — so the key carries the
- * reference compiler's own hash (`compilerKeyParts`, the same one the artefact cache uses) *and* the
- * import closure of `packages/wacc/src/api.wac`. Change a bindgen rule in wacc and the key moves;
- * change the program and it moves. When `compilerKeyParts` cannot say what the compiler is, there is
- * nothing to key against and the cache is skipped rather than guessed at — the in-process memo still
- * applies.
- */
-async function nativeWire(
-  api: { bindTypesFiles: (p: string[], s: string[], e: string) => string;
-         exportSigsFiles: (p: string[], s: string[], e: string) => string;
-         bindTypesFilesIn: (p: string[], s: string[], r: WaccRes, e: string) => string;
-         exportSigsFilesIn: (p: string[], s: string[], r: WaccRes, e: string) => string },
-  paths: string[],
-  sources: string[],
-  entry: string,
-  res: WaccRes,
-  roots: Map<string, string>,
-  base: string,
-): Promise<{ wire: string; sigWire: string }> {
-  const { cached, compilerKeyParts, contentKey, filesParts } = await import(
-    "../../harness/buildCache.ts"
-  );
-  const { wacFiles } = await import("../../harness/wacFiles.ts");
-  const compiler = await compilerKeyParts();
-  const producer = compiler === null ? null : [...compiler, ...filesParts(await wacFiles(WACC_API))];
-  const key = await contentKey([
-    // **3, because the resolution context is now part of the answer.** A wire cached before it was
-    // computed from a graph whose `@/` imports resolved to nothing, and would be served against a key
-    // that now resolves them — a stale boundary for a module that compiled correctly.
-    "native-wire 3",
-    entry,
-    ...[...roots].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([p, r]) => `root ${p} ${r}`),
-    `base ${base}`,
-    ...(producer ?? ["unkeyed"]),
-    ...paths.flatMap((p, i) => [p, sources[i]]),
-  ]);
-  const hit = wireOf.get(key);
-  if (hit !== undefined) return hit;
-
-  const make = () => ({
-    wire: api.bindTypesFilesIn(paths, sources, res, entry),
-    sigWire: api.exportSigsFilesIn(paths, sources, res, entry),
-  });
-  let made: { wire: string; sigWire: string };
-  if (producer === null) {
-    made = make();
-  } else {
-    const path = await cached("native-wire", key, ".json", async (at) => {
-      await Deno.writeTextFile(at, JSON.stringify(make()));
-    });
-    made = JSON.parse(await Deno.readTextFile(path));
-  }
-  wireOf.set(key, made);
-  return made;
-}
 
 /** What `waccApi` builds, and therefore part of the wire cache's key. */
 // **Absolute, from this file's own location.** It is the *compiler's* source, not the caller's, so a
@@ -404,14 +335,20 @@ async function buildNativeWithWacc(
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
-  // **The wire needs it as much as the module does.** It is where the manifest's struct and signature
-  // tables come from, so a type declared in a file reached only through `@/` would be missing from the
-  // boundary of a module that otherwise compiled.
-  const answered = await nativeWire(api, paths, sources, entry, waccRes(api, paths, roots, base), roots, base);
-  const wire = answered.wire;
+  // **From the compile that made the module, not from a second one** — `issues/system/0241c`.
+  //
+  // This called `bindTypesFilesIn` separately, which is its own pass with its own signature table:
+  // a capability signature that pass did not reach got no `C` line while the emitter still emitted
+  // its import, so the manifest described 63 callbacks for a module importing 65 and instantiating
+  // it from the manifest failed. `packages/box/example/boxsh.wac` never calls `Cli.load`, which is
+  // what made it the file that showed it.
+  //
+  // `buildFilesIn` answers the wasm and the metadata together — `issues/lang/0129` made that one
+  // call — so the boundary here is the module's own by construction and cannot drift from it.
+  const wire = art.wire;
   const types = parseBindTypes(wire);
   const cbs = parseCallbacks(wire);
-  const sigs = parseSigs(answered.sigWire);
+  const sigs = parseSigs(art.sigWire);
 
   const bind: Record<string, string> = {};
   const module = new WebAssembly.Module(art.wasm.slice().buffer as ArrayBuffer);

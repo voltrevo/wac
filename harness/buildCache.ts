@@ -107,6 +107,32 @@ export async function compilerKeyParts(): Promise<string[] | null> {
   return compilerParts;
 }
 
+let waccParts: string[] | null | undefined;
+
+/**
+ * The **wac** compiler's own sources, which `compilerKeyParts` does not cover.
+ *
+ * `compilerKeyParts` hashes `compiler/*.ts` — the *reference*. Anything built by `wacc` depends on
+ * `packages/wacc/src` as well, and on more than it looks: `coretext.wac` there is the generated
+ * embedding of `std/platform.wac` and `core/*.wac`, so **a capability added to `Cli` changes no file
+ * a build walks and no file this key covered**. A module compiled against the old `Cli` was served
+ * for the new one, its import count no longer matched its manifest, and instantiating it from that
+ * manifest failed with two missing imports and nothing pointing at a cache. `issues/system/0241c`.
+ *
+ * `.wac` rather than every extension: the seed's `.wasm` is an output of these files, and hashing it
+ * would key on the build rather than the source.
+ */
+export async function waccKeyParts(): Promise<string[] | null> {
+  if (waccParts !== undefined) return waccParts;
+  const root = decodeURIComponent(new URL("../packages/wacc/src", import.meta.url).pathname);
+  try {
+    waccParts = await hashDir(root.replace(/\/$/, ""), ".wac");
+  } catch {
+    waccParts = null;
+  }
+  return waccParts;
+}
+
 let harnessParts: string[] | null | undefined;
 
 /** This harness's own sources: it decides what is generated and how. */
