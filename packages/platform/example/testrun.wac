@@ -1,0 +1,79 @@
+// A test runner, in wac — the whole of what `wac test` does to one file, in forty lines.
+//
+//     runner <module.wasm>
+//
+// The module is built with `wac build`; the names come out of its own manifest; a test that traps
+// passes when it is called `test_traps_*`, which is the convention the host used to own.
+
+import { Called, Cli, Core, FileResult, Loaded } from "std/platform.wac";
+import { JsonObject, JsonValue } from "../../json/src/value.wac";
+import { parse } from "../../json/src/json.wac";
+import { manifestIn } from "../../wacc/src/manifest.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+export i32 main(Core core, Cli cli) {
+  FileResult f = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
+  if (!f.ok) { core.warn("cannot read: " + f.error); return 1; }
+
+  Loaded m = cli.load(f.bytes);
+  if (m.handle < 0) { core.warn("load: " + m.error); return 1; }
+
+  i32 passed = 0;
+  i32 failed = 0;
+  string[] names = testExports(f.bytes);
+  for (i32 i = 0; i < names.len(); i++) {
+    string name = names[i];
+    Called c = cli.call(m.handle, name, 0);
+    bool wantsTrap = name.len() > 11 && name.slice(0, 11) == "test_traps_";
+    if (c.trapped()) {
+      // A trap is a value, so the runner decides what it means instead of dying with it.
+      if (wantsTrap) { passed = passed + 1; core.log("ok   " + name + " (trapped)"); }
+      else { failed = failed + 1; core.log("FAIL " + name + " — trapped: " + c.text); }
+    } else if (c.text == "") {
+      passed = passed + 1;
+      core.log("ok   " + name);
+    } else {
+      failed = failed + 1;
+      core.log("FAIL " + name + " — " + c.text);
+    }
+  }
+  cli.unload(m.handle);
+  core.log(itoa(passed) + " passed, " + itoa(failed) + " failed");
+  return failed == 0 ? 0 : 3;
+}
+
+/** Every `test*` export the module declares, read from the manifest it carries. */
+string[] testExports(u8[] wasm) {
+  JsonValue? doc = parse(manifestIn(wasm).toBytes());
+  if (doc is null) { return string[0](fill: ""); }
+  JsonObject root = JsonObject.create();
+  match (doc!) { case Object(o): { root = o; } else: { return string[0](fill: ""); } }
+  JsonValue? xs = root.getStr("exports");
+  if (xs is null) { return string[0](fill: ""); }
+  string[] out = string[256](fill: "");
+  i32 n = 0;
+  match (xs!) {
+    case Array(items): {
+      for (i32 i = 0; i < items.len(); i++) {
+        match (items.get(i)) {
+          case Object(e): {
+            JsonValue? nm = e.getStr("name");
+            if (nm is null) { continue; }
+            match (nm!) {
+              case Str(bytes): {
+                string s = string.fromBytes(bytes);
+                if (s.len() > 4 && s.slice(0, 4) == "test" && n < 256) { out[n] = s; n = n + 1; }
+              }
+              else: { }
+            }
+          }
+          else: { }
+        }
+      }
+    }
+    else: { }
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}

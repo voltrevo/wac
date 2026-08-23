@@ -96,7 +96,7 @@ pub struct Method {
     pub export_name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Export {
     pub name: String,
     pub params: Vec<String>,

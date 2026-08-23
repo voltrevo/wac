@@ -1,0 +1,171 @@
+// Loading a module and calling its exports — `issues/system/0240c`.
+//
+// **`spawn` hands over a *program*: argv, two streams, an exit code.** Four commands — `wac test`,
+// `covdump`, `tracestat`, `ctcompare` — need a module's *exports* instead, and existed on the native
+// binary alone because of it. Every host already did the thing internally: `host/driver.ts`'s
+// `asAppModule` returns every non-`$bind$` export of a module driven from its manifest, and
+// `native/v8`'s `run_tests` enumerates and calls each `test*` catching a trap per test. None offered
+// it to a wac program.
+//
+// ## Two cases, because the capability is the host's
+//
+// The first calls `load` directly, so it is about whichever host runs this file — the native binary
+// under `wac test`. The second builds `loadprobe.wac` for Deno and for Node, runs both, and compares
+// them to a fixed expectation and to each other; that is the only way to reach those two from a wac
+// test, and it is the shape `spawn_test.wac` uses for the same reason.
+//
+// **Four hosts, one answer, deliberately.** This issue was filed because four commands existed on the
+// native binary alone, and a capability that landed on the JavaScript hosts alone would have been the
+// same mistake pointing the other way. So: `provider.ts` serves Deno, Node and a page; `native/v8`
+// swaps a module context around the call; `wacland` gives the module a `Store` of its own that shares
+// the caller's authority. Three implementations, and the second case holds all four to one output.
+//
+// ## What each row of the expectation is for
+//
+// `loadee.wac` has one export per shape the capability accepts, and the shapes are a closed set:
+// `void f()`, `i32 f()`, `i32 f(i32)`, and `i32`- or `string`-returning `f(Core?, Cli?)`. That is
+// every signature the four commands need and nothing else, which is what keeps this from being a
+// general boundary.
+//
+// - **`test_traps_on_purpose 1 0 unreachable` is the row the capability exists for.** 389 of this
+//   repository's 2553 test exports pass *by* trapping, and no wac program can catch one. Every row
+//   after it is also proof the caller survived.
+// - `test_fails` carries a report back, because that string is what a runner prints.
+// - `twice 0 42` is the `i32` argument arriving: the probe passes 21 to everything.
+// - `no_such_export 2` and `half 3` are two different refusals — a typo, and a request to widen the
+//   boundary. Merging them would make "cannot call an `f64`" look like a missing export.
+// - `after-unload 2`, because letting a module go is a caller's tidying rather than a hazard.
+//
+// ## What this does not claim
+//
+// A loaded module runs on the **caller's thread**. An export that loops forever hangs the caller,
+// where a spawned child can be killed. That is not a gap to close — `spawn` is the right tool for
+// anything unbounded — and `spawn_test.wac` holds the other half.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Called, Cli, Core, Exec, Loaded } from "std/platform.wac";
+import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot }
+  from "../../../wactest/src/built.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string PROBE = "packages/platform/test/wac/loadprobe.wac";
+
+/** The module whose exports get called, built once by the `wac` binary. */
+string loadee(Cli cli) {
+  return builtProgram(cli, "packages/platform/test/wac/loadee.wac", "loadee", string[0](fill: ""));
+}
+
+/** One line per call, in `loadprobe.wac`'s order. Compared verbatim, so a shape cannot move quietly. */
+string expected() {
+  return "test_passes 0 0 \n"
+       + "test_fails 0 0 two of two assertions failed\n"
+       + "test_traps_on_purpose 1 0 unreachable\n"
+       + "test_core_only 0 0 \n"
+       + "test_no_world 0 0 \n"
+       + "answer 0 42 \n"
+       + "twice 0 42 \n"
+       + "nothing 0 0 \n"
+       + "no_such_export 2 0 no export named no_such_export\n"
+       + "half 3 0 cannot call half(f64)\n"
+       + "after-unload 2\n";
+}
+
+struct Ran {
+  i32 code;
+  string out;
+  string err;
+}
+
+Ran run(Cli cli, string bin, string[] args) {
+  Exec r = cli.exec(bin, args, u8[0]()).wait();
+  if (!r.ran()) { return Ran(-1, "", "did not run — " + r.error); }
+  return Ran(r.status, string.fromBytes(r.stdout), string.fromBytes(r.stderr));
+}
+
+export string test_this_host_loads_a_module_and_calls_every_shape(Core core, Cli cli) {
+  // **Directly, on whatever host is running this file** — which is the native binary under
+  // `wac test`. The JavaScript hosts are covered by the built probe below; this is the same claim
+  // about this one, and having both is the point: `issues/system/0240c` was filed because four
+  // commands existed on one host only, and a capability that repeated that would be no better.
+  T t = T.create();
+  string path = loadee(cli);
+  t.isTrue(cli.stat(path).wait().isFile, "the module built: " + path);
+  if (!cli.stat(path).wait().isFile) { return t.report(); }
+
+  Loaded m = cli.load(cli.readFile(path).wait().bytes);
+  t.isTrue(!m.unavailable(), "this host can load a module — " + m.error);
+  t.isTrue(m.handle >= 0, "it loaded: " + m.error);
+  if (m.handle < 0) { return t.report(); }
+
+  Called pass = cli.call(m.handle, "test_passes", 0);
+  t.eqI32(pass.status, 0, "test_passes returned: " + pass.text);
+  t.eqStr(pass.text, "", "a passing test's report is empty");
+
+  Called fail = cli.call(m.handle, "test_fails", 0);
+  t.eqStr(fail.text, "two of two assertions failed", "the failing report came back whole");
+
+  // **The row the capability exists for**, and every assertion after it is also proof that the
+  // caller survived: 389 of this repository's 2553 test exports pass by trapping.
+  Called trapped = cli.call(m.handle, "test_traps_on_purpose", 0);
+  t.eqI32(trapped.status, 1, "a trap is a value, not the end");
+  t.eqStr(trapped.text, "unreachable", "and it says what — the same word every host says");
+
+  t.eqI32(cli.call(m.handle, "test_core_only", 0).status, 0, "Core alone is callable");
+  t.eqI32(cli.call(m.handle, "test_no_world", 0).status, 0, "no capabilities is callable");
+  t.eqI32(cli.call(m.handle, "answer", 0).value, 42, "an i32 answer comes back");
+  t.eqI32(cli.call(m.handle, "twice", 21).value, 42, "the i32 argument arrived");
+  t.eqI32(cli.call(m.handle, "nothing", 0).status, 0, "a void export is callable");
+  t.eqI32(cli.call(m.handle, "no_such_export", 0).status, 2, "a missing export says so");
+  t.eqI32(cli.call(m.handle, "half", 0).status, 3, "a signature outside the set is refused");
+
+  // **The caller's own world is intact afterwards.** On the native hosts `call` swaps the running
+  // module's context in and out, and a swap that did not put the caller's back would corrupt the
+  // next capability call rather than fail — silently, because `write_string` would copy into the
+  // wrong module's memory. Reading a file here is the cheapest thing that would notice.
+  cli.unload(m.handle);
+  t.isTrue(cli.stat(path).wait().isFile, "the caller's own capabilities still work afterwards");
+  t.eqI32(cli.call(m.handle, "answer", 0).status, 2, "an unloaded handle names nothing");
+  return t.report();
+}
+
+export string test_all_four_hosts_load_one_module_and_answer_the_same(Core core, Cli cli) {
+  T t = T.create();
+  string mod = loadee(cli);
+  t.isTrue(cli.stat(mod).wait().isFile, "the module built: " + mod);
+  if (!cli.stat(mod).wait().isFile) { return t.report(); }
+
+  string[] grants = string[]("--allow-read");
+  string deno = builtByDeno(cli, PROBE, "loadprobe-deno", grants, "deno", false);
+  string node = builtByDeno(cli, PROBE, "loadprobe-node", grants, "node", false);
+  t.isTrue(cli.stat(deno).wait().isFile, "the Deno probe built");
+  t.isTrue(cli.stat(node).wait().isFile, "the Node probe built");
+  if (!cli.stat(deno).wait().isFile || !cli.stat(node).wait().isFile) { return t.report(); }
+
+  Ran d = run(cli, deno, string[](mod));
+  t.eqI32(d.code, 0, "the Deno probe ran: " + d.err);
+  t.eqStr(d.out, expected(), "Deno: " + d.err);
+
+  Ran n = run(cli, "node", string[](node, mod));
+  t.eqI32(n.code, 0, "the Node probe ran: " + n.err);
+  // **Against Deno's, not only against the expectation.** The two share `provider.ts` — one
+  // implementation, two runtimes — so this row is what would catch a difference in the *runtime*
+  // rather than in the code: how a trap is spelled, what a `WebAssembly.RuntimeError` says.
+  t.eqStr(n.out, d.out, "Node said the same as Deno");
+
+  // **And the fourth host.** `wacland` is a separate implementation in Rust over a separate engine,
+  // so this is the row that is not sharing any code with the others — the one that would catch the
+  // capability having been *described* the same and *implemented* differently. It is asked for rather
+  // than built (`issues/system/0208`), so a checkout without one keeps the three above.
+  string why = nativeHostWhyNot(cli);
+  if (why != "") {
+    core.warn("   skipping the wasmtime column: " + why);
+    return t.report();
+  }
+  string probe = builtProgram(cli, PROBE, "loadprobe-native", string[]("--allow-read"));
+  t.isTrue(cli.stat(probe).wait().isFile, "the native probe module built");
+  if (!cli.stat(probe).wait().isFile) { return t.report(); }
+  Ran w = run(cli, nativeHost(cli), string[](probe, mod));
+  t.eqI32(w.code, 0, "the wasmtime probe ran: " + w.err);
+  t.eqStr(w.out, d.out, "wacland said the same as Deno");
+  return t.report();
+}

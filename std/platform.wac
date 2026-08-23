@@ -1409,6 +1409,84 @@ export struct Child {
   bool unavailable(const this) { return this.handle == -2; }
 }
 
+/**
+ * A module this program has instantiated and may call the exports of.
+ *
+ * **The other half of `spawn`, and deliberately not a replacement for it.** `spawn` hands over a
+ * *program*: an argument vector, two streams, an exit code, on its own thread, and `closeSocket` stops
+ * it wherever it is. This hands over a module's *functions*, in this program's own world, on this
+ * program's own thread — so an export that loops forever hangs the caller, and nothing here can stop
+ * it. Anything unbounded or untrusted is `spawn`'s.
+ *
+ * Its world is the caller's, undiminished: see `load` for why there is no grant argument.
+ *
+ * It exists because four commands needed it and no wac program could express them: `wac test` calls a
+ * module's `test*` exports and has to survive one of them trapping, and `covdump`, `tracestat` and
+ * `ctcompare` read the counters through `__cov_init`, `__cov_len` and `__cov_get`. Every host already
+ * did this internally — `host/driver.ts`'s `asAppModule`, `native/v8`'s `run_tests` — and none of them
+ * offered it. `issues/system/0240c`.
+ *
+ * **Which exports there are is not a capability.** A module carries its own manifest, and the manifest
+ * lists every non-`$bind$` export with its parameters and return type — so a caller reads the names
+ * from the bytes it already has (`manifestIn` in `packages/wacc/src/manifest.wac`) and the host
+ * dispatches on the signature it finds there. Nothing has to describe a module to the host that the
+ * module does not already say about itself.
+ */
+export struct Loaded {
+  /**
+   * The module, or why not.
+   *
+   *   >= 0  a handle for `call` and `unload`
+   *    -1   this world can load and this module could not be — `error` says why
+   *    -2   **this world has no `load` at all**, so nothing was attempted
+   *
+   * The same two negatives `Child` uses, for the same reason it uses them: a caller that reads -2 has
+   * a host without the capability and should fall through to whatever it would have done, where -1 is
+   * a real failure about this module.
+   */
+  i32 handle;
+  /** The host's own sentence, empty when `handle` is not negative. */
+  string error;
+
+  /** Whether this world can load a module at all. False says nothing about the module. */
+  bool unavailable(const this) { return this.handle == -2; }
+
+  Loaded of(i32 handle, string error) { return Loaded(handle, error); }
+}
+
+/**
+ * What one call to a loaded module's export answered.
+ *
+ * **A trap is a value here, and that is the point.** 389 of this repository's 2553 test exports are
+ * `test_traps_*` — a test that passes *by* trapping — and no wac program can catch one. Without a
+ * status for it, a caller learns about such a test by dying with it.
+ *
+ * The signatures a call accepts are a **closed set**: `void f()`, `i32 f()`, `i32 f(i32)`, and
+ * `i32`- or `string`-returning `f(Core?, Cli?)`. That is every shape the four commands need. Anything
+ * else answers `status == 3` rather than being marshalled — widening the set is a decision about the
+ * boundary, and answering plainly is what stops it being made by accident.
+ */
+export struct Called {
+  /**
+   * 0 returned, 1 **trapped**, 2 no such export, 3 a signature this cannot call.
+   *
+   * Distinct rather than merged because the remedies differ: 2 is a typo or a module built without
+   * the export, and 3 is a request to widen the boundary.
+   */
+  i32 status;
+  /** A `string`-returning export's answer, or — when `status` is 1 — what the trap said. */
+  string text;
+  /** An `i32`-returning export's answer, and 0 for every other shape. */
+  i32 value;
+
+  /** It returned. Says nothing about *what*: a failing test returns a report. */
+  bool ok(const this) { return this.status == 0; }
+  /** It trapped, which for a `test_traps_*` export is the pass. */
+  bool trapped(const this) { return this.status == 1; }
+
+  Called of(i32 status, string text, i32 value) { return Called(status, text, value); }
+}
+
 export struct Cli {
   fn[Pending<i32>()] argCount;
   /**
@@ -1979,6 +2057,47 @@ export struct Cli {
     return this.execWith(path, args, stdin, string[](), false, false);
   }
 
+  /**
+   * Instantiate `module` and answer a handle to call its exports through — `issues/system/0240c`.
+   *
+   * **No grants argument, and that is deliberate.** A loaded module lives in the caller's own realm and
+   * its `Core` and `Cli` are built against the caller's own capabilities — so it gets *exactly* what
+   * the caller has, and there is nowhere for a narrowing to be enforced. A caller that wants to confine
+   * something wants `spawn`, which is a different thread, a different world, and killable. This is
+   * "call these functions", not "run this program", and the two are not on a spectrum.
+   *
+   * **Not `Pending`, because nothing crosses to a host.** Driving a module and calling one of its
+   * exports both finish before the call returns. Every other field here answers a ticket because it
+   * asks the launcher something; these three do not ask anybody.
+   *
+   * **On this thread.** See `Loaded`: nothing can stop a running export, so an export that loops
+   * forever hangs the caller.
+   */
+  fn[Loaded(u8[])] load;
+
+  /**
+   * Call `name` on a loaded module, and answer what it did — including trapping.
+   *
+   * `arg` is passed to a signature that takes one `i32` and ignored by every other shape in the set.
+   * One field rather than a vector because the set is closed and one is all of it: `__cov_get(i)` is
+   * the only member that takes anything at all.
+   *
+   * A trap does not end the caller and does not poison the handle: the next `call` on the same module
+   * runs. That is what lets a runner take a file's tests in order when one of them is meant to trap —
+   * and it is safe for the same reason `test_traps_*` has always been able to run beside its
+   * neighbours, which is that wac has no module-level state for a trap to leave behind.
+   */
+  fn[Called(i32, string, i32)] call;
+
+  /**
+   * Let a loaded module go.
+   *
+   * `void`, and forgiving of a handle that is not one: a caller tidying up after a failure should not
+   * have to know how far it got. Not required for correctness — a program that exits releases
+   * everything — but a runner that loads a module per file would otherwise hold every one of them.
+   */
+  fn[void(i32)] unload;
+
 
   Cli of(
     fn[Pending<i32>()] argCount,
@@ -2017,14 +2136,18 @@ export struct Cli {
     fn[Pending<string>()] cwd,
     fn[Pending<bool>(string[], u8[], string, bool)] pushChild,
     fn[Pending<Captured>()] popChild,
-    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool)] execWith
+    fn[Pending<Exec>(string, string[], u8[], string[], bool, bool)] execWith,
+    fn[Loaded(u8[])] load,
+    fn[Called(i32, string, i32)] call,
+    fn[void(i32)] unload
   ) {
     return Cli(
       argCount, arg, env, readStdin, write, writeErr, readFile, writeFile, stat, linkStat, readDir,
       mkdir, remove, rename, setExecutable, openInput, readChunk, outputError, openOutput,
       connect, listen, accept, recv, send, closeSocket, closeSend, bindDatagram, receiveFrom, sendTo,
       spawn, spawnSelf, closeFeed, exitCode, cwd,
-      pushChild, popChild, execWith
+      pushChild, popChild, execWith,
+      load, call, unload
     );
   }
 }

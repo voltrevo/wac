@@ -31,6 +31,10 @@ import {
   unstr,
 } from "./call.ts";
 import { OP } from "./ops.ts";
+import { asAppModule, drive, manifestIn } from "./driver.ts";
+import type { Driven } from "./driver.ts";
+/** One export's wac signature, as the manifest records it — `Manifest.exports` in `native.ts`. */
+type ExportSig = { name: string; params: string[]; ret: string };
 import { FAULT_OTHER, STAT_EXEC } from "./faults.ts";
 
 const EMPTY = new Uint8Array(0);
@@ -164,6 +168,8 @@ export function cliOf(
     Socket: { of(...a: unknown[]): unknown };
     Datagram: { of(...a: unknown[]): unknown };
     Child: { of(...a: unknown[]): unknown };
+    Loaded: { of(...a: unknown[]): unknown };
+    Called: { of(...a: unknown[]): unknown };
     Captured: { of(...a: unknown[]): unknown };
     Exec: { of(...a: unknown[]): unknown };
     Change: { of(...a: unknown[]): unknown };
@@ -661,7 +667,90 @@ export function cliOf(
             ),
           ),
         ),
-      )));
+      )),
+    /*= load */
+    // **No opcode: the module is instantiated right here.** Its `Core` and `Cli` are built by
+    // `worldFor` against *this* bridge, so the launcher serves the loaded module exactly as it serves
+    // the program that loaded it and cannot tell them apart. That is what makes this small — the
+    // alternative, loading in the launcher, would need a second implementation of the whole world with
+    // no bridge under it. `issues/system/0240c`.
+    (module: Uint8Array) => {
+      try {
+        const manifest = manifestIn(module);
+        if (manifest === null) {
+          return cls.Loaded.of(-1, "this module carries no wac.manifest section");
+        }
+        const driven = drive(module, manifest);
+        const app = asAppModule(driven);
+        const handle = nextLoaded++;
+        loadedModules.set(handle, {
+          driven,
+          app,
+          // Built once per module rather than per call: `Core` and `Cli` register one wasm function
+          // per host function in the *module's* funcref table, and only sixteen per signature can be
+          // live — so a world rebuilt per call fails on the seventeenth, a long way from the cause.
+          // `entry.ts` learnt this about `main` being called more than once.
+          world: worldFor(b, app),
+          exports: new Map(manifest.exports.map((e) => [e.name, e])),
+        });
+        return cls.Loaded.of(handle, "");
+      } catch (e) {
+        // A module that will not compile or instantiate is a value the caller acts on, exactly as a
+        // child that would not start is. `Child` has the same shape for the same reason.
+        return cls.Loaded.of(-1, e instanceof Error ? e.message : String(e));
+      }
+    },
+    /*= call */
+    // The signature comes from the **manifest**, not from the caller: a module says what its exports
+    // take and answer, so nothing has to describe it twice. The set is closed — see `Called`.
+    (handle: number, name: string, arg: number) => {
+      const m = loadedModules.get(handle);
+      if (m === undefined) return cls.Called.of(2, "no module on handle " + handle, 0);
+      const sig = m.exports.get(name);
+      const f = m.app[name];
+      if (sig === undefined || typeof f !== "function") {
+        return cls.Called.of(2, "no export named " + name, 0);
+      }
+      // What to hand it. `Core`/`Cli` in that order, or one `i32`, or nothing — and anything else is
+      // refused rather than guessed at, which is what keeps `status == 3` meaningful.
+      const world = m.world;
+      let args: unknown[];
+      if (sig.params.length === 0) args = [];
+      else if (sig.params.length === 1 && sig.params[0] === "i32") args = [arg];
+      else if (
+        sig.params.length <= 2 &&
+        sig.params.every((t: string, i: number) => t === ["Core", "Cli"][i])
+      ) {
+        args = world.slice(0, sig.params.length);
+        // A module whose `main` named no capabilities has no `Core` class, so `worldFor` gave nothing
+        // — and calling an export that wants one with `undefined` would trap inside the module rather
+        // than say why. `issues/lang/0107` is the rule this reads.
+        if (args.length < sig.params.length) {
+          return cls.Called.of(3, "this module was built without " + sig.params.join(" and "), 0);
+        }
+      } else return cls.Called.of(3, "cannot call " + name + "(" + sig.params.join(", ") + ")", 0);
+      if (sig.ret !== "" && sig.ret !== "void" && sig.ret !== "i32" && sig.ret !== "string") {
+        return cls.Called.of(3, name + " answers " + sig.ret, 0);
+      }
+      try {
+        const out = (f as CallableFunction)(...args);
+        if (sig.ret === "string") {
+          return cls.Called.of(0, String(m.driven.fromWasm("string", out) ?? ""), 0);
+        }
+        if (sig.ret === "i32") return cls.Called.of(0, "", Number(out) | 0);
+        return cls.Called.of(0, "", 0);
+      } catch (e) {
+        // **The whole point.** A `test_traps_*` export passes by trapping, and 389 of this
+        // repository's test exports are one. The handle stays usable: wac has no module-level state
+        // for a trap to leave behind, which is the same reason those tests have always been able to
+        // run beside their neighbours.
+        return cls.Called.of(1, e instanceof Error ? e.message : String(e), 0);
+      }
+    },
+    /*= unload */
+    // Forgiving of a handle that is not one: a caller tidying up after a failure should not have to
+    // know how far it got.
+    (handle: number) => { loadedModules.delete(handle); });
 }
 
 /**
@@ -691,6 +780,25 @@ export type PageClasses = {
  * exported constructors for every capability whether its program mentioned them or not.
  * `issues/lang/0107`.
  */
+/**
+ * The modules this program has loaded, by handle — `issues/system/0240c`.
+ *
+ * **Module-scope rather than per `Cli`**, because a frame forwards `load`/`call`/`unload` unchanged
+ * (`packages/platform/src/frame.wac`), so a handle taken through one `Cli` is used through another.
+ * One program is one realm here: a worker runs one program at a time, and a spawned child is a
+ * different worker with its own copy of this module.
+ */
+type LoadedModule = {
+  driven: Driven;
+  app: Record<string, unknown>;
+  /** `[Core]`, `[Core, Cli]` or `[]` — built once, because funcref slots are finite. See `load`. */
+  world: unknown[];
+  exports: Map<string, ExportSig>;
+};
+const loadedModules = new Map<number, LoadedModule>();
+/** From 1, so that 0 is never a valid handle and a zeroed field cannot name a module. */
+let nextLoaded = 1;
+
 export function worldFor(b: Bridge, app: Record<string, unknown>): unknown[] {
   // **A `main` that declared nothing gets nothing**, which is the same rule one step further: the classes
   // are in the module because the program named the *types*, so a program that named none has no `Core`

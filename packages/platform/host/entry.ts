@@ -61,6 +61,14 @@ export type AppModule = {
   Exec: { of(...a: unknown[]): unknown };
   Pending$Exec: { of(...a: unknown[]): unknown };
   Read: { Data(...a: unknown[]): unknown; End(): unknown; Failed(...a: unknown[]): unknown };
+  /**
+   * `Cli.load`'s answer and `Cli.call`'s — `issues/system/0240c`.
+   *
+   * Not optional, unlike `Page`: `Cli`'s own field types name them, so a module with a `Cli` has both
+   * classes whether or not the program ever loads anything.
+   */
+  Loaded: { of(...a: unknown[]): unknown };
+  Called: { of(...a: unknown[]): unknown };
   Change: { of(...a: unknown[]): unknown };
   Pending$Change: { of(...a: unknown[]): unknown };
   Pending$Read: { of(...a: unknown[]): unknown };

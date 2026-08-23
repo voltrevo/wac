@@ -99,6 +99,7 @@ struct Method {
 }
 
 #[derive(Deserialize)]
+#[derive(Clone)]
 struct ExportSig {
     name: String,
     params: Vec<String>,
@@ -182,6 +183,10 @@ enum Cap {
     SetExecutable,
     /// `Cli.exec` — a host program, run to completion.
     Exec,
+    /// `Cli.load`, `Cli.call`, `Cli.unload` — a module in this isolate. `issues/system/0240c`.
+    Load,
+    Call,
+    Unload,
     /// `Pending<T>.resolve` — the guest asking for the answer it was promised.
     ResolveI32,
     ResolveI64,
@@ -256,6 +261,18 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "mkdir") => Cap::Mkdir,
         ("Cli", "setExecutable") => Cap::SetExecutable,
         ("Cli", "execWith") => Cap::Exec,
+        // **Answered, and the answer is "not here".** `issues/system/0240c` gave the JavaScript hosts
+        // `load`/`call` in `provider.ts`, where a module can be driven in the caller's own realm
+        // against the caller's own bridge. This host builds its world in Rust around one program's
+        // thread-local state, so a second module in the same isolate is a real piece of work rather
+        // than a wiring change — and until it is done, a program asking gets -2 and can fall through.
+        //
+        // Mapped rather than left to `Cap::Unsupported`, which *throws*: a capability a host does not
+        // have must be a value the caller reads, or `Loaded.unavailable()` can never be observed and
+        // every portable program dies on the ask instead of taking its other route.
+        ("Cli", "load") => Cap::Load,
+        ("Cli", "call") => Cap::Call,
+        ("Cli", "unload") => Cap::Unload,
         _ => Cap::Unsupported,
     }
 }
@@ -354,6 +371,39 @@ fn fault_of(e: &std::io::Error) -> i32 {
     }
 }
 
+/// One instantiated module: what a dispatcher needs to answer *that module's* capability calls.
+///
+/// **The reason this is a type at all** — `issues/system/0240c`. A dispatcher is a bare `fn` pointer
+/// and finds its context through the `HOST` thread-local, so until `Cli.load` existed there was
+/// exactly one module per thread and these three fields could live directly on `HostState`. A loaded
+/// module is a second one in the same thread, and its capability calls have to resolve against *its*
+/// exports — `write_string` copies into the module's own memory, and the wrong memory is silent
+/// corruption rather than an error. So `call` swaps this in and out around the call it makes.
+///
+/// A child spawned with `Cli.spawn` needs none of this: it gets a thread, and the thread-local with it.
+struct ModuleCtx {
+    exports: v8::Global<v8::Object>,
+    /// `caps[signature][slot]`, the same shape the wasmtime host uses.
+    caps: Vec<Vec<Cap>>,
+    /// The same table, spelled, for a message that names the capability it could not answer.
+    cap_names: Vec<Vec<String>>,
+}
+
+/// A module `Cli.load` instantiated, and what is needed to call into it.
+struct LoadedModule {
+    ctx: ModuleCtx,
+    /// Its own manifest's export list, so `call` dispatches on the signature the *module* declares
+    /// rather than on anything the caller says about it.
+    exports: Vec<ExportSig>,
+    /// `Core` and `Cli` built for it, in `main`'s order — kept because funcref slots are finite and a
+    /// world rebuilt per call fails on the seventeenth. `entry.ts` learnt the same thing about `main`.
+    world: Vec<v8::Global<v8::Value>>,
+    /// `Loaded.of` and `Called.of` as *this* module spells them, which is not the loader's spelling:
+    /// a monomorphisation binds under a mangled name and only the module is the authority on it.
+    loaded_of: Option<String>,
+    called_of: Option<String>,
+}
+
 /// Everything a dispatcher needs, reachable from a `fn` pointer that cannot close over anything.
 struct HostState {
     exports: v8::Global<v8::Object>,
@@ -407,6 +457,16 @@ struct HostState {
     exec_of: Option<String>,
     /// `Child`'s.
     child_of: Option<String>,
+    /// `Loaded.of` and `Called.of`, for `Cli.load` and `Cli.call` — `issues/system/0240c`.
+    ///
+    /// Cached like the rest, and `None` for a program that never named the type: a module that does
+    /// not load anything has no `Loaded` class, and building one would be inventing a type it never
+    /// declared. That is the same rule `worldFor` reads on the JavaScript side.
+    loaded_of: Option<String>,
+    called_of: Option<String>,
+    /// The modules this program has loaded, by handle. From 1, so a zeroed field names nothing.
+    loaded: HashMap<i32, LoadedModule>,
+    next_loaded: i32,
     /// **The frame stack.** `pushChild` runs an applet *in this program* rather than in a child
     /// process: box's dispatcher re-enters itself, reads the frame's argv, and its output is
     /// collected here instead of reaching a terminal. While a frame is live it is what `argCount`,
@@ -3056,6 +3116,16 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 .find_struct("Child")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
+            loaded: HashMap::new(),
+            next_loaded: 1,
+            loaded_of: m
+                .find_struct("Loaded")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
+            called_of: m
+                .find_struct("Called")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
             captured_of: m
                 .find_struct("Captured")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
@@ -5186,6 +5256,44 @@ fn dispatch(
                 None => throw(scope, "this program has no Pending<string[]> to answer readDir with"),
             }
         }
+        // `Cli.load` — a module in this isolate, whose exports this program may call.
+        // `issues/system/0240c`.
+        Cap::Load => {
+            let bytes = read_bytes(scope, args.get(1));
+            let (handle, why) = match load_module(scope, &bytes) {
+                Ok(h) => (h, String::new()),
+                Err(e) => (-1, e),
+            };
+            match build_loaded(scope, handle, &why) {
+                Some(v) => rv.set(v),
+                None => throw(scope, "could not build a Loaded for the answer"),
+            }
+            return;
+        }
+        Cap::Call => {
+            let handle = match args.get(1).int32_value(scope) {
+                Some(n) => n,
+                None => 0,
+            };
+            let name = read_string(scope, args.get(2));
+            let arg = args.get(3).int32_value(scope).unwrap_or(0);
+            let (status, text, value) = call_loaded(scope, handle, &name, arg);
+            match build_called(scope, status, &text, value) {
+                Some(v) => rv.set(v),
+                None => throw(scope, "could not build a Called for the answer"),
+            }
+            return;
+        }
+        Cap::Unload => {
+            if let Some(n) = args.get(1).int32_value(scope) {
+                HOST.with(|h| {
+                    if let Some(st) = h.borrow_mut().as_mut() {
+                        st.loaded.remove(&n);
+                    }
+                });
+            }
+            return;
+        }
         Cap::Exec => {
             // A host program, run to completion. `issues/system/0165`.
             //
@@ -6045,6 +6153,269 @@ fn build_child<'s>(
     let c = v8::Integer::new(scope, fs_handle);
     let ctor = get_export(scope, exports, &ctor_name)?;
     ctor.call(scope, exports.into(), &[a.into(), b.into(), c.into(), msg])
+}
+
+
+/// Instantiate `wasm` in this isolate and keep what is needed to call into it.
+///
+/// **The same sequence `run_as_with` uses to start a program**, stopping before `main`: compile, build
+/// one dispatcher per callback signature, instantiate, build the capability structs. The world it gets
+/// is this program's own — `dispatch` reaches the same `HOST`, so a loaded module's `readFile` is
+/// served exactly as its loader's is and the grants are the loader's by construction, which is why
+/// `Cli.load` takes no grant argument. `issues/system/0240c`.
+fn load_module(scope: &mut v8::PinScope, wasm: &[u8]) -> Result<i32, String> {
+    let Some(text) = manifest_in(wasm) else {
+        return Err("this module carries no wac.manifest section".into());
+    };
+    let m: Manifest = serde_json::from_str(&text)
+        .map_err(|e| format!("its wac.manifest section does not parse: {e}"))?;
+    // No version check: this host's `Manifest` does not carry the field, and `serde` refusing an
+    // incompatible shape is the check it has. `native/src/manifest.rs` is the one that versions.
+    let module = v8::WasmModuleObject::compile(scope, wasm)
+        .ok_or_else(|| "the engine would not compile it".to_string())?;
+
+    // One dispatcher per callback signature, each carrying its index as external data — the same
+    // shape as the program's own imports, because it is the same `dispatch`.
+    let wac_ns = v8::Object::new(scope);
+    for (j, cb) in m.callbacks.iter().enumerate() {
+        let index = v8::Integer::new(scope, j as i32);
+        let f = v8::Function::builder(dispatch)
+            .data(index.into())
+            .build(scope)
+            .ok_or_else(|| "could not build a dispatcher".to_string())?;
+        let key = v8::String::new(scope, &cb.field).ok_or_else(|| "a field name".to_string())?;
+        wac_ns.set(scope, key.into(), f.into());
+    }
+    let imports = v8::Object::new(scope);
+    let wac_key = v8::String::new(scope, "wac").ok_or_else(|| "the wac key".to_string())?;
+    imports.set(scope, wac_key.into(), wac_ns.into());
+
+    let context = scope.get_current_context();
+    let global = context.global(scope);
+    let mod_key = v8::String::new(scope, "__mod").ok_or_else(|| "__mod".to_string())?;
+    global.set(scope, mod_key.into(), module.into());
+    let imp_key = v8::String::new(scope, "__imports").ok_or_else(|| "__imports".to_string())?;
+    global.set(scope, imp_key.into(), imports.into());
+    let src = v8::String::new(scope, "new WebAssembly.Instance(__mod, __imports).exports")
+        .ok_or_else(|| "the instantiation source".to_string())?;
+    let script = v8::Script::compile(scope, src, None)
+        .ok_or_else(|| "could not compile the instantiation".to_string())?;
+    let exports = script
+        .run(scope)
+        .and_then(|v| v.to_object(scope))
+        .ok_or_else(|| "it did not instantiate — an import it wants is missing".to_string())?;
+
+    let mut caps: Vec<Vec<Cap>> = vec![Vec::new(); m.callbacks.len()];
+    let mut names: Vec<Vec<String>> = vec![Vec::new(); m.callbacks.len()];
+    let mut unsupported: Vec<String> = Vec::new();
+
+    // **`Core` and `Cli`, and neither is required.** A module of pure test functions names no
+    // capability, so its manifest has no `Core` — building one first is what made `wac test` refuse
+    // every test file in this repository once, and the same mistake is available here.
+    let mut world: Vec<v8::Global<v8::Value>> = Vec::new();
+    if let Ok(core) = build_struct(scope, exports, &m, "Core", &mut caps, &mut names, &mut unsupported) {
+        world.push(v8::Global::new(scope, core));
+        if let Ok(cli) = build_struct(scope, exports, &m, "Cli", &mut caps, &mut names, &mut unsupported) {
+            world.push(v8::Global::new(scope, cli));
+        }
+    }
+
+    let of = |name: &str| -> Option<String> {
+        m.find_struct(name)
+            .and_then(|st| st.methods.iter().find(|mm| mm.name == "of"))
+            .map(|mm| mm.export_name.clone())
+    };
+    let entry = LoadedModule {
+        ctx: ModuleCtx {
+            exports: v8::Global::new(scope, exports),
+            caps,
+            cap_names: names,
+        },
+        exports: m.exports.clone(),
+        world,
+        loaded_of: of("Loaded"),
+        called_of: of("Called"),
+    };
+    Ok(HOST.with(|h| {
+        let mut b = h.borrow_mut();
+        let st = b.as_mut().expect("a host");
+        let handle = st.next_loaded;
+        st.next_loaded += 1;
+        st.loaded.insert(handle, entry);
+        handle
+    }))
+}
+
+/// Call `name` on a loaded module: `(status, text, value)` as `Called` carries them.
+///
+/// **The context swap is the whole of the difficulty.** While the loaded module runs, every capability
+/// it reaches goes through `dispatch`, which finds `HOST.exports` — and `write_string` copies into
+/// *that* module's memory. Pointing it at the loader would corrupt silently rather than fail, so the
+/// module's own `ModuleCtx` is installed for the duration and put back after, including when the call
+/// traps. `issues/system/0240c`.
+fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (i32, String, i32) {
+    // What to call it with, decided from the *module's* manifest — the closed set `Called` documents.
+    let plan = HOST.with(|h| {
+        let b = h.borrow();
+        let st = b.as_ref()?;
+        let lm = st.loaded.get(&handle)?;
+        let sig = lm.exports.iter().find(|e| e.name == name)?;
+        Some((sig.params.clone(), sig.ret.clone(), lm.world.len()))
+    });
+    let Some((params, ret, worlds)) = plan else {
+        return (2, format!("no export named {name}"), 0);
+    };
+    let takes_int = params.len() == 1 && params[0] == "i32";
+    let world_arity = if params.iter().enumerate().all(|(i, t)| t == ["Core", "Cli"][i.min(1)])
+        && params.len() <= 2
+        && !params.is_empty()
+        && params[0] == "Core"
+    {
+        params.len()
+    } else {
+        0
+    };
+    if !params.is_empty() && !takes_int && world_arity == 0 {
+        return (3, format!("cannot call {name}({})", params.join(", ")), 0);
+    }
+    if world_arity > worlds {
+        return (3, format!("this module was built without {}", params.join(" and ")), 0);
+    }
+    if !ret.is_empty() && ret != "void" && ret != "i32" && ret != "string" {
+        return (3, format!("{name} answers {ret}"), 0);
+    }
+
+    // Install the module's context, remembering the caller's.
+    let saved = HOST.with(|h| {
+        let mut b = h.borrow_mut();
+        let st = b.as_mut().expect("a host");
+        let lm = st.loaded.get(&handle).expect("the module");
+        let mine = ModuleCtx {
+            exports: lm.ctx.exports.clone(),
+            caps: lm.ctx.caps.clone(),
+            cap_names: lm.ctx.cap_names.clone(),
+        };
+        let world: Vec<v8::Global<v8::Value>> = lm.world.clone();
+        let was = ModuleCtx {
+            exports: st.exports.clone(),
+            caps: std::mem::take(&mut st.caps),
+            cap_names: std::mem::take(&mut st.cap_names),
+        };
+        st.exports = mine.exports;
+        st.caps = mine.caps;
+        st.cap_names = mine.cap_names;
+        (was, world)
+    });
+    let (was, world) = saved;
+
+    // **Called inside a `TryCatch`, and read outside it.** The answer has to be turned into a wac
+    // `string` through the module's own helpers, which wants the outer scope — so the call happens in
+    // the catch, and what survives it is a `Global` and a flag.
+    let mut trapped: Option<String> = None;
+    let mut answer: Option<v8::Global<v8::Value>> = None;
+    let mut found = false;
+    {
+        let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()));
+        if let Some(exports) = exports {
+            let exports = v8::Local::new(scope, exports);
+            if let Some(f) = get_export(scope, exports, name) {
+                found = true;
+                let mut argv: Vec<v8::Local<v8::Value>> = Vec::new();
+                if takes_int {
+                    argv.push(v8::Integer::new(scope, arg).into());
+                }
+                for g in world.iter().take(world_arity) {
+                    argv.push(v8::Local::new(scope, g.clone()));
+                }
+                let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                let mut tc = tc.init();
+                let out = f.call(&tc, exports.into(), &argv);
+                if let Some(err) = tc.exception() {
+                    // **The message, not the whole exception.** A wac `trap` reaches here as a
+                    // `RuntimeError`, whose `toString` is `RuntimeError: unreachable` — and the
+                    // JavaScript hosts answer `e.message`, which is `unreachable`. Saying the same
+                    // thing is the point: `load_test.wac` compares the two word for word.
+                    let mut why = String::new();
+                    if let Some(obj) = err.to_object(&tc) {
+                        if let Some(key) = v8::String::new(&tc, "message") {
+                            if let Some(v) = obj.get(&tc, key.into()) {
+                                why = v.to_rust_string_lossy(&tc);
+                            }
+                        }
+                    }
+                    if why.is_empty() { why = err.to_rust_string_lossy(&tc); }
+                    trapped = Some(why);
+                } else if let Some(v) = out {
+                    answer = Some(v8::Global::new(&tc, v));
+                }
+                tc.reset();
+            }
+        }
+    }
+    let outcome = if let Some(why) = trapped {
+        (1, why, 0)
+    } else if !found {
+        (2, format!("no export named {name}"), 0)
+    } else if ret == "string" {
+        match answer {
+            Some(g) => {
+                let v = v8::Local::new(scope, g);
+                (0, read_string(scope, v), 0)
+            }
+            None => (0, String::new(), 0),
+        }
+    } else if ret == "i32" {
+        let n = answer
+            .map(|g| v8::Local::new(scope, g))
+            .and_then(|v| v.to_int32(scope))
+            .map(|v| v.value())
+            .unwrap_or(0);
+        (0, String::new(), n)
+    } else {
+        (0, String::new(), 0)
+    };
+
+    // ...and put the caller's back, whatever happened.
+    HOST.with(|h| {
+        if let Some(st) = h.borrow_mut().as_mut() {
+            st.exports = was.exports;
+            st.caps = was.caps;
+            st.cap_names = was.cap_names;
+        }
+    });
+    outcome
+}
+
+/// `Loaded.of(handle, error)` — `issues/system/0240c`.
+fn build_loaded<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    handle: i32,
+    error: &str,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.loaded_of.clone()))?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let msg = write_string(scope, error)?;
+    let a = v8::Integer::new(scope, handle);
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(scope, exports.into(), &[a.into(), msg])
+}
+
+/// `Called.of(status, text, value)`.
+fn build_called<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    status: i32,
+    text: &str,
+    value: i32,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.called_of.clone()))?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let msg = write_string(scope, text)?;
+    let a = v8::Integer::new(scope, status);
+    let c = v8::Integer::new(scope, value);
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(scope, exports.into(), &[a.into(), msg, c.into()])
 }
 
 /// `Captured.of(out, err, truncated)`.

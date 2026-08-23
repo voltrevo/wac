@@ -97,6 +97,10 @@ export const OP = {
    * so each host still implements exactly one of them.
    */
   EXEC_WITH: 58,
+  // **`Cli.load`, `Cli.call` and `Cli.unload` have no opcode**, and that is the design rather than an
+  // omission. A loaded module lives in the *caller's own realm* and its capabilities are built against
+  // the caller's own bridge — so nothing about it crosses to the launcher, and the three are
+  // implemented in `provider.ts` where `Core` and `Cli` are already built. `issues/system/0240c`.
 } as const;
 
 /**

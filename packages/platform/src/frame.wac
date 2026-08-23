@@ -368,5 +368,12 @@ export Cli childCli(Frame f, const Cli parent) {
     // callers that inherit are runners, which do not redirect — and the frame that would have to
     // refuse it is the place to look when something does.
     parent.execWith,
+    // **Forwarded, for the same reason `execWith` is.** A frame is a view of stdio and the working
+    // directory; a loaded module reaches neither. Its exports get a world built from *this* `Cli`, so
+    // they see the frame's stdio — which is what a shell running a command that loads a module would
+    // want, and is the frame doing its job rather than being bypassed. `issues/system/0240c`.
+    parent.load,
+    parent.call,
+    parent.unload,
   );
 }

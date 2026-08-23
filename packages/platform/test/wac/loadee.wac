@@ -1,0 +1,56 @@
+// A module built to be *loaded and called*, one export per shape `Cli.load`/`Cli.call` accepts.
+//
+// Not a `_test.wac`, so discovery never collects it: the `test_*` names here are the subject rather
+// than tests of this repository. `load_test.wac` builds it, loads it and calls each export by name —
+// which is the whole of `issues/system/0240c`, and the reason the shapes below are a closed set.
+//
+// The signature set is `void f()`, `i32 f()`, `i32 f(i32)` and `{i32,string} f(Core?, Cli?)`. That is
+// every shape the four native-only commands need: `wac test` calls `string f(Core, Cli)`, and
+// `covdump`, `tracestat` and `ctcompare` call `__cov_init`, `__cov_len` and `__cov_get`.
+
+import { Cli, Core } from "std/platform.wac";
+
+/** A test that passes: an empty report. */
+export string test_passes(Core core, Cli cli) { return ""; }
+
+/** A test that fails, and its report is what a caller has to get back. */
+export string test_fails(Core core, Cli cli) { return "two of two assertions failed"; }
+
+/**
+ * A test that passes **by trapping**, which is why a trap has to be a value rather than the end.
+ *
+ * 389 of this repository's 2553 test exports are `test_traps_*`, and no wac program can catch one —
+ * so without `Called.status == 1` a caller can only learn this by dying with it.
+ */
+export string test_traps_on_purpose(Core core, Cli cli) {
+  trap;
+}
+
+/** `Core` alone, because a test may name fewer capabilities than the boundary offers. */
+export string test_core_only(Core core) { return ""; }
+
+/** No capabilities at all, which is the third arity a test export is written with. */
+export string test_no_world() { return ""; }
+
+/** `i32 f()` — `__cov_len`'s shape. */
+export i32 answer() { return 42; }
+
+/** `i32 f(i32)` — `__cov_get`'s shape. */
+export i32 twice(i32 n) { return n * 2; }
+
+/** `void f()` — `__cov_init`'s shape: called for its effect, answering nothing. */
+export void nothing() { }
+
+/**
+ * A shape `call` must refuse rather than guess at, so that `status == 3` is reachable.
+ *
+ * `f64` is not in the closed set. Widening the set is a decision about the boundary; answering "not a
+ * signature this can call" is what keeps that decision from being made by accident.
+ */
+export f64 half(f64 x) { return x / 2.0; }
+
+/** A program too, so the same module can be spawned as well as loaded — `load_test` compares them. */
+export i32 main(Core core, Cli cli) {
+  core.log("loadee ran as a program");
+  return 3;
+}

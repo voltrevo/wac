@@ -23,7 +23,7 @@
 // picks an id from the path; `resolveFile` turns the id back into a `FileResult`. It reads
 // oddly and it is the only way to build a resolved ticket without state.
 
-import { Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Pending, Sched, Socket, Stat } from "std/platform.wac";
+import { Called, Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Loaded, Pending, Sched, Socket, Stat } from "std/platform.wac";
 import { Read } from "core";
 import { Shell, builtinNames, isBuiltin, runScript } from "../../src/exec.wac";
 
@@ -353,12 +353,27 @@ Pending<Exec> fakeExec(string path, string[] args, u8[] stdin, string[] env, boo
   return Pending.of(0, resolveNoHost, alwaysSettled, ignoreDrop);
 }
 
+
+/**
+ * `load` in a world that has none, which is the honest answer for a probe.
+ *
+ * -2 rather than -1: `Loaded.unavailable()` is how a caller tells "this host cannot" from "this module
+ * could not be", and a fake that said -1 would have every caller reporting a broken module. Same shape
+ * as `fakeSpawnSelf` above and for the same reason. `issues/system/0240c`.
+ */
+Loaded fakeLoad(u8[] module) { return Loaded(-2, "no load in this world"); }
+
+/** ...and so nothing is ever callable: 2 is "no such export", which is true of a module never loaded. */
+Called fakeCall(i32 handle, string name, i32 arg) { return Called(2, "", 0); }
+
+void fakeUnload(i32 handle) {}
+
 Cli fakeCli() {
   return Cli.of(fakeArgCount, fakeArg, fakeEnv, fakeStdin, fakeWrite, fakeWriteErr, fakeReadFile, fakeWriteFile,
                 fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeSetExecutable, fakeOpenInput,
                 fakeReadChunk, fakeOutputError, fakeOpenOutput, fakeConnect, fakeListen, fakeAccept, fakeRecv,
                 fakeSend, fakeCloseSocket, fakeCloseSend, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
-                fakeCwd, fakePushChild, fakePopChild, fakeExec);
+                fakeCwd, fakePushChild, fakePopChild, fakeExec, fakeLoad, fakeCall, fakeUnload);
 }
 
 // ── What the coverage driver calls ────────────────────────────────────────────

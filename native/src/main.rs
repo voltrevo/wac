@@ -92,6 +92,10 @@ struct PendingHooks {
 enum Cap {
     /// `Core.askInterrupt` — nothing here owns a keyboard, so it is always "no". See below.
     Interrupted,
+    /// `Cli.load`, `Cli.call`, `Cli.unload` — a loaded module. `issues/system/0240c`.
+    Load,
+    Call,
+    Unload,
     Log,
     Warn,
     Write,
@@ -802,12 +806,205 @@ fn run(m: Arc<Manifest>, wasm: &[u8], args: Vec<Vec<u8>>) -> Result<i32, wasmtim
 }
 
 /// Instantiate, build the capability structs, and call `main`. The half a child repeats.
-fn enter(
+/// An engine trap in the words the JavaScript hosts use, so `Called.text` reads the same everywhere.
+///
+/// **Only `unreachable` is held to that, and deliberately.** A bare `trap` in wac compiles to
+/// `unreachable`, so it is the one every `test_traps_*` in this repository produces and the one
+/// `load_test.wac` compares across hosts; V8 answers `e.message`, which is exactly `unreachable`,
+/// where wasmtime's `Display` is three lines with a backtrace in the middle.
+///
+/// Any other engine trap keeps wasmtime's own sentence with its `wasm trap: ` prefix off. Those *do*
+/// differ from V8's wording, and inventing a table of translations for traps nothing here produces
+/// would be a second copy of somebody else's spelling — the honest thing is that a program's own
+/// `trap "…"` message is identical on every host, and an engine trap's is not.
+fn engine_trap_words(e: &wasmtime::Error) -> String {
+    if let Some(t) = e.downcast_ref::<wasmtime::Trap>() {
+        if matches!(t, wasmtime::Trap::UnreachableCodeReached) {
+            return "unreachable".to_string();
+        }
+        return format!("{t}").trim_start_matches("wasm trap: ").to_string();
+    }
+    // Not a trap at all — a host function that failed, say. The last line of the chain is the cause;
+    // the first is "error while executing at wasm backtrace:", which says nothing.
+    format!("{e}")
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .next_back()
+        .unwrap_or("it trapped")
+        .trim()
+        .trim_start_matches("wasm trap: ")
+        .to_string()
+}
+
+/// A wac `string` a loaded module returned, read through its own `$bind$str_*` helpers.
+///
+/// **`from_staging`'s twin, on a `Store` rather than a `Caller`.** Everything else on this boundary
+/// runs inside a host call and has a `Caller`; a loaded module's export is called from *outside* one,
+/// where there is only the store and the instance — the same position `trap_message` is in.
+fn read_string_in(store: &mut Store<Host>, instance: &Instance, v: &Val) -> String {
+    let get = |st: &mut Store<Host>, name: &str| instance.get_func(&mut *st, name);
+    let Some(len_fn) = get(store, "$bind$str_len") else { return String::new() };
+    let Some(to_mem) = get(store, "$bind$str_to_mem") else { return String::new() };
+    let Some(ensure) = get(store, "$bind$mem_ensure") else { return String::new() };
+    let mut out = [Val::I32(0)];
+    if len_fn.call(&mut *store, std::slice::from_ref(v), &mut out).is_err() {
+        return String::new();
+    }
+    let n = match out[0] {
+        Val::I32(n) if n >= 0 => n as usize,
+        _ => return String::new(),
+    };
+    let mut ignored = vec![Val::I32(0); ensure.ty(&mut *store).results().len()];
+    if ensure.call(&mut *store, &[Val::I32(n as i32)], &mut ignored).is_err() {
+        return String::new();
+    }
+    let mut ignored = vec![Val::I32(0); to_mem.ty(&mut *store).results().len()];
+    if to_mem.call(&mut *store, std::slice::from_ref(v), &mut ignored).is_err() {
+        return String::new();
+    }
+    let Some(Extern::Memory(mem)) = instance.get_export(&mut *store, "$bind$mem") else {
+        return String::new();
+    };
+    let mut bytes = vec![0u8; n];
+    if mem.read(&mut *store, 0, &mut bytes).is_err() {
+        return String::new();
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// A module `Cli.load` instantiated, and what is needed to call into it — `issues/system/0240c`.
+///
+/// **Its own `Store`, because a host call arrives holding the caller's.** wasmtime will not let a
+/// store be re-entered, and a second module is a second store either way — so the loaded module gets
+/// one, and its `Host` *shares the caller's* `tickets`, `handles` and `grants` by `Arc`. That sharing
+/// is what makes a loaded module's `readFile` behave exactly as its loader's, and is why `Cli.load`
+/// takes no grant argument: there is nowhere for a narrowing to live.
+struct LoadedModule {
+    store: Store<Host>,
+    instance: Instance,
+    manifest: Arc<Manifest>,
+    /// `Core` and `Cli` for this module, in `main`'s order — built once, because they are `Val`s in
+    /// this store and rebuilding per call would register a fresh funcref every time.
+    world: Vec<Val>,
+}
+
+thread_local! {
+    /// **Thread-local, like the V8 host's, and for the same reason**: this runtime is one program per
+    /// thread — a spawned child gets a thread of its own — so a table here is a table per program.
+    /// It cannot live in `Host` because a `Store<Host>` inside a `Host` is the store owning itself.
+    static LOADED: std::cell::RefCell<HashMap<i32, LoadedModule>> =
+        std::cell::RefCell::new(HashMap::new());
+    static NEXT_LOADED: std::cell::Cell<i32> = const { std::cell::Cell::new(1) };
+}
+
+/// Instantiate `wasm` in a store of its own, sharing this caller's world.
+fn load_module(caller: &mut Caller<'_, Host>, wasm: &[u8]) -> Result<i32, String> {
+    let world = world_from(&caller.engine().clone(), wasm)?;
+    let m = world.manifest.clone();
+    // The caller's own authority, by reference — see `LoadedModule`.
+    let mut host = Host::new(m.callbacks.len(), caller.data().args.clone(), caller.data().grants.clone());
+    host.tickets = caller.data().tickets.clone();
+    host.handles = caller.data().handles.clone();
+    host.cwd = caller.data().cwd.clone();
+    host.world = Some(world.clone());
+    let mut store = Store::new(&world.engine, host);
+    run_until_stopped(&mut store, None);
+    let linker = wire(&world.engine, &world.module, &m).map_err(|e| format!("{e}"))?;
+    let (instance, built) =
+        prepare(&mut store, &world.module, &linker, &m).map_err(|e| format!("{e}"))?;
+    let handle = NEXT_LOADED.with(|n| {
+        let h = n.get();
+        n.set(h + 1);
+        h
+    });
+    LOADED.with(|t| {
+        t.borrow_mut().insert(handle, LoadedModule { store, instance, manifest: m, world: built })
+    });
+    Ok(handle)
+}
+
+/// Call `name` on a loaded module: `(status, text, value)`, as `Called` carries them.
+///
+/// **A trap is a value.** `func.call` answers `Err` for one, and `test_traps_*` passes by trapping —
+/// 389 of this repository's 2553 test exports do. `$trap$message` carries what a `trap "…"` said, the
+/// same way `enter` reads it for a program.
+fn call_loaded(handle: i32, name: &str, arg: i32) -> (i32, String, i32) {
+    LOADED.with(|t| {
+        let mut table = t.borrow_mut();
+        let Some(lm) = table.get_mut(&handle) else {
+            return (2, format!("no module on handle {handle}"), 0);
+        };
+        let Some(sig) = lm.manifest.exports.iter().find(|e| e.name == name).cloned() else {
+            return (2, format!("no export named {name}"), 0);
+        };
+        let takes_int = sig.params.len() == 1 && sig.params[0] == "i32";
+        let world_arity = if !sig.params.is_empty()
+            && sig.params.len() <= 2
+            && sig.params[0] == "Core"
+            && (sig.params.len() == 1 || sig.params[1] == "Cli")
+        {
+            sig.params.len()
+        } else {
+            0
+        };
+        if !sig.params.is_empty() && !takes_int && world_arity == 0 {
+            return (3, format!("cannot call {name}({})", sig.params.join(", ")), 0);
+        }
+        if world_arity > lm.world.len() {
+            return (3, format!("this module was built without {}", sig.params.join(" and ")), 0);
+        }
+        if !sig.ret.is_empty() && sig.ret != "void" && sig.ret != "i32" && sig.ret != "string" {
+            return (3, format!("{name} answers {}", sig.ret), 0);
+        }
+        let Some(f) = lm.instance.get_func(&mut lm.store, name) else {
+            return (2, format!("no export named {name}"), 0);
+        };
+        let mut args: Vec<Val> = Vec::new();
+        if takes_int {
+            args.push(Val::I32(arg));
+        }
+        for v in lm.world.iter().take(world_arity) {
+            args.push(v.clone());
+        }
+        let wants = if sig.ret.is_empty() || sig.ret == "void" { 0 } else { 1 };
+        let mut out = vec![Val::I32(0); wants];
+        if let Err(e) = f.call(&mut lm.store, &args, &mut out) {
+            // The program's own sentence when it had one — `trap "why"` leaves it in a global, and
+            // that text is identical on every host. Otherwise the engine's, put into the words the
+            // other three answer.
+            let said = trap_message(&mut lm.store, &lm.instance).unwrap_or_default();
+            let why = if said.is_empty() { engine_trap_words(&e) } else { said };
+            return (1, why, 0);
+        }
+        if sig.ret == "string" {
+            let text = out
+                .first()
+                .map(|v| read_string_in(&mut lm.store, &lm.instance, v))
+                .unwrap_or_default();
+            return (0, text, 0);
+        }
+        if sig.ret == "i32" {
+            return (0, String::new(), match out.first() {
+                Some(Val::I32(n)) => *n,
+                _ => 0,
+            });
+        }
+        (0, String::new(), 0)
+    })
+}
+
+/// Instantiate, register the `Pending<T>` hooks and `Read`'s constructors, and build the world.
+///
+/// **Split out of `enter` so that `Cli.load` can reuse it** — `issues/system/0240c`. A loaded module
+/// needs everything here and none of what follows it: `enter` goes on to call `main`, and a loaded
+/// module is called export by export instead. The world is built to the arity `main` declared, which
+/// is also the arity a `test*` export declares, so the same list serves both.
+fn prepare(
     store: &mut Store<Host>,
     module: &Module,
     linker: &Linker<Host>,
     m: &Manifest,
-) -> Result<i32, wasmtime::Error> {
+) -> Result<(Instance, Vec<Val>), wasmtime::Error> {
     let instance = linker.instantiate(&mut *store, module)?;
 
     // The `Pending<T>` hooks first: a capability cannot answer one until the three shared functions
@@ -861,6 +1058,17 @@ fn enter(
         vec![core, cli]
     };
 
+    Ok((instance, args))
+}
+
+/// Instantiate and run `main`, answering its status.
+fn enter(
+    store: &mut Store<Host>,
+    module: &Module,
+    linker: &Linker<Host>,
+    m: &Manifest,
+) -> Result<i32, wasmtime::Error> {
+    let (instance, args) = prepare(store, module, linker, m)?;
     let main = instance
         .get_func(&mut *store, "main")
         .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported `main`", m.entry)))?;
@@ -1138,6 +1346,11 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "rename") => Cap::Rename,
         ("Cli", "setExecutable") => Cap::SetExecutable,
         ("Cli", "execWith") => Cap::Exec,
+        // A **module** rather than a program: its exports called, in a store of its own that shares
+        // this one's authority. `issues/system/0240c`.
+        ("Cli", "load") => Cap::Load,
+        ("Cli", "call") => Cap::Call,
+        ("Cli", "unload") => Cap::Unload,
         ("Cli", "openInput") => Cap::OpenInput,
         ("Cli", "openOutput") => Cap::OpenOutput,
         ("Cli", "outputError") => Cap::OutputError,
@@ -1468,6 +1681,50 @@ fn dispatch(
                 return no_spawn_here(caller, results);
             };
             return spawn_instance(caller, world, argv, want, cwd, inherit, serve_fs, results);
+        }
+        // **Synchronous, unlike almost everything here.** Nothing is submitted and no ticket comes
+        // back: instantiating a module and calling one of its exports both finish before the host call
+        // returns, so `load` and `call` answer a struct directly. `issues/system/0240c`.
+        Cap::Load => {
+            let prog = read_u8_array(caller, &params[1])?;
+            let (handle, why) = match load_module(caller, &prog) {
+                Ok(h) => (h, String::new()),
+                Err(e) => (-1, e),
+            };
+            let msg = make_string(caller, why.as_bytes())?;
+            let f = export_func(caller, "$bind$sm_Loaded_of")?;
+            let built = call_dyn(caller, &f, &[Val::I32(handle), msg])?;
+            results[0] = built
+                .into_iter()
+                .next()
+                .ok_or_else(|| wasmtime::Error::msg("Loaded.of answered nothing"))?;
+            return Ok(());
+        }
+        Cap::Call => {
+            let handle = match arg(1) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let name = String::from_utf8_lossy(&read_string(caller, &params[2])?).into_owned();
+            let n = match arg(3) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let (status, text, value) = call_loaded(handle, &name, n);
+            let msg = make_string(caller, text.as_bytes())?;
+            let f = export_func(caller, "$bind$sm_Called_of")?;
+            let built = call_dyn(caller, &f, &[Val::I32(status), msg, Val::I32(value)])?;
+            results[0] = built
+                .into_iter()
+                .next()
+                .ok_or_else(|| wasmtime::Error::msg("Called.of answered nothing"))?;
+            return Ok(());
+        }
+        Cap::Unload => {
+            if let Val::I32(n) = arg(1) {
+                LOADED.with(|t| t.borrow_mut().remove(&n));
+            }
+            return Ok(());
         }
         Cap::Spawn => {
             // `spawn(prog, argv, grants, cwd, inheritInput, serveFs)` — **a module carrying its own

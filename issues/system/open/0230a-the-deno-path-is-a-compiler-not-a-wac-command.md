@@ -405,3 +405,20 @@ injects it, so no source names it."*
 **`validate` is the odd one and should not be made identical.** It answers whether *the engine* accepts
 a module, so three hosts giving three answers is the command working. "Each host answers for its own
 engine" is the right goal there.
+
+## 2026-08-23: `Cli.load` exists on all four hosts, so `test` is unblocked
+
+`issues/system/0240c` is closed. A wac program can load a module and call its exports — including one
+that traps, which 389 of this repository's 2553 test exports do — on Deno, Node, `wac` and `wacland`
+alike. `packages/platform/example/testrun.wac` is forty lines that do what `wac test` does to one file,
+and it runs on all four.
+
+That was the blocker under step 5's hardest piece. What is left on that step is the *work*: discovery
+(walk for `*_test.wac`, `--ignore`, a named file), the aggregate build, `--filter`, and the report's
+exit codes 0/1/3/4/5. None of it needs anything the platform does not now have — except `--coverage`,
+which needs `__cov_init`/`__cov_len`/`__cov_get`, and those are three of the four shapes `call` accepts.
+
+Still ahead of it in the order: `update` and `sh`, which need the **payload** question answered. That
+one is unchanged and is the operator's: the native binary embeds three modules and a JS-hosted `wac` is
+built from `wacc.wac` alone, so `wac sh` has no shell to start. `Cli.load` does not settle it — a
+loaded module has to come from somewhere, and "somewhere" is what the question is about.
