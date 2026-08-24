@@ -40,6 +40,7 @@
     "coverage:gzip": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/gzip/test/cov_ledger.wac",
     "coverage:http": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/http/test/cov_ledger.wac",
     "coverage:json": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/json/test/cov_ledger.wac",
+    "coverage:quic": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/quic/test/cov_ledger.wac",
     "coverage:regex": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/regex/test/cov_ledger.wac",
     "coverage:mpt": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/mpt/test/cov_ledger.wac",
     "coverage:raster": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/raster/test/cov_ledger.wac",

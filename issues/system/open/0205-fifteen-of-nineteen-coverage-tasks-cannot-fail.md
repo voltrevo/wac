@@ -789,6 +789,56 @@ declaration's **signature line**, not its body — nine rules keyed on body text
 said so, which is the ratchet working. And `verifyChain` turned out to be a second implementation of
 `verifyPath`'s verdicts; the ledger is where the duplicate became visible.
 
+### `quic` eighth — an audit of the seventh's weakest entry, and what it found
+
+**28 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 29 drivers; the unmeasured list is 10.
+
+**696 of 868 → 726 of 868.** This package was picked because `packages/tls`'s ledger pins
+`handshake.wac`'s parsers as *exercised in another package* — this one — and says in as many words
+that `deno task coverage:quic` does not exist to check the claim.
+
+#### The audit, and the number that came out of it
+
+Pointing quic's own exercise at `packages/tls/src/handshake.wac`:
+
+| exercise | dark | of 108 |
+|---|---:|---:|
+| tls's | 36 | 108 |
+| quic's | 33 | 108 |
+| **dark to both** | **15** | **108** |
+
+Each covers about twenty points the other misses. So **each ledger read alone overstates that file's
+gap by roughly twenty lines**, and neither can tell a dead line from one its neighbour exercises.
+
+That makes "covered by a neighbour" the one exemption reason nothing can verify. If quic stopped
+calling `parseServerHello` tomorrow both ledgers would stay green — quic's because it does not measure
+that file, tls's because its rule says somebody else does. Filed as **`issues/system/0241b`**, with the
+note that `measure` already collects every point across every file it compiled and the prefix is
+applied at `report`, so the data exists and is discarded.
+
+#### What the driver itself found
+
+`frame.wac` had **33 uncovered points of which 32 were the same check** — `stop(Frame.Incomplete)`, the
+answer for a frame running off the end of a datagram. That is the cheapest hostile input QUIC has: a
+truncated datagram needs no keys, no handshake and no timing. None of the thirty-two had an input.
+
+`test/wac/truncated_test.wac` sweeps every frame in table 3, cut at every byte. 82.2% → 93.3%.
+
+**The canaries answered differently by kind of field, which is the useful part**: the varint guards are
+defence in depth (delete one, the next catches it, every case still passes), the fixed-width ones are
+load-bearing, and deleting NEW_CONNECTION_ID's `p >= b.len()` makes the sweep **trap** rather than fail
+— the reader runs off the end of the datagram. So the file says plainly that it pins the property for
+one family and the specific check for the other, which is the correction `ssz` needed after the fact
+and this one had before it was committed.
+
+#### And the residue is a different shape from every package before
+
+142 points, and almost none is a refusal nobody wrote. They are the *not-found* arms of accessors that
+read a peer's flight — "you asked this datagram for a certificate and there is no certificate in it" —
+forty-two in `Client` and twenty-three in `Server`. Not a branch nobody tested: an answer nobody has
+ever seen returned.
+
 ### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
 
 Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's

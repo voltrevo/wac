@@ -166,6 +166,7 @@ deno task coverage:gzip
 deno task coverage:http
 deno task coverage:json
 deno task coverage:mpt
+deno task coverage:quic
 deno task coverage:regex
 deno task coverage:rlp
 deno task coverage:raster
