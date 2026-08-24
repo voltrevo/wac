@@ -247,11 +247,32 @@ Rule[] rules() {
          "fixtures and drive a subset. The rest are reached by `link.wac` and `socks.wac` — the " +
          "two files this ledger already accounts for as program-driven — so this is the same gap " +
          "seen from the layer below."),
-    Rule("packages/tor/src/consensusgen.wac", ") {", "decl", false,
-         "The microdescriptor consensus writer's body — see the `return` rule over this file. " +
-         "Its signature spans lines, so the declaration this rule matches is the closing `) {`."),
-    Rule("packages/tor/src/vote.wac", ") {", "decl", false,
-         "The same multi-line-signature shape in the vote writer — see `consensusgen.wac`."),
+    Rule("packages/tor/src/consensusgen.wac", "consensusDocument", "decl", false,
+         "The consensus writers' bodies — see the `return` rule over this file. Both\n" +
+         "         `consensusDocument` and `microdescConsensusDocument` are named by this one " +
+         "rule, since the second contains the first as a substring.\n" +
+         "         **This used to read `holds: \") {\"`**, because a signature spanning lines " +
+         "opens on a bare `) {` in column zero and that was the only text `declOf` offered. `) {` " +
+         "is the last two characters of nearly every declaration in the file, so the rule claimed " +
+         "**all twelve** uncovered points here — a blanket exemption that could not fail and would " +
+         "have absorbed any new dark code in silence. `tools/wac/covledger.wac` now joins a " +
+         "multi-line signature so a rule can name its function; fixed 2026-08-24."),
+    Rule("packages/tor/src/consensusgen.wac", "consensusFlavoured", "decl", false,
+         "**The flavour switch, and it was hidden by the blanket rule above.** " +
+         "`consensusFlavoured` is the shared body both writers call, and its five uncovered points " +
+         "are the `microdesc` arms — the version-3-microdesc header, the microdescriptor router " +
+         "status line, the `m` digest line and the exit policy the microdesc flavour omits.\n" +
+         "         They run: `gendesc.wac:261` calls `microdescConsensusDocument`, and " +
+         "`gendesc.wac` is a program with a `main`, so it runs in a spawned process the instrument " +
+         "cannot see. The in-process tests reach the plain flavour only — `consensusgen_test.wac` " +
+         "and `hsdir_test.wac` both call `consensusDocument`.\n" +
+         "         Worth a test rather than an exemption, and the exemption says so: a microdesc " +
+         "consensus is what a real client actually fetches. Recorded now because these five points " +
+         "were invisible until 2026-08-24 — a `\") {\"` rule was claiming every point in the file, " +
+         "including a function it did not name and nobody had looked at."),
+    Rule("packages/tor/src/vote.wac", "voteDocument", "decl", false,
+         "The same shape in the vote writer — see `consensusgen.wac` above for what this rule used " +
+         "to say and why it could not say anything narrower."),
     Rule("packages/tor/src/directory.wac", "base64NoPad", "decl", false,
          "Base64 without padding, and the exit-policy and relay-field parsers around it. The " +
          "arms are for inputs whose length is not a multiple of three, and for consensus fields " +

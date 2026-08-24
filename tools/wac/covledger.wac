@@ -605,10 +605,42 @@ bool opensDecl(string l) {
   return endsWith(t, "{") || (contains(t, "{") && endsWith(t, "}"));
 }
 
-/** The enclosing declaration of `line`, 1-based, or "". */
+/**
+ * The enclosing declaration of `line`, 1-based, or "" — the whole signature when it spans lines.
+ *
+ * **A signature that spans lines opens on its last one**, which is a bare `) {` in column zero:
+ *
+ *     export u8[] voteDocument(
+ *       VoteInfo info, AuthorityKeys keys, u8[] certificate, RelayOpinion[] relays
+ *     ) {
+ *
+ * That satisfies `opensDecl` and carries none of the declaration — not the name, not the types. So a
+ * rule over such a function could only be written `holds: ") {"`, and `") {"` is the last two
+ * characters of nearly every declaration in the file. `packages/tor`'s ledger had two of them, one
+ * per file, each claiming **all twelve** uncovered points in its file: a blanket exemption that can
+ * never fail and absorbs any new dark code silently. That is the opposite of what a ledger is for,
+ * and the rules were not wrong to be written that way — there was no other spelling available.
+ *
+ * So walk back over the continuation and return the signature joined, and a rule can name the
+ * function. Rules that already say `") {"` keep matching, since the joined text still contains it.
+ */
 string declOf(string[] ls, i32 line) {
   for (i32 i = line - 1; i >= 0; i--) {
-    if (i < ls.len() && opensDecl(ls[i])) { return ls[i]; }
+    if (i < ls.len() && opensDecl(ls[i])) {
+      string acc = ls[i];
+      if (!startsWith(trimmed(ls[i]), ")")) { return acc; }
+      for (i32 k = i - 1; k >= 0; k--) {
+        acc = ls[k] + " " + acc;
+        string t = trimmed(ls[k]);
+        // The line that opens the parameter list is the first one worth having, and anything that
+        // closes a previous statement means the signature did not start here.
+        if (contains(t, "(") || t.len() == 0 || endsWith(t, ";") || endsWith(t, "}") ||
+            endsWith(t, "{")) {
+          return acc;
+        }
+      }
+      return acc;
+    }
   }
   return "";
 }
