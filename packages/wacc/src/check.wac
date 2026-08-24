@@ -701,6 +701,27 @@ export bool assignable(C c, string want, string got) {
   // `as!`. Upcasting *by assignment* is the same fact as upcasting by cast, one syntax along, and was
   // missed because nothing in the spec corpus assigns a child to a parent.
   if (c.isStruct(want) && c.isStruct(got) && descendsFrom(c, got, want)) { return true; }
+  // **And a generic child into a non-generic parent**, which the line above cannot see. A generic is
+  // spelled with its arguments at the use site, so `parentOf("Cont<string>")` looks for a declaration
+  // by that name, finds none and answers `""` — the inheritance walk never starts and a correct
+  // program is refused with *"expected Task, found Cont<string>"*. Everything the checker knows about
+  // a generic is filed under the template, which is what `genericBase` is for; this is one more
+  // lookup that had not come back through it.
+  //
+  // The reference accepts this, emits it and runs it. `issues/lang/0144` found it while probing its
+  // own question — whether a call through a parent-typed reference dispatches dynamically — and
+  // recorded it as a consequence of that undecided rule. It is not: assignability to a declared
+  // parent is a different fact from which method a call runs, and the reference settles it. Reading
+  // it as part of the decision is what left a false alarm parked for a week.
+  //
+  // **Only a non-generic parent.** `Cont<T> : Box<T>` would need `T` substituted along the chain
+  // before `Box<string>` and `Box<i32>` could be told apart, and guessing there would trade this
+  // false alarm for a wrong acceptance. Left to fall through, which reports — the case is beyond
+  // this slice, and `descendsFrom` walking a chain of templates is the change that would settle it.
+  if (c.isStruct(want) && genericBase(want) == "" && genericBase(got) != ""
+      && c.isStruct(genericBase(got)) && descendsFrom(c, genericBase(got), want)) {
+    return true;
+  }
   // **A variant is a value of its enum.** `Option<i32> a = Option.Some(5);` — the source has the
   // variant's own type, which is what the reference answers too (*"expected i32, got A"*), and the
   // slot has the enum's. Compared against the *template*, so an instance takes its own variants:

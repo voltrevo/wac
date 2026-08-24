@@ -87,3 +87,39 @@ one nothing in this system reached for, which is an argument for writing down th
 compilers already give rather than building a vtable to make the expensive one true. The counter-argument
 is that people avoid it *because* it does not dispatch — `packages/box`'s 65 applets dispatch on an enum
 tag, and an interface is what you would otherwise reach for there.
+
+## One of the two side gaps was not this issue's at all — agent-a, 2026-08-24
+
+Re-running the reproduction a week on: the four numbers are unchanged — `40 / 0 / 0 / 1` from **both**
+compilers — so the dispatch question stands exactly as filed and nothing below touches it.
+
+The two smaller things this issue hands to whoever picks it up were called *"consequences of the same
+missing rule rather than separate gaps"*. Measured against the reference, they are not the same, and
+they do not both belong here:
+
+- **"a generic struct cannot be assigned to its non-generic parent at all"** — this was a **wacc false
+  alarm**, and it is fixed. The reference accepts `Task t = c;` for a `Cont<string> c`, emits it, and
+  runs it: `t.id` is 7 and `t.fire()` is 0. wacc refused it with *"expected Task, found
+  Cont<string>"*, because a generic is spelled with its arguments at the use site and `parentOf`
+  matches a *declared* name — so it looked for a struct called `Cont<string>`, found none, and the
+  inheritance walk never started. Everything the checker knows about a generic is filed under the
+  template; this was one more lookup that had not come back through `genericBase`. Fixed in
+  `assignable`, pinned as a clean case in `packages/wacc/test/wac/typecheck_test.wac`'s rung-3
+  differential — which is where a false alarm belongs, because the case only means anything while the
+  reference still accepts it. wacc now answers 7 and 0, matching the reference exactly.
+
+- **`Cont.make(…)` binding `T` from the slot** — this one really is shared. Both compilers refuse the
+  declaration before any slot is involved: `static Cont<T> make(i32 id, T v)` is *"expected '(', found
+  'make'"* in wacc and *"expected ';' or '(' after member 'Cont'"* in the reference. A static method
+  whose return type is its own generic instance does not parse in either, so it is a language gap and
+  not an inference one, and the sentence about binding from the enclosing slot describes a program
+  neither compiler can get to.
+
+**Why this matters beyond the fix.** Reading the false alarm as part of an undecided design question is
+what kept it parked: it was filed as something that could not be worked until dispatch was settled, and
+it was a checker bug with a one-line reproduction and a reference that disagreed. The tell is available
+without deciding anything — *ask the reference*. Where the two compilers agree, it is the language and
+this issue owns it; where they differ, it is ours and it is ordinary work.
+
+**Still undecided and still this issue's:** whether a call through a parent-typed reference dispatches
+statically or dynamically, and the clause in `structs.md` that should say so.
