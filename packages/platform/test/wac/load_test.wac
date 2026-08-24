@@ -27,9 +27,16 @@
 // every signature the four commands need and nothing else, which is what keeps this from being a
 // general boundary.
 //
-// - **`test_traps_on_purpose 1 0 unreachable` is the row the capability exists for.** 389 of this
-//   repository's 2553 test exports pass *by* trapping, and no wac program can catch one. Every row
-//   after it is also proof the caller survived.
+// - **`test_traps_on_purpose 1 0` — status 1 and no text — is the row the capability exists for.**
+//   389 of this repository's 2553 test exports pass *by* trapping, and no wac program can catch one.
+//   Every row after it is also proof the caller survived.
+//
+//   **The empty field is the assertion.** This read `unreachable` until 2026-08-24: the word V8 puts
+//   in a `RuntimeError`, which the wasmtime host then synthesised so that all four would agree — a
+//   value one host invented to match another, identical for every trap wac emits. `status == 1`
+//   already says it trapped; `text` answers "did it say why", and a bare `trap` did not. What goes
+//   there when a program *does* say why is `trap "…"`'s own sentence, which needs no translation
+//   because it is the program's, and `commandparity_test.wac` is where that is compared.
 // - `test_fails` carries a report back, because that string is what a runner prints.
 // - `twice 0 42` is the `i32` argument arriving: the probe passes 21 to everything.
 // - `no_such_export 2` and `half 3` are two different refusals — a typo, and a request to widen the
@@ -59,7 +66,7 @@ string loadee(Cli cli) {
 string expected() {
   return "test_passes 0 0 \n"
        + "test_fails 0 0 two of two assertions failed\n"
-       + "test_traps_on_purpose 1 0 unreachable\n"
+       + "test_traps_on_purpose 1 0 \n"
        + "test_core_only 0 0 \n"
        + "test_no_world 0 0 \n"
        + "answer 0 42 \n"
@@ -108,7 +115,9 @@ export string test_this_host_loads_a_module_and_calls_every_shape(Core core, Cli
   // caller survived: 389 of this repository's 2553 test exports pass by trapping.
   CallResult trapped = cli.call(m.handle, "test_traps_on_purpose", 0);
   t.eqI32(trapped.status, 1, "a trap is a value, not the end");
-  t.eqStr(trapped.text, "unreachable", "and it says what — the same word every host says");
+  t.eqStr(trapped.text, "", "a bare trap says nothing, on every host — the engine's own word "
+                            + "for it was invented to make the four agree and told a caller "
+                            + "nothing");
 
   t.eqI32(cli.call(m.handle, "test_core_only", 0).status, 0, "Core alone is callable");
   t.eqI32(cli.call(m.handle, "test_no_world", 0).status, 0, "no capabilities is callable");

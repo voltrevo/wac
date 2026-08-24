@@ -1539,7 +1539,14 @@ export struct CallResult {
    * the export, and 3 is a request to widen the boundary.
    */
   i32 status;
-  /** A `string`-returning export's answer, or — when `status` is 1 — what the trap said. */
+  /**
+   * A `string`-returning export's answer, or, when `status` is 1, what the trap said.
+   *
+   * **Empty when it said nothing**, which is an engine trap: a bounds check, a null dereference, a
+   * bare `trap;`. Only `trap "..."` writes a sentence. This field is the answer to "did it say why",
+   * and `status` is already the answer to "did it trap" -- so the engine's own word for the
+   * instruction does not go here. It used to, and one host had to invent that word to match another.
+   */
   string text;
   /** An `i32`-returning export's answer, and 0 for every other shape. */
   i32 value;

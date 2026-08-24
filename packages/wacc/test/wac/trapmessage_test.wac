@@ -7,6 +7,11 @@
 //
 // The half that must not move: an *engine* trap — a bounds check, a null dereference — writes nothing,
 // and reporting the previous `trap`'s sentence for one of those would be worse than reporting none.
+//
+// **That last sentence is the requirement and not the behaviour — `issues/lang/0254c`.** Nothing
+// clears the global, so a trap that says nothing is reported with the last sentence any trap in that
+// module wrote. These probes each trap once, which is why the file states the rule and cannot see it
+// broken; the case that shows it is two traps in one module with only the first saying anything.
 
 import { Change, Cli, Core, Exec } from "std/platform.wac";
 import { T } from "../../../wactest/src/assert.wac";

@@ -1394,6 +1394,12 @@ struct Tally {
   i32 ungrantedCount;
 }
 
+/** ` (12 ms)`, the way the native runner spells a test's wall time under `--verbose`. */
+string tookMs(Core core, i64 began) {
+  i64 took = (core.monotonicNanos().wait() - began) / 1000000;
+  return " (" + itoa64(took) + " ms)";
+}
+
 /**
  * Call the named tests on a loaded module and report each one, answering what they came to.
  *
@@ -1403,7 +1409,7 @@ struct Tally {
  * name.
  */
 Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, i32 count,
-               i32 grants, string filter) {
+               i32 grants, string filter, bool loud) {
   i32 passed = 0;
   i32 failed = 0;
   i32 filtered = 0;
@@ -1418,22 +1424,41 @@ Tally runNamed(Core core, Cli cli, i32 handle, TestExport[] names, i32[] which, 
       ungrantedCount = ungrantedCount + 1;
       continue;
     }
-    bool wantsTrap = shown.len() > 11 && shown.slice(0, 11) == "test_traps_";
+    // **Both spellings**, because three other implementations of this rule take both — the native
+    // runner, `harness/wacTestRun.ts`, and `packages/wactest/README.md`, which documents it as
+    // "`test_traps_` (or `testTraps`)". This one took the first, so a camelCase `testTrapsOnNull`
+    // that trapped as its name says was a pass on the native binary and a failure here. Nothing in
+    // the repository is named that way today — 392 to 0 — which is why no test noticed.
+    bool wantsTrap = (shown.len() > 11 && shown.slice(0, 11) == "test_traps_")
+                     || (shown.len() > 9 && shown.slice(0, 9) == "testTraps");
+    // The clock only when it will be printed: a run that is not `--verbose` says nothing per test, and
+    // this is a host call per test on the JavaScript hosts.
+    i64 began = loud ? core.monotonicNanos().wait() : 0 as i64;
     CallResult c = cli.call(handle, t.name, 0);
+    // `c.text` is what the *program* said, or empty for an engine trap — a bounds check, a null
+    // dereference — which writes nothing. So the message is appended rather than assumed: this read
+    // `"— trapped: " + c.text` and left a dangling colon on every engine trap.
+    string said = c.text == "" ? "" : ": " + c.text;
     if (c.trapped()) {
-      if (wantsTrap) { passed = passed + 1; }
-      else { failed = failed + 1; core.log("FAIL " + shown + " — trapped: " + c.text); }
+      if (wantsTrap) {
+        passed = passed + 1;
+        if (loud) { core.log("ok   " + shown + " — trapped, as it says" + said + tookMs(core, began)); }
+      } else { failed = failed + 1; core.log("FAIL " + shown + " — trapped" + said); }
     } else if (c.status != 0) {
       failed = failed + 1;
       core.log("FAIL " + shown + " — " + c.text);
     } else if (wantsTrap) {
+      // The report is ignored on purpose: a test named for a trap that returned cleanly has not
+      // observed the thing it is about, and an empty string from it would otherwise read as a pass.
       failed = failed + 1;
-      core.log("FAIL " + shown + " — returned instead of trapping");
+      core.log("FAIL " + shown + " — returned instead of trapping"
+               + (c.text == "" ? "" : " — " + c.text));
     } else if (c.text != "") {
       failed = failed + 1;
       core.log("FAIL " + shown + " — " + c.text);
     } else {
       passed = passed + 1;
+      if (loud) { core.log("ok   " + shown + tookMs(core, began)); }
     }
   }
   return Tally(passed, failed, filtered, ungranted, ungrantedCount);
@@ -1446,7 +1471,7 @@ void sayTally(Core core, Tally t) {
 }
 
 i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 grants,
-             string filter, string[] files, i32 ignored, string target, string covTable) {
+             string filter, string[] files, i32 ignored, string target, string covTable, bool loud) {
   // **The tests get what the caller granted, and no more.** `wac test --allow-read` means the tests
   // may read; it does not mean they may write because *this command* can. `load` narrows the world it
   // hands over, and it took a test writing a file to disk to find that it had not been asked to —
@@ -1472,7 +1497,7 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
   if (files.len() == 0) {
     i32[] all = i32[names.len()]();
     for (i32 i = 0; i < names.len(); i++) { all[i] = i; }
-    Tally t = runNamed(core, cli, m.handle, names, all, names.len(), grants, filter);
+    Tally t = runNamed(core, cli, m.handle, names, all, names.len(), grants, filter, loud);
     // **Read before the handle goes.** The counters live in the module, so `unload` is the end of
     // them — and an unloaded handle answers "no such export" rather than failing, so this would have
     // reported a run of nothing as a coverage of zero.
@@ -1518,7 +1543,7 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
     }
     if (count == 0) { continue; }
     core.log("── " + files[f]);
-    Tally t = runNamed(core, cli, m.handle, names, mine, count, grants, filter);
+    Tally t = runNamed(core, cli, m.handle, names, mine, count, grants, filter, loud);
     if (t.ungrantedCount > 0) {
       core.log(itoa(t.ungrantedCount) + " test(s) want a capability this run was not granted: "
                + t.ungranted + " — try `wac test --allow-read …`");
@@ -2172,7 +2197,8 @@ export i32 main(Core core, Cli cli) {
                                   baseName(stem(entry)) + ".wasm", grants);
     i32 code = runTests(core, cli, entry, withManifestSection(wasm, manifest), manifest, grants,
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target,
-                        covered ? covTableFilesIn(paths, texts, res, entry) : "");
+                        covered ? covTableFilesIn(paths, texts, res, entry) : "",
+                        hasFlag(cli, argc, "--verbose"));
     // **The aggregate is scratch and goes when the run does.** It is a generated file with a unique
     // name, so leaving it would grow `.cache/` by one per invocation — `issues/system/0136` is the day
     // this repository's disk filled from exactly that shape, one temporary directory per run that

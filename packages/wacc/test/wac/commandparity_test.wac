@@ -31,7 +31,7 @@
 //
 // ## What is compared, and what is deliberately not
 //
-// Twenty-six invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
+// Twenty-eight invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
 // side's stdout and stderr concatenated, and the exit code. Not compared: timing, and the module bytes
 // `build` writes — those have their own tests (`bindgenwac_test.wac` holds the two *generators* to the
 // same bytes, which is a different claim from two hosts running one generator). **Worth adding and not
@@ -56,8 +56,9 @@
 //
 // ## What it costs, measured 2026-08-22
 //
-// **39s warm** — up from 2–3s, for three hosts instead of two and twenty-six cases instead of six,
-// thirteen of which compile, run or test a program rather than only checking one, plus three module
+// **39s warm at twenty-six cases, measured then; twenty-eight now** — up from 2–3s, for three hosts
+// instead of two and twenty-eight cases instead of six,
+// fifteen of which compile, run or test a program rather than only checking one, plus three module
 // builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
 // it, where `check` stops at the diagnostics. The build is the only expensive part
 // and is paid by `builtByDeno`, which keys on the closure of `wacc.wac`, `compiler/`, `build.ts` and
@@ -94,6 +95,31 @@ bool put(T t, Cli cli, string path, string text) {
   Change c = cli.writeFile(path, text.toBytes()).wait();
   t.isTrue(c.ok(), "could not write " + path + " — " + c.message);
   return c.ok();
+}
+
+/**
+ * `(12 ms)` becomes `(N ms)` — the one figure two hosts are allowed to disagree about.
+ *
+ * A *map* rather than a strip, because the failure this row exists to catch is a host printing no
+ * timing at all, and deleting the figure from both sides would call that agreement.
+ */
+string steadied(string s) {
+  string out = "";
+  i32 i = 0;
+  while (i < s.len()) {
+    if (s.slice(i, i + 1) == "(") {
+      i32 j = i + 1;
+      while (j < s.len() && "0123456789".indexOf(s.slice(j, j + 1)) >= 0) { j = j + 1; }
+      if (j > i + 1 && j + 4 <= s.len() && s.slice(j, j + 4) == " ms)") {
+        out = out + "(N ms)";
+        i = j + 4;
+        continue;
+      }
+    }
+    out = out + s.slice(i, i + 1);
+    i = i + 1;
+  }
+  return out;
 }
 
 /** What one host said. */
@@ -153,7 +179,7 @@ string[][] cases() {
     // The directory case is still the native binary's alone — it walks for `*_test.wac` and builds one
     // aggregate module — so these rows name a file. `--coverage` refuses on both rather than being
     // quietly ignored.
-    string[]("test", "--allow-read", "src/one_test.wac"),     // 2 pass, 2 fail, and which
+    string[]("test", "--allow-read", "src/one_test.wac"),     // 3 pass, 2 fail, and which
     string[]("test", "--allow-read", "--filter", "passes", "src/one_test.wac"),
     string[]("test", "--allow-read", "--filter", "zzz", "src/one_test.wac"),   // matches nothing
     string[]("test", "--nonsense", "src/one_test.wac"),       // an unknown flag, named
@@ -164,6 +190,21 @@ string[][] cases() {
     // run that granted nothing at all, where the test is skipped and named and the status is 4.
     string[]("test", "--allow-read", "src/writes_test.wac"),
     string[]("test", "src/reads_test.wac"),
+    // **A trap on the failing path, which is the only path that prints what the trap said.** The rows
+    // above cover a trap that *passes* — `test_traps_on_purpose` — and a pass prints nothing, so what
+    // `trap "…"` wrote had never been compared between hosts at all. It did not match: the native
+    // reads the message out of the module's `$trap$message`, and `Cli.call` reported the engine's
+    // `unreachable` instead.
+    //
+    // Its own file, and one trap in it, on purpose. `issues/lang/0254c` is that nothing clears the
+    // global between calls, so a second trap in the same module would report the first one's sentence
+    // on every host — agreement, on a value that is wrong. A differential can pin that as easily as
+    // anything else, and pinning it is how it would survive being fixed.
+    string[]("test", "--allow-read", "src/breaks_test.wac"),
+    // **`--verbose`, which was accepted and ignored.** `unknownTestFlag` let it through — so it was
+    // spelled correctly and did nothing — while the native printed a line per passing test. A flag
+    // that is refused is a bad answer and a flag that is silently dropped is a worse one.
+    string[]("test", "--allow-read", "--verbose", "src/one_test.wac"),
     // **A directory, which is a different command underneath.** One aggregate module for the whole
     // walk (`issues/system/0192`), a block per file, and a summary whose buckets are the interesting
     // part: `ok`, `not run (--ignore)`, `with failures`, `needing a grant`, `with nothing matching
@@ -213,7 +254,21 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            "export string test_passes(Core core, Cli cli) { return \"\"; }\n" +
            "export string test_fails(Core core, Cli cli) { return \"1 of 1 assertions failed\"; }\n" +
            "export string test_traps_here(Core core, Cli cli) { return \"\"; }\n" +
-           "export string test_traps_on_purpose(Core core, Cli cli) { trap; }\n")
+           "export string test_traps_on_purpose(Core core, Cli cli) { trap; }\n"
+           // **The camelCase spelling of the same rule.** `wactest/README.md` documents the prefix as
+           // "`test_traps_` (or `testTraps`)" and three implementations take both; the wac runner took
+           // only the first, so this export was a pass on the native binary and a failure on the other
+           // two. Nothing in the repository was named this way, which is exactly why the arm could be
+           // written wrong and stay wrong -- it is here so that it is driven.
+           //
+           // A bare trap, like its neighbour: two traps in one module and neither saying anything, so
+           // `issues/lang/0254c` cannot make one of them report the other's sentence.
+           + "export string testTrapsOnPurpose(Core core, Cli cli) { trap; }\n")
+    // One trap, saying something, under a name that does *not* start `test_traps_` — so it is a
+    // failure, and a failure is what prints the sentence. See the row that uses it.
+    && put(t, cli, dir + "/src/breaks_test.wac",
+           "import { Cli, Core } from \"std/platform.wac\";\n" +
+           "export string test_falls_over(Core core, Cli cli) { trap \"the reason it stopped\"; }\n")
     // **The capability canary.** A test that writes, run on a read-only grant. `issues/system/0242c`
     // is the day this passed on the JavaScript hosts and left `leaked.txt` on disk: a loaded module
     // was handed the *command's* world, and a `wac` command holds every grant because it has to
@@ -282,11 +337,17 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // A built Node program is not executable by itself; `node` runs it, as `spawn_test.wac` does.
     Said j = say(cli, dir, "node " + node, table[i]);
     string what = joined(table[i], " ");
+    // Timing is the one thing the header says is not compared, and `--verbose` prints some. Mapped to
+    // `(N ms)` rather than deleted: a host that printed no timing at all would pass a comparison that
+    // stripped the figure from both sides, and printing it is half of what that flag is.
+    string nOut = steadied(n.out);
+    string dOut = steadied(d.out);
+    string jOut = steadied(j.out);
     t.eqI32(d.status, n.status, "exit codes differ, deno vs native, for `wac " + what + "`");
-    t.eqStr(d.out, n.out, "output differs, deno vs native, for `wac " + what + "`");
+    t.eqStr(dOut, nOut, "output differs, deno vs native, for `wac " + what + "`");
     t.eqI32(j.status, n.status, "exit codes differ, node vs native, for `wac " + what + "`");
-    t.eqStr(j.out, n.out, "output differs, node vs native, for `wac " + what + "`");
-    if (d.status == n.status && d.out == n.out && j.status == n.status && j.out == n.out) {
+    t.eqStr(jOut, nOut, "output differs, node vs native, for `wac " + what + "`");
+    if (d.status == n.status && dOut == nOut && j.status == n.status && jOut == nOut) {
       agreed = agreed + 1;
     }
     if (n.status == 0) { zeroes = zeroes + 1; }
@@ -294,9 +355,9 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   }
 
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
-  // header. Eight of these sixteen exit 0: two `bindgen`s, one `check`, the two `run`s of a program
-  // that returns 0, and the three modules run directly.
-  t.eqI32(zeroes, 9, "nine of these twenty-six succeed on the native host; a different count " +
+  // header. Nine of these exit 0: two `bindgen`s, one `check`, the two `run`s of a program that
+  // returns 0, and the three modules run directly.
+  t.eqI32(zeroes, 9, "nine of these twenty-eight succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success

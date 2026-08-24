@@ -1583,25 +1583,35 @@ fn test_command(rest: &[String]) -> i32 {
 ///
 /// `trap "…"` writes the message to a global before trapping, because after one there is no code left
 /// to run, and `$trap$message` reads it once the trap has unwound — `issues/lang/0147`. Empty for an
-/// engine trap, which writes nothing: a bounds check reporting the *previous* `trap`'s sentence would
-/// be worse than reporting none, so the caller gets a tail it can print unconditionally.
+/// engine trap, which writes nothing, so the caller gets a tail it can print unconditionally.
+///
+/// **This used to say that a bounds check reporting the previous `trap`'s sentence "would be worse
+/// than reporting none", as though that were the arrangement. It is what happens** — nothing clears
+/// the global, so a trap that says nothing is answered with the last sentence any trap in that module
+/// wrote. `issues/lang/0254c`, filed rather than fixed here because the fix is in both emitters.
 fn trap_said(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String {
+    let said = trap_said_bare(scope, exports);
+    if said.is_empty() { String::new() } else { format!(": {said}") }
+}
+
+/// The sentence itself, with no punctuation around it — what `Cli.call` puts in `CallResult.text`.
+///
+/// Split from `trap_said` when `Cli.call` needed the same answer without the `: ` a printed line
+/// wants: two readers of one global, and the one that had been guessing was the capability.
+fn trap_said_bare(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String {
     // **Inside a `TryCatch`, because this is asked *of a module that has just trapped*.** Its state is
     // gone, so the call is liable to trap in its own right — and an uncaught one is announced by V8's
     // default handler on **stdout**, in the middle of the test runner's output. `unwrap_or_default()`
     // already reads a failed call as "it said nothing", which is the right answer; what was missing was
     // stopping the engine saying otherwise on the wrong stream.
-    let said = {
-        let tc = std::pin::pin!(v8::TryCatch::new(scope));
-        let mut tc = tc.init();
-        let got = get_export(&mut tc, exports, "$trap$message")
-            .and_then(|f| f.call(&mut tc, exports.into(), &[]))
-            .map(|v| read_string(&mut tc, v))
-            .unwrap_or_default();
-        tc.reset();
-        got
-    };
-    if said.is_empty() { String::new() } else { format!(": {said}") }
+    let tc = std::pin::pin!(v8::TryCatch::new(scope));
+    let mut tc = tc.init();
+    let got = get_export(&mut tc, exports, "$trap$message")
+        .and_then(|f| f.call(&mut tc, exports.into(), &[]))
+        .map(|v| read_string(&mut tc, v))
+        .unwrap_or_default();
+    tc.reset();
+    got
 }
 
 /// How many tests a run skipped because it was not granted the capability they take.
@@ -6514,21 +6524,21 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
                 let tc = std::pin::pin!(v8::TryCatch::new(scope));
                 let mut tc = tc.init();
                 let out = f.call(&tc, exports.into(), &argv);
-                if let Some(err) = tc.exception() {
-                    // **The message, not the whole exception.** A wac `trap` reaches here as a
-                    // `RuntimeError`, whose `toString` is `RuntimeError: unreachable` — and the
-                    // JavaScript hosts answer `e.message`, which is `unreachable`. Saying the same
-                    // thing is the point: `load_test.wac` compares the two word for word.
-                    let mut why = String::new();
-                    if let Some(obj) = err.to_object(&tc) {
-                        if let Some(key) = v8::String::new(&tc, "message") {
-                            if let Some(v) = obj.get(&tc, key.into()) {
-                                why = v.to_rust_string_lossy(&tc);
-                            }
-                        }
-                    }
-                    if why.is_empty() { why = err.to_rust_string_lossy(&tc); }
-                    trapped = Some(why);
+                if tc.exception().is_some() {
+                    // **What the program said, and nothing when it said nothing.** This used to
+                    // answer the exception's `message` — `unreachable` — because that is the word V8
+                    // hands a JavaScript host, and the wasmtime host then *synthesised* the same word
+                    // so the three would agree. A field whose value one host invents to match another
+                    // is carrying no information: every wac trap produces it, so it distinguishes
+                    // nothing that `status == 1` has not already said.
+                    //
+                    // What a caller can use is the sentence `trap "…"` left behind, which is what the
+                    // test runner ten screens up has always printed and what `Cli.call` had no way to
+                    // reach. Empty for an engine trap — a bounds check, a null dereference — which
+                    // writes none, and reporting the previous one's would be worse than reporting
+                    // nothing (`issues/lang/0254c`, which is that this global is never cleared).
+                    tc.reset();
+                    trapped = Some(trap_said_bare(&mut tc, exports));
                 } else if let Some(v) = out {
                     answer = Some(v8::Global::new(&tc, v));
                 }

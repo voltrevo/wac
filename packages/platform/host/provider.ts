@@ -824,7 +824,31 @@ export function cliOf(
         // repository's test exports are one. The handle stays usable: wac has no module-level state
         // for a trap to leave behind, which is the same reason those tests have always been able to
         // run beside their neighbours.
-        return cls.CallResult.of(1, e instanceof Error ? e.message : String(e), 0);
+        //
+        // **What the program said, not what the engine said.** `trap "…"` leaves its sentence in a
+        // global and `$trap$message` reads it once the trap has unwound (`issues/lang/0147`); a bare
+        // throw from here reported `unreachable` instead, which is the engine describing the
+        // instruction rather than the program describing the moment. `wacInstance.ts:121` and
+        // `wacBindgen.ts`'s `TRAP_GUARD` have always done this — `Cli.call` reaches an export
+        // directly, with no glue around it, so it was the one caller with nowhere for the message to
+        // come from. `commandparity_test.wac` has the row; before this the native said "trapped: the
+        // reason it stopped" and Deno and Node said "trapped: unreachable" for one file.
+        //
+        // Empty when there is none, which is an engine trap — a bounds check, a null dereference —
+        // and is what the native host reports for one. That drops the engine's own words on this
+        // side; they are worth having, and adding them is a change to both hosts rather than a
+        // reason for these two to differ.
+        //
+        // The value read is stale if an earlier trap in this module said something and this one did
+        // not: nothing clears the global. `issues/lang/0254c`, which is not this bug and is now
+        // reachable from here too.
+        let said = "";
+        try {
+          const read = m.driven.exports.$trap$message;
+          const s = typeof read === "function" ? (read as CallableFunction)() : null;
+          if (s !== null && s !== undefined) said = String(m.driven.fromWasm("string", s) ?? "");
+        } catch { /* asking a module that has just trapped is itself allowed to fail */ }
+        return cls.CallResult.of(1, said, 0);
       }
     },
     /*= unload */

@@ -805,37 +805,6 @@ fn run(m: Arc<Manifest>, wasm: &[u8], args: Vec<Vec<u8>>) -> Result<i32, wasmtim
     enter(&mut store, &module, &linker, &m)
 }
 
-/// Instantiate, build the capability structs, and call `main`. The half a child repeats.
-/// An engine trap in the words the JavaScript hosts use, so `CallResult.text` reads the same everywhere.
-///
-/// **Only `unreachable` is held to that, and deliberately.** A bare `trap` in wac compiles to
-/// `unreachable`, so it is the one every `test_traps_*` in this repository produces and the one
-/// `load_test.wac` compares across hosts; V8 answers `e.message`, which is exactly `unreachable`,
-/// where wasmtime's `Display` is three lines with a backtrace in the middle.
-///
-/// Any other engine trap keeps wasmtime's own sentence with its `wasm trap: ` prefix off. Those *do*
-/// differ from V8's wording, and inventing a table of translations for traps nothing here produces
-/// would be a second copy of somebody else's spelling — the honest thing is that a program's own
-/// `trap "…"` message is identical on every host, and an engine trap's is not.
-fn engine_trap_words(e: &wasmtime::Error) -> String {
-    if let Some(t) = e.downcast_ref::<wasmtime::Trap>() {
-        if matches!(t, wasmtime::Trap::UnreachableCodeReached) {
-            return "unreachable".to_string();
-        }
-        return format!("{t}").trim_start_matches("wasm trap: ").to_string();
-    }
-    // Not a trap at all — a host function that failed, say. The last line of the chain is the cause;
-    // the first is "error while executing at wasm backtrace:", which says nothing.
-    format!("{e}")
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .next_back()
-        .unwrap_or("it trapped")
-        .trim()
-        .trim_start_matches("wasm trap: ")
-        .to_string()
-}
-
 /// A wac `string` a loaded module returned, read through its own `$bind$str_*` helpers.
 ///
 /// **`from_staging`'s twin, on a `Store` rather than a `Caller`.** Everything else on this boundary
@@ -983,13 +952,14 @@ fn call_loaded(handle: i32, name: &str, arg: i32) -> (i32, String, i32) {
         }
         let wants = if sig.ret.is_empty() || sig.ret == "void" { 0 } else { 1 };
         let mut out = vec![Val::I32(0); wants];
-        if let Err(e) = f.call(&mut lm.store, &args, &mut out) {
-            // The program's own sentence when it had one — `trap "why"` leaves it in a global, and
-            // that text is identical on every host. Otherwise the engine's, put into the words the
-            // other three answer.
-            let said = trap_message(&mut lm.store, &lm.instance).unwrap_or_default();
-            let why = if said.is_empty() { engine_trap_words(&e) } else { said };
-            return (1, why, 0);
+        if f.call(&mut lm.store, &args, &mut out).is_err() {
+            // **The program's own sentence, and nothing when it had none.** `trap "why"` leaves it in
+            // a global and that text is identical on every host. This used to fall back to the
+            // engine's words, normalised to V8's spelling so the four hosts would agree — a value
+            // invented here to match one invented there, identical for every trap wac emits, saying
+            // nothing `status == 1` had not. `status` is the answer to "did it trap"; this field is
+            // the answer to "did it say why", and for an engine trap the answer is no.
+            return (1, trap_message(&mut lm.store, &lm.instance).unwrap_or_default(), 0);
         }
         if sig.ret == "string" {
             let text = out
