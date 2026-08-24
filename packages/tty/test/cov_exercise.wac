@@ -1,0 +1,73 @@
+// Branch coverage for tty: the package's own tests, and nothing else.
+//
+//   deno task coverage:tty
+//   deno task coverage:tty --verbose
+//
+// The third of the packages `issues/system/0205` records as unmeasured, after `ssz` and `mpt`, and
+// picked because its oracle is a different *kind*. Those two are judged against vendored corpora of
+// real Ethereum data; this one is judged against **the kernel's own line discipline**, through a real
+// pty, with the inputs chosen by whoever wrote the test rather than shipped by anybody.
+//
+// If the first two packages' finding — that the unreached branches are the refusals a real-data corpus
+// cannot contain — holds here too, it is a property of differential testing rather than of vendored
+// vectors. If it does not, that is the honest limit of the claim.
+//
+// All eight tests take `(Core, Cli)`: every one of them opens a pty or asks a recorded oracle.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import {
+  test_the_oracle_is_the_configuration_this_module_implements as ln__the_oracle_is_the_configuration_this_module_implements,
+  test_every_editing_rule_answers_what_the_kernel_answers as ln__every_editing_rule_answers_what_the_kernel_answers,
+  test_interrupt_and_end_of_input as ln__interrupt_and_end_of_input,
+  test_the_live_pty_still_answers_what_was_recorded as ln__the_live_pty_still_answers_what_was_recorded,
+  test_cbreak_still_answers_a_signal_and_the_unused_accessors_work as ln__cbreak_still_answers_a_signal_and_the_unused_accessors_work,
+} from "./wac/line_test.wac";
+import {
+  test_the_pty_harness_reproduces_the_oracle_line_test_trusts as md__the_pty_harness_reproduces_the_oracle_line_test_trusts,
+  test_the_three_modes_differ_in_the_ways_that_were_measured as md__the_three_modes_differ_in_the_ways_that_were_measured,
+  test_line_answers_what_the_kernel_answers_in_every_mode as md__line_answers_what_the_kernel_answers_in_every_mode,
+  test_the_live_pty_still_answers_what_was_recorded_in_each_mode as md__the_live_pty_still_answers_what_was_recorded_in_each_mode,
+} from "./wac/modes_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (ln__cbreak_still_answers_a_signal_and_the_unused_accessors_work().len() > 0) {
+    core.warn("error: FAILED line_test test_cbreak_still_answers_a_signal_and_the_unused_accessors_work");
+    bad = bad + 1;
+  }
+  if (ln__the_oracle_is_the_configuration_this_module_implements(core, cli).len() > 0) {
+    core.warn("error: FAILED line_test test_the_oracle_is_the_configuration_this_module_implements");
+    bad = bad + 1;
+  }
+  if (ln__every_editing_rule_answers_what_the_kernel_answers(core, cli).len() > 0) {
+    core.warn("error: FAILED line_test test_every_editing_rule_answers_what_the_kernel_answers");
+    bad = bad + 1;
+  }
+  if (ln__interrupt_and_end_of_input(core, cli).len() > 0) {
+    core.warn("error: FAILED line_test test_interrupt_and_end_of_input");
+    bad = bad + 1;
+  }
+  if (ln__the_live_pty_still_answers_what_was_recorded(core, cli).len() > 0) {
+    core.warn("error: FAILED line_test test_the_live_pty_still_answers_what_was_recorded");
+    bad = bad + 1;
+  }
+  if (md__the_pty_harness_reproduces_the_oracle_line_test_trusts(core, cli).len() > 0) {
+    core.warn("error: FAILED modes_test test_the_pty_harness_reproduces_the_oracle_line_test_trusts");
+    bad = bad + 1;
+  }
+  if (md__the_three_modes_differ_in_the_ways_that_were_measured(core, cli).len() > 0) {
+    core.warn("error: FAILED modes_test test_the_three_modes_differ_in_the_ways_that_were_measured");
+    bad = bad + 1;
+  }
+  if (md__line_answers_what_the_kernel_answers_in_every_mode(core, cli).len() > 0) {
+    core.warn("error: FAILED modes_test test_line_answers_what_the_kernel_answers_in_every_mode");
+    bad = bad + 1;
+  }
+  if (md__the_live_pty_still_answers_what_was_recorded_in_each_mode(core, cli).len() > 0) {
+    core.warn("error: FAILED modes_test test_the_live_pty_still_answers_what_was_recorded_in_each_mode");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("tty: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}

@@ -1,0 +1,143 @@
+// The three accessors, and the length rules that decide what an encoding *is*.
+//
+// Found by this package's first coverage driver on 2026-08-24 — `issues/system/0205`. Its gaps came in
+// two kinds at once, which is why it opened lower than the three packages before it:
+//
+//   - **`bytesOf`, `itemsOf` and `isList` were entirely uncovered.** All three are public and all three
+//     are used constantly — by `packages/mpt` on every trie node and by `packages/ssz` on every
+//     container — and *this* package's own tests never called one. A package's tests exercise what it
+//     does; its accessors are what its consumers do, and nobody was standing where they stand.
+//   - **the canonical-length refusals**, which are RLP's whole attack surface. A decoder that accepts a
+//     non-minimal length accepts two encodings of one value, and two encodings mean two hashes for one
+//     object — which for a trie node or a beacon container is the difference between a proof and a
+//     forgery.
+//
+// The published vectors cannot reach the second kind for the reason the first three packages found: a
+// corpus of real Ethereum data contains nothing Ethereum would never emit.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { decode, encode, Decoded, Item, bytesOf, itemsOf, isList } from "../../src/rlp.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** The error a decode answered, or "" when it succeeded. */
+string why(u8[] input) {
+  Decoded d = decode(input);
+  return d.ok ? "" : d.error;
+}
+
+/**
+ * `bytesOf`, `itemsOf` and `isList` over both variants, including the two that trap.
+ *
+ * `Item` is a two-variant enum and each accessor answers for one variant and refuses the other. The
+ * refusals are traps rather than empty answers on purpose: a caller that asks a list for its bytes has
+ * a bug in it, and an empty `u8[]` would be a plausible answer to carry forward — a node hashed from
+ * nothing rather than an error.
+ *
+ * The trapping halves live in `trapCase` in the coverage exercise; what is here is everything that
+ * returns.
+ */
+export string test_the_accessors_answer_for_the_variant_they_are_for() {
+  T t = T.create();
+
+  Item bytes = Item.Bytes(u8[](1, 2, 3));
+  Item[] two = Item[2](fill: Item.Bytes(u8[0]()));
+  two[0] = Item.Bytes(u8[](9));
+  two[1] = Item.Bytes(u8[](8, 7));
+  Item list = Item.List(two);
+
+  t.isFalse(isList(bytes), "a byte string called itself a list");
+  t.isTrue(isList(list), "a list called itself a byte string");
+
+  u8[] got = bytesOf(bytes);
+  t.eqI32(got.len(), 3, "bytesOf answered the wrong length");
+  t.eqI32(got[0], 1, "bytesOf answered the wrong bytes");
+
+  Item[] items = itemsOf(list);
+  t.eqI32(items.len(), 2, "itemsOf answered the wrong count");
+  t.eqI32(bytesOf(items[1]).len(), 2, "the second item is not what was put in it");
+
+  // An empty list and an empty string are different things that both hold nothing, which is the
+  // distinction `isList` exists to make: `0xC0` and `0x80` are one byte each and not the same byte.
+  t.isTrue(isList(Item.List(Item[0](fill: bytes))), "an empty list is still a list");
+  t.eqI32(itemsOf(Item.List(Item[0](fill: bytes))).len(), 0, "an empty list has items");
+  t.eqI32(bytesOf(Item.Bytes(u8[0]())).len(), 0, "an empty string has bytes");
+  t.eqI32(encode(Item.List(Item[0](fill: bytes)))[0], 0xC0, "an empty list is not 0xC0");
+  t.eqI32(encode(Item.Bytes(u8[0]()))[0], 0x80, "an empty string is not 0x80");
+  return t.report();
+}
+
+/**
+ * The long-form length rules, each refused for its own reason.
+ *
+ * A long-form prefix says how many bytes carry the length, and the length must then be minimal, above
+ * 55, and small enough to be an `i32`. Every one of those is a canonicity rule rather than a
+ * well-formedness one: the value is perfectly readable and there is a shorter way to have written it,
+ * and accepting both is what gives one object two hashes.
+ */
+export string test_a_length_prefix_must_be_canonical_and_must_fit() {
+  T t = T.create();
+
+  // The well-formed twin: a 56-byte string, which is the first length that needs the long form.
+  u8[] long56 = u8[58]();
+  long56[0] = 0xB8;
+  long56[1] = 56;
+  t.eqStr(why(long56), "", "the shortest legitimate long form was refused");
+
+  // A prefix that says one length byte follows, and nothing does.
+  t.isTrue(why(u8[](0xB8)).len() > 0, "a truncated length prefix was accepted");
+  t.isTrue(why(u8[](0xB8)).indexOf("past the end") >= 0,
+           "the message does not say what ran out: " + why(u8[](0xB8)));
+
+  // A leading zero in the length: 0x00 0x38 is 56 written in two bytes instead of one.
+  u8[] leadingZero = u8[60]();
+  leadingZero[0] = 0xB9;
+  leadingZero[1] = 0;
+  leadingZero[2] = 56;
+  t.isTrue(why(leadingZero).indexOf("leading zero") >= 0,
+           "a length with a leading zero was accepted: " + why(leadingZero));
+
+  // A length below 56, written long: `0xB8 0x01 'a'` is `'a'`, which is one byte on its own.
+  t.isTrue(why(u8[](0xB8, 1, 0x61)).indexOf("short form") >= 0,
+           "a long form that fits the short one was accepted: " + why(u8[](0xB8, 1, 0x61)));
+
+  // **Four bytes of length can spell four gigabytes and an i32 cannot hold it.** The alternative to
+  // refusing is a negative length read as a short item, which is how a decoder is talked into reading
+  // backwards.
+  string big = why(u8[](0xBB, 0xFF, 0xFF, 0xFF, 0xFF));
+  t.isTrue(big.indexOf("32-bit") >= 0, "a four-gigabyte length was accepted: " + big);
+
+  // And more than four bytes of length, refused before the arithmetic rather than after it.
+  string wider = why(u8[](0xBF, 1, 0, 0, 0, 0, 0, 0, 0));
+  t.isTrue(wider.indexOf("32-bit") >= 0, "an eight-byte length was accepted: " + wider);
+  return t.report();
+}
+
+/**
+ * A list whose members do not fill it, and one whose members overrun it.
+ *
+ * A list's prefix declares a byte count and its members are decoded until that count is used up. The
+ * two ways that can fail to agree are the two ambiguities RLP's canonicity forbids: if the members stop
+ * short there are bytes inside the list that are not in any member, and if they overrun, the list says
+ * one thing and its contents another.
+ */
+export string test_a_lists_members_must_end_exactly_where_it_says() {
+  T t = T.create();
+
+  // The well-formed twin: a two-byte list holding two one-byte strings.
+  t.eqStr(why(u8[](0xC2, 0x61, 0x62)), "", "a well-formed list was refused");
+
+  // A member that runs past the list's declared end: the list says two bytes and its first member
+  // claims three.
+  string over = why(u8[](0xC2, 0x83, 0x61, 0x62, 0x63));
+  t.isTrue(over.len() > 0, "a list whose member overruns its length was accepted");
+
+  // A first member that is malformed, in a list with more bytes after it — so the decoder is asked for
+  // a second item with the error already recorded. What that guards is the *first* message surviving:
+  // a later item overwriting it would name the last thing examined rather than the thing wrong.
+  string after = why(u8[](0xC4, 0xB8, 0x00, 0x61, 0x62));
+  t.isTrue(after.len() > 0, "a list whose first member is malformed was accepted");
+
+  // Trailing bytes after a complete item are not part of it and are not ignored.
+  t.isTrue(why(u8[](0x61, 0x62)).len() > 0, "a trailing byte after a complete item was accepted");
+  return t.report();
+}

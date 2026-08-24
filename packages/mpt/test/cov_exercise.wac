@@ -1,0 +1,195 @@
+// Branch coverage for mpt: the package's own tests, and nothing else.
+//
+//   deno task coverage:mpt
+//   deno task coverage:mpt --verbose
+//
+// The second of the packages `issues/system/0205` records as having no coverage driver, after
+// `packages/ssz`. Picked for the contrast as much as the value: it is the same business — proofs that
+// either verify or do not, where a wrong answer is silent rather than loud — but unlike `ssz` it
+// already has a `malformed_test.wac`, seven tests of its refusals written before any driver existed.
+// Whether that shows up as a smaller first gap is exactly what the measurement is for.
+//
+// All 28 tests are called directly; twenty take `(Core, Cli)` because they verify against Ethereum's
+// published roots through a host-side oracle. None expects a trap.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import {
+  test_the_two_empty_constants_are_what_they_claim_to_be as ac__the_two_empty_constants_are_what_they_claim_to_be,
+  test_an_account_is_read_out_of_the_state_trie_fields_and_all as ac__an_account_is_read_out_of_the_state_trie_fields_and_all,
+  test_an_address_the_state_has_never_seen_is_proved_absent as ac__an_address_the_state_has_never_seen_is_proved_absent,
+  test_a_slot_is_read_out_of_the_storage_trie_under_the_root_the_account_gave as ac__a_slot_is_read_out_of_the_storage_trie_under_the_root_the_account_gave,
+  test_a_slot_that_was_never_written_is_absent_which_is_how_zero_is_stored as ac__a_slot_that_was_never_written_is_absent_which_is_how_zero_is_stored,
+  test_an_account_with_no_storage_refuses_a_storage_proof_from_another_account as ac__an_account_with_no_storage_refuses_a_storage_proof_from_another_account,
+  test_the_accounts_own_bytes_are_checked_not_just_the_path_to_them as ac__the_accounts_own_bytes_are_checked_not_just_the_path_to_them,
+  test_a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_bytes as ac__a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_bytes,
+  test_an_address_is_twenty_bytes_and_a_slot_key_is_thirty_two as ac__an_address_is_twenty_bytes_and_a_slot_key_is_thirty_two,
+} from "./wac/account_test.wac";
+import {
+  test_an_account_with_storage_verifies_against_a_real_state_root as gp__an_account_with_storage_verifies_against_a_real_state_root,
+  test_an_account_that_does_not_exist_is_proved_absent as gp__an_account_that_does_not_exist_is_proved_absent,
+  test_a_funded_account_with_no_storage as gp__a_funded_account_with_no_storage,
+  test_the_clients_roots_are_this_packages_constants as gp__the_clients_roots_are_this_packages_constants,
+  test_a_proof_from_one_account_does_not_verify_against_another as gp__a_proof_from_one_account_does_not_verify_against_another,
+} from "./wac/getproof_test.wac";
+import {
+  test_a_leaf_whose_value_is_a_list_is_refused as mf__a_leaf_whose_value_is_a_list_is_refused,
+  test_a_branch_terminal_that_is_a_list_is_refused as mf__a_branch_terminal_that_is_a_list_is_refused,
+  test_a_hex_prefix_header_that_is_a_list_is_refused as mf__a_hex_prefix_header_that_is_a_list_is_refused,
+  test_an_account_field_that_is_a_list_is_refused as mf__an_account_field_that_is_a_list_is_refused,
+  test_absence_from_an_empty_trie_is_proved_by_no_nodes as mf__absence_from_an_empty_trie_is_proved_by_no_nodes,
+  test_no_nodes_against_any_other_root_proves_nothing as mf__no_nodes_against_any_other_root_proves_nothing,
+  test_a_slot_of_an_account_with_no_storage_is_absent as mf__a_slot_of_an_account_with_no_storage_is_absent,
+  test_a_hex_prefix_header_must_be_canonical_not_merely_parseable as mf__a_hex_prefix_header_must_be_canonical_not_merely_parseable,
+  test_a_root_and_a_node_reference_are_thirty_two_bytes as mf__a_root_and_a_node_reference_are_thirty_two_bytes,
+  test_a_node_that_is_not_an_rlp_list_is_refused as mf__a_node_that_is_not_an_rlp_list_is_refused,
+  test_a_proved_value_that_is_not_rlp_is_refused_after_the_proof_verifies as mf__a_proved_value_that_is_not_rlp_is_refused_after_the_proof_verifies,
+  test_a_later_node_cannot_overwrite_the_first_refusal as mf__a_later_node_cannot_overwrite_the_first_refusal,
+} from "./wac/malformed_test.wac";
+import {
+  test_the_oracles_keccak256_is_keccak256 as pr__the_oracles_keccak256_is_keccak256,
+  test_the_trie_oracle_matches_ethereums_published_roots as pr__the_trie_oracle_matches_ethereums_published_roots,
+  test_every_key_of_every_fixture_has_a_proof_that_verifies as pr__every_key_of_every_fixture_has_a_proof_that_verifies,
+  test_a_key_that_is_not_in_the_trie_is_proved_absent_not_merely_unproven as pr__a_key_that_is_not_in_the_trie_is_proved_absent_not_merely_unproven,
+  test_a_refusal_names_the_hashes_it_could_not_reconcile as pr__a_refusal_names_the_hashes_it_could_not_reconcile,
+  test_every_perturbation_of_a_valid_proof_is_refused as pr__every_perturbation_of_a_valid_proof_is_refused,
+  test_a_trie_the_shape_ethereums_actually_are_keccak_keys_32_byte_values_deep_paths as pr__a_trie_the_shape_ethereums_actually_are_keccak_keys_32_byte_values_deep_paths,
+} from "./wac/proof_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (mf__a_proved_value_that_is_not_rlp_is_refused_after_the_proof_verifies().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_proved_value_that_is_not_rlp_is_refused_after_the_proof_verifies");
+    bad = bad + 1;
+  }
+  if (mf__a_later_node_cannot_overwrite_the_first_refusal().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_later_node_cannot_overwrite_the_first_refusal");
+    bad = bad + 1;
+  }
+  if (mf__a_hex_prefix_header_must_be_canonical_not_merely_parseable().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_hex_prefix_header_must_be_canonical_not_merely_parseable");
+    bad = bad + 1;
+  }
+  if (mf__a_root_and_a_node_reference_are_thirty_two_bytes().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_root_and_a_node_reference_are_thirty_two_bytes");
+    bad = bad + 1;
+  }
+  if (mf__a_node_that_is_not_an_rlp_list_is_refused().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_node_that_is_not_an_rlp_list_is_refused");
+    bad = bad + 1;
+  }
+  if (ac__the_two_empty_constants_are_what_they_claim_to_be().len() > 0) {
+    core.warn("error: FAILED account_test test_the_two_empty_constants_are_what_they_claim_to_be");
+    bad = bad + 1;
+  }
+  if (ac__an_account_is_read_out_of_the_state_trie_fields_and_all(core, cli).len() > 0) {
+    core.warn("error: FAILED account_test test_an_account_is_read_out_of_the_state_trie_fields_and_all");
+    bad = bad + 1;
+  }
+  if (ac__an_address_the_state_has_never_seen_is_proved_absent(core, cli).len() > 0) {
+    core.warn("error: FAILED account_test test_an_address_the_state_has_never_seen_is_proved_absent");
+    bad = bad + 1;
+  }
+  if (ac__a_slot_is_read_out_of_the_storage_trie_under_the_root_the_account_gave(core, cli).len() > 0) {
+    core.warn("error: FAILED account_test test_a_slot_is_read_out_of_the_storage_trie_under_the_root_the_account_gave");
+    bad = bad + 1;
+  }
+  if (ac__a_slot_that_was_never_written_is_absent_which_is_how_zero_is_stored(core, cli).len() > 0) {
+    core.warn("error: FAILED account_test test_a_slot_that_was_never_written_is_absent_which_is_how_zero_is_stored");
+    bad = bad + 1;
+  }
+  if (ac__an_account_with_no_storage_refuses_a_storage_proof_from_another_account(core, cli).len() > 0) {
+    core.warn("error: FAILED account_test test_an_account_with_no_storage_refuses_a_storage_proof_from_another_account");
+    bad = bad + 1;
+  }
+  if (ac__the_accounts_own_bytes_are_checked_not_just_the_path_to_them(core, cli).len() > 0) {
+    core.warn("error: FAILED account_test test_the_accounts_own_bytes_are_checked_not_just_the_path_to_them");
+    bad = bad + 1;
+  }
+  if (ac__a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_bytes(core, cli).len() > 0) {
+    core.warn("error: FAILED account_test test_a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_bytes");
+    bad = bad + 1;
+  }
+  if (ac__an_address_is_twenty_bytes_and_a_slot_key_is_thirty_two(core, cli).len() > 0) {
+    core.warn("error: FAILED account_test test_an_address_is_twenty_bytes_and_a_slot_key_is_thirty_two");
+    bad = bad + 1;
+  }
+  if (gp__an_account_with_storage_verifies_against_a_real_state_root(core, cli).len() > 0) {
+    core.warn("error: FAILED getproof_test test_an_account_with_storage_verifies_against_a_real_state_root");
+    bad = bad + 1;
+  }
+  if (gp__an_account_that_does_not_exist_is_proved_absent(core, cli).len() > 0) {
+    core.warn("error: FAILED getproof_test test_an_account_that_does_not_exist_is_proved_absent");
+    bad = bad + 1;
+  }
+  if (gp__a_funded_account_with_no_storage(core, cli).len() > 0) {
+    core.warn("error: FAILED getproof_test test_a_funded_account_with_no_storage");
+    bad = bad + 1;
+  }
+  if (gp__the_clients_roots_are_this_packages_constants(core, cli).len() > 0) {
+    core.warn("error: FAILED getproof_test test_the_clients_roots_are_this_packages_constants");
+    bad = bad + 1;
+  }
+  if (gp__a_proof_from_one_account_does_not_verify_against_another(core, cli).len() > 0) {
+    core.warn("error: FAILED getproof_test test_a_proof_from_one_account_does_not_verify_against_another");
+    bad = bad + 1;
+  }
+  if (mf__a_leaf_whose_value_is_a_list_is_refused().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_leaf_whose_value_is_a_list_is_refused");
+    bad = bad + 1;
+  }
+  if (mf__a_branch_terminal_that_is_a_list_is_refused().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_branch_terminal_that_is_a_list_is_refused");
+    bad = bad + 1;
+  }
+  if (mf__a_hex_prefix_header_that_is_a_list_is_refused().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_hex_prefix_header_that_is_a_list_is_refused");
+    bad = bad + 1;
+  }
+  if (mf__an_account_field_that_is_a_list_is_refused().len() > 0) {
+    core.warn("error: FAILED malformed_test test_an_account_field_that_is_a_list_is_refused");
+    bad = bad + 1;
+  }
+  if (mf__absence_from_an_empty_trie_is_proved_by_no_nodes().len() > 0) {
+    core.warn("error: FAILED malformed_test test_absence_from_an_empty_trie_is_proved_by_no_nodes");
+    bad = bad + 1;
+  }
+  if (mf__no_nodes_against_any_other_root_proves_nothing().len() > 0) {
+    core.warn("error: FAILED malformed_test test_no_nodes_against_any_other_root_proves_nothing");
+    bad = bad + 1;
+  }
+  if (mf__a_slot_of_an_account_with_no_storage_is_absent().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_slot_of_an_account_with_no_storage_is_absent");
+    bad = bad + 1;
+  }
+  if (pr__the_oracles_keccak256_is_keccak256(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_the_oracles_keccak256_is_keccak256");
+    bad = bad + 1;
+  }
+  if (pr__the_trie_oracle_matches_ethereums_published_roots(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_the_trie_oracle_matches_ethereums_published_roots");
+    bad = bad + 1;
+  }
+  if (pr__every_key_of_every_fixture_has_a_proof_that_verifies(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_every_key_of_every_fixture_has_a_proof_that_verifies");
+    bad = bad + 1;
+  }
+  if (pr__a_key_that_is_not_in_the_trie_is_proved_absent_not_merely_unproven(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_a_key_that_is_not_in_the_trie_is_proved_absent_not_merely_unproven");
+    bad = bad + 1;
+  }
+  if (pr__a_refusal_names_the_hashes_it_could_not_reconcile(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_a_refusal_names_the_hashes_it_could_not_reconcile");
+    bad = bad + 1;
+  }
+  if (pr__every_perturbation_of_a_valid_proof_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_every_perturbation_of_a_valid_proof_is_refused");
+    bad = bad + 1;
+  }
+  if (pr__a_trie_the_shape_ethereums_actually_are_keccak_keys_32_byte_values_deep_paths(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_a_trie_the_shape_ethereums_actually_are_keccak_keys_32_byte_values_deep_paths");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("mpt: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}

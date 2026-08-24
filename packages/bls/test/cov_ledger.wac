@@ -1,0 +1,263 @@
+// bls's coverage, and the first package measured whose subject is a verifier.
+//
+//   deno task coverage:bls
+//   deno task coverage:bls --verbose
+//
+// **661 of 718**, from 633 on the first run. `issues/system/0205`.
+//
+// ## Where the gap was, which is the whole result
+//
+// `verify.wac` opened at **77.1%**, the worst file in the package, and **every one of its twenty-four
+// uncovered points was a refusal.** Nine `g2IsInfinity` guards, ten deserialization refusals, four
+// count checks, one correction — and not one line of arithmetic among them. The tower, the Miller
+// loop and the final exponentiation were already at 91–96%.
+//
+// That is the fifth package in a row to land in the same place, and the reason is the same: the
+// corpus is the CFRG hash-to-curve vectors and the Ethereum consensus fixtures, and **a published
+// test vector is written by an implementation that works.** `rlp`, `mpt`, `ssz` and `abi` reached it
+// about decoders judged against real Ethereum data; this one reaches it about a verifier judged
+// against real signatures.
+//
+// ## The finding: the fixtures were not driving the function the verifiers call
+//
+// The best of the new tests did not need a new input. Ethereum's corpus already contains
+// `deserialization_fails_not_in_G1` — a well-formed encoding of a curve point outside the order-r
+// subgroup, which is the small-subgroup input the check exists for. It was read, it was refused, the
+// test passed.
+//
+// It was refused by `test/wac/probe.wac`'s `blsG1Status`, which calls `g1Decompress`, `g1IsOnCurve`
+// and `g1InSubgroup` in sequence so it can report *which* said no. So the corpus was driving the
+// probe's copy of the composition, and never **`g1FromBytes`** — the function every verifier in this
+// package calls, whose own subgroup line no test had executed.
+//
+// `g1FromBytes`'s source comment states the intent it was not held to:
+//
+//     *"The three are separate functions above so a test can reach each one, and one function here so
+//     a caller cannot use two of the three by accident."*
+//
+// Canaried, because a claim like that should not be asserted from reading: with the subgroup line
+// deleted from `g1FromBytes`, `verify_test`, `curve_test` and `aggregate_test` all pass — and
+// `test_the_real_entry_point_refuses_what_the_probe_refuses` fails. The code was right; nothing was
+// checking that it stayed right.
+//
+// ## Three new test files, and one deletion
+//
+//   - `test/wac/refusals_test.wac` — a **real** public key with an infinity signature, at each of the
+//     four entry points. The corpus's one infinity case supplies an infinity key *and* signature at
+//     once, so any single guard satisfies it; these separate them.
+//   - `test/wac/group_edges_test.wac` — the finding above, plus infinity as an operand and the
+//     identity's absent affine coordinates, which `toPair` depends on being `null`.
+//   - `test/wac/field_edges_test.wac` — `fp2Sqrt` over a walk of values, about half of which have no
+//     root. A vector table has no row for *there is no square root*, which is what the format is.
+//   - `fp12Zero` was exported, imported once by `probe.wac` and never called. Deleted with its import,
+//     per the repository's rule about a second copy of anything.
+//
+// ## What is left, and why it is nearly all defence in depth
+//
+// Fifty-seven points, and the large families are stated as rules rather than pinned one at a time.
+// Two are worth reading before adding to them: `fp2Sqrt`'s three later refusals cannot fire because
+// the norm test above them already decides the question, and the whole SWU degenerate branch is
+// reached with probability about 2⁻³⁸¹.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/bls/test/cov_exercise.wac";
+const string PREFIX = "packages/bls/";
+
+/** What the tests need: the vendored fixtures on disk, and a process to ask the Python oracle. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/bls/src/verify.wac", "is null", "line", true,
+         "**Seven `null` checks behind a guard that already established the value is not null.** " +
+         "`toPair` answers `null` for exactly one reason — a point at infinity has no affine " +
+         "coordinates — and every one of its callers refuses infinity on the line above. So `:220`, " +
+         "`:224`, `:336` and `:342` cannot fire, and `:77` and `:89` inside `toPair` and `verifyPair` " +
+         "are the same fact one level down. `:67` is `finalExponentiate` failing, which needs a " +
+         "non-invertible element of a field.\n" +
+         "         Kept, and this is the file where keeping them is least arguable: the whole of " +
+         "`verify.wac` is a sequence of refusals, and one of them being redundant *today* is a " +
+         "property of the guard above it rather than of this line. Reorder the two and the redundant " +
+         "one becomes the only one."),
+    Rule("packages/bls/src/verify.wac", "g2IsInfinity(h)", "line", true,
+         "**The hash of a message is never the identity.** `hashToG2` maps to the curve and then " +
+         "clears the cofactor, and the identity is not in the image for any input — RFC 9380 is " +
+         "explicit that the map is to the group's non-identity elements. So `:86`, `:218` and `:332` " +
+         "have no message that reaches them.\n" +
+         "         Three copies rather than one because each is in a different loop over a different " +
+         "caller's messages, and the alternative is a single check somewhere that a fourth caller " +
+         "would not inherit."),
+    Rule("packages/bls/src/fp2.wac", "{ return null; }", "line", true,
+         "**`fp2Sqrt`'s three later refusals cannot fire, and the reason is a theorem rather than an " +
+         "accident.** `a ∈ Fp2` is a square exactly when its norm `a0² + a1²` is a square in Fp, and " +
+         "the norm is tested at `:139` — so by the time `:143`, `:146` and `:148` are reached, `a` is " +
+         "known to be a square and the construction succeeds. `:130` is the same shape in the purely " +
+         "real branch: `p ≡ 3 (mod 4)`, so `−1` is a nonresidue, so exactly one of `a0` and `−a0` is " +
+         "a square and the two attempts cannot both fail.\n" +
+         "         `test/wac/field_edges_test.wac` drives forty values through this function and " +
+         "about half have no root — every one of them refused at `:139`. Kept because `:148` is the " +
+         "check that the answer squares back, and a function that computes a root by three different " +
+         "formulas depending on the input should verify the one it took."),
+    Rule("packages/bls/src/fpkernel.wac", "return (a[", "line", false,
+         "**The deep rungs of the limb-by-limb comparison against p.** `atLeastP` walks the twelve " +
+         "limbs from the top and returns as soon as one differs, so reaching the comparison at limb " +
+         "two needs a value agreeing with p in its top nine limbs. Nothing in a signature protocol " +
+         "produces one: the values are hashes, products and coordinates, uniform over the field.\n" +
+         "         `proven: false` rather than true — these are perfectly reachable, and a test that " +
+         "constructed p-minus-a-few would drive every rung. It has not been written, and this file " +
+         "is generated from `tools/gen/bls/fpkernel`, so the useful version of that test belongs " +
+         "beside the generator rather than here."),
+    Rule("packages/bls/src/g1.wac", "if (zi is null) { return null; }", "line", true,
+         "`g1AffineX` and `g1AffineY` invert `z` after checking the point is not infinity, and the " +
+         "only element of Fp with no inverse is zero, which is what infinity *means* here. Two " +
+         "copies, one per accessor. `test/wac/group_edges_test.wac` drives the infinity check above " +
+         "each of them; this is the line below it."),
+    Rule("packages/bls/src/g2.wac", "if (zi is null) { return null; }", "line", true,
+         "The G2 half of the same pair — see `packages/bls/src/g1.wac:231`.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/bls/src/verify.wac", 271, "if (k[0] == 0 && k[1] == 0) { k[0] = 1; }", false,
+        "**The zero batch weight, excluded rather than reasoned about.** A weight of zero drops its " +
+        "term out of the batch equation entirely, so a signature carrying one is not checked at all " +
+        "— which is the single value that must not occur. Reaching this line needs a transcript " +
+        "whose SHA-256 begins with sixty-four zero bits.\n" +
+        "         `proven: false` because an input exists; it costs 2⁶⁴ hashes to find, which is the " +
+        "work this line exists to make unnecessary. The surrounding contract is tested instead — " +
+        "`test_a_batch_weight_is_two_words_and_never_zero` asserts the weights are not all zero, not " +
+        "all equal, and depend on both the index and the transcript."),
+    Pin("packages/bls/src/verify.wac", 340, "if (g2IsInfinity(sigSum)) { return false; }", false,
+        "The weighted signatures summing to the identity. An adversary would have to choose points " +
+        "that cancel under weights derived from those same points, which is what committing the " +
+        "transcript prevents — and a test cannot build it for the same reason. Reachable in " +
+        "principle, hence `false`, and the guard is what makes the impossibility a refusal rather " +
+        "than a pairing with the identity."),
+    Pin("packages/bls/src/g1.wac", 202,
+        "if (g1IsInfinity(a) || g1IsInfinity(b)) { return g1IsInfinity(a) && g1IsInfinity(b); }", true,
+        "**`g1Same` is private and its only callers never hand it the identity.** It is used by " +
+        "`g1InSubgroup`, which compares `φ(P)` against `[−x²]P` — and for `P = O` both sides are " +
+        "computed but the subgroup test short-circuits before the comparison. So there is no exported " +
+        "route to this arm.\n" +
+        "         `test/wac/group_edges_test.wac` asserts `g1InSubgroup(g1Infinity())` is true, which " +
+        "is the closest a test gets; the arm itself stays unexecuted."),
+    Pin("packages/bls/src/g2.wac", 194,
+        "if (g2IsInfinity(a) || g2IsInfinity(b)) { return g2IsInfinity(a) && g2IsInfinity(b); }", true,
+        "The G2 half of the same private comparison — see `packages/bls/src/g1.wac:202`."),
+    Pin("packages/bls/src/g1.wac", 267, "if ((ax is null) || (ay is null)) { return out; }", true,
+        "`g1Compress` after the infinity branch has already returned, so the point has affine " +
+        "coordinates by construction. The `out` it would return is forty-eight zero bytes, which is " +
+        "not a valid encoding of anything — a deliberate choice over trapping, since compression is " +
+        "called on points the caller already validated."),
+    Pin("packages/bls/src/g2.wac", 253, "if ((ax is null) || (ay is null)) { return out; }", true,
+        "The G2 half — see `packages/bls/src/g1.wac:267`."),
+    Pin("packages/bls/src/g1.wac", 325, "if (!g1IsOnCurve(p!)) { return null; }", true,
+        "**Structurally unreachable, unlike the subgroup line below it.** `g1Decompress` derives `y` " +
+        "as a square root of `x³ + b`, so anything it returns satisfies the curve equation by " +
+        "construction and this can only fire if the two disagree about what the curve is.\n" +
+        "         Kept, and this is the pin most worth reading beside the finding in " +
+        "`group_edges_test.wac`: the *subgroup* line one below was uncovered for a completely " +
+        "different reason — an input existed and no test sent it through this function — and the two " +
+        "look identical from the report. A line being unreachable and a line being untested are the " +
+        "same number and not the same problem."),
+    Pin("packages/bls/src/g2.wac", 301, "if (!g2IsOnCurve(p!)) { return null; }", true,
+        "The G2 half — see `packages/bls/src/g1.wac:325`."),
+    Pin("packages/bls/src/g2.wac", 241, "if (!fpIsZero(a.c1)) { return fpIsLexicographicallyLarger(a.c1); }", false,
+        "The sign of a G2 coordinate whose `c1` is zero, so the tie is broken on `c0`. Every point " +
+        "the corpus and the tests produce has a `y` with a nonzero `c1` — a random element of Fp2 " +
+        "has `c1 = 0` with probability 2⁻³⁸¹. Reachable by constructing such a point, which nothing " +
+        "yet does."),
+    Pin("packages/bls/src/hash.wac", 101, "if (uniform.len() == 0) { return out; }", true,
+        "`hashToFieldFp2` asks `expandMessageXmd` for `2 · 2 · L` bytes, a compile-time constant well " +
+        "inside the range it accepts, so the empty answer this guards against cannot occur at this " +
+        "call site. `hash_test.wac` drives the out-of-range refusal directly, where it is reachable."),
+    Pin("packages/bls/src/map.wac", 247, "Fp2 swuNegInvZ() {", false,
+        "**The whole SWU degenerate branch, entered with probability about 2⁻³⁸¹.** `:280` takes it " +
+        "when the map's denominator vanishes, and this function supplies the replacement `x`. " +
+        "RFC 9380 requires the case to be handled and no `u` anyone can compute reaches it.\n" +
+        "         `proven: false` because a `u` exists — it is a root of a specific polynomial and " +
+        "could be solved for. Worth someone's time if this package ever grows a way to construct " +
+        "field elements by inverse computation; until then, unexercised and correct by reading."),
+    Pin("packages/bls/src/map.wac", 280, "if (degenerate) { x1 = swuNegInvZ(); }", false,
+        "The branch `:247` supplies the value for — see there."),
+    Pin("packages/bls/src/map.wac", 299, "if (root2 is not null) { y = root2!; }", false,
+        "The second candidate root in the SWU map. The first candidate works for every `u` the " +
+        "vectors and the tests supply; this is the arm for the other quadratic case, of the same " +
+        "family as `:280`."),
+    Pin("packages/bls/src/map.wac", 335, "if (fp2IsZero(xDen) || fp2IsZero(yDen)) { return G2(fp2One(), fp2One(), fp2Zero()); }", false,
+        "A vanishing denominator in the 3-isogeny, which maps the point to infinity. Same family as " +
+        "`:280` — the isogeny's poles are a finite set of `x` values and nothing computes one."),
+    Pin("packages/bls/src/pairing.wac", 186, "if (inv is null) { return null; }", true,
+        "The final exponentiation inverting an element of Fp12 that it has already established is " +
+        "not zero — the Miller loop's output is a product of line evaluations at points not at " +
+        "infinity, so it is a unit."),
+    Pin("packages/bls/src/pairing.wac", 288, "if ((px is null) || (py is null) || (qx is null) || (qy is null)) { return null; }", true,
+        "`pairing`'s own affine extraction, guarded by the caller having refused infinity. The same " +
+        "fact as the rule over `verify.wac`'s `is null` lines, in the file below it."),
+    Pin("packages/bls/src/fp12.wac", 105, "if (n is null) { return null; }", true,
+        "`fp6Invert` on a norm that is zero, which happens only for the zero element — refused by the " +
+        "caller. The tower's inversions are each written as invert-the-norm-then-scale, and each " +
+        "carries this line for the element the layer above has already excluded."),
+    Pin("packages/bls/src/fp12.wac", 336, "if (t is null) { return null; }", true,
+        "The same fact one layer up, in `fp12Invert` — see `:105`."),
+    Pin("packages/bls/src/fpkernel.wac", 75, "borrow = (d < 0) ? 1 : 0;", false,
+        "One of the twelve borrow computations in `subPInPlace`, at the limb where nothing has yet " +
+        "borrowed. The subtraction runs bottom-up and this rung's `d < 0` is false for every value " +
+        "the exercise supplies — reachable, and it needs a value whose limb sits just above p's at " +
+        "exactly this position. Same family as the rule above, and unbuilt for the same reason: this " +
+        "file is generated, so a sweep over the reduction belongs beside its generator."),
+    Pin("packages/bls/src/fp.wac", 113, "if (!atLeastP(p)) { return false; }", true,
+        "**`fpModulusConstantsAgree` is a self-check that returns false when this file's two spellings " +
+        "of p disagree, and they agree.** Four of its five arms are therefore unexecuted: `:113`, " +
+        "`:116`, `:119` and `:121` each report a different way for the two to differ.\n" +
+        "         Kept and driven, in the sense that matters — `probe.wac` calls it and `fp_test.wac` " +
+        "asserts it is true, so the *walk* runs on every test run and only the failure arms are " +
+        "unexecuted. A ledger cannot tell that apart from a function nobody calls, which is why this " +
+        "says so."),
+    Pin("packages/bls/src/fp.wac", 116, "if (!fpIsZero(zero)) { return false; }", true,
+        "The second arm of the modulus self-check — see `:113`."),
+    Pin("packages/bls/src/fp.wac", 119, "if (atLeastP(below)) { return false; }", true,
+        "The third arm — see `:113`."),
+    Pin("packages/bls/src/fp.wac", 121, "if (p[i] != pWord(i)) { return false; }", true,
+        "The fourth arm — see `:113`."),
+    Pin("packages/bls/src/fp.wac", 245, "if (a[i] != 0) { return false; }", false,
+        "The early exit in a zero test, reached when a value's low limbs are zero and a higher one is " +
+        "not. Reachable and unbuilt: the values this package tests are field elements from hashes and " +
+        "products, and one with a zero low limb turns up about once in 2³²."),
+    Pin("packages/bls/src/fp.wac", 308, "if (carry != 0 || atLeastP(a)) { subPInPlace(a); }", false,
+        "The conditional subtraction after a Montgomery reduction, taken when the intermediate " +
+        "overflows or lands at or above p. Reachable — it fires for a real fraction of random inputs " +
+        "— and this exercise's inputs are the ones the vectors supply, which happen not to. The " +
+        "generated `fpkernel_generated_test.wac` is where a sweep over the reduction belongs."),
+    Pin("packages/bls/src/fp.wac", 381, "if (v[i] != half[i]) { return (v[i] as u64) > (half[i] as u64); }", false,
+        "The deep rungs of `fpIsLexicographicallyLarger`'s comparison against (p−1)/2, which decides " +
+        "a compressed point's sign bit. Same shape as the `fpkernel` rule: the walk exits at the top " +
+        "limb for every value that is not within a few of the midpoint."),
+    Pin("packages/bls/src/fp.wac", 407, "if (lead != 0) {", false,
+        "`fpFromWideBytes` handling an input whose length is not a multiple of four, in its leading " +
+        "partial word. Its two callers pass `L`-byte buffers, and `L` is 64. Reachable by any caller " +
+        "with another length, of which there are none."),
+    Pin("packages/bls/src/fp.wac", 410, "for (i32 i = 0; i < lead; i++) { w = (w << 8) | (s[i] as@ u32); }", false,
+        "The loop inside `:407` — see there.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

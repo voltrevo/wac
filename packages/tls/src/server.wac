@@ -49,10 +49,10 @@ import {
   nextTrafficSecret, trafficKeyIv,
 } from "./keyschedule.wac";
 import {
-  recordSeal, recordOpen, recordType, recordContent, suiteAes128Gcm, suiteKeyLen,
+  recordSeal, recordTryOpen, recordType, recordContent, hasContentType, suiteAes128Gcm, suiteKeyLen,
   typeHandshake, typeApplicationData, typeAlert, typeChangeCipherSpec, maxPlaintext,
   alertBody, plaintextAlert, alertCloseNotify, alertDecryptError, alertHandshakeFailure,
-  alertIllegalParameter, alertProtocolVersion, alertUnexpectedMessage,
+  alertIllegalParameter, alertProtocolVersion, alertUnexpectedMessage, alertBadRecordMac,
 } from "./record.wac";
 import {
   certificate, certificateVerify, certificateVerifyContent, encryptedExtensions,
@@ -229,14 +229,23 @@ void sealInto(Writer out, Conn c, i32 contentType, u8[] content) {
 }
 
 /** Open a record under the current read secret. */
-u8[] openWith(Conn c, u8[] record) {
+/**
+ * Open a record under the client's current traffic keys, or `null` if it is not one.
+ *
+ * **The sequence number advances either way.** A record that did not authenticate still occupied a
+ * position in the peer's stream, and not counting it would leave the two ends disagreeing about
+ * every record after — which is indistinguishable from forgery, which is the point of the counter.
+ * Moot while the only thing a caller does with `null` is fail the connection, and not moot if that
+ * ever changes.
+ */
+u8[]? openWith(Conn c, u8[] record) {
   i32 keyLen = suiteKeyLen(c.suite);
   u8[] ki = trafficKeyIv(c.clientSecret, keyLen);
   u8[] key = u8[keyLen]();
   u8[] iv = u8[12]();
   for (i32 i = 0; i < keyLen; i++) { key[i] = ki[i]; }
   for (i32 i = 0; i < 12; i++) { iv[i] = ki[keyLen + i]; }
-  u8[] inner = recordOpen(c.suite, key, iv, c.seqIn, record);
+  u8[]? inner = recordTryOpen(c.suite, key, iv, c.seqIn, record);
   c.seqIn += 1;
   return inner;
 }
@@ -399,6 +408,19 @@ u8[] result(Conn c, u8[] toSend, u8[] appData) {
 }
 
 /**
+ * End the connection with an alert, which is what a peer's mistake earns.
+ *
+ * The alert is sealed under the current write key, so a peer that got this far can read it. One
+ * spelling because there were four copies of these three lines and the fifth place that needed them
+ * had a `trap` instead — see `phaseWaitFinished` in `tlsServerFeed`.
+ */
+u8[] refuse(Conn c, i32 alert, Writer toSend, Writer appData) {
+  sealInto(toSend, c, typeAlert(), alertBody(alert));
+  c.phase = phaseFailed();
+  return result(c, toSend.take(), appData.take());
+}
+
+/**
  * Feed the connection whatever has arrived, and get back what to send.
  *
  * The return is `[stateLen][state][toSendLen][toSend][appDataLen][appData]`, and the
@@ -449,10 +471,20 @@ export u8[] tlsServerFeed(u8[] state, u8[] input) {
       if (messageType(body) != 1) { trap; }
       toSend.bytes(serverFlight(c, body));
     } else if (c.phase == phaseWaitFinished()) {
-      u8[] inner = openWith(c, record);
-      if (recordType(inner) != typeHandshake()) { trap; }
+      // **Every one of these three was a trap, and every one is peer-reachable.** RFC 8446 §5.2 for
+      // the first and §6.2 for the other two: a record that does not open, a record that opens and is
+      // not a handshake, and a handshake message that is not Finished are all things a stranger can
+      // send to a listening server, and all three ended the process. `test/wac/loopback_test.wac`.
+      u8[]? opened = openWith(c, record);
+      if (opened is null) { return refuse(c, alertBadRecordMac(), toSend, appData); }
+      u8[] inner = opened!;
+      if (!hasContentType(inner) || recordType(inner) != typeHandshake()) {
+        return refuse(c, alertUnexpectedMessage(), toSend, appData);
+      }
       u8[] msg = recordContent(inner);
-      if (messageType(msg) != 20) { trap; }
+      if (messageType(msg) != 20) {
+        return refuse(c, alertUnexpectedMessage(), toSend, appData);
+      }
       // verify_data covers the transcript up to but not including this message.
       u8[] want = finishedVerify(c.clientSecret, sha256(c.transcript));
       u8[] got = messageBody(msg);
@@ -477,7 +509,14 @@ export u8[] tlsServerFeed(u8[] state, u8[] input) {
       c.seqOut = 0;
       c.phase = phaseEstablished();
     } else if (c.phase == phaseEstablished()) {
-      u8[] inner = openWith(c, record);
+      // Same three hazards as the waiting phase, and this one is worse: an established connection is
+      // one an attacker has watched succeed, so injecting a record into it needs no timing at all.
+      u8[]? opened = openWith(c, record);
+      if (opened is null) { return refuse(c, alertBadRecordMac(), toSend, appData); }
+      u8[] inner = opened!;
+      // All padding and no content type. RFC 8446 §5.4 names `unexpected_message` for exactly this,
+      // and `recordType` traps on it — right for a caller opening its own records, wrong here.
+      if (!hasContentType(inner)) { return refuse(c, alertUnexpectedMessage(), toSend, appData); }
       i32 t = recordType(inner);
       if (t == typeApplicationData()) {
         appData.bytes(recordContent(inner));

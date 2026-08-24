@@ -1,0 +1,195 @@
+// Branch coverage for wactest: the package's own tests, and nothing else.
+//
+//   deno task coverage:wactest
+//   deno task coverage:wactest --verbose
+//
+// One of the last packages `issues/system/0205` records as unmeasured.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+import {
+  test_itoa as asse__itoa,
+  test_passing_assertions_are_silent as asse__passing_assertions_are_silent,
+  test_failing_assertions_are_recorded as asse__failing_assertions_are_recorded,
+  test_multiple_failures_accumulate as asse__multiple_failures_accumulate,
+  test_array_length_mismatch_is_its_own_message as asse__array_length_mismatch_is_its_own_message,
+  test_bytes_compare_zero_extended as asse__bytes_compare_zero_extended,
+  test_failNow_records_without_a_condition as asse__failNow_records_without_a_condition,
+  test_eqF64_is_bit_exact as asse__eqF64_is_bit_exact,
+  test_nearF64_tolerance as asse__nearF64_tolerance,
+} from "./wac/assert_test.wac";
+import {
+  test_a_lambda_is_a_value as clos__a_lambda_is_a_value,
+  test_a_lambda_captures_by_reference as clos__a_lambda_captures_by_reference,
+  test_a_lambda_captures_a_parameter as clos__a_lambda_captures_a_parameter,
+} from "./wac/closure_test.wac";
+import {
+  test_a_started_server_answers_and_a_stopped_one_does_not as daem__a_started_server_answers_and_a_stopped_one_does_not,
+  test_a_command_that_cannot_start_is_reported as daem__a_command_that_cannot_start_is_reported,
+  test_quoting_keeps_a_value_whole as daem__quoting_keeps_a_value_whole,
+  test_a_deadline_wait_waits_for_the_deadline as daem__a_deadline_wait_waits_for_the_deadline,
+} from "./wac/daemon_test.wac";
+import {
+  test_itoa64_and_utoa64_agree_with_bigint as itoa__itoa64_and_utoa64_agree_with_bigint,
+} from "./wac/itoa64_test.wac";
+import {
+  test_the_shared_rng_draws_what_the_copies_drew as rng__the_shared_rng_draws_what_the_copies_drew,
+  test_the_signed_family_would_have_drawn_a_different_corpus as rng__the_signed_family_would_have_drawn_a_different_corpus,
+  test_a_signed_remainder_is_a_different_remainder as rng__a_signed_remainder_is_a_different_remainder,
+  test_dropping_the_mask_changes_the_generator as rng__dropping_the_mask_changes_the_generator,
+  test_a_draw_from_an_empty_range_answers_zero as rng__a_draw_from_an_empty_range_answers_zero,
+  test_a_free_function_can_extend_the_shared_rng as rng__a_free_function_can_extend_the_shared_rng,
+} from "./wac/rng_test.wac";
+import {
+  test_discovery_finds_every_test_export_and_runs_it as runn__discovery_finds_every_test_export_and_runs_it,
+  test_a_file_with_no_tests_is_an_error_not_a_silent_pass as runn__a_file_with_no_tests_is_an_error_not_a_silent_pass,
+  test_a_failing_assertion_surfaces_its_message as runn__a_failing_assertion_surfaces_its_message,
+} from "./wac/runner_test.wac";
+import {
+  test_contains_finds_a_substring_at_either_end_and_in_the_middle as stri__contains_finds_a_substring_at_either_end_and_in_the_middle,
+  test_the_empty_needle_is_found_and_the_empty_haystack_holds_only_it as stri__the_empty_needle_is_found_and_the_empty_haystack_holds_only_it,
+  test_startswith_and_endswith_refuse_a_needle_longer_than_the_string as stri__startswith_and_endswith_refuse_a_needle_longer_than_the_string,
+  test_has_compares_whole_elements_rather_than_prefixes as stri__has_compares_whole_elements_rather_than_prefixes,
+  test_trimmed_takes_every_kind_of_space_from_both_ends_and_nothing_from_the_middle as stri__trimmed_takes_every_kind_of_space_from_both_ends_and_nothing_from_the_middle,
+  test_joined_puts_the_separator_between_rather_than_after as stri__joined_puts_the_separator_between_rather_than_after,
+  test_splitlines_drops_the_empty_line_a_trailing_newline_would_add as stri__splitlines_drops_the_empty_line_a_trailing_newline_would_add,
+} from "./wac/strings_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (asse__itoa().len() > 0) {
+    core.warn("error: FAILED assert_test test_itoa");
+    bad = bad + 1;
+  }
+  if (asse__passing_assertions_are_silent().len() > 0) {
+    core.warn("error: FAILED assert_test test_passing_assertions_are_silent");
+    bad = bad + 1;
+  }
+  if (asse__failing_assertions_are_recorded().len() > 0) {
+    core.warn("error: FAILED assert_test test_failing_assertions_are_recorded");
+    bad = bad + 1;
+  }
+  if (asse__multiple_failures_accumulate().len() > 0) {
+    core.warn("error: FAILED assert_test test_multiple_failures_accumulate");
+    bad = bad + 1;
+  }
+  if (asse__array_length_mismatch_is_its_own_message().len() > 0) {
+    core.warn("error: FAILED assert_test test_array_length_mismatch_is_its_own_message");
+    bad = bad + 1;
+  }
+  if (asse__bytes_compare_zero_extended().len() > 0) {
+    core.warn("error: FAILED assert_test test_bytes_compare_zero_extended");
+    bad = bad + 1;
+  }
+  if (asse__failNow_records_without_a_condition().len() > 0) {
+    core.warn("error: FAILED assert_test test_failNow_records_without_a_condition");
+    bad = bad + 1;
+  }
+  if (asse__eqF64_is_bit_exact().len() > 0) {
+    core.warn("error: FAILED assert_test test_eqF64_is_bit_exact");
+    bad = bad + 1;
+  }
+  if (asse__nearF64_tolerance().len() > 0) {
+    core.warn("error: FAILED assert_test test_nearF64_tolerance");
+    bad = bad + 1;
+  }
+  if (clos__a_lambda_is_a_value().len() > 0) {
+    core.warn("error: FAILED closure_test test_a_lambda_is_a_value");
+    bad = bad + 1;
+  }
+  if (clos__a_lambda_captures_by_reference().len() > 0) {
+    core.warn("error: FAILED closure_test test_a_lambda_captures_by_reference");
+    bad = bad + 1;
+  }
+  if (clos__a_lambda_captures_a_parameter().len() > 0) {
+    core.warn("error: FAILED closure_test test_a_lambda_captures_a_parameter");
+    bad = bad + 1;
+  }
+  if (daem__a_started_server_answers_and_a_stopped_one_does_not(core, cli).len() > 0) {
+    core.warn("error: FAILED daemon_test test_a_started_server_answers_and_a_stopped_one_does_not");
+    bad = bad + 1;
+  }
+  if (daem__a_command_that_cannot_start_is_reported(core, cli).len() > 0) {
+    core.warn("error: FAILED daemon_test test_a_command_that_cannot_start_is_reported");
+    bad = bad + 1;
+  }
+  if (daem__quoting_keeps_a_value_whole().len() > 0) {
+    core.warn("error: FAILED daemon_test test_quoting_keeps_a_value_whole");
+    bad = bad + 1;
+  }
+  if (daem__a_deadline_wait_waits_for_the_deadline(core, cli).len() > 0) {
+    core.warn("error: FAILED daemon_test test_a_deadline_wait_waits_for_the_deadline");
+    bad = bad + 1;
+  }
+  if (itoa__itoa64_and_utoa64_agree_with_bigint(core, cli).len() > 0) {
+    core.warn("error: FAILED itoa64_test test_itoa64_and_utoa64_agree_with_bigint");
+    bad = bad + 1;
+  }
+  if (rng__the_shared_rng_draws_what_the_copies_drew().len() > 0) {
+    core.warn("error: FAILED rng_test test_the_shared_rng_draws_what_the_copies_drew");
+    bad = bad + 1;
+  }
+  if (rng__the_signed_family_would_have_drawn_a_different_corpus().len() > 0) {
+    core.warn("error: FAILED rng_test test_the_signed_family_would_have_drawn_a_different_corpus");
+    bad = bad + 1;
+  }
+  if (rng__a_signed_remainder_is_a_different_remainder().len() > 0) {
+    core.warn("error: FAILED rng_test test_a_signed_remainder_is_a_different_remainder");
+    bad = bad + 1;
+  }
+  if (rng__dropping_the_mask_changes_the_generator().len() > 0) {
+    core.warn("error: FAILED rng_test test_dropping_the_mask_changes_the_generator");
+    bad = bad + 1;
+  }
+  if (rng__a_draw_from_an_empty_range_answers_zero().len() > 0) {
+    core.warn("error: FAILED rng_test test_a_draw_from_an_empty_range_answers_zero");
+    bad = bad + 1;
+  }
+  if (rng__a_free_function_can_extend_the_shared_rng().len() > 0) {
+    core.warn("error: FAILED rng_test test_a_free_function_can_extend_the_shared_rng");
+    bad = bad + 1;
+  }
+  if (runn__discovery_finds_every_test_export_and_runs_it(core, cli).len() > 0) {
+    core.warn("error: FAILED runner_test test_discovery_finds_every_test_export_and_runs_it");
+    bad = bad + 1;
+  }
+  if (runn__a_file_with_no_tests_is_an_error_not_a_silent_pass(core, cli).len() > 0) {
+    core.warn("error: FAILED runner_test test_a_file_with_no_tests_is_an_error_not_a_silent_pass");
+    bad = bad + 1;
+  }
+  if (runn__a_failing_assertion_surfaces_its_message(core, cli).len() > 0) {
+    core.warn("error: FAILED runner_test test_a_failing_assertion_surfaces_its_message");
+    bad = bad + 1;
+  }
+  if (stri__contains_finds_a_substring_at_either_end_and_in_the_middle().len() > 0) {
+    core.warn("error: FAILED strings_test test_contains_finds_a_substring_at_either_end_and_in_the_middle");
+    bad = bad + 1;
+  }
+  if (stri__the_empty_needle_is_found_and_the_empty_haystack_holds_only_it().len() > 0) {
+    core.warn("error: FAILED strings_test test_the_empty_needle_is_found_and_the_empty_haystack_holds_only_it");
+    bad = bad + 1;
+  }
+  if (stri__startswith_and_endswith_refuse_a_needle_longer_than_the_string().len() > 0) {
+    core.warn("error: FAILED strings_test test_startswith_and_endswith_refuse_a_needle_longer_than_the_string");
+    bad = bad + 1;
+  }
+  if (stri__has_compares_whole_elements_rather_than_prefixes().len() > 0) {
+    core.warn("error: FAILED strings_test test_has_compares_whole_elements_rather_than_prefixes");
+    bad = bad + 1;
+  }
+  if (stri__trimmed_takes_every_kind_of_space_from_both_ends_and_nothing_from_the_middle().len() > 0) {
+    core.warn("error: FAILED strings_test test_trimmed_takes_every_kind_of_space_from_both_ends_and_nothing_from_the_middle");
+    bad = bad + 1;
+  }
+  if (stri__joined_puts_the_separator_between_rather_than_after().len() > 0) {
+    core.warn("error: FAILED strings_test test_joined_puts_the_separator_between_rather_than_after");
+    bad = bad + 1;
+  }
+  if (stri__splitlines_drops_the_empty_line_a_trailing_newline_would_add().len() > 0) {
+    core.warn("error: FAILED strings_test test_splitlines_drops_the_empty_line_a_trailing_newline_would_add");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("wactest: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}

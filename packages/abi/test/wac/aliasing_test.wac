@@ -1,0 +1,290 @@
+// The offset and canonicity rules an encoder never breaks, and a caller can.
+//
+// Found by this package's first coverage driver — `issues/system/0205`, 2026-08-24. `packages/abi` is
+// the fourth of the four that Ethereum's decode stack rests on, after `rlp`, `mpt` and `ssz`, and it
+// showed the same thing all three of those did: the corpus is real data produced by real tools, and
+// real tools do not emit the encodings these rules exist to refuse.
+//
+// It showed it *despite* already having a `strictness_test.wac` and two refusal tests in its corpus
+// file — which is the same result `packages/mpt`'s `malformed_test.wac` gave. Existing refusal tests do
+// not predict a smaller first gap, because what any one author thought to write down is not the set of
+// rules the decoder actually implements.
+//
+// ## The two with teeth
+//
+//   - **an element offset pointing back into the array's head.** A dynamic array is a head of offsets
+//     followed by the elements they point at. An offset below the head's own length points *at the
+//     offsets* — so element 2 can be made to read element 0's offset word as its own contents, or two
+//     elements can be aimed at one span. That is ABI's aliasing shape, the same idea as an SSZ offset
+//     table running backwards.
+//   - **a bool whose first 31 bytes are not zero.** ABI pads a bool to a full word, and only the last
+//     byte carries it. A decoder that read the last byte alone would accept 2^248 encodings of `true` —
+//     every one hashing differently, every one meaning the same thing to a contract.
+//
+// Neither can come out of an encoder. Both can arrive from a peer.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Decoded, Encoded, Value, decode, encode, wordOfValue, bytesOfValue, listOf }
+  from "../../src/abi.wac";
+import { T_UINT, T_BOOL, T_BYTES, T_ARRAY, T_FIXED, unhex } from "./descriptor.wac";
+
+/** A 32-byte big-endian word holding `v`. */
+u8[] word(i32 v) {
+  u8[] w = u8[32]();
+  w[28] = (v >> 24) & 0xFF;
+  w[29] = (v >> 16) & 0xFF;
+  w[30] = (v >> 8) & 0xFF;
+  w[31] = v & 0xFF;
+  return w;
+}
+
+/**
+ * `words` concatenated, behind the offset word a top-level dynamic argument is reached through.
+ *
+ * **ABI's outermost layer is a tuple of arguments**, so a dynamic one is not written inline: the head
+ * holds a 32-byte offset and the value sits at it. Writing the array's own words directly gets
+ * *"an offset of 2 points back into a head of 32 bytes"* — the decoder reading the element count as
+ * the offset it was expecting. That was this file's first draft, and the control caught it.
+ */
+u8[] argument(u8[][] words) {
+  u8[][] all = u8[][words.len() + 1](fill: u8[0]());
+  all[0] = word(32);
+  for (i32 i = 0; i < words.len(); i++) { all[i + 1] = words[i]; }
+  return joinWords(all);
+}
+
+/** `words` concatenated. */
+u8[] joinWords(u8[][] words) {
+  i32 n = 0;
+  for (i32 i = 0; i < words.len(); i++) { n = n + words[i].len(); }
+  u8[] out = u8[n]();
+  i32 at = 0;
+  for (i32 i = 0; i < words.len(); i++) {
+    for (i32 k = 0; k < words[i].len(); k++) { out[at + k] = words[i][k]; }
+    at = at + words[i].len();
+  }
+  return out;
+}
+
+/** The error a decode answered, or "" when it succeeded. */
+string why(u8[] data, i32[] schema) {
+  Decoded d = decode(data, schema);
+  return d.ok ? "" : d.error;
+}
+
+/**
+ * A bool must be a padded 0 or 1, and both halves of that are checked.
+ *
+ * The last byte is the value and the first thirty-one are padding that must be zero. A decoder that
+ * looked only at the last byte would accept 2^248 spellings of `true`, and one that looked only at the
+ * padding would accept `0x02` as a third boolean.
+ */
+export string test_a_bool_is_a_padded_zero_or_one_and_nothing_else() {
+  T t = T.create();
+  i32[] schema = i32[](T_BOOL);
+
+  // The two legitimate spellings.
+  t.eqStr(why(word(0), schema), "", "a padded false was refused");
+  t.eqStr(why(word(1), schema), "", "a padded true was refused");
+
+  // **A non-zero padding byte.** Same last byte, different word, same meaning to a contract.
+  u8[] dirty = word(1);
+  dirty[0] = 1;
+  string pad = why(dirty, schema);
+  t.isTrue(pad.len() > 0, "a bool with a non-zero first byte was accepted");
+  t.isTrue(pad.indexOf("31 bytes") >= 0, "the message does not name the rule: " + pad);
+
+  // Padding in the middle, not just at the front — the loop runs to 31 and this is byte 30.
+  u8[] middle = word(1);
+  middle[30] = 0xFF;
+  t.isTrue(why(middle, schema).len() > 0, "a bool with a non-zero byte before the last was accepted");
+
+  // And a last byte that is neither 0 nor 1.
+  string two = why(word(2), schema);
+  t.isTrue(two.len() > 0, "a bool of 2 was accepted");
+  t.isTrue(two.indexOf("0 or 1") >= 0, "the message does not name the rule: " + two);
+  return t.report();
+}
+
+/**
+ * An element offset that points into the head, or past the end of its array.
+ *
+ * A dynamic array is a count, then one offset per element, then the elements. The offsets are
+ * attacker-controlled and the two ways they can lie are both refused: below the head's length is an
+ * offset aimed at the offsets themselves, and past the end is one aimed outside the array.
+ *
+ * **Aiming an element at the head is how one span is read as two values.** With no check, element 1's
+ * offset can be set to 0 — so it decodes whatever element 0's *offset word* happens to spell, and two
+ * elements of one array can be pointed at one span.
+ */
+export string test_an_element_offset_cannot_point_into_the_head_or_past_the_end() {
+  T t = T.create();
+  // `string[]` — a dynamic array of dynamic elements, which is the shape that has a head of offsets.
+  i32[] schema = i32[](T_ARRAY, 6);          // array of string
+
+  // A well-formed two-element array: count, two offsets, then the two elements. The offsets are
+  // relative to the start of the head, so the first element sits at 64 — two offset words in.
+  u8[][] good = u8[][7](fill: u8[0]());
+  good[0] = word(2);                          // count
+  good[1] = word(64);                         // offset of element 0
+  good[2] = word(128);                        // offset of element 1
+  good[3] = word(1);                          // element 0: length 1
+  good[4] = word(0);                          //            its byte, padded — 0x00
+  good[5] = word(1);                          // element 1: length 1
+  good[6] = word(0);
+  u8[] ok = argument(good);
+  t.eqStr(why(ok, schema), "", "the well-formed array was refused, so the negatives prove nothing");
+
+  // **Element 1 aimed back into the head.** Offset 0 is element 0's own offset word.
+  u8[][] alias = u8[][7](fill: u8[0]());
+  for (i32 i = 0; i < 7; i++) { alias[i] = good[i]; }
+  alias[2] = word(0);
+  string back = why(argument(alias), schema);
+  t.isTrue(back.len() > 0, "an element offset pointing into the head was accepted");
+  t.isTrue(back.indexOf("back into") >= 0, "the message does not say where it points: " + back);
+
+  // An offset just below the head's length is the boundary — 32 is inside a two-word head.
+  u8[][] edge = u8[][7](fill: u8[0]());
+  for (i32 i = 0; i < 7; i++) { edge[i] = good[i]; }
+  edge[2] = word(32);
+  t.isTrue(why(argument(edge), schema).len() > 0,
+           "an element offset inside the head was accepted at the boundary");
+
+  // And one aimed past the end of the array.
+  u8[][] far = u8[][7](fill: u8[0]());
+  for (i32 i = 0; i < 7; i++) { far[i] = good[i]; }
+  far[2] = word(4096);
+  string out = why(argument(far), schema);
+  t.isTrue(out.len() > 0, "an element offset past the end was accepted");
+  t.isTrue(out.indexOf("outside") >= 0, "the message does not say where it points: " + out);
+  return t.report();
+}
+
+/**
+ * A length or an offset that does not fit an `i32`, and a read that runs off the end.
+ *
+ * Every count in an ABI encoding is a 32-byte word and every index into the data is an `i32`. A word
+ * can spell 2^256 and an `i32` cannot hold it, so the alternative to refusing is a negative length — a
+ * decoder talked into reading backwards, which is the same failure `packages/rlp`'s four-byte length
+ * check exists to prevent.
+ */
+export string test_a_word_that_cannot_be_an_index_is_refused_rather_than_wrapped() {
+  T t = T.create();
+  i32[] schema = i32[](T_ARRAY, 1);          // array of uint
+
+  // A count that is a full word of ones.
+  u8[] huge = u8[32](fill: 0xFF);
+  string big = why(argument(u8[][](huge)), schema);
+  t.isTrue(big.len() > 0, "a 2^256 element count was accepted");
+
+  // A count that fits a word and not an i32: 2^31 exactly.
+  u8[] justOver = u8[32]();
+  justOver[28] = 0x80;
+  t.isTrue(why(argument(u8[][](justOver)), schema).len() > 0, "a count of 2^31 was accepted");
+
+  // A count that is fine and data that is not there: two elements promised, none supplied.
+  t.isTrue(why(argument(u8[][](word(2))), schema).len() > 0,
+           "an array whose elements are missing was accepted");
+
+  // And the well-formed twin, so the three above are about the numbers rather than the schema.
+  u8[][] one = u8[][2](fill: u8[0]());
+  one[0] = word(1);
+  one[1] = word(7);
+  t.eqStr(why(argument(one), schema), "", "a one-element array of uint was refused");
+  return t.report();
+}
+
+/**
+ * The three accessors, asked for what the value they hold is not.
+ *
+ * `Value` has three variants and each accessor answers for one. Asked for another it returns an empty
+ * default rather than trapping — a zero word, no bytes, no items — which is a deliberate choice and the
+ * opposite of the one `packages/rlp` made for the same shape: there, `bytesOf` on a list traps.
+ *
+ * The difference is what a caller can do about it. `rlp`'s accessors are reached after a decode that
+ * already told you the variant, so asking wrongly is a bug; these are reached from an encoder walking a
+ * caller's own tree, where a wrong shape is a *message* — the four `case` arms at `:384` and `:401` say
+ * which type wanted which variant. The default keeps the walk going long enough to produce that
+ * sentence instead of dying at the first mismatch.
+ *
+ * Untested either way, so the choice was undocumented as well as unexercised.
+ */
+export string test_an_accessor_asked_for_the_wrong_variant_answers_an_empty_default() {
+  T t = T.create();
+  Value word = Value.Word(u8[32](fill: 7));
+  Value bytes = Value.Bytes(u8[](1, 2, 3));
+  Value list = Value.List(Value[1](fill: word));
+
+  // Each accessor for the variant it is for.
+  t.eqI32(wordOfValue(word)[0], 7, "wordOfValue did not answer the word");
+  t.eqI32(bytesOfValue(bytes).len(), 3, "bytesOfValue did not answer the bytes");
+  t.eqI32(listOf(list).len(), 1, "listOf did not answer the items");
+
+  // And for the two it is not: a zero word, no bytes, no items — never a trap.
+  t.eqI32(wordOfValue(bytes).len(), 32, "wordOfValue on Bytes did not answer a zero word");
+  t.eqI32(wordOfValue(bytes)[0], 0, "wordOfValue on Bytes answered something non-zero");
+  t.eqI32(wordOfValue(list).len(), 32, "wordOfValue on List did not answer a zero word");
+  t.eqI32(bytesOfValue(word).len(), 32, "bytesOfValue on Word did not answer the word's bytes");
+  t.eqI32(bytesOfValue(list).len(), 0, "bytesOfValue on List answered bytes");
+  t.eqI32(listOf(word).len(), 0, "listOf on Word answered items");
+  t.eqI32(listOf(bytes).len(), 0, "listOf on Bytes answered items");
+  return t.report();
+}
+
+/** The message `encode` refused a value with, or "" when it accepted it. */
+string refusal(Value v, i32[] schema) {
+  Value[] one = Value[1](fill: v);
+  Encoded e = encode(one, schema);
+  return e.ok ? "" : e.error;
+}
+
+/**
+ * What `encode` says when a caller's tree does not match its schema.
+ *
+ * These are the sentences a *caller* reads — the value being encoded is the caller's own, built by
+ * hand, and every mismatch is a mistake in their program rather than hostile input. So the useful
+ * property is not that encoding fails but that the message names the type it wanted and the variant it
+ * got, and for an element inside an array, which element.
+ *
+ * Four of the arms had never run: the corpus only encodes trees that came from a decode, and a tree
+ * that came from a decode matches its schema by construction.
+ */
+export string test_encoding_a_value_of_the_wrong_shape_says_which_and_where() {
+  T t = T.create();
+  Value word = Value.Word(u8[32]());
+  Value bytes = Value.Bytes(u8[](1, 2, 3));
+  Value list1 = Value.List(Value[1](fill: word));
+
+  // **Every message names the argument first** — `member 0:` — which the exact-match version of this
+  // test did not expect and which is the more useful half: a caller with six arguments needs to know
+  // which one, and the type-and-variant sentence alone would not say.
+  string w = refusal(word, i32[](T_BYTES));
+  t.isTrue(w.indexOf("member 0: ") == 0, "the refusal does not name the argument: " + w);
+  t.isTrue(w.indexOf("a bytes or string needs Bytes, and a Word was given") > 0,
+           "the Word message drifted: " + w);
+  t.isTrue(refusal(list1, i32[](T_BYTES)).indexOf("and a List was given") > 0,
+           "the List message drifted");
+  t.eqStr(refusal(bytes, i32[](T_BYTES)), "", "a bytes given Bytes was refused");
+
+  // An array given the two things it is not.
+  t.isTrue(refusal(word, i32[](T_ARRAY, T_UINT)).indexOf("needs List, and a Word was given") > 0,
+           "the array-Word message drifted");
+  t.isTrue(refusal(bytes, i32[](T_ARRAY, T_UINT)).indexOf("needs List, and Bytes were given") > 0,
+           "the array-Bytes message drifted");
+
+  // **A fixed array of the wrong length**, which is the one mismatch that is about a number rather
+  // than a variant: the schema says how many and the tree has a different count.
+  Value three = Value.List(Value[3](fill: word));
+  string wrong = refusal(three, i32[](T_FIXED, 2, T_UINT));
+  t.isTrue(wrong.indexOf("was given 3 elements") >= 0,
+           "a fixed[2] given three elements did not say so: " + wrong);
+  t.eqStr(refusal(Value.List(Value[2](fill: word)), i32[](T_FIXED, 2, T_UINT)), "",
+          "a fixed[2] given two elements was refused");
+
+  // And a bad element *inside* an array, which must name its index.
+  Value inner = Value.List(Value[2](fill: bytes));
+  string el = refusal(inner, i32[](T_ARRAY, T_UINT));
+  t.isTrue(el.indexOf("element 0") >= 0, "a bad element did not name its index: " + el);
+  return t.report();
+}

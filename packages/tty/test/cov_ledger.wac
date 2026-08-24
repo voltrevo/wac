@@ -1,0 +1,86 @@
+// tty's coverage, and the finding that the first two packages' pattern is narrower than it looked.
+//
+//   deno task coverage:tty
+//   deno task coverage:tty --verbose
+//
+// **107 of 111**, from 101 on the first run. `issues/system/0205`.
+//
+// ## Three packages, three first runs at ninety-one per cent
+//
+// `ssz` opened at 90.5%, `mpt` at 91.2%, `tty` at 91.0%. That much is consistent enough to be worth
+// saying: **a package with no driver is at about nine per cent unreached**, whatever it does.
+//
+// What is *not* consistent is the kind. `ssz` and `mpt` are judged against vendored corpora of real
+// Ethereum data, and twenty-three of twenty-six and eleven of eleven of their gaps were the
+// implementation's own **refusals** — a real-data corpus contains nothing Ethereum would never build.
+// This package is judged against **the kernel**, through a live pty, with inputs chosen by whoever
+// wrote the test. Its gaps were a different thing entirely:
+//
+//   - `Line.pending()` and `Line.feedAll()` — **two public methods with no caller in the repository**;
+//   - `^C` and `^\` in cbreak, which is the mode's most consequential rule and the one `cbreak`'s own
+//     doc comment argues about at length: `stty raw` clears `ISIG` and would make `^C` an ordinary
+//     byte, and this is deliberately not that. Nothing had ever pressed either key in that mode;
+//   - a tab's width, which the erase rules count backwards over — measured as two columns it would rub
+//     out one character too many, and no recorded vector contains a tab.
+//
+// So the rule is not "differential testing hides refusals". It is that **a driver finds what the
+// corpus does not reach, and what that is depends on where the corpus comes from**: vendored real data
+// hides your refusals, hand-chosen inputs hide your unused API and your unentered modes.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/tty/test/cov_exercise.wac";
+const string PREFIX = "packages/tty/";
+
+/** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/tty/src/line.wac", 236, "u8[] drawn = this.echo ? render(b) : u8[0]();", true,
+        "**`cbreak` is the only caller and it never echoes.** `feedByte` is reached from `feed` when " +
+        "`this.canonical` is false, which only `Line.cbreak()` produces — and that constructor is " +
+        "`Line(Buf.create(), false, false, false)`, echo off. The three constructors are the whole " +
+        "public surface: `create` is canonical with echo, `noEcho` is canonical without, `cbreak` is " +
+        "neither and never draws.\n" +
+        "         So the `then` arm needs a cbreak-with-echo, and there is no way to ask for one. Kept " +
+        "because `feedByte` reads `this.echo` rather than assuming its caller: a fourth constructor is " +
+        "one line, and the arm is what makes it correct on the day somebody adds it. The `else` is " +
+        "covered, which is the mode as it exists.")
+  );
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/tty/example/ttycat.wac", "main", "decl", true,
+         "**An example's `main` is run as a program, and this driver imports it as a module.** " +
+         "`ttycat.wac` is what the pty tests build and execute — `line_test.wac` imports `ttycatBytes` " +
+         "from it, which is the part that is a function — and `main` reads stdin, picks a mode from " +
+         "`argv` and writes. A coverage driver calls exported functions; it does not start programs, " +
+         "so the entry and the argument-parsing ternary inside it are unreachable from here by " +
+         "construction rather than by omission.\n" +
+         "         Not a gap in the example's testing: `test_the_live_pty_still_answers_what_was_" +
+         "recorded` runs this program against a real pty in every mode, which is what the ternary " +
+         "exists for. What cannot see it is *this measurement*, which is a different statement — the " +
+         "same one `packages/raster`'s ledger makes about its two-host test.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 rules()) ? 1 : 0;
+}

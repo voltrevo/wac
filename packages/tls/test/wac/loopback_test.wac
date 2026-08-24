@@ -1,0 +1,448 @@
+// A whole TLS 1.3 handshake between our client and our server, in one process, with no socket.
+//
+// Found by this package's first coverage driver on 2026-08-24 — `issues/system/0205`. The package
+// opened at **74.5%**, the lowest first run of any package measured, and the shape of it was not a
+// scatter of missed refusals:
+//
+//     packages/tls/src/client.wac      168   136   81.0
+//     packages/tls/src/handshake.wac   108    26   24.1
+//     packages/tls/src/server.wac      143    37   25.9
+//
+// **Our server is tested thoroughly and in another process.** `interop_test.wac`,
+// `rsa_interop_test.wac` and `client_test.wac` build `test/wac/tlsserved.wac` into its own binary and
+// start it as a daemon, because a handshake needs both ends running at once and a wac test is one
+// thread. Our client then runs in-process and talks to it over a real socket — and to OpenSSL, and to
+// rustls. That is a genuinely strong arrangement and it is why `client.wac` reads 81%.
+//
+// It also means the coverage instrument watches one side of a conversation the harness drives both
+// ends of. The 37 points reported for `server.wac` are what `server_traps_test.wac`'s six tests reach
+// by feeding malformed records to a fresh state; nothing else in the package's measurement has ever
+// seen the server complete a handshake, because every time it does, it does so somewhere else.
+//
+// **A number that low is a claim about the tests, and here it was a fact about the harness.** Writing
+// two hundred pins saying "the server is untested" would have been false, and writing none would have
+// left `deno task coverage:tls` unable to notice the server actually going untested later.
+//
+// ## Why this can exist at all
+//
+// `src/server.wac`'s header says it: *"a pure function from (state, bytes) to (state, bytes)"*. So is
+// the client. The socket is in `tlsserved.wac` and in `tlsclient.wac`, not in either implementation,
+// and two pure state machines can be introduced to each other directly by handing each one what the
+// other just produced. No port, no daemon, no build step, no timeout.
+//
+// What that buys beyond the measurement:
+//
+//   - **it is deterministic.** Every input is fixed — the certificate, both randoms, the ephemeral
+//     keys — so a failure reproduces rather than being a flake in a socket test.
+//   - **it can corrupt a live handshake.** A test that owns both ends can change any byte of message
+//     N *after* the transcript is under way, which is where the interesting refusals are and which
+//     nothing here could do before: the conversation used to happen between two processes over a
+//     socket, where a test had no way to reach inside it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Store } from "../../src/roots.wac";
+import { selfSignedEd25519 } from "../../src/x509gen.wac";
+import {
+  tlsServerInit, tlsServerFeed, tlsServerSend, tlsServerClose, tlsPhase,
+  phaseEstablished, phaseFailed,
+} from "../../src/server.wac";
+import { alertBadRecordMac, alertUnexpectedMessage } from "../../src/record.wac";
+import {
+  ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientPhase, tlsClientFailure,
+  tlsClientSend, tlsClientClose,
+} from "../../src/client.wac";
+
+// Fixed and inside the certificate's validity. Seconds, as `selfSignedEd25519` takes them.
+const i64 NOT_BEFORE = 1000 as i64;
+const i64 NOT_AFTER = 2000000000 as i64;
+const i64 NOW = 1600000000 as i64;
+const string HOST = "wac.test";
+
+/** The server's long-term identity: one seed, and the self-signed certificate over it. */
+u8[] identitySeed() {
+  u8[] seed = u8[32](fill: 0);
+  seed[31] = 7;
+  return seed;
+}
+
+u8[] certificate() {
+  return selfSignedEd25519(HOST, 1 as i64, NOT_BEFORE, NOT_AFTER, identitySeed());
+}
+
+/**
+ * **No trust store, which makes the client skip path building — deliberately, and only here.**
+ *
+ * `client.wac` reads an empty store as "do not verify a chain", and says why it is spelt that way:
+ * *"a boolean is one typo from disabling this everywhere, while an empty store is something a caller
+ * has to construct on purpose"*. This file is one of the callers that means it.
+ *
+ * What is being skipped is *path building*, and nothing else. The client still checks the server's
+ * CertificateVerify signature over the transcript and both Finished messages, which is the
+ * cryptography a handshake rests on. Chains are `x509_path_test.wac`'s subject and it has real
+ * CA-signed certificates to do it with — `src/x509gen.wac` cannot issue one certificate under
+ * another, so a self-signed leaf offered as its own anchor is refused with verdict 5, correctly:
+ * `verifyPath` requires `basicConstraints cA` on a trust anchor and a leaf does not have it.
+ *
+ * The refusal tests below use a *foreign* root instead, which is the honest way to be untrusted.
+ */
+Store noTrustStore() {
+  return Store(u8[0](), i32[0](), 0);
+}
+
+/** A store holding one certificate nobody in this conversation holds the key for. */
+Store trustingSomebodyElse() {
+  u8[] other = u8[32](fill: 0);
+  other[31] = 9;
+  u8[] cert = selfSignedEd25519("other.test", 2 as i64, NOT_BEFORE, NOT_AFTER, other);
+  return Store(cert, i32[](0, cert.len()), 0);
+}
+
+u8[] freshServer() {
+  return tlsServerInit(certificate(), identitySeed(), u8[32](fill: 3), u8[32](fill: 4));
+}
+
+u8[] freshClient(Store roots) {
+  return tlsClientInit(HOST.toBytes(), roots.der, roots.offsets,
+                       u8[32](fill: 5), u8[32](fill: 6), u8[64](fill: 7), u8[32](fill: 8), NOW);
+}
+
+/** What a completed loopback produced, so a caller can assert on any part of it. */
+struct Conversation {
+  u8[] clientState;
+  u8[] serverState;
+  /** What the server read out of the client's application data, empty if it never got any. */
+  u8[] serverSaw;
+  u8[] clientSaw;
+  i32 rounds;
+  string error;
+}
+
+/**
+ * Shuttle bytes between the two until neither has anything more to say.
+ *
+ * Bounded, and the bound is asserted rather than silently exited: a handshake that never settles is a
+ * different bug from one that fails, and a loop that just stops looks like the first.
+ */
+Conversation converse(u8[] cState, u8[] sState, u8[] request) {
+  ClientStep cs = clientStep(cState);
+  u8[] serverSaw = u8[0]();
+  u8[] clientSaw = u8[0]();
+  bool sent = false;
+  i32 round = 0;
+  for (round = 0; round < 16; round++) {
+    if (cs.toSend.len() == 0) { break; }
+    ClientStep ss = clientStep(tlsServerFeed(sState, cs.toSend));
+    sState = ss.state;
+    if (ss.appData.len() > 0) { serverSaw = ss.appData; }
+    if (tlsPhase(sState) == phaseFailed()) {
+      return Conversation(cs.state, sState, serverSaw, clientSaw, round,
+                          "the server refused at round " + itoa(round));
+    }
+
+    // Once the client is established it has nothing further to send unless we give it something, so
+    // the request goes in here — which is also what makes `serverSaw` reachable.
+    //
+    // **Only when the server has fallen silent**, which is what says the client's Finished has been
+    // delivered. An earlier version sent the request the moment the client reached phase 3, which
+    // overwrote the pending Finished with an application record — and the server, still waiting for
+    // Finished, aborted the process. That was a bug in this loop and it is also how
+    // `test_the_server_refuses_a_record_it_cannot_open` below came to be written.
+    if (ss.toSend.len() == 0) {
+      if (tlsClientPhase(cs.state) == 3 && !sent && request.len() > 0) {
+        cs = clientStep(tlsClientSend(cs.state, request));
+        sent = true;
+        continue;
+      }
+      break;
+    }
+
+    cs = clientStep(tlsClientFeed(cs.state, ss.toSend));
+    if (cs.appData.len() > 0) { clientSaw = cs.appData; }
+    if (tlsClientPhase(cs.state) == 4) {
+      return Conversation(cs.state, sState, serverSaw, clientSaw, round,
+                          "the client refused at round " + itoa(round) + " with code " +
+                          itoa(tlsClientFailure(cs.state)));
+    }
+  }
+  return Conversation(cs.state, sState, serverSaw, clientSaw, round, "");
+}
+
+/**
+ * The control, and the reason every other test in this file means something: the two sides complete a
+ * handshake, agree on keys, and carry application data both ways.
+ *
+ * Asserted at four points rather than one, because "it did not crash" is not the claim. The client
+ * reaching phase 3 says it verified the certificate and the Finished; the server reaching established
+ * says the same in the other direction; `serverSaw` says the request arrived *decrypted*, which is
+ * the only assertion that distinguishes a working key schedule from two peers politely agreeing to
+ * exchange noise.
+ */
+export string test_our_client_and_our_server_complete_a_handshake_in_one_process() {
+  T t = T.create();
+
+  u8[] cert = certificate();
+  t.isTrue(cert.len() > 100, "the self-signed certificate came out too short: " + itoa(cert.len()));
+
+  string request = "GET / HTTP/1.1\r\nhost: " + HOST + "\r\n\r\n";
+  Conversation c = converse(freshClient(noTrustStore()), freshServer(), request.toBytes());
+
+  t.eqStr(c.error, "", "the handshake did not complete");
+  if (c.error.len() > 0) { return t.report(); }
+
+  t.eqI32(tlsClientPhase(c.clientState), 3,
+          "the client did not reach established; failure code " + itoa(tlsClientFailure(c.clientState)));
+  t.eqI32(tlsPhase(c.serverState), phaseEstablished(), "the server did not reach established");
+  t.eqI32(tlsClientFailure(c.clientState), 0, "the client completed but recorded a failure");
+
+  // The request arrived, decrypted, on the other side.
+  t.eqStr(string.fromBytes(c.serverSaw), request, "the server did not read the request the client sent");
+
+  // And it took a bounded number of rounds — a TLS 1.3 handshake is one round trip, so anything
+  // near the loop's limit means the two are talking past each other rather than to each other.
+  t.isTrue(c.rounds < 8, "the handshake took " + itoa(c.rounds) + " rounds, which is too many");
+  return t.report();
+}
+
+/**
+ * Application data in the other direction, and an orderly close.
+ *
+ * `close_notify` is the difference between a shutdown and a truncation, and a peer that cannot tell
+ * them apart cannot report a truncation attack. `tlsserved.wac`'s comment makes the point and one
+ * socket test checks it; this checks the same thing without the socket, which means it also checks
+ * the *server's* close path, which the socket test could only observe from outside.
+ */
+export string test_the_server_answers_and_closes_in_an_orderly_way() {
+  T t = T.create();
+
+  u8[] cert = certificate();
+  string request = "GET / HTTP/1.1\r\n\r\n";
+  Conversation c = converse(freshClient(noTrustStore()), freshServer(), request.toBytes());
+  t.eqStr(c.error, "", "the handshake did not complete");
+  if (c.error.len() > 0) { return t.report(); }
+  t.eqI32(tlsClientPhase(c.clientState), 3, "the client did not reach established");
+
+  // The server replies, and the client reads it back out.
+  string body = "hello from the loopback\n";
+  ClientStep out = clientStep(tlsServerSend(c.serverState, body.toBytes()));
+  t.isTrue(out.toSend.len() > 0, "the server produced no bytes for its reply");
+  ClientStep got = clientStep(tlsClientFeed(c.clientState, out.toSend));
+  t.eqStr(string.fromBytes(got.appData), body, "the client did not read the server's reply");
+
+  // And a close_notify, which the client must see as a close rather than a truncation.
+  ClientStep bye = clientStep(tlsServerClose(out.state));
+  t.isTrue(bye.toSend.len() > 0, "closing the server produced no close_notify");
+  ClientStep after = clientStep(tlsClientFeed(got.state, bye.toSend));
+  t.eqI32(tlsClientFailure(after.state), 0,
+          "an orderly close was recorded as a failure, code " + itoa(tlsClientFailure(after.state)));
+
+  // The client's own close, which is the half `tlsserved.wac` never exercises because the server is
+  // always the one that closes first. Taken from a *live* client rather than `after.state`: a client
+  // that has already seen the peer's `close_notify` is closed, and closing it again correctly
+  // produces nothing — which is a different property and is asserted separately below.
+  Conversation live = converse(freshClient(noTrustStore()), freshServer(), request.toBytes());
+  t.eqStr(live.error, "", "the second handshake did not complete");
+  ClientStep cbye = clientStep(tlsClientClose(live.clientState));
+  t.isTrue(cbye.toSend.len() > 0, "closing a live client produced no close_notify");
+
+  // And closing one that is already closed is silence rather than a second alert on a dead socket.
+  ClientStep twice = clientStep(tlsClientClose(after.state));
+  t.eqI32(twice.toSend.len(), 0, "a client that had already seen close_notify sent another");
+  return t.report();
+}
+
+/**
+ * A byte changed in the middle of a live handshake, at four positions across the server's flight.
+ *
+ * **This is the test the socket arrangement could not host.** The conversation used to happen between
+ * two processes, so a test could tamper with the first flight — `certtamper_test.wac` does — but not
+ * with a flight already under way, whose contents depend on a transcript hash of everything before it.
+ *
+ * Four positions rather than four flights, because a TLS 1.3 handshake is one round trip and the
+ * server says everything it has to say at once. That single flight is not homogeneous, which is what
+ * makes the positions worth varying: it opens with a **plaintext** ServerHello, which a client parses,
+ * and continues with records **encrypted** under keys the ServerHello just established, which a client
+ * decrypts. A byte flipped in the first region is caught by a parser and one in the second by an
+ * authentication tag, and until today the second aborted the process.
+ *
+ * The control is `test_our_client_and_our_server_complete_a_handshake_in_one_process`: the same
+ * conversation with nothing changed completes, so a refusal here is caused by the byte.
+ */
+export string test_a_corrupted_server_flight_is_refused_at_every_position() {
+  T t = T.create();
+
+  u8[] sState = freshServer();
+  ClientStep cs = clientStep(freshClient(noTrustStore()));
+  ClientStep ss = clientStep(tlsServerFeed(sState, cs.toSend));
+  u8[] flight = ss.toSend;
+  t.isTrue(flight.len() > 400, "the server flight is too short to tamper with in four places");
+  if (flight.len() <= 400) { return t.report(); }
+
+  // Spread across the flight: inside the plaintext ServerHello, and three points inside the
+  // encrypted records after it.
+  i32[] spots = i32[](8, flight.len() / 3, (flight.len() * 2) / 3, flight.len() - 1);
+  i32 refused = 0;
+  for (i32 k = 0; k < spots.len(); k++) {
+    u8[] tampered = u8[flight.len()]();
+    for (i32 i = 0; i < flight.len(); i++) { tampered[i] = flight[i]; }
+    tampered[spots[k]] = tampered[spots[k]] ^ 0xFF;
+
+    ClientStep after = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+                                                tampered));
+    t.eqI32(tlsClientPhase(after.state), 4,
+            "the client accepted a server flight with byte " + itoa(spots[k]) + " flipped");
+    t.isTrue(after.appData.len() == 0,
+             "a tampered flight produced application data at byte " + itoa(spots[k]));
+    if (tlsClientPhase(after.state) == 4) { refused = refused + 1; }
+  }
+  t.eqI32(refused, spots.len(), "not every corrupted position was refused");
+
+  // Said out loud, because four refusals prove nothing if the untampered flight is refused too.
+  ClientStep clean = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state, flight));
+  t.eqI32(tlsClientPhase(clean.state), 3, "the untampered flight was refused as well");
+  return t.report();
+}
+
+/**
+ * The three verdicts a client reaches about a certificate it does not accept.
+ *
+ * All three run the server's **entire** handshake first — it is completely correct and completely
+ * unaware — and then check what the client concluded. That combination is what the measurement was
+ * missing: the server completing a handshake inside the process doing the measuring.
+ *
+ * The trust store holds a certificate for `other.test`, signed by a key nobody in the conversation
+ * has. That is the honest way to be untrusted: an *empty* store is not a refusal here, it is the
+ * documented way to switch path building off.
+ *
+ * **The verdict is checked, not the fact of refusal.** A client that rejected everything would
+ * satisfy "it refused" three times over, so each case names the code `verifyPath` documents:
+ * 5 unknown authority, 7 name mismatch, 2 expired — reported by `client.wac` as `40 + verdict`.
+ */
+export string test_the_client_says_which_check_the_certificate_failed() {
+  T t = T.create();
+  Store foreign = trustingSomebodyElse();
+  u8[] request = "GET / HTTP/1.1\r\n\r\n".toBytes();
+
+  // Right name, right dates, an issuer the store has never heard of.
+  Conversation unknown = converse(freshClient(foreign), freshServer(), request);
+  t.eqI32(tlsClientPhase(unknown.clientState), 4, "an untrusted certificate was accepted");
+  t.eqI32(tlsClientFailure(unknown.clientState), 45,
+          "an untrusted certificate was refused as something other than an unknown authority");
+
+  // The same certificate, a different name asked for. This is the case that needs the subjectAltName
+  // `src/x509gen.wac` did not emit until today: without one every host mismatches, so a passing
+  // assertion here would have said nothing about whether the name was compared at all.
+  u8[] wrongName = tlsClientInit("not.wac.test".toBytes(), foreign.der, foreign.offsets,
+                                 u8[32](fill: 5), u8[32](fill: 6), u8[64](fill: 7),
+                                 u8[32](fill: 8), NOW);
+  Conversation misnamed = converse(wrongName, freshServer(), request);
+  t.eqI32(tlsClientPhase(misnamed.clientState), 4, "a certificate for another host was accepted");
+  t.eqI32(tlsClientFailure(misnamed.clientState), 47,
+          "a wrong host was refused as something other than a name mismatch");
+
+  // The right certificate for the right host, asked about after it expires.
+  u8[] late = tlsClientInit(HOST.toBytes(), foreign.der, foreign.offsets,
+                            u8[32](fill: 5), u8[32](fill: 6), u8[64](fill: 7),
+                            u8[32](fill: 8), NOT_AFTER + (1 as i64));
+  Conversation expired = converse(late, freshServer(), request);
+  t.eqI32(tlsClientPhase(expired.clientState), 4, "an expired certificate was accepted");
+  t.eqI32(tlsClientFailure(expired.clientState), 42,
+          "an expired certificate was refused as something other than expired");
+
+  // Expiry is checked before the name, so the same expired certificate under the wrong name still
+  // reports expiry — which is the ordering `verifyPath` documents and a thing a rewrite could break
+  // without any test noticing.
+  u8[] lateAndWrong = tlsClientInit("not.wac.test".toBytes(), foreign.der, foreign.offsets,
+                                    u8[32](fill: 5), u8[32](fill: 6), u8[64](fill: 7),
+                                    u8[32](fill: 8), NOT_AFTER + (1 as i64));
+  Conversation both = converse(lateAndWrong, freshServer(), request);
+  t.eqI32(tlsClientFailure(both.clientState), 42,
+          "an expired certificate under the wrong name did not report expiry first");
+  return t.report();
+}
+
+/**
+ * **A record that does not authenticate must end the connection, not the process.**
+ *
+ * RFC 8446 §5.2: *"If the decryption fails, the receiver MUST terminate the connection with a
+ * `bad_record_mac` alert."* Terminate the connection — one peer, one socket — not abort.
+ *
+ * `recordOpen`'s documented contract was to trap on a tag that does not verify, and both state
+ * machines called it on bytes a stranger chose. So anyone who could complete a ClientHello exchange
+ * could abort the server process, taking every other connection with it; and any on-path attacker who
+ * flipped one byte could abort a client. `packages/tor` is a client.
+ *
+ * **Why no existing test found it.** `record_traps_test.wac` asserts the trap deliberately and
+ * correctly — at that layer it *is* the contract. Reaching it through the state machine needs a real
+ * server flight to tamper with, and until this file existed the server only ever produced one in
+ * another process, over a socket, where no test could reach between the two ends. The same arrangement
+ * that made `server.wac` read 25.9% is what kept this hidden.
+ *
+ * The server's own header describes closing this exact hole once, for a `close_notify` followed by
+ * anything, and says *"`tlsClientFeed` had the identical hole and was fixed first; this is the side
+ * that accepts connections from strangers."* That fix covered the failed phase. This is the waiting
+ * phase, and this time the client had it too.
+ */
+export string test_the_server_refuses_a_record_it_cannot_open() {
+  T t = T.create();
+
+  u8[] sState = freshServer();
+  ClientStep cs = clientStep(freshClient(noTrustStore()));
+  ClientStep ss = clientStep(tlsServerFeed(sState, cs.toSend));
+  sState = ss.state;
+
+  // The control: the server answered a real ClientHello and is waiting for Finished.
+  t.isTrue(ss.toSend.len() > 0, "the server did not answer the ClientHello");
+  t.eqI32(tlsPhase(sState), 1, "the server is not waiting for a Finished");
+
+  // Well-framed, and authenticates under nothing.
+  u8[] junk = u8[5 + 32]();
+  junk[0] = 23; junk[1] = 3; junk[2] = 3; junk[3] = 0; junk[4] = 32;
+  for (i32 i = 5; i < junk.len(); i++) { junk[i] = 0xA5; }
+
+  ClientStep after = clientStep(tlsServerFeed(sState, junk));
+  t.eqI32(tlsPhase(after.state), phaseFailed(),
+          "a record that does not authenticate did not end the connection");
+  t.isTrue(after.appData.len() == 0, "a record that did not authenticate produced application data");
+
+  // And a second record after it is answered rather than aborted, which is the property the phase
+  // check at the top of `tlsServerFeed` exists to give.
+  ClientStep again = clientStep(tlsServerFeed(after.state, junk));
+  t.eqI32(tlsPhase(again.state), phaseFailed(), "the closed connection did not stay closed");
+  return t.report();
+}
+
+/**
+ * The same, on the client, one byte into a flight it is decrypting.
+ *
+ * The client survives garbage *before* the ServerHello — it is parsing, not decrypting, and
+ * `tlsClientFeed` refuses with code 10. After the ServerHello it holds handshake keys and every
+ * record goes through the same `recordOpen`, so one flipped byte in the certificate message reached
+ * the same trap.
+ *
+ * That is the more serious half. A server has to be dialled; a client is answering whoever it dialled,
+ * and an on-path attacker needs no key material at all to flip a byte.
+ */
+export string test_the_client_refuses_a_flight_it_cannot_open() {
+  T t = T.create();
+
+  u8[] sState = freshServer();
+  ClientStep cs = clientStep(freshClient(noTrustStore()));
+  ClientStep ss = clientStep(tlsServerFeed(sState, cs.toSend));
+  t.isTrue(ss.toSend.len() > 100, "the server flight is too short to tamper with meaningfully");
+
+  u8[] tampered = u8[ss.toSend.len()]();
+  for (i32 i = 0; i < ss.toSend.len(); i++) { tampered[i] = ss.toSend[i]; }
+  tampered[tampered.len() - 1] = tampered[tampered.len() - 1] ^ 0xFF;
+
+  ClientStep after = clientStep(tlsClientFeed(cs.state, tampered));
+  t.eqI32(tlsClientPhase(after.state), 4, "a tampered server flight was accepted");
+  t.isTrue(tlsClientFailure(after.state) != 0, "the client failed without recording why");
+  t.isTrue(after.appData.len() == 0, "a tampered flight produced application data");
+
+  // The control that says the tampering is what did it: the same flight, untouched, is accepted.
+  ClientStep clean = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+                                              ss.toSend));
+  t.eqI32(tlsClientPhase(clean.state), 3, "the untampered flight was not accepted either");
+  return t.report();
+}

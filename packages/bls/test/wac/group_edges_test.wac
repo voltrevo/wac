@@ -1,0 +1,197 @@
+// The group operations at their degenerate points, and the one composition the corpus never drives.
+//
+// Found by this package's first coverage driver on 2026-08-24 — `issues/system/0205`.
+//
+// ## `g1FromBytes` is not what the deserialization fixtures test
+//
+// The gap that matters here is not a missing input. Ethereum's corpus **has** the case:
+// `deserialization_fails_not_in_G1` is a well-formed encoding of a point that is on the curve and
+// outside the order-r subgroup — the small-subgroup input, the whole reason a subgroup check exists.
+// `verify_test.wac` reads it, and it is refused, and the test passes.
+//
+// It is refused by `test/wac/probe.wac`'s `blsG1Status`, which calls `g1Decompress`, `g1IsOnCurve`
+// and `g1InSubgroup` one after another and reports which one said no. That is a useful thing for a
+// test to do — the three verdicts are three different bugs. But it means the corpus is driving the
+// probe's copy of the composition rather than **`g1FromBytes`**, which is the function every verifier
+// in this package actually calls, and whose own subgroup line was never executed by anything.
+//
+// The source comment on `g1FromBytes` states the intent exactly:
+//
+//     *"The three are separate functions above so a test can reach each one, and one function here so
+//     a caller cannot use two of the three by accident."*
+//
+// The test then reached each one, and nothing checked the function written to stop a caller doing
+// that. Delete `g1FromBytes`'s subgroup line and every fixture still passes — and `verify`,
+// `fastAggregateVerify`, `aggregateVerify` and `batchVerify` all accept a small-subgroup key.
+//
+// So the fix is not a new vector. It is running the vectors the corpus already has **through the
+// entry point**, which is what `test_the_real_entry_point_refuses_what_the_probe_refuses` does.
+//
+// ## The rest
+//
+// The degenerate cases of addition, equality and the affine accessors: infinity as an operand, and
+// the identity's missing coordinates. Every one is a value a signature protocol never produces and a
+// caller can always construct, which is why they are here and not in the vectors.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import {
+  G1, g1Generator, g1Infinity, g1IsInfinity, g1Add, g1Double, g1Negate,
+  g1AffineX, g1AffineY, g1Compress, g1Decompress, g1FromBytes, g1IsOnCurve, g1InSubgroup,
+} from "../../src/g1.wac";
+import {
+  G2, g2Generator, g2Infinity, g2IsInfinity, g2Add, g2Double, g2Negate,
+  g2AffineX, g2AffineY, g2Compress, g2Decompress, g2FromBytes, g2IsOnCurve, g2InSubgroup,
+} from "../../src/g2.wac";
+
+u8[] un(string h) { return decoded(h); }
+
+/**
+ * Point equality by comparing compressed encodings.
+ *
+ * The package's own `g1Same` is private, so a test cannot call it. Comparing bytes is the equality a
+ * caller has anyway, and it is the stronger claim: two points that are equal as group elements have
+ * one encoding each, which is what compression being canonical means.
+ */
+bool sameG1(G1 a, G1 b) {
+  u8[] x = g1Compress(a);
+  u8[] y = g1Compress(b);
+  for (i32 i = 0; i < 48; i++) { if (x[i] != y[i]) { return false; } }
+  return true;
+}
+
+bool sameG2(G2 a, G2 b) {
+  u8[] x = g2Compress(a);
+  u8[] y = g2Compress(b);
+  for (i32 i = 0; i < 96; i++) { if (x[i] != y[i]) { return false; } }
+  return true;
+}
+
+// The two cases from `vendor/eth_deserialization_*.json` that get past the encoding rules, named as
+// the fixtures name them. `not_in_curve` decodes to nothing — its x has no y — and `not_in_G1`
+// decodes to a real curve point outside the subgroup.
+const string G1_NOT_IN_G1 = "8123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const string G2_NOT_IN_G2 = "8123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+/**
+ * The composite entry point refuses what the three checks refuse, on the corpus's own input.
+ *
+ * The assertion is deliberately in two halves. The first says the input is what the fixture name
+ * claims — decodable, on the curve, outside the subgroup — because an input that failed earlier would
+ * make the second half pass for the wrong reason, which is how this went unnoticed. The second says
+ * `g1FromBytes` refuses it.
+ */
+export string test_the_real_entry_point_refuses_what_the_probe_refuses() {
+  T t = T.create();
+
+  u8[] bad1 = un(G1_NOT_IN_G1);
+  G1? d1 = g1Decompress(bad1);
+  t.isTrue(!(d1 is null), "the not-in-G1 fixture no longer decompresses, so it tests nothing");
+  if (!(d1 is null)) {
+    t.isTrue(g1IsOnCurve(d1!), "the not-in-G1 fixture is not on the curve, so it is the wrong case");
+    t.isFalse(g1InSubgroup(d1!), "the not-in-G1 fixture is in the subgroup, so it is the wrong case");
+  }
+  t.isTrue(g1FromBytes(bad1) is null,
+           "g1FromBytes accepted a curve point outside the order-r subgroup");
+
+  u8[] bad2 = un(G2_NOT_IN_G2);
+  G2? d2 = g2Decompress(bad2);
+  t.isTrue(!(d2 is null), "the not-in-G2 fixture no longer decompresses, so it tests nothing");
+  if (!(d2 is null)) {
+    t.isTrue(g2IsOnCurve(d2!), "the not-in-G2 fixture is not on the curve, so it is the wrong case");
+    t.isFalse(g2InSubgroup(d2!), "the not-in-G2 fixture is in the subgroup, so it is the wrong case");
+  }
+  t.isTrue(g2FromBytes(bad2) is null,
+           "g2FromBytes accepted a curve point outside the order-r subgroup");
+
+  // And the entry point still accepts what it should, so the two above are not passing because it
+  // refuses everything.
+  t.isTrue(!(g1FromBytes(g1Compress(g1Generator())) is null), "g1FromBytes refused the generator");
+  t.isTrue(!(g2FromBytes(g2Compress(g2Generator())) is null), "g2FromBytes refused the generator");
+  return t.report();
+}
+
+/**
+ * Infinity as an operand of addition and equality.
+ *
+ * The identity is the one point with no affine coordinates, so the addition formulas cannot be run on
+ * it and every arm is a special case. A protocol never supplies it — the tests that do are in
+ * `refusals_test.wac`, where refusing it is the subject — but the arithmetic still has to be right,
+ * because it is where a cleared cofactor or an empty aggregate lands.
+ */
+export string test_infinity_is_the_identity_of_addition_and_equals_only_itself() {
+  T t = T.create();
+
+  G1 g = g1Generator();
+  G1 o = g1Infinity();
+
+  // Both orders, because they are different arms.
+  t.isTrue(sameG1(g1Add(g, o), g), "P + O is not P");
+  t.isTrue(sameG1(g1Add(o, g), g), "O + P is not P");
+  t.isTrue(g1IsInfinity(g1Add(o, o)), "O + O is not O");
+  t.isTrue(g1IsInfinity(g1Double(o)), "2·O is not O");
+  t.isTrue(g1IsInfinity(g1Negate(o)), "−O is not O");
+  t.isTrue(g1IsInfinity(g1Add(g, g1Negate(g))), "P + (−P) is not O");
+
+  // `g1InSubgroup` compares φ(P) against [−x²]P, so asking it about the identity is the only route a
+  // test has to the infinity arm of the private equality — and the answer must be yes, since the
+  // identity lies in every subgroup.
+  t.isTrue(g1InSubgroup(g1Infinity()), "the identity is not in the order-r subgroup");
+  t.isTrue(g2InSubgroup(g2Infinity()), "the identity is not in the order-r subgroup in G2");
+  t.isTrue(g1IsOnCurve(g1Infinity()), "the identity is not on the curve");
+  t.isTrue(g2IsOnCurve(g2Infinity()), "the identity is not on the curve in G2");
+
+  t.isTrue(sameG1(o, o), "O does not equal itself");
+  t.isFalse(sameG1(o, g), "O equals the generator");
+  t.isFalse(sameG1(g, o), "the generator equals O");
+
+  G2 h = g2Generator();
+  G2 z = g2Infinity();
+  t.isTrue(sameG2(g2Add(h, z), h), "Q + O is not Q");
+  t.isTrue(sameG2(g2Add(z, h), h), "O + Q is not Q");
+  t.isTrue(g2IsInfinity(g2Add(z, z)), "O + O is not O in G2");
+  t.isTrue(g2IsInfinity(g2Double(z)), "2·O is not O in G2");
+  t.isTrue(sameG2(z, z), "O does not equal itself in G2");
+  t.isFalse(sameG2(z, h), "O equals the generator in G2");
+  t.isFalse(sameG2(h, z), "the generator equals O in G2");
+  return t.report();
+}
+
+/**
+ * The affine accessors at infinity, which is the case they return `null` for.
+ *
+ * `x/z` and `y/z` with `z = 0`, so there is no answer to give. What makes it worth a test rather than
+ * a shrug is that the alternative — returning `(0, 0)` — is a *point on nothing* that the pairing
+ * would happily consume, and `toPair` in `verify.wac` depends on this `null` to refuse a pairing with
+ * the identity. That dependency is the load-bearing use of these four functions.
+ */
+export string test_the_identity_has_no_affine_coordinates() {
+  T t = T.create();
+
+  t.isTrue(g1AffineX(g1Infinity()) is null, "the identity answered an affine x in G1");
+  t.isTrue(g1AffineY(g1Infinity()) is null, "the identity answered an affine y in G1");
+  t.isTrue(g2AffineX(g2Infinity()) is null, "the identity answered an affine x in G2");
+  t.isTrue(g2AffineY(g2Infinity()) is null, "the identity answered an affine y in G2");
+
+  // And a real point does answer, so the assertions above are about infinity rather than about the
+  // accessors always failing.
+  t.isTrue(!(g1AffineX(g1Generator()) is null), "the generator has no affine x in G1");
+  t.isTrue(!(g1AffineY(g1Generator()) is null), "the generator has no affine y in G1");
+  t.isTrue(!(g2AffineX(g2Generator()) is null), "the generator has no affine x in G2");
+  t.isTrue(!(g2AffineY(g2Generator()) is null), "the generator has no affine y in G2");
+
+  // Compressing the identity takes the same branch and does have an answer: the canonical `0xc0`
+  // encoding, which round-trips.
+  u8[] c1 = g1Compress(g1Infinity());
+  t.eqI32(c1[0], 0xc0, "the compressed identity does not begin 0xc0");
+  G1? back = g1Decompress(c1);
+  t.isTrue(!(back is null), "the compressed identity does not decompress");
+  if (!(back is null)) { t.isTrue(g1IsInfinity(back!), "the identity did not round-trip through bytes"); }
+
+  u8[] c2 = g2Compress(g2Infinity());
+  t.eqI32(c2[0], 0xc0, "the compressed G2 identity does not begin 0xc0");
+  G2? back2 = g2Decompress(c2);
+  t.isTrue(!(back2 is null), "the compressed G2 identity does not decompress");
+  if (!(back2 is null)) { t.isTrue(g2IsInfinity(back2!), "the G2 identity did not round-trip"); }
+  return t.report();
+}

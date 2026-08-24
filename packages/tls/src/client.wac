@@ -33,11 +33,11 @@ import {
   trafficKeyIv,
 } from "./keyschedule.wac";
 import {
-  recordSeal, recordOpen, recordType, recordContent, suiteAes128Gcm, suiteKeyLen,
+  recordSeal, recordTryOpen, recordType, recordContent, hasContentType, suiteAes128Gcm, suiteKeyLen,
   typeHandshake, typeApplicationData, typeAlert, typeChangeCipherSpec, maxPlaintext,
   alertBody, plaintextAlert, alertBadCertificate, alertCertificateExpired,
   alertCloseNotify, alertDecryptError, alertHandshakeFailure, alertIllegalParameter,
-  alertUnexpectedMessage, alertUnknownCa, alertUnsupportedCertificate,
+  alertUnexpectedMessage, alertUnknownCa, alertUnsupportedCertificate, alertBadRecordMac,
 } from "./record.wac";
 import {
   certificateVerifyContent, finished, handshakeMessage, messageBody, messageLength,
@@ -172,14 +172,19 @@ void sealInto(Writer out, CConn c, i32 contentType, u8[] content) {
   c.seqOut += 1;
 }
 
-u8[] openWith(CConn c, u8[] record) {
+/**
+ * Open a record under the server's current traffic keys, or `null` if it is not one.
+ *
+ * The sequence number advances either way — see the identical note on `server.wac`'s `openWith`.
+ */
+u8[]? openWith(CConn c, u8[] record) {
   i32 keyLen = suiteKeyLen(c.suite);
   u8[] ki = trafficKeyIv(c.serverSecret, keyLen);
   u8[] key = u8[keyLen]();
   u8[] iv = u8[12]();
   for (i32 i = 0; i < keyLen; i++) { key[i] = ki[i]; }
   for (i32 i = 0; i < 12; i++) { iv[i] = ki[keyLen + i]; }
-  u8[] inner = recordOpen(c.suite, key, iv, c.seqIn, record);
+  u8[]? inner = recordTryOpen(c.suite, key, iv, c.seqIn, record);
   c.seqIn += 1;
   return inner;
 }
@@ -516,7 +521,14 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
       c.seqOut = 0;
       c.phase = 2;
     } else if (c.phase == 2) {
-      u8[] inner = openWith(c, record);
+      // **A server flight with one byte changed used to abort the process.** `recordOpen` trapped on
+      // a tag that did not verify and this is where a client meets bytes chosen by whoever is on the
+      // path — no key material required to flip one. Code 24, `bad_record_mac`, RFC 8446 §5.2.
+      // `test/wac/loopback_test.wac`.
+      u8[]? opened = openWith(c, record);
+      if (opened is null) { return fail(c, 24, alertBadRecordMac(), toSend, appData); }
+      u8[] inner = opened!;
+      if (!hasContentType(inner)) { return fail(c, 25, alertUnexpectedMessage(), toSend, appData); }
       i32 t = recordType(inner);
       if (t == typeAlert()) { return fail(c, 20, alertCloseNotify(), toSend, appData); }
       if (t != typeHandshake()) { return fail(c, 21, alertUnexpectedMessage(), toSend, appData); }
@@ -638,7 +650,11 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
         }
       }
     } else if (c.phase == 3) {
-      u8[] inner = openWith(c, record);
+      // The same, on an established connection — see the note at phase 2.
+      u8[]? opened = openWith(c, record);
+      if (opened is null) { return fail(c, 24, alertBadRecordMac(), toSend, appData); }
+      u8[] inner = opened!;
+      if (!hasContentType(inner)) { return fail(c, 25, alertUnexpectedMessage(), toSend, appData); }
       i32 t = recordType(inner);
       if (t == typeApplicationData()) {
         appData.bytes(recordContent(inner));

@@ -1,0 +1,110 @@
+// abi's coverage, and the last of the four Ethereum's decode stack rests on.
+//
+//   deno task coverage:abi
+//   deno task coverage:abi --verbose
+//
+// **219 of 233**, from 204 on the first run. `issues/system/0205`.
+//
+// ## The same result as the three before it, and one more time despite the refusal tests
+//
+// `rlp`, `mpt`, `ssz` and this are the four packages an Ethereum state proof passes through, and all
+// four had their canonicity rules unexercised. This one had a `strictness_test.wac` and two refusal
+// tests in its corpus file already — as `mpt` had a `malformed_test.wac` — and it made no difference
+// to the first number. **What any one author thought to write down is not the set of rules the decoder
+// implements**, which is the argument for measuring rather than asking.
+//
+// The two with teeth, both now in `test/wac/aliasing_test.wac`:
+//
+//   - **an element offset pointing back into the array's head.** A dynamic array is a head of offsets
+//     and then the elements; an offset below the head's own length aims an element *at the offsets*,
+//     so two elements can be pointed at one span. The same idea as an SSZ offset table running
+//     backwards, in a different encoding.
+//   - **a bool whose first thirty-one bytes are not zero.** ABI pads a bool to a word and only the last
+//     byte carries it, so a decoder reading that byte alone would accept 2^248 spellings of `true` —
+//     each hashing differently and all meaning the same thing to a contract.
+//
+// ## Two controls, two misunderstandings of mine
+//
+// The array test's well-formed twin failed first with *an offset of 2 points back into a head of 32
+// bytes*: ABI's outermost layer is a **tuple of arguments**, so a dynamic argument is reached through
+// an offset word I had not written, and the decoder was reading my element count as that offset. And
+// the encode-mismatch expectations were exact-match and wrong — every message is prefixed `member 0:`,
+// naming which argument, which is the more useful half and which the test now asserts.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/abi/test/cov_exercise.wac";
+const string PREFIX = "packages/abi/";
+
+/** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/abi/src/abi.wac", "r.error", "line", true,
+         "**Eight guards, one fact: every caller checks `r.error` before calling again.** The decode " +
+         "path is a cursor that records the first fault and keeps its position, and each function " +
+         "reads the flag on entry so that a caller need not. The loops that drive them — `:167`'s " +
+         "argument walk, `:280`'s element walk — check after every call and return, so the entry " +
+         "guards are never the thing that stops anything.\n" +
+         "         Kept, and eight of them rather than one, because that is what makes the contract " +
+         "hold at the function instead of at each of its call sites. `packages/rlp`'s `item` and " +
+         "`packages/mpt`'s `step` carry the identical guard and are pinned in those packages for the " +
+         "identical reason: a decoder whose second failure overwrote its first would name the last " +
+         "thing examined rather than the thing that was wrong.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/abi/src/abi.wac", 198, "if (at > end) {", false,
+        "A head that runs past the end of its own region. Reachable — it is the same family as the " +
+        "offset checks the new tests do drive — and not built: the inputs that reach it need a schema " +
+        "whose head is longer than the data supplied for it, which is a third shape beyond the two " +
+        "the array tests construct."),
+    Pin("packages/abi/src/abi.wac", 271, "if (t == T_TUPLE()) {", false,
+        "**The corpus has no tuple.** `T_TUPLE` appears three times in this package's tests and every " +
+        "one is a tag comparison or a descriptor entry, never a value with a tuple in it. So the " +
+        "decode arm at `:271` and the encode arm at `:475` are the whole of tuple support and neither " +
+        "has an input.\n" +
+        "         `proven: false` and worth someone's time: a tuple is how a Solidity struct crosses " +
+        "the boundary, and the arms are written but unexercised. This is a gap in the *corpus* rather " +
+        "than a branch that cannot run, which is the distinction this file is for."),
+    Pin("packages/abi/src/abi.wac", 325, "if (at < 0 || at + n > r.data.len()) {", false,
+        "The read-past-the-end guard in `bytesAt`. Every caller computes `at` from a word this decoder " +
+        "has already range-checked, so reaching it needs an offset that passed the earlier checks and " +
+        "still overruns — the same family as `:198` and unbuilt for the same reason."),
+    Pin("packages/abi/src/abi.wac", 365, "if (items.len() != count) {", false,
+        "An encode whose value list does not match the count its schema declares. The check-then-" +
+        "encode path refuses a mismatched tree in `check` first — which the new `test_encoding_a_" +
+        "value_of_the_wrong_shape_says_which_and_where` drives — so this is the same rule enforced a " +
+        "second time, inside the encoder, for a caller that reached it another way."),
+    Pin("packages/abi/src/abi.wac", 475, "if (t == T_TUPLE()) { return encodeTuple(listOf(v), schema, s + 2, schema[s + 1]); }", false,
+        "The encode half of the missing tuple case — see `:271`."),
+    Pin("packages/abi/src/abi.wac", 526, "if (v < 0) { trap; }", true,
+        "**`wordOf` is called with lengths and counts, never with a signed quantity.** Its callers pass " +
+        "`xs.len()`, a byte count, or a value the decoder has already refused as negative, and an " +
+        "array's length is not negative.\n" +
+        "         Kept as a trap rather than a clamp for the reason `packages/rlp`'s `header` keeps " +
+        "its own: a negative written into a 32-byte big-endian word does not produce a smaller number, " +
+        "it produces a *different valid word* — an encoding of the wrong value rather than a failure.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

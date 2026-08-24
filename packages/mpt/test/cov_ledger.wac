@@ -1,0 +1,83 @@
+// mpt's coverage, and the second of the packages that had no driver.
+//
+//   deno task coverage:mpt
+//   deno task coverage:mpt --verbose
+//
+// **124 of 125**, from 114 on the first run. `issues/system/0205`.
+//
+// ## The same shape as `packages/ssz`, and that is the point
+//
+// `ssz` was the first of the eighteen unmeasured packages; this is the second, picked for contrast.
+// It is the same business — proofs that verify or do not, where a wrong answer is silent — but unlike
+// `ssz` it *already had* a `malformed_test.wac`, seven tests of its refusals written before any driver
+// existed. The question was whether that showed up as a smaller first gap.
+//
+// **It did not.** `ssz` opened at 90.5% and `mpt` at 91.2%, and eleven of `mpt`'s eleven gaps were the
+// same class: refusals of malformed input, in a package judged against Ethereum's published roots. A
+// corpus of real proofs contains no proof that Ethereum would never build, and the checks that matter
+// most are exactly the ones about proofs nobody would build by accident.
+//
+// What the new cases drive, all in `test/wac/malformed_test.wac` beside its existing seven:
+//
+//   - **a non-canonical hex-prefix header** — an even-length path is encoded with a zero padding
+//     nibble, and an implementation that ignored it would accept two encodings of one path, two
+//     hashes, and a root that depends on which the writer chose. Ethereum's own tries never contain
+//     one, which is why no corpus of real proofs can reach the line;
+//   - a hex-prefix flag above 3, and an empty header;
+//   - a root, and a node reference, that are not 32 bytes;
+//   - a node that is not RLP, one that is RLP but not a list, and a list of the wrong width;
+//   - **a proved value that is not an account** — the proof reconciles to the root and the payload
+//     still does not decode, which is what a peer serving a trie it built itself would produce.
+//
+// ## A control that earned its place
+//
+// The well-formed twin in the value test failed first, and its message was the finding: *a leaf's
+// value is a byte string, and this one is a list*. A trie leaf holds the RLP **encoding** of an
+// account as opaque bytes, not the account as a nested list — I had the data model wrong, and the two
+// negatives beside it were passing for a reason I had not established. Without the control they would
+// have read as evidence about the payload check.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/mpt/test/cov_exercise.wac";
+const string PREFIX = "packages/mpt/";
+
+/** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/mpt/src/proof.wac", 167, "if (w.error != \"\") { return; }", true,
+        "**Every caller checks first, which is what this guard is for.** `verify` reads `w.error` " +
+        "immediately before and immediately after each `step` at `:113` and `:115` and returns on " +
+        "either, so a walk that has failed never reaches another node. The two recursive calls at " +
+        "`:270` and `:287` are inside `step`'s own body, which has already returned on every error " +
+        "path above them.\n" +
+        "         Tried and did not reach it: a two-node proof whose first node is a byte string. The " +
+        "first `step` records the fault, `verify` returns before the second, and the coverage does not " +
+        "move — which is the evidence for the sentence above rather than a guess.\n" +
+        "         Kept because it is what makes `step`'s contract *does nothing if the walk has already " +
+        "failed* true at the function rather than at each of its four call sites. Without it, a caller " +
+        "written without the check would overwrite the first fault with the last, and a refusal would " +
+        "name the last node examined rather than the one that was wrong — which is the difference " +
+        "between a message that finds the bad node and one that does not.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

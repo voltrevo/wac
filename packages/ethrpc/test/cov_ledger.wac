@@ -1,0 +1,81 @@
+// ethrpc's coverage, and a package whose library was invisible.
+//
+//   deno task coverage:ethrpc
+//   deno task coverage:ethrpc --verbose
+//
+// **66 of 75 — 88.0%**, from **14 of 38 — 36.8%** on the first run. `issues/system/0205`.
+//
+// ## The first reading measured one file of four
+//
+// `rpc.wac`, `header.wac` and `getproof.wac` — 404 of this package's 496 lines — contributed **no
+// branch points at all**, so they were absent from the table rather than reading zero. The reason is
+// two-layered and neither layer is 'nobody wrote tests':
+//
+//   - the three tests that exercise them are `*_live_test.wac` and need `anvil`, a whole Ethereum
+//     execution client, running on a socket. It is absent here, so they skip;
+//   - and when it is present they still would not be measured, because they drive the library by
+//     **spawning `example/` programs as subprocesses** rather than importing it.
+//
+// `rpc_live_test.wac`'s own header names the first half: *a skip that prints nothing reads as
+// coverage*. The driver added the second half and the size of it — and the report line that names
+// files contributing nothing was written for exactly this shape, in `covledger.wac`.
+//
+// ## What closed most of it
+//
+// `test/wac/header_test.wac`. `headerOf` is **pure** — a parsed block and an expected hash in, a
+// verdict out — and it is the security boundary of the package: it is what turns a block hash from a
+// checkpoint into a trusted state root. It went from absent to **37 of 37**, and carried `jsonhex.wac`
+// from 36.8% to 76.3% on the way.
+//
+// `rpc.wac` and `getproof.wac` still contribute nothing; both take a `Cli` and talk to a socket, and
+// bringing them in-process needs a fake transport that does not exist yet.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/ethrpc/test/cov_exercise.wac";
+const string PREFIX = "packages/ethrpc/";
+
+/** What the tests need: the vendored fixtures on disk, and a process for the live ones. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/ethrpc/src/jsonhex.wac", "hexArray", "decl", false,
+         "**An uncovered entry.** `hexArray` reads a JSON array of hex strings — the shape " +
+         "`eth_getProof` returns for a proof path — and nothing calls it, because " +
+         "`getproof.wac` is its only caller and `getproof.wac` is one of the two files still " +
+         "contributing no points at all."),
+    Rule("packages/ethrpc/src/jsonhex.wac", "fromHexQuantity", "decl", false,
+         "A quantity that is empty after its `0x`, and one whose digits are not hex. " +
+         "`header_test.wac` drives the well-formed quantities; these are the malformed ones a " +
+         "node would have to send."),
+    Rule("packages/ethrpc/src/jsonhex.wac", "memberOf", "decl", false,
+         "Asking a JSON value that is not an object for a member. Its callers all hold a block " +
+         "object."),
+    Rule("packages/ethrpc/src/jsonhex.wac", "prefixLen", "decl", false,
+         "The uppercase `0X` prefix, which is legal JSON-RPC and which no node in the corpus " +
+         "emits.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[0](fill: Pin("", 0, "", true, ""));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

@@ -1,0 +1,230 @@
+// quic's coverage, and an audit of a neighbour's ledger.
+//
+//   deno task coverage:quic
+//   deno task coverage:quic --verbose
+//
+// **726 of 868**, from 696 on the first run. `issues/system/0205`.
+//
+// ## Why this package, and what it settled
+//
+// `packages/tls`'s ledger pins `handshake.wac`'s `parseServerHello`, `clientHello` and `serverHello`
+// as *exercised in another package* — this one — and says in as many words that `deno task
+// coverage:quic` does not exist to check the claim. A ledger entry saying "somebody else covers it"
+// is the weakest kind there is: nothing verifies it, and it reads exactly like an entry saying nobody
+// does.
+//
+// So the first thing this driver did was run its own exercise with the prefix pointed at
+// `packages/tls/src/handshake.wac`. The claim holds — and the numbers are more interesting than that:
+//
+//     tls's exercise leaves 36 of 108 points dark
+//     quic's exercise leaves 33 of 108 points dark
+//     dark to BOTH:            15
+//
+// **Each driver covers about twenty points the other misses, and neither can tell a dead line from
+// one its neighbour exercises.** A coverage prefix is a directory, so a shared file is measured once
+// per consumer and never as a whole. The honest reading of a shared file is the union, and nothing
+// computes it — `issues/system/0241b`.
+//
+// ## What the first run found here
+//
+// 80.2%, and `frame.wac` had **33 uncovered points of which 32 were the same check**:
+// `return stop(Frame.Incomplete)`, the answer for a frame that runs off the end of the datagram.
+// That is the cheapest hostile input QUIC has — a truncated datagram needs no keys, no handshake and
+// no timing — and no test had reached one of the thirty-two.
+//
+// `test/wac/truncated_test.wac` sweeps every frame in table 3, cut at every byte. `frame.wac` went
+// 82.2% → 93.3%. Its header records what the canaries said, and the answer differs by kind of field:
+// the varint guards are defence in depth, the fixed-width ones are load-bearing, and deleting
+// NEW_CONNECTION_ID's `p >= b.len()` makes the sweep **trap** rather than fail — the reader runs off
+// the end of the datagram, and that guard is the only thing between a truncated packet from anybody
+// and reading memory that is not there.
+//
+// ## What is left
+//
+// 142 points, and the shape is different from every package before it: almost none is a refusal
+// nobody built. They are the *not-found* arms of accessors that read a peer's flight — "you asked
+// this datagram for a certificate and there is no certificate in it" — and the alternate packet
+// shapes a well-behaved peer never sends.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/quic/test/cov_exercise.wac";
+const string PREFIX = "packages/quic/";
+
+/** A datagram socket for the live tests, a process for quinn, and the vendored captures. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/quic/src/client.wac", "struct Client", "struct", false,
+         "**The not-found arms of twenty accessors, each reading a server's flight for one thing.** " +
+         "`serverCertificate`, `serverSignature`, `serverFinishedVerifies`, `serverChain` and the " +
+         "rest walk the same handshake bytes looking for one message, and every one has an arm for " +
+         "*it is not in here*: a message header shorter than four bytes, a length that runs past the " +
+         "end, a key share of the wrong width, a Finished whose verify data does not match.\n" +
+         "         Every one is reachable — they are what a malformed or partial server flight " +
+         "produces — and the corpus is flights from quinn and from our own server, which are " +
+         "complete. This is the same shape `packages/tls` found one layer up and it is the more " +
+         "interesting half of what a driver is for: not a refusal nobody wrote a test for, but an " +
+         "accessor whose failure answer nobody has ever seen.\n" +
+         "         **`test/wac/truncated_test.wac` is the pattern for closing it.** Sweeping a " +
+         "server flight the way that file sweeps a frame would drive most of these forty-two in one " +
+         "test, and the canaries there say what such a sweep can and cannot pin."),
+    Rule("packages/quic/src/server.wac", "struct Server", "struct", false,
+         "The same, on the side that answers: a client Initial missing a field, a token that does " +
+         "not check, a datagram too short to carry what its header claims. Our server is driven by " +
+         "our client and by quinn, both of which send well-formed Initials.\n" +
+         "         Worth more than the client's half, for the reason `packages/tls` gives about its " +
+         "own server: this is the side that accepts connections from strangers, and the arms below " +
+         "are what a stranger's first packet reaches."),
+    Rule("packages/quic/src/connection.wac", "struct Connection", "struct", false,
+         "Stream bookkeeping for cases the tests do not produce — a stream ending on a byte boundary, " +
+         "data arriving out of order, a limit reached. Reachable through the ordinary API and " +
+         "unbuilt."),
+    Rule("packages/quic/src/initial.wac", "openShort", "decl", false,
+         "**Short-header packets that do not open**, which is the 1-RTT half of what `tamper_test.wac` " +
+         "does for Initials. That file's header is worth reading beside this: it exists because " +
+         "`gcmDecrypt` traps on a bad tag by design, and RFC 9001 §9 requires an endpoint to *discard* " +
+         "a packet it cannot authenticate — so a trap there is a remote kill switch, which was " +
+         "`issues/system/0090`.\n" +
+         "         The Initial path is tested for exactly that and the short-header path is not. " +
+         "Same reader, same hazard, one epoch later, and the packets that reach it are the ones after " +
+         "the handshake — which is every packet in a connection's life."),
+    Rule("packages/quic/src/initial.wac", "openAt", "decl", false,
+         "The long-header half of the same question — see `openShort`."),
+    Rule("packages/quic/src/initial.wac", "seal", "decl", false,
+         "Sealing with arguments the callers do not produce: an empty connection id, a packet number " +
+         "needing more than one byte of encoding, a payload that fills the datagram. Reachable, and " +
+         "the second of those is the one worth building — a packet number's length is encoded in the " +
+         "protected header, so the multi-byte forms are a different wire shape rather than a bigger " +
+         "number."),
+    Rule("packages/quic/src/initial.wac", "shortPacketNumber", "decl", false,
+         "Packet numbers of two, three and four bytes. Every test connection sends fewer than 256 " +
+         "packets, so only the one-byte form is ever written or read — and the decoding is *not* the " +
+         "same code path for the others, because the length comes out of the protected header bits."),
+    Rule("packages/quic/src/packet.wac", "parseLong", "decl", false,
+         "Long headers our peers do not send: a version we do not know, connection ids of unusual " +
+         "length, a token where none is expected. The corpus is quinn and ourselves, which agree on " +
+         "one shape."),
+    Rule("packages/quic/src/packet.wac", "negotiationVersions", "decl", false,
+         "**Version negotiation, which nothing here has ever received.** A server that does not speak " +
+         "our version answers with a list of the ones it does, and the whole reader for that list is " +
+         "unentered. Reachable by handing it a datagram; `greased_test.wac` is the nearest neighbour " +
+         "and tests the reserved-version *grease* rather than a real negotiation."),
+    Rule("packages/quic/src/packet.wac", "nextPacketAt", "decl", false,
+         "Walking to the next packet in a coalesced datagram, for shapes the tests do not coalesce. " +
+         "An Initial and a Handshake packet in one datagram is ordinary on the wire and our sender " +
+         "does not produce every combination of it."),
+    Rule("packages/quic/src/packet.wac", "parseShortDcid", "decl", false,
+         "Short-header destination ids of lengths the tests do not use. Ours are a fixed width."),
+    Rule("packages/quic/src/frame.wac", "nextIn", "decl", false,
+         "**Three length fields that decode to a negative number.** A QUIC varint is up to 62 bits " +
+         "and these are read into an `i64`, so a value above 2⁶³ arrives negative — an ACK range " +
+         "count, a NEW_TOKEN length, a STREAM length. `test/wac/truncated_test.wac` sweeps every " +
+         "frame *cut short* and none of its frames *lies about a length*, which is the other half of " +
+         "the same attack and one eight-byte varint away from being written."),
+    Rule("packages/quic/src/frame.wac", "cryptoStream", "decl", false,
+         "Reassembling CRYPTO frames that arrive out of order or overlap. Every test flight arrives " +
+         "in order in one datagram; a reassembler's whole reason to exist is the case where that is " +
+         "not true, so this is the gap most worth closing in the file."),
+    Rule("packages/quic/src/frame.wac", "streamFrames", "decl", false,
+         "The same for STREAM frames — out of order, overlapping, or a `fin` arriving before data " +
+         "that precedes it."),
+    Rule("packages/quic/src/frame.wac", "write", "decl", false,
+         "The writers' arms for values needing a wider varint than the tests use: an offset above 63, " +
+         "a stream id above 63, an acknowledgement range that does not fit one byte. The encoding " +
+         "changes width at each boundary and the tests stay inside the first."),
+    Rule("packages/quic/src/params.wac", "export i32 PARAM_", "line", false,
+         "**Transport parameter identifiers neither end sends.** RFC 9000 §18's table is long and " +
+         "the set actually exchanged in a handshake here is short, so three constants — the maximum " +
+         "UDP payload, and the two unidirectional-stream limits — are declared and never compared " +
+         "against. Reachable by a peer that sends them, which quinn does not.\n" +
+         "         `proven: false` rather than deleted: a parameter identifier the reader does not " +
+         "know is silently skipped, so removing these would not fail anything and would quietly " +
+         "narrow what this package understands.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/quic/src/frame.wac", 147, "export i32 EPOCH_HANDSHAKE() { return 1; }", false,
+        "The Handshake epoch constant, unread. Every test packet is an Initial or a 1-RTT, and the " +
+        "epoch in between carries the rest of the TLS flight — so the one packet type this package " +
+        "walks frames in and never tests is the one the handshake actually completes in."),
+    Pin("packages/quic/src/frame.wac", 155, "if (n < 0 || at < 0 || at + n > b.len()) { return u8[0](); }", true,
+        "`slice` asked for more bytes than remain. Its callers all check the length first — those are " +
+        "the thirty-two guards `test/wac/truncated_test.wac` now sweeps — so this is the belt under " +
+        "those braces and reaching it means one of them is wrong."),
+    Pin("packages/quic/src/frame.wac", 601, "else: {}", false,
+        "The catch-all arm of a match over `Frame`, for a variant the walk does not act on. Every " +
+        "variant the tests produce is named above it."),
+    Pin("packages/quic/src/keys.wac", 65, "if (take > room) { take = room; }", false,
+        "**An entry nothing calls, and its two clamps.** `prefix` takes the first `n` bytes of a " +
+        "buffer; `initial.wac` slices inline everywhere it needs one. Either something should use it " +
+        "or it should go, which is this repository's own rule about a second copy of anything — " +
+        "recorded rather than deleted because it is a one-line judgement for whoever owns this " +
+        "package."),
+    Pin("packages/quic/src/keys.wac", 66, "if (take < 0) { take = 0; }", false,
+        "The second clamp — see `:65`."),
+    Pin("packages/quic/src/varint.wac", 76, "if (len == 0 || at < 0 || at + len > out.len()) { return 0; }", false,
+        "Encoding a varint into a buffer with no room for it, and the eight-byte form for a value " +
+        "above 2³⁰. Nothing in a test connection is that large — packet numbers, stream ids and " +
+        "offsets all stay small — and the decoder's matching arm *is* covered, because " +
+        "`varint_test.wac` reads bytes it wrote by hand rather than bytes this encoder produced."),
+    Pin("packages/quic/src/packet.wac", 34, "export i32 TYPE_0RTT() { return 1; }", false,
+        "**0-RTT, which this package does not implement.** The constant is here because table 3's " +
+        "permission column refers to it and `frame.wac`'s `permitted` compares against it; nothing " +
+        "sends or receives one. Named rather than deleted because the epoch it stands for is real " +
+        "and the frame-permission logic would be wrong without it."),
+    Pin("packages/quic/src/packet.wac", 68, "export bool isLong(u8[] b, i32 at) {", false,
+        "**An uncovered entry.** Reading the header form of a byte that is not there — an empty " +
+        "datagram, or a walk that has consumed everything. Any peer can send a zero-length UDP " +
+        "datagram, which is a thing that happens on the open internet, and nothing here has ever " +
+        "handed one to the reader."),
+    Pin("packages/quic/src/packet.wac", 69, "return at >= 0 && at < b.len() && (b[at] & FORM_LONG()) != 0;", false,
+        "The body of `:68` — see there."),
+    Pin("packages/quic/src/packet.wac", 201, "if (at < 0 || at + 5 > b.len()) { return false; }", false,
+        "The version-negotiation recogniser refusing a datagram too short to be one — see the rule " +
+        "over `negotiationVersions` for why the whole feature is dark."),
+    Pin("packages/quic/src/initial.wac", 170, "if (!h.ok) { return u8[0](); }", false,
+        "A long header that will not parse, refused before decryption is attempted — the first of the " +
+        "three failures `initial.wac`'s comment names and the one furthest from a test. " +
+        "`tamper_test.wac` covers the third."),
+    Pin("packages/quic/src/initial.wac", 425, "if (mask.len() == 0) { return -1; }", false,
+        "Header protection failing to produce a mask while reading a short header's key phase — the " +
+        "packet is too short to sample from. Same family as `:119`, in the 1-RTT reader."),
+    Pin("packages/quic/src/initial.wac", 119, "if (ciphertext.len() < 16) { return u8[0](); }", false,
+        "A packet body shorter than an authentication tag. `tamper_test.wac` damages a tag and this " +
+        "is the neighbouring failure — asking the reader for something that is not there at all — " +
+        "which `initial.wac`'s own comment names beside it: *\"a header that will not parse, a sample " +
+        "that runs off the end, a tag that does not verify\"*. The third is tested and the first two " +
+        "are not."),
+    Pin("packages/quic/src/initial.wac", 552, "if (originalDcid.len() > MAX_CID()) { return false; }", false,
+        "A Retry checked against an oversized original connection id — a caller's argument rather " +
+        "than a peer's packet."),
+    Pin("packages/quic/src/initial.wac", 566, "if (packet.len() < 16) { return u8[0](); }", false,
+        "A Retry packet too short to carry its own integrity tag. `retry_test.wac` drives eight cases " +
+        "and every one is well-formed; this is the truncated one, which is the family " +
+        "`test/wac/truncated_test.wac` closed for frames and nobody has done for packets."),
+    Pin("packages/quic/src/initial.wac", 580, "if (!h.ok || h.packetType != TYPE_RETRY()) { return u8[0](); }", false,
+        "Asking for a Retry's token when the packet is not a Retry — see `:566`.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

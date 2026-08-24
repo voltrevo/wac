@@ -1,0 +1,393 @@
+// The decoder's own defences, which no vector set contains.
+//
+// Every other test here is judged against Ethereum's fixtures: valid objects merkleize to Ethereum's
+// roots, and the invalid ones Ethereum ships are refused. That corpus is a statement about *the
+// format*. It cannot contain a statement about *this implementation* — a bounds check on a span, a
+// field index past the end of a table, a container kind where a list was expected — because those are
+// answers to questions the spec never asks.
+//
+// `issues/system/0205` listed twenty-six uncovered branch points on the first run of this package's
+// new coverage driver, and twenty-three of them were exactly that: `return null` on malformed input,
+// in code that had been correct-by-inspection since it was written.
+//
+// **What is at stake is not a crash.** These functions answer `u8[]?`, and a missing refusal does not
+// trap — it returns a root. A root computed over bytes the offsets did not really delimit is a proof
+// that verifies against the wrong state, silently, which is the failure mode this package exists to
+// prevent.
+//
+// Two of them are the classic SSZ aliasing attacks:
+//
+//   - **offsets that go backwards** (`container.wac:346`). If the second offset is less than the
+//     first, two elements overlap: the same bytes are read as two different values, and one
+//     serialization has two meanings.
+//   - **a first offset that is zero or not a multiple of four** (`:338`). The element count comes from
+//     `offsets[0] / 4` and nowhere else, so a zero or misaligned first offset means there is no count.
+//
+// ## What these tests pin, stated exactly
+//
+// **The property, not the individual checks.** Each case asserts that a hostile offset table never
+// yields a root — and that is what a caller depends on. It is *not* true that each assertion guards
+// the line it is written next to, and I checked rather than assuming: deleting the backwards-offset
+// comparison leaves every case here still refused, and so does deleting `rootAt`'s span-range guard as
+// well. Something further in refuses them anyway.
+//
+// That is defence in depth and it is the right shape for a decoder that stands between a network and a
+// consensus root. It also means a coverage report saying these lines are *executed* is a weaker
+// statement than it looks: executed is not the same as load-bearing, and the canary is what tells them
+// apart. What would pin an individual check is a mutation score, not a branch count —
+// `issues/system/0005` is where that lives.
+//
+// Everything below drives an exported function directly with a hand-built type table. That is the
+// only way in: `hashTreeRoot` refuses these long before the inner checks are reached, so a test that
+// went through the public entry point would be testing the outer guard twice.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { containerSpans, fieldBytes, fieldRoot, rootAt, hashTreeRoot, isFixed, fixedSize,
+         KIND_LIST } from "../../src/container.wac";
+import { merkleize, isValidMerkleBranch, isValidNormalizedMerkleBranch }
+  from "../../src/merkle.wac";
+import { Schema } from "./schema.wac";
+
+/** A `uint16, List[uint16, 1024], uint8` container — the shape the fixtures call `VarTestStruct`. */
+struct Built {
+  i32[] t;
+  i32[] f;
+  i32 varStruct;
+  i32 fixedStruct;
+  i32 list;
+  i32 boolField;
+  i32 varList;
+  i32 fixedList;
+  i32 compositeList;
+  i32 empty;
+  i32 tinyVarList;
+  i32 varVector;
+  i32 boolType;
+}
+
+Built built() {
+  Schema s = Schema.create();
+  i32 uint8 = s.basic(1);
+  i32 uint16 = s.basic(2);
+  i32 uint32 = s.basic(4);
+  i32 uint64 = s.basic(8);
+  i32 list = s.list(uint16, 1024);
+  i32 varStruct = s.container(i32[](uint16, list, uint8));
+  i32 fixedStruct = s.container(i32[](uint8, uint64, uint32));
+  // A boolean field, which no vendored container in this package's corpus has — `fixedSize` has an
+  // arm for it and nothing had ever asked.
+  i32 boolField = s.container(i32[](s.boolean(), uint16));
+  i32 varList = s.list(varStruct, 4);          // List[VarTestStruct, 4]
+  i32 fixedList = s.list(uint16, 8);           // List[uint16, 8]
+  i32 compositeList = s.list(fixedStruct, 4);  // List[FixedTestStruct, 4] — 13 bytes each
+  i32 empty = s.container(i32[0]());           // SSZ has no empty containers; this is the input that says so
+  i32 tinyVarList = s.list(varStruct, 1);      // List[VarTestStruct, 1] — two elements is over
+  i32 varVector = s.vector(varStruct, 3);      // Vector[VarTestStruct, 3] — two is short
+  i32 boolType = s.boolean();
+  return Built(s.t(), s.f(), varStruct, fixedStruct, list, boolField, varList, fixedList,
+               compositeList, empty, tinyVarList, varVector, boolType);
+}
+
+/** A well-formed `VarTestStruct`: uint16 = 1, offset = 7, uint8 = 9, then two list elements. */
+u8[] goodVarStruct() {
+  return u8[](1, 0, 7, 0, 0, 0, 9, 0xAA, 0xBB, 0xCC, 0xDD);
+}
+
+/** The same, with the four offset bytes at 2..6 replaced. */
+u8[] withOffset(i32 off) {
+  u8[] b = goodVarStruct();
+  b[2] = off & 0xFF;
+  b[3] = (off >> 8) & 0xFF;
+  b[4] = (off >> 16) & 0xFF;
+  b[5] = (off >> 24) & 0xFF;
+  return b;
+}
+
+/**
+ * Every refusal in `containerSpans`, which is where a serialization's shape is decided.
+ *
+ * `containerSpans` turns a byte range into one span per field by reading the offsets. Every `null` it
+ * can answer is a different malformation, and the one that matters most is the pair at the end: an
+ * offset that goes backwards makes two fields share bytes.
+ */
+export string test_container_spans_refuses_every_malformed_offset_table() {
+  T t = T.create();
+  Built b = built();
+
+  // The unmodified case is accepted, so every refusal below is about what was changed rather than
+  // about the fixture being wrong. Without this the test would pass with `containerSpans` stubbed to
+  // return null.
+  u8[] good = goodVarStruct();
+  t.isFalse(containerSpans(b.t, b.f, b.varStruct, good, 0, good.len()) is null,
+            "the well-formed case was refused, so the negatives below prove nothing");
+
+  // A kind that is not a container at all.
+  t.isTrue(containerSpans(b.t, b.f, b.list, good, 0, good.len()) is null,
+           "a list was accepted where a container was required");
+
+  // Ranges that are not ranges.
+  t.isTrue(containerSpans(b.t, b.f, b.varStruct, good, -1, good.len()) is null,
+           "a negative start was accepted");
+  t.isTrue(containerSpans(b.t, b.f, b.varStruct, good, 0, good.len() + 1) is null,
+           "an end past the data was accepted");
+  t.isTrue(containerSpans(b.t, b.f, b.varStruct, good, 5, 2) is null,
+           "a start after its end was accepted");
+
+  // An empty span, and one too small to hold the offset the type says is there.
+  t.isTrue(containerSpans(b.t, b.f, b.varStruct, good, 3, 3) is null,
+           "an empty span was accepted for a container with fields");
+  t.isTrue(containerSpans(b.t, b.f, b.varStruct, good, 0, 3) is null,
+           "a span shorter than the fixed part was accepted");
+
+  // **The first offset carries the length of the fixed part**, so zero and misalignment are refusals.
+  t.isTrue(containerSpans(b.t, b.f, b.varStruct, withOffset(0), 0, 11) is null,
+           "a first offset of zero was accepted");
+  t.isTrue(containerSpans(b.t, b.f, b.varStruct, withOffset(5), 0, 11) is null,
+           "a first offset that is not a multiple of four was accepted");
+  t.isTrue(containerSpans(b.t, b.f, b.varStruct, withOffset(99), 0, 11) is null,
+           "a first offset past the end of the span was accepted");
+  return t.report();
+}
+
+/**
+ * `rootAt`, `fieldBytes` and `fieldRoot` — the three that answer about *one* field.
+ *
+ * Each takes an index into a type table and a byte range, and each has to refuse the combinations a
+ * caller can ask for and the data cannot support. A list longer than its limit is the one with
+ * consensus meaning: the limit fixes the depth of the tree, so a list that exceeds it merkleizes to a
+ * root of the wrong shape rather than to a wrong value.
+ */
+export string test_the_field_readers_refuse_what_the_data_cannot_support() {
+  T t = T.create();
+  Built b = built();
+  u8[] good = goodVarStruct();
+
+  t.isFalse(rootAt(b.t, b.f, b.varStruct, good, 0, good.len()) is null,
+            "the well-formed case was refused, so the negatives below prove nothing");
+
+  // The same three range malformations, one function further in.
+  t.isTrue(rootAt(b.t, b.f, b.varStruct, good, -1, good.len()) is null,
+           "rootAt accepted a negative start");
+  t.isTrue(rootAt(b.t, b.f, b.varStruct, good, 0, good.len() + 1) is null,
+           "rootAt accepted an end past the data");
+  t.isTrue(rootAt(b.t, b.f, b.varStruct, good, 6, 2) is null,
+           "rootAt accepted a start after its end");
+
+  // A field index outside the table.
+  t.isTrue(fieldRoot(b.t, b.f, b.varStruct, good, -1) is null,
+           "a negative field index was accepted");
+  t.isTrue(fieldRoot(b.t, b.f, b.varStruct, good, 99) is null,
+           "a field index past the container's fields was accepted");
+  t.eqI32(fieldBytes(b.t, b.f, b.varStruct, u8[](1, 0), 0).len(), 0,
+          "fieldBytes answered bytes for a serialization it could not span");
+
+  // A vector whose data is the wrong length, and a list past its limit. Both are the length checks
+  // that decide the *shape* of the tree rather than its contents.
+  Schema s = Schema.create();
+  i32 u16 = s.basic(2);
+  i32 vec4 = s.vector(u16, 4);
+  i32 tiny = s.list(u16, 2);
+  i32[] t2 = s.t();
+  i32[] f2 = s.f();
+  u8[] six = u8[](1, 0, 2, 0, 3, 0);
+  t.isTrue(rootAt(t2, f2, vec4, six, 0, 6) is null,
+           "a Vector[uint16, 4] accepted six bytes, which is three elements");
+  u8[] eight = u8[](1, 0, 2, 0, 3, 0, 4, 0);
+  t.isTrue(rootAt(t2, f2, tiny, eight, 0, 8) is null,
+           "a List[uint16, 2] accepted four elements");
+  t.isFalse(rootAt(t2, f2, tiny, six, 0, 4) is null,
+            "the same list refused two elements, so the limit check is what refused four");
+  return t.report();
+}
+
+/**
+ * A boolean field, and the fixed-size arithmetic that walks a container.
+ *
+ * `fixedSize` answers how many bytes a field occupies in the fixed part, and it has an arm per kind.
+ * The boolean arm had never run: no container in the vendored corpus has one, and `isFixed` and
+ * `fixedSize` are what a caller uses before it has decoded anything, so a wrong answer here misplaces
+ * every field after it.
+ */
+export string test_a_boolean_field_is_one_fixed_byte_and_a_variable_field_is_an_offset() {
+  T t = T.create();
+  Built b = built();
+
+  t.isTrue(isFixed(b.t, b.f, b.boolField), "a container of boolean and uint16 is not fixed");
+  t.eqI32(fixedSize(b.t, b.f, b.boolField), 3, "a boolean plus a uint16 is three bytes");
+
+  // The container arm, which sums its fields — and the ternary inside it that charges a *variable*
+  // field four bytes for its offset rather than its contents.
+  t.isTrue(isFixed(b.t, b.f, b.fixedStruct), "uint8+uint64+uint32 is a fixed container");
+  t.eqI32(fixedSize(b.t, b.f, b.fixedStruct), 13, "1 + 8 + 4");
+  t.isFalse(isFixed(b.t, b.f, b.varStruct), "a container holding a list is not fixed");
+  t.eqI32(fixedSize(b.t, b.f, b.varStruct), 7,
+          "uint16 + an offset + uint8 is 2 + 4 + 1, the offset standing in for the list");
+  return t.report();
+}
+
+/**
+ * The three refusals in `merkle.wac`, which are about shapes rather than values.
+ *
+ * `isValidMerkleBranch` is the one a light client stands on: it is handed a leaf, a branch and a root
+ * from the network, and the lengths are the first thing that cannot be trusted. A branch of the wrong
+ * length against a depth is not a proof that fails to verify — without the check it is an index past
+ * the end of an array.
+ */
+export string test_merkle_refuses_a_leaf_a_root_or_a_branch_of_the_wrong_length() {
+  T t = T.create();
+  u8[] chunk = u8[32]();
+  u8[] short = u8[31]();
+  u8[] branch1 = u8[32]();
+
+  // A real proof of depth 1 first, so the refusals below are about the lengths.
+  t.isTrue(isValidMerkleBranch(chunk, branch1, 1, 0, merkleize(chunk, 2)) ||
+           !isValidMerkleBranch(chunk, branch1, 1, 0, chunk),
+           "the depth-1 shape could not be exercised at all");
+
+  t.isFalse(isValidMerkleBranch(short, branch1, 1, 0, chunk), "a 31-byte leaf was accepted");
+  t.isFalse(isValidMerkleBranch(chunk, branch1, 1, 0, short), "a 31-byte root was accepted");
+  t.isFalse(isValidMerkleBranch(chunk, u8[0](), 1, 0, chunk),
+            "an empty branch was accepted for depth 1");
+  t.isFalse(isValidMerkleBranch(chunk, u8[64](), 1, 0, chunk),
+            "a two-node branch was accepted for depth 1");
+
+  // Merkleizing nothing is the zero subtree for the depth the limit fixes, not an empty answer.
+  t.eqI32(merkleize(u8[0](), 4).len(), 32, "an empty input merkleized to nothing");
+  t.eqI32(merkleize(u8[0](), 1).len(), 32, "an empty input at limit 1 merkleized to nothing");
+  return t.report();
+}
+
+/**
+ * A `List[VarTestStruct, 4]` holding two elements, with the offset table written by the caller.
+ *
+ * The table is `n` four-byte offsets and the count comes from `offsets[0] / 4` — the size of the table
+ * is the only thing that says how many elements there are. So the first offset is load-bearing twice
+ * over, which is why three separate checks guard it.
+ */
+u8[] listOfTwo(i32 first, i32 second) {
+  u8[] one = goodVarStruct();                       // 11 bytes
+  u8[] out = u8[8 + one.len() * 2]();
+  out[0] = first & 0xFF;   out[1] = (first >> 8) & 0xFF;
+  out[2] = (first >> 16) & 0xFF; out[3] = (first >> 24) & 0xFF;
+  out[4] = second & 0xFF;  out[5] = (second >> 8) & 0xFF;
+  out[6] = (second >> 16) & 0xFF; out[7] = (second >> 24) & 0xFF;
+  for (i32 i = 0; i < one.len(); i++) {
+    out[8 + i] = one[i];
+    out[8 + one.len() + i] = one[i];
+  }
+  return out;
+}
+
+/**
+ * The offset table of a **list of variable-size elements** — where SSZ aliasing lives.
+ *
+ * `elementBounds` is a different function from `containerSpans` above and guards a different table:
+ * a container's offsets say where its own fields are, and this one says where the *elements* of a list
+ * are. Both are attacker-controlled and only the first had a test.
+ *
+ * **The backwards-offset check is the one worth the file.** If element 1 begins before element 0 ends,
+ * the same bytes are inside two elements: one serialization, two readings, and both merkleize to roots
+ * a verifier will accept. The check is `b[e] < b[e - 1]` and it had never run.
+ */
+export string test_a_list_of_variable_elements_refuses_a_hostile_offset_table() {
+  T t = T.create();
+  Built b = built();
+
+  // Two elements, table of eight bytes, second element eight-plus-eleven in. Accepted, so every
+  // refusal below is about the perturbation.
+  u8[] good = listOfTwo(8, 19);
+  t.isFalse(rootAt(b.t, b.f, b.varList, good, 0, good.len()) is null,
+            "the well-formed list was refused, so the negatives below prove nothing");
+
+  t.isTrue(rootAt(b.t, b.f, b.varList, listOfTwo(0, 19), 0, good.len()) is null,
+           "a first offset of zero was accepted — there is no element count in it");
+  t.isTrue(rootAt(b.t, b.f, b.varList, listOfTwo(6, 19), 0, good.len()) is null,
+           "a first offset that is not a multiple of four was accepted");
+  t.isTrue(rootAt(b.t, b.f, b.varList, listOfTwo(99, 19), 0, good.len()) is null,
+           "a first offset past the span was accepted");
+  t.isTrue(rootAt(b.t, b.f, b.varList, listOfTwo(8, 999), 0, good.len()) is null,
+           "a later offset past the span was accepted");
+
+  // **Backwards.** Element 1 starts before element 0, so they overlap.
+  t.isTrue(rootAt(b.t, b.f, b.varList, listOfTwo(8, 8), 0, good.len()) is null,
+           "two elements were allowed to start at the same byte");
+  u8[] backwards = listOfTwo(12, 8);
+  t.isTrue(rootAt(b.t, b.f, b.varList, backwards, 0, backwards.len()) is null,
+           "an offset table that goes backwards was accepted — two elements alias one span");
+
+  // An empty list of variable elements is a list, not a refusal: no table, nothing to check.
+  t.isFalse(rootAt(b.t, b.f, b.varList, u8[0](), 0, 0) is null,
+            "an empty List[VarTestStruct, 4] was refused");
+
+  // And the fixed-element path: a span that is not a whole number of elements.
+  u8[] three = u8[](1, 0, 2);
+  t.isTrue(rootAt(b.t, b.f, b.fixedList, three, 0, 3) is null,
+           "a List[uint16, 8] accepted three bytes, which is one and a half elements");
+  t.isFalse(rootAt(b.t, b.f, b.fixedList, three, 0, 2) is null,
+            "the same list refused one whole element, so the parity check is what refused three");
+
+  // **A list of fixed *composite* elements** takes a different path from a list of basic ones: basic
+  // elements are merkleized from the bytes directly and never counted, so the "is this a whole number
+  // of elements" check only exists for composites. Thirteen bytes each, twenty given.
+  u8[] twenty = u8[20]();
+  t.isTrue(rootAt(b.t, b.f, b.compositeList, twenty, 0, 20) is null,
+           "a List[FixedTestStruct, 4] accepted twenty bytes, which is one and a half elements");
+  u8[] thirteen = u8[13]();
+  t.isFalse(rootAt(b.t, b.f, b.compositeList, thirteen, 0, 13) is null,
+            "the same list refused one whole element, so the size check is what refused twenty");
+
+  // A variable-element list with fewer bytes than one offset. There is no table, so there is no count.
+  u8[] two = u8[](1, 2);
+  t.isTrue(rootAt(b.t, b.f, b.varList, two, 0, 2) is null,
+           "a list of variable elements accepted a span too short to hold an offset");
+
+  // A first offset that is a multiple of four *and* past the span — the check after the alignment one,
+  // which an unaligned value can never reach.
+  u8[] far = listOfTwo(100, 19);
+  t.isTrue(rootAt(b.t, b.f, b.varList, far, 0, far.len()) is null,
+           "a four-aligned first offset past the span was accepted");
+  return t.report();
+}
+
+/**
+ * The three refusals that no valid object can produce: an empty container, an unspannable
+ * serialization, and a normalized branch whose length is not a whole number of nodes.
+ */
+export string test_the_shapes_that_are_not_ssz_at_all() {
+  T t = T.create();
+  Built b = built();
+
+  // SSZ has no empty containers. The type table can express one; the decoder says so.
+  t.isTrue(containerSpans(b.t, b.f, b.empty, u8[0](), 0, 0) is null,
+           "a container with no fields was spanned rather than refused");
+
+  // `fieldRoot` asks for the spans first, so a serialization too short to span is refused before the
+  // field index is even looked at.
+  t.isTrue(fieldRoot(b.t, b.f, b.varStruct, u8[](1, 0), 0) is null,
+           "fieldRoot accepted a serialization that cannot be spanned");
+
+  // A normalized branch is a whole number of 32-byte nodes. Thirty-three bytes is not.
+  u8[] chunk = u8[32]();
+  t.isFalse(isValidNormalizedMerkleBranch(chunk, u8[33](), 2, chunk),
+            "a branch of 33 bytes was accepted as a whole number of nodes");
+  t.isFalse(isValidNormalizedMerkleBranch(chunk, u8[1](), 2, chunk),
+            "a one-byte branch was accepted");
+
+  // **A composite list past its limit, and a composite vector of the wrong length.** These are the
+  // count checks for elements that are containers; the basic-element versions above take a different
+  // path, which is why both are needed. The limit fixes the tree's depth, so an over-long list would
+  // merkleize to a root of the wrong shape.
+  u8[] two = listOfTwo(8, 19);
+  t.isTrue(rootAt(b.t, b.f, b.tinyVarList, two, 0, two.len()) is null,
+           "a List[VarTestStruct, 1] accepted two elements");
+  t.isTrue(rootAt(b.t, b.f, b.varVector, two, 0, two.len()) is null,
+           "a Vector[VarTestStruct, 3] accepted two elements");
+
+  // `fixedSize` is documented "meaningless for a variable one; guard with `isFixed`" — and it answers
+  // zero rather than guessing, which is what makes an unguarded caller wrong rather than plausible.
+  t.isFalse(isFixed(b.t, b.f, b.list), "a List[uint16, 1024] was called fixed");
+  t.eqI32(fixedSize(b.t, b.f, b.list), 0, "a variable type reported a fixed size");
+  return t.report();
+}

@@ -33,6 +33,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { ttycatBytes } from "../../example/ttycat.wac";
+import { Line, Typed } from "../../src/line.wac";
 import { DEL, EOF, INTR, QUIT, j3, join, k, sameBytes, show, t, typed,
          typedNames } from "./cases.wac";
 import { Loaded, Vector, find, load, pty, vectorsPath } from "./replay.wac";
@@ -244,4 +245,66 @@ bool hasSetting(string said, string name, string key) {
     at = at + 1 + next;
   }
   return false;
+}
+
+/**
+ * `cbreak`'s signal keys, and the two methods on `Line` that nothing calls.
+ *
+ * The coverage driver added on 2026-08-24 (`issues/system/0205`) found these, and they are a different
+ * kind of gap from the ones `packages/ssz` and `packages/mpt` turned up. Those two are judged against
+ * vendored corpora of real Ethereum data, and what a real-data corpus cannot contain is the
+ * implementation's own *refusals*. This package is judged against the kernel through a real pty, with
+ * the inputs chosen by whoever wrote the test — so what it misses instead is **API nobody called and a
+ * mode nobody entered**.
+ *
+ * `^C` and `^\` in cbreak are the mode's most consequential rule and the one the file's own header
+ * argues about at length: `stty raw` clears `ISIG` and would make `^C` an ordinary byte, and this is
+ * deliberately *not* that. Nothing had ever pressed either key in this mode.
+ */
+export string test_cbreak_still_answers_a_signal_and_the_unused_accessors_work() {
+  T t = T.create();
+
+  // `^C` and `^\` are signals in cbreak, not data. This is the claim `cbreak`'s doc comment makes.
+  Line c = Line.cbreak();
+  Typed intr = c.feedByte(INTR);
+  t.eqI32(intr.signal, 2, "^C in cbreak did not answer SIGINT");
+  t.isFalse(intr.hasLine, "^C delivered a line as well as a signal");
+  t.eqI32(intr.line.len(), 0, "^C answered a line");
+
+  Line q = Line.cbreak();
+  Typed quit = q.feedByte(QUIT);
+  t.eqI32(quit.signal, 3, "^\\ in cbreak did not answer SIGQUIT");
+  t.isFalse(quit.hasLine, "^\\ delivered a line as well as a signal");
+
+  // An ordinary byte in the same mode is data, arriving one at a time — so the two above are about
+  // those keys rather than about cbreak delivering nothing.
+  Line d = Line.cbreak();
+  Typed one = d.feedByte('x');
+  t.isTrue(one.hasLine, "an ordinary byte in cbreak did not arrive");
+  t.eqI32(one.line.len(), 1, "cbreak delivered other than one byte");
+  t.eqI32(one.signal, 0, "an ordinary byte answered a signal");
+
+  // **`pending` and `feedAll` had no caller anywhere in the repository.** They are the accessor a
+  // caller uses to ask whether a partial line is held, and the loop it would otherwise write itself.
+  Line l = Line.create();
+  t.isFalse(l.pending(), "a fresh line is holding something");
+  l.feed('a');
+  t.isTrue(l.pending(), "a line with a character typed is not pending");
+  l.feed('\n');
+  t.isFalse(l.pending(), "a line delivered is still pending");
+
+  // **A tab is one column, not the two a control character takes.** `columns` is what the erase rules
+  // count backwards over, so a tab measured as two would rub out one character too many — and the
+  // recorded vectors have no tab in them.
+  Line tab = Line.create();
+  Typed drew = tab.feed(9);
+  t.eqI32(drew.echo.len(), 1, "a tab echoed as something other than one byte");
+  Typed rub = tab.feed(DEL);
+  t.eqI32(rub.echo.len(), 3, "erasing a tab did not rub out exactly one column");
+
+  Typed[] all = Line.create().feedAll("hi\n".toBytes());
+  t.eqI32(all.len(), 3, "feedAll answered one Typed per byte");
+  t.isTrue(all[2].hasLine, "the newline did not finish the line");
+  t.eqStr(string.fromBytes(all[2].line), "hi\n", "feedAll's last answer is not the line");
+  return t.report();
 }
