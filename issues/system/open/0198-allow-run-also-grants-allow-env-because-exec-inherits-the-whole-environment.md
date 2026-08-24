@@ -267,3 +267,28 @@ The other two callers this issue names — `tor`'s capture tool, which needs `HO
 fallback is `/root`, and the uninstaller test, which needs the proxy — are left. They work under today's
 default and converting them means answering "which proxy variables", which is the sweep rather than the
 mechanism.
+
+## Step 2, second of three: `tor`'s capture tools declare their environment — agent-a, 2026-08-24
+
+`packages/tor/test/wac/capturetools_test.wac` spawns every recipe through one helper, and that helper
+now uses `onlyEnv(cli, ["PATH", "HOME"], …)` — `execWith` with `clearEnv: true` — instead of
+`cli.exec`. Two of the three directories this issue measured are now converted; the third is the one
+that wants the proxy.
+
+**Both names are load-bearing, and each was proved by removing it** rather than by reasoning from the
+earlier measurement:
+
+- without `PATH`: `capture-hkdfcap: deno would not start: deno: No such file or directory` — the
+  recipe asks WebCrypto through `deno eval`, named by a bare word, so `PATH` is what naming it that
+  way means;
+- without `HOME`: `capture-blind: no libtor.a under /root/tor-build/…` — the tools fall back to
+  `/root`, which is the exact symptom this issue recorded when it measured the directory.
+
+That second canary matters beyond this file: it says the clear is really taking effect. A conversion
+that quietly kept inheriting would pass, and so would one whose recipes had all skipped — this
+machine has tor built under `$HOME`, so the recipes that need it actually ran.
+
+Nothing here relied on the leak, so this is a hardening: the file behaves the same today and does not
+notice the day `Cli.exec` stops inheriting. **The open decision is untouched** — whether `PATH` comes
+from the API or from 122 call sites through a shared helper — and this conversion is neutral to it,
+since a helper would simply be where these two names come from instead of here.
