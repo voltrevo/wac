@@ -1270,10 +1270,26 @@ export string test_rung3_every_operator_against_every_type(Core core, Cli cli) {
  */
 export string test_rung3_every_type_into_every_other_types_slot(Core core, Cli cli) {
   T t = T.create();
-  string prelude = "struct S { i32 v; } enum E { A, B }\n";
+  // **A child and a generic child, added 2026-08-24 — and the grid would have found all three.**
+  //
+  // The list was eighteen types with no inheritance and no generic in it, so every rule about a
+  // *related* pair of struct types was outside the grid entirely. Three defects lived in that gap and
+  // were found by hand instead, one of them a week after being filed as a language question:
+  //
+  //   - `S? r = k` for a `K k` — refused, and the reference accepts, emits and runs it. The spec says
+  //     so too: `spec/tour.wac` §14, *"`T` widens to `T?` implicitly"*.
+  //   - `S r = g` for a `G<i32> g` — refused, same story.
+  //   - `g as! S` — accepted, where the reference says *"upcast to 'S' is always safe — use 'as'"*.
+  //
+  // One helper was blind to a spelling in both directions. Five types is 529 cells against 324, and
+  // the pairs that matter are the ones no hand-written list reaches for: child into parent, child into
+  // *nullable* parent, generic child into parent, and each of those backwards, which must stay refused.
+  string prelude = "struct S { i32 v; } struct K : S { i32 w; } struct G<T> : S { T g; } "
+                   + "enum E { A, B }\n";
   string[] types = string[](
     "i32", "i64", "f64", "bool", "string", "string?", "S", "S?", "E", "E?",
-    "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref", "i8", "u32", "f32");
+    "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref", "i8", "u32", "f32",
+    "K", "K?", "G<i32>", "G<i32>?", "anyref?");
   i32 total = types.len() * types.len();
   string[] sources = string[total](fill: "");
   string[] labels = string[total](fill: "");

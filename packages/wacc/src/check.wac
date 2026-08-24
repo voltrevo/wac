@@ -773,11 +773,25 @@ bool isReferenceType(C c, string t) {
  * `assignable` still answers `true` for it, so the mismatch rules stay quiet and this reports instead
  * of both firing at one position.
  */
-export bool nullableIntoNonNull(string want, string got) {
+export bool nullableIntoNonNull(C c, string want, string got) {
   if (want == "" || got == "") { return false; }
   if (!endsWith(got, "?")) { return false; }
   if (endsWith(want, "?")) { return false; }
-  return withoutNull(got) == want;
+  // **`anyref` is already nullable**, so `anyref? into anyref` takes nothing away and the reference
+  // accepts it. The old exact-name test reported it, which is the one cell of this family wacc
+  // invented — found by putting `anyref?` in the slot grid.
+  if (want == "anyref") { return false; }
+  // **The base has to *fit* the slot, not equal it.** `withoutNull(got) == want` was the whole test,
+  // so this family was only ever recognised when the two names matched exactly: `S? into S` reported
+  // and `K? into S` said nothing at all, for a `K : S`. The reference gives both the same message —
+  // *"cannot assign nullable to non-null"* — because both are the same mistake, and the child one is
+  // the likelier to be written. `G<i32>? into S` was missed for the same reason one spelling further
+  // along.
+  //
+  // Asking `assignable` is what keeps the two families apart rather than overlapping: `string? into
+  // i32` fails here, because a `string` does not fit an `i32` under any nullability, and falls
+  // through to the ordinary mismatch — which is what the reference calls it too.
+  return assignable(c, want, withoutNull(got));
 }
 
 /** Whether `==` is refused on this type because it is a reference. Arrays are, as structs are. */
@@ -4601,7 +4615,7 @@ void checkFuncrefArgs(C c, string held, Expr[] args, i32 callLine) {
     }
     string got = typeOfExpr(c, args[i]);
     if (got == typeNone() || got == "") { continue; }
-    if (nullableIntoNonNull(want, got)) {
+    if (nullableIntoNonNull(c, want, got)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
@@ -5050,7 +5064,7 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
       continue;
     }
     string got = typeOfExpr(c, args[i]);
-    if (nullableIntoNonNull(want, got)) {
+    if (nullableIntoNonNull(c, want, got)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
@@ -6836,7 +6850,7 @@ void checkMethodArgs(C c, string owner, i32 at, Expr[] args, i32 callLine) {
     }
     string mgot = typeOfExpr(c, args[i]);
     if (mgot == typeNone() || mgot == "") { continue; }
-    if (nullableIntoNonNull(mwant, mgot)) {
+    if (nullableIntoNonNull(c, mwant, mgot)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, mwant, mgot)) {
       c.reportWith(errArgumentMismatch(), args[i].line, args[i].col, expectedFound(mwant, mgot));
@@ -7427,7 +7441,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         return;
       }
       string gotTo = typeOfExpr(c, rhs);
-      if (nullableIntoNonNull(wantTo, gotTo)) {
+      if (nullableIntoNonNull(c, wantTo, gotTo)) {
         c.report(errNullableToNonNull(), rhs.line, rhs.col);
       } else if (!assignable(c, wantTo, gotTo)) {
         reportExpr(c, errInitTypeMismatch(), rhs, expectedFound(wantTo, gotTo));
@@ -7457,7 +7471,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         return;
       }
       string gotVar = typeOfExpr(c, init);
-      if (nullableIntoNonNull(wantVar, gotVar)) {
+      if (nullableIntoNonNull(c, wantVar, gotVar)) {
         c.report(errNullableToNonNull(), init.line, init.col);
       } else if (!assignable(c, wantVar, gotVar)) {
         reportExpr(c, errInitTypeMismatch(), init, expectedFound(wantVar, gotVar));
@@ -7535,7 +7549,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       // A name: a value of exactly one type, so the question is whether it is the declared one.
       string got = typeOfExpr(c, e);
-      if (nullableIntoNonNull(expected, got)) {
+      if (nullableIntoNonNull(c, expected, got)) {
         c.report(errNullableToNonNull(), e.line, e.col);
       } else if (!assignable(c, expected, got)) {
         // The whole returned expression, not its first token: `§wac-diag-wide-k4rn8wp` states `span: 7`
