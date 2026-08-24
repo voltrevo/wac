@@ -1,0 +1,41 @@
+// tls's coverage. Placeholder header — replaced once the first run is read.
+//
+//   deno task coverage:tls
+//   deno task coverage:tls --verbose
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/tls/test/cov_exercise.wac";
+const string PREFIX = "packages/tls/";
+
+/** Sockets to OpenSSL, a process to start it, the vendored certificates, and a temp dir to write. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+/** A hundred of the 185 tests expect a trap — see the exercise's `trapCase`. */
+string[] cases() { return string[]("trapCase:100"); }
+
+Rule[] rules() {
+  return Rule[0](fill: Rule("", "", "line", true, ""));
+}
+
+Pin[] pins() {
+  return Pin[0](fill: Pin("", 0, "", true, ""));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}
