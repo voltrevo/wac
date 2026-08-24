@@ -828,6 +828,22 @@ export struct Association {
       Chunk c = parseChunk(pkt, at);
       if (c.kind == chunkInit()) {
         this.theirTag = initiateTag(c.value);
+        // **Believe what the peer says it will start at, not what turns up first.**
+        //
+        // `cumulativeTsn` means everything up to and including it arrived. Left unset, the first
+        // DATA chunk to *arrive* becomes that point — so a chunk that overtook another on the path
+        // makes us claim the one still in flight was delivered, refuse it as a duplicate when it
+        // lands, and never name it in a gap block. The peer stops resending and the payload is
+        // gone with both ends believing otherwise. Seeding one below the declared start makes the
+        // first in-order chunk the successor it should be, and anything that overtook it a gap the
+        // machinery below already knows how to report.
+        //
+        // Only when nothing has arrived yet: an INIT is retransmitted when its answer is lost, and
+        // a second one must not rewind a receive point that has since moved.
+        if (this.haveCumulative == 0) {
+          this.cumulativeTsn = initTsn(c.value) - 1;
+          this.haveCumulative = 1;
+        }
         out = appendPacket(out, packet(5000, 5000, this.theirTag,
           chunk(chunkInitAck(), 0,
                 initAckValue(this.ourTag, this.window, 16, 16, this.nextTsn, cookie))));

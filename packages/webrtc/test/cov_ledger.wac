@@ -182,11 +182,15 @@ Pin[] pins() {
         "**An uncovered entry.** The advertised receive window out of an INIT — the peer telling us " +
         "how much it will accept before an acknowledgement. Nothing reads it, which means nothing " +
         "here does receiver-side flow control, which is a gap in the implementation rather than in " +
-        "the tests. Recorded as such."),
-    Pin("packages/webrtc/src/sctp.wac", 214, "export i32 initTsn(u8[] value) {", false,
-        "The peer's initial transmission sequence number, likewise unread — see `:208`. The " +
-        "association takes the first DATA chunk's TSN as the start instead, which works until a peer " +
-        "sends its chunks out of order."),
+        "the tests. Now filed as `issues/system/0251b` rather than only recorded here — a coverage " +
+        "ledger is read by someone moving a number, and an implementation gap has to be findable by " +
+        "someone deciding what to implement.\n" +
+        "         **Its twin `initTsn` was the same shape and was a bug, not a gap**, fixed " +
+        "2026-08-24: the association adopted whichever DATA chunk arrived first as its cumulative " +
+        "point, which claims everything below it arrived. One reorder and a chunk still in flight " +
+        "was acknowledged, refused as a duplicate when it landed, and never named in a gap block. " +
+        "Worth the sentence here because the two pins were written together and read the same, and " +
+        "only one of them was harmless."),
     Pin("packages/webrtc/src/session.wac", 266, "u8[] labelOf(u8[] msg) {", false,
         "The DCEP label accessor's entry — see the pin on `:271` for its body and for why the whole " +
         "function is reached only through the browser test."),
@@ -218,7 +222,7 @@ Pin[] pins() {
     Pin("packages/webrtc/src/sctp.wac", 86, "if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[0]()); }", false,
         "A chunk header too short to hold its own length. The entry to every SCTP walk, and the one " +
         "malformation the corpus does not contain."),
-    Pin("packages/webrtc/src/sctp.wac", 1256, "return t > (60000 as i64) ? (60000 as i64) : t;", false,
+    Pin("packages/webrtc/src/sctp.wac", 1272, "return t > (60000 as i64) ? (60000 as i64) : t;", false,
         "**The retransmission backoff hitting its sixty-second ceiling.** RFC 4960 §6.3.3 caps RTO " +
         "doubling, and reaching the cap needs six consecutive timeouts — about two minutes of a peer " +
         "not answering. No test waits that long and none should; a test that wanted this would inject " +
