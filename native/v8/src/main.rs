@@ -2566,7 +2566,17 @@ fn counters_of(path: &str) -> Result<Vec<i32>, String> {
     };
     init.call(scope, exports.into(), &[]);
     if let Some(main) = get_export(scope, exports, "main") {
-        main.call(scope, exports.into(), &[]);
+        // **A `TryCatch`, because a trap here is expected and tolerated.** The next lines say so: the
+        // counters stand after a trap and they are what was asked for. Without one, V8's default
+        // handler announces the trap on **stdout** — which is the stream `tracestat` prints its one
+        // line of numbers to and `ctcompare` prints its verdict to, and `ct.wac` and
+        // `packages/crypto/test/wac/constanttime_test.wac` both parse. Measured before the fix: a
+        // trapping module gave `tracestat` one stray line and `ctcompare` two, since it reads two
+        // modules through here.
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let mut tc = tc.init();
+        main.call(&mut tc, exports.into(), &[]);
+        tc.reset();
     }
 
     let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
