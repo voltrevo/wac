@@ -1,0 +1,84 @@
+// The host tells every payload which compiler is running it.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env tools/wac/compilerid_test.wac
+//
+// `issues/system/0204` wants a build cache on the wac side, where the artefact, the file set and the
+// flags are all in hand — and named the one ingredient that is not: *"the identity of the compiler
+// doing the compiling: the seed is embedded in the binary and a wac program cannot hash it. That is one
+// small thing the host must supply … and it is the part to design first, because a cache that cannot
+// tell which compiler produced an entry is the stale-hit bug this issue would introduce."*
+//
+// So `$WAC_COMPILER_ID` is set by the host before any payload runs — sixteen hex digits over the same
+// two inputs `test_module_key` already hashes to decide whether a *cached module* was built by this
+// compiler: the embedded seed, and the binary's own version because the manifest shape is its.
+//
+// **Why an environment variable and not a new host function.** Reading it needs the `env` grant, which
+// the compiler already holds — it reads `$WAC_HOME` through the same door. A host function would have
+// to be implemented in every host (native, Deno, browser) for a value that is information rather than
+// authority, and `packages/wacc/example/wacc.wac` is the only caller in sight.
+//
+// **The caller can override it**, which is not a hole but the point: a test that wants to force a
+// cache miss says so, and the override is how the future cache gets tested at all.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
+import { wacBinary } from "../../packages/wactest/src/built.wac";
+import { freshDir, putFile } from "../../packages/wactest/src/host.wac";
+
+const string PROBE =
+  "import { Core, Cli } from \"std/platform.wac\";\n"
+  + "export i32 main(Core core, Cli cli) {\n"
+  + "  u8[]? id = cli.env(\"WAC_COMPILER_ID\").wait();\n"
+  + "  core.log(id is null ? \"(unset)\" : string.fromBytes(id!));\n"
+  + "  return 0;\n"
+  + "}\n";
+
+/** Run the probe, optionally with `WAC_COMPILER_ID` already set, and answer what it printed. */
+string idSeenBy(Cli cli, string probe, string forced) {
+  string[] env = forced == "" ? string[0](fill: "") : string[]("WAC_COMPILER_ID=" + forced);
+  Exec r = cli.execWith(wacBinary(cli), string[]("run", "--allow-env", probe), u8[0](),
+                        env, false, false).wait();
+  if (!r.ran()) { return "(did not run: " + r.error + ")"; }
+  string out = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  // The probe prints one line; take it without the newline.
+  i32 nl = out.indexOf("\n");
+  return nl < 0 ? out : out.slice(0, nl);
+}
+
+bool isSixteenHex(string s) {
+  if (s.len() != 16) { return false; }
+  for (i32 i = 0; i < 16; i++) {
+    string c = s.slice(i, i + 1);
+    bool digit = c >= "0" && c <= "9";
+    bool lower = c >= "a" && c <= "f";
+    if (!digit && !lower) { return false; }
+  }
+  return true;
+}
+
+export string test_the_host_names_the_compiler_running_a_payload(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/compilerid-probe";
+  string whyDir = freshDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+  string probe = dir + "/whoami.wac";
+  string whyFile = putFile(cli, probe, PROBE);
+  t.isTrue(whyFile == "", whyFile);
+
+  string first = idSeenBy(cli, probe, "");
+  t.isTrue(isSixteenHex(first),
+      "the payload was not told which compiler is running it — got `" + first + "`, wanted sixteen "
+      + "hex digits. Without this a build cache cannot tell one compiler's entries from another's.");
+
+  // **Stable across runs**, which is the whole of what a cache key needs from it: two invocations of
+  // one binary must agree, or every build is a miss and the cache is a write-only directory.
+  t.eqStr(idSeenBy(cli, probe, ""), first,
+      "two runs of the same binary named different compilers");
+
+  // And the caller's value wins, which is how a test forces a miss.
+  t.eqStr(idSeenBy(cli, probe, "forced-by-the-caller"), "forced-by-the-caller",
+      "the host overwrote an identity its caller had already chosen");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

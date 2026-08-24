@@ -277,3 +277,46 @@ since it was computed on the assumption that the cache covered the directories i
 for the same reason: the build-and-run path shares `cached_module`, and whether *it* was reaching a
 complete closure is the same question asked one call site along.
 
+## The compiler identity, which was the named blocker — agent-a, 2026-08-24
+
+*"That is one small thing the host must supply … and it is the part to design first."* Done:
+`$WAC_COMPILER_ID`, sixteen hex digits, set by the host before any payload runs, over the same two
+inputs `test_module_key` already hashes — the embedded seed and `CARGO_PKG_VERSION`.
+
+Verified by recomputing it outside the binary from `native/v8/seed/wacc.wasm` and the version in
+`Cargo.toml`: `e19c273b281e5b92` both ways. So it is provably a function of those two things and
+changes exactly when the compiler does.
+
+An environment variable rather than a host function, deliberately. Reading it needs the `env` grant the
+compiler already holds for `$WAC_HOME`; a host function would have to be written three times — native,
+Deno, browser — for a value that is *information* rather than authority. The caller's value wins if one
+is already set, which is how a test forces a miss.
+`tools/wac/compilerid_test.wac` pins all three properties, canaried by taking the `set_var` out: *"the
+payload was not told which compiler is running it — got `(unset)`"*.
+
+### And the shape of the cache itself, now that the ingredients are in hand
+
+Read out of `packages/wacc/example/wacc.wac` rather than guessed, because the first design was wrong in
+a way worth recording.
+
+**Cache the bytes that get written, not the compiler's intermediates.** The obvious reading is to cache
+`wasm` from `buildFilesIn`, but a hit would then also need `sigs` and `types`, because
+`manifestWire(wasm, types, sigs, …)` builds the manifest from them and `withManifestSection` is what
+actually reaches the disk. Caching `whole` — the bytes written — needs none of that: one blob in, one
+file out.
+
+**What the key has to contain**, all of it already in scope at the write site: the compiler id, the
+entry, every `(path, text)` pair from the gather, the `--coverage`/`--trace` flags, the **grants**
+(they go into the manifest) and the output's **base name** (`baseName(stem) + ".wasm"` is *in* the
+manifest, so two destinations are two artefacts).
+
+**The obstacle, which is why this is not in this commit.** The compile happens at `buildFilesIn` on a
+path shared by `build`, `bindgen`, `app` and the check commands; `stem` is not read until ~140 lines
+later. Skipping the compile means hoisting the key computation above a branch several commands go
+through, and that is a restructure of the path every build in the repository takes — not a change to
+make in the same commit as the thing it depends on, and not one to make the same week
+`issues/lang/0241c` cost two wrong diagnoses to a stale artefact cache.
+
+The hit path still gathers, because the sources *are* the key; what it skips is the compile. On the
+numbers in this issue that is the whole of the 2 s.
+
