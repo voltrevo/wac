@@ -660,7 +660,7 @@ a tuple of arguments, so a dynamic argument is reached through an offset word I 
 every encode refusal is prefixed `member 0:`, naming which argument, which my exact-match expectations
 had called drift.
 
-### The four so far
+### The five so far
 
 | package | first run | gaps were |
 |---|---:|---|
@@ -668,9 +668,33 @@ had called drift.
 | `mpt` | 91.2% | refusals (11 of 11) |
 | `tty` | 91.0% | unused API, an unentered mode, an unmeasured tab |
 | `rlp` | 84.6% | **both** — three uncovered accessors *and* the canonicity refusals |
+| `abi` | 87.6% | **both** — the accessor fallbacks *and* the canonicity refusals |
 
 About an hour each. Every one turned up something with consequences rather than tidy-up, and none of it
 was visible from inside the package's own tests.
+
+### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
+
+Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's
+whole output is new tests whose value is exactly that difference. So each new refusal test was run once
+against its own subject with the rule it names deleted:
+
+| package | rule deleted | test |
+|---|---|---|
+| `rlp` | the leading-zero check in a long-form length | **failed** |
+| `abi` | a bool's first thirty-one bytes must be zero | **failed** |
+| `mpt` | a hex-prefix's pad nibble must be zero | **failed** |
+| `ssz` | the backwards-offset check, then `rootAt`'s span guard | **passed both times** |
+
+Three of the four pin the check. The fourth does not, and that is the more interesting result: SSZ's
+offset table is validated in more than one place, so deleting any single guard leaves the malformed
+input still refused — by the next one. The test pins the *property* and its header now says so.
+
+**This is why a coverage floor is not a quality claim.** A floor stops a rule from becoming unreachable;
+it cannot tell whether the input that reaches it would notice the rule going away. The instrument that
+answers that is mutation score — `issues/system/0005` — and the two are complements rather than
+alternatives. The cheap version, done here, is one deletion per rule a new test claims to hold, which
+cost about a minute each and would have let one overclaiming test header through.
 
 ### `tty` third — and the pattern is narrower than two packages made it look
 
