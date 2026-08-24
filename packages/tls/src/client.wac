@@ -22,11 +22,10 @@
 
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
-import { p256Ecdh, p256PublicKey } from "../../crypto/src/p256.wac";
+import { p256Ecdh, p256PublicKey, p256Decodes } from "../../crypto/src/p256.wac";
 import {
   hybridClientOffer, hybridClientFinish, groupX25519MlKem768, hybridClientShareLen,
-  hybridServerShareLen,
-} from "./hybrid.wac";
+  hybridServerShareLen } from "./hybrid.wac";
 import { ed25519Verify } from "../../crypto/src/ed25519.wac";
 import {
   deriveSecret, earlySecret, finishedVerify, handshakeSecret, hashLen, masterSecret,
@@ -495,6 +494,7 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
       for (i32 i = 0; i < peerKey.len(); i++) { peerKey[i] = share[2 + i]; }
       c.group = group;
 
+
       addTranscript(c, msg);
       u8[] shared = u8[0]();
       if (group == groupX25519MlKem768()) {
@@ -504,8 +504,15 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
       } else if (group == groupX25519()) {
         shared = x25519(c.ephemeralPriv, peerKey);
       } else {
-        // p256Ecdh validates the peer's point, which is the defence against an
-        // invalid-curve attack; a bad point traps rather than returning a secret.
+        // **`p256Ecdh` validates the peer's point, and until 2026-08-24 it validated by trapping.**
+        // The comment here used to say so as though it were the end of the sentence — *a bad point
+        // traps rather than returning a secret* — which is the right security property and the wrong
+        // consequence: a server answering with sixty-five bytes that are not a point aborted the
+        // client process. `packages/tor` is a client, and it dials relays out of a public directory.
+        //
+        // Asked rather than enforced now. `illegal_parameter` is RFC 8446 §4.2.8's name for a key
+        // share the receiver cannot use.
+        if (!p256Decodes(peerKey)) { return fail(c, 15, alertIllegalParameter(), toSend, appData); }
         shared = p256Ecdh(c.p256Priv, peerKey);
       }
       u8[] early = earlySecret(u8[hashLen()]());

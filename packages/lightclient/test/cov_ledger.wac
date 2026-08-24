@@ -31,16 +31,24 @@ Rule[] rules() {
   return Rule[](
     Rule("packages/lightclient/src/store.wac", "validateUpdate", "decl", false,
          "**Twenty refusal arms, and the function is the package's entire reason to exist.** A " +
-         "light client believes a sync committee because a supermajority of the previous one " +
-         "signed for it, and `validateUpdate` is where each of those conditions is checked: " +
-         "enough participation, a finality branch that reaches the attested header, a " +
-         "next-sync-committee branch that reaches it too, a signature over the right fork " +
-         "domain, slots in the right order. \n" +
-         "Every one is unexercised. The corpus is updates produced by a conforming beacon " +
-         "node, and a conforming node does not produce an update that fails validation — which " +
-         "is exactly the shape `rlp`, `mpt`, `ssz`, `abi`, `bls` and `tor` each turned out to " +
-         "have. **This is the most valuable unbuilt test in the package**: each arm is one " +
-         "field of a real update, corrupted."),
+         "light client believes a sync committee because a supermajority of the previous one signed " +
+         "for it, and `validateUpdate` is where each of those conditions is checked.\n" +
+         "         **What they need is a *store*, not a corrupted update — corrected on 2026-08-24 " +
+         "after trying the other thing.** This entry first said each arm was one field of a real " +
+         "update corrupted, and a test was written to do exactly that: locate each of the six " +
+         "fields by its own bytes and flip one. It passed, it moved coverage by **zero points**, " +
+         "and canarying showed why — `test_the_store_rejects_an_update_whose_branches_do_not_prove" +
+         "_what_it_claims` already fires on the same mutation, at named offsets, with better " +
+         "messages. The test was deleted rather than kept for looking thorough.\n" +
+         "         Reading the twenty that are left says what they actually want: a signature " +
+         "period that is neither the store's nor the next one, an update that advances nothing the " +
+         "store does not already have, a next sync committee that disagrees with the one the store " +
+         "holds, a committee of the wrong size, a finalized header that is not zero when the update " +
+         "carries no finality proof. **Every one is a property of the store the update is offered " +
+         "to**, so the input to build is a store in an unusual state — mid-period, already holding " +
+         "a next committee, or behind — and the vectors supply one shape of store.\n" +
+         "         That is a different and larger piece of work than corrupting bytes, and saying " +
+         "so is worth more than the estimate this entry carried before it."),
     Rule("packages/lightclient/src/store.wac", "isBetterUpdate", "decl", false,
          "The comparison that picks between two candidate updates — supermajority over active " +
          "participation, finalised over not, older over newer. Reached when a client holds two " +

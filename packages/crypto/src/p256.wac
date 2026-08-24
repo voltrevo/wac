@@ -20,7 +20,7 @@
 import { sha256 } from "./sha256.wac";
 import { fpFromBytes } from "./fieldp.wac";
 import {
-  Curve, Jac, curveBase, curveDecode, curveEncode, curveEcdh, curvePublicKey,
+  Curve, Jac, curveBase, curveDecode, curveDecodes, curveEncode, curveEcdh, curvePublicKey,
   ecdsaSign, ecdsaVerify, jacMul,
 } from "./weierstrass.wac";
 
@@ -59,7 +59,27 @@ export Curve p256() { return Curve(fpFromBytes(bBytes()), p256Order(), gxBytes()
 /** The public key for a private scalar: 65 uncompressed bytes. */
 export u8[] p256PublicKey(u8[] priv) { return curvePublicKey(p256(), priv); }
 
-/** The ECDH shared secret: the x-coordinate of priv * peerPublic, 32 bytes. */
+/**
+ * Whether `point` is 65 uncompressed bytes naming a point on this curve.
+ *
+ * **The question `p256Ecdh` answers by trapping.** `curveEcdh` validates the peer's point — that is
+ * the whole defence against an invalid-curve attack, and `curveDecode` enforces it with a `trap`,
+ * which is right for a caller whose point is its own and wrong for one holding a stranger's. Both
+ * TLS state machines held a stranger's: a ClientHello or ServerHello naming P-256 and carrying
+ * sixty-five bytes that are not a point aborted the process. `packages/tls`, 2026-08-24.
+ *
+ * `curveDecodes` already existed for exactly this reason — its own comment says *"a `bool` verifier
+ * must answer, and a trap is not an answer"* — and was reachable only through `weierstrass.wac`.
+ * This is the P-256 spelling of it, beside the function that needs asking first.
+ */
+export bool p256Decodes(u8[] point) { return curveDecodes(p256(), point); }
+
+/**
+ * The ECDH shared secret: the x-coordinate of priv * peerPublic, 32 bytes.
+ *
+ * **Traps if `peerPublic` is not a point on the curve.** Ask `p256Decodes` first if it came from a
+ * peer.
+ */
 export u8[] p256Ecdh(u8[] priv, u8[] peerPublic) { return curveEcdh(p256(), priv, peerPublic); }
 
 /** Verify an ECDSA-P256 signature over SHA-256 of `msg`. `sig` is r ++ s, 64 bytes. */

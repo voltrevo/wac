@@ -1079,6 +1079,34 @@ have degraded the instrument into noise:
 
 After both, `platform` names exactly one file and `core` names none.
 
+### The ledgers are now a work list, and the first item off it was a bug — 2026-08-24
+
+`packages/webrtc`'s ledger said three things: that the bounds check on every accessor in `dtls.wac`
+had no input, that `helloGroups` alone was twelve points and the densest gap in the package, and that
+`packages/quic/test/wac/truncated_test.wac` was the shape that would close it.
+
+Writing that sweep found one of the checks missing. A ClientHello's `supported_groups` extension is a
+length-prefixed extension containing a length-prefixed list; `helloGroups` bounded the **extension**
+and then read the **list** using a length taken from the wire and never compared to it. A hello whose
+extension is four bytes and whose list claims four hundred walked four hundred bytes past the end of
+the array and trapped. Its three siblings all check their inner length against the body and were
+right — the file already knew, in three places.
+
+`dtls.wac` 64.0% → 86.5%; the package 72.0% → 76.1%.
+
+**That is the third abort-class bug this sweep has produced, and the first found by acting on a ledger
+rather than by writing one.** The other two were `packages/tls`'s `recordOpen` trapping on a peer's
+record, in both directions. All three are the same shape: a length from the wire used without being
+related to the buffer it indexes, in code that reads what a stranger sent.
+
+It is also the argument for the prose. A pin that said *"the bounds checks are unexercised"* and
+stopped would have been true and useless; what made this findable was the ledger naming the family,
+counting it, and pointing at the file in another package that had already solved it. **A ledger entry
+worth writing tells the next person what to build.**
+
+Two entries had to change as a result, and both were the two-way ratchet working: a pin on
+`dtls.wac:113` became covered, and a rule stopped speaking for anything.
+
 ### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
 
 Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's

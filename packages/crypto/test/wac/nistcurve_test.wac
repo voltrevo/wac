@@ -26,7 +26,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { p256Verify, p256VerifyDigest, p256Sign, p256PublicKey, p256Ecdh, p256Order, p256ScalarBase,
+import { p256Verify, p256VerifyDigest, p256Sign, p256PublicKey, p256Ecdh, p256Decodes, p256Order, p256ScalarBase,
          p256Reencode } from "../../src/p256.wac";
 import { p384Verify, p384VerifyDigest, p384Order } from "../../src/p384.wac";
 import { sha256 } from "../../src/sha256.wac";
@@ -512,5 +512,75 @@ export string test_a_malformed_public_key_is_false_not_a_trap(Core core, Cli cli
   u8[] good = p256Sign(priv, msg, k);
   t.isTrue(good.len() == 64 && p256Verify(pub, msg, good),
            "a genuine signature still verifies, so the refusals above are about the key");
+  return t.report();
+}
+
+/**
+ * `p256Decodes` — the question `p256Ecdh` answers by trapping.
+ *
+ * **Added on 2026-08-24 because two callers needed to ask and could not.** `curveEcdh` validates the
+ * peer's point, which is the whole defence against an invalid-curve attack, and `curveDecode`
+ * enforces it with a `trap`. That is right for a caller whose point is its own. Both TLS state
+ * machines held a stranger's: a ClientHello or ServerHello naming P-256 and carrying sixty-five bytes
+ * that are not a point aborted the process, before any keys existed.
+ *
+ * `curveDecodes` had existed for exactly this reason and said so — *"a `bool` verifier must answer,
+ * and a trap is not an answer"* — and was reachable only through `weierstrass.wac`. This is its P-256
+ * spelling, beside the function that needs asking first.
+ *
+ * The assertions are both directions. A decoder that answered `true` to everything would be worse
+ * than the trap, because it would hand an off-curve point to the multiplication and produce a shared
+ * secret in the wrong group — which is the attack, arrived at through the defence.
+ */
+export string test_a_point_is_recognised_as_on_the_curve_or_not() {
+  T t = T.create();
+
+  // Real points, from this file's own generator.
+  for (i32 k = 1; k < 6; k++) {
+    u8[] pub = p256PublicKey(u8[32](fill: k));
+    t.eqI32(pub.len(), 65, "a public key is not 65 uncompressed bytes");
+    t.isTrue(p256Decodes(pub), "a point this package generated was not recognised, k = " + itoa64(k as i64));
+  }
+
+  u8[] good = p256PublicKey(u8[32](fill: 0x11));
+
+  // One bit of y: the coordinates are a field element pair that no longer satisfies y² = x³ − 3x + b.
+  u8[] offCurve = u8[65]();
+  for (i32 i = 0; i < 65; i++) { offCurve[i] = good[i]; }
+  offCurve[64] = offCurve[64] ^ 0x01;
+  t.isFalse(p256Decodes(offCurve), "a point one bit off the curve was recognised");
+
+  // One bit of x, which moves it just as far off.
+  u8[] offX = u8[65]();
+  for (i32 i = 0; i < 65; i++) { offX[i] = good[i]; }
+  offX[32] = offX[32] ^ 0x01;
+  t.isFalse(p256Decodes(offX), "a point with x moved one bit was recognised");
+
+  // The uncompressed prefix and nothing else — the shape a hostile peer sends because it costs
+  // nothing to construct.
+  t.isFalse(p256Decodes(u8[65](fill: 0x04)), "sixty-five bytes of 0x04 were recognised as a point");
+  t.isFalse(p256Decodes(u8[65]()), "sixty-five zero bytes were recognised as a point");
+
+  // Wrong widths, and the compressed form this decoder does not accept.
+  t.isFalse(p256Decodes(u8[0]()), "an empty array was recognised as a point");
+  t.isFalse(p256Decodes(u8[64](fill: 0x04)), "a 64-byte value was recognised as a point");
+  t.isFalse(p256Decodes(u8[66](fill: 0x04)), "a 66-byte value was recognised as a point");
+  u8[] compressed = u8[33]();
+  compressed[0] = 0x02;
+  for (i32 i = 0; i < 32; i++) { compressed[1 + i] = good[1 + i]; }
+  t.isFalse(p256Decodes(compressed), "a compressed point was recognised by an uncompressed decoder");
+
+  // A valid point with the wrong prefix byte: the coordinates are right and the encoding is not.
+  u8[] badPrefix = u8[65]();
+  for (i32 i = 0; i < 65; i++) { badPrefix[i] = good[i]; }
+  badPrefix[0] = 0x05;
+  t.isFalse(p256Decodes(badPrefix), "a point tagged 0x05 was recognised");
+
+  // And the agreement that makes this worth having: what `p256Decodes` accepts is what `p256Ecdh`
+  // will not trap on. Only the accepting direction is checkable here — calling `p256Ecdh` on a point
+  // it refuses would end the run — which is the asymmetry the trap creates and the reason the
+  // question had to exist separately.
+  u8[] secret = p256Ecdh(u8[32](fill: 0x22), good);
+  t.eqI32(secret.len(), 32, "ECDH over a point p256Decodes accepted did not produce a secret");
   return t.report();
 }

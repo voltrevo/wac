@@ -1,0 +1,280 @@
+// A DTLS handshake message that lies about its own lengths, and one that is simply cut short.
+//
+// Found by this package's first coverage driver on 2026-08-24 — `issues/system/0205`. Its ledger says
+// the bounds check on every accessor in `dtls.wac` had no input, that `helloGroups` alone was twelve
+// uncovered points, and that `packages/quic/test/wac/truncated_test.wac` was the shape that would
+// close it. This is that shape, and writing it found one of the checks missing.
+//
+// ## `helloGroups` read past the end of the array
+//
+// A ClientHello's `supported_groups` extension is a length-prefixed extension containing a
+// length-prefixed list. `helloGroups` bounded the **extension** — `at + 4 + len > extEnd` — and then
+// read the **list** using a length taken from the wire and never compared to it. A hello whose
+// extension is four bytes and whose list claims four hundred walked four hundred bytes past where the
+// extension ended, and past the end of the array:
+//
+//     wac: trapped
+//     RuntimeError: array element access out of bounds
+//
+// **A DTLS ClientHello arrives in a UDP datagram from anybody who can reach the port** — no handshake,
+// no keys, no timing. What keeps this off the severity it sounds like is that nothing in `src/` calls
+// `helloGroups` today: it is exported for a server that picks a curve from what the client offered,
+// and ours does not yet. So it is a latent out-of-bounds read in library code, one caller away from
+// being live, and that is exactly how it is worth describing.
+//
+// Its three siblings — `leafCertificate`, `serverKeyExchangeSignature`, `clientPublic` — all check
+// their inner length against `body.len()` and were right. That is what makes this a bug rather than a
+// convention: the file already knew, in three places, and the fourth related the list to nothing.
+//
+// ## What is swept here
+//
+// Every parser in `dtls.wac` that reads a length off the wire, given (a) a message cut short at every
+// byte and (b) where there is a nested length, a message that lies about it. The first is what the
+// ledger asked for; the second is what the first turned up.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import {
+  Record, Handshake, parseRecord, recordSize, parseHandshake, record, handshake,
+  helloGroups, helloOffers, helloCookie, chosenSuite, serverPublic, clientPublic,
+  leafCertificate, serverKeyExchangeSignature,
+} from "../../src/dtls.wac";
+
+/** The first `n` bytes of `b`. */
+u8[] prefix(u8[] b, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
+  return out;
+}
+
+/**
+ * A ClientHello body: version, random, session_id, cookie, cipher_suites, compression, extensions.
+ *
+ * `groupListLen` is written into the `supported_groups` extension's inner length field, so passing
+ * something other than the true length is how this file builds a message that lies.
+ */
+u8[] clientHello(i32 groupListLen) {
+  u8[] b = u8[80]();
+  i32 at = 0;
+  b[at] = 0xFE; at++; b[at] = 0xFD; at++;              // version DTLS 1.2
+  for (i32 i = 0; i < 32; i++) { b[at] = i; at++; }    // random
+  b[at] = 0; at++;                                     // session_id, empty
+  b[at] = 0; at++;                                     // cookie, empty
+  b[at] = 0; at++; b[at] = 2; at++;                    // cipher_suites, one suite
+  b[at] = 0xC0; at++; b[at] = 0x2B; at++;
+  b[at] = 1; at++; b[at] = 0; at++;                    // compression_methods: null
+  b[at] = 0; at++; b[at] = 8; at++;                    // extensions, 8 bytes
+  b[at] = 0x00; at++; b[at] = 0x0A; at++;              // supported_groups
+  b[at] = 0; at++; b[at] = 4; at++;                    // extension body, 4 bytes
+  b[at] = (groupListLen >> 8) & 0xFF; at++;            // list length
+  b[at] = groupListLen & 0xFF; at++;
+  b[at] = 0x00; at++; b[at] = 0x17; at++;              // secp256r1
+  return prefix(b, at);
+}
+
+/**
+ * **The regression.** A `supported_groups` list longer than the extension that contains it.
+ *
+ * The control is the honest hello immediately above it: the same message with a truthful list length
+ * parses and yields one group, so a refusal below is caused by the lie and not by the shape.
+ */
+export string test_a_group_list_longer_than_its_extension_is_refused() {
+  T t = T.create();
+
+  i32[] honest = helloGroups(clientHello(2));
+  t.eqI32(honest.len(), 1, "the honest hello did not yield its one group");
+  if (honest.len() == 1) { t.eqI32(honest[0], 0x0017, "the group is not secp256r1"); }
+
+  // Four bytes of extension, a list claiming four hundred. This read past the end of the array.
+  t.eqI32(helloGroups(clientHello(400)).len(), 0,
+          "a supported_groups list longer than its own extension was read");
+
+  // And every length between: the list occupies two bytes of the four-byte extension body, so
+  // anything above two is a lie and anything at or below it is not.
+  for (i32 claim = 0; claim < 24; claim = claim + 2) {
+    i32[] got = helloGroups(clientHello(claim));
+    t.isTrue(got.len() * 2 <= 2,
+             "a list length of " + itoa(claim) + " yielded " + itoa(got.len()) +
+             " groups, which is more than the extension can hold");
+  }
+
+  // An odd list length cannot be a list of two-byte groups. Truncating it silently would accept a
+  // message no conforming peer sends and read one byte of the next field as half a group.
+  t.eqI32(helloGroups(clientHello(3)).len(), 0, "an odd group-list length was accepted");
+  return t.report();
+}
+
+/**
+ * The same hello cut short at every byte, through all four of its readers.
+ *
+ * `helloGroups`, `helloCookie`, `chosenSuite` and `helloOffers` each walk the same message looking for
+ * a different field, and each has its own idea of how far it needs to get. A prefix is the cheapest
+ * malformation there is — a datagram that arrived truncated, or one an attacker cut — and none of the
+ * four had ever been given one.
+ *
+ * The assertion is not that they refuse: a short hello legitimately has no groups and no cookie, and
+ * an *empty* answer is the right one. It is that they **return** — that walking off the end is caught
+ * rather than reached.
+ */
+export string test_every_prefix_of_a_hello_is_survived_by_every_reader() {
+  T t = T.create();
+  u8[] full = clientHello(2);
+  t.isTrue(full.len() > 45, "the test's own hello is too short to sweep");
+
+  i32 cuts = 0;
+  for (i32 n = 0; n < full.len(); n++) {
+    u8[] part = prefix(full, n);
+    // Each of these traps if it walks off the end, so reaching the next line is the assertion.
+    i32[] g = helloGroups(part);
+    u8[] c = helloCookie(part);
+    bool o = helloOffers(part, 0xC02B);
+    t.isTrue(g.len() * 2 <= (n > 0 ? n : 0), "a prefix of " + itoa(n) + " yielded too many groups");
+    t.isTrue(c.len() <= (n > 0 ? n : 0), "a prefix of " + itoa(n) + " yielded too long a cookie");
+    cuts = cuts + 1;
+  }
+  t.eqI32(cuts, full.len(), "the sweep did not reach every prefix");
+
+  // The whole message still answers, so the sweep is not passing because everything answers empty.
+  t.eqI32(helloGroups(full).len(), 1, "the complete hello stopped yielding its group");
+  t.isTrue(helloOffers(full, 0xC02B), "the complete hello stopped offering its suite");
+
+  // **`chosenSuite` reads a ServerHello, not a ClientHello**, and the difference is one field: a
+  // ClientHello carries a cookie between its session_id and its cipher_suites and a ServerHello does
+  // not. Applied to the hello above it answers 0 — reading the cookie length and the top half of the
+  // suite list length as a suite — which is what the two layouts sharing a prefix costs, and is why
+  // it gets a message of its own here rather than a place in the sweep.
+  u8[] server = u8[37]();
+  server[0] = 0xFE; server[1] = 0xFD;
+  for (i32 i = 0; i < 32; i++) { server[2 + i] = i; }
+  server[34] = 0;                                      // session_id, empty
+  server[35] = 0xC0; server[36] = 0x2B;                // the chosen suite
+  t.eqI32(chosenSuite(server), 0xC02B, "the ServerHello's suite is not the one written into it");
+  for (i32 n = 0; n < server.len(); n++) {
+    t.isTrue(chosenSuite(prefix(server, n)) == -1 || n >= server.len(),
+             "a ServerHello prefix of " + itoa(n) + " answered a suite");
+  }
+  return t.report();
+}
+
+/**
+ * Record and handshake framing, cut short and lied to.
+ *
+ * A DTLS record is a thirteen-byte header and a fragment; a handshake message is a twelve-byte header
+ * and a body, and its header carries *two* lengths — the message's and this fragment's — which is the
+ * pair `parseHandshake` exists to compare.
+ */
+export string test_a_record_or_handshake_header_that_does_not_add_up_is_refused() {
+  T t = T.create();
+
+  u8[] body = u8[16](fill: 0xAB);
+  u8[] msg = handshake(1, 0, body);
+  u8[] rec = record(22, 0xFEFD, 0, 7 as i64, msg);
+
+  // The control.
+  Record whole = parseRecord(rec, 0);
+  t.isTrue(whole.ok, "a well-formed record did not parse");
+  t.eqI32(whole.kind, 22, "the record's type is not handshake");
+  t.eqI32(recordSize(rec, 0), rec.len(), "recordSize disagrees with the record it was given");
+  Handshake hs = parseHandshake(whole.fragment);
+  t.isTrue(hs.ok, "a well-formed handshake message did not parse");
+  t.isTrue(hs.whole, "an unfragmented message was reported as a fragment");
+  t.eqI32(hs.body.len(), 16, "the handshake body is the wrong length");
+
+  // Every prefix of the record refuses rather than reading past the end.
+  for (i32 n = 0; n < rec.len(); n++) {
+    t.eqI32(recordSize(prefix(rec, n), 0), -1,
+            "a record of " + itoa(n) + " bytes was reported as whole");
+    t.isFalse(parseRecord(prefix(rec, n), 0).ok,
+              "a record of " + itoa(n) + " bytes parsed");
+  }
+  // And every prefix of the handshake message.
+  for (i32 n = 0; n < msg.len(); n++) {
+    t.isFalse(parseHandshake(prefix(msg, n)).ok,
+              "a handshake message of " + itoa(n) + " bytes parsed");
+  }
+
+  // A record header whose length field promises more than arrived.
+  u8[] lying = u8[rec.len()]();
+  for (i32 i = 0; i < rec.len(); i++) { lying[i] = rec[i]; }
+  lying[11] = 0xFF; lying[12] = 0xFF;
+  t.eqI32(recordSize(lying, 0), -1, "a record claiming 65535 bytes of fragment was accepted");
+  t.isFalse(parseRecord(lying, 0).ok, "a record claiming more than arrived parsed");
+
+  // A handshake header whose fragment_length exceeds what follows.
+  u8[] shortFrag = u8[msg.len()]();
+  for (i32 i = 0; i < msg.len(); i++) { shortFrag[i] = msg[i]; }
+  shortFrag[9] = 0x00; shortFrag[10] = 0xFF; shortFrag[11] = 0xFF;
+  t.isFalse(parseHandshake(shortFrag).ok, "a handshake claiming 65535 bytes of fragment parsed");
+
+  // A fragment_length short of the message length is a *fragment*, not a whole message — accepted,
+  // and `whole` false. A reader that ignored the distinction would take a truncated ServerHello for
+  // a complete one, which is what the source comment says this field is for.
+  u8[] partial = u8[msg.len()]();
+  for (i32 i = 0; i < msg.len(); i++) { partial[i] = msg[i]; }
+  partial[11] = 8;                                     // fragment_length 8 of a 16-byte message
+  Handshake frag = parseHandshake(partial);
+  t.isTrue(frag.ok, "a legitimate fragment was refused");
+  t.isFalse(frag.whole, "a fragment of a longer message was reported as whole");
+  return t.report();
+}
+
+/**
+ * The three parsers that read a nested length and got it right, kept honest.
+ *
+ * `leafCertificate`, `serverKeyExchangeSignature` and `clientPublic` each check an inner length
+ * against the body they were given. They are here because `helloGroups` did not, and because the
+ * cheapest way for that fix to be undone is for somebody to make these four consistent in the wrong
+ * direction.
+ */
+export string test_the_nested_lengths_that_were_already_checked_stay_checked() {
+  T t = T.create();
+
+  // A Certificate message: list length, then one certificate's length, then its DER.
+  u8[] der = u8[10](fill: 0x30);
+  u8[] cert = u8[6 + der.len()]();
+  cert[0] = 0; cert[1] = 0; cert[2] = 3 + der.len();
+  cert[3] = 0; cert[4] = 0; cert[5] = der.len();
+  for (i32 i = 0; i < der.len(); i++) { cert[6 + i] = der[i]; }
+  t.eqI32(leafCertificate(cert).len(), der.len(), "a well-formed certificate did not come back");
+
+  u8[] lyingCert = u8[cert.len()]();
+  for (i32 i = 0; i < cert.len(); i++) { lyingCert[i] = cert[i]; }
+  lyingCert[5] = 0xFF;
+  t.eqI32(leafCertificate(lyingCert).len(), 0, "a certificate longer than its message was read");
+  for (i32 n = 0; n < cert.len(); n++) {
+    t.isTrue(leafCertificate(prefix(cert, n)).len() <= n,
+             "a certificate prefix of " + itoa(n) + " yielded more bytes than it holds");
+  }
+
+  // A ServerKeyExchange: curve_type(3), named_curve(2), public key length + key, then the signature.
+  u8[] ske = u8[4 + 4 + 4 + 8]();
+  ske[0] = 3; ske[1] = 0x00; ske[2] = 0x17; ske[3] = 4;
+  for (i32 i = 0; i < 4; i++) { ske[4 + i] = 0xC0 + i; }
+  ske[8] = 4; ske[9] = 1;                              // signature algorithm
+  ske[10] = 0; ske[11] = 8;                            // signature length
+  for (i32 i = 0; i < 8; i++) { ske[12 + i] = 0x5A; }
+  t.eqI32(serverPublic(ske).len(), 4, "the server's public key did not come back");
+  t.eqI32(serverKeyExchangeSignature(ske).len(), 8, "the signature did not come back");
+
+  u8[] lyingSke = u8[ske.len()]();
+  for (i32 i = 0; i < ske.len(); i++) { lyingSke[i] = ske[i]; }
+  lyingSke[11] = 0xFF;
+  t.eqI32(serverKeyExchangeSignature(lyingSke).len(), 0,
+          "a signature longer than the message was read");
+  for (i32 n = 0; n < ske.len(); n++) {
+    t.isTrue(serverPublic(prefix(ske, n)).len() <= n, "a ServerKeyExchange prefix over-read");
+    t.isTrue(serverKeyExchangeSignature(prefix(ske, n)).len() <= n,
+             "a ServerKeyExchange prefix over-read its signature");
+  }
+
+  // ClientKeyExchange: one length byte and that many bytes of public key.
+  u8[] cke = u8[5]();
+  cke[0] = 4;
+  for (i32 i = 0; i < 4; i++) { cke[1 + i] = 0xB0 + i; }
+  t.eqI32(clientPublic(cke).len(), 4, "the client's public key did not come back");
+  u8[] lyingCke = u8[5]();
+  for (i32 i = 0; i < 5; i++) { lyingCke[i] = cke[i]; }
+  lyingCke[0] = 200;
+  t.eqI32(clientPublic(lyingCke).len(), 0, "a client key longer than the message was read");
+  return t.report();
+}

@@ -38,9 +38,10 @@
 
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
-import { p256Ecdh, p256PublicKey } from "../../crypto/src/p256.wac";
+import { p256Ecdh, p256PublicKey, p256Decodes } from "../../crypto/src/p256.wac";
 import {
   hybridServerAccept, groupX25519MlKem768, hybridServerShareLen, hybridSecretLen,
+  hybridClientShareValid,
 } from "./hybrid.wac";
 import { ed25519Sign } from "../../crypto/src/ed25519.wac";
 import { rsaSignPss } from "../../crypto/src/rsa.wac";
@@ -284,6 +285,37 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
   i32 group = (ch.keyShare[0] << 8) | ch.keyShare[1];
   u8[] peerKey = u8[ch.keyShare.len() - 2]();
   for (i32 i = 0; i < peerKey.len(); i++) { peerKey[i] = ch.keyShare[2 + i]; }
+
+  // **A P-256 share has to be a point on P-256, and asking was a trap until 2026-08-24.**
+  // `p256Ecdh` validates the peer's point — that is the defence against an invalid-curve attack —
+  // and it validated by aborting the process. This is a stranger's *first message*: no handshake, no
+  // keys, no timing, just sixty-five bytes that are not a point. `illegal_parameter` is what RFC 8446
+  // §4.2.8 names for a key share the receiver cannot use.
+  //
+  // x25519 and the hybrid need no equivalent: a Montgomery ladder accepts any thirty-two bytes by
+  // design, and `hybridServerAccept` checks its own widths.
+  // **Every group's share is checked before the primitive sees it, and none of these existed until
+  // 2026-08-24.** Each primitive validated correctly and enforced by trapping, so a stranger's first
+  // message — a ClientHello, before any keys exist — could end the process three different ways.
+  // `illegal_parameter` is RFC 8446 §4.2.8's name for a key share the receiver cannot use.
+  //
+  //   - **hybrid**: 1,184 bytes of ML-KEM encapsulation key. `mlkemEncaps` checks them against q as
+  //     FIPS 203 §7.2 requires; 1,216 bytes of `0xFF` aborted the server, on the group this server
+  //     *prefers*, which made it the most reachable of the three.
+  //   - **P-256**: sixty-five bytes that must be a point. `p256Ecdh` validates it — the defence
+  //     against an invalid-curve attack — by trapping.
+  //
+  // **Widths are not checked here, and that is not an omission**: `parseClientHello` accepts a share
+  // only at its group's exact length, so anything else arrives as no share at all and is refused by
+  // `keyShare.len() < 3` above. x25519 needs nothing further — a Montgomery ladder accepts any
+  // thirty-two bytes by design, which is the property it was chosen for. Checked by removing each
+  // guard in turn: the two below fail a test, a width guard here failed none.
+  if (group == groupX25519MlKem768() && !hybridClientShareValid(peerKey)) {
+    return failPlain(c, alertIllegalParameter());
+  }
+  if (group == groupP256() && !p256Decodes(peerKey)) {
+    return failPlain(c, alertIllegalParameter());
+  }
 
   // The hybrid does the exchange while building the share, because encapsulation
   // produces both at once; the other two derive the secret separately below.

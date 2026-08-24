@@ -71,6 +71,7 @@ import {
   test_a_signing_key_its_identity_never_certified as cons__a_signing_key_its_identity_never_certified,
   test_a_signature_names_which_signing_key_made_it as cons__a_signature_names_which_signing_key_made_it,
   test_a_utc_timestamp_is_not_read_as_local as cons__a_utc_timestamp_is_not_read_as_local,
+  test_a_malformed_consensus_is_refused_without_trapping as cons__a_malformed_consensus_is_refused_without_trapping,
 } from "./wac/consensus_test.wac";
 import {
   test_the_consensus_tor_found_wellformed_is_reproduced as cons2__the_consensus_tor_found_wellformed_is_reproduced,
@@ -308,6 +309,7 @@ import {
   test_every_input_moves_the_key_material as ntor__every_input_moves_the_key_material,
   test_a_small_order_reply_is_refused as ntor__a_small_order_reply_is_refused,
   test_agrees_with_tors_own_implementation as ntor__agrees_with_tors_own_implementation,
+  test_a_relay_cannot_choose_the_length_of_its_own_reply as ntor__a_relay_cannot_choose_the_length_of_its_own_reply,
 } from "./wac/ntor_test.wac";
 import {
   test_the_distribution_is_exactly_proportional as path__the_distribution_is_exactly_proportional,
@@ -428,6 +430,14 @@ import {
 
 export i32 main(Core core, Cli cli) {
   i32 bad = 0;
+  if (cons__a_malformed_consensus_is_refused_without_trapping(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_malformed_consensus_is_refused_without_trapping");
+    bad = bad + 1;
+  }
+  if (ntor__a_relay_cannot_choose_the_length_of_its_own_reply().len() > 0) {
+    core.warn("error: FAILED ntor_test test_a_relay_cannot_choose_the_length_of_its_own_reply");
+    bad = bad + 1;
+  }
   if (auth__the_certificate_tor_accepted_is_reproduced(core, cli).len() > 0) {
     core.warn("error: FAILED authcert_test test_the_certificate_tor_accepted_is_reproduced");
     bad = bad + 1;

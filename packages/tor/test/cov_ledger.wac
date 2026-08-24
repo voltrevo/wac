@@ -203,12 +203,20 @@ Rule[] rules() {
          "Nothing reaches these but a caller in this repository, and every one passes the right " +
          "widths."),
     Rule("packages/tor/src/ntor.wac", "trap;", "line", true,
-         "**Preconditions on this file's own entry points, checked before any peer data is " +
-         "read.** A key, identity or buffer of the wrong width is the calling program's bug " +
-         "rather than a stranger's, so it earns a stack instead of a refusal — the distinction " +
-         "`packages/tls` learned the hard way when `recordOpen` trapped on a peer's record. " +
-         "Nothing reaches these but a caller in this repository, and every one passes the right " +
-         "widths."),
+         "**Preconditions on this file's own entry points — and one of them was not, which is why " +
+         "this rule is worth reading rather than skimming.** `identity`, `onionKey` and " +
+         "`ephemeralPriv` are the calling program's own values: a caller passing a 31-byte private " +
+         "key has a bug that should stop it, and a stack is the right answer.\n" +
+         "         `reply` was in the same list and did not belong there. It arrives from a relay — " +
+         "`bootstrap.wac` passes `decodeCreated2(cellPayload(cell))` for the guard's CREATED2 and " +
+         "`extendedReply(got.data)` for the middle and exit relays' EXTENDED2, and both hand on the " +
+         "length the relay wrote into the cell. So `reply.len() != 64` trapping meant **any relay " +
+         "could end the process of any client that built a circuit through it**, with one cell. Fixed " +
+         "on 2026-08-24: it returns the empty array this function already documents for a relay that " +
+         "did not prove it holds the onion key. `test/wac/ntor_test.wac`.\n" +
+         "         Found by enumerating rather than by luck — every `trap;` in this package listed, " +
+         "then each asked whether a caller feeds it something a stranger chose. Thirty-four sites, " +
+         "one answer."),
     Rule("packages/tor/src/relay.wac", "trap;", "line", true,
          "**Preconditions on this file's own entry points, checked before any peer data is " +
          "read.** A key, identity or buffer of the wrong width is the calling program's bug " +
