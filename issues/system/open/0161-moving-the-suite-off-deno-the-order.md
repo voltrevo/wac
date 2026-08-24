@@ -18,9 +18,9 @@ got the order wrong twice from reasoning about it.
 
 | where | lines | files | what it is |
 |---|---|---|---|
-| `box`, `sh` | 5,680 + 1,570 | 17 + 4 | another agent's packages |
-| `platform` | 6,382 | 29 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20 |
-| `wacc` | 2,190 | 11 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
+| `box`, `sh` | 5,696 + 1,570 | 17 + 4 | another agent's packages |
+| `platform` | 6,522 | 30 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20. Re-checked on 2026-08-24 and it holds — see below |
+| `wacc` | 2,281 | 11 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
 | `webrtc`, `raster`, `stream` | 909 + 217 + 296 | 1 + 1 + 1 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
 
 **The classification is checked now, and the arithmetic is deliberately not.**
@@ -156,6 +156,32 @@ What is lost is localisation. `selfTest()` says a conjunct disagrees, not which.
 the failure and says how to find it, and the `double(21)` canary demonstrates the difference — with
 the tour perturbed, `selfTest()` reports "some conjunct disagrees" while the canary reports
 "got 43, want 42".
+
+### `platform`'s row re-checked, and it holds — 2026-08-24
+
+The row carries its own warning — *"Nothing convertible left" was said on 2026-08-19 and was wrong
+once* — which is a standing invitation to re-check rather than re-read. Done, by asking each of the
+thirty files the discriminating question: **is the subject the TypeScript host, or is it wac code?**
+
+Seventeen of the thirty do not mention a `.wac` file at all, so the question does not arise. The
+thirteen that do were read:
+
+- `project` tests `harness/wacFiles.ts` — the `@/` root search, which is TypeScript;
+- `keydown` tests the browser host translating a `keydown` into the bytes a terminal would send;
+- `pointer` tests what the host puts in a pointer event, after it sent `ev.offsetX` for a field
+  documented as relative to the element the capability names;
+- `ring` uses **the worker API directly**, and says why: the rest of the suite drives the bridge
+  through wac programs that issue one call at a time, so nothing there would notice if the ring served
+  them in order and the slots were decoration.
+
+In each the wac file is a *fixture* — a program built and run so the host has something to host. A
+port would have to run it through the wac binary's host instead, which is a different subject, so it
+would not be the same test.
+
+**So the row stands, and this is what checking it looks like** rather than what re-reading it looks
+like. The figures above are also refreshed to today: `platform` 6,382 → 6,522 across 29 → 30 files,
+`wacc` 2,190 → 2,281, `box` 5,680 → 5,696. Nobody should pin those — `tools/wac/testtsclassified_test.wac`
+explains at length why the arithmetic is not checked and the classification is.
 
 ### The eight, and what each would need — 2026-08-20
 

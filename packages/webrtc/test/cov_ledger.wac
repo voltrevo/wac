@@ -3,8 +3,8 @@
 //   deno task coverage:webrtc
 //   deno task coverage:webrtc --verbose
 //
-// **701 of 973** on the first run — 72.0%, the lowest of any package `issues/system/0205` has
-// measured, and for the fourth distinct reason in three packages.
+// **743 of 976 — 76.1%**, from 701 of 973 (72.0%) on the first run, which was the lowest any package
+// in `issues/system/0205`'s sweep had produced, and for the fourth distinct reason in three packages.
 //
 // ## Where the code runs when it is exercised
 //
@@ -144,18 +144,15 @@ Rule[] rules() {
          "**The hello parsers' not-found arms**: a ClientHello with no cookie, no supported groups, " +
          "or without the suite being asked about. Every hello in the corpus comes from OpenSSL, " +
          "aiortc or Chromium and carries everything.\n" +
-         "         `helloGroups` alone is twelve points, which makes it the single densest gap in the " +
-         "package — it walks an extension list and every arm for a list that ends early, repeats an " +
-         "extension, or names a group of the wrong width is unentered. `packages/quic`'s " +
-         "`test/wac/truncated_test.wac` sweeps exactly this shape for QUIC frames and would transfer " +
-         "here almost unchanged."),
+         "         `helloGroups` was twelve points and the densest gap in the package. " +
+         "`test/wac/malformed_test.wac` closed it on 2026-08-24 and **found an out-of-bounds read " +
+         "doing so**: the extension was bounded and the group list inside it was not, so a hello " +
+         "claiming a four-hundred-byte list in a four-byte extension walked off the end of the " +
+         "array. What is left in this family is the rest of the hello readers — a cookie where one " +
+         "is required, a HelloVerifyRequest this client does not send."),
     Rule("packages/webrtc/src/dtls.wac", "Certificate", "decl", false,
          "Reading a peer's certificate chain out of a DTLS Certificate message when it is absent, " +
          "empty, or shorter than its own length prefix. The peers in the corpus all send one."),
-    Rule("packages/webrtc/src/dtls.wac", "serverKeyExchangeSignature", "decl", false,
-         "Extracting the signature from a ServerKeyExchange that does not carry one where expected. " +
-         "See `issues/system/0151` for the live disagreement about this message's *contents* — this " +
-         "is the arm for it being malformed, which is a different question and equally unbuilt."),
     Rule("packages/webrtc/src/sctp.wac", "chunk", "decl", false,
          "The chunk accessors asked for a chunk that is not there — an index past the end, a length " +
          "field that overruns the packet, a value shorter than its own header. An SCTP packet carries " +
@@ -204,17 +201,13 @@ Pin[] pins() {
     Pin("packages/webrtc/src/stun.wac", 368, "if (((msg[at + 2] << 8) | msg[at + 3]) != 4) { return false; }", false,
         "A FINGERPRINT attribute whose length is not four. Same family as `:367` — the attribute is " +
         "fixed-width by definition and nothing has ever sent one that is not."),
-    Pin("packages/webrtc/src/dtls.wac", 113, "if (size < 0) { return Record(false, 0, 0, 0, 0 as i64, u8[0]()); }", false,
-        "A DTLS record whose length field cannot be read at all — fewer than thirteen bytes in the " +
-        "datagram. The first thing any UDP datagram meets, and the corpus is datagrams from peers " +
-        "that framed them correctly."),
     Pin("packages/webrtc/src/dtls.wac", 365, "export i32 curveSecp256r1() { return 0x0017; }", false,
         "The named-curve identifier, never compared against because the ServerKeyExchange reader " +
         "takes the curve the peer names rather than checking it is the one we offered. That is worth " +
         "a second look rather than a pin — an unchecked curve is how a peer moves a key exchange to " +
         "a group it prefers — but it is `packages/webrtc`'s call, and `issues/system/0151` is already " +
         "open about this message."),
-    Pin("packages/webrtc/src/dtls.wac", 554, "if (!r.ok) { return \"not a record\"; }", false,
+    Pin("packages/webrtc/src/dtls.wac", 565, "if (!r.ok) { return \"not a record\"; }", false,
         "`describe` on a record that did not parse. A diagnostic helper, reached only when something " +
         "wants to print a malformed record — which is the situation the tests do not produce because " +
         "they do not produce malformed records."),

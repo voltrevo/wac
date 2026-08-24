@@ -8,7 +8,7 @@
 // `issues/system/0241b` is about what those two measurements did not add up to; this is the third
 // term.
 //
-// None of the 72 tests expects a trap.
+// None of the 76 tests expects a trap.
 
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
@@ -108,8 +108,31 @@ import {
   test_and_a_timeout_closes_it_hard as tim__and_a_timeout_closes_it_hard,
 } from "./wac/timers_test.wac";
 
+import {
+  test_a_group_list_longer_than_its_extension_is_refused as mf__a_group_list_longer_than_its_extension_is_refused,
+  test_every_prefix_of_a_hello_is_survived_by_every_reader as mf__every_prefix_of_a_hello_is_survived_by_every_reader,
+  test_a_record_or_handshake_header_that_does_not_add_up_is_refused as mf__a_record_or_handshake_header_that_does_not_add_up_is_refused,
+  test_the_nested_lengths_that_were_already_checked_stay_checked as mf__the_nested_lengths_that_were_already_checked_stay_checked,
+} from "./wac/malformed_test.wac";
+
 export i32 main(Core core, Cli cli) {
   i32 bad = 0;
+  if (mf__a_group_list_longer_than_its_extension_is_refused().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_group_list_longer_than_its_extension_is_refused");
+    bad = bad + 1;
+  }
+  if (mf__every_prefix_of_a_hello_is_survived_by_every_reader().len() > 0) {
+    core.warn("error: FAILED malformed_test test_every_prefix_of_a_hello_is_survived_by_every_reader");
+    bad = bad + 1;
+  }
+  if (mf__a_record_or_handshake_header_that_does_not_add_up_is_refused().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_record_or_handshake_header_that_does_not_add_up_is_refused");
+    bad = bad + 1;
+  }
+  if (mf__the_nested_lengths_that_were_already_checked_stay_checked().len() > 0) {
+    core.warn("error: FAILED malformed_test test_the_nested_lengths_that_were_already_checked_stay_checked");
+    bad = bad + 1;
+  }
   if (dtl__openssl_answers_our_clienthello_with_a_helloverifyrequest(core, cli).len() > 0) {
     core.warn("error: FAILED dtls_test test_openssl_answers_our_clienthello_with_a_helloverifyrequest");
     bad = bad + 1;
