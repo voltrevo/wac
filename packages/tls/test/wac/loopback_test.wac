@@ -48,7 +48,8 @@ import {
   phaseEstablished, phaseFailed,
 } from "../../src/server.wac";
 import { alertBadRecordMac, alertUnexpectedMessage, typeHandshake } from "../../src/record.wac";
-import { clientHello, groupX25519, groupP256, groupHybrid } from "../../src/handshake.wac";
+import { clientHello, serverHello, encryptedExtensions, groupX25519, groupP256,
+         groupHybrid } from "../../src/handshake.wac";
 import { p256PublicKey } from "../../../crypto/src/p256.wac";
 import {
   ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientPhase, tlsClientFailure,
@@ -636,4 +637,76 @@ u8[] inRecord(u8[] msg) {
   out[4] = msg.len() & 0xFF;
   for (i32 i = 0; i < msg.len(); i++) { out[5 + i] = msg[i]; }
   return out;
+}
+
+/**
+ * A ServerHello the client refuses, and the four checks it refuses at.
+ *
+ * **This is the other half of the invalid-curve fix, and it was unexercised.** `client.wac:515` is the
+ * `p256Decodes` guard added on 2026-08-24 to stop a server's key share aborting the client, and until
+ * this test nothing drove it: the loopback's server is ours and sends a point. A guard nobody has
+ * ever taken is a guard nobody has ever seen work.
+ *
+ * The client's refusals need a **hostile server**, which is what `handshake.wac`'s `serverHello`
+ * makes cheap: it is the shared builder, so a test can name any suite, group and key share and hand
+ * the result straight to `tlsClientFeed`. That was impossible while the only server was a real one in
+ * another process.
+ *
+ * Each case asserts the failure *code* rather than just the phase. `client.wac` numbers its refusals
+ * — 12 not a ServerHello, 13 a suite we did not offer, 14 a share too short, 15 a share we cannot use
+ * — and a client that refused everything with one code would satisfy a bare "it refused" four times.
+ */
+export string test_a_hostile_serverhello_is_refused_at_each_check() {
+  T t = T.create();
+  u8[] random = u8[32](fill: 0x77);
+
+  // The control: our own server's flight is accepted, which
+  // `test_our_client_and_our_server_complete_a_handshake_in_one_process` already establishes. What is
+  // asserted here is that the *builder* produces something acceptable too, so a refusal below is
+  // caused by what was varied rather than by the hand-built message being wrong in general.
+  u8[] sState = freshServer();
+  ClientStep flight = clientStep(tlsServerFeed(sState, clientStep(freshClient(noTrustStore())).toSend));
+  t.isTrue(flight.toSend.len() > 100, "the real server flight is too short to be a control");
+
+  // 1. The first handshake message is not a ServerHello at all.
+  // `encryptedExtensions` is a handshake message of the right shape and the wrong type, and it takes
+  // no arguments — `handshake.wac`'s `certificate` builder would collide with this file's own
+  // `certificate()` helper, which is the sort of thing a reader should not have to untangle.
+  ClientStep notHello = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+                                                 inRecord(encryptedExtensions())));
+  t.eqI32(tlsClientPhase(notHello.state), 4, "a first message that is not a ServerHello was accepted");
+  t.eqI32(tlsClientFailure(notHello.state), 12, "the wrong code for a message that is not a ServerHello");
+
+  // 2. A suite the client did not offer. Ours pins AES-128-GCM.
+  ClientStep wrongSuite = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1303, groupHybrid(), u8[1120](fill: 0x22)))));
+  t.eqI32(tlsClientPhase(wrongSuite.state), 4, "a ServerHello naming another suite was accepted");
+  t.eqI32(tlsClientFailure(wrongSuite.state), 13, "the wrong code for an unoffered suite");
+
+  // 3. A key share too short to carry a group identifier.
+  ClientStep shortShare = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1301, groupHybrid(), u8[0]()))));
+  t.eqI32(tlsClientPhase(shortShare.state), 4, "a ServerHello with no key share was accepted");
+  t.eqI32(tlsClientFailure(shortShare.state), 14, "the wrong code for a share with no group");
+
+  // 4. **A P-256 share that is not a point on the curve** — the client half of the invalid-curve
+  //    fix. Before it, this ended the process.
+  ClientStep badPoint = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1301, groupP256(), u8[65](fill: 0x04)))));
+  t.eqI32(tlsClientPhase(badPoint.state), 4, "a server key share that is not a point was accepted");
+  t.eqI32(tlsClientFailure(badPoint.state), 15, "the wrong code for a key share we cannot use");
+
+  // And a valid P-256 point from the same builder is *not* refused at that check, so case 4 is about
+  // the point rather than about P-256.
+  ClientStep goodPoint = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1301, groupP256(), p256PublicKey(u8[32](fill: 0x33))))));
+  t.isTrue(tlsClientFailure(goodPoint.state) != 15,
+           "a valid P-256 point was refused as unusable, so case 4 proves nothing");
+
+  // 5. A hybrid share of the wrong width, which the client's own reader refuses before the primitive
+  //    sees it — the width discipline that made three guards unnecessary on the server side.
+  ClientStep badWidth = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1301, groupHybrid(), u8[64](fill: 0x22)))));
+  t.eqI32(tlsClientPhase(badWidth.state), 4, "a hybrid share of the wrong width was accepted");
+  return t.report();
 }
