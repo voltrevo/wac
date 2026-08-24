@@ -634,6 +634,32 @@ packages Ethereum state proofs stand on, and all three had their canonicity rule
 measured, and `item`'s already-in-error guard, which is character-for-character the one `mpt`'s `step`
 carries and is pinned there too.
 
+### `abi` fifth — and the four Ethereum proofs pass through are all done
+
+**25 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 26 drivers; the unmeasured list is 13.
+
+`rlp`, `mpt`, `ssz` and `abi` are the four packages an Ethereum state proof passes through, and **all
+four had their canonicity rules unexercised** until this week. `abi` opened at 87.6% and carried a
+`strictness_test.wac` plus two refusal tests already — as `mpt` carried a `malformed_test.wac` — and
+neither predicted a smaller first gap. What any one author thought to write down is not the set of
+rules the decoder implements, which is the argument for measuring rather than asking.
+
+Its two with teeth: an **element offset pointing back into the array's head** (two elements aimed at one
+span — the same idea as an SSZ offset table running backwards, in a different encoding) and a **bool
+whose first thirty-one bytes are not zero** (2^248 spellings of `true`, each hashing differently and all
+meaning the same thing to a contract). **219 of 233**, one rule and six pins.
+
+One pin is a finding rather than an exemption: **the corpus has no tuple at all**. `T_TUPLE` appears
+three times in the tests and every one is a tag comparison, so the decode and encode arms are the whole
+of tuple support and neither has an input — and a tuple is how a Solidity struct crosses the boundary.
+That is a gap in the corpus rather than a branch that cannot run, and it is recorded as such.
+
+Two controls caught misunderstandings of mine before they became false claims: ABI's outermost layer is
+a tuple of arguments, so a dynamic argument is reached through an offset word I had not written; and
+every encode refusal is prefixed `member 0:`, naming which argument, which my exact-match expectations
+had called drift.
+
 ### The four so far
 
 | package | first run | gaps were |

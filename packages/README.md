@@ -152,6 +152,7 @@ deno task app:build <entry.wac> --target browser -o page/index.html  # ...or a b
 deno task app:build <entry.wac> --worker -o child.worker.js  # ...or something `spawn` can run
 deno task map             # regenerate MAP.md; the suite fails if it is stale
 deno task coverage        # branch coverage of every package, from its wac-native tests
+deno task coverage:abi
 deno task coverage:bignum # ...and the host-driven exercises, per package
 deno task coverage:bytes
 deno task coverage:codec

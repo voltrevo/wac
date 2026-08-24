@@ -23,23 +23,23 @@ export const TOTALS = {
   packages: 38,
   lines: 133154,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2713,
+  tests: 2718,
   programs: 82,
   pages: 11,
   /**
-   * The whole repository: the packages (2713), and the compiler, harness and tooling
+   * The whole repository: the packages (2718), and the compiler, harness and tooling
    * around them (1377).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 4090,
+  testsAll: 4095,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 534,
+  wacTests: 537,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -56,7 +56,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 496, tests: 9 },
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1230, tests: 28 },
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 72 },
-  { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
+  { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 14 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1311, tests: 46 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 59 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1084, tests: 28 },
