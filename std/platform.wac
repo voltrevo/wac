@@ -407,8 +407,14 @@ export struct Captured {
   /**
    * Whether `out` is **all** of what the child wrote, or as much as would fit.
    *
-   * A frame's output is held in this program's memory rather than draining anywhere, so it is capped
-   * — and at the cap `write` starts answering false. From inside the child that is indistinguishable
+   * A frame's output is held in this program's memory rather than draining anywhere, so on the
+   * JavaScript hosts it is capped — 8 MiB — and at the cap `write` starts answering false.
+   *
+   * **The native runtime does not cap it**, which is a difference rather than a simplification and is
+   * why this field exists rather than a constant: its frame is a `Vec` that grows, so the same applet
+   * answers in full there and this is always `false`. A caller that must not be handed a short answer
+   * reads this field; a caller that must not be handed an unbounded one cannot learn that here, and
+   * `issues/system/0252a` is which of the two behaviours should win. From inside the child that is indistinguishable
    * from the reader going away, which is exactly what `box yes` is written to stop on: `while
    * (cli.write(block)) {}`. So an applet that fills the buffer exits **cleanly**, believing its pipe
    * closed, and hands back a short answer that looks complete.
