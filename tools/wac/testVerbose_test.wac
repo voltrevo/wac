@@ -1,0 +1,113 @@
+// `wac test --verbose` — a line per passing test, where a run without it says nothing about one.
+//
+// **The flag existed and did nothing on three of the four hosts.** It was in the list of flags `test`
+// accepts, so it was not refused as a typo, and no code read it: the native binary printed a line per
+// pass and Deno, Node and the browser printed none, for the same file and the same argument vector.
+// `packages/wacc/test/wac/commandparity_test.wac` is where that comparison lives now, and it cannot
+// hold this claim on its own: it asks whether the three hosts agree, so a change that stopped *all* of
+// them printing these lines would leave it green. That is what a differential is for and what it
+// cannot do. This file is the absolute half — what the line says, and how many there are.
+//
+// A run where everything passes, on purpose: without the flag such a run prints one summary line and
+// nothing else, so "no `ok` lines" is an assertion about the flag rather than about which tests failed.
+//
+// `5vq3mk8` in the names is `[§wac-cli-verbose-5vq3mk8]`, the spec claim these check —
+// `spec/cli/wac.md`. A wac export cannot hold the bracketed spelling, so the suffix carries it.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { Core, Cli, Exec, Change } from "std/platform.wac";
+
+/**
+ * Two ordinary passes and one that passes *by trapping*, which prints a different line.
+ *
+ * One trap and no more: `issues/lang/0254c` is that nothing clears the global a `trap "…"` writes, so
+ * a second trap in this module would be reported with this one's sentence.
+ */
+string SOURCE() {
+  return "export string test_first() { return \"\"; }\n"
+       + "export string test_second() { return \"\"; }\n"
+       + "export string test_traps_on_purpose() { trap \"the ring is full\"; }\n";
+}
+
+struct Dir {
+  bool ok;
+  string path;
+  string what;
+}
+
+Dir workspace(Cli cli) {
+  string dir = scratch(cli, "test-verbose");
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) { return Dir(false, "", "a working directory: " + made.message); }
+  Change w = cli.writeFile(dir + "/three_test.wac", SOURCE().toBytes()).wait();
+  if (!w.ok()) { return Dir(false, "", "three_test.wac: " + w.message); }
+  return Dir(true, dir, "");
+}
+
+struct Ran {
+  bool started;
+  i32 status;
+  string out;
+}
+
+Ran wacTest(Cli cli, string[] args) {
+  string[] argv = string[args.len() + 1](fill: "");
+  argv[0] = "test";
+  for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
+  Exec r = cli.exec(binaryPath(cli), argv, u8[0]()).wait();
+  if (!r.ran()) { return Ran(false, -1, r.error); }
+  return Ran(true, r.status, string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
+}
+
+/** How many times `needle` appears in `hay`. Overlaps are not a concern for what this counts. */
+i32 countOf(string hay, string needle) {
+  i32 n = 0;
+  i32 at = 0;
+  while (at + needle.len() <= hay.len()) {
+    if (hay.slice(at, at + needle.len()) == needle) { n = n + 1; at = at + needle.len(); }
+    else { at = at + 1; }
+  }
+  return n;
+}
+
+export string test_a_passing_run_is_silent_about_it_without_the_flag_5vq3mk8(Core core, Cli cli) {
+  T t = T.create();
+  Dir d = workspace(cli);
+  t.isTrue(d.ok, d.what);
+  if (!d.ok) { return t.report(); }
+
+  Ran quiet = wacTest(cli, string[](d.path + "/three_test.wac"));
+  t.isTrue(quiet.started, "the binary started");
+  if (!quiet.started) { return t.report(); }
+  t.eqI32(quiet.status, 0, "all three pass — " + quiet.out);
+  t.isTrue(contains(quiet.out, "3 passed, 0 failed"), "the summary — got \"" + quiet.out + "\"");
+  t.eqI32(countOf(quiet.out, "ok   "), 0, "and not a word about which — got \"" + quiet.out + "\"");
+  return t.report();
+}
+
+export string test_verbose_names_every_pass_and_times_it_5vq3mk8(Core core, Cli cli) {
+  T t = T.create();
+  Dir d = workspace(cli);
+  t.isTrue(d.ok, d.what);
+  if (!d.ok) { return t.report(); }
+
+  Ran loud = wacTest(cli, string[]("--verbose", d.path + "/three_test.wac"));
+  t.isTrue(loud.started, "the binary started");
+  if (!loud.started) { return t.report(); }
+  t.eqI32(loud.status, 0, "all three still pass — " + loud.out);
+  // **Three, not "at least one".** A flag that named the first test and stopped would satisfy a
+  // `contains`, and this run's whole subject is that every pass gets a line.
+  t.eqI32(countOf(loud.out, "ok   "), 3,
+          "one line per passing test — got \"" + loud.out + "\"");
+  t.isTrue(contains(loud.out, "ok   test_first ("), "the first, by name");
+  t.isTrue(contains(loud.out, "ok   test_second ("), "the second, by name");
+  // The trapping pass takes the other form, and carries what the trap said: a `test_traps_*` export
+  // that passed is not the same event as one that returned, and the line says which.
+  t.isTrue(contains(loud.out, "ok   test_traps_on_purpose — trapped, as it says: the ring is full ("),
+           "the trapping pass says so, and says what — got \"" + loud.out + "\"");
+  t.eqI32(countOf(loud.out, " ms)"), 3, "each carries a time — got \"" + loud.out + "\"");
+  t.isTrue(contains(loud.out, "3 passed, 0 failed"), "and the summary is unchanged");
+  return t.report();
+}

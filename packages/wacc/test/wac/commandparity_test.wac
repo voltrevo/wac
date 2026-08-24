@@ -56,10 +56,9 @@
 //
 // ## What it costs, measured 2026-08-22
 //
-// **39s warm at twenty-six cases, measured then; twenty-eight now** — up from 2–3s, for three hosts
-// instead of two and twenty-eight cases instead of six,
-// fifteen of which compile, run or test a program rather than only checking one, plus three module
-// builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
+// **39s warm, measured at twenty-six cases; twenty-eight now** — up from 2–3s, for three hosts instead
+// of two and twenty-eight cases instead of six, fifteen of which compile, run or test a program rather
+// than only checking one, plus three module builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
 // it, where `check` stops at the diagnostics. The build is the only expensive part
 // and is paid by `builtByDeno`, which keys on the closure of `wacc.wac`, `compiler/`, `build.ts` and
 // `packages/platform/host/`; under it, `build.ts` keys its own work on the content of every file it
@@ -176,9 +175,17 @@ string[][] cases() {
     // exports called, which `Cli.load` made expressible (`issues/system/0240c`): before it a wac
     // program could start a *program* and not call a *function*, and a test is a function.
     //
-    // The directory case is still the native binary's alone — it walks for `*_test.wac` and builds one
-    // aggregate module — so these rows name a file. `--coverage` refuses on both rather than being
-    // quietly ignored.
+    // **The directory case is the wac program's too**, since 2026-08-22: it walks for `*_test.wac` and
+    // builds one aggregate module, as the native binary does, so there are rows below for a file and
+    // for a directory. This said it was "still the native binary's alone" for two days after it
+    // stopped being true, twenty lines above the rows that compare it.
+    //
+    // `--coverage` is the one part of `test` that really is the native command's alone: its counters
+    // are reached through exports the instrumentation injects and no manifest lists, so `Cli.call`
+    // cannot find them (`issues/system/0243c`). The wac program refuses it rather than printing the
+    // zeroes it would otherwise get. **So there is no `--coverage` row here** — the two do not agree,
+    // and a row would be red rather than informative. This said they refused it alike, which is the
+    // shape a missing row invites: a claim about a comparison nobody is making.
     string[]("test", "--allow-read", "src/one_test.wac"),     // 3 pass, 2 fail, and which
     string[]("test", "--allow-read", "--filter", "passes", "src/one_test.wac"),
     string[]("test", "--allow-read", "--filter", "zzz", "src/one_test.wac"),   // matches nothing

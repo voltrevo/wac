@@ -219,7 +219,7 @@ export default function Checked() {
 
       <Section id="spec" kicker="evidence, sixth kind" title="A specification that cannot drift">
         <P>
-          The language has a written specification, and <Lead>391 of its claims carry a tag</Lead>{" "}
+          The language has a written specification, and <Lead>392 of its claims carry a tag</Lead>{" "}
           like {m({ children: "[§wac-core-one-type-8fjm2wq]" })}. Every tag names a test. A claim
           without evidence beside it reads as evidence, which is the failure mode a specification
           has, so a test walks the specification and fails with the list of any tag nothing covers.

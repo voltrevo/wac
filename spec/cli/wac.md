@@ -23,7 +23,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 |---|---|
 | `prog.wasm` | run that program — the module carries its own manifest, and its grants are the ones that manifest declares. A Deno- or Node-hosted `wac` does this too, since 2026-08-22 |
 | `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat`, `app`, `app-run` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
-| `run` and `test`, again | **also implemented in the wac program**, which is where every host but this one gets them. `issues/system/0230a` is giving the subcommands to all three hosts one at a time; this binary answers both in Rust first, and `packages/wacc/test/wac/commandparity_test.wac` holds each pair to the same output. Both stay — the Rust `run` runs the module in this process rather than relaying it, and the Rust `test` walks a *directory* and builds one aggregate module, which the wac one does not do yet |
+| `run` and `test`, again | **also implemented in the wac program**, which is where every host but this one gets them. `issues/system/0230a` is giving the subcommands to all three hosts one at a time; this binary answers both in Rust first, and `packages/wacc/test/wac/commandparity_test.wac` holds each pair to the same output. Both stay — the Rust `run` runs the module in this process rather than relaying it, and the Rust `test` is the one that can answer `--coverage`: its counters are reached through exports the instrumentation injects, which no manifest lists, so the wac program cannot call them and refuses the flag rather than reporting zeroes (`issues/system/0243c`). The wac `test` walks a directory and builds one aggregate module too, since 2026-08-22 |
 | `uninstall` | remove what an install put under `$WAC_HOME`, and the line it added to each shell profile |
 | `update` | resolve and fetch what `wac.lock` does not cover, and write the lock |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` — and `run`, which this binary intercepts above |
@@ -211,6 +211,21 @@ The suite uses it for the heavy lane. A test file declares `// test-lane: heavy 
 too expensive for a run that discovers everything, and `tools/runTests.wac` builds this flag from
 those declarations so a push does not pay for them; `deno task test:heavy` runs them. **Naming a
 path still runs it** — the exclusion is for the run that discovers, not a way to turn a file off.
+
+### test: what a run prints
+
+A run prints a line per failure and a summary, and says nothing about a test that passed.
+`[§wac-cli-verbose-5vq3mk8]` `--verbose` adds a line per passing test as well:
+`ok   <name> (<n> ms)`, and `ok   <name> — trapped, as it says: <what>` for a `test_traps_*`
+export that passed by trapping.
+
+The figure is wall time around the one call, and it is the only part of this output not compared
+between hosts — `packages/wacc/test/wac/commandparity_test.wac` maps it to `(N ms)` and compares
+everything else, which is a comparison a host printing no timing at all still fails.
+
+**The flag was accepted and ignored on three of the four hosts until 2026-08-24**, which is why it is
+written down now: it was spelled correctly, refused nothing, and did nothing, and no document said
+what it should have done.
 
 ### Grants, and which side of the entry they go
 
