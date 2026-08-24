@@ -1424,7 +1424,23 @@ export i32 main(Core core, Cli cli) {
     if (cachePath != "") {
       string cacheDir = dirOf(cachePath);
       cli.mkdir(cacheDir, true).wait();
-      cli.writeFile(cachePath, whole).wait();
+      // **Written beside and moved into place**, because three agents share this machine and a reader
+      // that catches a half-written entry gets a truncated module rather than a miss. `rename` is
+      // atomic on every filesystem this runs on — `std/platform.wac` says so where it explains why
+      // `rename` is in the same tier as `writeFile` — so a concurrent build sees the old entry or the
+      // new one and never part of either.
+      //
+      // The temporary name carries the *destination*, since this world has no pid: two builds racing
+      // on one key are building the same program, and what distinguishes them is where each was asked
+      // to put it. Two that also share a destination are already in conflict over the artefact itself.
+      Fnv u = Fnv.start();
+      u.eat(stem);
+      string tmp = cachePath + ".tmp" + u.hex();
+      Change wroteTmp = cli.writeFile(tmp, whole).wait();
+      if (wroteTmp.ok()) {
+        Change moved = cli.rename(tmp, cachePath).wait();
+        if (!moved.ok()) { cli.remove(tmp, false).wait(); }
+      }
       sweepBuildCache(cli, cacheDir);
     }
     // **Inside the module, and only there.** A `.json` went beside it until 2026-08-20, because the
