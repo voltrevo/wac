@@ -56,6 +56,8 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
 /**
  * Start a compile of wacc to `stem`, without waiting for it.
  *
+ * `[§wac-cli-build-nocache-2wq9nk4]`
+ *
  * **`--no-cache`, and this test is the reason the flag exists.** `wac build` remembers what it built
  * (`issues/system/0204`), keyed on the compiler, the sources, the grants and the output's base *name* —
  * and both builds here share all four, because the name is deliberately the same and only the directory

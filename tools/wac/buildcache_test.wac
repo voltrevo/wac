@@ -2,6 +2,8 @@
 //
 //     wac test --allow-read --allow-write --allow-run --allow-env tools/wac/buildcache_test.wac
 //
+// `[§wac-cli-build-cache-7pk3mq9]` `[§wac-cli-build-nocache-2wq9nk4]`
+//
 // `issues/system/0204`. `wac build` compiled from source every time — box's shell is about five
 // seconds of it — and the tests that build an application and run it pay that per run, which is what
 // stops the rest of `issues/system/0161` converting off TypeScript.
