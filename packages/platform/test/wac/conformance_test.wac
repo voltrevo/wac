@@ -188,16 +188,21 @@ Cover[] coverage() {
       "end by `arrival_users` over ssh — but only with the native host as the *server*, so nothing " +
       "compared the three calls themselves"),
     where("LISTEN", "as CONNECT — the same program, the same run"),
-    gap("BIND_DATAGRAM",
-      "**every host answers it, and `Cli` cannot declare it yet.** All four hosts have arms — Deno, " +
-      "Node, wasmtime's `Sock::Datagram` and V8's — and `echod_test.wac` drives the V8 one against a " +
-      "foreign UDP peer, which is a differential against the *runtime* rather than between hosts. " +
-      "What is missing is the capability itself: adding three fields to `Cli` puts every native " +
-      "program past the compiler's sixteen funcrefs per signature, so it fails 21 tests that have " +
-      "nothing to do with datagrams (issues/lang 0109). The wac side and a program that echoes on " +
-      "both hosts are written and wait on that; this becomes a `where` then"),
-    gap("RECEIVE_FROM", "as BIND_DATAGRAM — the same step, the same work"),
-    gap("SEND_TO", "as BIND_DATAGRAM"),
+    where("BIND_DATAGRAM",
+      "datagram: one program binds two sockets on loopback, sends between them and reads what " +
+      "arrives, so one run exercises all three calls — `datagram_test.wac`, the shape `writeread` " +
+      "uses for connect/listen/accept. Built for the Deno host and the V8 native one and compared, " +
+      "with the **wasmtime** host asked for as well because that is the one `issues/lang/0109` " +
+      "reported. Port 0 and read the port back, since these run in the parallel lane. " +
+      "**This entry was a gap for a reason that had stopped being true.** It said the capability " +
+      "itself was missing, because three more fields on `Cli` would put every native program past " +
+      "sixteen funcrefs per signature. 0109 closed on 2026-08-13 — not by raising the sixteen, which " +
+      "is still sixteen, but by registering `Pending<T>`'s `settled` and `drop` once instead of once " +
+      "per instantiation, since neither depends on `T`. `Cli` has carried the three fields since and " +
+      "`packages/webrtc` and `packages/quic` use them; all four hosts printed the same transcript the " +
+      "first time they were asked. What was left was nobody having written the comparison"),
+    where("RECEIVE_FROM", "as BIND_DATAGRAM — the same program, the same run"),
+    where("SEND_TO", "as BIND_DATAGRAM"),
     where("ACCEPT", "as CONNECT"),
     where("RECV",
       "native_shell: every filesystem operation of every spawned stage. `sealedsh` spawns its stages " +

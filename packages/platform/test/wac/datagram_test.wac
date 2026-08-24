@@ -1,0 +1,84 @@
+// The datagram capabilities answer the same way on every host.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env --allow-net packages/platform/test/wac/datagram_test.wac
+//
+// **This closes three gaps `conformance_test.wac` had written down** — `BIND_DATAGRAM`,
+// `RECEIVE_FROM` and `SEND_TO` — and the reason they were open no longer holds. The entry said:
+//
+// > What is missing is the capability itself: adding three fields to `Cli` puts every native program
+// > past the compiler's sixteen funcrefs per signature, so it fails 21 tests (issues/lang 0109).
+//
+// `issues/lang/0109` closed on 2026-08-13. It was not fixed by raising the sixteen — it is still
+// sixteen — but by noticing that `Pending<T>`'s `settled` and `drop` hooks do not depend on `T` and
+// were being registered once per instantiation. `Cli` has carried `bindDatagram`, `receiveFrom` and
+// `sendTo` since, and `packages/webrtc` and `packages/quic` use them. The blocker was recorded
+// accurately and then outlived by the language.
+//
+// **What was left was nobody having written the comparison**, which is what this is. Checked by hand
+// across all four hosts before it was written — V8-native, wasmtime, Deno and Node all print the same
+// three lines — and the test carries the three that are cheap to reach from here.
+//
+// **The transcript is asserted, not just compared.** Two hosts agreeing is the weaker half: they would
+// agree perfectly if `sendTo` answered false everywhere and nothing arrived. So each line is pinned,
+// and `got: ping … sender-is-a yes` is the one that says a datagram made the trip.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
+import { wacBinary, nativeHost, nativeHostWhyNot } from "../../../wactest/src/built.wac";
+
+const string PROBE = "packages/platform/test/wac/datagram_probe.wac";
+
+/** What every host must print, line for line. */
+const string WANT = "bound: yes yes distinct-ports yes\n"
+  + "sent: yes\n"
+  + "got: ping from 127.0.0.1 sender-is-a yes error ''\n";
+
+string ranOut(Exec r) {
+  if (!r.ran()) { return "(did not run: " + r.error + ")"; }
+  return string.fromBytes(r.stdout);
+}
+
+export string test_the_datagram_capabilities_agree_across_hosts(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/datagram";
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
+  if (why != "") { return t.report(); }
+
+  // The Deno host, built the way every other two-host test builds one.
+  Exec bd = cli.exec("deno", string[]("run", "-A", "packages/platform/build.ts", PROBE,
+                                      "--target", "deno", "--allow-net", "-o", dir + "/deno"),
+                     u8[0]()).wait();
+  t.isTrue(bd.ran() && bd.status == 0,
+           "the probe built for deno — " + string.fromBytes(bd.stderr));
+  if (!bd.ran() || bd.status != 0) { return t.report(); }
+
+  // The V8 native host, through a plain module rather than an app: `wac run` is the shortest route
+  // and needs no `wac` on PATH the way a `wac app` wrapper does.
+  Exec bn = cli.exec(wacBinary(cli),
+                     string[]("build", PROBE, "-o", dir + "/mod", "--allow-net"), u8[0]()).wait();
+  t.isTrue(bn.ran() && bn.status == 0, "the probe built — " + string.fromBytes(bn.stderr));
+  if (!bn.ran() || bn.status != 0) { return t.report(); }
+
+  string denoSaid = ranOut(cli.exec(dir + "/deno", string[0](fill: ""), u8[0]()).wait());
+  string v8Said = ranOut(cli.exec(wacBinary(cli),
+                                  string[]("run", "--allow-net", PROBE), u8[0]()).wait());
+
+  t.eqStr(v8Said, WANT, "the V8 native host's transcript");
+  t.eqStr(denoSaid, WANT, "the Deno host's transcript");
+
+  // **And the wasmtime host, which is the one `issues/lang/0109` reported.** Asked rather than built,
+  // per `issues/system/0208`: a checkout without it is not quietly short of coverage — it says so.
+  string whyNot = nativeHostWhyNot(cli);
+  if (whyNot != "") {
+    core.warn("datagram: the wasmtime half is skipped — " + whyNot
+              + ". That is the host issues/lang/0109 refused on, so it is the one worth having.");
+  } else {
+    string wlSaid = ranOut(cli.exec(nativeHost(cli), string[](dir + "/mod.wasm"), u8[0]()).wait());
+    t.eqStr(wlSaid, WANT, "the wasmtime host's transcript");
+  }
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

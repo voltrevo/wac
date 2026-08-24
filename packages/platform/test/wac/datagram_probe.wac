@@ -1,0 +1,32 @@
+// One program that talks to itself over UDP, so every host can be asked the same three questions.
+//
+// `datagram_test.wac` builds this for each host and compares the transcript. Loopback and two sockets
+// in one program, which is `writeread`'s shape for `connect`/`listen`/`accept` and works here for the
+// same reason: one run exercises `bindDatagram`, `sendTo` and `receiveFrom` together, and there is no
+// second process whose scheduling could make the answer differ.
+//
+// **Port 0 and then read the port back.** A fixed port is a test that fails when something else on the
+// machine holds it, and these run in the parallel lane; `bindDatagram(addr, 0)` is documented to answer
+// a `Socket` whose `port` is what the kernel chose. That is also what makes `sender-is-a` worth
+// printing — it says the datagram arrived from the socket that sent it rather than from anywhere.
+//
+// Every line is a verdict rather than a measurement: the ports differ per run, so printing them would
+// make two hosts disagree about nothing.
+
+import { Core, Cli, Socket, Datagram } from "std/platform.wac";
+export i32 main(Core core, Cli cli) {
+  Socket a = cli.bindDatagram("127.0.0.1", 0).wait();
+  Socket b = cli.bindDatagram("127.0.0.1", 0).wait();
+  cli.write(("bound: " + (a.handle >= 0 ? "yes" : "no") + " " + (b.handle >= 0 ? "yes" : "no")
+             + " distinct-ports " + (a.port != b.port ? "yes" : "no") + "\n").toBytes());
+  if (a.handle < 0 || b.handle < 0) { return 1; }
+  bool sent = cli.sendTo(a.handle, "127.0.0.1", b.port, "ping".toBytes()).wait();
+  cli.write(("sent: " + (sent ? "yes" : "no") + "\n").toBytes());
+  Datagram d = cli.receiveFrom(b.handle).wait();
+  cli.write(("got: " + string.fromBytes(d.bytes) + " from " + d.peer
+             + " sender-is-a " + (d.port == a.port ? "yes" : "no")
+             + " error '" + d.error + "'\n").toBytes());
+  cli.closeSocket(a.handle);
+  cli.closeSocket(b.handle);
+  return 0;
+}
