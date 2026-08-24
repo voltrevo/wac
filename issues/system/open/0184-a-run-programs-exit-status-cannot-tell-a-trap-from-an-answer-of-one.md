@@ -200,3 +200,28 @@ written down in none.
 What this does *not* settle is this issue's own question. A wasm trap inside `wac prog.wasm` is still
 an exit of 1, and making it a signal is a change to the run path rather than to `Exec` — but the
 caller's half is now able to see the answer, which was the stated blocker.
+
+## One of the two build targets already reserves a code — agent-a, 2026-08-24
+
+This issue's central argument is that there is no code to give a trap: *"once `main` runs the status
+belongs to it … the program's range is the whole of 0–255 … There is no value a trap could take that
+some program could not also answer."* That is sound, and it is worth knowing that **the Deno target
+already picked one anyway**.
+
+The same program, built both ways and run:
+
+| | `wac app` (native) | `build.ts --target deno` |
+|---|---:|---:|
+| `main` traps | exit **1** | exit **70** |
+| `main` returns 7 | exit 7 | exit 7 |
+| `main` returns 0 | exit 0 | exit 0 |
+
+So option 1 from the list above — *"reserve one anyway … and document that a `main` returning it is
+indistinguishable from a trap"* — is not hypothetical. Half of the toolchain does it, undocumented, at
+70; the other half returns 1 and collides with the ordinary failure this issue was filed about. A
+caller cannot rely on either, and the two disagreeing is worse than either choice made on purpose.
+
+That does not settle the decision, and it is not an argument for 70 — it is an argument that the
+decision is already being made by default, in one host, and that whatever is chosen has to land in
+both. Found while measuring `issues/system/0197`'s conversion; the *stdout* half of the same
+comparison was a plain defect and is fixed.

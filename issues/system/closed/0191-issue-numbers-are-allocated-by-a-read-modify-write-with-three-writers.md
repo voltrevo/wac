@@ -1,11 +1,35 @@
 # 0191 — issue numbers are a read-modify-write with three writers, and every collision reds master
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-24
+- **Fixed in:** the suffix convention and the guard that understands it, both landed 2026-08-19 — see
+  *"A second session, and the answer"* below
 - **Reported by:** agent-a
 - **Date:** 2026-08-17
 - **Kind:** process
 - **Symptom:** the shared suite goes red on a clash between two people filing at the same time
+
+## Closed, and the evidence is that everybody uses it — 2026-08-24
+
+The answer this issue reached is `0213a`: a one-letter suffix, per writer, needing no coordination
+because two agents both taking "highest + 1" produce different identifiers. It has been in use since,
+by all three of us — **53 suffixed issues** across the two trees today, `0230a` and `0230c` and `0241a`
+and `0241b` and `0241c` among them, several of which are two agents filing about the same subject at
+the same time and *not* colliding. That is the reproduction behaving: the pairs that would have been a
+red master are now two files.
+
+Canaried both ways on the day of closing, because a guard that stopped distinguishing them would bring
+the failure back silently:
+
+- a genuine duplicate is still caught — a second file numbered `0197` fails with
+  *"issues/system: duplicate issue numbers: 0197: …, …"*;
+- a suffixed neighbour is not — `0197z` beside `0197` fails only the *count* line, which is the
+  ordinary bookkeeping check and not the uniqueness one.
+
+**The open question at the end stays open and is not what this issue was about.** Whether the letter
+should be the agent's — an issue belongs to the repository rather than its filer — is a naming taste
+question; the mechanism needs only that the letter is per-writer-unique. Anybody who wants to change
+what the letter means can, without reopening this.
 
 Filing an issue means reading the directory, taking the highest number, and adding one. Three
 agents do that concurrently against checkouts that are minutes apart, so two people who file
