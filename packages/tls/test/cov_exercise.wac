@@ -241,8 +241,41 @@ import {
   test_time_crosses_the_utc_boundary_correctly as x__time_crosses_the_utc_boundary_correctly,
 } from "./wac/x509gen_test.wac";
 
+import {
+  test_our_client_and_our_server_complete_a_handshake_in_one_process as lb__our_client_and_our_server_complete_a_handshake_in_one_process,
+  test_the_server_answers_and_closes_in_an_orderly_way as lb__the_server_answers_and_closes_in_an_orderly_way,
+  test_a_corrupted_server_flight_is_refused_at_every_position as lb__a_corrupted_server_flight_is_refused_at_every_position,
+  test_the_client_says_which_check_the_certificate_failed as lb__the_client_says_which_check_the_certificate_failed,
+  test_the_server_refuses_a_record_it_cannot_open as lb__the_server_refuses_a_record_it_cannot_open,
+  test_the_client_refuses_a_flight_it_cannot_open as lb__the_client_refuses_a_flight_it_cannot_open,
+} from "./wac/loopback_test.wac";
+
 export i32 main(Core core, Cli cli) {
   i32 bad = 0;
+  if (lb__our_client_and_our_server_complete_a_handshake_in_one_process().len() > 0) {
+    core.warn("error: FAILED loopback_test test_our_client_and_our_server_complete_a_handshake_in_one_process");
+    bad = bad + 1;
+  }
+  if (lb__the_server_answers_and_closes_in_an_orderly_way().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_server_answers_and_closes_in_an_orderly_way");
+    bad = bad + 1;
+  }
+  if (lb__a_corrupted_server_flight_is_refused_at_every_position().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_corrupted_server_flight_is_refused_at_every_position");
+    bad = bad + 1;
+  }
+  if (lb__the_client_says_which_check_the_certificate_failed().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_client_says_which_check_the_certificate_failed");
+    bad = bad + 1;
+  }
+  if (lb__the_server_refuses_a_record_it_cannot_open().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_server_refuses_a_record_it_cannot_open");
+    bad = bad + 1;
+  }
+  if (lb__the_client_refuses_a_flight_it_cannot_open().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_client_refuses_a_flight_it_cannot_open");
+    bad = bad + 1;
+  }
   if (c__every_single_byte_tampering_is_refused(core, cli).len() > 0) {
     core.warn("error: FAILED certtamper_test test_every_single_byte_tampering_is_refused");
     bad = bad + 1;

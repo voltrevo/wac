@@ -723,6 +723,72 @@ exactly when its norm is a square in Fp, and the norm is tested above them, so t
 walk of forty values through `fp2Sqrt` (about half have no root) confirmed every refusal happens at
 that one line. And `fp12Zero` was exported, imported once and never called, so it went.
 
+### `tls` seventh — where the number was a fact about the harness, and a remote abort behind it
+
+**27 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 28 drivers; the unmeasured list is 11.
+
+**924 of 1274 → 1042 of 1274.** 74.5% is the lowest first run of any package measured, and the shape
+was not a scatter of missed refusals:
+
+    packages/tls/src/client.wac      168   136   81.0
+    packages/tls/src/handshake.wac   108    26   24.1
+    packages/tls/src/server.wac      143    37   25.9
+
+**Our server is tested thoroughly, against OpenSSL and rustls, in another process.** `interop_test`,
+`rsa_interop_test` and `client_test` build `test/wac/tlsserved.wac` into its own binary and start it as
+a daemon, because a handshake needs both ends at once and a wac test is one thread. The instrument
+watched one side of a conversation the harness drove both ends of.
+
+**This is the failure mode this issue most needed to see.** Six packages in, the reflex was to read a
+low number as a claim about the tests. Two hundred pins saying "the server is untested" would have
+been false, and writing none would have left the task unable to notice the server going untested
+later. The discriminating question is not *what is uncovered* but *where does this code run when it is
+exercised* — and a coverage prefix is a directory, so it cannot ask.
+
+By the end the same distinction had appeared three times in one package: `server.wac` exercised in
+another **process**; the RSA identity path likewise; and `handshake.wac`'s `parseServerHello` and
+`clientHello` exercised in another **package**, by `packages/quic` and `packages/webrtc`, which is why
+they read as dead from the side that exports them.
+
+#### What closed it
+
+Both state machines are documented as pure functions from `(state, bytes)` to `(state, bytes)`, so
+`test/wac/loopback_test.wac` introduces them to each other directly — a whole handshake, a request, a
+reply and an orderly close, in one process, no socket, no daemon, no build step. `handshake.wac` went
+24.1% → 66.7% and `server.wac` 25.9% → 57.6%. It is also deterministic where the socket tests are not,
+and it can tamper with a flight already under way, which two processes over a socket could not.
+
+#### What it found
+
+**A remotely-triggerable abort, in both directions.** `recordOpen` trapped when a tag did not verify,
+and both state machines called it on bytes a stranger chose. A peer that completed a ClientHello
+exchange could abort the server *process* — every other connection with it — and one flipped byte in
+a server flight could abort a client, which `packages/tor` is. Neither needs key material. RFC 8446
+§5.2 requires `bad_record_mac` and terminating the connection.
+
+The trap was deliberate one layer down and that argument still holds. What had gone stale was the
+reason given for the shape: *"wac cannot express a result the caller is forced to inspect."* It can —
+a `u8[]?` cannot be used without `is null` or `!`, and `!` on null still traps.
+
+**Why nothing found it earlier**: `record_traps_test.wac` asserts the trap deliberately and correctly,
+because at that layer it *is* the contract. Reaching it through the state machine needs a real server
+flight to tamper with, and the server only ever produced one in another process. The arrangement that
+made `server.wac` read 25.9% is the arrangement that hid it.
+
+Also fixed on the way: `x509gen.wac` emitted no `subjectAltName` and `certMatchesHost` consults nothing
+else, so **nothing this repository could generate was acceptable to its own TLS client by name**.
+Unnoticed because the callers did not care — WebRTC identifies a peer by SDP fingerprint, and the TLS
+tests that check a name use a vendored CA certificate.
+
+#### On the ledger itself
+
+232 points remain and they are stated as 30 rules and 26 pins rather than pinned one at a time. Two
+things learned about the mechanism: a `Rule` with `scope: "decl"` matches the enclosing
+declaration's **signature line**, not its body — nine rules keyed on body text matched nothing and
+said so, which is the ratchet working. And `verifyChain` turned out to be a second implementation of
+`verifyPath`'s verdicts; the ledger is where the duplicate became visible.
+
 ### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
 
 Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's
