@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0252a](open/0252a-a-frames-output-is-capped-on-two-hosts-and-unbounded-on-the-others.md) | a frame's output is capped at 8 MiB on the JavaScript hosts and grows without limit on the native one, so `Captured.truncated` is always false there — bounded-and-honest against unbounded-and-complete, and `std/platform.wac` documented the cap as the language's | decision | wrong answer |
 | [0251b](open/0251b-an-sctp-association-ignores-the-peers-advertised-receive-window.md) | `initWindow` — the receive window a peer announces in its INIT — is parsed and never read, so nothing does receiver-side flow control and `send` is bounded only by our own `cwnd`; its twin `initTsn` was unread in the same branch and was a *bug* rather than a gap, fixed the same day | missing feature | not implemented |
 | [0250b](open/0250b-wacc-can-say-what-a-host-reaches-but-not-what-a-file-declares.md) | `tools/docSignatures.test.ts` resolves a README's backticked `` `foo(…)` `` against every name a declaration introduces — "functions, types, variants, fields, methods" — and `packages/wacc`'s API answers only what crosses the host boundary: `exportSigsFiles` gives exported functions, `bindTypesFiles` host-holdable types, and nothing gives methods, enum variants or unexported functions, so porting that check onto our own parser would silently narrow the half that found both bugs it was written for | missing feature | not implemented |
 | [0241b](open/0241b-a-shared-file-is-measured-once-per-consumer-and-never-as-a-whole.md) | a coverage ledger's prefix is a directory, so a file imported across a package boundary is measured once per importer and never as a whole — `tls/src/handshake.wac` reads 36 of 108 dark from `tls` and 33 from `quic`, and only 15 are dark to both, so "covered by a neighbour" is the one exemption reason nothing can verify | missing feature | wrong answer |
@@ -64,7 +65,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-254 issues, 202 closed.
+255 issues, 202 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
