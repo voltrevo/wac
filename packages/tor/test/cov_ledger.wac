@@ -247,11 +247,23 @@ Rule[] rules() {
          "fixtures and drive a subset. The rest are reached by `link.wac` and `socks.wac` — the " +
          "two files this ledger already accounts for as program-driven — so this is the same gap " +
          "seen from the layer below."),
-    Rule("packages/tor/src/consensusgen.wac", ") {", "decl", false,
-         "The microdescriptor consensus writer's body — see the `return` rule over this file. " +
-         "Its signature spans lines, so the declaration this rule matches is the closing `) {`."),
-    Rule("packages/tor/src/vote.wac", ") {", "decl", false,
-         "The same multi-line-signature shape in the vote writer — see `consensusgen.wac`."),
+    Rule("packages/tor/src/consensusgen.wac", "md.len() == 0", "line", false,
+         "**A relay omitted from a microdesc consensus because it has no microdescriptor digest.** " +
+         "Its own comment gives the rule — *omitted rather than refused: tor drops an entry it has " +
+         "no microdescriptor digest for, and a document that listed a relay whose keys no client " +
+         "can fetch is the worse of the two* — and every relay in the fixture has one, so the arm " +
+         "has never run. Reachable with an opinion whose descriptor yields no digest.\n" +
+         "         **What was here before is the reason this entry is one line and not twelve.** " +
+         "A `\") {\"` rule claimed every uncovered point in this file, because a signature that " +
+         "spans lines opens on a bare `) {` and that was the only text a `decl` rule could match. " +
+         "It hid `consensusFlavoured` — the body both writers share — entirely, and nobody had " +
+         "looked at its `microdesc` arms. `tools/wac/covledger.wac` joins multi-line signatures " +
+         "since 2026-08-24, the arms are now driven by " +
+         "`test_the_microdesc_flavour_differs_from_the_plain_one_in_four_stated_ways`, and this is " +
+         "what was actually left underneath."),
+    Rule("packages/tor/src/vote.wac", "voteDocument", "decl", false,
+         "The same shape in the vote writer — see `consensusgen.wac` above for what this rule used " +
+         "to say and why it could not say anything narrower."),
     Rule("packages/tor/src/directory.wac", "base64NoPad", "decl", false,
          "Base64 without padding, and the exit-policy and relay-field parsers around it. The " +
          "arms are for inputs whose length is not a multiple of three, and for consensus fields " +

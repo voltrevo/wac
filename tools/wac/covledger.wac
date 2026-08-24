@@ -605,10 +605,42 @@ bool opensDecl(string l) {
   return endsWith(t, "{") || (contains(t, "{") && endsWith(t, "}"));
 }
 
-/** The enclosing declaration of `line`, 1-based, or "". */
+/**
+ * The enclosing declaration of `line`, 1-based, or "" — the whole signature when it spans lines.
+ *
+ * **A signature that spans lines opens on its last one**, which is a bare `) {` in column zero:
+ *
+ *     export u8[] voteDocument(
+ *       VoteInfo info, AuthorityKeys keys, u8[] certificate, RelayOpinion[] relays
+ *     ) {
+ *
+ * That satisfies `opensDecl` and carries none of the declaration — not the name, not the types. So a
+ * rule over such a function could only be written `holds: ") {"`, and `") {"` is the last two
+ * characters of nearly every declaration in the file. `packages/tor`'s ledger had two of them, one
+ * per file, each claiming **all twelve** uncovered points in its file: a blanket exemption that can
+ * never fail and absorbs any new dark code silently. That is the opposite of what a ledger is for,
+ * and the rules were not wrong to be written that way — there was no other spelling available.
+ *
+ * So walk back over the continuation and return the signature joined, and a rule can name the
+ * function. Rules that already say `") {"` keep matching, since the joined text still contains it.
+ */
 string declOf(string[] ls, i32 line) {
   for (i32 i = line - 1; i >= 0; i--) {
-    if (i < ls.len() && opensDecl(ls[i])) { return ls[i]; }
+    if (i < ls.len() && opensDecl(ls[i])) {
+      string acc = ls[i];
+      if (!startsWith(trimmed(ls[i]), ")")) { return acc; }
+      for (i32 k = i - 1; k >= 0; k--) {
+        acc = ls[k] + " " + acc;
+        string t = trimmed(ls[k]);
+        // The line that opens the parameter list is the first one worth having, and anything that
+        // closes a previous statement means the signature did not start here.
+        if (contains(t, "(") || t.len() == 0 || endsWith(t, ";") || endsWith(t, "}") ||
+            endsWith(t, "{")) {
+          return acc;
+        }
+      }
+      return acc;
+    }
   }
   return "";
 }
@@ -631,6 +663,27 @@ bool rulePicks(Rule rule, string[] ls, string file, i32 line) {
   if (rule.scope == "decl") { return contains(declOf(ls, line), rule.holds); }
   if (rule.scope == "struct") { return contains(structOf(ls, line), rule.holds); }
   return line >= 1 && line <= ls.len() && contains(ls[line - 1], rule.holds);
+}
+
+/**
+ * How many uncovered points this rule is the **only** claimant of.
+ *
+ * `claims[i]` is how many rules pick point `i` in total, computed once by the caller. Zero here
+ * means every point this rule speaks for is also spoken for by another, so deleting it would change
+ * what the ratchet accepts by nothing at all — see the note in `ratchet` for why that matters and
+ * why it is reported rather than failed.
+ *
+ * Separated from the reporting so it can be tested: the note itself is a log line, and `ratchet`
+ * answers with one bool for the whole run.
+ */
+export i32 onlyClaims(Rule rule, string[] ls, string[] uncovered, i32 nUncovered, i32[] claims) {
+  i32 only = 0;
+  for (i32 i = 0; i < nUncovered && i < claims.len(); i++) {
+    if (claims[i] == 1 && rulePicks(rule, ls, fileOf(uncovered[i]), lineOfKey(uncovered[i]))) {
+      only = only + 1;
+    }
+  }
+  return only;
 }
 
 /**
@@ -807,6 +860,36 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
     }
   }
 
+  // **How many rules claim each point**, computed before any of them is reported.
+  //
+  // The ratchet already fails a rule that matches *nothing* — "the rule explains something that is
+  // gone". What it could not see until 2026-08-24 is a rule every one of whose points is also
+  // claimed by another rule: it matches, so it never trips that check, and its prose goes on being
+  // read as an independent statement about the code long after it stopped being one.
+  //
+  // The instance that prompted this: `packages/tls`'s ledger carried a `keyType != 4` line rule
+  // whose single point sits inside `certVerifySignature`, which a `decl` rule over the same file
+  // already covered. Deleting the line rule changed nothing — and its prose said a P-384 chain
+  // "exists to generate and nothing reads what it makes", which had been false since somebody wrote
+  // `test_a_two_deep_chain_verifies_to_a_p384_root`. A reader looking for work would have gone and
+  // built a fixture that was already there.
+  //
+  // Reported rather than failed, deliberately. Thirty-seven drivers run this, and a new failing
+  // condition applied to all of them at once would make the shared suite red for everyone over
+  // something that is untidy rather than wrong. What it costs to leave as a report is that it can be
+  // ignored; what it costs to make it fail is everybody else's afternoon.
+  i32[] claims = i32[nUncovered > 0 ? nUncovered : 1]();
+  for (i32 r = 0; r < rules.len(); r++) {
+    FileResult csrc = cli.readFile(rules[r].file).wait();
+    if (!csrc.ok) { continue; }
+    string[] cls = linesOf(string.fromBytes(csrc.bytes));
+    for (i32 i = 0; i < nUncovered; i++) {
+      if (rulePicks(rules[r], cls, fileOf(uncovered[i]), lineOfKey(uncovered[i]))) {
+        claims[i] = claims[i] + 1;
+      }
+    }
+  }
+
   // Rules, applied to the points that are actually uncovered.
   for (i32 r = 0; r < rules.len(); r++) {
     Rule rule = rules[r];
@@ -832,10 +915,16 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
       failed = true;
       continue;
     }
+    i32 only = onlyClaims(rule, ls, uncovered, nUncovered, claims);
     core.log("");
     core.log(itoa(hits) + "x " + (rule.proven ? "unreachable" : "reachable, NOT COVERED") + ": " +
              rule.file + " — " + rule.holds);
     core.log("  " + rule.why);
+    if (only == 0) {
+      core.log("  note: every point this claims is claimed by another rule too, so deleting it " +
+               "would change nothing. Its reason is being read as a separate fact about the code " +
+               "and has nothing of its own to keep it true — check it, then merge or delete it.");
+    }
   }
 
   // What is uncovered and unspoken for. Named rather than counted, because a count is a number

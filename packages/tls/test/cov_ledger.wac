@@ -137,13 +137,16 @@ Rule[] rules() {
          "and P-256; the RSA leaf lives in `rsa_interop_test.wac`, in the subprocess. Reachable the " +
          "moment a test hands `verifyPath` an RSA chain, and worth doing — RSA-PSS is what the " +
          "public web is signed with."),
-    Rule("packages/tls/src/x509.wac", "keyType != 4", "line", false,
-         "P-384, the same story as RSA one line up: implemented, and the corpus is P-256. " +
-         "`test/data/make-p384.sh` exists to generate a chain and nothing reads what it makes."),
     Rule("packages/tls/src/x509.wac", "acc", "line", false,
          "**Name constraints — `joinName` and the walk that uses it.** RFC 5280 §4.2.1.10 permits a " +
-         "CA to be limited to a set of names, and `namesAllowed` enforces it. No certificate in any " +
-         "corpus here carries the extension, so the whole machinery is written and unentered.\n" +
+         "CA to be limited to a set of names, and `namesAllowed` enforces it.\n" +
+         "         **This used to end \"no certificate in any corpus here carries the extension, so " +
+         "the whole machinery is written and unentered\", and that stopped being true.** Seven " +
+         "`p384_nc_*.pem` fixtures carry it and `test_name_constraints` asserts on each: the right " +
+         "namespace, the wrong one, an excluded subtree, a constraint form we do not enforce, a " +
+         "suffix that is not a subtree, capitals, and a base the same length as the name. So the " +
+         "machinery is entered and what is left is five arms inside it — which ones was not " +
+         "determined, and the previous sentence is the reason to say so rather than guess again.\n" +
          "         Reachable with one generated CA and `proven: false` for that reason. It is also " +
          "the piece of `x509.wac` where being wrong is quietest: a constraint that is never applied " +
          "and a constraint that is applied and always passes look identical from outside."),
@@ -254,7 +257,14 @@ Rule[] rules() {
          "algorithm outside ed25519 and P-256 is dark."),
     Rule("packages/tls/src/x509.wac", "certVerifySignature", "decl", false,
          "The scheme-to-key-type table, refusing a signature whose algorithm does not match the key " +
-         "it is offered against. Same corpus limit — arms for schemes no test certificate uses."),
+         "it is offered against. Same corpus limit — arms for schemes no test certificate uses.\n" +
+         "         **A `keyType != 4` line rule used to sit beside this one and said P-384 was " +
+         "\"implemented, and the corpus is P-256\" with `test/data/make-p384.sh` generating a chain " +
+         "\"nothing reads\".** Both halves were false — `x509_path_test.wac` reads what that script " +
+         "makes, in `test_a_two_deep_chain_verifies_to_a_p384_root` and in the seven `p384_nc_*` " +
+         "fixtures — and it survived because its single point sits inside this declaration, so it " +
+         "never matched nothing and never tripped the ratchet. Deleted 2026-08-24, and " +
+         "`tools/wac/covledger.wac` now says when a rule has no point of its own."),
     Rule("packages/tls/src/x509.wac", "parseCert", "decl", false,
          "Certificate fields no corpus certificate carries: an ed25519 or P-384 public key where the " +
          "corpus has P-256 and RSA, a two-byte `pathLenConstraint`, an RSA-PSS signature algorithm. " +
