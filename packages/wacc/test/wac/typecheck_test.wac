@@ -77,7 +77,16 @@ string[] WRONG() {
     // an invented one in `CLEAN` below, which is what said to fix the helper rather than either
     // caller. Soundness is what this list asserts, so the position is compared too.
     "struct Task { i32 id; }\nstruct Cont<T> : Task { T v; }\n"
-      + "export i32 f() { Cont<string> c = Cont<string>(7, \"x\"); Task t = c as! Task; return t.id; }");
+      + "export i32 f() { Cont<string> c = Cont<string>(7, \"x\"); Task t = c as! Task; return t.id; }",
+    // **`is` against a *parent* must not narrow away the `?`.** `narrowingsOf` already declines to
+    // retype `p is P` on a `P?` — its comment says why: the knowledge changes and the type does not,
+    // and the next thing such code writes is `p!.v`, which a retyped `p` has nothing left to unwrap.
+    // The guard was `withoutNull(cur) == t`, an exact name match, so the same test against an
+    // *ancestor* fell through it and dropped the nullability. wacc then accepted `k.v` where the
+    // reference asks for the unwrap — the one spelling in this family where the two disagreed, and
+    // `k is K` right beside it is refused by both.
+    "struct S { i32 v; }\nstruct K : S { i32 w; }\n"
+      + "export i32 f(K? k) { if (k is S) { return k.v; } return 0; }");
 }
 
 /**
