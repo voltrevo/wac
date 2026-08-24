@@ -502,3 +502,28 @@ And two in `native/v8`, both of which only a second implementation could see:
 - **`update` and `sh`**, still waiting on the **payload** question: the native binary embeds three
   modules and a JavaScript-hosted `wac` is built from `wacc.wac` alone, so `wac sh` has no shell to
   start. `Cli.load` did not settle it — a loaded module still has to come from somewhere.
+
+### One section of `test <directory>` cannot be written, and it is not `--coverage`
+
+After the summary the native command ranks the files that cost a second or more:
+
+    1 file(s) cost a second or more of CPU to run — the other 4 did not:
+        1.1s cpu ( 1.1s here,  0.0s in children)   1.0s wall  src/nested/deep_test.wac
+
+That is **CPU** time, split between this process and its children — `getrusage`, which the platform
+does not offer a wac program: `Core` has a wall clock and no accounting. Wall time alone would be a
+different number under the same name, which is worse than an absence, so the wac command omits the
+section and says so where it would have written it.
+
+It is a diagnostic aid rather than part of the result, and every case in `commandparity_test.wac` runs
+under the one-second floor, so the two agree today. If it is ever wanted on the other hosts it is a
+capability — `Core.cpuNanos()` or similar — rather than work in the command.
+
+### And the caps that were in the first version of the walk
+
+`testFilesIn`, `testsInSource` and `testExportsIn` each stopped at a fixed size and said nothing: 512
+files, 512 tests per file, 1024 exports. For a *test runner* that is the worst shape a bug takes —
+fewer tests run and everything reported as passing — and this repository has 386 test files, so
+`wac test packages/` was inside the cap and not by much. `issues/lang/0158` is the same bug in
+`gather`, and `wacc.wac` states the rule twelve lines from where the violation was written: "the cap is
+reported, not skipped". They are `Vec`s now, which has no cap to report.

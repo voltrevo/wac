@@ -23,6 +23,7 @@
 import { CallResult, Change, Child, Cli, Core, FileResult, LoadedModule, Pending, Stat, faultWords }
   from "std/platform.wac";
 import { Read } from "core";
+import { Vec } from "core/vec.wac";
 import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
@@ -1021,11 +1022,12 @@ struct SourceTest {
  * only types a wac test signature carries are `Core` and `Cli`.
  */
 SourceTest[] testsInSource(string text) {
-  SourceTest[] out = SourceTest[512](fill: SourceTest("", ""));
-  i32 n = 0;
+  // No cap, for `testFilesIn`'s reason: a file with more tests than the limit would contribute the
+  // first few and the rest would vanish from the aggregate without a word.
+  Vec<SourceTest> out = Vec.create();
   string mark = "export string test";
   i32 at = 0;
-  while (at < text.len() && n < out.len()) {
+  while (at < text.len()) {
     i32 hit = text.slice(at, text.len()).indexOf(mark);
     if (hit < 0) { break; }
     i32 start = at + hit;
@@ -1040,13 +1042,10 @@ SourceTest[] testsInSource(string text) {
     close = open + close;
     string name = trimmedText(text.slice(start + "export string ".len(), open));
     if (!plainName(name)) { continue; }
-    out[n] = SourceTest(name, trimmedText(text.slice(open + 1, close)));
-    n = n + 1;
+    out.push(SourceTest(name, trimmedText(text.slice(open + 1, close))));
     at = close + 1;
   }
-  SourceTest[] exact = SourceTest[n](fill: SourceTest("", ""));
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
-  return exact;
+  return out.toArray();
 }
 
 /** Whether only whitespace stands between `at` and the start of its line. */
@@ -1147,31 +1146,33 @@ bool startsWithPath(string path, string prefix) {
  * `target` are skipped: nothing anybody wants compiled, and `target` in particular is enormous.
  */
 string[] testFilesIn(Fs fs, string dir) {
-  string[] out = string[maxFiles()](fill: "");
-  i32 n = walkTests(fs, dir, out, 0);
-  return exactly(out, n);
+  // **No cap**, because a cap here is a silent truncation and this is a *test* runner: running fewer
+  // files and reporting that they passed is the worst answer available. `maxFiles()` bounds a
+  // program's import graph and `issues/lang/0158` is the day it was applied by skipping rather than
+  // reporting; a growing vector has nothing to skip.
+  Vec<string> out = Vec.create();
+  walkTests(fs, dir, out);
+  return out.toArray();
 }
 
-/** One level of the walk, appending into `out` from `n` and answering the new count. */
-i32 walkTests(Fs fs, string dir, string[] out, i32 n) {
+/** One level of the walk, appending into `out`. */
+void walkTests(Fs fs, string dir, Vec<string> out) {
   string[]? listed = fs.readDir(dir);
-  if (listed is null) { return n; }
+  if (listed is null) { return; }
   string[] names = sortedNames(listed!);
-  for (i32 i = 0; i < names.len() && n < out.len(); i++) {
+  for (i32 i = 0; i < names.len(); i++) {
     string name = names[i];
     if (name == "" || name.slice(0, 1) == ".") { continue; }
     if (name == "node_modules" || name == "target") { continue; }
     string path = dir + (dir.len() > 0 && dir.slice(dir.len() - 1, dir.len()) == "/" ? "" : "/") + name;
     if (fs.stat(path).isDir) {
-      n = walkTests(fs, path, out, n);
+      walkTests(fs, path, out);
       continue;
     }
     if (name.len() > 9 && name.slice(name.len() - 9, name.len()) == "_test.wac") {
-      out[n] = path;
-      n = n + 1;
+      out.push(path);
     }
   }
-  return n;
 }
 
 /** `names`, sorted — an insertion sort, because a directory is small and this runs per level. */
@@ -1198,19 +1199,19 @@ string[] sortedNames(string[] names) {
  */
 TestExport[] testExportsIn(string manifest) {
   JsonValue? doc = parse(manifest.toBytes());
-  if (doc is null) { return TestExport[0](fill: TestExport("", false)); }
+  if (doc is null) { return TestExport[0](); }
   JsonObject root = JsonObject.create();
   match (doc!) {
     case Object(o): { root = o; }
-    else: { return TestExport[0](fill: TestExport("", false)); }
+    else: { return TestExport[0](); }
   }
   JsonValue? xs = root.getStr("exports");
-  if (xs is null) { return TestExport[0](fill: TestExport("", false)); }
-  TestExport[] out = TestExport[1024](fill: TestExport("", false));
-  i32 n = 0;
+  if (xs is null) { return TestExport[0](); }
+  // No cap, for `testFilesIn`'s reason.
+  Vec<TestExport> out = Vec.create();
   match (xs!) {
     case Array(items): {
-      for (i32 i = 0; i < items.len() && n < out.len(); i++) {
+      for (i32 i = 0; i < items.len(); i++) {
         match (items.get(i)) {
           case Object(e): {
             JsonValue? nm = e.getStr("name");
@@ -1219,8 +1220,7 @@ TestExport[] testExportsIn(string manifest) {
               case Str(bytes): {
                 string name = string.fromBytes(bytes);
                 if (name.len() > 4 && name.slice(0, 4) == "test") {
-                  out[n] = TestExport(name, namesCli(e));
-                  n = n + 1;
+                  out.push(TestExport(name, namesCli(e)));
                 }
               }
               else: { }
@@ -1232,9 +1232,7 @@ TestExport[] testExportsIn(string manifest) {
     }
     else: { }
   }
-  TestExport[] exact = TestExport[n](fill: TestExport("", false));
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
-  return exact;
+  return out.toArray();
 }
 
 /** One `test*` export: its name, and whether it asked for a `Cli`. */
@@ -1579,6 +1577,18 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
     return 1;
   }
   core.log("");
+  // **One section of the native command's output is missing here, and cannot be written.** After the
+  // summary it ranks the files that cost a second or more:
+  //
+  //     1 file(s) cost a second or more of CPU to run — the other 4 did not:
+  //         1.1s cpu ( 1.1s here,  0.0s in children)   1.0s wall  src/nested/deep_test.wac
+  //
+  // That is *CPU* time, split between this process and its children, which is `getrusage` and not
+  // something the platform offers a wac program — `Core` has a wall clock and no accounting. Wall
+  // time alone would be a different number under a different name, which is worse than an absence.
+  // It is a diagnostic aid rather than part of the result, so a walk that takes under a second a file
+  // — every case in `commandparity_test.wac` — agrees anyway. `issues/system/0230a`.
+  //
   // `1 file:` and `4 files:`, as the native command spells them. `file(s)` is the spelling that
   // avoids the choice, and it is a different sentence from the one this has to match.
   i32 total = ok + withFailures + unmatched + ungrantedFiles;
