@@ -697,6 +697,19 @@ export bool assignable(C c, string want, string got) {
     return assignable(c, withoutNull(want), withoutNull(got));
   }
   if (isNullableName(got)) { return assignable(c, want, withoutNull(got)); }
+  // **A nullable slot accepts whatever its base accepts**, and the missing half was the ordinary one.
+  // `withoutNull(want) == got` above answers when the names match exactly — `Base? b = Base(9)` — and
+  // the both-nullable line answers `Base? b = k` for a `Kid? k` by recursing onto `Base` against
+  // `Kid`. So the rule this needs was already being relied on one line up; what had no route to it
+  // was a source that is *not* nullable. `Base? b = Kid(2, 38)` reported, in every position a value
+  // can be written: local, parameter, return, field, array element and a later assignment, all six
+  // measured against the reference, which accepts, emits and runs each of them.
+  //
+  // Stated as a general unwrap rather than a struct rule, because it is one: a `?` widens what a slot
+  // takes and narrows nothing. It subsumes the exact-name line above and the `anyref?` line below,
+  // both of which are special cases of it, and it cannot let anything new through — `i32? n = "x"`
+  // still asks whether a `string` fits an `i32`, and still gets no.
+  if (isNullableName(want)) { return assignable(c, withoutNull(want), got); }
   // A child goes into a parent's slot without a cast; the other direction is the downcast that needs
   // `as!`. Upcasting *by assignment* is the same fact as upcasting by cast, one syntax along, and was
   // missed because nothing in the spec corpus assigns a child to a parent.
