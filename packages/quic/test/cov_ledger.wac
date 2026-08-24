@@ -121,12 +121,19 @@ Rule[] rules() {
          "does not produce every combination of it."),
     Rule("packages/quic/src/packet.wac", "parseShortDcid", "decl", false,
          "Short-header destination ids of lengths the tests do not use. Ours are a fixed width."),
-    Rule("packages/quic/src/frame.wac", "nextIn", "decl", false,
-         "**Three length fields that decode to a negative number.** A QUIC varint is up to 62 bits " +
-         "and these are read into an `i64`, so a value above 2⁶³ arrives negative — an ACK range " +
-         "count, a NEW_TOKEN length, a STREAM length. `test/wac/truncated_test.wac` sweeps every " +
-         "frame *cut short* and none of its frames *lies about a length*, which is the other half of " +
-         "the same attack and one eight-byte varint away from being written."),
+    Rule("packages/quic/src/frame.wac", "nextIn", "decl", true,
+         "**Three `n < 0` guards on values a QUIC varint cannot produce.** An ACK range count, a " +
+         "NEW_TOKEN length and a STREAM length, each read straight from `varint.decode` and checked " +
+         "for being negative.\n" +
+         "         They cannot be. `decode` starts the value at `first & 0x3F` — six bits — and " +
+         "shifts left by eight at most seven times, so the widest varint is 62 bits and every value " +
+         "is positive in an `i64`. **Corrected on 2026-08-24**: this rule first said the arms were " +
+         "reachable and *one eight-byte varint away from being written*, which would have cost " +
+         "somebody an afternoon trying to build an input that does not exist. Checked by reading the " +
+         "decoder rather than by assuming the usual thing about widths.\n" +
+         "         Kept, and `proven: true` is the honest label. They guard an invariant rather than " +
+         "an input: the line below each one is `(p as i64) + n > room`, whose correctness depends on " +
+         "`n` not being negative, and a decoder that ever widened would break that silently."),
     Rule("packages/quic/src/frame.wac", "cryptoStream", "decl", false,
          "Reassembling CRYPTO frames that arrive out of order or overlap. Every test flight arrives " +
          "in order in one datagram; a reassembler's whole reason to exist is the case where that is " +
