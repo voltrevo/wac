@@ -35,6 +35,8 @@ import { parse } from "../../../json/src/json.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 import { blsAggregate, blsFastAggregateVerify, blsAggregateVerify, blsBatchVerify, blsVerify,
          blsBatchScalar } from "./probe.wac";
+import { G1, g1FromBytes } from "../../src/g1.wac";
+import { G2, g2FromBytes } from "../../src/g2.wac";
 
 /** `0x…` as bytes, which is how every field in these fixtures is written. */
 u8[] un(string h) {
@@ -329,5 +331,95 @@ export string test_a_batch_weight_depends_on_the_whole_batch_not_just_its_positi
   // Distinct weights per term, too: identical weights would collapse the batch to an unweighted sum.
   t.isFalse(weight(pks, msgs, sigs, noEntropy(), 0) == weight(pks, msgs, sigs, noEntropy(), 1),
             "terms 0 and 1 got the same weight");
+  return t.report();
+}
+
+/**
+ * **Ethereum's own point-deserialization vectors, which were vendored and never read.**
+ *
+ * `test/vendor/eth_deserialization_G1.json` and `..._G2.json` came from `ethereum/bls12-381-tests`
+ * with the rest of the `eth_*` set, and the sibling files are all driven — `eth_verify`,
+ * `eth_aggregate_verify`, `eth_batch_verify`, `eth_fast_aggregate_verify`. These two were not.
+ * Found by listing `test/vendor` against the tests that name a file.
+ *
+ * They are the consensus-critical encoding cases and twenty-four of the twenty-eight are refusals,
+ * which is what makes them worth more than the arithmetic ones. The names are the documentation and
+ * they enumerate the whole surface an attacker has on a compressed point: `deserialization_fails_
+ * not_in_G1` is the subgroup check, `_not_in_curve` the curve equation, `_x_greater_than_modulus`
+ * and `_x_equal_to_modulus` the field bound, `_with_wrong_c_flag` and `_with_b_flag_and_a_flag_true`
+ * and `_with_b_flag_and_x_nonzero` the three flag bits, `_too_few_bytes` and `_too_many_bytes` the
+ * length.
+ *
+ * **The function under test is `g1FromBytes`, not `g1Decompress`, and the difference is the point.**
+ * `g1Decompress` reads the encoding; `g1FromBytes` is *"decompress and check the encoding, the curve
+ * and the subgroup"*. Asking the first one these vectors reports two failures that are not failures
+ * — `deserialization_fails_not_in_G1` and `_infinity_with_false_b_flag` — because a point on the
+ * curve outside the prime-order subgroup is a perfectly good decoding and a rejected key. `g1.wac`'s
+ * own header says which layer owns that: *"the point is in the order-r subgroup, not merely on the
+ * curve... a subgroup is exactly what small-subgroup attacks are made of, and it will pass a naive
+ * check"*. I picked the wrong function by name first and read the result as a missing subgroup check.
+ *
+ * `g1Decompress` says in its own header that *"the order of the checks is the order an attacker
+ * would probe them in, and every one of them returns null rather than a 'best effort' point"* — a
+ * claim about refusals with nothing asking it about one.
+ *
+ * The four accepting cases matter as much: without them a decompressor that returned null for
+ * everything would pass twenty-four assertions.
+ *
+ * ## Which of `g1FromBytes`'s three checks these vectors actually hold
+ *
+ * Canaried one at a time. Deleting the **subgroup** check turns this red in both G1 and G2, which is
+ * the one that matters — a point on the curve outside the prime-order subgroup is what a
+ * small-subgroup attack is made of, and `g1.wac`'s header says it "will pass a naive check".
+ *
+ * Deleting the **curve** check leaves it green, and that is not a gap. `g1Decompress` recovers y by
+ * solving y² = x³ + 4 and answers null when x³ + 4 has no square root, so anything it returns is on
+ * the curve by construction and `g1IsOnCurve` after it cannot fail. It is defence in depth on this
+ * path — worth keeping, since the same function is called after arithmetic where it is not
+ * redundant, and worth writing down so nobody reads these twenty-eight passing assertions as
+ * evidence for a check they do not exercise.
+ */
+export string test_every_ethereum_g1_deserialization_fixture_agrees(Core core, Cli cli) {
+  T t = T.create();
+  JsonObject? cases = load(t, cli, "eth_deserialization_G1");
+  if (cases is null) { return t.report(); }
+  i32 ran = 0;
+  i32 accepted = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    string name = cases!.at(i).keyStr();
+    JsonValue c = cases!.at(i).value;
+    JsonValue? input = member(c, "input");
+    if (input is null) { continue; }
+    G1? got = g1FromBytes(un(memberText(input!, "pubkey")));
+    bool ok = !(got is null);
+    t.eqBool(ok, memberBool(c, "output"), name);
+    if (ok) { accepted = accepted + 1; }
+    ran = ran + 1;
+  }
+  t.eqI32(ran, 13, "G1 deserialization fixtures run");
+  t.eqI32(accepted, 2, "a decompressor that accepted nothing would pass every refusal above");
+  return t.report();
+}
+
+/** The same for signatures, which are G2 points. */
+export string test_every_ethereum_g2_deserialization_fixture_agrees(Core core, Cli cli) {
+  T t = T.create();
+  JsonObject? cases = load(t, cli, "eth_deserialization_G2");
+  if (cases is null) { return t.report(); }
+  i32 ran = 0;
+  i32 accepted = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    string name = cases!.at(i).keyStr();
+    JsonValue c = cases!.at(i).value;
+    JsonValue? input = member(c, "input");
+    if (input is null) { continue; }
+    G2? got = g2FromBytes(un(memberText(input!, "signature")));
+    bool ok = !(got is null);
+    t.eqBool(ok, memberBool(c, "output"), name);
+    if (ok) { accepted = accepted + 1; }
+    ran = ran + 1;
+  }
+  t.eqI32(ran, 15, "G2 deserialization fixtures run");
+  t.eqI32(accepted, 2, "a decompressor that accepted nothing would pass every refusal above");
   return t.report();
 }

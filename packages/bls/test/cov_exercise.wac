@@ -65,6 +65,8 @@ import {
 } from "./wac/pairing_test.wac";
 import {
   test_every_ethereum_fast_aggregate_verify_fixture_agrees as ag__every_ethereum_fast_aggregate_verify_fixture_agrees,
+  test_every_ethereum_g1_deserialization_fixture_agrees as ag__g1_deser,
+  test_every_ethereum_g2_deserialization_fixture_agrees as ag__g2_deser,
   test_every_ethereum_aggregate_verify_fixture_agrees as ag__every_ethereum_aggregate_verify_fixture_agrees,
   test_every_ethereum_batch_verify_fixture_agrees as ag__every_ethereum_batch_verify_fixture_agrees,
   test_the_batch_weights_are_what_reject_a_forged_set as ag__the_batch_weights_are_what_reject_a_forged_set,
@@ -274,6 +276,14 @@ export i32 main(Core core, Cli cli) {
   }
   if (pa__the_two_pair_miller_loop_equals_the_product_of_two_single_loops(core, cli).len() > 0) {
     core.warn("error: FAILED pairing_test test_the_two_pair_miller_loop_equals_the_product_of_two_single_loops");
+    bad = bad + 1;
+  }
+  if (ag__g1_deser(core, cli).len() > 0) {
+    core.warn("error: FAILED aggregate_test test_every_ethereum_g1_deserialization_fixture_agrees");
+    bad = bad + 1;
+  }
+  if (ag__g2_deser(core, cli).len() > 0) {
+    core.warn("error: FAILED aggregate_test test_every_ethereum_g2_deserialization_fixture_agrees");
     bad = bad + 1;
   }
   if (ag__every_ethereum_fast_aggregate_verify_fixture_agrees(core, cli).len() > 0) {
