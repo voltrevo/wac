@@ -247,10 +247,6 @@ Rule[] rules() {
          "fixtures and drive a subset. The rest are reached by `link.wac` and `socks.wac` — the " +
          "two files this ledger already accounts for as program-driven — so this is the same gap " +
          "seen from the layer below."),
-    Rule("packages/tor/src/dirserve.wac", "dirSourceFingerprint", "decl", false,
-         "**An uncovered entry**: scanning a consensus for the `dir-source` line that names the " +
-         "authority that signed it. The whole function, eight points, never called — and it is " +
-         "what a client would use to attribute a document to an authority."),
     Rule("packages/tor/src/consensusgen.wac", ") {", "decl", false,
          "The microdescriptor consensus writer's body — see the `return` rule over this file. " +
          "Its signature spans lines, so the declaration this rule matches is the closing `) {`."),

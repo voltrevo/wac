@@ -108,6 +108,7 @@ import {
   test_microdescriptors_are_batched_with_a_hyphen as dirs__microdescriptors_are_batched_with_a_hyphen,
   test_the_compression_suffix_is_a_request_not_a_name as dirs__the_compression_suffix_is_a_request_not_a_name,
   test_the_response_is_framed_for_a_client as dirs__the_response_is_framed_for_a_client,
+  test_a_dir_source_line_a_stranger_wrote as dirs__a_dir_source_line_a_stranger_wrote,
 } from "./wac/dirserve_test.wac";
 import {
   test_the_sequences_can_show_the_rule as dirs2__the_sequences_can_show_the_rule,
@@ -697,6 +698,10 @@ export i32 main(Core core, Cli cli) {
   }
   if (dirs__the_compression_suffix_is_a_request_not_a_name(core, cli).len() > 0) {
     core.warn("error: FAILED dirserve_test test_the_compression_suffix_is_a_request_not_a_name");
+    bad = bad + 1;
+  }
+  if (dirs__a_dir_source_line_a_stranger_wrote().len() > 0) {
+    core.warn("error: FAILED dirserve_test test_a_dir_source_line_a_stranger_wrote");
     bad = bad + 1;
   }
   if (dirs__the_response_is_framed_for_a_client(core, cli).len() > 0) {
