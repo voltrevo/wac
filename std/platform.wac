@@ -1038,7 +1038,17 @@ export string readReason(FileResult f) {
  * `issues/system/0165`.
  */
 export struct Exec {
-  /** The exit code, when the program ran. Meaningless when `error` is non-empty. */
+  /**
+   * The exit code, when the program ran. Meaningless when `error` is non-empty.
+   *
+   * **`-1` means the child died by a signal rather than exiting**, and it is a real value rather than
+   * an absence: a signalled process has no exit code at all, so all four hosts write `code ?? -1`.
+   * It is safe as a sentinel because a POSIX status is eight bits — no child that *exited* can
+   * produce it — which is the one thing that saves it from being a sentinel drawn from the value's own
+   * range. Read it through `signalled()` rather than by comparing, so the convention has a name.
+   *
+   * `ran()` is still true for such a child: it started, and a signal is how it ended.
+   */
   i32 status;
   u8[] stdout;
   u8[] stderr;
@@ -1059,6 +1069,17 @@ export struct Exec {
 
   /** Whether it ran **and** exited zero, which is what most callers mean by "it worked". */
   bool ok(const this) { return this.ran() && this.status == 0; }
+
+  /**
+   * Whether it started and was **killed** rather than exiting — see `status`.
+   *
+   * Worth a name because the alternative is every caller writing `status == 0 - 1`, and because the
+   * two facts a caller usually wants to separate are "it failed" and "it was killed": an out-of-memory
+   * kill and a program that exited non-zero are the same `!ok()` and very different problems. The
+   * signal *number* is not carried — the hosts do not report it — so this says that it happened and
+   * not which one.
+   */
+  bool signalled(const this) { return this.ran() && this.status == 0 - 1; }
 }
 
 export struct Change {

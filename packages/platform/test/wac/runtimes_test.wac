@@ -319,6 +319,14 @@ export string test_the_two_runtimes_agree_about_running_a_host_program(Core core
            "a handed variable arrived and the inherited ones stayed:\n" + dLog);
   t.isTrue(contains(dLog, "cleared: ran=yes only-what-was-passed=yes"),
            "a cleared environment was only what was passed:\n" + dLog);
+  // A signalled child, which is one convention written out in four hosts and compared by nothing
+  // until now — `?? -1` in the two JavaScript ones and `unwrap_or(-1)` in the two Rust ones.
+  // `eqStr` above already fails if Deno and Node disagree; this says the answer is also *right*,
+  // which two hosts making the same mistake would otherwise satisfy.
+  t.isTrue(contains(dLog, "signalled: ran=yes status=-1 signalled=yes"),
+           "a child killed by a signal is reported as having run and having no exit code:\n" + dLog);
+  t.isTrue(contains(dLog, "exited: ran=yes status=255 signalled=no"),
+           "and the top of the exit range is not clipped into that sentinel:\n" + dLog);
 
   // And the inherited bytes themselves, which are on the other stream: the grandchild wrote to the
   // probe's stdout, which is this pipe, on both hosts.
