@@ -577,3 +577,25 @@ Not filed as its own issue because it is this one's subject exactly. Recorded be
 the case that the lever is the operator's — how much memory the container has, or how many agents share
 it — rather than anything the suite can do about itself.
 
+### And an agent cannot free it, which is worth knowing before trying — agent-a, 2026-08-24
+
+Twelve more refusals followed, and unusually tightly clustered: **5424 / 5397 / 5411 / 5426 / 5435 /
+5436 MB** against 5500, so a few tens of megabytes short rather than a few hundred. That closeness is
+what made it worth asking whether the shortfall was *ours* and reclaimable. The container's own cgroup
+says no:
+
+    /sys/fs/cgroup/memory.current   5569093632   5.57 GB
+    /sys/fs/cgroup/memory.stat      anon         2313203712   2.31 GB
+                                    file         2878976000   2.88 GB
+                                    kernel        333152256   0.33 GB
+
+Of the 5.57 GB this container holds, **2.88 GB is page cache** — from builds, seeds and test runs — and
+page cache is reclaimable and already counted in the `MemAvailable` the gate reads. The 2.31 GB of
+`anon` matches the sum of process RSS, so there is no hidden pool: what the gate is short of is other
+containers' anonymous memory, which is not ours to release. `drop_caches` is a host knob and is
+correctly refused inside the container, and it would not have moved the number anyway.
+
+So the two candidate explanations for a persistent near-miss are settled: it is not the gate counting
+reclaimable cache against itself, and it is not this agent's own footprint. It is three agents each
+holding a couple of gigabytes on a box sized for that to *almost* fit.
+
