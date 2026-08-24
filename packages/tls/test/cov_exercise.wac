@@ -261,6 +261,7 @@ import {
 
 import {
   test_a_hostile_serverhello_is_refused_at_each_check as lb__a_hostile_serverhello_is_refused_at_each_check,
+  test_the_first_record_back_is_refused_on_its_framing as lb__the_first_record_back_is_refused_on_its_framing,
 } from "./wac/loopback_test.wac";
 
 import {
@@ -279,6 +280,10 @@ export i32 main(Core core, Cli cli) {
   }
   if (lb__a_key_share_that_forces_a_zero_secret_is_refused().len() > 0) {
     core.warn("error: FAILED loopback_test test_a_key_share_that_forces_a_zero_secret_is_refused");
+    bad = bad + 1;
+  }
+  if (lb__the_first_record_back_is_refused_on_its_framing().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_first_record_back_is_refused_on_its_framing");
     bad = bad + 1;
   }
   if (lb__a_hostile_serverhello_is_refused_at_each_check().len() > 0) {
