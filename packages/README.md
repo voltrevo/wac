@@ -170,6 +170,7 @@ deno task coverage:http
 deno task coverage:json
 deno task coverage:lightclient
 deno task coverage:mpt
+deno task coverage:platform
 deno task coverage:quic
 deno task coverage:regex
 deno task coverage:rlp
@@ -185,6 +186,7 @@ deno task coverage:tls
 deno task coverage:unicode
 deno task coverage:webrtc
 deno task coverage:url
+deno task coverage:wactest
 deno task coverage:wacpkg
 deno task coverage:zstd
 deno task coverage:all    # every one of them in turn, and says which are red

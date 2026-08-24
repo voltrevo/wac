@@ -692,6 +692,12 @@ i32 lineOfKey(string where) {
  * and no function declaration has nothing to compile. `") {"` is what tells them apart: a function
  * signature has a parameter list and a `struct`, `enum` or `const` does not.
  */
+/** Whether a path is in a directory that holds programs rather than library code. */
+bool isProgramDir(string path) {
+  return contains(path, "/example/") || contains(path, "/bench/")
+      || contains(path, "/size/") || contains(path, "/audit/");
+}
+
 void nameFilesWithNoPoints(Core core, Cli cli, Point[] points, i32 nPoints, string prefix) {
   string[] all = sourceFiles(core, cli, string[](".wac"), string[0](fill: ""));
   string[] missing = string[all.len() > 0 ? all.len() : 1](fill: "");
@@ -712,13 +718,30 @@ void nameFilesWithNoPoints(Core core, Cli cli, Point[] points, i32 nPoints, stri
     nMissing = nMissing + 1;
   }
   if (nMissing == 0) { return; }
+  // **`example/`, `bench/`, `size/` and `audit/` hold programs by convention, and naming them every
+  // run is noise.** `packages/platform` has two files in `src/` and thirty-nine examples; a list that
+  // led with the examples would bury the one thing worth reading. They are counted rather than listed
+  // — the count still moves if one appears or goes, and the reader is not asked to skim past it.
+  i32 library = 0;
+  for (i32 i = 0; i < nMissing; i++) {
+    if (!isProgramDir(missing[i])) { library = library + 1; }
+  }
   core.log("");
-  core.log(itoa(nMissing) + " of " + itoa(seen) + " source file(s) under " + prefix +
-           " contributed no branch points — nothing the exercise compiled imports them, so they are "
-           + "absent from the table above rather than reading zero:");
-  for (i32 i = 0; i < nMissing; i++) { core.log("  " + missing[i]); }
-  core.log("  A program that a test builds and spawns lands here. Reported, not failed — see "
-           + "`issues/system/0241b`.");
+  if (library > 0) {
+    core.log(itoa(library) + " of " + itoa(seen) + " source file(s) under " + prefix +
+             " contributed no branch points — nothing the exercise compiled imports them, so they are "
+             + "absent from the table above rather than reading zero:");
+    for (i32 i = 0; i < nMissing; i++) {
+      if (isProgramDir(missing[i])) { continue; }
+      core.log("  " + missing[i]);
+    }
+    core.log("  A program that a test builds and spawns lands here. Reported, not failed — see "
+             + "`issues/system/0241b`.");
+  }
+  if (nMissing > library) {
+    core.log("  ...and " + itoa(nMissing - library) + " under example/, bench/, size/ or audit/, "
+             + "which hold programs by convention and are counted rather than listed.");
+  }
 }
 
 export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] counts, string prefix,

@@ -1022,6 +1022,63 @@ The remaining 575 points are the usual: refusals in `fetch.wac`'s advertisement 
 `pack.wac`'s format checks, `ignore.wac`'s pattern corner cases. The corpus is GitHub, git itself and
 this package's own writers, all of which produce well-formed input.
 
+### The sweep is done: 37 drivers, 36 floors, two packages left — 2026-08-24
+
+    37/37 ran in 173s (556s of work at 4 workers) — 36 hold a coverage floor,
+    0 only check their own exemptions have not drifted, 1 report and cannot fail
+       2 package(s) have no coverage task: box, wacc
+
+From the nineteen this issue was filed about, of which fifteen could not fail. **`box` is
+`agent-c`'s** and **`wacc` is 33,575 lines and its own project**; both are somebody's decision rather
+than mine.
+
+`wactest` and `platform` were the last two, and between them they close the argument this sweep has
+been having with itself.
+
+#### `wactest` — 28.3%, and the inverse of every other finding
+
+    packages/wactest/src/built.wac    134    0    0.0
+    packages/wactest/src/oracle.wac   123   14   11.4
+    packages/wactest/src/host.wac      34    2    5.9
+
+**These are the three most-used files in the repository**: `oracle.wac` is imported by ninety files,
+`host.wac` by seventy-four, `built.wac` by thirty. Every differential test in `crypto`, `tls`, `zstd`
+and a dozen others goes through them thousands of times a run — and `wactest`'s own tests barely call
+them.
+
+Nine packages in, the story had always been code that *runs* somewhere the instrument cannot see: a
+subprocess, a browser, a live node, a spawned CLI. **This is the mirror image — the code runs
+in-process, and its callers are what live elsewhere.** Same cause, opposite direction, and the same
+fix: the union pass in `issues/system/0241b`, which would give this package's real reading out of
+thirty exercises that already run.
+
+The one gap that genuinely belongs to `wactest` is `assert.wac`'s failure-reporting arms — unreachable
+by construction from a *passing* suite, and the code that runs at the moment somebody most needs it to
+be right.
+
+#### `platform` — 38.7%, and mostly not the sort of thing coverage measures
+
+`src/` is two files. Everything else the package offers is a *declaration* — the `Core` and `Cli`
+capabilities the host implements — and a declaration has no branch points. Of the two, `stream.wac`'s
+consumer is `packages/box`, which has no driver; `frame.wac`'s seventeen uncovered points are almost
+all in `childCli`, the capability narrowing, and every one is a refusal. That is the package's whole
+subject and the part with no inputs.
+
+#### The report line, refined twice
+
+Naming files that contributed nothing turned up two false alarms worth recording, because both would
+have degraded the instrument into noise:
+
+1. **declaration-only files.** `core/read.wac` is one `enum`; it cannot contribute a point however
+   thoroughly it is used. Discriminator: a function with no branches still produces an *entry* point,
+   so zero points plus a `") {"` means not compiled, and zero points without one means nothing to
+   compile.
+2. **`example/`, `bench/`, `size/`, `audit/`.** `packages/platform` has two files in `src/` and
+   thirty-nine examples; a list led by the examples buries the one line worth reading. They are now
+   counted rather than listed — the count still moves if one appears or goes.
+
+After both, `platform` names exactly one file and `core` names none.
+
 ### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
 
 Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's

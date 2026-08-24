@@ -1,0 +1,110 @@
+// wactest's coverage, and the inverse of everything else in this sweep.
+//
+//   deno task coverage:wactest
+//   deno task coverage:wactest --verbose
+//
+// **134 of 473 — 28.3%**, the lowest number `issues/system/0205` has produced, over the package every
+// other package's tests are built on.
+//
+//     packages/wactest/src/built.wac    134    0    0.0
+//     packages/wactest/src/oracle.wac   123   14   11.4
+//     packages/wactest/src/host.wac      34    2    5.9
+//
+// **These are the three most-used files in the repository.** `oracle.wac` is imported by ninety files,
+// `host.wac` by seventy-four, `built.wac` by thirty. Every differential test in `packages/crypto`,
+// `packages/tls`, `packages/zstd` and a dozen others goes through them, thousands of times a run —
+// and `packages/wactest`'s own tests barely call them, so this driver sees almost none of it.
+//
+// **That is the inverse of the finding the rest of the sweep kept making.** Nine packages in, the
+// story was always code that *runs* somewhere the instrument cannot see: a daemon in a subprocess, a
+// browser, a live node, a spawned CLI. Here the code runs in-process, thousands of times — its
+// *callers* are what live elsewhere. A ledger's prefix is a directory, and a library's exercise is its
+// consumers.
+//
+// Both halves have the same fix and it is not more tests here: the union pass `issues/system/0241b`
+// describes. Thirty drivers already run; unioning their point sets per file would give this package's
+// real reading out of exercises that exist.
+//
+// ## The one gap that is genuinely this package's
+//
+// `assert.wac`'s failure-reporting arms. A test framework's error paths are the ones a *passing*
+// suite never takes, so they are unreachable by construction from a green run — and they are the code
+// that runs at the exact moment somebody most needs it to be right.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/wactest/test/cov_exercise.wac";
+const string PREFIX = "packages/wactest/";
+
+/** What the tests need: a process to build and spawn children, sockets, and a temp dir. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/wactest/src/oracle.wac", "", "line", false,
+         "**The oracle harness, at 14 of 123 — and it is imported by ninety files across this " +
+         "repository.** \n" +
+         "`oracle.wac` is how a test asks a reference implementation what the answer should " +
+         "be: it builds the program, caches the result, sweeps stale copies and reads back " +
+         "what came out. Almost every differential test in `packages/crypto`, `packages/tls`, " +
+         "`packages/zstd` and a dozen others goes through it, thousands of times a run. \n" +
+         "And `packages/wactest`'s own tests barely call it, so this driver sees almost none " +
+         "of that. **This is the inverse of the finding the rest of the sweep kept making**: " +
+         "not code that runs somewhere the instrument cannot see, but code whose *callers* are " +
+         "somewhere it does not look. A ledger's prefix is a directory, and a library's " +
+         "exercise is its consumers — `issues/system/0241b`. \n" +
+         "A whole-file rule, deliberately, because a floor at 11% over the most-used file in " +
+         "the repository would be a number nobody could act on. What would make it measurable " +
+         "is the union pass `0241b` describes: run every driver, union the point sets per " +
+         "file, and this file's real reading falls out of thirty exercises that already run."),
+    Rule("packages/wactest/src/built.wac", "", "line", false,
+         "**The build-and-cache helper, at 0 of 134 — nothing in this package's own tests " +
+         "calls it, and thirty files elsewhere do.** `builtProgram` compiles a wac program to " +
+         "a binary once and reuses it, and `newestInClosure` is what decides the cached copy " +
+         "is stale: it walks a program's import graph and compares mtimes. \n" +
+         "That freshness rule is the interesting part and the reason a floor here would be " +
+         "worth having — a stale binary is how `issues/system/0160` produced a coverage report " +
+         "that named real files, real lines, and was 40% wrong. Same reason as `oracle.wac` " +
+         "for why it is a whole-file rule."),
+    Rule("packages/wactest/src/host.wac", "", "line", false,
+         "The host helpers — an agent's directory, writing a file for a child to read — used " +
+         "by seventy-four files elsewhere and two here. Same story as `oracle.wac`."),
+    Rule("packages/wactest/src/assert.wac", "eqStrArray", "decl", false,
+         "The array assertions' mismatch arms. `T`'s comparisons are exercised constantly by " +
+         "every package's tests; what is dark here is the *reporting* of a mismatch, which " +
+         "only runs when a test fails — so the arms that format a failure message are, by " +
+         "construction, the ones a green suite never takes."),
+    Rule("packages/wactest/src/assert.wac", "", "line", false,
+         "The rest of `T`'s failure-reporting arms — see `eqStrArray`. A test framework's " +
+         "error paths are unreachable from a passing test suite, which is the one gap here " +
+         "that is not about consumers."),
+    Rule("packages/wactest/src/daemon.wac", "", "line", false,
+         "The daemon helper's refusals: a child that never announced itself, a port that would " +
+         "not bind, a log that could not be read. Driven by `packages/tls`, `packages/tor` and " +
+         "`packages/ethrpc` when a spawn goes wrong, which in a green run it does not."),
+    Rule("packages/wactest/src/childenv.wac", "", "line", false,
+         "Child environment construction for shapes the callers do not build.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[0](fill: Pin("", 0, "", true, ""));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}
