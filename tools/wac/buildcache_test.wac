@@ -300,3 +300,52 @@ export string test_no_cache_neither_reads_nor_writes(Core core, Cli cli) {
   cli.remove(dir, true).wait();
   return t.report();
 }
+
+/** One `wac build` under `home`, answering everything it printed. */
+string outputOf(Cli cli, string home, string entry, string stem) {
+  Exec r = cli.execWith(wacBinary(cli),
+      string[]("run", "--allow-read", "--allow-write", "--allow-env", "--allow-run", WACC,
+               "--", "build", entry, "-o", stem),
+      u8[0](), string[]("WAC_HOME=" + home), false, false).wait();
+  if (!r.ran()) { return "(did not run: " + r.error + ")"; }
+  return string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+}
+
+// **A warning survives the cache, because a warning nobody sees is not a warning.**
+//
+// `spec/cli/wac.md` `[§wac-cli-usage-3nkq8wj]` says warnings print and do not change the exit code,
+// and *"are not held back for `check` or suppressed on a command that also writes a file"*. A hit
+// returns above the diagnostics pass, so the first build of a warned program printed its warning and
+// every later one did not — the same source and the same command line saying two different things,
+// decided by whether anybody had built it before. That is the shape of the flag bug in this file's
+// neighbour test, arriving at a documented clause rather than at an error message.
+//
+// **Fixed by not storing a build that warned**, rather than by replaying the text: a warned program
+// recompiles every time, which costs a little and cannot go quietly wrong. The alternative — keeping
+// the diagnostics beside the artefact — is a second file to write, evict and validate, for a case the
+// repository would rather fix than cache.
+export string test_a_warning_is_not_swallowed_by_a_hit(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/buildcache-warn";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  string home = dir + "/home";
+  string entry = dir + "/w.wac";
+  // Two structs with no ancestor in common: `is` between them is always false, and legal.
+  t.isTrue(putFile(cli, entry,
+      "struct A { i32 v; }\nstruct B { i32 w; }\n"
+      + "export i32 main() {\n  A x = A(1);\n  if (x is B) { return 1; }\n  return 0;\n}\n") == "",
+      "could not write the program");
+
+  string cold = outputOf(cli, home, entry, dir + "/w");
+  t.isTrue(cold.indexOf("warning") >= 0,
+      "the cold build printed no warning, so this test is not about what it thinks: " + cold);
+
+  string warm = outputOf(cli, home, entry, dir + "/w");
+  t.isTrue(warm.indexOf("warning") >= 0,
+      "the second build of the same source printed no warning — the cache answered above the "
+      + "diagnostics pass, so a documented clause holds only until somebody builds the program "
+      + "once: " + warm);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

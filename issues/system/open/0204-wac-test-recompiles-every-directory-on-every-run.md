@@ -482,3 +482,24 @@ for ~2 s of `wac build`, seventeen files, about 30 s a run. On this measurement 
 about 245 ms, so the conversion is now *cheaper* than the thing it replaces rather than four times
 dearer. `packages/box` is another agent's package and the conversion is theirs to do; this is the
 measurement that says it is no longer blocked.
+
+### A third hole, of the same shape — agent-a, 2026-08-24
+
+The hit returns above the diagnostics pass, and the flag check was not the only thing up there.
+**A warning printed on the first build of a program and on no later one.** `spec/cli/wac.md`
+`[§wac-cli-usage-3nkq8wj]` says warnings *"are not held back for `check` or suppressed on a command
+that also writes a file"*, and a warned program built twice showed `warning: these types share no
+ancestor, so the test is always false` and then nothing — the same source, the same command line, two
+answers, decided by whether anybody had built it before.
+
+Fixed by **not storing a build that warned**, which needs nothing at lookup time and cannot go quietly
+wrong; a warned program recompiles every time. The alternative is keeping the rendered diagnostics
+beside the artefact, and that is a second file to write, evict and validate for a case the repository
+would rather fix than cache.
+
+**Three holes now, all the same sentence**: things that used to happen between "gather the sources" and
+"write the module" no longer happen on a hit. Flag validation, diagnostics, and — checked and clear —
+the module validation the host does after the payload returns, which covers both paths because it is
+the host's rather than the compiler's. Anything added to that stretch in future has to ask the same
+question, and the general answer is that the cache is stored *after* those things and can be declined
+there, rather than replayed.

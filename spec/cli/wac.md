@@ -143,6 +143,11 @@ name are the same one. A build with `--coverage` or `--trace` is never cached, b
 table beside the module that a hit would not produce, and neither is a build with no `$WAC_HOME` to put
 it in or no `-o` to name it.
 
+`[§wac-cli-build-cache-7pk3mq9]` **A build that warned is not remembered either.** A hit answers above
+the diagnostics pass, so an entry for a warned program would print its warning once and never again —
+which is the one thing `[§wac-cli-usage-3nkq8wj]` says must not happen to a warning. Such a program
+compiles in full every time; that is the cost of the rule, and the way out of it is to fix the warning.
+
 `[§wac-cli-build-cache-7pk3mq9]` **A hit says so** — `stem.wasm: 1782 bytes from cache, 1 file(s)
 unchanged`, against `1782 bytes from 1 file(s)` for a compile. That distinction is the point rather
 than a courtesy: without it a caller cannot tell a compile from a lookup, and something that needs a

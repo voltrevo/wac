@@ -1445,7 +1445,17 @@ export i32 main(Core core, Cli cli) {
     // Remembered under the key computed before the compile. A failure to write the cache is not a
     // failure to build: the artefact the caller asked for is already on disk, and the next run simply
     // compiles again.
-    if (cachePath != "") {
+    //
+    // **A build that warned is not remembered.** A hit returns above the diagnostics pass, so an entry
+    // for a warned program would make its warning print once and never again — the same source and the
+    // same command line saying two different things, decided by whether anybody had built it before.
+    // `spec/cli/wac.md` `[§wac-cli-usage-3nkq8wj]` is explicit that warnings are *"not held back … or
+    // suppressed on a command that also writes a file"*, so the cache must not be the thing that holds
+    // them back. Declining to store is the cheap half of the choice: the alternative is keeping the
+    // rendered diagnostics beside the artefact, which is a second file to write, evict and validate for
+    // a case worth fixing rather than caching. A warned program pays full price every build, and any
+    // `diags` still here is a warning — `wireHasErrors` returned above.
+    if (cachePath != "" && diags == "") {
       string cacheDir = dirOf(cachePath);
       cli.mkdir(cacheDir, true).wait();
       // **Written beside and moved into place**, because three agents share this machine and a reader
