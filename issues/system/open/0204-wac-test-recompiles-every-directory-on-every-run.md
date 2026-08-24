@@ -320,3 +320,54 @@ make in the same commit as the thing it depends on, and not one to make the same
 The hit path still gathers, because the sources *are* the key; what it skips is the compile. On the
 numbers in this issue that is the whole of the 2 s.
 
+## The build cache, and it beats the TypeScript path it was losing to — agent-a, 2026-08-24
+
+`wac build` now remembers what it built, keyed on the compiler identity above plus the entry, every
+source's content, the grants and the output's base name. Measured on the seeded binary, box's shell:
+
+    cold   5294 ms
+    warm    337 ms      byte-identical to the cold build
+    warm    357 ms
+
+**Which closes the argument this issue was really about.** The conversion blocker was recorded as
+*"375 ms warm as TypeScript, 2 317 ms as a wac file on its own"* — the wac path is **337 ms** now, so
+it is no longer the slower of the two and the seventeen `packages/box` build-and-run tests can convert
+without paying for it.
+
+### What it caches, and what it refuses to
+
+**The bytes that get written, not the compiler's intermediates.** Caching `wasm` from `buildFilesIn`
+would also need `sigs` and `types`, because the manifest is built from them and `withManifestSection`
+is what reaches the disk. Caching `whole` needs none of that.
+
+**The key** is the compiler id, the entry, every `(path, text)` pair, the grants as the bitmask
+`grantsIn` answers, and `baseName(stem) + ".wasm"` — the output name is *in* the manifest, so two
+destinations really are two artefacts. Confirmed rather than assumed: the same program built to `t1`
+and to `t2` differs by exactly the five bytes their names differ by.
+
+**`""` — no caching at all — for a coverage or traced build** (each writes a table beside the module
+that would have to be cached with it), for a build with no `-o`, without `$WAC_HOME`, and **without a
+compiler identity**. That last one is the point of the identity: an entry that cannot say which
+compiler made it is the stale hit, so its absence is a permanent miss rather than a guess.
+
+### The test, and the claim byte equality alone cannot make
+
+A fresh compile is deterministic, so *"cold and warm agree"* is equally true of a cache that stores and
+never reads — the test would have passed on a cache that saved nothing. `tools/wac/buildcache_test.wac`
+closes that by **poisoning**: after a build, the single entry is overwritten with a recognisable string
+and the build run again, which must hand back the marker. The only way to produce it is to have read
+the cache.
+
+It runs the checkout's own `wacc.wac` as a program rather than calling `wac build`, because the binary
+carries a *seed* and `wac build` would test the compiler the change is not in. Canaried by disabling
+the cache: all three tests fail, on the entry count, the miss and the bound.
+
+### Bounded, and why the number has a measurement beside it
+
+Sixty-four entries. These are whole programs rather than the test lane's aggregates — box's shell is
+about a megabyte — so that is roughly 60 MB, against a filesystem that was at 99% four days ago
+(`issues/system/0136`). Eviction is newest-by-write rather than by use, because this world has no
+`utime`; at sixty-four against the handful of applications built here the difference cannot bite, and
+saying so is cheaper than discovering it. `$WAC_BUILD_CACHE_KEEP` overrides the bound, and `0` turns
+the cache off — which is the switch to reach for when a cache is the thing under suspicion.
+

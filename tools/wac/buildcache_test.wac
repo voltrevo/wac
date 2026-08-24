@@ -1,0 +1,138 @@
+// `wac build` remembers what it built, and a hit is the bytes a fresh build would have written.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env tools/wac/buildcache_test.wac
+//
+// `issues/system/0204`. `wac build` compiled from source every time — box's shell is about five
+// seconds of it — and the tests that build an application and run it pay that per run, which is what
+// stops the rest of `issues/system/0161` converting off TypeScript.
+//
+// **The claim is byte equality, not speed.** A cache that is merely fast is a cache nobody can trust:
+// the failure mode is serving a module built from something else, silently, and `issues/lang/0241c`
+// cost two wrong diagnoses to exactly that three days ago. So the oracle here is a cold build and a
+// warm one compared byte for byte, and a perturbed source that must *not* match.
+//
+// **Run through `wac run … wacc.wac` rather than `wac build`.** The binary carries a *seed* — the
+// compiler as it was when the seed was last built — so `wac build` would test the compiler this change
+// is not in. Running the checkout's own `wacc.wac` as a program is what makes this test able to fail.
+//
+// The bound is exercised through `$WAC_BUILD_CACHE_KEEP` because proving eviction otherwise costs
+// sixty-five real builds; the cache directory is `$WAC_HOME`'s, so each case gets a home of its own and
+// asserts about nothing but itself.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { wacBinary } from "../../packages/wactest/src/built.wac";
+import { freshDir, putFile } from "../../packages/wactest/src/host.wac";
+
+const string WACC = "packages/wacc/example/wacc.wac";
+
+/** One `wac build` of `entry` to `stem`, with `home` as `$WAC_HOME` and an optional keep override. */
+i32 buildIn(Cli cli, string home, string keep, string entry, string stem) {
+  string[] env = keep == "" ? string[]("WAC_HOME=" + home)
+                            : string[]("WAC_HOME=" + home, "WAC_BUILD_CACHE_KEEP=" + keep);
+  Exec r = cli.execWith(wacBinary(cli),
+      string[]("run", "--allow-read", "--allow-write", "--allow-env", "--allow-run", WACC,
+               "--", "build", entry, "-o", stem, "--quiet"),
+      u8[0](), env, false, false).wait();
+  return r.ran() ? r.status : 0 - 1;
+}
+
+i32 entriesIn(Cli cli, string dir) {
+  string[]? names = cli.readDir(dir).wait();
+  return names is null ? 0 : names!.len();
+}
+
+u8[] bytesOf(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  return r.ok ? r.bytes : u8[0]();
+}
+
+export string test_a_repeat_build_is_the_same_bytes_and_no_second_entry(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/buildcache-same";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  string home = dir + "/home";
+  string entry = dir + "/p.wac";
+  t.isTrue(putFile(cli, entry, "export i32 f() { return 1; }\n") == "", "could not write the program");
+
+  t.eqI32(buildIn(cli, home, "", entry, dir + "/out"), 0, "the cold build failed");
+  u8[] cold = bytesOf(cli, dir + "/out.wasm");
+  t.isTrue(cold.len() > 8, "the cold build wrote nothing");
+  i32 after = entriesIn(cli, home + "/cache/build");
+  t.eqI32(after, 1, "the cold build did not remember what it built");
+
+  t.eqI32(buildIn(cli, home, "", entry, dir + "/out"), 0, "the warm build failed");
+  t.eqBytes(bytesOf(cli, dir + "/out.wasm"), cold,
+      "the cache served bytes a fresh build would not have written");
+  t.eqI32(entriesIn(cli, home + "/cache/build"), 1,
+      "the second build wrote another entry, so the key is not stable across runs");
+
+  // **And the hit is real, which byte equality alone cannot show.** A fresh compile is deterministic,
+  // so "cold and warm agree" is equally true of a cache that stores and never reads. Overwriting the
+  // one entry with something recognisable and building again is what distinguishes them: the build
+  // must hand back the marker, because the only way to produce it is to have read the cache.
+  string[]? names = cli.readDir(home + "/cache/build").wait();
+  t.eqI32(names is null ? 0 : names!.len(), 1, "expected exactly one entry to poison");
+  if (!(names is null) && names!.len() == 1) {
+    string marker = "not a module, but longer than a header";
+    t.isTrue(putFile(cli, home + "/cache/build/" + names![0], marker) == "",
+        "could not overwrite the cache entry");
+    t.eqI32(buildIn(cli, home, "", entry, dir + "/out"), 0, "the build after poisoning failed");
+    t.eqBytes(bytesOf(cli, dir + "/out.wasm"), marker.toBytes(),
+        "the build did not read the cache — it recompiled, so every `wac build` still pays full price "
+        + "and the saving this issue is about is not there");
+  }
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_changed_source_is_a_miss(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/buildcache-miss";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  string home = dir + "/home";
+  string entry = dir + "/p.wac";
+  t.isTrue(putFile(cli, entry, "export i32 f() { return 1; }\n") == "", "could not write the program");
+  t.eqI32(buildIn(cli, home, "", entry, dir + "/out"), 0, "the first build failed");
+  u8[] first = bytesOf(cli, dir + "/out.wasm");
+
+  t.isTrue(putFile(cli, entry, "export i32 f() { return 1; }\nexport i32 g() { return 2; }\n") == "",
+      "could not rewrite the program");
+  t.eqI32(buildIn(cli, home, "", entry, dir + "/out"), 0, "the second build failed");
+  u8[] second = bytesOf(cli, dir + "/out.wasm");
+
+  t.isTrue(second.len() != first.len(),
+      "an edited source produced the same artefact — the cache is keyed on something that did not "
+      + "change with it, which is the stale hit this cache exists to avoid");
+  t.eqI32(entriesIn(cli, home + "/cache/build"), 2, "the edit did not produce a second entry");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_the_directory_is_bounded(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/buildcache-bound";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  string home = dir + "/home";
+  for (i32 i = 0; i < 4; i++) {
+    string entry = dir + "/p" + itoa(i) + ".wac";
+    t.isTrue(putFile(cli, entry, "export i32 f() { return " + itoa(i) + "; }\n") == "",
+        "could not write program " + itoa(i));
+    t.eqI32(buildIn(cli, home, "2", entry, dir + "/out" + itoa(i)), 0,
+        "build " + itoa(i) + " failed");
+  }
+  t.eqI32(entriesIn(cli, home + "/cache/build"), 2,
+      "four builds with a bound of two left a directory that only grows — `issues/system/0136` is the "
+      + "day that filled this disk");
+
+  // And zero turns it off, which is the switch a caller needs when a cache is the thing under suspicion.
+  string off = dir + "/off";
+  t.eqI32(buildIn(cli, off, "0", dir + "/p0.wac", dir + "/outoff"), 0, "the build with keep=0 failed");
+  t.eqI32(entriesIn(cli, off + "/cache/build"), 0, "keep=0 still wrote an entry");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
