@@ -17,6 +17,7 @@
 // and is load-bearing — a helper used by a class has to exist before the class that calls it.
 
 import { splitTop } from "./manifest.wac";
+import { field, linesOf } from "./text.wac";
 
 /** What one run needs to know: the wires, taken apart, and which language to write. */
 struct G {
@@ -288,35 +289,6 @@ string fromWasmInner(G g, string t, string expr) {
 // ── Reading the wires ─────────────────────────────────────────────────────────────────────────
 
 /** The lines of a text. */
-string[] linesOf(string text) {
-  i32 count = 0;
-  for (i32 i = 0; i < text.len(); i++) { if (text.slice(i, i + 1) == "\n") { count = count + 1; } }
-  string[] out = string[count + 1](fill: "");
-  i32 n = 0;
-  string cur = "";
-  for (i32 i = 0; i < text.len(); i++) {
-    if (text.slice(i, i + 1) == "\n") { out[n] = cur; n = n + 1; cur = ""; continue; }
-    cur = cur + text.slice(i, i + 1);
-  }
-  out[n] = cur;
-  return out;
-}
-
-/** One tab-separated field of a line, or "" past the end. */
-string cell(string line, i32 want) {
-  i32 n = 0;
-  string cur = "";
-  for (i32 i = 0; i < line.len(); i++) {
-    if (line.slice(i, i + 1) == "\t") {
-      if (n == want) { return cur; }
-      n = n + 1;
-      cur = "";
-      continue;
-    }
-    cur = cur + line.slice(i, i + 1);
-  }
-  return n == want ? cur : "";
-}
 
 /** The `S`/`E`/`M`/`C`/`O`/`A` lines and the export signatures, taken apart once. */
 G readWires(string wire, string sigs, bool js) {
@@ -331,37 +303,37 @@ G readWires(string wire, string sigs, bool js) {
           string[wl.len()](fill: ""), string[wl.len()](fill: ""), 0,
           string[sl.len()](fill: ""), string[sl.len()](fill: ""), string[sl.len()](fill: ""), 0);
   for (i32 i = 0; i < wl.len(); i++) {
-    string tag = cell(wl[i], 0);
+    string tag = field(wl[i], 0);
     if (tag == "S" || tag == "E") {
-      g.tName[g.tCount] = cell(wl[i], 1);
-      g.tBind[g.tCount] = cell(wl[i], 2);
+      g.tName[g.tCount] = field(wl[i], 1);
+      g.tBind[g.tCount] = field(wl[i], 2);
       g.tKind[g.tCount] = tag;
-      g.tPayload[g.tCount] = cell(wl[i], 3);
+      g.tPayload[g.tCount] = field(wl[i], 3);
       g.tCount = g.tCount + 1;
     } else if (tag == "M") {
       g.mLines[g.mCount] = wl[i];
       g.mCount = g.mCount + 1;
     } else if (tag == "C") {
-      g.cRet[g.cCount] = cell(wl[i], 2);
-      g.cParams[g.cCount] = cell(wl[i], 3);
-      g.cWac[g.cCount] = cell(wl[i], 4);
+      g.cRet[g.cCount] = field(wl[i], 2);
+      g.cParams[g.cCount] = field(wl[i], 3);
+      g.cWac[g.cCount] = field(wl[i], 4);
       g.cCount = g.cCount + 1;
     } else if (tag == "O") {
-      g.oRet[g.oCount] = cell(wl[i], 2);
-      g.oParams[g.oCount] = cell(wl[i], 3);
-      g.oWac[g.oCount] = cell(wl[i], 4);
+      g.oRet[g.oCount] = field(wl[i], 2);
+      g.oParams[g.oCount] = field(wl[i], 3);
+      g.oWac[g.oCount] = field(wl[i], 4);
       g.oCount = g.oCount + 1;
     } else if (tag == "A") {
-      g.aOf[g.aCount] = cell(wl[i], 1);
-      g.aName[g.aCount] = cell(wl[i], 2);
+      g.aOf[g.aCount] = field(wl[i], 1);
+      g.aName[g.aCount] = field(wl[i], 2);
       g.aCount = g.aCount + 1;
     }
   }
   for (i32 i = 0; i < sl.len(); i++) {
     if (sl[i] == "") { continue; }
-    g.sName[g.sCount] = cell(sl[i], 0);
-    g.sRet[g.sCount] = cell(sl[i], 1);
-    g.sParams[g.sCount] = cell(sl[i], 2);
+    g.sName[g.sCount] = field(sl[i], 0);
+    g.sRet[g.sCount] = field(sl[i], 1);
+    g.sParams[g.sCount] = field(sl[i], 2);
     g.sCount = g.sCount + 1;
   }
   return g;
@@ -472,9 +444,9 @@ i32 crossingOf(G g, bool[] usable, string[] out) {
       }
     }
     for (i32 m = 0; m < g.mCount; m++) {
-      if (cell(g.mLines[m], 1) != g.tBind[t]) { continue; }
-      n = addUnique(out, n, orVoid(cell(g.mLines[m], 4)));
-      string[] ps = paramsOf(cell(g.mLines[m], 5));
+      if (field(g.mLines[m], 1) != g.tBind[t]) { continue; }
+      n = addUnique(out, n, orVoid(field(g.mLines[m], 4)));
+      string[] ps = paramsOf(field(g.mLines[m], 5));
       for (i32 i = 0; i < ps.len(); i++) { n = addUnique(out, n, ps[i]); }
     }
   }
@@ -955,11 +927,11 @@ void classFor(Out o, G g, i32 t) {
     }
   }
   for (i32 m = 0; m < g.mCount; m++) {
-    if (cell(g.mLines[m], 1) != bind) { continue; }
-    string mn = cell(g.mLines[m], 2);
-    bool hasThis = cell(g.mLines[m], 3) == "this";
-    string ret = orVoid(cell(g.mLines[m], 4));
-    string[] ps = paramsOf(cell(g.mLines[m], 5));
+    if (field(g.mLines[m], 1) != bind) { continue; }
+    string mn = field(g.mLines[m], 2);
+    bool hasThis = field(g.mLines[m], 3) == "this";
+    string ret = orVoid(field(g.mLines[m], 4));
+    string[] ps = paramsOf(field(g.mLines[m], 5));
     string args = "";
     string conv = "";
     for (i32 i = 0; i < ps.len(); i++) {

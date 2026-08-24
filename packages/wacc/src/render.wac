@@ -32,51 +32,7 @@
 // column off, would still look like a diagnostic.
 
 import { numText } from "./emit.wac";
-
-/** One tab-separated field, or "" past the end. */
-string field(string line, i32 want) {
-  i32 at = 0;
-  i32 n = 0;
-  string cur = "";
-  for (i32 i = 0; i < line.len(); i++) {
-    if (line.slice(i, i + 1) == "\t") {
-      if (n == want) { return cur; }
-      n = n + 1;
-      cur = "";
-      continue;
-    }
-    cur = cur + line.slice(i, i + 1);
-  }
-  return n == want ? cur : "";
-}
-
-/**
- * The lines of a text, which is where a diagnostic's own line comes from.
- *
- * **Sliced between the newlines rather than accumulated a character at a time.** `cur = cur + ch`
- * allocates a new string per character, so building one line of `n` characters costs `n²/2` character
- * copies — invisible on source, where lines are short, and the whole cost on a file that has no
- * newlines at all. A 75 KB wasm module offered to the compiler as source is exactly that: one line.
- * `issues/system/0239c`.
- */
-string[] linesOf(string text) {
-  i32 count = 1;
-  for (i32 i = 0; i < text.len(); i++) {
-    if (text.slice(i, i + 1) == "\n") { count = count + 1; }
-  }
-  string[] out = string[count](fill: "");
-  i32 n = 0;
-  i32 start = 0;
-  for (i32 i = 0; i < text.len(); i++) {
-    if (text.slice(i, i + 1) == "\n") {
-      out[n] = text.slice(start, i);
-      n = n + 1;
-      start = i + 1;
-    }
-  }
-  out[n] = text.slice(start, text.len());
-  return out;
-}
+import { field, linesOf } from "./text.wac";
 
 /** A non-negative number, or 0 for anything that is not one. */
 i32 numOf(string s) {
