@@ -170,3 +170,33 @@ is the same fourth-parameter conversation as `issues/system/0182`.
 Recording it rather than doing it because the constraint above is the part that was missing: without it,
 the first attempt is a reserved code, and the reason that is wrong is not obvious until you look up what
 `main` may return.
+## Option 2's missing half exists now, and building it found a bug — agent-a, 2026-08-24
+
+The section above recommends **dying by signal** and says why it was not done: *"`packages/platform`'s
+`Exec` would need a way to report it"*. It has one. `Exec.signalled()` is `status == -1`, and `-1` was
+already what three of the four hosts wrote for a child that died by a signal — a safe sentinel because
+a POSIX status is eight bits, so no child that *exited* can produce it. What was missing was that the
+convention had a name, a docstring and a test; it was four `code ?? -1` expressions with four identical
+comments and nothing comparing them.
+
+**Comparing them found that one was wrong.** `packages/platform/test/wac/exec_probe.wac` now spawns
+`/bin/sh -c 'kill -9 $$'` and `runtimes_test.wac` holds the two JavaScript hosts to the same answer:
+
+| host | before | after |
+|---|---|---|
+| native (v8), native (wasmtime) | `-1` | `-1` |
+| Node | `-1` | `-1` |
+| **Deno** | **`137`** | `-1` |
+
+Deno fills `code` in for a signalled child with the shell's `128 + signal`, so `?? -1` never fired and a
+`SIGKILL` arrived as an ordinary exit 137 — indistinguishable from a program that returned 137. The
+fallback was dead code, with a comment above it describing behaviour it did not have. `signal` is the
+field that knows, so `statusOf` asks it.
+
+That is worth recording beyond the fix: **the differential found it on its first run**, which is the
+argument for the test rather than for the convention. The convention was right in three places and
+written down in none.
+
+What this does *not* settle is this issue's own question. A wasm trap inside `wac prog.wasm` is still
+an exit of 1, and making it a signal is a change to the run path rather than to `Exec` — but the
+caller's half is now able to see the answer, which was the stated blocker.
