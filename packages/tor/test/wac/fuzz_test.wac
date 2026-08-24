@@ -33,6 +33,7 @@ import { parseConsensus, attachMicrodescriptors, parsePolicy, parseInt,
 import { splitResponse, isIdentity, refreshAt, validUntil, Response } from "../../src/dirclient.wac";
 import { signedLength, parseUtc } from "../../src/consensus.wac";
 import { Rng64, rng, next, randomBytes } from "../../../wactest/src/rng64.wac";
+import { ntorClientFinish } from "../../src/ntor.wac";
 
 export string test_cell_framing_survives_arbitrary_bytes() {
   // `cellSize` is the first thing that touches what a relay sent, before anything is
@@ -189,21 +190,54 @@ export string test_http_responses_from_a_hostile_cache() {
 export string test_the_small_decoders() {
   T t = T.create();
   Rng64 r = rng(8);
+  i32 wellFormed = 0;
+  // Wide enough that a sixty-four-byte handshake reply is sometimes generated. It was 40, which is
+  // shorter than a reply can be — so the onward calls below would only ever have seen refusals, and
+  // a sweep whose control never fires is a sweep that proves nothing.
   for (i32 i = 0; i < 3000; i++) {
-    i32 n = next(r) % 40;
+    i32 n = next(r) % 120;
     u8[] b = randomBytes(r, n);
     parseInt(string.fromBytes(b));
     unpaddedBase64(string.fromBytes(b));
-    if (n >= 2) {
-      i32 len = (b[0] << 8) | b[1];
-      // Both of these trap on a length past the end rather than returning short, so only
-      // the well-formed ones are fed in. That they trap at all is the finding.
-      if (2 + len <= n) {
-        extended2Reply(b);
-        decodeCreated2(b);
-      }
+
+    // **The guard that used to be here was stale, and its staleness cost three weeks.**
+    //
+    // It read `if (2 + len <= n)`, over a comment saying *both of these trap on a length past the
+    // end rather than returning short, so only the well-formed ones are fed in*. True when written,
+    // and untrue from `e40ab306` — the commit titled *fuzz the parsers, and fix the remote crash it
+    // found*, which changed these two to return empty. So this sweep has been skipping the malformed
+    // lengths ever since the fix that made them safe to run.
+    // Every twentieth case is given a well-formed header instead of a random one. **Random bytes
+    // essentially never produce one** — `HLEN` must be exactly `0x00 0x40` and the buffer at least
+    // sixty-six bytes, which is about one in sixty-five thousand — so a purely random sweep can
+    // reach the refusing paths and never the accepting one. A sweep whose control never fires
+    // proves nothing, and the first version of this loop had exactly that fault.
+    if (i % 20 == 0 && n >= 66) {
+      b[0] = 0; b[1] = 64;
     }
+
+    u8[] reply = decodeCreated2(b);
+    u8[] ext = extended2Reply(b);
+    if (reply.len() == 64) { wellFormed = wellFormed + 1; }
+
+    // **And what the decoders return, fed onward — which is where the bug this file was written for
+    // actually survived.**
+    //
+    // `e40ab306` fixed the parsers and stopped at them. `ntorClientFinish` consumes
+    // `decodeCreated2`'s output and required exactly sixty-four bytes, by trapping, while the decoder
+    // hands on whatever length the relay named. So one CREATED2 cell with `HLEN` of zero still ended
+    // the client three weeks later, in the same code path this commit was about. Fixed 2026-08-24.
+    //
+    // Fuzzing a parser proves the parser survives. It says nothing about whether the parser's output
+    // is acceptable to whatever the parser feeds, and that seam is where this one lived.
+    ntorClientFinish(u8[20](fill: 1), u8[32](fill: 2), u8[32](fill: 3), reply, 72);
+    ntorClientFinish(u8[20](fill: 1), u8[32](fill: 2), u8[32](fill: 3), ext, 72);
   }
+  // Said out loud: without a single well-formed reply the onward calls only ever saw refusals, and
+  // this test would pass against an `ntorClientFinish` that rejected everything.
+  t.isTrue(wellFormed > 0,
+           "no iteration produced a 64-byte handshake reply, so the onward calls never saw a "
+           + "well-formed one");
   return t.report();
 }
 

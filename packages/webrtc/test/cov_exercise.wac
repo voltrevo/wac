@@ -18,6 +18,7 @@ import {
   test_a_clienthello_with_a_wrong_cookie_is_refused as dtl__a_clienthello_with_a_wrong_cookie_is_refused,
   test_the_framing_round_trips_and_says_when_a_record_is_not_whole as dtl__the_framing_round_trips_and_says_when_a_record_is_not_whole,
   test_the_abandoned_server_pattern_discriminates as dtl__the_abandoned_server_pattern_discriminates,
+  test_a_clientkeyexchange_of_the_wrong_width_is_refused as dtl__a_clientkeyexchange_of_the_wrong_width_is_refused,
 } from "./wac/dtls_test.wac";
 import {
   test_our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_block_boundary as dtl2__our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_block_boundary,
@@ -117,6 +118,10 @@ import {
 
 export i32 main(Core core, Cli cli) {
   i32 bad = 0;
+  if (dtl__a_clientkeyexchange_of_the_wrong_width_is_refused().len() > 0) {
+    core.warn("error: FAILED dtls_test test_a_clientkeyexchange_of_the_wrong_width_is_refused");
+    bad = bad + 1;
+  }
   if (mf__a_group_list_longer_than_its_extension_is_refused().len() > 0) {
     core.warn("error: FAILED malformed_test test_a_group_list_longer_than_its_extension_is_refused");
     bad = bad + 1;

@@ -259,8 +259,32 @@ import {
   test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused as lb__a_hybrid_share_that_is_not_an_encapsulation_key_is_refused,
 } from "./wac/loopback_test.wac";
 
+import {
+  test_a_hostile_serverhello_is_refused_at_each_check as lb__a_hostile_serverhello_is_refused_at_each_check,
+} from "./wac/loopback_test.wac";
+
+import {
+  test_a_key_share_that_forces_a_zero_secret_is_refused as lb__a_key_share_that_forces_a_zero_secret_is_refused,
+} from "./wac/loopback_test.wac";
+
+import {
+  test_a_hybrid_share_with_a_dead_x25519_half_is_refused as lb__a_hybrid_share_with_a_dead_x25519_half_is_refused,
+} from "./wac/loopback_test.wac";
+
 export i32 main(Core core, Cli cli) {
   i32 bad = 0;
+  if (lb__a_hybrid_share_with_a_dead_x25519_half_is_refused().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_hybrid_share_with_a_dead_x25519_half_is_refused");
+    bad = bad + 1;
+  }
+  if (lb__a_key_share_that_forces_a_zero_secret_is_refused().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_key_share_that_forces_a_zero_secret_is_refused");
+    bad = bad + 1;
+  }
+  if (lb__a_hostile_serverhello_is_refused_at_each_check().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_hostile_serverhello_is_refused_at_each_check");
+    bad = bad + 1;
+  }
   if (lb__a_hybrid_share_that_is_not_an_encapsulation_key_is_refused().len() > 0) {
     core.warn("error: FAILED loopback_test test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused");
     bad = bad + 1;

@@ -24,6 +24,11 @@ import { alertAt, cookieAt, describeAt, epochAt, handshakeKindAt, hello, hClient
          hServerHello, hVerifyRequest, kAlert, kHandshake, kindAt, messageSeqAt, seqAt, sizeAt,
          suiteAt, wholeAt } from "./dtls_probe.wac";
 import { Dtls, startServer, stopServer, waitForBind, wouldReap } from "./openssl.wac";
+import { Peer } from "../../src/peer.wac";
+import { newPeer, peerReceive, peerEstablished } from "./peer_probe.wac";
+import { clientHello as dtlsClientHello, handshake as dtlsHandshake, record as dtlsRecord,
+         versionDtls12, typeHandshake as dtlsTypeHandshake } from "../../src/dtls.wac";
+import { selfSignedP256 } from "../../../tls/src/x509gen.wac";
 
 /** A fixed ClientHello random, so a failing run prints the same bytes as the last one. */
 u8[] random32() {
@@ -264,4 +269,77 @@ u8[] slice(u8[] b, i32 at, i32 end) {
   u8[] out = u8[end - at]();
   out.copyFrom(b, at, 0, end - at);
   return out;
+}
+
+// ── A ClientKeyExchange whose length byte the peer chose ─────────────────────
+
+/** Deterministic filler, so a failure reproduces. */
+u8[] ramp2(i32 n, i32 mul, i32 add) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * mul + add) & 255; }
+  return out;
+}
+
+/** A peer holding a generated identity and a known cookie, so a hello can carry it directly. */
+Peer freshPeer() {
+  u8[] priv = ramp2(32, 3, 7);
+  u8[] cert = selfSignedP256("wac", 1 as i64, 1000 as i64, 2000000000 as i64, priv, ramp2(32, 19, 23));
+  return newPeer(cert, priv, ramp2(32, 17, 29), ramp2(32, 13, 2), ramp2(32, 5, 11), ramp2(8, 1, 2));
+}
+
+/** One handshake message in one DTLS record. */
+u8[] inDtlsRecord(i32 kind, i32 seq, u8[] body) {
+  return dtlsRecord(dtlsTypeHandshake(), versionDtls12(), 0, seq as i64, dtlsHandshake(kind, seq, body));
+}
+
+/**
+ * **A ClientKeyExchange whose public key is not thirty-two bytes ended the process.**
+ *
+ * `peer.wac` reads it with `clientPublic(body)`, which hands on whatever length the peer's leading
+ * byte names — and returns *empty* when that length overruns the message — and passes the result
+ * straight to `x25519`, which traps on anything but thirty-two bytes.
+ *
+ * This is the plaintext phase: `kind == 16 && !this.keysReady`, before any key exists. A cookie
+ * exchange is one free round trip, so the cost to an attacker is two datagrams and nothing else.
+ *
+ * **The same seam as `packages/tor`'s `decodeCreated2` feeding `ntorClientFinish`**, found by looking
+ * for it rather than by tripping over it: a parser that correctly returns a short value, handed to a
+ * primitive that requires an exact width. The parser's own refusal path — returning empty — is the
+ * one that aborts hardest, because empty is never thirty-two.
+ *
+ * Driven in-process. `dtlsserver_test.wac` drives this peer with a real OpenSSL `s_client` over a
+ * real socket, which is thorough and is exactly why the malformed case had no input: OpenSSL sends a
+ * well-formed key.
+ */
+export string test_a_clientkeyexchange_of_the_wrong_width_is_refused() {
+  T t = T.create();
+
+  // The control: a hello carrying the peer's own cookie is answered with a flight.
+  Peer peer = freshPeer();
+  u8[][] flight = peerReceive(peer, inDtlsRecord(1, 0, dtlsClientHello(ramp2(32, 7, 3), ramp2(8, 1, 2))));
+  t.isTrue(flight.len() > 0, "the peer did not answer a ClientHello carrying its own cookie");
+
+  // Every width a peer could name for its public key, including the two the wire makes easiest.
+  i32[] widths = i32[](0, 1, 31, 33, 64, 255);
+  for (i32 i = 0; i < widths.len(); i++) {
+    Peer p = freshPeer();
+    peerReceive(p, inDtlsRecord(1, 0, dtlsClientHello(ramp2(32, 7, 3), ramp2(8, 1, 2))));
+    u8[] body = u8[1 + widths[i]]();
+    body[0] = widths[i];
+    for (i32 k = 0; k < widths[i]; k++) { body[1 + k] = 0xB0 + (k & 15); }
+    // Reaching the next line is the assertion: a trap kills the test.
+    peerReceive(p, inDtlsRecord(16, 1, body));
+    t.isFalse(peerEstablished(p),
+              "a ClientKeyExchange of " + itoa(widths[i]) + " bytes established a connection");
+  }
+
+  // A length that overruns the message, which `clientPublic` refuses by returning empty — and empty
+  // is not thirty-two either, so this was the refusal path that aborted.
+  Peer over = freshPeer();
+  peerReceive(over, inDtlsRecord(1, 0, dtlsClientHello(ramp2(32, 7, 3), ramp2(8, 1, 2))));
+  u8[] lying = u8[5]();
+  lying[0] = 200;
+  peerReceive(over, inDtlsRecord(16, 1, lying));
+  t.isFalse(peerEstablished(over), "a ClientKeyExchange claiming 200 bytes in five established");
+  return t.report();
 }

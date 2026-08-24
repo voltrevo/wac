@@ -48,8 +48,10 @@ import {
   phaseEstablished, phaseFailed,
 } from "../../src/server.wac";
 import { alertBadRecordMac, alertUnexpectedMessage, typeHandshake } from "../../src/record.wac";
-import { clientHello, groupX25519, groupP256, groupHybrid } from "../../src/handshake.wac";
+import { clientHello, serverHello, encryptedExtensions, groupX25519, groupP256,
+         groupHybrid } from "../../src/handshake.wac";
 import { p256PublicKey } from "../../../crypto/src/p256.wac";
+import { x25519Base } from "../../../crypto/src/x25519.wac";
 import {
   ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientPhase, tlsClientFailure,
   tlsClientSend, tlsClientClose,
@@ -501,6 +503,14 @@ export string test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal(
   return t.report();
 }
 
+/** A hybrid client share with its last thirty-two bytes replaced by an honest X25519 public key. */
+u8[] withX25519(u8[] share, u8[] xPub) {
+  u8[] out = u8[share.len()]();
+  for (i32 i = 0; i < share.len(); i++) { out[i] = share[i]; }
+  for (i32 i = 0; i < 32 && share.len() >= 32; i++) { out[share.len() - 32 + i] = xPub[i]; }
+  return out;
+}
+
 /**
  * **A hybrid key share whose ML-KEM half is not a valid encapsulation key aborted the server.**
  *
@@ -522,13 +532,20 @@ export string test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused() 
   u8[] random = u8[32](fill: 0x5A);
 
   // Structurally valid: every 12-bit coefficient is below q, so the server answers.
+  //
+  // **Both controls carry an honest X25519 half.** A share that is uniformly `0x11` or uniformly zero
+  // has a small-order point in its last thirty-two bytes, and since 2026-08-24 that is refused in its
+  // own right — see `test_a_hybrid_share_with_a_dead_x25519_half_is_refused`. Leaving them uniform
+  // would make these two pass or fail for a reason that has nothing to do with the ML-KEM key they
+  // are here to test.
+  u8[] xPub = x25519Base(u8[32](fill: 0x57));
   ClientStep ok1 = clientStep(tlsServerFeed(freshServer(), inRecord(
-      clientHello(random, u8[0](), 0x1301, groupHybrid(), u8[1216](fill: 0x11), HOST.toBytes(),
-                  u8[0](), u8[0]()))));
+      clientHello(random, u8[0](), 0x1301, groupHybrid(), withX25519(u8[1216](fill: 0x11), xPub),
+                  HOST.toBytes(), u8[0](), u8[0]()))));
   t.eqI32(tlsPhase(ok1.state), 1, "a hybrid share of 0x11 bytes was refused, but it is a valid key");
   ClientStep ok2 = clientStep(tlsServerFeed(freshServer(), inRecord(
-      clientHello(random, u8[0](), 0x1301, groupHybrid(), u8[1216](), HOST.toBytes(),
-                  u8[0](), u8[0]()))));
+      clientHello(random, u8[0](), 0x1301, groupHybrid(), withX25519(u8[1216](), xPub),
+                  HOST.toBytes(), u8[0](), u8[0]()))));
   t.eqI32(tlsPhase(ok2.state), 1, "a hybrid share of zero bytes was refused, but it is a valid key");
 
   // 0xFF gives coefficients at or above q, which is not a key.
@@ -636,4 +653,217 @@ u8[] inRecord(u8[] msg) {
   out[4] = msg.len() & 0xFF;
   for (i32 i = 0; i < msg.len(); i++) { out[5 + i] = msg[i]; }
   return out;
+}
+
+/**
+ * A ServerHello the client refuses, and the four checks it refuses at.
+ *
+ * **This is the other half of the invalid-curve fix, and it was unexercised.** `client.wac:515` is the
+ * `p256Decodes` guard added on 2026-08-24 to stop a server's key share aborting the client, and until
+ * this test nothing drove it: the loopback's server is ours and sends a point. A guard nobody has
+ * ever taken is a guard nobody has ever seen work.
+ *
+ * The client's refusals need a **hostile server**, which is what `handshake.wac`'s `serverHello`
+ * makes cheap: it is the shared builder, so a test can name any suite, group and key share and hand
+ * the result straight to `tlsClientFeed`. That was impossible while the only server was a real one in
+ * another process.
+ *
+ * Each case asserts the failure *code* rather than just the phase. `client.wac` numbers its refusals
+ * — 12 not a ServerHello, 13 a suite we did not offer, 14 a share too short, 15 a share we cannot use
+ * — and a client that refused everything with one code would satisfy a bare "it refused" four times.
+ */
+export string test_a_hostile_serverhello_is_refused_at_each_check() {
+  T t = T.create();
+  u8[] random = u8[32](fill: 0x77);
+
+  // The control: our own server's flight is accepted, which
+  // `test_our_client_and_our_server_complete_a_handshake_in_one_process` already establishes. What is
+  // asserted here is that the *builder* produces something acceptable too, so a refusal below is
+  // caused by what was varied rather than by the hand-built message being wrong in general.
+  u8[] sState = freshServer();
+  ClientStep flight = clientStep(tlsServerFeed(sState, clientStep(freshClient(noTrustStore())).toSend));
+  t.isTrue(flight.toSend.len() > 100, "the real server flight is too short to be a control");
+
+  // 1. The first handshake message is not a ServerHello at all.
+  // `encryptedExtensions` is a handshake message of the right shape and the wrong type, and it takes
+  // no arguments — `handshake.wac`'s `certificate` builder would collide with this file's own
+  // `certificate()` helper, which is the sort of thing a reader should not have to untangle.
+  ClientStep notHello = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+                                                 inRecord(encryptedExtensions())));
+  t.eqI32(tlsClientPhase(notHello.state), 4, "a first message that is not a ServerHello was accepted");
+  t.eqI32(tlsClientFailure(notHello.state), 12, "the wrong code for a message that is not a ServerHello");
+
+  // 2. A suite the client did not offer. Ours pins AES-128-GCM.
+  ClientStep wrongSuite = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1303, groupHybrid(), u8[1120](fill: 0x22)))));
+  t.eqI32(tlsClientPhase(wrongSuite.state), 4, "a ServerHello naming another suite was accepted");
+  t.eqI32(tlsClientFailure(wrongSuite.state), 13, "the wrong code for an unoffered suite");
+
+  // 3. A key share too short to carry a group identifier.
+  ClientStep shortShare = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1301, groupHybrid(), u8[0]()))));
+  t.eqI32(tlsClientPhase(shortShare.state), 4, "a ServerHello with no key share was accepted");
+  t.eqI32(tlsClientFailure(shortShare.state), 14, "the wrong code for a share with no group");
+
+  // 4. **A P-256 share that is not a point on the curve** — the client half of the invalid-curve
+  //    fix. Before it, this ended the process.
+  ClientStep badPoint = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1301, groupP256(), u8[65](fill: 0x04)))));
+  t.eqI32(tlsClientPhase(badPoint.state), 4, "a server key share that is not a point was accepted");
+  t.eqI32(tlsClientFailure(badPoint.state), 15, "the wrong code for a key share we cannot use");
+
+  // And a valid P-256 point from the same builder is *not* refused at that check, so case 4 is about
+  // the point rather than about P-256.
+  ClientStep goodPoint = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1301, groupP256(), p256PublicKey(u8[32](fill: 0x33))))));
+  t.isTrue(tlsClientFailure(goodPoint.state) != 15,
+           "a valid P-256 point was refused as unusable, so case 4 proves nothing");
+
+  // 5. A hybrid share of the wrong width, which the client's own reader refuses before the primitive
+  //    sees it — the width discipline that made three guards unnecessary on the server side.
+  ClientStep badWidth = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1301, groupHybrid(), u8[64](fill: 0x22)))));
+  t.eqI32(tlsClientPhase(badWidth.state), 4, "a hybrid share of the wrong width was accepted");
+  return t.report();
+}
+
+/**
+ * **A key share that forces the shared secret to zero.**
+ *
+ * Curve25519 has small-order points. If a peer sends one, `x25519(ours, theirs)` is the all-zero
+ * value for *every* scalar — so both ends derive their traffic keys from a secret an observer
+ * already knows, without holding any private key. The handshake completes. Nothing looks wrong.
+ *
+ * RFC 8446 §7.4.2 is explicit that a TLS 1.3 implementation **MUST** check for the all-zero shared
+ * secret and abort, pointing at RFC 7748 §6.
+ *
+ * **This repository already knew.** `packages/tor`'s `ntor.wac` carries the rule in its header — *if
+ * the relay sends one as Y, EXP(Y,x) is the all-zero value for every x, so the client derives keys
+ * the attacker knows without any private key at all* — and `packages/ssh` checks it at both of its
+ * exchange sites, citing RFC 8731 §3. `packages/tls` did not.
+ *
+ * Unlike the aborts this file's other tests are about, this one is not a crash. It is a session with
+ * no confidentiality that behaves exactly like a working one, which is why nothing noticed.
+ */
+export string test_a_key_share_that_forces_a_zero_secret_is_refused() {
+  T t = T.create();
+  u8[] random = u8[32](fill: 0x5A);
+
+  // Three points of small order. Any scalar times any of them is the identity.
+  u8[][] lowOrder = u8[][3](fill: u8[32]());
+  u8[] one = u8[32](); one[0] = 1;
+  u8[] top = u8[32](); top[31] = 0x80;
+  lowOrder[0] = u8[32]();          // zero
+  lowOrder[1] = one;
+  lowOrder[2] = top;
+  string[] names = string[]("the all-zero point", "the point 1", "the order-four point");
+
+  // The server, given one as a ClientHello key share.
+  for (i32 i = 0; i < lowOrder.len(); i++) {
+    ClientStep no = clientStep(tlsServerFeed(freshServer(), inRecord(
+        clientHello(random, u8[0](), 0x1301, groupX25519(), lowOrder[i], HOST.toBytes(),
+                    u8[0](), u8[0]()))));
+    t.eqI32(tlsPhase(no.state), phaseFailed(),
+            "the server accepted " + names[i] + " as a key share, so the session's secret is zero");
+  }
+
+  // And an honest x25519 share is still accepted, so the three above are about the points rather
+  // than about the group.
+  ClientStep ok = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupX25519(), x25519Base(u8[32](fill: 0x57)),
+                  HOST.toBytes(), u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(ok.state), 1, "an honest x25519 key share was refused");
+
+  // The client, given one as a ServerHello key share.
+  for (i32 i = 0; i < lowOrder.len(); i++) {
+    ClientStep no = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+        inRecord(serverHello(random, u8[0](), 0x1301, groupX25519(), lowOrder[i]))));
+    t.eqI32(tlsClientPhase(no.state), 4,
+            "the client accepted " + names[i] + " from a server, so the session's secret is zero");
+  }
+  return t.report();
+}
+
+/**
+ * **A hybrid share whose X25519 half is a small-order point.**
+ *
+ * This one is not a break and is worth stating carefully. `hybrid.wac`'s header gives the whole
+ * argument for the construction:
+ *
+ *   > an attacker must break *both* to recover the traffic key: X25519 covers the case where ML-KEM's
+ *   > lattice assumption turns out to be wrong […] **Neither alone is what anyone is willing to
+ *   > deploy**, which is why the hybrid is what shipped.
+ *
+ * A peer that sends a small-order point in the X25519 half zeroes that contribution. ML-KEM still
+ * holds, so the session is not readable — but the hybrid has been **silently reduced to one of its
+ * two halves**, by the peer, unilaterally, and precisely the half that covers the lattice assumption
+ * failing is the one removed. By this file's own standard that is not something to deploy.
+ *
+ * So it is refused rather than accepted-with-less. The control is an honest hybrid share, which is
+ * still completed.
+ */
+export string test_a_hybrid_share_with_a_dead_x25519_half_is_refused() {
+  T t = T.create();
+  u8[] random = u8[32](fill: 0x5A);
+
+  // A structurally valid share: an all-zero ML-KEM key decodes to coefficients below q, and an
+  // honest X25519 half.
+  u8[] honest = u8[1216]();
+  u8[] xPub = x25519Base(u8[32](fill: 0x57));
+  for (i32 i = 0; i < 32; i++) { honest[1184 + i] = xPub[i]; }
+  ClientStep ok = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupHybrid(), honest, HOST.toBytes(),
+                  u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(ok.state), 1, "an honest hybrid share was refused");
+
+  // The same share with the X25519 half replaced by a small-order point. Bytes 1184..1216 are the
+  // X25519 half; the 1184 before them are the ML-KEM encapsulation key.
+  u8[][] lowOrder = u8[][3](fill: u8[32]());
+  u8[] one = u8[32](); one[0] = 1;
+  u8[] top = u8[32](); top[31] = 0x80;
+  lowOrder[0] = u8[32]();
+  lowOrder[1] = one;
+  lowOrder[2] = top;
+  string[] names = string[]("the all-zero point", "the point 1", "the order-four point");
+  for (i32 i = 0; i < lowOrder.len(); i++) {
+    u8[] dead = u8[1216]();
+    for (i32 k = 0; k < 1184; k++) { dead[k] = honest[k]; }
+    for (i32 k = 0; k < 32; k++) { dead[1184 + k] = lowOrder[i][k]; }
+    ClientStep no = clientStep(tlsServerFeed(freshServer(), inRecord(
+        clientHello(random, u8[0](), 0x1301, groupHybrid(), dead, HOST.toBytes(),
+                    u8[0](), u8[0]()))));
+    t.eqI32(tlsPhase(no.state), phaseFailed(),
+            "the server accepted a hybrid share whose X25519 half is " + names[i] +
+            ", reducing the hybrid to ML-KEM alone");
+  }
+
+  // **And the client direction, which is not symmetric.** The server picks its peer's share out of a
+  // ClientHello; the client picks it out of a ServerHello, a different reader feeding a different
+  // function. `hybridClientFinish` needed the same guard and would not have been reached by anything
+  // above. A hostile server is cheap here for the reason `test_a_hostile_serverhello_is_refused_at_each_check`
+  // gives: `serverHello` is the shared builder, so the share can be named directly.
+  //
+  // The ML-KEM ciphertext is arbitrary bytes, which is fine — decapsulation answers for every
+  // 1088-byte input by implicit rejection, so the only thing that can refuse these is the X25519 half.
+  for (i32 i = 0; i < lowOrder.len(); i++) {
+    u8[] share = u8[1120](fill: 0x2C);
+    for (i32 k = 0; k < 32; k++) { share[1088 + k] = lowOrder[i][k]; }
+    ClientStep no = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+        inRecord(serverHello(random, u8[0](), 0x1301, groupHybrid(), share))));
+    t.eqI32(tlsClientPhase(no.state), 4,
+            "the client accepted a hybrid share whose X25519 half is " + names[i]);
+    t.eqI32(tlsClientFailure(no.state), 16,
+            "the wrong code for a server hybrid share whose X25519 half is " + names[i]);
+  }
+
+  // The control for those three: the same arbitrary ciphertext with an honest X25519 half is *not*
+  // refused at that check, so the refusals above are about the point and not about the junk
+  // ciphertext beside it. It fails later, on a transcript it cannot verify, which is a different code.
+  u8[] live = u8[1120](fill: 0x2C);
+  for (i32 k = 0; k < 32; k++) { live[1088 + k] = xPub[k]; }
+  ClientStep alive = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecord(serverHello(random, u8[0](), 0x1301, groupHybrid(), live))));
+  t.isTrue(tlsClientFailure(alive.state) != 16,
+           "an honest X25519 half was refused as dead, so the three cases above prove nothing");
+  return t.report();
 }

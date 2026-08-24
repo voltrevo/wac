@@ -32,7 +32,7 @@ import { finishedVerify } from "../../tls/src/keyschedule.wac";
 import { Cert, certMatchesHost, certVerifySignature, parseCert, verifyPath }
          from "../../tls/src/x509.wac";
 import { suiteAes128Gcm } from "../../tls/src/record.wac";
-import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { x25519, x25519Base, x25519Shared } from "../../crypto/src/x25519.wac";
 import { clientParameters, parametersExtension } from "./params.wac";
 import { encodedLength } from "./varint.wac";
 import { InitialKeys, openAt, openServerInitial, openShort, sealClientInitial, sealLong, sealShort,
@@ -187,7 +187,11 @@ export struct Client {
     if (!this.readableMessage(m)) { return u8[0](); }
     u8[] theirs = parseServerHello(messageBody(m)).keyShare;
     if (theirs.len() != 32) { return u8[0](); }
-    return x25519(this.scalar, theirs);
+    // **A small-order point makes this all zeros for every scalar**, so a server sending one would
+    // hand the session's keys to anyone watching. Empty is already this function's failure answer.
+    // RFC 7748 §6; `packages/tor` and `packages/ssh` have carried the rule and this did not.
+    u8[]? dh = x25519Shared(this.scalar, theirs);
+    return dh is null ? u8[0]() : dh!;
   }
 
   /** The transcript through the ServerHello, which is where the handshake keys are taken. */

@@ -37,7 +37,7 @@
 // {} is encrypted under the handshake traffic keys, [] under the application ones.
 
 import { sha256 } from "../../crypto/src/sha256.wac";
-import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { x25519, x25519Base, x25519Shared } from "../../crypto/src/x25519.wac";
 import { p256Ecdh, p256PublicKey, p256Decodes } from "../../crypto/src/p256.wac";
 import {
   hybridServerAccept, groupX25519MlKem768, hybridServerShareLen, hybridSecretLen,
@@ -326,6 +326,8 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
     // be in a real deployment: it must be unpredictable and unique per handshake, and
     // this host supplies exactly one 32-byte random value per connection.
     u8[] accepted = hybridServerAccept(peerKey, c.serverRandom, c.ephemeralPriv);
+    // Empty means the client's X25519 half was a small-order point — see `hybrid.wac`.
+    if (accepted.len() == 0) { return failPlain(c, alertIllegalParameter()); }
     ourShare = u8[hybridServerShareLen()]();
     for (i32 i = 0; i < hybridServerShareLen(); i++) { ourShare[i] = accepted[i]; }
     hybridSecret = u8[64]();
@@ -345,7 +347,12 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
   if (group == groupX25519MlKem768()) {
     shared = hybridSecret;
   } else if (group == groupX25519()) {
-    shared = x25519(c.ephemeralPriv, peerKey);
+    // **A small-order point makes the shared secret all zeros for every private key**, so a client
+    // sending one would have the session's keys without holding anything. RFC 8446 §7.4.2 makes the
+    // check a MUST; `packages/tor` and `packages/ssh` have had it and this did not. 2026-08-24.
+    u8[]? dh = x25519Shared(c.ephemeralPriv, peerKey);
+    if (dh is null) { return failPlain(c, alertIllegalParameter()); }
+    shared = dh!;
   } else {
     shared = p256Ecdh(c.ephemeralPriv, peerKey);
   }

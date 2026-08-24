@@ -21,7 +21,7 @@
 // randomness.
 
 import { sha256 } from "../../crypto/src/sha256.wac";
-import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { x25519, x25519Base, x25519Shared } from "../../crypto/src/x25519.wac";
 import { p256Ecdh, p256PublicKey, p256Decodes } from "../../crypto/src/p256.wac";
 import {
   hybridClientOffer, hybridClientFinish, groupX25519MlKem768, hybridClientShareLen,
@@ -501,8 +501,14 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
         // 64 bytes rather than 32, and the key schedule takes it unchanged: it is the
         // IKM of an HKDF extract, which has no opinion about length.
         shared = hybridClientFinish(c.hybridState, peerKey, c.ephemeralPriv);
+        // Empty means the server's X25519 half was a small-order point — see `hybrid.wac`.
+        if (shared.len() == 0) { return fail(c, 16, alertIllegalParameter(), toSend, appData); }
       } else if (group == groupX25519()) {
-        shared = x25519(c.ephemeralPriv, peerKey);
+        // The client's half of the same rule — see `server.wac`. A server sending a small-order
+        // point would hand every observer the session's keys.
+        u8[]? dh = x25519Shared(c.ephemeralPriv, peerKey);
+        if (dh is null) { return fail(c, 16, alertIllegalParameter(), toSend, appData); }
+        shared = dh!;
       } else {
         // **`p256Ecdh` validates the peer's point, and until 2026-08-24 it validated by trapping.**
         // The comment here used to say so as though it were the end of the sentence — *a bad point

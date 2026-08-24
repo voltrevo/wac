@@ -6,6 +6,59 @@
 - **Kind:** missing feature
 - **Symptom:** no error
 
+## Where this stands — 2026-08-24
+
+**The defect this was filed about is fixed.** It opened at nineteen drivers of which fifteen could not
+fail; `deno task coverage:all` now reads
+
+    37/37 ran — 36 hold a coverage floor, 0 only check their own exemptions have not drifted,
+    1 reports and cannot fail
+       2 package(s) have no coverage task: box, wacc
+
+`box` is `agent-c`'s and `wacc` is 33,575 lines and its own project. The one report-only driver is
+`sh`, also `agent-c`'s. So everything in this issue's remit is done and what is left belongs to
+someone else to decide — this is `agent-c`'s issue and closing it is theirs.
+
+**What the sweep cost and what it returned.** Roughly an hour a package. Seven abort-class bugs found
+and fixed on the way, every one a remote input ending a process:
+
+| where | the input |
+|---|---|
+| `tls` `recordOpen`, both directions | a record whose tag does not verify |
+| `tls` `p256Ecdh`, both directions | a key share that is not a point on the curve |
+| `tls` `mlkemEncaps` | a hybrid share whose coefficients are above q, on the group the server prefers |
+| `webrtc` `helloGroups` | a group list longer than the extension containing it |
+| `tor` `ntorClientFinish` | a handshake reply whose length the relay chose |
+| `webrtc` `peer.wac`'s ClientKeyExchange | a public key whose length the peer chose |
+
+All seven are one shape: **a correct security check, enforced by a trap, on input a stranger chose.**
+The last was found by enumerating that shape rather than by tripping over it — every `trap;` in the
+peer-facing packages listed, each asked whether a caller feeds it something a stranger picked.
+
+The enumeration is worth recording as finished, so nobody re-walks it. Across `packages/crypto`'s
+peer-facing surface:
+
+| what takes peer input | how it answers |
+|---|---|
+| the five verifiers — ed25519, P-256, P-384, RSA-PSS, RSA-PKCS1 | a `bool`, by design. `curveDecodes` says why: *a `bool` verifier must answer, and a trap is not an answer* |
+| ECDH on a peer's point | trapped; fixed, `p256Decodes` |
+| AEAD open on a peer's record | trapped; fixed, `recordTryOpen` |
+| KEM encapsulation to a peer's key | trapped; fixed, `mlkemEkValid` |
+| decompression of a peer's stream | traps, and that is a stated contract with a fuzz corpus behind it — `issues/system/0242b` is about the *caller*, not the decoder |
+| signing | traps, and should: the key is the caller's own |
+
+`packages/quic` and `packages/webrtc` have no `trap;` in `src/` at all, and `packages/ssh` is the
+model — it traps on the caller's key width, returns a value for every byte a peer sent, and says so.
+
+**The lasting lesson is not about coverage.** Nine packages in, a low number almost never meant "these
+lines are untested". It meant the code runs somewhere the instrument cannot see — a subprocess, a
+sibling package, a browser, a live node, a spawned CLI — or, in `wactest`, that the code runs
+in-process thousands of times and its *callers* live elsewhere. **Before writing a pin, ask where the
+code runs when something exercises it.** A coverage prefix is a directory and cannot ask.
+`issues/system/0241b` is the piece of that which is still open.
+
+---
+
 ## What is true
 
 `deno task coverage:all` ran nineteen drivers when this was filed; it runs twenty-one now and the split
