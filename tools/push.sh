@@ -93,6 +93,29 @@ if [ "${starved:-0}" -gt 0 ]; then
   echo "   losing the race is expected. The suite time spent so far is real and nobody read it."
 fi
 
+# **The seed is checked before the first attempt, not only after a merge.**
+#
+# The retry loop already rebuilds when a *merge* ages the seed, with the argument that a script which
+# merges on your behalf should not expect you to notice that it did. The same applies one step earlier
+# and was missing: an agent's own edits age it too, and then the gate spends a whole suite discovering
+# a fact that costs 200 ms to ask. On 2026-08-24 that happened twice in one session — 495 s and 381 s —
+# both times after a **canary**, where a source file is perturbed to prove a test notices and then put
+# back. The content ends up byte-identical and the mtime does not, so there is no diff to look at and
+# nothing about the tree says the seed is behind. `issues/system/0160`.
+#
+# The same condition as the one in the loop, and for the same reason: `tools/seedFresh.test.ts` owns
+# the question, so this cannot drift from the definition because it *is* the definition.
+if ! deno test -A --no-check --unstable-net tools/seedFresh.test.ts >/dev/null 2>&1; then
+  echo "== the seed is older than the tree — rebuilding before the suite =="
+  if ! deno task seed >/dev/null 2>&1; then
+    echo "== the seed will not rebuild: not running the suite ==" >&2
+    echo "   Run \`deno task seed\` by hand to see why; every later failure would be downstream of it." >&2
+    echo "   \`deno task seed:bootstrap\` is the way out if a wacc change has made wacc unable to" >&2
+    echo "   build itself." >&2
+    exit 1
+  fi
+fi
+
 for attempt in 1 2 3; do
   guardDenoCache
 
