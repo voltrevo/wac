@@ -35,7 +35,7 @@
 // cost is that a line carrying both a covered and an uncovered point reads as uncovered, which is the
 // safe direction — it asks for an entry rather than hiding one.
 
-import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, execReason } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, trimmed } from "../../packages/wactest/src/strings.wac";
 import { sourceFiles } from "../../packages/wactest/src/repo.wac";
@@ -275,8 +275,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   build[5 + grants.len()] = "--quiet";
   Exec built = cli.exec(binary(cli), build, u8[0]()).wait();
   if (!built.ran() || built.status != 0) {
-    core.warn("error: " + entry + " did not build — " + built.error +
-              string.fromBytes(built.stderr));
+    core.warn("error: " + entry + " did not build — " + execReason(built));
     cli.remove(dir, true).wait();
     return none;
   }
@@ -293,7 +292,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   for (i32 i = 0; i < exports.len(); i++) { dump[2 + i] = exports[i]; }
   Exec dumped = cli.exec(binary(cli), dump, u8[0]()).wait();
   if (!dumped.ran() || dumped.status != 0) {
-    core.warn("error: covdump — " + dumped.error + string.fromBytes(dumped.stderr));
+    core.warn("error: covdump — " + execReason(dumped));
     cli.remove(dir, true).wait();
     return none;
   }

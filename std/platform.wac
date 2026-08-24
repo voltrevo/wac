@@ -1021,6 +1021,26 @@ export string readReason(FileResult f) {
   return words == "" ? f.error : words;
 }
 
+/**
+ * The same, for a program that did not do what was asked — and the **killed** case is why it exists.
+ *
+ * Every caller writes the same phrase by hand: `e.error + string.fromBytes(e.stderr)`. It is right for
+ * the two ordinary outcomes and renders the third as nothing at all. `error` is empty whenever the
+ * program started, and a child killed by a signal writes no `stderr` before it dies — so an
+ * out-of-memory kill prints as a sentence that stops after the dash. A reason with no cause in it is
+ * what `issues/system/0142` is a page of.
+ *
+ * Takes no status, because `std` has no integer formatter and the caller has the number anyway.
+ */
+export string execReason(Exec r) {
+  if (!r.ran()) { return r.error; }
+  if (r.signalled()) {
+    return "killed by a signal, having written nothing — on a shared machine the usual cause is memory";
+  }
+  string said = string.fromBytes(r.stderr);
+  return said.len() > 0 ? said : "exited non-zero and said nothing";
+}
+
 /** What a filesystem change answered. */
 /**
  * What a host program did: `Cli.exec`'s answer.

@@ -24,7 +24,7 @@
 // constantly. `error` is non-empty only for the second.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Pending } from "std/platform.wac";
+import { Core, Cli, Exec, Pending, execReason } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram, wacBinary } from "../../../wactest/src/built.wac";
 
@@ -315,6 +315,15 @@ export string test_an_inherited_stream_reaches_our_own_output(Core core, Cli cli
            "the environment reached a child of the probe too: " + log);
   t.isTrue(log.indexOf("signalled: ran=yes status=-1 signalled=yes") >= 0,
            "a child killed by a signal ran, and has no exit code:\n" + log);
+  // **And the reason names the kill.** A signalled child writes no stderr, so the phrase every caller
+  // reaches for — `error` then `stderr` — renders it as nothing at all, which is a reason with no cause
+  // in it. `execReason` is the one place that knows.
+  Exec killed = cli.exec("/bin/sh", string[]("-c", "kill -9 $$"), u8[0]()).wait();
+  t.isTrue(killed.error.len() == 0 && killed.stderr.len() == 0,
+           "the premise: a killed child says nothing through either of the usual channels");
+  t.isTrue(execReason(killed).indexOf("killed by a signal") >= 0,
+           "execReason named the kill rather than answering with an empty string: \""
+           + execReason(killed) + "\"");
   t.isTrue(log.indexOf("exited: ran=yes status=255 signalled=no") >= 0,
            "and 255 is an exit code rather than the signal sentinel:\n" + log);
   t.isTrue(log.indexOf("cleared: ran=yes only-what-was-passed=yes") >= 0,
