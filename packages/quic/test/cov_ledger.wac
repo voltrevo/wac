@@ -187,13 +187,6 @@ Pin[] pins() {
         "permission column refers to it and `frame.wac`'s `permitted` compares against it; nothing " +
         "sends or receives one. Named rather than deleted because the epoch it stands for is real " +
         "and the frame-permission logic would be wrong without it."),
-    Pin("packages/quic/src/packet.wac", 68, "export bool isLong(u8[] b, i32 at) {", false,
-        "**An uncovered entry.** Reading the header form of a byte that is not there — an empty " +
-        "datagram, or a walk that has consumed everything. Any peer can send a zero-length UDP " +
-        "datagram, which is a thing that happens on the open internet, and nothing here has ever " +
-        "handed one to the reader."),
-    Pin("packages/quic/src/packet.wac", 69, "return at >= 0 && at < b.len() && (b[at] & FORM_LONG()) != 0;", false,
-        "The body of `:68` — see there."),
     Pin("packages/quic/src/packet.wac", 201, "if (at < 0 || at + 5 > b.len()) { return false; }", false,
         "The version-negotiation recogniser refusing a datagram too short to be one — see the rule " +
         "over `negotiationVersions` for why the whole feature is dark."),

@@ -1,0 +1,168 @@
+// Every datagram-reading method of `Client`, handed a datagram no server sent.
+//
+// **The lead came from this package's coverage ledger**, which pins `packet.wac`'s `isLong` as an
+// uncovered *entry* and says why: *"Any peer can send a zero-length UDP datagram, which is a thing
+// that happens on the open internet, and nothing here has ever handed one to the reader."* That was
+// true of the whole struct, not just of `isLong`.
+//
+// ## What was already covered, and why this is not it
+//
+// Two tests reach hostile bytes and neither reaches this:
+//
+//   - `truncated_test.wac` cuts every frame in table 3 short — *inside an opened packet*, after the
+//     header has parsed and the AEAD has verified. It is the strongest test in the package and it
+//     starts one layer below here.
+//   - `tamper_test.wac` flips ciphertext and tag bytes of a *well-formed* packet, so the header is
+//     always intact.
+//
+// A datagram arrives before either. It is the first thing a peer controls and the only thing it
+// controls without keys: nineteen methods on `Client` take one, and the sweep below asks each of
+// them the same question.
+//
+// ## Why a sweep of entry points rather than cases
+//
+// The bug this shape produces is not a wrong answer, it is a trap — an index off the end of a buffer
+// somebody else sized, which `spec/spec/arrays.md` `[§wac-arr-oob-7jby7f8]` says ends the process.
+// A trap cannot be asserted in-process: the run dies and the harness reports the file, not the line.
+// So what a test can do is *reach* every entry with every shape of bad datagram and finish. Finishing
+// is the assertion, and the per-call `isTrue` below exist to say which answer came back, so a future
+// change that starts returning something rather than nothing is visible rather than silently absorbed.
+//
+// The datagrams are the shapes that are cheap for a stranger and awkward for a parser: nothing at
+// all, one byte of each header form, a long header cut off inside each of its own fields, and a
+// plausible-looking one whose length varint promises more than arrived.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Client, handshakeAt } from "../../src/client.wac";
+import { isLong, nextPacketAt, parseLong } from "../../src/packet.wac";
+
+Client someone() {
+  u8[] s = u8[32]();
+  for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
+  u8[] r = u8[32]();
+  for (i32 i = 0; i < 32; i++) { r[i] = (i * 31 + 3) & 255; }
+  return Client.of(s, r, u8[8](), u8[4](), "localhost");
+}
+
+/**
+ * The datagrams. `n` selects one; `count()` says how many there are.
+ *
+ * Written out rather than generated because each is a different *reason* a parser can be surprised,
+ * and a random sweep would spend its cases on the uninteresting middle. The long-header ones share a
+ * prefix — form bit and fixed bit set, version 1 — and stop at a different field each time.
+ */
+i32 count() { return 12; }
+
+u8[] datagram(i32 n) {
+  if (n == 0) { return u8[0](); }
+  if (n == 1) { u8[] d = u8[1](); d[0] = 0xC0; return d; }          // a long header and nothing else
+  if (n == 2) { u8[] d = u8[1](); d[0] = 0x40; return d; }          // a short header and nothing else
+  if (n == 3) { return u8[1](); }                                    // one zero byte: neither form
+  if (n == 4) {                                                      // long header, version cut short
+    u8[] d = u8[3](); d[0] = 0xC0; d[1] = 0x00; d[2] = 0x00; return d;
+  }
+  if (n == 5) {                                                      // version 1, no dcid length
+    u8[] d = u8[5](); d[0] = 0xC0; d[3] = 0x00; d[4] = 0x01; return d;
+  }
+  if (n == 6) {                                                      // a dcid length past the end
+    u8[] d = u8[6](); d[0] = 0xC0; d[4] = 0x01; d[5] = 0xFF; return d;
+  }
+  if (n == 7) {                                                      // dcid present, scid missing
+    u8[] d = u8[10](); d[0] = 0xC0; d[4] = 0x01; d[5] = 0x04; return d;
+  }
+  if (n == 8) {                                                      // a token length past the end
+    u8[] d = u8[12](); d[0] = 0xC0; d[4] = 0x01; d[5] = 0x00; d[6] = 0x00; d[7] = 0x7F; return d;
+  }
+  if (n == 9) {                                                      // a length varint past the end
+    u8[] d = u8[14](); d[0] = 0xC0; d[4] = 0x01; d[7] = 0x7F; d[8] = 0xFF; return d;
+  }
+  if (n == 10) {                                                     // every byte set
+    return u8[64](fill: 0xFF);
+  }
+  // A packet-shaped datagram of the right size whose contents are noise, so the header parses far
+  // enough to reach the AEAD and the AEAD is the thing that says no.
+  u8[] d = u8[128]();
+  for (i32 i = 0; i < 128; i++) { d[i] = (i * 37 + 11) & 255; }
+  d[0] = 0xC0; d[1] = 0x00; d[2] = 0x00; d[3] = 0x00; d[4] = 0x01; d[5] = 0x08;
+  return d;
+}
+
+string name(i32 n) {
+  if (n == 0) { return "an empty datagram"; }
+  if (n == 10) { return "sixty-four 0xFF bytes"; }
+  if (n == 11) { return "a packet-shaped datagram of noise"; }
+  return "datagram " + itoa(n) + " of " + itoa(datagram(n).len()) + " bytes";
+}
+
+/**
+ * **The reader's own entry points, which is where the ledger's pin sits.**
+ *
+ * `isLong` is the one it names. It is asked here of an offset that is past the end of every datagram
+ * as well as of zero, because the pin gives two ways to reach it — an empty datagram, and a walk that
+ * has consumed everything — and they are different callers arriving at the same line.
+ */
+export string test_the_packet_reader_answers_for_a_datagram_that_is_not_one() {
+  T t = T.create();
+  for (i32 n = 0; n < count(); n++) {
+    u8[] d = datagram(n);
+    // Past the end, at the end, and at the start. The first two must be false whatever the bytes are.
+    t.isFalse(isLong(d, d.len()), "isLong said yes at the end of " + name(n));
+    t.isFalse(isLong(d, d.len() + 8), "isLong said yes past the end of " + name(n));
+    t.isFalse(isLong(d, 0 - 1), "isLong said yes at a negative offset in " + name(n));
+    // At zero it may legitimately say either; what matters is that it answers.
+    bool form = isLong(d, 0);
+    t.isTrue(form || !form, "isLong did not answer for " + name(n));
+    // `parseLong` and `nextPacketAt` are the two callers that walk from there.
+    t.isTrue(!parseLong(d, 0, true).ok || d.len() >= 5,
+             "a datagram under five bytes parsed as a long header: " + name(n));
+    t.isTrue(nextPacketAt(d, 0, true) >= 0, "nextPacketAt returned a negative offset for " + name(n));
+    t.isTrue(handshakeAt(d) >= 0, "handshakeAt returned a negative offset for " + name(n));
+  }
+
+  // The empty datagram specifically, which is the one the ledger's pin is about.
+  t.isFalse(isLong(u8[0](), 0), "isLong read the first byte of a datagram with no bytes");
+  t.eqI32(nextPacketAt(u8[0](), 0, true), 0, "an empty datagram named a next packet");
+  return t.report();
+}
+
+/**
+ * **Every `Client` method that takes a datagram, over every shape above.**
+ *
+ * The client is one that has sent a ClientHello and is waiting for a server's flight, which is the
+ * state in which a stranger's datagram is most useful to them: the four-tuple is known, no keys are
+ * established, and every method below is one the client would call on what arrives.
+ *
+ * What is asserted per call is only that the answer is the empty one — nothing here should succeed,
+ * because none of these datagrams was sealed with keys this client shares. The real assertion is that
+ * the loop reaches the end.
+ */
+export string test_every_client_reader_survives_a_datagram_no_server_sent() {
+  T t = T.create();
+  Client c = someone();
+  for (i32 n = 0; n < count(); n++) {
+    u8[] d = datagram(n);
+    string w = " for " + name(n);
+    t.eqI32(c.serverInitialPayload(d).len(), 0, "serverInitialPayload answered" + w);
+    t.eqI32(c.serverHelloMessage(d).len(), 0, "serverHelloMessage answered" + w);
+    t.eqI32(c.serverGroup(d), 0, "serverGroup named a group" + w);
+    t.isFalse(c.serverIsTls13(d), "serverIsTls13 said yes" + w);
+    t.isFalse(c.serverAskedRetry(d), "serverAskedRetry said yes" + w);
+    t.eqI32(c.shared(d).len(), 0, "shared produced a secret" + w);
+    t.eqI32(c.handshakePayload(d).len(), 0, "handshakePayload answered" + w);
+    t.eqI32(c.handshakeCrypto(d).len(), 0, "handshakeCrypto answered" + w);
+    t.eqI32(c.handshakeMessageType(d), 0 - 1, "handshakeMessageType named a type" + w);
+    t.eqI32(c.serverFlightKinds(d), 0, "serverFlightKinds named a message" + w);
+    t.isFalse(c.serverFinishedVerifies(d), "serverFinishedVerifies said yes" + w);
+    t.eqI32(c.serverCertificate(d).len(), 0, "serverCertificate answered" + w);
+    t.isFalse(c.serverIdentityVerifies(d), "serverIdentityVerifies said yes" + w);
+    t.eqI32(c.serverSignature(d).len(), 0, "serverSignature answered" + w);
+    t.eqI32(c.serverChosenId(d).len(), 0, "serverChosenId answered" + w);
+    t.eqI32(c.finished(d).len(), 0, "finished produced a packet" + w);
+    // These two return a transcript rather than a decision, so they may be non-empty — the client's
+    // own ClientHello is in it. Called for the same reason as the rest: to be reached.
+    t.isTrue(c.throughServerHello(d).len() >= 0, "throughServerHello" + w);
+    t.isTrue(c.throughServerFinished(d).len() >= 0, "throughServerFinished" + w);
+  }
+  return t.report();
+}
