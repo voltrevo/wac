@@ -38,6 +38,7 @@
 import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, trimmed } from "../../packages/wactest/src/strings.wac";
+import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 
 /** One instrumented point: where it is and what kind. */
 export struct Point {
@@ -660,9 +661,70 @@ i32 lineOfKey(string where) {
   return v;
 }
 
+
+/**
+ * Source files under `prefix` that contributed **no branch points at all**, named on the report.
+ *
+ * A file with one uncovered point appears in the table reading 0%. A file with none does not appear
+ * at all — the report is built from the points the exercise produced, so a file nothing imports is
+ * not low, it is *absent*, and a reader scanning the table has no way to notice it is missing.
+ *
+ * **`packages/tor` is why this exists.** A third of that package is programs — eleven files and 5,334
+ * of its 15,913 lines — and its tests build them into binaries and spawn them rather than importing
+ * them. Ten of the eleven contribute nothing, so the first reading of that package showed a table of
+ * forty files and silently omitted `network.wac`, `socks.wac`, `gendesc.wac`, `hsconnect.wac` and six
+ * more. `relayd.wac` is only visible because one constant of its 1,890 lines happens to be reachable
+ * from elsewhere.
+ *
+ * **Reported and not failed, deliberately.** Making it fail would turn every ledger red at once for a
+ * question none of them has answered yet — whether a program should be measured, and how — and that
+ * is a decision rather than a bug. `issues/system/0241b`. What it costs to say nothing is that ten
+ * files disappeared from a report somebody was reading closely, and nobody noticed for a day.
+ *
+ * ## Declaration-only files are not a gap, and the first version said they were
+ *
+ * `core/read.wac` is one `enum` and `core/jsx.wac` is two `struct`s. Neither holds a line that can
+ * execute, so neither contributes a point *however thoroughly it is used* — and the first version of
+ * this named both, under a `core` ledger reading 100%, as though something were missing.
+ *
+ * The discriminator is that **a function with no branches still produces an entry point.** So a file
+ * with zero points and at least one function declaration was not compiled; a file with zero points
+ * and no function declaration has nothing to compile. `") {"` is what tells them apart: a function
+ * signature has a parameter list and a `struct`, `enum` or `const` does not.
+ */
+void nameFilesWithNoPoints(Core core, Cli cli, Point[] points, i32 nPoints, string prefix) {
+  string[] all = sourceFiles(core, cli, string[](".wac"), string[0](fill: ""));
+  string[] missing = string[all.len() > 0 ? all.len() : 1](fill: "");
+  i32 nMissing = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    string f = all[i];
+    if (!startsWith(f, prefix) || isTest(f)) { continue; }
+    seen = seen + 1;
+    bool has = false;
+    for (i32 k = 0; k < nPoints && !has; k++) { if (points[k].file == f) { has = true; } }
+    if (has) { continue; }
+    // Nothing to compile is not the same as not compiled — see the note above.
+    FileResult src = cli.readFile(f).wait();
+    if (!src.ok) { continue; }
+    if (!contains(string.fromBytes(src.bytes), ") {")) { continue; }
+    missing[nMissing] = f;
+    nMissing = nMissing + 1;
+  }
+  if (nMissing == 0) { return; }
+  core.log("");
+  core.log(itoa(nMissing) + " of " + itoa(seen) + " source file(s) under " + prefix +
+           " contributed no branch points — nothing the exercise compiled imports them, so they are "
+           + "absent from the table above rather than reading zero:");
+  for (i32 i = 0; i < nMissing; i++) { core.log("  " + missing[i]); }
+  core.log("  A program that a test builds and spawns lands here. Reported, not failed — see "
+           + "`issues/system/0241b`.");
+}
+
 export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] counts, string prefix,
                     Pin[] pins, Rule[] rules) {
   bool failed = false;
+  nameFilesWithNoPoints(core, cli, points, nPoints, prefix);
   string[] uncovered = string[nPoints > 0 ? nPoints : 1](fill: "");
   i32 nUncovered = uncoveredLines(points, nPoints, counts, prefix, uncovered);
   // **Which points have been spoken for, as a set.** A point named by a pin *and* matched by a rule was

@@ -376,13 +376,13 @@ Pin[] pins() {
         "family as `:149`: reachable by a caller who asks for one, and no caller does."),
     Pin("packages/tls/src/derwrite.wac", 193, "i64 era = (z >= 0 ? z : z - 146096) / 146097;", false,
         "The negative branch of the era calculation — see `:188`."),
-    Pin("packages/tls/src/x509gen.wac", 183, "ext[2] = derTlv(0x04, derSequence(isCa ? derTlv(0x01, caTrue()) : u8[0]()));", false,
+    Pin("packages/tls/src/x509gen.wac", 184, "ext[2] = derTlv(0x04, derSequence(isCa ? derTlv(0x01, caTrue()) : u8[0]()));", false,
         "**`isCa: true`, which nothing asks for.** All three generators pass `false`, so this file can " +
         "only make leaves — which is why `loopback_test.wac` cannot trust the certificate it " +
         "generates and uses an empty store instead. A generator that could issue one certificate " +
         "under another would close this, several arms of `verifyPath`, and the name-constraints rule " +
         "above; it is the single most useful thing missing from this package's test surface."),
-    Pin("packages/tls/src/x509gen.wac", 184, "u8[][] all = u8[][dns.len() > 0 ? 2 : 1]();", false,
+    Pin("packages/tls/src/x509gen.wac", 185, "u8[][] all = u8[][dns.len() > 0 ? 2 : 1]();", false,
         "The one-extension case, taken when a caller generates a certificate with no name. New on " +
         "2026-08-24 with `subjectAltName`; every present caller passes a subject, so the arm that " +
         "omits it is unentered."),

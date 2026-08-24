@@ -175,6 +175,7 @@ deno task coverage:sh
 deno task coverage:ssh
 deno task coverage:ssz
 deno task coverage:stream
+deno task coverage:tor
 deno task coverage:tty
 deno task coverage:tls
 deno task coverage:unicode

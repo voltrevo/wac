@@ -1,0 +1,341 @@
+// tor's coverage, and the package that is a third programs.
+//
+//   deno task coverage:tor
+//   deno task coverage:tor --verbose
+//
+// **2269 of 3281 — 69.2%**, over the largest package in the repository: 15,913 lines of source and
+// 313 tests across 47 files. `issues/system/0205`.
+//
+// ## Read the two numbers at the bottom of the table first
+//
+//     packages/tor/src/relayd.wac   484    1    0.2
+//     packages/tor/src/link.wac     208   18    8.7
+//
+// Between them they are 673 of the 1,012 uncovered points, and neither is untested. `relayd.wac` is a
+// **program** — `wac run … relayd.wac -- <dir>` — and four tests build it into a binary and spawn it;
+// two of those put the **real C tor** on the other end and are 21 of this suite's 50 seconds.
+// `link.wac` is what `app.wac` and `socks.wac` drive, and both of those are programs too.
+//
+// **A third of this package is programs: eleven files, 5,334 of 15,913 lines.** Ten of the eleven do
+// not appear in the table above *at all* — a file nothing imports contributes no branch points, so it
+// is absent rather than low, and a reader scanning forty rows has no way to notice that `network.wac`,
+// `socks.wac`, `gendesc.wac`, `hsconnect.wac` and six more were never there.
+//
+// That last part was invisible until this driver was written, and it is fixed: `covledger.wac`'s
+// ratchet now names source files under the prefix that contributed nothing, skipping the
+// declaration-only ones that legitimately cannot contribute. `core`'s ledger reads 100% and had two
+// such files; it correctly reports none. This package reports twenty-two. `issues/system/0241b`.
+//
+// ## The other third, and it is the same finding as everywhere else
+//
+// The remaining 339 points are, overwhelmingly, **the refusal arms of document and cell parsers**:
+// 168 are `if (…) return`, 61 are bounds checks. The corpus is consensuses, certificates, votes and
+// cells fetched from the real Tor directory authorities or produced by C tor — and both produce
+// well-formed input, so every arm for malformed input has never run.
+//
+// `rlp`, `mpt`, `ssz`, `abi` and `bls` each reached that finding about their own decoders. It is
+// worth more here than in any of them, and two places especially:
+//
+//   - **`verifyConsensus`** decides whether to believe the document that says which relays exist.
+//     Seven arms, and every one of them is a way of saying no.
+//   - **`parseIntroducePlaintext`** reads an INTRODUCE2 cell, which arrives from a stranger by way of
+//     an introduction point and is the least trusted input this package takes. Twelve arms, none run.
+//
+// ## On the size of this file
+//
+// Seventy-one rules, which is more than every other ledger here put together. That is what it costs
+// to say something true about a package this size without either pinning a thousand points one at a
+// time or giving up and writing one paragraph that means nothing. Two rules are whole-file and give
+// up their file's floor deliberately, and both say why.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/tor/test/cov_exercise.wac";
+const string PREFIX = "packages/tor/";
+
+/** Sockets to relays and to C tor, a process to start it, and the vendored directory documents. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/tor/src/relayd.wac", "", "line", false,
+         "**The relay daemon, and the largest unmeasured thing in the repository: 1,890 lines of " +
+         "which one point is reachable from here.** `relayd.wac` is a *program* — `wac run … " +
+         "relayd.wac -- <dir>` — and `entries_test.wac`, `network_tor_test.wac`, " +
+         "`relayring_test.wac` and `ctor_live_test.wac` build it into a binary and spawn it. Two " +
+         "of those put the **real C tor** on the other end, and are 21 of this suite's 50 " +
+         "seconds. \n" +
+         "So it is thoroughly tested and almost entirely unmeasured, which is the distinction " +
+         "this ledger exists to draw. A third of this package is programs — eleven files, 5,334 " +
+         "of 15,913 lines — and ten of the eleven do not appear in the table above at all, " +
+         "because a file nothing imports contributes no points and is therefore *absent* rather " +
+         "than low. The line naming them under the report was added on 2026-08-24 for exactly " +
+         "this; see `issues/system/0241b`. \n" +
+         "A whole-file rule, which gives up this file's floor, and that is the honest trade: a " +
+         "floor over one reachable point is not a floor. What would earn one back is the shape " +
+         "`packages/tls/test/wac/loopback_test.wac` used — the parts below the sockets are " +
+         "already separate and separately tested, so what is unmeasured is the *joining*, and a " +
+         "test feeding one relay's output to another's input would measure it in-process."),
+    Rule("packages/tor/src/link.wac", "", "line", false,
+         "**The client's reusable half — a link to a relay and a circuit through relays — at 18 " +
+         "of 208.** Its own header says what happened: *this is everything `app.wac` had inside " +
+         "it before there was a second program that wanted it*. Both of those callers, `app.wac` " +
+         "and `socks.wac`, are programs, and `relay_test.wac` imports the file to test pieces " +
+         "rather than to drive a link. \n" +
+         "Same story as `relayd.wac` one level down, and the same trade in giving it a " +
+         "whole-file rule. The difference is that this one is *importable*: nothing stops a test " +
+         "building a link against a fake relay in-process, and the bounded reads its header is " +
+         "proud of — *a relay is a stranger from a public directory and one that answers the TCP " +
+         "handshake and then says nothing is not hypothetical* — are exactly the behaviour a " +
+         "test with no network could pin."),
+    Rule("packages/tor/src/consensus.wac", "return", "line", false,
+         "**The consensus parser's refusals, and the reason every document file in this package " +
+         "reads the same way.** The corpus is consensuses, certificates and votes fetched from " +
+         "the real Tor directory authorities, or generated by this package's own writers. Both " +
+         "produce well-formed documents, so every arm for a malformed one — a missing keyword, a " +
+         "signature line that does not parse, an inverted validity window, a base64 body that is " +
+         "not base64 — has never run. \n" +
+         "That is the finding `rlp`, `mpt`, `ssz`, `abi` and `bls` each reached about their own " +
+         "decoders, and it is worth more here than in any of them: a consensus is what tells a " +
+         "client which relays exist, and `verifyConsensus` is what decides whether to believe " +
+         "it. Its seven uncovered arms are the ones that say no."),
+    Rule("packages/tor/src/cell.wac", "return", "line", false,
+         "Cell framing refusals — a command that is not the length it should be, a payload past " +
+         "the limit. Same family as `consensus.wac`; the corpus is cells from C tor and from our " +
+         "own writer."),
+    Rule("packages/tor/src/circuit.wac", "return", "line", false,
+         "The circuit state machine's arms for cells arriving in states that do not expect them, " +
+         "and for flow-control windows going negative. Reached by a relay that misbehaves, and " +
+         "the relays in the corpus are C tor and ourselves."),
+    Rule("packages/tor/src/relay.wac", "return", "line", false,
+         "Relay-cell crypto refusals, and the wide-material variants a different handshake " +
+         "version uses. Same family as `consensus.wac`."),
+    Rule("packages/tor/src/directory.wac", "return", "line", false,
+         "Directory-document parsing arms for fields the real consensus omits — a router status " +
+         "with no microdescriptor digest, an exit policy that does not parse, an empty family " +
+         "line."),
+    Rule("packages/tor/src/routerdesc.wac", "return", "line", false,
+         "Router-descriptor refusals, and the formatting arms for values the corpus does not " +
+         "contain. Same family as `consensus.wac`."),
+    Rule("packages/tor/src/dirserve.wac", "return", "line", false,
+         "The directory server's refusals for a request it cannot answer — an unknown path, a " +
+         "document it does not hold, a compression the client did not offer."),
+    Rule("packages/tor/src/hsservice.wac", "return", "line", false,
+         "**The hidden-service side's refusals, and the most security-relevant of this family.** " +
+         "`parseIntroducePlaintext` alone has twelve, each an arm for a malformed INTRODUCE2 " +
+         "cell. That cell arrives from a stranger by way of an introduction point, which is the " +
+         "least trusted input this package takes, and the corpus is cells our own client " +
+         "produced."),
+    Rule("packages/tor/src/hsintro.wac", "return", "line", false,
+         "Introduction-point parsing refusals — see `hsservice.wac`, which reads the cells these " +
+         "descriptors invite."),
+    Rule("packages/tor/src/hsdesc.wac", "return", "line", false,
+         "Hidden-service descriptor parsing refusals. Same family as `consensus.wac`."),
+    Rule("packages/tor/src/hsdescbuild.wac", "return", "line", false,
+         "The descriptor builder's refusals for inputs its callers do not produce."),
+    Rule("packages/tor/src/hsdir.wac", "return", "line", false,
+         "Hidden-service directory selection refusals — a descriptor whose index does not parse, " +
+         "a ring with no members."),
+    Rule("packages/tor/src/hsstore.wac", "return", "line", false,
+         "The descriptor store's refusals — a descriptor that does not parse, or one for a " +
+         "service it was not asked about."),
+    Rule("packages/tor/src/hsblind.wac", "return", "line", false,
+         "Blinded-key derivation refusals for parameters of the wrong width."),
+    Rule("packages/tor/src/hsdescgen.wac", "return", "line", false,
+         "The descriptor generator's refusals for inputs its callers do not produce."),
+    Rule("packages/tor/src/hsntor.wac", "return", "line", false,
+         "The hidden-service ntor handshake's refusals for a peer message of the wrong shape."),
+    Rule("packages/tor/src/relaycert.wac", "return", "line", false,
+         "Relay certificate refusals: an unknown certificate type, an expired one, a signature " +
+         "that does not check, a key that is not the length its type declares. **Fourteen arms " +
+         "and none exercised** — every certificate in the corpus was produced by C tor or by us, " +
+         "and both produce valid ones."),
+    Rule("packages/tor/src/relaycircuit.wac", "return", "line", false,
+         "The relay-side circuit's refusals for a cell that does not belong to it."),
+    Rule("packages/tor/src/relaylink.wac", "return", "line", false,
+         "Relay link refusals — see `relaycert.wac`."),
+    Rule("packages/tor/src/vote.wac", "return", "line", false,
+         "Vote parsing and comparison refusals. Same family as `consensus.wac`, on the document " +
+         "an authority publishes rather than the one they agree."),
+    Rule("packages/tor/src/consensusgen.wac", "return", "line", false,
+         "The consensus generator's **microdescriptor variant**, which nothing here generates — " +
+         "the tests build the full-descriptor form. Not a refusal family: a second output " +
+         "format, written and unexercised, and the one a real client actually fetches."),
+    Rule("packages/tor/src/authcert.wac", "return", "line", false,
+         "Authority certificate refusals — see `relaycert.wac`."),
+    Rule("packages/tor/src/ntor.wac", "return", "line", false,
+         "The ntor handshake's refusals for keys and identities of the wrong width."),
+    Rule("packages/tor/src/pathsel.wac", "return", "line", false,
+         "Path-selection refusals for a consensus with no usable relays, and the weight arms for " +
+         "values the real consensus does not carry."),
+    Rule("packages/tor/src/onionaddr.wac", "return", "line", false,
+         "Onion address refusals — a checksum that does not match, a version byte that is not " +
+         "three, a length that is not fifty-six. **The one input in this package a human " +
+         "types**, and every refusal unexercised."),
+    Rule("packages/tor/src/socks5.wac", "return", "line", false,
+         "SOCKS5 refusals for a request this proxy does not implement."),
+    Rule("packages/tor/src/dirclient.wac", "return", "line", false,
+         "A directory response that is not one."),
+    Rule("packages/tor/src/introrelay.wac", "return", "line", false,
+         "Introduction relay refusals — see `hsservice.wac`."),
+    Rule("packages/tor/src/rendrelay.wac", "return", "line", false,
+         "Rendezvous relay refusals — see `hsservice.wac`."),
+    Rule("packages/tor/src/hsrendpoint.wac", "return", "line", false,
+         "Rendezvous point refusals — see `hsservice.wac`."),
+    Rule("packages/tor/src/hsintroduce.wac", "return", "line", false,
+         "INTRODUCE cell refusals — see `hsservice.wac`."),
+    Rule("packages/tor/src/consensus.wac", "trap;", "line", true,
+         "**Preconditions on this file's own entry points, checked before any peer data is " +
+         "read.** A key, identity or buffer of the wrong width is the calling program's bug " +
+         "rather than a stranger's, so it earns a stack instead of a refusal — the distinction " +
+         "`packages/tls` learned the hard way when `recordOpen` trapped on a peer's record. " +
+         "Nothing reaches these but a caller in this repository, and every one passes the right " +
+         "widths."),
+    Rule("packages/tor/src/cell.wac", "trap;", "line", true,
+         "**Preconditions on this file's own entry points, checked before any peer data is " +
+         "read.** A key, identity or buffer of the wrong width is the calling program's bug " +
+         "rather than a stranger's, so it earns a stack instead of a refusal — the distinction " +
+         "`packages/tls` learned the hard way when `recordOpen` trapped on a peer's record. " +
+         "Nothing reaches these but a caller in this repository, and every one passes the right " +
+         "widths."),
+    Rule("packages/tor/src/ntor.wac", "trap;", "line", true,
+         "**Preconditions on this file's own entry points, checked before any peer data is " +
+         "read.** A key, identity or buffer of the wrong width is the calling program's bug " +
+         "rather than a stranger's, so it earns a stack instead of a refusal — the distinction " +
+         "`packages/tls` learned the hard way when `recordOpen` trapped on a peer's record. " +
+         "Nothing reaches these but a caller in this repository, and every one passes the right " +
+         "widths."),
+    Rule("packages/tor/src/relay.wac", "trap;", "line", true,
+         "**Preconditions on this file's own entry points, checked before any peer data is " +
+         "read.** A key, identity or buffer of the wrong width is the calling program's bug " +
+         "rather than a stranger's, so it earns a stack instead of a refusal — the distinction " +
+         "`packages/tls` learned the hard way when `recordOpen` trapped on a peer's record. " +
+         "Nothing reaches these but a caller in this repository, and every one passes the right " +
+         "widths."),
+    Rule("packages/tor/src/pathsel.wac", "trap;", "line", true,
+         "**Preconditions on this file's own entry points, checked before any peer data is " +
+         "read.** A key, identity or buffer of the wrong width is the calling program's bug " +
+         "rather than a stranger's, so it earns a stack instead of a refusal — the distinction " +
+         "`packages/tls` learned the hard way when `recordOpen` trapped on a peer's record. " +
+         "Nothing reaches these but a caller in this repository, and every one passes the right " +
+         "widths."),
+    Rule("packages/tor/src/circuit.wac", "struct Circuit", "struct", false,
+         "**Every cell the circuit can build, and the receive path's arms for cells it did not " +
+         "expect.** `Circuit`'s methods construct BEGIN_DIR, DATA, END, EXTEND and the " +
+         "rendezvous hops, and handle SENDME accounting; the tests build circuits through " +
+         "fixtures and drive a subset. The rest are reached by `link.wac` and `socks.wac` — the " +
+         "two files this ledger already accounts for as program-driven — so this is the same gap " +
+         "seen from the layer below."),
+    Rule("packages/tor/src/dirserve.wac", "dirSourceFingerprint", "decl", false,
+         "**An uncovered entry**: scanning a consensus for the `dir-source` line that names the " +
+         "authority that signed it. The whole function, eight points, never called — and it is " +
+         "what a client would use to attribute a document to an authority."),
+    Rule("packages/tor/src/consensus.wac", "verifyConsensus", "decl", false,
+         "**`verifyConsensus`'s seven refusal arms** — too few signatures, a signature from an " +
+         "authority not in the trusted set, a digest that does not match, a document outside its " +
+         "validity window. This is the function that decides whether to believe the directory, " +
+         "and every path by which it says no is unexercised. The corpus is real consensuses, " +
+         "which are valid."),
+    Rule("packages/tor/src/consensusgen.wac", ") {", "decl", false,
+         "The microdescriptor consensus writer's body — see the `return` rule over this file. " +
+         "Its signature spans lines, so the declaration this rule matches is the closing `) {`."),
+    Rule("packages/tor/src/vote.wac", ") {", "decl", false,
+         "The same multi-line-signature shape in the vote writer — see `consensusgen.wac`."),
+    Rule("packages/tor/src/directory.wac", "base64NoPad", "decl", false,
+         "Base64 without padding, and the exit-policy and relay-field parsers around it. The " +
+         "arms are for inputs whose length is not a multiple of three, and for consensus fields " +
+         "the real document omits."),
+    Rule("packages/tor/src/hsintro.wac", "parseIntroPoints", "decl", false,
+         "Introduction-point parsing arms for a descriptor that lists none, or lists one whose " +
+         "link specifiers do not validate — see `hsservice.wac`."),
+    Rule("packages/tor/src/relay.wac", "createWideReversed", "decl", false,
+         "The reversed wide key material used by the relay side of a handshake this package's " +
+         "client half does not perform."),
+    Rule("packages/tor/src/routerdesc.wac", "splitSpaces", "decl", false,
+         "Field splitting and number formatting for descriptor values the corpus does not " +
+         "contain — a line with repeated spaces, a value needing four-digit padding."),
+    Rule("packages/tor/src/consensus.wac", "pemBody", "decl", false,
+         "The small helpers under the consensus parser: PEM extraction, certificate parsing, " +
+         "time fields and case folding, each with an arm for a document shaped differently from " +
+         "the real one."),
+    Rule("packages/tor/src/cell.wac", "encodeDestroy", "decl", false,
+         "A DESTROY cell with a reason this package never sends."),
+    Rule("packages/tor/src/hsdesc.wac", "keywordValue", "decl", false,
+         "Keyword lookup in a descriptor that does not contain the keyword — see " +
+         "`consensus.wac`."),
+    Rule("packages/tor/src/hsdescgen.wac", "padToBlock", "decl", false,
+         "Padding a plaintext that is already a whole number of blocks."),
+    Rule("packages/tor/src/hsdir.wac", "compareIndex", "decl", false,
+         "Hidden-service directory index comparison at the tie the ring's ordering makes " +
+         "vanishingly unlikely — two indices equal in every byte."),
+    Rule("packages/tor/src/hsservice.wac", "macEnd", "decl", false,
+         "Locating the MAC in an INTRODUCE2 cell that is too short to have one — see the " +
+         "`return` rule over this file."),
+    Rule("packages/tor/src/onionaddr.wac", "stripSuffix", "decl", false,
+         "Stripping `.onion` from an address that does not end in it."),
+    Rule("packages/tor/src/pathsel.wac", "parseWeights", "decl", false,
+         "Bandwidth-weight parsing and family resolution for a consensus shaped differently from " +
+         "the real one."),
+    Rule("packages/tor/src/pool.wac", "selectCircuit", "decl", false,
+         "Choosing between two circuits that are equally good, which needs a pool holding two of " +
+         "them."),
+    Rule("packages/tor/src/relay.wac", "wrapForClient", "decl", false,
+         "Wrapping a relay cell for a client at a hop count the tests do not build."),
+    Rule("packages/tor/src/relaycircuit.wac", "receiveFromClient", "decl", false,
+         "The relay side receiving a cell whose length field does not validate — see the " +
+         "`return` rule over this file."),
+    Rule("packages/tor/src/routerdesc.wac", "pad4", "decl", false,
+         "See `splitSpaces` above."),
+    Rule("packages/tor/src/routerdesc.wac", "statusLine", "decl", false,
+         "The status line's with-digest variant, which the microdescriptor consensus needs and " +
+         "nothing here generates — see `consensusgen.wac`."),
+    Rule("packages/tor/src/vote.wac", "compareBytes", "decl", false,
+         "Byte comparison at the length tie."),
+    Rule("packages/tor/src/directory.wac", "parseConsensus", "decl", false,
+         "See `base64NoPad` above."),
+    Rule("packages/tor/src/directory.wac", "attachMicrodescriptors", "decl", false,
+         "See `base64NoPad` above."),
+    Rule("packages/tor/src/directory.wac", "parsePolicy", "decl", false,
+         "See `base64NoPad` above."),
+    Rule("packages/tor/src/directory.wac", "fillFrom", "decl", false,
+         "See `base64NoPad` above."),
+    Rule("packages/tor/src/consensus.wac", "parseCertificates", "decl", false,
+         "See `pemBody` above."),
+    Rule("packages/tor/src/consensus.wac", "timeField", "decl", false,
+         "See `pemBody` above."),
+    Rule("packages/tor/src/consensus.wac", "splitSpaces", "decl", false,
+         "See `pemBody` above."),
+    Rule("packages/tor/src/consensus.wac", "upper", "decl", false,
+         "See `pemBody` above."),
+    Rule("packages/tor/src/hsservice.wac", "parseIntroducePlaintext", "decl", false,
+         "See the `return` rule over this file — this is the one arm of it that is not a " +
+         "`return`."),
+    Rule("packages/tor/src/pathsel.wac", "resolveFamilies", "decl", false,
+         "Family resolution when a relay names a family member that names it back, which is what " +
+         "a *mutual* family declaration is — and the real consensus is full of them, but the " +
+         "fixtures are not. The one point in this package accounted for individually rather than " +
+         "by family.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[0](fill: Pin("", 0, "", true, ""));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

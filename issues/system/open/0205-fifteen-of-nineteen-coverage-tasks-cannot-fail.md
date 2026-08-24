@@ -886,6 +886,61 @@ twenty-two tests simply do not construct, and `dtls.wac`'s accessors have a boun
 certificate in the corpus comes from OpenSSL, aiortc or Chromium. That is the same family
 `packages/quic`'s `truncated_test.wac` closed for QUIC frames, and it transfers here almost unchanged.
 
+### `tor` tenth — a third of a package is programs, and ten of them were invisible
+
+**30 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 31 drivers; the unmeasured list is 8 — `box, ens, ethrpc, git, lightclient, platform, wacc,
+wactest`.
+
+**2269 of 3281 — 69.2%**, over the largest package in the repository. Two rows carry two thirds of it:
+
+    packages/tor/src/relayd.wac   484    1    0.2
+    packages/tor/src/link.wac     208   18    8.7
+
+`relayd.wac` is a **program**, and four tests build it into a binary and spawn it — two of them with
+the real C tor on the other end, together 21 of that suite's 50 seconds. `link.wac` is what `app.wac`
+and `socks.wac` drive, and both of those are programs too.
+
+**A third of this package is programs: eleven files, 5,334 of 15,913 lines.**
+
+#### The part that was invisible rather than low
+
+Ten of those eleven do not appear in the report *at all*. A file nothing imports contributes no branch
+points, so it is absent from the table rather than reading zero, and a reader scanning forty rows has
+no way to notice `network.wac`, `socks.wac`, `gendesc.wac`, `hsconnect.wac` and six more were never
+there.
+
+That is now fixed in the shared seam. `covledger.wac`'s ratchet names source files under the prefix
+that contributed nothing — **skipping declaration-only files**, which was the first version's false
+alarm: `core/read.wac` is one `enum` and `core/jsx.wac` is two `struct`s, so neither can contribute a
+point however thoroughly it is used, and both were named under a `core` ledger reading 100%. The
+discriminator is that a function with no branches still produces an entry point, so a file with zero
+points and a `") {"` in it was not compiled while one without has nothing to compile. `core` now
+reports none and `tor` reports twenty-two.
+
+Reported, not failed. Whether a program should be measured — and how — is a decision, and making it
+fail would turn thirty ledgers red at once for a question none of them has answered.
+
+#### The other third is the same finding as everywhere else
+
+339 points, of which 168 are `if (…) return` and 61 are bounds checks: the refusal arms of document
+and cell parsers, against a corpus of real Tor directory documents and cells from C tor, both of which
+are well-formed. Two are worth naming — **`verifyConsensus`**, which decides whether to believe the
+document that says which relays exist, has seven arms and every one is a way of saying no; and
+**`parseIntroducePlaintext`**, which reads an INTRODUCE2 cell from a stranger by way of an
+introduction point, has twelve.
+
+#### On the ledger's size, and how it was written
+
+Seventy-one rules — more than every other ledger put together. Two are whole-file and give up their
+file's floor deliberately, saying so.
+
+Worth recording as method: the rule set was developed **offline**, by reimplementing `rulePicks`,
+`declOf` and `opensDecl` in a scratch script and simulating which uncovered points each candidate rule
+would claim. A `coverage:tor` run is 80–90 seconds, so iterating against the real thing would have
+been half an hour of waiting; the simulation took one run's worth of data and got the ledger green on
+the first real attempt. The three predicates are twenty lines between them and the fidelity was exact.
+
 ### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
 
 Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's
