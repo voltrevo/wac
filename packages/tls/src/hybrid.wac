@@ -28,7 +28,7 @@
 // the IKM of the handshake-secret extract, and HKDF does not care how long it is.
 
 import { mlkemKeyGen, mlkemEncaps, mlkemDecaps, mlkemEkValid } from "../../crypto/src/mlkem.wac";
-import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { x25519, x25519Base, x25519Shared } from "../../crypto/src/x25519.wac";
 
 /** The TLS named group code point. */
 export i32 groupX25519MlKem768() { return 0x11EC; }
@@ -97,7 +97,18 @@ export u8[] hybridServerAccept(u8[] clientShare, u8[] m, u8[] xPriv) {
   // FIPS 203 requires of a peer's key and the only defence against one chosen to put
   // the arithmetic outside the ring.
   u8[] enc = mlkemEncaps(ek, m);            // shared ++ ciphertext
-  u8[] xShared = x25519(xPriv, xPeer);
+
+  // **A small-order X25519 half zeroes that contribution, and this construction's whole argument is
+  // that both halves have to be broken.** ML-KEM still holds, so a session built on one would not be
+  // readable — but the peer would have reduced the hybrid to ML-KEM alone, unilaterally, removing
+  // exactly the half that covers the lattice assumption turning out to be wrong. The header above
+  // says neither alone is what anyone is willing to deploy, so this is refused rather than accepted
+  // with less. 2026-08-24.
+  //
+  // Empty rather than a trap: the peer chose these bytes.
+  u8[]? xs = x25519Shared(xPriv, xPeer);
+  if (xs is null) { return u8[0](); }
+  u8[] xShared = xs!;
   u8[] xPub = x25519Base(xPriv);
 
   u8[] out = u8[1120 + 64]();
@@ -130,7 +141,11 @@ export u8[] hybridClientFinish(u8[] offerAndDk, u8[] serverShare, u8[] xPriv) {
   for (i32 i = 0; i < 32; i++) { xPeer[i] = serverShare[1088 + i]; }
 
   u8[] kemShared = mlkemDecaps(dk, ct);
-  u8[] xShared = x25519(xPriv, xPeer);
+  // The client's half of the same rule — see `hybridServerAccept`. A server that sent a small-order
+  // point would have reduced the hybrid to ML-KEM alone.
+  u8[]? xs = x25519Shared(xPriv, xPeer);
+  if (xs is null) { return u8[0](); }
+  u8[] xShared = xs!;
 
   u8[] out = u8[64]();
   for (i32 i = 0; i < 32; i++) { out[i] = kemShared[i]; }

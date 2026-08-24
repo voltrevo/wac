@@ -326,6 +326,8 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
     // be in a real deployment: it must be unpredictable and unique per handshake, and
     // this host supplies exactly one 32-byte random value per connection.
     u8[] accepted = hybridServerAccept(peerKey, c.serverRandom, c.ephemeralPriv);
+    // Empty means the client's X25519 half was a small-order point — see `hybrid.wac`.
+    if (accepted.len() == 0) { return failPlain(c, alertIllegalParameter()); }
     ourShare = u8[hybridServerShareLen()]();
     for (i32 i = 0; i < hybridServerShareLen(); i++) { ourShare[i] = accepted[i]; }
     hybridSecret = u8[64]();
