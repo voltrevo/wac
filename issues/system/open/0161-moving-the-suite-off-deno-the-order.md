@@ -13,8 +13,9 @@ got the order wrong twice from reasoning about it.
 
 ## Where this stands — 2026-08-20
 
-**17,244 lines of `.test.ts` under `packages/`, in 64 files**, and every one accounted for — not
-"looked at": each has a determination here.
+**17,491 lines of `.test.ts` under `packages/`, in 65 files**, and every one accounted for — not
+"looked at": each has a determination here. (Re-derived 2026-08-24; it read 17,244 in 64, and the rows
+below were already current — see the note at the end of "The two \"not applicable\" rows were wrong".)
 
 | where | lines | files | what it is |
 |---|---|---|---|
@@ -212,6 +213,63 @@ So the eight are really three questions, not one:
    to *build* broken programs. If the principle is "its only job is bootstrapping", using it as a
    mutation source is a different use of the word "job", and the issue said so from the start.
 
+### The two "not applicable" rows were wrong, and the decision is uniform — 2026-08-24
+
+The table above splits the nine by what the reference *is*, and puts `mutateCheck` and `corpusMutate`
+on the generator side: *"Not applicable. Only wacc is asked whether it notices; nothing asserts what
+the reference computed."* That sentence was written from what the files are *for* rather than from
+what they assert, and it is false in both.
+
+Both compare **diagnostic positions** against the reference, which is the same use `parse_errors`
+makes of it:
+
+- `corpusMutate.test.ts:370` throws with *"on a mutant the reference answers with one diagnostic, we
+  point elsewhere"*. Its header states the rule as a contract — *"the assertion is exact where the
+  comparison is exact: on a mutant the reference answers with one diagnostic, every position we
+  report must be that one"*.
+- `mutateCheck.test.ts:212` builds `theirPos` out of the reference's `line:col` pairs and counts
+  every position of ours that is not in it as a contradiction; its header opens with *"every position
+  we report on a rejected program is one the reference mentions"*.
+
+So the reference is doing two jobs in these two files at once — it builds the broken program *and* it
+says where the fault is — and the second job is the one the principle is about. Reading only the
+first is what produced the wrong row.
+
+**What changes is the shape of the decision, not the status of any file.** All nine were blocked and
+all nine still are. But the question is not "seven files where the reference is an oracle, plus two
+that are something else"; it is **nine files, uniformly**, and whichever way *"the reference's only
+job is bootstrapping"* is decided, it reaches all of them. That is a simpler question to answer than
+the three-part one this issue posed, and it removes the temptation to move the two mutation files
+first on the grounds that they were exempt.
+
+It also changes what a port of them would cost. The issue's own test — *a port that deletes the
+reference is safe whichever way the decision goes* — applies here and returns the same answer as for
+`sweep` and its siblings: a generated mutant carries no expected position, so deleting the reference
+deletes the position check and leaves only "wacc said something", which is the recall count the files
+already print and deliberately do not assert on its own.
+
+**The lesson is the one this issue keeps relearning at a different level.** Twice now a row here has
+been written from a file's *purpose* — "it generates input", "nothing convertible left" — and been
+wrong about the file's *assertions*. A classification that decides something should be read off the
+`throw`s and the comparisons, which are mechanical to find, rather than off the header prose, which
+describes intent. `grep -n "assert\|throw" ` on each of the nine would have caught this on the day the
+table was written.
+
+**The other seven were re-checked the same way, and they hold.** `parse_errors` *"compares parsers"*;
+`checkSweep` asserts *"for every program the reference accepts, we…"*; `emitSweep` *"every answer
+agrees"*; `linkEmit` *"run what both compilers emit"*; `specEmit` throws on *"spec answers differ"*;
+`sweep` on *"false alarms on programs the reference accepts"*. Each names the reference in the thing
+it throws on. So the correction is exactly two rows and the enumeration is finished rather than
+sampled — which is the part that makes it safe to act on.
+
+**And the arithmetic, re-derived on the same day.** `find packages -name '*.test.ts' | xargs wc -l`
+reads **17,491 in 65 files**, and the rows in the table above now add to exactly that — 5,696 + 6,522
++ 217 + 1,570 + 296 + 2,281 + 909. That is the first time the headline, the rows and the tree have
+agreed since this issue started recording all three, and it is worth one sentence only because the
+paragraph above it explains at length why they usually do not. The headline read 17,244; the rows were
+already current. Which is the expected failure mode — a total is copied once and the rows are edited
+when a package is touched.
+
 ### `specEmit`, and why it is its own question
 
 Its cases come from `compiler/wacSpec.test.ts` — the reference's conformance suite, 529 tests, each
@@ -247,6 +305,52 @@ true of the *binary* or of the *language*, and neither was ever the only thing a
 
 The question that would have caught all five: **not "can wac do this", but "is there a program that
 does this, and can a wac test run it?"**
+
+### `docSignatures` is a decision *and* a missing API, which was not known — 2026-08-24
+
+The entry above says a wac port *"would use `packages/wacc`'s parser instead, which is not a downgrade
+and is not the same claim"*, and leaves it as a decision about meaning. Reading both sides, the
+decision is real and there is something under it that has to happen first.
+
+**What the check needs is every name a declaration introduces**, and it says so at
+`tools/docSignatures.test.ts:102`: *"functions, types, variants, fields, methods"*. Two sets come out
+of that walk and they are not the same set — `signatures`, gated on `item.exported`, is what a ```wac
+fence is matched against; `names` is ungated and is what a backticked `` `foo(…)` `` in prose is
+resolved against. The second is the larger one and it is the one with non-exported functions,
+enum variants and methods in it.
+
+**What `packages/wacc` exposes today answers a different question.** Its API is
+`exportSigsFiles` — *"the exported functions and their wac types"*, described in its own doc comment
+as *"the metadata half of bindgen — which functions a host may call"* — and `bindTypesFiles`, *"the
+structs and enums a host can hold"*. Both are scoped to **what a host can reach**. `names(src)` is
+narrower still: the *emitted* functions in order, for turning a wasm "function #N" back into a name.
+
+So the sets line up like this:
+
+| what `docSignatures` walks | what wacc can answer with |
+|---|---|
+| exported function signatures | `exportSigsFiles` — the same set |
+| struct and enum declarations | `bindTypesFiles` — the host-holdable subset |
+| **non-exported functions, methods, enum variants** | **nothing** |
+
+A port built on today's API would therefore keep the fence check intact and quietly narrow the prose
+check, which is the half that catches a README naming something that does not exist — the failure the
+whole file was written for, and the one it found twice. That is not the "change to what the check
+means" the entry anticipated; it is a second, unintended one on top of it.
+
+**So the order is: wacc grows a declaration dump, then the port is a translation.** The dump is the
+thing `wacParse` gives the reference for free — walk the program and emit every introduced name with
+its rendered signature — and `packages/wacc/src/print.wac` already has `printProgram`, so the
+rendering half exists. Filed as an issue rather than done here because it is an addition to another
+package's public API and wants to be someone's deliberate design rather than the by-product of moving
+a test.
+
+**And the general point, which is the reusable one.** *"Port it to use our own parser"* sounds like a
+change of dependency and is really a change of **question**. The reference is asked *what does this
+program declare*; wacc's API is asked *what can a host reach*. Those coincide for most of a package
+and diverge exactly at the private surface, which is where a README is most likely to be wrong,
+because nothing else checks it. Before porting a check onto a different implementation, write down the
+question each side actually answers — not the data structure each returns.
 
 ## Where this stood, and what was blocking — 2026-08-17, second pass
 

@@ -68,6 +68,7 @@ import {
   test_a_fingerprint_is_the_sha1_of_the_key as cons__a_fingerprint_is_the_sha1_of_the_key,
   test_the_chain_accepts_a_genuine_consensus as cons__the_chain_accepts_a_genuine_consensus,
   test_everything_the_chain_must_refuse as cons__everything_the_chain_must_refuse,
+  test_a_malformed_directory_signature_line_is_not_counted as cons__a_malformed_directory_signature_line_is_not_counted,
   test_a_signing_key_its_identity_never_certified as cons__a_signing_key_its_identity_never_certified,
   test_a_signature_names_which_signing_key_made_it as cons__a_signature_names_which_signing_key_made_it,
   test_a_utc_timestamp_is_not_read_as_local as cons__a_utc_timestamp_is_not_read_as_local,
@@ -107,6 +108,7 @@ import {
   test_microdescriptors_are_batched_with_a_hyphen as dirs__microdescriptors_are_batched_with_a_hyphen,
   test_the_compression_suffix_is_a_request_not_a_name as dirs__the_compression_suffix_is_a_request_not_a_name,
   test_the_response_is_framed_for_a_client as dirs__the_response_is_framed_for_a_client,
+  test_a_dir_source_line_a_stranger_wrote as dirs__a_dir_source_line_a_stranger_wrote,
 } from "./wac/dirserve_test.wac";
 import {
   test_the_sequences_can_show_the_rule as dirs2__the_sequences_can_show_the_rule,
@@ -594,6 +596,10 @@ export i32 main(Core core, Cli cli) {
     core.warn("error: FAILED consensus_test test_everything_the_chain_must_refuse");
     bad = bad + 1;
   }
+  if (cons__a_malformed_directory_signature_line_is_not_counted(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_malformed_directory_signature_line_is_not_counted");
+    bad = bad + 1;
+  }
   if (cons__a_signing_key_its_identity_never_certified(core, cli).len() > 0) {
     core.warn("error: FAILED consensus_test test_a_signing_key_its_identity_never_certified");
     bad = bad + 1;
@@ -692,6 +698,10 @@ export i32 main(Core core, Cli cli) {
   }
   if (dirs__the_compression_suffix_is_a_request_not_a_name(core, cli).len() > 0) {
     core.warn("error: FAILED dirserve_test test_the_compression_suffix_is_a_request_not_a_name");
+    bad = bad + 1;
+  }
+  if (dirs__a_dir_source_line_a_stranger_wrote().len() > 0) {
+    core.warn("error: FAILED dirserve_test test_a_dir_source_line_a_stranger_wrote");
     bad = bad + 1;
   }
   if (dirs__the_response_is_framed_for_a_client(core, cli).len() > 0) {

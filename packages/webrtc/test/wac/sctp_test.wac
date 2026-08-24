@@ -526,3 +526,74 @@ string repeated(string s, i32 n) {
   for (i32 i = 0; i < n; i++) { out = out + s; }
   return out;
 }
+
+/**
+ * **The peer says in its INIT which TSN it will start at, and nothing reads it.**
+ *
+ * `Association.receive`'s INIT branch takes `initiateTag(c.value)` out of the INIT and drops the
+ * rest of the same value on the floor — including `initTsn`, which `sctp.wac` exports and documents
+ * as *"the initial TSN an INIT or INIT-ACK carries — the first data it will send."* So the
+ * association starts with `haveCumulative == 0` and the **first DATA chunk that arrives** becomes
+ * the cumulative point, whether or not it is the first one sent.
+ *
+ * Cumulative means *everything up to and including it arrived*. Adopting 101 as the cumulative point
+ * is therefore a statement that 100 arrived, made about a chunk still on the wire. `accept` then
+ * refuses the real 100 as a duplicate — `tsnBefore(101, 100)` is false, so it is not even recorded
+ * as a gap — and the SACK never mentions it, so the peer stops resending. **The payload is lost and
+ * both ends believe it was delivered.**
+ *
+ * `test_a_message_reassembles_when_its_chunks_are_reordered_on_the_path` is the neighbouring case
+ * and does not reach this: it drives `reassemble` directly, which is downstream of `accept`, and it
+ * starts from a cumulative point that has already been established. The first chunk is the one the
+ * gap machinery cannot cover for, because there is nothing yet to have a gap in.
+ *
+ * The assertion is on the SACK rather than on internal state, because the SACK is what the peer
+ * acts on: a cumulative point of 101 is the lie, and 99 — one below what the peer said it would
+ * start at — is the truth that nothing has arrived in order yet.
+ */
+export string test_the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive() {
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+
+  // The peer's INIT: it will start sending at TSN 100.
+  u8[][] answer = a.receive(initPacket(0x22222222, 65536, 16, 16, 100), u8[0](), 0 as i64);
+  t.isTrue(answer.len() > 0, "the INIT was not answered, so nothing below was set up");
+
+  // 101 overtakes 100 on the path, which is a reorder and not a loss.
+  u8[][] sacks = a.receive(dataPacket(0x11111111, 101, 0, 0, ppidString(), "B".toBytes()),
+                           u8[0](), 0 as i64);
+  t.isTrue(sacks.len() > 0, "a DATA chunk was not acknowledged at all");
+  i32 cumulative = sackCumulative(firstChunkValue(sacks[0]));
+  t.eqI32(cumulative, 99,
+          "the SACK claims everything through " + itoa(cumulative) + " arrived, but the peer said " +
+          "it starts at 100 and 100 has not arrived");
+  t.eqI32(sackGaps(firstChunkValue(sacks[0])), 1, "101 was not reported as a gap");
+
+  // And the chunk that was overtaken is still accepted when it turns up, rather than being refused
+  // as a duplicate of something the association already claimed to have.
+  u8[][] after = a.receive(dataPacket(0x11111111, 100, 0, 0, ppidString(), "A".toBytes()),
+                           u8[0](), 0 as i64);
+  t.isTrue(after.len() > 0, "the overtaken chunk was not acknowledged");
+  t.eqI32(sackCumulative(firstChunkValue(after[0])), 101,
+          "100 arrived and closed the hole, so everything through 101 is now delivered");
+  t.eqI32(sackGaps(firstChunkValue(after[0])), 0, "the gap was not closed");
+
+  // The control: in order, from the declared start, there is never a gap.
+  Association b = newAssociation(0x11111111, 1, 65536);
+  b.receive(initPacket(0x22222222, 65536, 16, 16, 100), u8[0](), 0 as i64);
+  u8[][] one = b.receive(dataPacket(0x11111111, 100, 0, 0, ppidString(), "A".toBytes()),
+                         u8[0](), 0 as i64);
+  t.eqI32(sackCumulative(firstChunkValue(one[0])), 100, "an in-order first chunk was not cumulative");
+  t.eqI32(sackGaps(firstChunkValue(one[0])), 0, "an in-order first chunk reported a gap");
+
+  // **A retransmitted INIT must not rewind a receive point that has moved.** An INIT is resent when
+  // its INIT-ACK is lost, and the copy carries the same initial TSN — so seeding unconditionally
+  // would throw away everything received in between and re-request it, or worse, make chunks already
+  // delivered look new. The guard is `haveCumulative == 0`, and this is what it is for.
+  b.receive(initPacket(0x22222222, 65536, 16, 16, 100), u8[0](), 0 as i64);
+  u8[][] again = b.receive(dataPacket(0x11111111, 101, 0, 0, ppidString(), "B".toBytes()),
+                           u8[0](), 0 as i64);
+  t.eqI32(sackCumulative(firstChunkValue(again[0])), 101,
+          "a repeated INIT rewound the cumulative point, so what had arrived was forgotten");
+  return t.report();
+}

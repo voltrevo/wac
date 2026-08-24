@@ -102,7 +102,16 @@ Rule[] rules() {
          "That is the finding `rlp`, `mpt`, `ssz`, `abi` and `bls` each reached about their own " +
          "decoders, and it is worth more here than in any of them: a consensus is what tells a " +
          "client which relays exist, and `verifyConsensus` is what decides whether to believe " +
-         "it. Its seven uncovered arms are the ones that say no."),
+         "it. Its seven uncovered arms were the ones that say no.\n" +
+         "**`verifyConsensus` itself came off this list on 2026-08-24** and its rule is deleted " +
+         "rather than reworded: all seven arms are now driven by " +
+         "`test_a_malformed_directory_signature_line_is_not_counted`, which corrupts the " +
+         "`directory-signature` *line* rather than the document body. That is what the corpus " +
+         "could not supply — the bodies it tampers with are refused at the signature check, three " +
+         "steps past every arm. The rest of this file's refusals are still in the state described " +
+         "above, and that test is the shape that reaches them: everything after the " +
+         "`directory-signature ` token is outside the digest, so a line can be rewritten without " +
+         "disturbing the signatures that are not under test."),
     Rule("packages/tor/src/cell.wac", "return", "line", false,
          "Cell framing refusals — a command that is not the length it should be, a payload past " +
          "the limit. Same family as `consensus.wac`; the corpus is cells from C tor and from our " +
@@ -238,16 +247,6 @@ Rule[] rules() {
          "fixtures and drive a subset. The rest are reached by `link.wac` and `socks.wac` — the " +
          "two files this ledger already accounts for as program-driven — so this is the same gap " +
          "seen from the layer below."),
-    Rule("packages/tor/src/dirserve.wac", "dirSourceFingerprint", "decl", false,
-         "**An uncovered entry**: scanning a consensus for the `dir-source` line that names the " +
-         "authority that signed it. The whole function, eight points, never called — and it is " +
-         "what a client would use to attribute a document to an authority."),
-    Rule("packages/tor/src/consensus.wac", "verifyConsensus", "decl", false,
-         "**`verifyConsensus`'s seven refusal arms** — too few signatures, a signature from an " +
-         "authority not in the trusted set, a digest that does not match, a document outside its " +
-         "validity window. This is the function that decides whether to believe the directory, " +
-         "and every path by which it says no is unexercised. The corpus is real consensuses, " +
-         "which are valid."),
     Rule("packages/tor/src/consensusgen.wac", ") {", "decl", false,
          "The microdescriptor consensus writer's body — see the `return` rule over this file. " +
          "Its signature spans lines, so the declaration this rule matches is the closing `) {`."),

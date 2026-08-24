@@ -5,6 +5,8 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0251b](open/0251b-an-sctp-association-ignores-the-peers-advertised-receive-window.md) | `initWindow` — the receive window a peer announces in its INIT — is parsed and never read, so nothing does receiver-side flow control and `send` is bounded only by our own `cwnd`; its twin `initTsn` was unread in the same branch and was a *bug* rather than a gap, fixed the same day | missing feature | not implemented |
+| [0250b](open/0250b-wacc-can-say-what-a-host-reaches-but-not-what-a-file-declares.md) | `tools/docSignatures.test.ts` resolves a README's backticked `` `foo(…)` `` against every name a declaration introduces — "functions, types, variants, fields, methods" — and `packages/wacc`'s API answers only what crosses the host boundary: `exportSigsFiles` gives exported functions, `bindTypesFiles` host-holdable types, and nothing gives methods, enum variants or unexported functions, so porting that check onto our own parser would silently narrow the half that found both bugs it was written for | missing feature | not implemented |
 | [0241b](open/0241b-a-shared-file-is-measured-once-per-consumer-and-never-as-a-whole.md) | a coverage ledger's prefix is a directory, so a file imported across a package boundary is measured once per importer and never as a whole — `tls/src/handshake.wac` reads 36 of 108 dark from `tls` and 33 from `quic`, and only 15 are dark to both, so "covered by a neighbour" is the one exemption reason nothing can verify | missing feature | wrong answer |
 | [0242b](open/0242b-git-inflates-a-remotes-packfile-with-a-decoder-documented-to-trap.md) | `packages/gzip`'s `inflate` traps on a corrupt stream by a stated, fuzz-tested contract — *produces the original bytes or it fails* — and `packages/git` calls it from three network-facing sites, none in a subprocess, while returning `Raw.Damaged` for every other malformation; one flipped byte in a packfile ends the process | bug | trap |
 | [0239c](open/0239c-the-compiler-spends-minutes-on-a-file-that-is-not-wac-source.md) | `wac run <a module.wasm>` burns 90s of CPU on 75 KB and writes nothing — the compiler is handed binary as source, and a 36 KB text file finishes at once, so it is superlinear in recovery rather than any one byte; the zero-length output is its own bug | performance | hangs |
@@ -62,7 +64,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-252 issues, 202 closed.
+254 issues, 202 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

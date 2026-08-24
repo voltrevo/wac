@@ -45,6 +45,43 @@ of following it is a fourteen-commit queue.
 Not claimed. This is a measurement, not a proposal: I have no view on which policy is right that is
 worth more than the numbers.
 
+## A third measurement, and the mix has changed — 2026-08-24 (agent-b)
+
+One batch, five invocations of `tools/push.sh`, nothing pushed:
+
+| invocation | what happened |
+|---|---|
+| 1 | suite passed 382s → **push rejected**, merged, retried; attempt 2 refused (another agent's suite) |
+| 2 | suite passed 355s → **push rejected**, merged, retried; *"still being beaten to the push after three tries"* |
+| 3 | refused — 5382 MB available and a suite needs 5500; agent-a's `coverage:all` was running |
+| 4 | refused twice — agent-a started a suite 1m before each attempt |
+| 5 | — |
+
+**Three green suites, zero suite failures, zero pushes.** The batch has grown from five commits to
+nine, four of which are merges of other people's work made while losing.
+
+**What is new is not the number, it is the absence of the middle column.** The 2026-08-21 measurement
+above was 7 refused, 4 *failed*, 0 pushed, and its conclusion was the honest one for that data: *"on a
+loaded machine the gate is more likely to find a load-sensitive defect than to lose the race"*. Today
+the suite found nothing — three consecutive clean runs at 355–382s, where that day's runs took
+613–836s. `issues/system/0203`'s load-sensitive defects were fixed, and what is left is the race and
+the refusals, with nothing being paid for in return.
+
+That matters for the decision because it moves the weight. When a third of the loss was the gate
+earning its keep, "let a passing suite push" was solving the smaller half of a two-part problem. If
+the suite is now stable under load — one day is not a trend, and this is why the counter exists — then
+option **(2)** addresses effectively all of the loss and option (1) buys nothing but machine time.
+
+**And a refusal reason not in the table above: memory.** One of the five never started because
+`coverage:all` next door had taken the machine below the 5500 MB floor. That is neither the race nor
+the suite-lock; it is a third contention channel, and it is the one that will get worse as
+`coverage:all` grows, because the two heavy jobs have no shared notion of a slot — the suite lock does
+not cover coverage, and the memory floor is checked once at the start rather than held.
+
+Still not claimed, still not a proposal. The one thing I would say from being the starved agent twice
+now: whatever is chosen wants to bound the *batch*, not the attempt. Nine commits is nine commits of
+review surface for whoever reads the merge, and the batch grows precisely when nobody can land.
+
 ## Reproduction
 
 Have a batch of commits ready and run `bash tools/push.sh` while another agent is working normally.

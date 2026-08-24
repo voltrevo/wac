@@ -58,6 +58,7 @@ import {
   test_a_data_channel_is_opened_by_a_dcep_message_inside_a_data_chunk as sct__a_data_channel_is_opened_by_a_dcep_message_inside_a_data_chunk,
   test_an_empty_string_has_its_own_protocol_identifier as sct__an_empty_string_has_its_own_protocol_identifier,
   test_a_message_reassembles_when_its_chunks_are_reordered_on_the_path as sct__a_message_reassembles_when_its_chunks_are_reordered_on_the_path,
+  test_the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive as sc__the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive,
   test_and_it_reassembles_when_the_tsns_are_negative_as_an_i32 as sct__and_it_reassembles_when_the_tsns_are_negative_as_an_i32,
   test_a_duplicate_of_a_piece_already_consumed_is_ignored as sct__a_duplicate_of_a_piece_already_consumed_is_ignored,
   test_tsn_comparison_is_serial_so_it_survives_the_wrap_at_2_32 as sct__tsn_comparison_is_serial_so_it_survives_the_wrap_at_2_32,
@@ -256,6 +257,10 @@ export i32 main(Core core, Cli cli) {
   }
   if (sct__an_empty_string_has_its_own_protocol_identifier().len() > 0) {
     core.warn("error: FAILED sctp_test test_an_empty_string_has_its_own_protocol_identifier");
+    bad = bad + 1;
+  }
+  if (sc__the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive().len() > 0) {
+    core.warn("error: FAILED sctp_test test_the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive");
     bad = bad + 1;
   }
   if (sct__a_message_reassembles_when_its_chunks_are_reordered_on_the_path().len() > 0) {

@@ -202,3 +202,47 @@ export string test_a_packet_number_survives_being_written_and_read_back() {
   }
   return t.report();
 }
+
+/**
+ * **An offset that is not inside the packet is refused rather than read.**
+ *
+ * `shortKeyPhase` and `shortPacketNumber` take the same four arguments and are read one after the
+ * other by anyone walking a datagram. Only the second guarded them. The first went straight to
+ * `packet[at]` after checking that `headerMask` returned something — and `headerMask` bounds its
+ * *sample* offset, `at + 5 + cidLen + 16`, not `at`. For a negative `at` the sample offset can land
+ * back inside the packet while `at` itself does not, so the mask check passes and the read is out of
+ * bounds. `spec/spec/arrays.md` `[§wac-arr-oob-7jby7f8]`: that traps, which ends the process.
+ *
+ * Nothing in this package passes a negative one — `client.wac:604` passes a literal zero — so this is
+ * a hazard on an exported function rather than a live bug, and the reason it is worth a test is that
+ * the sibling beside it has carried exactly these two guards since it was written. A pair that takes
+ * identical arguments and disagrees about whether to check them is the shape that eventually gets
+ * called the wrong way.
+ *
+ * Both are asserted together, because the point is that they now answer the same way.
+ */
+export string test_a_short_header_read_outside_the_packet_is_refused() {
+  T t = T.create();
+  u8[] packet = sealShort(id(), payload(1), 1 as i64, keys(), 0);
+  t.isTrue(packet.len() > 21, "the sealed packet is too short for the offsets below to mean anything");
+
+  // The control: at zero, with the id length it was sealed to, both still answer.
+  t.eqI32(shortKeyPhase(packet, 0, keys(), 4), 0, "the control: offset zero no longer reads a phase");
+  t.isTrue(shortPacketNumber(packet, 0, keys(), 4) >= (0 as i64),
+           "the control: offset zero no longer reads a packet number");
+
+  // A negative offset whose *sample* still lands inside the packet, which is the case the mask check
+  // cannot see, and two that are simply past the end.
+  i32[] outside = i32[](0 - 1, 0 - 5, 0 - 21, packet.len(), packet.len() + 40);
+  for (i32 i = 0; i < outside.len(); i++) {
+    t.eqI32(shortKeyPhase(packet, outside[i], keys(), 4), 0 - 1,
+            "shortKeyPhase read at offset " + itoa(outside[i]));
+    t.eqI64(shortPacketNumber(packet, outside[i], keys(), 4), (0 - 1) as i64,
+            "shortPacketNumber read at offset " + itoa(outside[i]));
+  }
+
+  // And a connection id length no receiver could have chosen, which the sibling also already refused.
+  t.eqI32(shortKeyPhase(packet, 0, keys(), 0 - 1), 0 - 1, "a negative id length was used");
+  t.eqI32(shortKeyPhase(packet, 0, keys(), 1000), 0 - 1, "an id length past the maximum was used");
+  return t.report();
+}
