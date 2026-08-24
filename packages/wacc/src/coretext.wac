@@ -1090,7 +1090,7 @@ export string stdFile(string path) {
             + "   * Whether `out` is **all** of what the child wrote, or as much as would fit.\n"
             + "   *\n"
             + "   * A frame's output is held in this program's memory rather than draining anywhere, so on the\n"
-            + "   * JavaScript hosts it is capped — 8 MiB — and at the cap `write` starts answering false.\n"
+            + "   * JavaScript hosts it is capped at 8 MiB, and at the cap `write` starts answering false.\n"
             + "   *\n"
             + "   * **The native runtime does not cap it**, which is a difference rather than a simplification and is\n"
             + "   * why this field exists rather than a constant: its frame is a `Vec` that grows, so the same applet\n"
