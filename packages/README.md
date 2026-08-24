@@ -165,6 +165,7 @@ deno task coverage:http
 deno task coverage:json
 deno task coverage:mpt
 deno task coverage:regex
+deno task coverage:rlp
 deno task coverage:raster
 deno task coverage:server
 deno task coverage:sh

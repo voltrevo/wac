@@ -23,23 +23,23 @@ export const TOTALS = {
   packages: 38,
   lines: 133154,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2710,
+  tests: 2713,
   programs: 82,
   pages: 11,
   /**
-   * The whole repository: the packages (2710), and the compiler, harness and tooling
+   * The whole repository: the packages (2713), and the compiler, harness and tooling
    * around them (1377).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 4087,
+  testsAll: 4090,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 531,
+  wacTests: 534,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -60,7 +60,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1311, tests: 46 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 59 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1084, tests: 28 },
-  { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 10 },
+  { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 13 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4062, tests: 40 },
   { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8456, tests: 138 },

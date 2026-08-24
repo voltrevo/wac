@@ -1,0 +1,94 @@
+// Branch coverage for rlp: the package's own tests, and nothing else.
+//
+//   deno task coverage:rlp
+//   deno task coverage:rlp --verbose
+//
+// The fourth of the packages `issues/system/0205` records as unmeasured, and the one `packages/mpt` and
+// `packages/ssz` both stand on: every trie node and every account is RLP before it is anything else.
+// Its published-vector corpus is Ethereum's, which by the first three packages' finding means the gaps
+// to expect are **this decoder's own refusals** — and RLP's refusals are the canonical-encoding rules,
+// which is the whole of its attack surface.
+//
+// **Three of the ten tests expect a trap** and go through `trapCase` rather than being called from
+// `main`: a trap in `main` ends the run, and the report then looks identical to the one before the
+// wiring — which is `packages/bytes`' lesson and the tell is `test_traps_` in the name.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Item, bytesOf, itemsOf } from "../src/rlp.wac";
+import {
+  test_the_accessors_answer_for_the_variant_they_are_for as ac__the_accessors_answer_for_the_variant_they_are_for,
+  test_a_length_prefix_must_be_canonical_and_must_fit as ac__a_length_prefix_must_be_canonical_and_must_fit,
+  test_a_lists_members_must_end_exactly_where_it_says as ac__a_lists_members_must_end_exactly_where_it_says,
+} from "./wac/accessors_test.wac";
+import {
+  test_the_published_vectors_decode_and_re_encode as rl__the_published_vectors_decode_and_re_encode,
+  test_the_invalid_vectors_are_all_refused as rl__the_invalid_vectors_are_all_refused,
+  test_trailing_bytes_are_refused as rl__trailing_bytes_are_refused,
+  test_the_edges_of_the_length_forms as rl__the_edges_of_the_length_forms,
+  test_a_number_is_the_shortest_big_endian_string as rl__a_number_is_the_shortest_big_endian_string,
+  test_nesting_survives_a_round_trip as rl__nesting_survives_a_round_trip,
+} from "./wac/rlp_test.wac";
+import {
+  test_traps_on_negative_one as tr__traps_on_negative_one,
+  test_traps_on_the_most_negative as tr__traps_on_the_most_negative,
+  test_traps_on_a_negative_inside_a_list as tr__traps_on_a_negative_inside_a_list,
+  test_an_ordinary_number_still_encodes as tr__an_ordinary_number_still_encodes,
+} from "./wac/traps_test.wac";
+
+/** The three tests that expect a trap, called one at a time with the trap caught. */
+export void trapCase(i32 i) {
+  if (i == 0) { tr__traps_on_negative_one(); }
+  if (i == 1) { tr__traps_on_the_most_negative(); }
+  if (i == 2) { tr__traps_on_a_negative_inside_a_list(); }
+  // `bytesOf` on a list and `itemsOf` on a byte string: the accessors' refusing halves, which trap
+  // rather than answering an empty value a caller could carry forward.
+  if (i == 3) { bytesOf(Item.List(Item[0](fill: Item.Bytes(u8[0]())))); }
+  if (i == 4) { itemsOf(Item.Bytes(u8[](1))); }
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (ac__the_accessors_answer_for_the_variant_they_are_for().len() > 0) {
+    core.warn("error: FAILED accessors_test test_the_accessors_answer_for_the_variant_they_are_for");
+    bad = bad + 1;
+  }
+  if (ac__a_length_prefix_must_be_canonical_and_must_fit().len() > 0) {
+    core.warn("error: FAILED accessors_test test_a_length_prefix_must_be_canonical_and_must_fit");
+    bad = bad + 1;
+  }
+  if (ac__a_lists_members_must_end_exactly_where_it_says().len() > 0) {
+    core.warn("error: FAILED accessors_test test_a_lists_members_must_end_exactly_where_it_says");
+    bad = bad + 1;
+  }
+  if (rl__the_published_vectors_decode_and_re_encode(core, cli).len() > 0) {
+    core.warn("error: FAILED rlp_test test_the_published_vectors_decode_and_re_encode");
+    bad = bad + 1;
+  }
+  if (rl__the_invalid_vectors_are_all_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED rlp_test test_the_invalid_vectors_are_all_refused");
+    bad = bad + 1;
+  }
+  if (rl__trailing_bytes_are_refused().len() > 0) {
+    core.warn("error: FAILED rlp_test test_trailing_bytes_are_refused");
+    bad = bad + 1;
+  }
+  if (rl__the_edges_of_the_length_forms().len() > 0) {
+    core.warn("error: FAILED rlp_test test_the_edges_of_the_length_forms");
+    bad = bad + 1;
+  }
+  if (rl__a_number_is_the_shortest_big_endian_string().len() > 0) {
+    core.warn("error: FAILED rlp_test test_a_number_is_the_shortest_big_endian_string");
+    bad = bad + 1;
+  }
+  if (rl__nesting_survives_a_round_trip().len() > 0) {
+    core.warn("error: FAILED rlp_test test_nesting_survives_a_round_trip");
+    bad = bad + 1;
+  }
+  if (tr__an_ordinary_number_still_encodes().len() > 0) {
+    core.warn("error: FAILED traps_test test_an_ordinary_number_still_encodes");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("rlp: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}

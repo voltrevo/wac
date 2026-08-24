@@ -609,6 +609,43 @@ count of tests is not the count of what they reach. Same mistake as `raster`'s g
 one) and it is now the standing rule for these headers: no number in a ledger that a canary has not
 produced.
 
+### `rlp` fourth — both kinds at once, and the lowest first run
+
+**24 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 25 drivers; the unmeasured list is 14.
+
+`rlp` opened at **84.6%**, against 90.5 / 91.2 / 91.0 for the three before it — and the reason is that
+its gaps came in *both* kinds rather than one:
+
+  - **`bytesOf`, `itemsOf` and `isList` were entirely uncovered.** Nine points, three public accessors,
+    every one used constantly by `mpt` on trie nodes and `ssz` on containers — and this package's own
+    tests never called one. A package's tests exercise what it *does*; its accessors are what its
+    *consumers* do. That is `tty`'s shape.
+  - **the canonical-length refusals** — a truncated prefix, a leading zero, a long form that fits the
+    short one, a four-byte length an `i32` cannot hold. That is `ssz` and `mpt`'s shape, and for the
+    same reason: the vectors are Ethereum's, and Ethereum never emits a non-canonical length.
+
+The second kind is the one with teeth. **A decoder that accepts a non-minimal length accepts two
+encodings of one value, and two encodings are two hashes for one object** — for a trie node or a beacon
+container that is the difference between a proof and a forgery. `ssz`, `mpt` and `rlp` are the three
+packages Ethereum state proofs stand on, and all three had their canonicity rules unexercised.
+
+**89 of 91**, two pins — `header`'s negative-length trap, whose two callers pass lengths they just
+measured, and `item`'s already-in-error guard, which is character-for-character the one `mpt`'s `step`
+carries and is pinned there too.
+
+### The four so far
+
+| package | first run | gaps were |
+|---|---:|---|
+| `ssz` | 90.5% | refusals (23 of 26) |
+| `mpt` | 91.2% | refusals (11 of 11) |
+| `tty` | 91.0% | unused API, an unentered mode, an unmeasured tab |
+| `rlp` | 84.6% | **both** — three uncovered accessors *and* the canonicity refusals |
+
+About an hour each. Every one turned up something with consequences rather than tidy-up, and none of it
+was visible from inside the package's own tests.
+
 ### `tty` third — and the pattern is narrower than two packages made it look
 
 **23 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
