@@ -422,3 +422,44 @@ Still ahead of it in the order: `update` and `sh`, which need the **payload** qu
 one is unchanged and is the operator's: the native binary embeds three modules and a JS-hosted `wac` is
 built from `wacc.wac` alone, so `wac sh` has no shell to start. `Cli.load` does not settle it — a
 loaded module has to come from somewhere, and "somewhere" is what the question is about.
+
+## 2026-08-24: `wac test <file>` is in the program, on all three hosts
+
+Twenty-one invocations now agree across the native binary, Deno and Node — `commandparity_test.wac`,
+22s warm. The five new rows are `test`: the failing-report case, `--filter`, a filter matching nothing,
+an unknown flag, and a missing file.
+
+The whole of it is thirty lines, because `Cli.load` did the hard part (`issues/system/0240c`): the
+module is already compiled by the lines above it, so wrap it in its manifest, load it, and call every
+`test*` the manifest declares. **The names come from the manifest**, not from a scan of the source —
+`native/v8`'s `test_exports_of` reads the file with `match_indices("export string test")` because it
+runs *before* anything is built and has to decide what to build; here the module already describes
+itself, so there is nothing to guess and no comment that can look like a declaration.
+
+### Two bugs in the native host, both found by comparing
+
+- **A trapping test left its exception pending on the isolate.** `run_tests` called the export with a
+  bare `f.call` and no `TryCatch`, so V8's default handler printed `Uncaught RuntimeError: unreachable`
+  on stderr — once per `test_traps_*`, and there are 389. The noise was the small half: a pending
+  exception makes the *next* `compile` hit V8's own
+  `Check failed: maybe_compiled.is_null() == i_isolate->has_exception()` and abort the process, which
+  the module loop in the same file already documents. Nothing there compiled twice until `Cli.load`
+  existed, so it had never bitten.
+- **`--filter`'s value was read as a path.** `positionals` skipped `-o` and `--trace-slots` and not
+  `--filter`, so `--filter passes src/x_test.wac` answered *cannot read passes* — a sentence about a
+  file, about a pattern. That is `issues/system/0177`'s own mistake one level along, in the function
+  that fixed it.
+
+And one of mine the differential caught: a filter matching nothing has to be an **error**. `0 passed,
+0 failed` reads like a suite that has quietly emptied, and the typo you made is invisible. The native
+answers 5 and its caller turns that into 1 for a file somebody named.
+
+### What is left on this step
+
+- **The directory case**: walk for `*_test.wac`, build *one aggregate module* per directory —
+  `issues/system/0192` is why one build rather than one per file — and print `N files: …` as well.
+  This is the substantial half and it is not blocked by anything.
+- **`--coverage`**: refuses explicitly rather than being ignored. `__cov_init`, `__cov_len` and
+  `__cov_get` are `void f()`, `i32 f()` and `i32 f(i32)` — three of the four shapes `call` accepts, so
+  this is work rather than a gap in the boundary.
+- Then `update` and `sh`, which still wait on the **payload** question.

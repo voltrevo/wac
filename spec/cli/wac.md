@@ -23,7 +23,7 @@ The command is decided by what the first argument *is* rather than by a flag, be
 |---|---|
 | `prog.wasm` | run that program — the module carries its own manifest, and its grants are the ones that manifest declares. A Deno- or Node-hosted `wac` does this too, since 2026-08-22 |
 | `run`, `test`, `sh`, `validate`, `covdump`, `ctcompare`, `tracestat`, `app`, `app-run` | this host's own commands — compiling, running, the shell, and the four that ask about a built module |
-| `run`, again | **also implemented in the wac program**, which is where every host but this one gets it. `issues/system/0230a` is giving the subcommands to all three hosts one at a time; this binary answers `run` in Rust first, and `packages/wacc/test/wac/commandparity_test.wac` holds the two to the same output. Both stay — the Rust one runs the module in this process rather than relaying it |
+| `run` and `test`, again | **also implemented in the wac program**, which is where every host but this one gets them. `issues/system/0230a` is giving the subcommands to all three hosts one at a time; this binary answers both in Rust first, and `packages/wacc/test/wac/commandparity_test.wac` holds each pair to the same output. Both stay — the Rust `run` runs the module in this process rather than relaying it, and the Rust `test` walks a *directory* and builds one aggregate module, which the wac one does not do yet |
 | `uninstall` | remove what an install put under `$WAC_HOME`, and the line it added to each shell profile |
 | `update` | resolve and fetch what `wac.lock` does not cover, and write the lock |
 | anything else | handed to the compiler inside: `check`, `compile`, `build`, `bindgen` — and `run`, which this binary intercepts above |

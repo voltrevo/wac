@@ -31,7 +31,7 @@
 //
 // ## What is compared, and what is deliberately not
 //
-// Sixteen invocations covering the five subcommands the program has plus `wac <module.wasm>`, each
+// Twenty-one invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
 // side's stdout and stderr concatenated, and the exit code. Not compared: timing, and the module bytes
 // `build` writes — those have their own tests (`bindgenwac_test.wac` holds the two *generators* to the
 // same bytes, which is a different claim from two hosts running one generator). **Worth adding and not
@@ -56,9 +56,10 @@
 //
 // ## What it costs, measured 2026-08-22
 //
-// **13.4s warm** — up from 2–3s, for three hosts instead of two and sixteen cases instead of six,
-// eight of which compile or run a program rather than only checking one, plus three module builds in
-// the fixture. The build is the only expensive part
+// **22s warm** — up from 2–3s, for three hosts instead of two and twenty-one cases instead of six,
+// thirteen of which compile, run or test a program rather than only checking one, plus three module
+// builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
+// it, where `check` stops at the diagnostics. The build is the only expensive part
 // and is paid by `builtByDeno`, which keys on the closure of `wacc.wac`, `compiler/`, `build.ts` and
 // `packages/platform/host/`; under it, `build.ts` keys its own work on the content of every file it
 // reads, so a rebuild after an unrelated change is a copy and a runtime start. The first run after
@@ -144,7 +145,19 @@ string[][] cases() {
     string[]("reader.wasm"),                  // built without the grant: denied on every host
     string[]("reader-read.wasm"),             // built with it: allowed on every host
     string[]("nosuch.wasm"),                  // a `.wasm` that is not there — a file, not a command
-    string[]("notamodule.wasm"));             // a file that is there and is not a program
+    string[]("notamodule.wasm"),              // a file that is there and is not a program
+    // **`test`, one file — `issues/system/0230a` step 5.** The module is loaded and its `test*`
+    // exports called, which `Cli.load` made expressible (`issues/system/0240c`): before it a wac
+    // program could start a *program* and not call a *function*, and a test is a function.
+    //
+    // The directory case is still the native binary's alone — it walks for `*_test.wac` and builds one
+    // aggregate module — so these rows name a file. `--coverage` refuses on both rather than being
+    // quietly ignored.
+    string[]("test", "--allow-read", "src/one_test.wac"),     // 2 pass, 2 fail, and which
+    string[]("test", "--allow-read", "--filter", "passes", "src/one_test.wac"),
+    string[]("test", "--allow-read", "--filter", "zzz", "src/one_test.wac"),   // matches nothing
+    string[]("test", "--nonsense", "src/one_test.wac"),       // an unknown flag, named
+    string[]("test", "--allow-read", "src/missing_test.wac"));
 }
 
 /**
@@ -177,7 +190,16 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            "  core.log(f.ok ? \"read ok\" : (f.fault == FAULT_NOT_GRANTED() ? \"read denied\"\n" +
            "                                                                : \"read failed\"));\n" +
            "  return 0;\n}\n")
-    && put(t, cli, dir + "/notamodule.wasm", "not a module\n");
+    && put(t, cli, dir + "/notamodule.wasm", "not a module\n")
+    // For `test`: one of each outcome the runner has to tell apart — a pass, a failing report, a
+    // `test_traps_*` that traps as its name says, and one that returns instead, which is a failure
+    // whose whole point is that an empty report from it must not read as a pass.
+    && put(t, cli, dir + "/src/one_test.wac",
+           "import { Cli, Core } from \"std/platform.wac\";\n" +
+           "export string test_passes(Core core, Cli cli) { return \"\"; }\n" +
+           "export string test_fails(Core core, Cli cli) { return \"1 of 1 assertions failed\"; }\n" +
+           "export string test_traps_here(Core core, Cli cli) { return \"\"; }\n" +
+           "export string test_traps_on_purpose(Core core, Cli cli) { trap; }\n");
   if (!wrote) { cli.remove(dir, true).wait(); return t.report(); }
 
   string native = wacBinary(cli);
@@ -239,8 +261,8 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
   // header. Eight of these sixteen exit 0: two `bindgen`s, one `check`, the two `run`s of a program
   // that returns 0, and the three modules run directly.
-  t.eqI32(zeroes, 8, "eight of these sixteen succeed on the native host; a different count means the " +
-                     "argument vectors did not arrive as vectors");
+  t.eqI32(zeroes, 9, "nine of these twenty-one succeed on the native host; a different count means " +
+                     "the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success
   // instead of the program's would read as 0 and every other assertion would still pass.

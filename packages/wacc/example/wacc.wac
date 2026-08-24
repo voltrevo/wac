@@ -20,7 +20,8 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { Change, Child, Cli, Core, FileResult, Pending, faultWords } from "std/platform.wac";
+import { CallResult, Change, Child, Cli, Core, FileResult, LoadedModule, Pending, faultWords }
+  from "std/platform.wac";
 import { Read } from "core";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
@@ -766,6 +767,149 @@ i32 runModule(Core core, Cli cli, i32 argc, string path) {
 }
 
 /**
+ * Every `test*` export a manifest declares, in the order the module declares them.
+ *
+ * **From the manifest rather than from a scan of the source**, which is the difference between this
+ * and `native/v8`'s `test_exports_of`: that reads the file with `match_indices("export string test")`
+ * because it runs *before* anything is compiled and has to decide what to build. Here the module is
+ * already built and describes itself, so there is nothing to guess and no comment that can look like
+ * a declaration. `issues/system/0240c` is what made the module reachable from wac at all.
+ */
+string[] testExportsIn(string manifest) {
+  JsonValue? doc = parse(manifest.toBytes());
+  if (doc is null) { return string[0](fill: ""); }
+  JsonObject root = JsonObject.create();
+  match (doc!) {
+    case Object(o): { root = o; }
+    else: { return string[0](fill: ""); }
+  }
+  JsonValue? xs = root.getStr("exports");
+  if (xs is null) { return string[0](fill: ""); }
+  string[] out = string[1024](fill: "");
+  i32 n = 0;
+  match (xs!) {
+    case Array(items): {
+      for (i32 i = 0; i < items.len() && n < out.len(); i++) {
+        match (items.get(i)) {
+          case Object(e): {
+            JsonValue? nm = e.getStr("name");
+            if (nm is null) { continue; }
+            match (nm!) {
+              case Str(bytes): {
+                string name = string.fromBytes(bytes);
+                if (name.len() > 4 && name.slice(0, 4) == "test") { out[n] = name; n = n + 1; }
+              }
+              else: { }
+            }
+          }
+          else: { }
+        }
+      }
+    }
+    else: { }
+  }
+  return exactly(out, n);
+}
+
+/**
+ * The first flag-looking argument `test` does not know, or "".
+ *
+ * **Flags in any position**, which is `run`'s opposite and the native command's rule: `wac test
+ * packages/fs/ --allow-write` counted the grant as a *file* once, printed a phantom entry that read
+ * like a failing test, and ran without the capability — `tools/wac/testcli_test.wac` is that. A test
+ * target is a path and a path is not a flag, so there is no tail here for `--` to protect.
+ */
+string unknownTestFlag(Cli cli, i32 argc, string entry) {
+  for (i32 i = 1; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
+    if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
+        && a != "--allow-run" && a != "--filter" && a != "--coverage" && a != "--verbose") {
+      return a;
+    }
+    // `--filter`'s value is not a flag, whatever it looks like.
+    if (a == "--filter") { i = i + 1; }
+  }
+  return "";
+}
+
+/** Whether `name` holds `part`. `--filter` matches a substring, as the native command's does. */
+bool holds(string name, string part) {
+  return part == "" || name.indexOf(part) >= 0;
+}
+
+/** The value after a flag, or "" — `--filter passes`. */
+string flagValue(Cli cli, i32 argc, string flag) {
+  for (i32 i = 1; i + 1 < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == flag) {
+      return string.fromBytes(cli.arg(i + 1).wait());
+    }
+  }
+  return "";
+}
+
+/**
+ * Run one built test module's exports, and answer the exit code.
+ *
+ * **A test named `test_traps_*` passes by trapping**, which is the convention `native/v8`'s
+ * `run_tests` owns and the reason `Cli.call` reports a trap as a value: 389 of this repository's 2553
+ * test exports are that shape, and no wac program can catch one. A test with that name that *returns*
+ * is a failure — "returned instead of trapping" is the native command's own sentence, matched here
+ * because `commandparity_test.wac` compares them.
+ */
+i32 runTests(Core core, Cli cli, u8[] whole, string manifest, string filter) {
+  LoadedModule m = cli.load(whole);
+  if (m.unavailable()) {
+    core.warn("wac: this host cannot run tests — `test` needs `load`, which a page has no form of");
+    return 1;
+  }
+  if (m.handle < 0) {
+    core.warn("wac: the module just built will not load — " + m.error);
+    return 1;
+  }
+  string[] names = testExportsIn(manifest);
+  i32 passed = 0;
+  i32 failed = 0;
+  i32 filtered = 0;
+  for (i32 i = 0; i < names.len(); i++) {
+    string name = names[i];
+    if (!holds(name, filter)) { filtered = filtered + 1; continue; }
+    bool wantsTrap = name.len() > 11 && name.slice(0, 11) == "test_traps_";
+    CallResult c = cli.call(m.handle, name, 0);
+    if (c.trapped()) {
+      if (wantsTrap) { passed = passed + 1; }
+      else {
+        failed = failed + 1;
+        core.log("FAIL " + name + " — trapped: " + c.text);
+      }
+    } else if (c.status != 0) {
+      failed = failed + 1;
+      core.log("FAIL " + name + " — " + c.text);
+    } else if (wantsTrap) {
+      failed = failed + 1;
+      core.log("FAIL " + name + " — returned instead of trapping");
+    } else if (c.text != "") {
+      failed = failed + 1;
+      core.log("FAIL " + name + " — " + c.text);
+    } else {
+      passed = passed + 1;
+    }
+  }
+  cli.unload(m.handle);
+  // **A filter that matched nothing is a mistake, not an empty pass.** You asked for a test by name
+  // and this file has no such name; exiting 0 would hide the typo, and `0 passed, 0 failed` reads
+  // like a suite that has quietly emptied. The native command answers 5 here and its caller turns
+  // that into 1 for a file somebody named — one layer there, and one command here, so this returns 1.
+  if (passed == 0 && failed == 0 && filter != "") {
+    core.log("(no test matches --filter " + filter + ")");
+    return 1;
+  }
+  core.log(itoa(passed) + " passed, " + itoa(failed) + " failed"
+           + (filtered > 0 ? ", " + itoa(filtered) + " filtered out" : ""));
+  return failed == 0 ? 0 : 3;
+}
+
+/**
  * Relay a child's two streams until both end, then answer its exit code.
  *
  * **Both, in the order they arrive.** One `recv` in flight per open stream and `waitAny` over the
@@ -816,7 +960,9 @@ string usage() {
        + "       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
        + "                <entry.wac> [args…]   compile and run it, with no file in between;\n"
        + "                a grant goes before the entry, and after `--` an argument is the\n"
-       + "                program's, whatever it looks like";
+       + "                program's, whatever it looks like\n"
+       + "       wac test [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]\n"
+       + "                [--filter <name>] <file_test.wac>   run its `test*()` exports";
 }
 
 /**
@@ -852,7 +998,10 @@ string[] positionals(Cli cli, i32 argc) {
   i32 i = 1;
   while (i < argc) {
     string a = string.fromBytes(cli.arg(i).wait());
-    if (a == "-o" || a == "--trace-slots") { i = i + 2; continue; }
+    // **Three flags carry a value**, and skipping the flag without its value leaves the value looking
+    // like the entry. `--filter passes src/x_test.wac` reported *cannot read passes* — a sentence
+    // about a file, about a pattern — which is `issues/system/0177`'s mistake one level along.
+    if (a == "-o" || a == "--trace-slots" || a == "--filter") { i = i + 2; continue; }
     if (a.len() > 0 && a.slice(0, 1) == "-") { i = i + 1; continue; }
     out[n] = a;
     n = n + 1;
@@ -1028,8 +1177,9 @@ export i32 main(Core core, Cli cli) {
   // wrong one: `wacc chekc nope.wac` reported *cannot read nope.wac* and exited 1, diagnosing the
   // typo you did not make and giving a compile-failure code for a usage mistake. Whether a usage
   // error is reported as one should not depend on an unrelated path happening to exist.
-  if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen" && cmd != "run") {
-    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build, bindgen or run");
+  if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen" && cmd != "run"
+      && cmd != "test") {
+    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build, bindgen, run or test");
     return 2;
   }
 
@@ -1188,6 +1338,39 @@ export i32 main(Core core, Cli cli) {
   // which `$bind$` export builds `Core` and in what order its funcrefs go, so an application is a
   // module *and* a manifest — `deno task app:native` in one command, which is what lets this binary
   // produce the artefact it is itself made of.
+  // **`test` — one file, and it runs where `load` runs.** `issues/system/0230a` step 5.
+  //
+  // The whole of it is: the module is already compiled by the lines above, so wrap it in its manifest,
+  // load it, and call every `test*` the manifest declares. `Cli.load` is what made that expressible
+  // (`issues/system/0240c`) — before it, a wac program could start a *program* and not call a
+  // *function*, and a test is a function.
+  //
+  // **One file, not a directory, and the summary says so by not being printed.** `wac test <dir>` on
+  // the native binary walks for `*_test.wac`, builds one aggregate module for the whole directory and
+  // prints `N files: …` as well. That aggregate is the part still to come; a caller naming one file
+  // gets the same output from either host today, which is what `commandparity_test.wac` holds.
+  //
+  // `--coverage` is not here and is not silently ignored: the counters are reached through
+  // `__cov_init`/`__cov_len`/`__cov_get`, which `call` accepts — three of its four shapes — so this is
+  // work rather than a gap in the boundary.
+  if (cmd == "test") {
+    string badFlag = unknownTestFlag(cli, argc, entry);
+    if (badFlag != "") {
+      core.warn("wac: unknown flag '" + badFlag + "' — --allow-read, --allow-write, --allow-net, "
+                + "--allow-env, --allow-run, --filter");
+      return 2;
+    }
+    if (hasFlag(cli, argc, "--coverage")) {
+      core.warn("wac: --coverage is not implemented here yet — issues/system/0230a");
+      return 2;
+    }
+    i32 grants = grantsIn(cli, argc);
+    string manifest = manifestWire(wasm, types, sigs, entry,
+                                  baseName(stem(entry)) + ".wasm", grants);
+    return runTests(core, cli, withManifestSection(wasm, manifest), manifest,
+                    flagValue(cli, argc, "--filter"));
+  }
+
   // **`run`, and it lives here rather than in a host — `issues/system/0230a`, option 2.**
   //
   // The operator ruled that the shared thing is *this program* and that Deno, Node and the native

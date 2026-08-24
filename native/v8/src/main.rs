@@ -1861,9 +1861,14 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     // misspelling. The wac program in `packages/wacc/example/wacc.wac` says this sentence, and the two
     // have to agree while both exist: `commandparity_test.wac` is what checks that. `issues/system/0230a`.
     if rest[i].starts_with("--") {
+        // `--filter` is `test`'s and not `run`'s — the loop above says so in its own words — so the
+        // list a reader is given is the one for the command they typed. The wac program in
+        // `packages/wacc/example/wacc.wac` prints the same sentence and
+        // `commandparity_test.wac` compares them.
+        let tail = if entry_point == Entry::Tests { ", --filter" } else { "" };
         eprintln!(
             "wac: unknown flag '{}' — --allow-read, --allow-write, --allow-net, --allow-env, \
-             --allow-run",
+             --allow-run{tail}",
             rest[i]
         );
         return 2;
@@ -3451,7 +3456,21 @@ fn run_tests(
             Vec::new()
         };
         let began = std::time::Instant::now();
-        let outcome = f.call(scope, exports.into(), &args);
+        // **Caught, not merely observed.** This was a bare `f.call`, so a trapping test left its
+        // exception pending on the isolate and V8's default handler printed
+        // `Uncaught RuntimeError: unreachable` on stderr — once per `test_traps_*`, of which this
+        // repository has 389. Noise was the small half. The large half is the hazard the module
+        // loop already documents: a pending exception makes the *next* `compile` walk into V8's own
+        // `Check failed: maybe_compiled.is_null() == i_isolate->has_exception()` and abort the
+        // process. Nothing here compiled twice until `Cli.load` existed. `issues/system/0240c`.
+        let outcome = {
+            let tc = std::pin::pin!(v8::TryCatch::new(scope));
+            let mut tc = tc.init();
+            let out = f.call(&tc, exports.into(), &args).map(|v| v8::Global::new(&tc, v));
+            tc.reset();
+            out
+        }
+        .map(|g| v8::Local::new(scope, g));
         if profile_dir.is_some() && cov.is_some() {
             let after = counters_now(scope, exports);
             let mut mine: Vec<String> = Vec::new();
