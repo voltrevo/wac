@@ -20,7 +20,7 @@
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { contains } from "../../packages/wactest/src/strings.wac";
-import { Point, Pin, Rule, ratchet, uncoveredLines } from "./covledger.wac";
+import { Point, Pin, Rule, onlyClaims, ratchet, uncoveredLines } from "./covledger.wac";
 import { freshDir, scratch } from "../../packages/wactest/src/host.wac";
 import { Core, Cli, Change } from "std/platform.wac";
 
@@ -319,6 +319,61 @@ export string test_a_point_spoken_for_twice_is_still_one_point(Core core, Cli cl
   Rule[] rules = Rule[](Rule(f, "Cli cli", "decl", false, "needs a live handle."));
   t.isTrue(ratchet(core, cli, ps, 2, i32[](0, 0), dir + "/", both, rules),
            "two mentions of one point must not account for two points");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * **A rule every one of whose points another rule also claims has nothing of its own.**
+ *
+ * The ratchet already fails a rule that matches nothing — *"the rule explains something that is
+ * gone"*. It could not see the weaker case: a rule that still matches, but only points a broader
+ * rule already speaks for. It never trips the first check, so its prose is read as an independent
+ * statement about the code for as long as nobody re-derives it.
+ *
+ * That is not hypothetical. `packages/tls`'s ledger carried a `keyType != 4` line rule whose one
+ * point sits inside `certVerifySignature`, which a `decl` rule over the same file already covered.
+ * Removing the line rule left the driver green with identical numbers — and the sentence it carried
+ * said `test/data/make-p384.sh` generates a chain "nothing reads", which
+ * `test_a_two_deep_chain_verifies_to_a_p384_root` had been reading for some time.
+ *
+ * Asserted on `onlyClaims` rather than through `ratchet` because the finding is a log line and
+ * `ratchet` answers with one bool for a whole run — the same reason the count is a function.
+ */
+export string test_a_rule_with_no_point_of_its_own_is_named(Core core, Cli cli) {
+  T t = T.create();
+  string dir = nestedSubject(cli, t, "covledger-rule-subsumed");
+  string f = dir + "/nested.wac";
+  string[] ls = nested();
+
+  // Two uncovered points inside `waitId`: its signature line and its body.
+  string[] uncovered = string[](f + ":4", f + ":5");
+
+  Rule broad = Rule(f, "waitId", "decl", false, "the whole method needs a live handle.");
+  Rule narrow = Rule(f, "return this.id;", "line", false, "and the body in particular.");
+
+  // Both points are claimed twice: the decl rule reaches both, the line rule reaches the second.
+  i32[] twice = i32[](2, 2);
+  t.eqI32(onlyClaims(narrow, ls, uncovered, 2, twice), 0,
+          "the narrow rule claims a point the broad one does not, which is not this fixture");
+  t.eqI32(onlyClaims(broad, ls, uncovered, 2, twice), 0,
+          "the broad rule was credited with a point it shares");
+
+  // **The canary**: with the narrow rule gone, the broad rule is the only claimant of both — so the
+  // count is about exclusivity and not about the rule being broad. Without this, a function that
+  // always returned zero would satisfy the two assertions above.
+  i32[] once = i32[](1, 1);
+  t.eqI32(onlyClaims(broad, ls, uncovered, 2, once), 2,
+          "a rule that is the sole claimant of both points was credited with neither");
+  t.eqI32(onlyClaims(narrow, ls, uncovered, 2, once), 1,
+          "the line rule is the sole claimant of the body line alone");
+
+  // A rule matching neither point has nothing of its own either, and that case is the one the
+  // existing `test_a_rule_that_matches_nothing_fails` already fails on — here only to pin that the
+  // two checks disagree about nothing.
+  t.eqI32(onlyClaims(Rule(f, "no such text", "line", false, "-"), ls, uncovered, 2, once), 0,
+          "a rule matching nothing was credited with a point");
 
   cli.remove(dir, true).wait();
   return t.report();
