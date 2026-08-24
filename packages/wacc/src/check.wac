@@ -697,31 +697,27 @@ export bool assignable(C c, string want, string got) {
     return assignable(c, withoutNull(want), withoutNull(got));
   }
   if (isNullableName(got)) { return assignable(c, want, withoutNull(got)); }
+  // **A nullable slot accepts whatever its base accepts**, and the missing half was the ordinary one.
+  // `withoutNull(want) == got` above answers when the names match exactly — `Base? b = Base(9)` — and
+  // the both-nullable line answers `Base? b = k` for a `Kid? k` by recursing onto `Base` against
+  // `Kid`. So the rule this needs was already being relied on one line up; what had no route to it
+  // was a source that is *not* nullable. `Base? b = Kid(2, 38)` reported, in every position a value
+  // can be written: local, parameter, return, field, array element and a later assignment, all six
+  // measured against the reference, which accepts, emits and runs each of them.
+  //
+  // Stated as a general unwrap rather than a struct rule, because it is one: a `?` widens what a slot
+  // takes and narrows nothing. It subsumes the exact-name line above and the `anyref?` line below,
+  // both of which are special cases of it, and it cannot let anything new through — `i32? n = "x"`
+  // still asks whether a `string` fits an `i32`, and still gets no.
+  if (isNullableName(want)) { return assignable(c, withoutNull(want), got); }
   // A child goes into a parent's slot without a cast; the other direction is the downcast that needs
   // `as!`. Upcasting *by assignment* is the same fact as upcasting by cast, one syntax along, and was
   // missed because nothing in the spec corpus assigns a child to a parent.
   if (c.isStruct(want) && c.isStruct(got) && descendsFrom(c, got, want)) { return true; }
-  // **And a generic child into a non-generic parent**, which the line above cannot see. A generic is
-  // spelled with its arguments at the use site, so `parentOf("Cont<string>")` looks for a declaration
-  // by that name, finds none and answers `""` — the inheritance walk never starts and a correct
-  // program is refused with *"expected Task, found Cont<string>"*. Everything the checker knows about
-  // a generic is filed under the template, which is what `genericBase` is for; this is one more
-  // lookup that had not come back through it.
-  //
-  // The reference accepts this, emits it and runs it. `issues/lang/0144` found it while probing its
-  // own question — whether a call through a parent-typed reference dispatches dynamically — and
-  // recorded it as a consequence of that undecided rule. It is not: assignability to a declared
-  // parent is a different fact from which method a call runs, and the reference settles it. Reading
-  // it as part of the decision is what left a false alarm parked for a week.
-  //
-  // **Only a non-generic parent.** `Cont<T> : Box<T>` would need `T` substituted along the chain
-  // before `Box<string>` and `Box<i32>` could be told apart, and guessing there would trade this
-  // false alarm for a wrong acceptance. Left to fall through, which reports — the case is beyond
-  // this slice, and `descendsFrom` walking a chain of templates is the change that would settle it.
-  if (c.isStruct(want) && genericBase(want) == "" && genericBase(got) != ""
-      && c.isStruct(genericBase(got)) && descendsFrom(c, genericBase(got), want)) {
-    return true;
-  }
+  // A generic child into a parent — `Task t = c` for a `Cont<string> c` — is the line above too, now
+  // that `descendsFrom` starts from the template. It was a separate clause here for one commit, which
+  // was one caller patching a shared helper's blind spot; the cast rule had the same spot and the
+  // opposite symptom, which is what said the fix belonged in the helper.
   // **A variant is a value of its enum.** `Option<i32> a = Option.Some(5);` — the source has the
   // variant's own type, which is what the reference answers too (*"expected i32, got A"*), and the
   // slot has the enum's. Compared against the *template*, so an instance takes its own variants:
@@ -777,11 +773,25 @@ bool isReferenceType(C c, string t) {
  * `assignable` still answers `true` for it, so the mismatch rules stay quiet and this reports instead
  * of both firing at one position.
  */
-export bool nullableIntoNonNull(string want, string got) {
+export bool nullableIntoNonNull(C c, string want, string got) {
   if (want == "" || got == "") { return false; }
   if (!endsWith(got, "?")) { return false; }
   if (endsWith(want, "?")) { return false; }
-  return withoutNull(got) == want;
+  // **`anyref` is already nullable**, so `anyref? into anyref` takes nothing away and the reference
+  // accepts it. The old exact-name test reported it, which is the one cell of this family wacc
+  // invented — found by putting `anyref?` in the slot grid.
+  if (want == "anyref") { return false; }
+  // **The base has to *fit* the slot, not equal it.** `withoutNull(got) == want` was the whole test,
+  // so this family was only ever recognised when the two names matched exactly: `S? into S` reported
+  // and `K? into S` said nothing at all, for a `K : S`. The reference gives both the same message —
+  // *"cannot assign nullable to non-null"* — because both are the same mistake, and the child one is
+  // the likelier to be written. `G<i32>? into S` was missed for the same reason one spelling further
+  // along.
+  //
+  // Asking `assignable` is what keeps the two families apart rather than overlapping: `string? into
+  // i32` fails here, because a `string` does not fit an `i32` under any nullability, and falls
+  // through to the ordinary mismatch — which is what the reference calls it too.
+  return assignable(c, want, withoutNull(got));
 }
 
 /** Whether `==` is refused on this type because it is a reference. Arrays are, as structs are. */
@@ -4605,7 +4615,7 @@ void checkFuncrefArgs(C c, string held, Expr[] args, i32 callLine) {
     }
     string got = typeOfExpr(c, args[i]);
     if (got == typeNone() || got == "") { continue; }
-    if (nullableIntoNonNull(want, got)) {
+    if (nullableIntoNonNull(c, want, got)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
@@ -5054,7 +5064,7 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
       continue;
     }
     string got = typeOfExpr(c, args[i]);
-    if (nullableIntoNonNull(want, got)) {
+    if (nullableIntoNonNull(c, want, got)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
@@ -5819,7 +5829,24 @@ string variantOwnerOf(C c, string name) {
 
 /** Whether `sub` inherits from `super`, which is what makes a cast between them a downcast. */
 bool descendsFrom(C c, string sub, string sup) {
-  string at = c.parentOf(sub);
+  // **From the template, because a use site spells a generic with its arguments.** `parentOf` matches
+  // a declared name, so `Cont<string>` found no declaration and this answered false for a type that
+  // plainly has a parent. `isStruct` next door already went through `templateOf` for exactly this
+  // reason, with the note that "every rule that asks this question means the reference-type one" —
+  // this was the neighbouring rule that had not.
+  //
+  // It was wrong in **both directions**, which is why it belongs here rather than at either caller.
+  // In `assignable` it invented a diagnostic: `Task t = c` for a `Cont<string> c` was refused, and the
+  // reference accepts, emits and runs it. In the cast rule it lost one: `c as! Task` is an upcast, the
+  // reference says *"upcast to 'Task' is always safe — use 'as'"*, and wacc said nothing — while
+  // catching the identical `k as! Base` for a plain `Kid`. One blind spot, a false alarm on one side of
+  // it and a miss on the other.
+  //
+  // Only the *sub* side is unwrapped. A generic **ancestor** — `Cont<T> : Box<T>` — needs `T`
+  // substituted along the chain before `Box<string>` and `Box<i32>` can be told apart, and the parent
+  // is recorded as it was written, so the comparison below simply fails and both callers stay as they
+  // were. Guessing there would trade a false alarm for a wrong answer.
+  string at = c.parentOf(templateOf(sub));
   for (i32 guard = 0; guard < 16; guard++) {
     if (at == "") { return false; }
     if (at == sup) { return true; }
@@ -6823,7 +6850,7 @@ void checkMethodArgs(C c, string owner, i32 at, Expr[] args, i32 callLine) {
     }
     string mgot = typeOfExpr(c, args[i]);
     if (mgot == typeNone() || mgot == "") { continue; }
-    if (nullableIntoNonNull(mwant, mgot)) {
+    if (nullableIntoNonNull(c, mwant, mgot)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
     } else if (!assignable(c, mwant, mgot)) {
       c.reportWith(errArgumentMismatch(), args[i].line, args[i].col, expectedFound(mwant, mgot));
@@ -7414,7 +7441,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         return;
       }
       string gotTo = typeOfExpr(c, rhs);
-      if (nullableIntoNonNull(wantTo, gotTo)) {
+      if (nullableIntoNonNull(c, wantTo, gotTo)) {
         c.report(errNullableToNonNull(), rhs.line, rhs.col);
       } else if (!assignable(c, wantTo, gotTo)) {
         reportExpr(c, errInitTypeMismatch(), rhs, expectedFound(wantTo, gotTo));
@@ -7444,7 +7471,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         return;
       }
       string gotVar = typeOfExpr(c, init);
-      if (nullableIntoNonNull(wantVar, gotVar)) {
+      if (nullableIntoNonNull(c, wantVar, gotVar)) {
         c.report(errNullableToNonNull(), init.line, init.col);
       } else if (!assignable(c, wantVar, gotVar)) {
         reportExpr(c, errInitTypeMismatch(), init, expectedFound(wantVar, gotVar));
@@ -7522,7 +7549,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       // A name: a value of exactly one type, so the question is whether it is the declared one.
       string got = typeOfExpr(c, e);
-      if (nullableIntoNonNull(expected, got)) {
+      if (nullableIntoNonNull(c, expected, got)) {
         c.report(errNullableToNonNull(), e.line, e.col);
       } else if (!assignable(c, expected, got)) {
         // The whole returned expression, not its first token: `§wac-diag-wide-k4rn8wp` states `span: 7`
