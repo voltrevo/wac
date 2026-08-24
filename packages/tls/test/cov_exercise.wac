@@ -228,6 +228,8 @@ import {
   test_a_root_with_the_right_name_and_wrong_key as xp__a_root_with_the_right_name_and_wrong_key,
   test_critical_extensions_and_key_usage as xp__critical_extensions_and_key_usage,
   test_name_constraints as xp__name_constraints,
+  test_an_rsa_chain_verifies as xp__an_rsa_chain_verifies,
+  test_a_signature_scheme_is_refused_against_the_wrong_key_type as xp__a_signature_scheme_is_refused_against_the_wrong_key_type,
   test_an_ip_literal_matches_an_ip_san as xp__an_ip_literal_matches_an_ip_san,
   test_an_ip_literal_never_matches_a_dns_entry as xp__an_ip_literal_never_matches_a_dns_entry,
   test_only_a_strict_dotted_quad_is_an_address as xp__only_a_strict_dotted_quad_is_an_address,
@@ -624,6 +626,14 @@ export i32 main(Core core, Cli cli) {
   }
   if (xp__critical_extensions_and_key_usage(core, cli).len() > 0) {
     core.warn("error: FAILED x509_path_test test_critical_extensions_and_key_usage");
+    bad = bad + 1;
+  }
+  if (xp__a_signature_scheme_is_refused_against_the_wrong_key_type(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_a_signature_scheme_is_refused_against_the_wrong_key_type");
+    bad = bad + 1;
+  }
+  if (xp__an_rsa_chain_verifies(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_an_rsa_chain_verifies");
     bad = bad + 1;
   }
   if (xp__name_constraints(core, cli).len() > 0) {

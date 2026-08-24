@@ -23,7 +23,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { verifyPath, parseCert, Cert, certMatchesHost, keyP256, keyP384, keyRsa,
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { verifyPath, parseCert, Cert, certVerifySignature, certMatchesHost, keyP256, keyP384, keyRsa,
          sigEcdsaSha256, sigEcdsaSha384 } from "../../src/x509.wac";
 import { Store, pemBundle } from "../../src/roots.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
@@ -269,6 +270,9 @@ export string test_name_constraints(Core core, Cli cli) {
 // ── Matching an IP address ───────────────────────────────────────────────────
 
 const i32 NC_SAMELEN = 17;   // permitted DNS:xyz.test — as long as the leaf's name
+const i32 RSA_CA = 18;       // CN=rsa test CA, CA:TRUE, sha256WithRSAEncryption
+const i32 RSA_LEAF = 19;     // CN=wac.test under it, DNS:wac.test/localhost, IP:127.0.0.1
+const i32 ED_LEAF = 20;      // CN=wac.test, an ed25519 key — the only one in this file's set
 const i32 EC_LEAF = 15;      // DNS:wac.test, DNS:localhost, IP:127.0.0.1
 const i32 IP_AS_DNS = 16;    // DNS:127.0.0.1, DNS:example.test — and no iPAddress at all
 
@@ -287,6 +291,9 @@ string fixtureName(i32 n) {
   if (n == NC_BAD) { return "p384_nc_bad"; }
   if (n == NC_EXCL) { return "p384_nc_excl"; }
   if (n == NC_SAMELEN) { return "p384_nc_samelen"; }
+  if (n == RSA_CA) { return "rsa_ca"; }
+  if (n == RSA_LEAF) { return "rsa_leaf"; }
+  if (n == ED_LEAF) { return "leaf"; }
   if (n == NC_IP) { return "p384_nc_ip"; }
   if (n == NC_SUFFIX) { return "p384_nc_suffix"; }
   if (n == NC_UPPER) { return "p384_nc_upper"; }
@@ -401,5 +408,142 @@ export string test_the_system_trust_store_parses(Core core, Cli cli) {
   // the reason this test exists at all.
   t.isTrue(rsa > 0, "there are RSA roots");
   t.isTrue(p384 > 0, "there is at least one P-384 root");
+  return t.report();
+}
+
+/**
+ * **An RSA chain, which is what the public web is signed with and what nothing here verified.**
+ *
+ * `test/data/rsa_ca.pem` and `rsa_leaf.pem` were committed in *"tls: P-256 key exchange, and ECDSA
+ * and RSA certificates"* and no test has read either since. Listing `test/data` against the tests
+ * that name a fixture is what found them, the same one-line check that found `p384_nc_samelen`.
+ *
+ * The coverage ledger said the gap was waiting on work that was already done: *"the RSA leaf lives
+ * in `rsa_interop_test.wac`, in the subprocess. Reachable the moment a test hands `verifyPath` an
+ * RSA chain."* The chain was sitting in the same directory.
+ *
+ * **The signature is `sha256WithRSAEncryption` — PKCS#1 v1.5.** That is not a mistake and not the
+ * scheme a TLS 1.3 CertificateVerify may use: `x509.wac` says so where it implements it, *"RFC 8446
+ * §4.4.3 forbids PKCS#1 v1.5 in CertificateVerify — it is listed in signature_algorithms only so a
+ * peer knows we can check *certificate* signatures made with it"*. Certificates on the public web
+ * are overwhelmingly signed this way, so this is the ordinary path and the one that had never run
+ * in-process.
+ */
+export string test_an_rsa_chain_verifies(Core core, Cli cli) {
+  T t = T.create();
+  u8[] leaf = load(cli, RSA_LEAF);
+  Bundle rsaRoots = Bundle.of1(load(cli, RSA_CA));
+  t.isTrue(leaf.len() > 200, "the RSA leaf did not load");
+
+  t.eqI32(check(Bundle.of1(leaf), rsaRoots, "wac.test", NOW, 8), 0,
+          "an RSA leaf did not verify against the RSA CA that signed it");
+  // The names it carries, so this is a chain check and a name check rather than only the first.
+  t.eqI32(check(Bundle.of1(leaf), rsaRoots, "localhost", NOW, 8), 0, "its second dNSName");
+  t.isTrue(check(Bundle.of1(leaf), rsaRoots, "not.wac.test", NOW, 8) != 0,
+           "a name the RSA leaf does not carry was accepted");
+
+  // **The controls, because a verifier that accepted everything would pass the three above.**
+  // Against the ed25519 root: same leaf, an anchor that did not sign it.
+  t.isTrue(check(Bundle.of1(leaf), Bundle.of1(load(cli, ROOT)), "wac.test", NOW, 8) != 0,
+           "the RSA leaf verified against a root that did not sign it");
+  // And the ed25519 leaf against the RSA CA, so the refusal above is about the pairing rather than
+  // about RSA being refused everywhere.
+  t.isTrue(check(Bundle.of1(load(cli, LEAF)), rsaRoots, "wac.test", NOW, 8) != 0,
+           "a leaf this CA never signed verified against it");
+
+  // Outside its window, which reaches the date arms with an RSA certificate rather than an EC one.
+  t.isTrue(check(Bundle.of1(leaf), rsaRoots, "wac.test", 1 as i64, 8) != 0,
+           "the RSA leaf verified before it was valid");
+
+  // **A tampered signature, which is the only case above that reaches `rsaVerifyPkcs1` at all.**
+  //
+  // The three controls above are refused earlier — on the issuer name, or the host, or the dates —
+  // so a verifier whose RSA check always returned true would pass every one of them. Measured:
+  // `return true || rsaVerifyPkcs1(...)` left this file green until this case existed. The whole
+  // point of an RSA chain test is the signature, and reaching it needs a certificate that is right
+  // in every other way and wrong in that one.
+  //
+  // The last bytes of a certificate are its signature, so flipping one there leaves the tbs, the
+  // names and the dates untouched.
+  i32[] spots = i32[](leaf.len() - 1, leaf.len() - 20, leaf.len() - 100);
+  for (i32 i = 0; i < spots.len(); i++) {
+    u8[] bad = u8[leaf.len()]();
+    for (i32 k = 0; k < leaf.len(); k++) { bad[k] = leaf[k]; }
+    bad[spots[i]] = bad[spots[i]] ^ 0xFF;
+    t.isTrue(check(Bundle.of1(bad), rsaRoots, "wac.test", NOW, 8) != 0,
+             "an RSA leaf with byte " + itoa(spots[i]) + " flipped still verified");
+  }
+  return t.report();
+}
+
+/**
+ * **The scheme-to-key-type table, asked directly, one cell at a time.**
+ *
+ * `certVerifySignature` refuses a signature whose algorithm does not match the key it is offered
+ * against — an RSA scheme over an EC key, an ed25519 scheme over an RSA key. Those arms had never
+ * run, and could not be reached through `verifyPath`: a real certificate's signature algorithm and
+ * its signer's key type agree, because whoever issued it used the key they had.
+ *
+ * `test_an_rsa_chain_verifies` above did not reach them either, and that is the useful part. It
+ * verifies a genuine RSA chain, so every `keyType` check it passes through takes the *matching*
+ * branch. The mismatched branch needs a certificate claiming one thing and holding another, which
+ * on the wire is a peer trying to have an EC key checked as though it were RSA.
+ *
+ * The function is exported, so a test can ask the question directly instead of hand-patching an
+ * algorithm OID into DER to produce a certificate no CA would issue. `content` and `signature` are
+ * arbitrary here on purpose: every cell below returns before either is looked at, which is the
+ * property — a key-type mismatch is refused *without* verifying, so a mismatched pair cannot spend
+ * a signature check, and a wrong answer cannot depend on the bytes.
+ */
+export string test_a_signature_scheme_is_refused_against_the_wrong_key_type(Core core, Cli cli) {
+  T t = T.create();
+  // One certificate of each key type this package can parse.
+  Cert ed = parseCert(load(cli, ED_LEAF));
+  Cert p256 = parseCert(load(cli, EC_LEAF));
+  Cert p384 = parseCert(load(cli, ROOT));
+  Cert rsa = parseCert(load(cli, RSA_LEAF));
+  t.eqI32(ed.keyType, 1, "the ed25519 fixture is not ed25519");
+  t.eqI32(p256.keyType, keyP256(), "the P-256 fixture is not P-256");
+  t.eqI32(p384.keyType, keyP384(), "the P-384 fixture is not P-384");
+  t.eqI32(rsa.keyType, keyRsa(), "the RSA fixture is not RSA");
+
+  u8[] content = "anything at all".toBytes();
+  u8[] signature = u8[256](fill: 0x5A);
+
+  // ed25519 (0x0807) wants keyType 1; P-256 (0x0403) wants 2; P-384 (0x0503) wants 4;
+  // RSA-PSS SHA-256 (0x0804) and SHA-384 (0x0805) want 3.
+  i32[] schemes = i32[](0x0807, 0x0403, 0x0503, 0x0804, 0x0805);
+  i32[] wants = i32[](1, keyP256(), keyP384(), keyRsa(), keyRsa());
+  Cert[] certs = Cert[](ed, p256, p384, rsa);
+  string[] names = string[]("ed25519", "P-256", "P-384", "RSA");
+  i32 refusals = 0;
+  for (i32 si = 0; si < schemes.len(); si++) {
+    for (i32 ci = 0; ci < certs.len(); ci++) {
+      if (certs[ci].keyType == wants[si]) { continue; }
+      t.isFalse(certVerifySignature(certs[ci], schemes[si], content, signature),
+                "scheme " + itoa(schemes[si]) + " was accepted against a " + names[ci] + " key");
+      refusals = refusals + 1;
+    }
+  }
+  // Fifteen of the twenty cells are mismatches — five schemes over four key types, less the five
+  // that agree, less nothing, because two schemes share the RSA type and one key type has no
+  // scheme here. Counted rather than assumed, so a fixture changing type is visible.
+  // Fifteen mismatches: five schemes over four key types, less the one cell per scheme where the
+  // types agree. Counted rather than assumed, so a fixture quietly changing key type shows up here
+  // rather than as a silently smaller sweep — which is how this test failed first, with `LEAF`
+  // turning out to be the P-256 leaf of the p384 chain rather than the ed25519 one.
+  t.eqI32(refusals, 15, "the mismatch grid is not the shape this test assumes");
+
+  // **PKCS#1 v1.5 is refused for every key type, including the right one.** RFC 8446 §4.4.3 forbids
+  // it in CertificateVerify, and `x509.wac` implements that as an unconditional `return false` —
+  // so this cell is not a key-type mismatch and must not be read as one.
+  for (i32 ci = 0; ci < certs.len(); ci++) {
+    t.isFalse(certVerifySignature(certs[ci], 0x0401, content, signature),
+              "rsa_pkcs1_sha256 was accepted in CertificateVerify against a " + names[ci] + " key");
+  }
+
+  // And a scheme nobody named at all.
+  t.isFalse(certVerifySignature(rsa, 0x0000, content, signature), "scheme 0 was accepted");
+  t.isFalse(certVerifySignature(rsa, 0xFFFF, content, signature), "scheme 0xFFFF was accepted");
   return t.report();
 }

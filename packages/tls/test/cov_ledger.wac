@@ -132,11 +132,6 @@ Rule[] rules() {
          "ones. What is left needs a hostile server that is malformed in one specific way, which " +
          "the loopback can now build and nobody has. That is the most valuable unbuilt work in this " +
          "package: each one is a `fail` a real server could provoke."),
-    Rule("packages/tls/src/x509.wac", "keyType != 3", "line", false,
-         "**RSA verification, in all four of its schemes.** `x509_path_test.wac`'s corpus is ed25519 " +
-         "and P-256; the RSA leaf lives in `rsa_interop_test.wac`, in the subprocess. Reachable the " +
-         "moment a test hands `verifyPath` an RSA chain, and worth doing — RSA-PSS is what the " +
-         "public web is signed with."),
     Rule("packages/tls/src/x509.wac", "acc", "line", false,
          "**Name constraints — `joinName` and the walk that uses it.** RFC 5280 §4.2.1.10 permits a " +
          "CA to be limited to a set of names, and `namesAllowed` enforces it.\n" +
@@ -197,15 +192,25 @@ Rule[] rules() {
          "from `tlsServerFeed` deciding, not from an embedder choosing. `tlsserved.wac` does not use " +
          "it either — it is API for a program that wants to reject a connection for its own reasons."),
     Rule("packages/tls/src/x509.wac", "certSignedBy", "decl", false,
-         "**RSA and P-384 signature verification, in every scheme.** `x509_path_test.wac`'s chains " +
-         "are ed25519 and P-256; the RSA leaf is in `rsa_interop_test.wac`, in the subprocess. " +
-         "`test/data/make-p384.sh` exists to generate a P-384 chain and nothing reads what it makes.\n" +
-         "         Reachable, unbuilt, and the most consequential gap in this file: rsa_pss_rsae_sha256 " +
-         "is what most of the public web is signed with."),
-    Rule("packages/tls/src/x509.wac", "scheme ==", "line", false,
-         "The scheme-to-key-type table in `certVerifySignature`, refusing a signature whose algorithm " +
-         "does not match the key it is offered against. Same corpus limit as the rule above — the " +
-         "arms for schemes no test certificate uses."),
+         "**A certificate whose signature algorithm names a key type its signer does not have** — " +
+         "`signer.keyType != 3` on the RSA arms, and the neighbouring arms for the same confusion " +
+         "with EC. On the wire that is a peer asking to have one kind of key checked as though it " +
+         "were another; no CA issues such a certificate, because whoever issued it used the key they " +
+         "had, so it cannot come out of a corpus and has to be built.\n" +
+         "         **This used to say something else and all three of its claims had expired.** It " +
+         "read *\"`x509_path_test.wac`'s chains are ed25519 and P-256; the RSA leaf is in " +
+         "`rsa_interop_test.wac`, in the subprocess; `test/data/make-p384.sh` exists to generate a " +
+         "P-384 chain and nothing reads what it makes\"*. The chains are P-384 and P-256; " +
+         "`test_an_rsa_chain_verifies` verifies a real RSA chain in-process since 2026-08-24 from " +
+         "`rsa_ca.pem` and `rsa_leaf.pem`, which sat unread in `test/data` from the commit that " +
+         "added them; and `test_a_two_deep_chain_verifies_to_a_p384_root` reads what the script " +
+         "makes. The third of those sentences was in three separate entries in this file — see " +
+         "`constraintsUnderstood` and the `x509gen.wac:184` pin, both corrected the same day.\n" +
+         "         The CertificateVerify half of the same table is covered now, by " +
+         "`test_a_signature_scheme_is_refused_against_the_wrong_key_type`, which asks " +
+         "`certVerifySignature` its fifteen mismatched cells directly rather than hand-patching an " +
+         "algorithm OID into DER. This copy sits behind `verifyPath` instead, so the same trick does " +
+         "not reach it — a certificate is needed, not a call."),
     Rule("packages/tls/src/x509.wac", "constraintsUnderstood", "decl", false,
          "**Two arms of the understood-or-refuse check, and they are not the ones this entry used to " +
          "name.** It said *no certificate in any corpus here carries the extension, so the whole walk " +
@@ -267,7 +272,11 @@ Rule[] rules() {
          "algorithm outside ed25519 and P-256 is dark."),
     Rule("packages/tls/src/x509.wac", "certVerifySignature", "decl", false,
          "The scheme-to-key-type table, refusing a signature whose algorithm does not match the key " +
-         "it is offered against. Same corpus limit — arms for schemes no test certificate uses.\n" +
+         "it is offered against.\n" +
+         "         **Its fifteen mismatched cells are driven since 2026-08-24** by " +
+         "`test_a_signature_scheme_is_refused_against_the_wrong_key_type`, which calls this exported " +
+         "function directly with a certificate of each key type. The `scheme ==` line rule that used " +
+         "to sit here went with it: the ratchet reported it matched nothing.\n" +
          "         **A `keyType != 4` line rule used to sit beside this one and said P-384 was " +
          "\"implemented, and the corpus is P-256\" with `test/data/make-p384.sh` generating a chain " +
          "\"nothing reads\".** Both halves were false — `x509_path_test.wac` reads what that script " +
