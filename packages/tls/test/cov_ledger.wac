@@ -148,9 +148,15 @@ Rule[] rules() {
          "does, in the subprocess, which is why the arm exists and how it is known to work."),
     Rule("packages/tls/src/handshake.wac", "parseServerHello", "decl", false,
          "**`parseServerHello` and `clientHello`, which this package does not call.** `client.wac` " +
-         "reads a ServerHello inline; these are the shared spellings, and their callers are " +
-         "`packages/quic/src/client.wac` and `packages/webrtc/src/dtls.wac`.\n" +
-         "         Tested elsewhere again, and this is the third kind of elsewhere this package has " +
+         "reads a ServerHello inline; these are the shared spellings, and the caller is " +
+         "`packages/quic/src/client.wac`.\n" +
+         "         Written first as \"quic and webrtc\", which was wrong and was caught within the " +
+         "day by `packages/webrtc`'s own driver measuring zero points in this file: " +
+         "`webrtc/src/dtls.wac` **declares its own** `clientHello` and `serverHello`, because DTLS " +
+         "1.2's handshake is a different wire format. A claim that somebody else covers a line is " +
+         "the one kind of ledger entry nothing checks, and this one was half wrong the moment it was " +
+         "written — see `issues/system/0241b`, which this is now the worked example for.\n" +
+         "         Tested elsewhere, and this is the third kind of elsewhere this package has " +
          "turned up: `server.wac` was tested in another **process**, the RSA path in another process " +
          "too, and this in another **package**. A ledger's prefix is a directory, so a shared helper " +
          "reads as dead from the side that exports it. Named rather than pinned because the fix is " +

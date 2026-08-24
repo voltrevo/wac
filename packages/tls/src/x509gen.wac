@@ -149,9 +149,10 @@ u8[] validity(i64 notBefore, i64 notAfter) {
  * hostname check with verdict 7 no matter what it is named. The generator and the verifier disagreed
  * about what a certificate needs, and the generator was the one that was wrong.
  *
- * That went unnoticed because the callers did not care: WebRTC identifies a peer by the SDP
- * fingerprint and never checks a name, and the TLS tests that do check one use a vendored certificate
- * from a real CA. The first thing to want a generated certificate *and* a name check was
+ * That went unnoticed because the callers did not care. The only one outside this package's own
+ * tests is `packages/webrtc/example/answer.wac`, and a WebRTC peer identifies the other end by the
+ * SDP fingerprint rather than by a name; the TLS tests that do check a name use a vendored
+ * certificate from a real CA. The first thing to want a generated certificate *and* a name check was
  * `test/wac/loopback_test.wac`, and it could not have one.
  *
  * Not marked critical. RFC 5280 §4.2.1.6 makes it critical only when the subject is empty, which is

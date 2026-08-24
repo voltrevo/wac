@@ -13,9 +13,8 @@ A coverage ledger names a `PREFIX`, and the prefix is a directory. `packages/tls
 consequence nobody had looked at: **a file imported across a package boundary is measured separately by
 each importer, and never as a whole.**
 
-`packages/tls/src/handshake.wac` is the worked example. It has 108 branch points and three consumers:
-`packages/tls` itself, `packages/quic/src/client.wac`, and `packages/webrtc/src/dtls.wac`. Measured on
-2026-08-24 with two of the three drivers that exist:
+`packages/tls/src/handshake.wac` is the worked example. It has 108 branch points and two consumers:
+`packages/tls` itself and `packages/quic/src/client.wac`. Measured on 2026-08-24:
 
 | exercise | dark | of |
 |---|---:|---:|
@@ -28,20 +27,37 @@ Each driver covers about twenty points the other misses: 21 that `tls` leaves da
 roughly twenty lines — and the two ledgers together are still not the answer, because nobody computes
 the intersection.
 
+## The claim was already wrong when it was written — 2026-08-24
+
+The `tls` ledger's entry originally named **two** consumers, `packages/quic/src/client.wac` and
+`packages/webrtc/src/dtls.wac`. The second is false: `webrtc/src/dtls.wac` **declares its own**
+`clientHello` and `serverHello`, because DTLS 1.2's handshake is a different wire format from TLS
+1.3's, and it imports nothing from `handshake.wac` at all.
+
+That was caught the same day, by accident, when `packages/webrtc`'s driver was pointed at the file to
+collect a third term for the table above and reported **zero points** — the file is not in its
+compilation graph.
+
+**This is the argument for the whole issue, and it did not need a year to rot.** The entry was written
+carefully, by someone who had just read the imports, and it was half wrong within the hour. Nothing in
+the ratchet could have said so: a rule that matches uncovered points and gives a reason is checked for
+*matching*, never for whether the reason is true. Every other exemption reason in every ledger here is
+at least a statement about code the reader can go and look at. "Somebody else covers it" is a
+statement about a measurement nobody took.
+
 ## Why it matters more than the arithmetic
 
 **A ledger entry cannot tell "nothing reaches this" from "the neighbour reaches this".** Both read as a
 line in the uncovered list, and the ledger's whole job is to make somebody write down which one it is.
-`packages/tls`'s ledger currently carries this, honestly and unverifiably:
+`packages/tls`'s ledger carries this, and after the correction above it is now true:
 
-> `parseServerHello` and `clientHello`, which this package does not call. […] Tested elsewhere again,
-> and this is the third kind of elsewhere this package has turned up […] A ledger's prefix is a
+> `parseServerHello` and `clientHello`, which this package does not call. […] A ledger's prefix is a
 > directory, so a shared helper reads as dead from the side that exports it.
 
-That entry is *true* — checking it was the first thing `packages/quic`'s driver did, by pointing its
-own prefix at `handshake.wac` — but the check was a hand-run one-off, and there is nothing to stop the
-claim rotting. If `packages/quic` stopped calling `parseServerHello` tomorrow, both ledgers would stay
-green: `quic`'s because it does not measure that file, and `tls`'s because its rule says somebody else
+True today, and unverifiable tomorrow. Both checks it has had — quic's, which confirmed the covering
+half, and webrtc's, which demolished the other — were hand-run one-offs by somebody who happened to
+be curious. If `packages/quic` stopped calling `parseServerHello` next week, both ledgers would stay
+green: quic's because it does not measure that file, and tls's because its rule says somebody else
 does.
 
 **That is the failure mode this is worth fixing for.** It is not that the numbers are pessimistic. It
@@ -74,6 +90,7 @@ class of exemption that is currently a promise rather than a measurement.
 
 ## Found by
 
-`issues/system/0205`'s seventh and eighth drivers, `packages/tls` and `packages/quic`. The `tls` ledger
-raised it as a gap it could not close; the `quic` ledger confirmed the specific claim by hand and
-produced the table above.
+`issues/system/0205`'s seventh, eighth and ninth drivers — `packages/tls`, `packages/quic` and
+`packages/webrtc`. The `tls` ledger raised it as a gap it could not close; the `quic` driver confirmed
+the covering half by hand and produced the table; the `webrtc` driver, pointed at the same file for a
+third term, reported zero points and disproved the rest.

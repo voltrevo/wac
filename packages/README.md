@@ -178,6 +178,7 @@ deno task coverage:stream
 deno task coverage:tty
 deno task coverage:tls
 deno task coverage:unicode
+deno task coverage:webrtc
 deno task coverage:url
 deno task coverage:wacpkg
 deno task coverage:zstd

@@ -48,6 +48,7 @@
     "coverage:server": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/server/test/cov_ledger.wac",
     "coverage:ssz": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/ssz/test/cov_ledger.wac",
     "coverage:stream": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/stream/test/cov_ledger.wac",
+    "coverage:webrtc": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env --allow-net packages/webrtc/test/cov_ledger.wac",
     "coverage:zstd": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/zstd/test/cov_ledger.wac",
     "coverage:ssh": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/ssh/test/cov_ledger.wac",
     "coverage:sh": "deno run -A packages/sh/cov.ts",

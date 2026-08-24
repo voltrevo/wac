@@ -839,6 +839,53 @@ read a peer's flight — "you asked this datagram for a certificate and there is
 forty-two in `Client` and twenty-three in `Server`. Not a branch nobody tested: an answer nobody has
 ever seen returned.
 
+### `webrtc` ninth — the fourth kind of elsewhere, and a wrong claim caught within the hour
+
+**29 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 30 drivers; the unmeasured list is 9.
+
+**701 of 973 — 72.0%, the lowest first run yet**, and `session.wac` reads **32.5%**. Its real exercise
+is `test/browser.test.ts`, which drives `Session`, `Peer` and `ice.wac` end to end against **Chromium**
+— *"libwebrtc is what WebRTC is; every other stack was written to talk to it"*. That test is
+TypeScript, it runs in a browser, and `cov_exercise.wac` compiles wac. The second-largest driver of
+the same code is `example/answer.wac`, a program run on its own.
+
+So in three packages the same low number has had four distinct causes, none of them "these lines are
+untested":
+
+| where the code runs | seen in |
+|---|---|
+| another **process** — a daemon the test spawns | `tls`'s server, and its RSA identity |
+| another **package** — a sibling imports it | `tls`'s `handshake.wac`, called by `quic` |
+| another **host** — a browser, driven from TypeScript | `webrtc`'s `session.wac` |
+| another **program** — an `example/` run on its own | `webrtc`'s `session.wac` again |
+
+**The discriminating question is not what is uncovered but where the code runs when something
+exercises it**, and a coverage prefix is a directory, so it cannot ask.
+
+#### The wrong claim, and why it is the best evidence for `0241b`
+
+`tls`'s ledger named two consumers of `handshake.wac`: `packages/quic/src/client.wac` and
+`packages/webrtc/src/dtls.wac`. The second is false — `dtls.wac` **declares its own** `clientHello` and
+`serverHello`, because DTLS 1.2's handshake is a different wire format, and it imports nothing from
+that file.
+
+It was caught the same day and by accident: `webrtc`'s driver was pointed at `handshake.wac` to collect
+a third term for `0241b`'s table and reported **zero points**.
+
+That entry was written carefully, by someone who had just read the imports, and it was half wrong
+within the hour. **Nothing in the ratchet could have said so** — a rule is checked for *matching*, never
+for whether its reason is true — and "somebody else covers it" is the only exemption reason that is a
+statement about a measurement nobody took. Both the ledger and `0241b` now record it.
+
+#### What is genuinely untested here
+
+Separable from the above, and the ledger separates it: `sctp.wac`'s `Association` has 27 points its own
+twenty-two tests simply do not construct, and `dtls.wac`'s accessors have a bounds check apiece —
+`body.len() < 4`, `3 + len > body.len()` — none of which has an input, because every hello and
+certificate in the corpus comes from OpenSSL, aiortc or Chromium. That is the same family
+`packages/quic`'s `truncated_test.wac` closed for QUIC frames, and it transfers here almost unchanged.
+
 ### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
 
 Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's
