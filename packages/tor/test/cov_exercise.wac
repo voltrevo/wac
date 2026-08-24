@@ -308,6 +308,7 @@ import {
   test_every_input_moves_the_key_material as ntor__every_input_moves_the_key_material,
   test_a_small_order_reply_is_refused as ntor__a_small_order_reply_is_refused,
   test_agrees_with_tors_own_implementation as ntor__agrees_with_tors_own_implementation,
+  test_a_relay_cannot_choose_the_length_of_its_own_reply as ntor__a_relay_cannot_choose_the_length_of_its_own_reply,
 } from "./wac/ntor_test.wac";
 import {
   test_the_distribution_is_exactly_proportional as path__the_distribution_is_exactly_proportional,
@@ -428,6 +429,10 @@ import {
 
 export i32 main(Core core, Cli cli) {
   i32 bad = 0;
+  if (ntor__a_relay_cannot_choose_the_length_of_its_own_reply().len() > 0) {
+    core.warn("error: FAILED ntor_test test_a_relay_cannot_choose_the_length_of_its_own_reply");
+    bad = bad + 1;
+  }
   if (auth__the_certificate_tor_accepted_is_reproduced(core, cli).len() > 0) {
     core.warn("error: FAILED authcert_test test_the_certificate_tor_accepted_is_reproduced");
     bad = bad + 1;

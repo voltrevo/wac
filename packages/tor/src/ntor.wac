@@ -77,7 +77,19 @@ export u8[] ntorClientFinish(u8[] identity, u8[] onionKey, u8[] ephemeralPriv,
   if (identity.len() != 20) { trap; }
   if (onionKey.len() != 32) { trap; }
   if (ephemeralPriv.len() != 32) { trap; }
-  if (reply.len() != 64) { trap; }
+
+  // **The reply's width is the relay's to choose, so refusing it is an answer and not a trap.**
+  // `bootstrap.wac` calls this with `decodeCreated2(cellPayload(cell))` for the guard's CREATED2 and
+  // `extendedReply(got.data)` for the middle and exit relays' EXTENDED2, and both hand on the length
+  // the relay wrote into the cell. Trapping here meant any relay could end the process of any client
+  // that built a circuit through it — one cell, no keys, nothing to guess — and a guard comes out of
+  // a public directory. 2026-08-24.
+  //
+  // The three checks above stay traps: those are the *caller's* own values, and a caller passing a
+  // 31-byte private key has a bug that should stop it. Only `reply` comes from a stranger, and an
+  // empty return is the answer this function already documents for one — *the relay did not prove it
+  // holds the onion key*, which a reply of the wrong width has not.
+  if (reply.len() != 64) { return u8[0](); }
 
   u8[] serverEph = u8[32]();
   u8[] auth = u8[32]();
