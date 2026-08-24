@@ -1570,10 +1570,21 @@ fn test_command(rest: &[String]) -> i32 {
 /// engine trap, which writes nothing: a bounds check reporting the *previous* `trap`'s sentence would
 /// be worse than reporting none, so the caller gets a tail it can print unconditionally.
 fn trap_said(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String {
-    let said = get_export(scope, exports, "$trap$message")
-        .and_then(|f| f.call(scope, exports.into(), &[]))
-        .map(|v| read_string(scope, v))
-        .unwrap_or_default();
+    // **Inside a `TryCatch`, because this is asked *of a module that has just trapped*.** Its state is
+    // gone, so the call is liable to trap in its own right — and an uncaught one is announced by V8's
+    // default handler on **stdout**, in the middle of the test runner's output. `unwrap_or_default()`
+    // already reads a failed call as "it said nothing", which is the right answer; what was missing was
+    // stopping the engine saying otherwise on the wrong stream.
+    let said = {
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let mut tc = tc.init();
+        let got = get_export(&mut tc, exports, "$trap$message")
+            .and_then(|f| f.call(&mut tc, exports.into(), &[]))
+            .map(|v| read_string(&mut tc, v))
+            .unwrap_or_default();
+        tc.reset();
+        got
+    };
     if said.is_empty() { String::new() } else { format!(": {said}") }
 }
 
@@ -3515,7 +3526,20 @@ fn run_tests(
             Vec::new()
         };
         let began = std::time::Instant::now();
-        let outcome = f.call(scope, exports.into(), &args);
+        // **A `TryCatch` around the test itself.** A whole category of tests — `test_traps_*` — is
+        // *expected* to trap, so this is the ordinary path rather than an edge of it, and without one
+        // V8's default handler announced every trap on **stdout**: one passing file,
+        // `packages/crypto/test/wac/traps_test.wac`, printed 108 lines of
+        // `wasm://wasm/00083c3e:39651: Uncaught RuntimeError: unreachable` around the single line of
+        // its own report. The runner already says what happened, and says it better — it knows which
+        // test trapped and whether the test wanted to.
+        let outcome = {
+            let tc = std::pin::pin!(v8::TryCatch::new(scope));
+            let mut tc = tc.init();
+            let out = f.call(&mut tc, exports.into(), &args);
+            tc.reset();
+            out
+        };
         if profile_dir.is_some() && cov.is_some() {
             let after = counters_now(scope, exports);
             let mut mine: Vec<String> = Vec::new();
