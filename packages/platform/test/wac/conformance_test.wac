@@ -77,20 +77,18 @@ Cover[] coverage() {
     where("MKDIR", "native_hostfs: `mkdir d2; ls; rmdir d2`"),
     where("REMOVE", "native_hostfs: `rm made`"),
     where("RENAME", "native_hostfs: `mv f moved`"),
-    gap("SET_EXECUTABLE",
-      "no two-host comparison, and **the gap this entry warned about was real**. It said the " +
-      "arithmetic is duplicated and only the Deno copy exercised, so a wrong mask elsewhere would not " +
-      "be caught. On 2026-08-24 there was one: the V8 native host set `mode | 0o100` and cleared " +
-      "`mode & !0o100` — owner-execute alone — where Deno, Node and the wasmtime host all do " +
-      "`mode | ((mode & 0o444) >> 2)` and clear `0o111`, which is `chmod +x`'s rule. The same program " +
-      "on the same file gave **744** natively and **755** under Deno, and clearing 755 gave 655 " +
-      "against 644. Fixed in `native/v8/src/main.rs`; three of four had always agreed. " +
-      "**`checkout_test.wac` passed throughout**, which is the point of writing gaps down: git reads " +
-      "any execute bit as 100755, so 744 satisfied the only oracle this capability had. " +
-      "What would close it is not a case in native_hostfs — that drives the hosts through shell " +
-      "scripts and there is no `chmod` applet, so `setExecutable` is unreachable from a script. It " +
-      "needs a purpose-built program run on both and the resulting mode compared, which is a small " +
-      "file rather than a case. issues/system/0132"),
+    where("SET_EXECUTABLE",
+      "setexecutable: a program built for both hosts, run on a file whose starting mode the test pins " +
+      "with `chmod`, and the resulting mode compared — `setexecutable_test.wac`. **This entry was a " +
+      "gap and the gap was real.** It said the arithmetic is duplicated and only the Deno copy " +
+      "exercised, so a wrong mask elsewhere would not be caught; on 2026-08-24 the V8 native host was " +
+      "setting `mode | 0o100` and clearing `mode & !0o100` where the other three do " +
+      "`mode | ((mode & 0o444) >> 2)` and clear `0o111`. Measured 744 against 755, and 655 against " +
+      "644 on the way back. The capability's only other oracle, `checkout_test.wac`, passed " +
+      "throughout — git reads any execute bit as 100755 — which is why a sharper check on a " +
+      "neighbouring question is not coverage of this one. A shell case could not reach it: " +
+      "native_hostfs drives the hosts through scripts and there is no `chmod` applet. " +
+      "issues/system/0132"),
     where("EXEC_WITH",
       "native: one module built once and run by both native binaries — `native_test.wac`'s " +
       "`test_running_a_host_program_agrees_between_the_two_native_hosts`, which compares the three " +
