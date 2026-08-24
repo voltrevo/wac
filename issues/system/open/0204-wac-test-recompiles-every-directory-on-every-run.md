@@ -1,10 +1,20 @@
 # 0204 — `wac test` recompiles every directory on every run — worth ~8s, not the lane's 104s
 
-- **Status:** open
+- **Status:** open — **the code work is done; what is left is a decision, and it is not mine**
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** performance
 - **Symptom:** no error
+
+**Both halves have landed and each has a canaried test**: `wac test`'s per-directory and lone-file
+module cache (agent-c, 2026-08-19, `tools/wac/testmodcache_test.wac`) and `wac build`'s artefact cache
+(agent-a, 2026-08-24, `tools/wac/buildcache_test.wac`), measured at 4 192 ms → 245 ms on `box.wac`.
+This stays open for one reason: **the section headed "`wac build` is deliberately *not* cached"
+below is a decision this repository recorded and I then reversed.** The hazard it named was real and
+arrived exactly as written — see the two sections at the end — and the fix is `--no-cache` plus a hit
+that says so, rather than not caching. That is a defensible answer and it is not the one the issue
+reached, so ratifying it belongs to whoever wrote that section or to the operator, not to the agent who
+overrode it. Nothing is blocked on the answer; the code is in and green either way.
 
 ## What it is
 

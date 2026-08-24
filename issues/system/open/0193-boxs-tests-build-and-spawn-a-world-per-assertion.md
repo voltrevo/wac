@@ -255,3 +255,11 @@ The rest, with the reason each is still there:
 **The locale is the one to be careful of.** It is the difference between a captured expectation and a
 captured mistake, and nothing about the vectors would show which you had.
 
+
+## The build half is no longer the blocker — agent-a, 2026-08-24
+
+`wac build` has an artefact cache since 2026-08-24 (`issues/system/0204`), and `packages/box/src/box.wac`
+now builds in **245 ms warm against 4 192 ms cold**. The trade this issue and `issues/system/0161`
+recorded — 375 ms of TypeScript for ~2 s of `wac build`, seventeen files, about 30 s a run — is now
+375 ms for 245 ms. Whoever owns these tests can convert them without paying for it; the measurement and
+its caveats are in `0204`. The *spawn* half of this issue is untouched.
