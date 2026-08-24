@@ -32,45 +32,7 @@
 // column off, would still look like a diagnostic.
 
 import { numText } from "./emit.wac";
-
-/** One tab-separated field, or "" past the end. */
-string field(string line, i32 want) {
-  i32 at = 0;
-  i32 n = 0;
-  string cur = "";
-  for (i32 i = 0; i < line.len(); i++) {
-    if (line.slice(i, i + 1) == "\t") {
-      if (n == want) { return cur; }
-      n = n + 1;
-      cur = "";
-      continue;
-    }
-    cur = cur + line.slice(i, i + 1);
-  }
-  return n == want ? cur : "";
-}
-
-/** The lines of a text, which is where a diagnostic's own line comes from. */
-string[] linesOf(string text) {
-  i32 count = 1;
-  for (i32 i = 0; i < text.len(); i++) {
-    if (text.slice(i, i + 1) == "\n") { count = count + 1; }
-  }
-  string[] out = string[count](fill: "");
-  i32 n = 0;
-  string cur = "";
-  for (i32 i = 0; i < text.len(); i++) {
-    if (text.slice(i, i + 1) == "\n") {
-      out[n] = cur;
-      n = n + 1;
-      cur = "";
-      continue;
-    }
-    cur = cur + text.slice(i, i + 1);
-  }
-  out[n] = cur;
-  return out;
-}
+import { field, linesOf } from "./text.wac";
 
 /** A non-negative number, or 0 for anything that is not one. */
 i32 numOf(string s) {
@@ -106,16 +68,31 @@ string sourceFor(string[] paths, string[] sources, string path) {
 export string renderDiagnostics(string wire, string[] paths, string[] sources) {
   string out = "";
   i32 shown = 0;
-  string cur = "";
-  for (i32 i = 0; i <= wire.len(); i++) {
-    string ch = i < wire.len() ? wire.slice(i, i + 1) : "\n";
-    if (ch != "\n") { cur = cur + ch; continue; }
-    if (cur != "") {
-      if (shown > 0) { out = out + "\n\n"; }
-      out = out + renderOne(cur, paths, sources);
-      shown = shown + 1;
+  // **The source is split once per file, not once per diagnostic.** `renderOne` used to do its own
+  // `linesOf(sourceFor(...))`, so a file with N diagnostics walked its whole source N times — and the
+  // walk was itself quadratic in the length of a line. Together that is the reason a 75 KB wasm module
+  // handed to the compiler as source burned 90 s of CPU and printed nothing: the diagnostics were all
+  // found quickly and the *rendering* never finished, which is also why a run killed part-way had
+  // written zero bytes. Measured on prefixes of one: 2 KB took 513 ms and 16 KB took 34 s, while the
+  // diagnostic count only doubled — the cost was in the rendering, not the parsing.
+  // `issues/system/0239c`.
+  //
+  // One entry is enough rather than a map: diagnostics arrive grouped by file, so this misses only at
+  // a boundary, and the common case is one file anyway.
+  string lastFile = "";
+  string[] lastLines = string[1](fill: "");
+  string[] lines = linesOf(wire);
+  for (i32 i = 0; i < lines.len(); i++) {
+    string cur = lines[i];
+    if (cur == "") { continue; }
+    string file = field(cur, 0);
+    if (file != lastFile || shown == 0) {
+      lastLines = linesOf(sourceFor(paths, sources, file));
+      lastFile = file;
     }
-    cur = "";
+    if (shown > 0) { out = out + "\n\n"; }
+    out = out + renderOne(cur, lastLines);
+    shown = shown + 1;
   }
   return out;
 }
@@ -133,7 +110,7 @@ string gutter(i32 n, i32 digits) {
 }
 
 /** One diagnostic, laid out the way `compiler/wacDiag.ts` lays one out. */
-string renderOne(string line, string[] paths, string[] sources) {
+string renderOne(string line, string[] srcLines) {
   string file = field(line, 0);
   i32 lineNo = numOf(field(line, 1));
   i32 col = numOf(field(line, 2));
@@ -161,7 +138,6 @@ string renderOne(string line, string[] paths, string[] sources) {
   string pad = repeat(" ", digits + 2);
   string arrowPad = repeat(" ", digits + 1);
 
-  string[] srcLines = linesOf(sourceFor(paths, sources, file));
   string text = lineNo >= 1 && lineNo <= srcLines.len() ? srcLines[lineNo - 1] : "";
 
   string out = (isWarning ? "warning: " : "error: ") + message + "\n";

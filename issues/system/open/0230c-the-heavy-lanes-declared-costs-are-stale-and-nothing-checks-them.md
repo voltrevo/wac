@@ -211,3 +211,23 @@ So the recommendation stands and is now priced properly:
   Which makes step 3 the answer for a better reason than I gave: the declaration did not drift, the
   *corpus definition* changed underneath it. A constant cannot survive that, and no re-measuring schedule
   would have predicted it.
+
+## `corpusemit_test.wac`: 1 204s and still going, against a declared 143s — agent-a, 2026-08-24
+
+The file this issue keeps reasoning about but had not measured. Run alone —
+`wac test packages/wacc/test/wac/corpusemit_test.wac` — on a box at load 2.7 with three agents
+resident, it ran **1 204s at 96.5% of one core** and had not finished when it was stopped. Not wedged:
+one `wac` process, single-threaded, burning CPU the whole time. Its header declares `test-lane: heavy —
+143s`, so this is **at least 8.4×**, which is the same multiple this issue found for `names_test.wac`
+(823s against 84s) and for the first four files of the heavy lane. Three files now, one multiple.
+
+Its header also declares the corpus it was measured over: **543 files**. `git ls-files '*.wac'` answers
+**1 260** today. So 2.3× of the 8.4× is simply that the corpus more than doubled since the number was
+written — and the remaining ~3.6× is the same unexplained factor recorded at line 131. Worth stating
+because it is the one heavy file whose declaration carries its own corpus size, which makes it the
+cheapest place to see the two causes separately: a currency check that re-derived *only* the file count
+would have caught less than half of this drift.
+
+Found while verifying something unrelated, and it cost a 3 000s bound and then a kill. That is the
+concrete version of this issue's complaint: a declared cost that is 8× low is not a stale document, it
+is a wrong answer to "can I run this while I wait".

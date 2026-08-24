@@ -6,6 +6,59 @@
 - **Kind:** missing feature
 - **Symptom:** no error
 
+## Where this stands — 2026-08-24
+
+**The defect this was filed about is fixed.** It opened at nineteen drivers of which fifteen could not
+fail; `deno task coverage:all` now reads
+
+    37/37 ran — 36 hold a coverage floor, 0 only check their own exemptions have not drifted,
+    1 reports and cannot fail
+       2 package(s) have no coverage task: box, wacc
+
+`box` is `agent-c`'s and `wacc` is 33,575 lines and its own project. The one report-only driver is
+`sh`, also `agent-c`'s. So everything in this issue's remit is done and what is left belongs to
+someone else to decide — this is `agent-c`'s issue and closing it is theirs.
+
+**What the sweep cost and what it returned.** Roughly an hour a package. Seven abort-class bugs found
+and fixed on the way, every one a remote input ending a process:
+
+| where | the input |
+|---|---|
+| `tls` `recordOpen`, both directions | a record whose tag does not verify |
+| `tls` `p256Ecdh`, both directions | a key share that is not a point on the curve |
+| `tls` `mlkemEncaps` | a hybrid share whose coefficients are above q, on the group the server prefers |
+| `webrtc` `helloGroups` | a group list longer than the extension containing it |
+| `tor` `ntorClientFinish` | a handshake reply whose length the relay chose |
+| `webrtc` `peer.wac`'s ClientKeyExchange | a public key whose length the peer chose |
+
+All seven are one shape: **a correct security check, enforced by a trap, on input a stranger chose.**
+The last was found by enumerating that shape rather than by tripping over it — every `trap;` in the
+peer-facing packages listed, each asked whether a caller feeds it something a stranger picked.
+
+The enumeration is worth recording as finished, so nobody re-walks it. Across `packages/crypto`'s
+peer-facing surface:
+
+| what takes peer input | how it answers |
+|---|---|
+| the five verifiers — ed25519, P-256, P-384, RSA-PSS, RSA-PKCS1 | a `bool`, by design. `curveDecodes` says why: *a `bool` verifier must answer, and a trap is not an answer* |
+| ECDH on a peer's point | trapped; fixed, `p256Decodes` |
+| AEAD open on a peer's record | trapped; fixed, `recordTryOpen` |
+| KEM encapsulation to a peer's key | trapped; fixed, `mlkemEkValid` |
+| decompression of a peer's stream | traps, and that is a stated contract with a fuzz corpus behind it — `issues/system/0242b` is about the *caller*, not the decoder |
+| signing | traps, and should: the key is the caller's own |
+
+`packages/quic` and `packages/webrtc` have no `trap;` in `src/` at all, and `packages/ssh` is the
+model — it traps on the caller's key width, returns a value for every byte a peer sent, and says so.
+
+**The lasting lesson is not about coverage.** Nine packages in, a low number almost never meant "these
+lines are untested". It meant the code runs somewhere the instrument cannot see — a subprocess, a
+sibling package, a browser, a live node, a spawned CLI — or, in `wactest`, that the code runs
+in-process thousands of times and its *callers* live elsewhere. **Before writing a pin, ask where the
+code runs when something exercises it.** A coverage prefix is a directory and cannot ask.
+`issues/system/0241b` is the piece of that which is still open.
+
+---
+
 ## What is true
 
 `deno task coverage:all` ran nineteen drivers when this was filed; it runs twenty-one now and the split
@@ -608,6 +661,624 @@ reaches, because several enter the same guard from different call sites and a gu
 count of tests is not the count of what they reach. Same mistake as `raster`'s grants ("ten", actually
 one) and it is now the standing rule for these headers: no number in a ledger that a canary has not
 produced.
+
+### `rlp` fourth — both kinds at once, and the lowest first run
+
+**24 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 25 drivers; the unmeasured list is 14.
+
+`rlp` opened at **84.6%**, against 90.5 / 91.2 / 91.0 for the three before it — and the reason is that
+its gaps came in *both* kinds rather than one:
+
+  - **`bytesOf`, `itemsOf` and `isList` were entirely uncovered.** Nine points, three public accessors,
+    every one used constantly by `mpt` on trie nodes and `ssz` on containers — and this package's own
+    tests never called one. A package's tests exercise what it *does*; its accessors are what its
+    *consumers* do. That is `tty`'s shape.
+  - **the canonical-length refusals** — a truncated prefix, a leading zero, a long form that fits the
+    short one, a four-byte length an `i32` cannot hold. That is `ssz` and `mpt`'s shape, and for the
+    same reason: the vectors are Ethereum's, and Ethereum never emits a non-canonical length.
+
+The second kind is the one with teeth. **A decoder that accepts a non-minimal length accepts two
+encodings of one value, and two encodings are two hashes for one object** — for a trie node or a beacon
+container that is the difference between a proof and a forgery. `ssz`, `mpt` and `rlp` are the three
+packages Ethereum state proofs stand on, and all three had their canonicity rules unexercised.
+
+**89 of 91**, two pins — `header`'s negative-length trap, whose two callers pass lengths they just
+measured, and `item`'s already-in-error guard, which is character-for-character the one `mpt`'s `step`
+carries and is pinned there too.
+
+### `abi` fifth — and the four Ethereum proofs pass through are all done
+
+**25 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 26 drivers; the unmeasured list is 13.
+
+`rlp`, `mpt`, `ssz` and `abi` are the four packages an Ethereum state proof passes through, and **all
+four had their canonicity rules unexercised** until this week. `abi` opened at 87.6% and carried a
+`strictness_test.wac` plus two refusal tests already — as `mpt` carried a `malformed_test.wac` — and
+neither predicted a smaller first gap. What any one author thought to write down is not the set of
+rules the decoder implements, which is the argument for measuring rather than asking.
+
+Its two with teeth: an **element offset pointing back into the array's head** (two elements aimed at one
+span — the same idea as an SSZ offset table running backwards, in a different encoding) and a **bool
+whose first thirty-one bytes are not zero** (2^248 spellings of `true`, each hashing differently and all
+meaning the same thing to a contract). **219 of 233**, one rule and six pins.
+
+One pin is a finding rather than an exemption: **the corpus has no tuple at all**. `T_TUPLE` appears
+three times in the tests and every one is a tag comparison, so the decode and encode arms are the whole
+of tuple support and neither has an input — and a tuple is how a Solidity struct crosses the boundary.
+That is a gap in the corpus rather than a branch that cannot run, and it is recorded as such.
+
+Two controls caught misunderstandings of mine before they became false claims: ABI's outermost layer is
+a tuple of arguments, so a dynamic argument is reached through an offset word I had not written; and
+every encode refusal is prefixed `member 0:`, naming which argument, which my exact-match expectations
+had called drift.
+
+### The five so far
+
+| package | first run | gaps were |
+|---|---:|---|
+| `ssz` | 90.5% | refusals (23 of 26) |
+| `mpt` | 91.2% | refusals (11 of 11) |
+| `tty` | 91.0% | unused API, an unentered mode, an unmeasured tab |
+| `rlp` | 84.6% | **both** — three uncovered accessors *and* the canonicity refusals |
+| `abi` | 87.6% | **both** — the accessor fallbacks *and* the canonicity refusals |
+
+About an hour each. Every one turned up something with consequences rather than tidy-up, and none of it
+was visible from inside the package's own tests.
+
+### `bls` sixth — where the fixture existed and the entry point was never handed it
+
+**26 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 27 drivers; the unmeasured list is 12.
+
+**633 of 718 → 661 of 718.** `verify.wac` opened at **77.1%**, the worst file in the package, and
+every one of its twenty-four uncovered points was a refusal — nine `g2IsInfinity` guards, ten
+deserialization refusals, four count checks, one correction, and not one line of arithmetic. The
+tower, the Miller loop and the final exponentiation were already at 91–96%. Fifth package in a row to
+land in the same place, and the same cause: the corpus is the CFRG vectors and the Ethereum consensus
+fixtures, and a published test vector is written by an implementation that works.
+
+**The package already suspected it.** Two of its migration commits are titled *"a refusal the fixtures
+do not reach"* and *"which infinity guard is load-bearing"*, both written by deleting a line and
+watching the fixtures still pass. That is the right instinct applied one line at a time. What it could
+not say is how many lines were in that position, which is the question a driver answers: twenty-four.
+
+#### The new shape: the input existed and the entry point never saw it
+
+The best of the three new test files needed no new input at all. Ethereum's corpus **has**
+`deserialization_fails_not_in_G1` — a well-formed encoding of a curve point outside the order-r
+subgroup, the small-subgroup input the check exists for. It is read, it is refused, the test passes.
+
+It is refused by `test/wac/probe.wac`'s `blsG1Status`, which calls `g1Decompress`, `g1IsOnCurve` and
+`g1InSubgroup` in sequence so it can report *which* one said no — a genuinely useful thing for a test
+to do. But that means the corpus drives the probe's copy of the composition and never `g1FromBytes`,
+the function every verifier in the package calls. Its own subgroup line had never executed.
+
+The source comment on `g1FromBytes` states the intent it was not held to: *"The three are separate
+functions above so a test can reach each one, and one function here so a caller cannot use two of the
+three by accident."* The test reached each one.
+
+Canaried rather than argued: with the subgroup line deleted from `g1FromBytes`, `verify_test`,
+`curve_test` and `aggregate_test` all pass, and the new test fails.
+
+**This is a fourth failure mode, and the first that a bigger corpus would not have fixed.** The three
+before it were about what a corpus contains — vendored real data hides refusals, hand-chosen inputs
+hide unused API. This one is about what the *harness* calls. A test that reimplements the composition
+it is checking cannot see the composition go wrong, and from a coverage report it looks identical to a
+line that is simply unreachable. `g1.wac:325` and `:326` sit one line apart and were uncovered for
+completely different reasons: the first cannot be reached by any input, the second had an input
+sitting in the corpus.
+
+#### Also
+
+`fp2Sqrt`'s three later refusals are pinned with a proof rather than a shrug — `a` is a square in Fp2
+exactly when its norm is a square in Fp, and the norm is tested above them, so they cannot fire. A
+walk of forty values through `fp2Sqrt` (about half have no root) confirmed every refusal happens at
+that one line. And `fp12Zero` was exported, imported once and never called, so it went.
+
+### `tls` seventh — where the number was a fact about the harness, and a remote abort behind it
+
+**27 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 28 drivers; the unmeasured list is 11.
+
+**924 of 1274 → 1042 of 1274.** 74.5% is the lowest first run of any package measured, and the shape
+was not a scatter of missed refusals:
+
+    packages/tls/src/client.wac      168   136   81.0
+    packages/tls/src/handshake.wac   108    26   24.1
+    packages/tls/src/server.wac      143    37   25.9
+
+**Our server is tested thoroughly, against OpenSSL and rustls, in another process.** `interop_test`,
+`rsa_interop_test` and `client_test` build `test/wac/tlsserved.wac` into its own binary and start it as
+a daemon, because a handshake needs both ends at once and a wac test is one thread. The instrument
+watched one side of a conversation the harness drove both ends of.
+
+**This is the failure mode this issue most needed to see.** Six packages in, the reflex was to read a
+low number as a claim about the tests. Two hundred pins saying "the server is untested" would have
+been false, and writing none would have left the task unable to notice the server going untested
+later. The discriminating question is not *what is uncovered* but *where does this code run when it is
+exercised* — and a coverage prefix is a directory, so it cannot ask.
+
+By the end the same distinction had appeared three times in one package: `server.wac` exercised in
+another **process**; the RSA identity path likewise; and `handshake.wac`'s `parseServerHello` and
+`clientHello` exercised in another **package**, by `packages/quic` and `packages/webrtc`, which is why
+they read as dead from the side that exports them.
+
+#### What closed it
+
+Both state machines are documented as pure functions from `(state, bytes)` to `(state, bytes)`, so
+`test/wac/loopback_test.wac` introduces them to each other directly — a whole handshake, a request, a
+reply and an orderly close, in one process, no socket, no daemon, no build step. `handshake.wac` went
+24.1% → 66.7% and `server.wac` 25.9% → 57.6%. It is also deterministic where the socket tests are not,
+and it can tamper with a flight already under way, which two processes over a socket could not.
+
+#### What it found
+
+**A remotely-triggerable abort, in both directions.** `recordOpen` trapped when a tag did not verify,
+and both state machines called it on bytes a stranger chose. A peer that completed a ClientHello
+exchange could abort the server *process* — every other connection with it — and one flipped byte in
+a server flight could abort a client, which `packages/tor` is. Neither needs key material. RFC 8446
+§5.2 requires `bad_record_mac` and terminating the connection.
+
+The trap was deliberate one layer down and that argument still holds. What had gone stale was the
+reason given for the shape: *"wac cannot express a result the caller is forced to inspect."* It can —
+a `u8[]?` cannot be used without `is null` or `!`, and `!` on null still traps.
+
+**Why nothing found it earlier**: `record_traps_test.wac` asserts the trap deliberately and correctly,
+because at that layer it *is* the contract. Reaching it through the state machine needs a real server
+flight to tamper with, and the server only ever produced one in another process. The arrangement that
+made `server.wac` read 25.9% is the arrangement that hid it.
+
+Also fixed on the way: `x509gen.wac` emitted no `subjectAltName` and `certMatchesHost` consults nothing
+else, so **nothing this repository could generate was acceptable to its own TLS client by name**.
+Unnoticed because the callers did not care — WebRTC identifies a peer by SDP fingerprint, and the TLS
+tests that check a name use a vendored CA certificate.
+
+#### On the ledger itself
+
+232 points remain and they are stated as 30 rules and 26 pins rather than pinned one at a time. Two
+things learned about the mechanism: a `Rule` with `scope: "decl"` matches the enclosing
+declaration's **signature line**, not its body — nine rules keyed on body text matched nothing and
+said so, which is the ratchet working. And `verifyChain` turned out to be a second implementation of
+`verifyPath`'s verdicts; the ledger is where the duplicate became visible.
+
+### `quic` eighth — an audit of the seventh's weakest entry, and what it found
+
+**28 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 29 drivers; the unmeasured list is 10.
+
+**696 of 868 → 726 of 868.** This package was picked because `packages/tls`'s ledger pins
+`handshake.wac`'s parsers as *exercised in another package* — this one — and says in as many words
+that `deno task coverage:quic` does not exist to check the claim.
+
+#### The audit, and the number that came out of it
+
+Pointing quic's own exercise at `packages/tls/src/handshake.wac`:
+
+| exercise | dark | of 108 |
+|---|---:|---:|
+| tls's | 36 | 108 |
+| quic's | 33 | 108 |
+| **dark to both** | **15** | **108** |
+
+Each covers about twenty points the other misses. So **each ledger read alone overstates that file's
+gap by roughly twenty lines**, and neither can tell a dead line from one its neighbour exercises.
+
+That makes "covered by a neighbour" the one exemption reason nothing can verify. If quic stopped
+calling `parseServerHello` tomorrow both ledgers would stay green — quic's because it does not measure
+that file, tls's because its rule says somebody else does. Filed as **`issues/system/0241b`**, with the
+note that `measure` already collects every point across every file it compiled and the prefix is
+applied at `report`, so the data exists and is discarded.
+
+#### What the driver itself found
+
+`frame.wac` had **33 uncovered points of which 32 were the same check** — `stop(Frame.Incomplete)`, the
+answer for a frame running off the end of a datagram. That is the cheapest hostile input QUIC has: a
+truncated datagram needs no keys, no handshake and no timing. None of the thirty-two had an input.
+
+`test/wac/truncated_test.wac` sweeps every frame in table 3, cut at every byte. 82.2% → 93.3%.
+
+**The canaries answered differently by kind of field, which is the useful part**: the varint guards are
+defence in depth (delete one, the next catches it, every case still passes), the fixed-width ones are
+load-bearing, and deleting NEW_CONNECTION_ID's `p >= b.len()` makes the sweep **trap** rather than fail
+— the reader runs off the end of the datagram. So the file says plainly that it pins the property for
+one family and the specific check for the other, which is the correction `ssz` needed after the fact
+and this one had before it was committed.
+
+#### And the residue is a different shape from every package before
+
+142 points, and almost none is a refusal nobody wrote. They are the *not-found* arms of accessors that
+read a peer's flight — "you asked this datagram for a certificate and there is no certificate in it" —
+forty-two in `Client` and twenty-three in `Server`. Not a branch nobody tested: an answer nobody has
+ever seen returned.
+
+### `webrtc` ninth — the fourth kind of elsewhere, and a wrong claim caught within the hour
+
+**29 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 30 drivers; the unmeasured list is 9.
+
+**701 of 973 — 72.0%, the lowest first run yet**, and `session.wac` reads **32.5%**. Its real exercise
+is `test/browser.test.ts`, which drives `Session`, `Peer` and `ice.wac` end to end against **Chromium**
+— *"libwebrtc is what WebRTC is; every other stack was written to talk to it"*. That test is
+TypeScript, it runs in a browser, and `cov_exercise.wac` compiles wac. The second-largest driver of
+the same code is `example/answer.wac`, a program run on its own.
+
+So in three packages the same low number has had four distinct causes, none of them "these lines are
+untested":
+
+| where the code runs | seen in |
+|---|---|
+| another **process** — a daemon the test spawns | `tls`'s server, and its RSA identity |
+| another **package** — a sibling imports it | `tls`'s `handshake.wac`, called by `quic` |
+| another **host** — a browser, driven from TypeScript | `webrtc`'s `session.wac` |
+| another **program** — an `example/` run on its own | `webrtc`'s `session.wac` again |
+
+**The discriminating question is not what is uncovered but where the code runs when something
+exercises it**, and a coverage prefix is a directory, so it cannot ask.
+
+#### The wrong claim, and why it is the best evidence for `0241b`
+
+`tls`'s ledger named two consumers of `handshake.wac`: `packages/quic/src/client.wac` and
+`packages/webrtc/src/dtls.wac`. The second is false — `dtls.wac` **declares its own** `clientHello` and
+`serverHello`, because DTLS 1.2's handshake is a different wire format, and it imports nothing from
+that file.
+
+It was caught the same day and by accident: `webrtc`'s driver was pointed at `handshake.wac` to collect
+a third term for `0241b`'s table and reported **zero points**.
+
+That entry was written carefully, by someone who had just read the imports, and it was half wrong
+within the hour. **Nothing in the ratchet could have said so** — a rule is checked for *matching*, never
+for whether its reason is true — and "somebody else covers it" is the only exemption reason that is a
+statement about a measurement nobody took. Both the ledger and `0241b` now record it.
+
+#### What is genuinely untested here
+
+Separable from the above, and the ledger separates it: `sctp.wac`'s `Association` has 27 points its own
+twenty-two tests simply do not construct, and `dtls.wac`'s accessors have a bounds check apiece —
+`body.len() < 4`, `3 + len > body.len()` — none of which has an input, because every hello and
+certificate in the corpus comes from OpenSSL, aiortc or Chromium. That is the same family
+`packages/quic`'s `truncated_test.wac` closed for QUIC frames, and it transfers here almost unchanged.
+
+### `tor` tenth — a third of a package is programs, and ten of them were invisible
+
+**30 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 31 drivers; the unmeasured list is 8 — `box, ens, ethrpc, git, lightclient, platform, wacc,
+wactest`.
+
+**2269 of 3281 — 69.2%**, over the largest package in the repository. Two rows carry two thirds of it:
+
+    packages/tor/src/relayd.wac   484    1    0.2
+    packages/tor/src/link.wac     208   18    8.7
+
+`relayd.wac` is a **program**, and four tests build it into a binary and spawn it — two of them with
+the real C tor on the other end, together 21 of that suite's 50 seconds. `link.wac` is what `app.wac`
+and `socks.wac` drive, and both of those are programs too.
+
+**A third of this package is programs: eleven files, 5,334 of 15,913 lines.**
+
+#### The part that was invisible rather than low
+
+Ten of those eleven do not appear in the report *at all*. A file nothing imports contributes no branch
+points, so it is absent from the table rather than reading zero, and a reader scanning forty rows has
+no way to notice `network.wac`, `socks.wac`, `gendesc.wac`, `hsconnect.wac` and six more were never
+there.
+
+That is now fixed in the shared seam. `covledger.wac`'s ratchet names source files under the prefix
+that contributed nothing — **skipping declaration-only files**, which was the first version's false
+alarm: `core/read.wac` is one `enum` and `core/jsx.wac` is two `struct`s, so neither can contribute a
+point however thoroughly it is used, and both were named under a `core` ledger reading 100%. The
+discriminator is that a function with no branches still produces an entry point, so a file with zero
+points and a `") {"` in it was not compiled while one without has nothing to compile. `core` now
+reports none and `tor` reports twenty-two.
+
+Reported, not failed. Whether a program should be measured — and how — is a decision, and making it
+fail would turn thirty ledgers red at once for a question none of them has answered.
+
+#### The other third is the same finding as everywhere else
+
+339 points, of which 168 are `if (…) return` and 61 are bounds checks: the refusal arms of document
+and cell parsers, against a corpus of real Tor directory documents and cells from C tor, both of which
+are well-formed. Two are worth naming — **`verifyConsensus`**, which decides whether to believe the
+document that says which relays exist, has seven arms and every one is a way of saying no; and
+**`parseIntroducePlaintext`**, which reads an INTRODUCE2 cell from a stranger by way of an
+introduction point, has twelve.
+
+#### On the ledger's size, and how it was written
+
+Seventy-one rules — more than every other ledger put together. Two are whole-file and give up their
+file's floor deliberately, saying so.
+
+Worth recording as method: the rule set was developed **offline**, by reimplementing `rulePicks`,
+`declOf` and `opensDecl` in a scratch script and simulating which uncovered points each candidate rule
+would claim. A `coverage:tor` run is 80–90 seconds, so iterating against the real thing would have
+been half an hour of waiting; the simulation took one run's worth of data and got the ledger green on
+the first real attempt. The three predicates are twenty lines between them and the fidelity was exact.
+
+### `ens`, `ethrpc`, `lightclient` eleventh to thirteenth — and one package whose library was invisible
+
+**33 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 34 drivers; the unmeasured list is 5 — `box, git, platform, wacc, wactest`.
+
+| package | first run | now |
+|---|---:|---:|
+| `ens` | 80.9% | 80.9% |
+| `ethrpc` | **36.8%** | **88.0%** |
+| `lightclient` | 77.2% | 77.2% |
+
+#### `ethrpc`: three of four source files contributed nothing
+
+`rpc.wac`, `header.wac` and `getproof.wac` — 404 of 496 lines — produced **no branch points at all**,
+so they were absent from the table rather than reading zero. The report line added with `tor`'s driver
+is what said so; without it the package reads "36.8% over `jsonhex.wac`" and nothing else.
+
+The reason has two layers and neither is "nobody wrote tests":
+
+- the three tests that exercise them are `*_live_test.wac` and need **anvil**, a whole Ethereum
+  execution client, on a socket. It is absent in this container, so they skip;
+- and with anvil present they still would not be measured, because they drive the library by
+  **spawning `example/` programs as subprocesses** rather than importing it.
+
+`rpc_live_test.wac`'s header already names the first half — *"a skip that prints nothing reads as
+coverage"* — which is a good instinct that could not measure itself.
+
+**What closed it**: `headerOf` is pure, and it is the security boundary of the package — the thing that
+turns a block hash from a checkpoint into a *trusted state root*. `test/wac/header_test.wac` took it
+from absent to **37 of 37** and carried `jsonhex.wac` from 36.8% to 76.3%.
+
+Written with its limitation stated in the file: there is no real block here, so the assertions are
+about the contract rather than agreement with the chain — which inputs are refused, that every one of
+the fifteen fixed fields is named when missing, that the fork-appended fields **stop at the first
+absent one** (a `withdrawalsRoot` without a `baseFeePerGas` before it must be ignored, and encoding it
+anyway would produce a hash for a header nobody has), and that quantities are minimised while data is
+not. Where a self-consistent hash would prove nothing, the test varies an input and asserts the hash
+*changed*.
+
+#### `lightclient`: twenty refusal arms in one function
+
+`validateUpdate` decides whether a sync-committee update is worth believing, and twenty of the
+package's fifty uncovered points are inside it — enough participation, a finality branch that reaches
+the attested header, a signature over the right fork domain, slots in the right order. Every arm is a
+way of saying no, and the corpus is updates a conforming beacon node produced.
+
+That is now the seventh package to land in the same place, after `rlp`, `mpt`, `ssz`, `abi`, `bls`,
+`tls` and `tor`. A light client's whole job is to refuse, and its refusals are the untested part.
+
+### `git` fourteenth — where testing the command instead of the library is the suite's design
+
+**34 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 35 drivers; the unmeasured list is 4 — `box, platform, wacc, wactest`.
+
+**844 of 1419 — 59.5%, the lowest of any package measured**, and one file is most of it:
+
+    packages/git/src/repo.wac   362   19   5.2
+
+**Seven of this package's eighteen test files build an `example/` program and spawn it.**
+`checkout_test`, `commit_test`, `clone_test`, `push_test`, `pull_test`, `fetchlive_test` and
+`configchain_test` each call `builtProgram(...)` on `gitco`, `gitci`, `gitclone`, `gitpush`, `gitpull`
+or `gitfetch`, run it, and check what it did to a repository on disk. Only `packwrite_test.wac`
+imports `repo.wac`, which is where its nineteen points come from.
+
+That is a *good* way to test a git client — it exercises the thing a user runs, end to end, against
+real object files — and it is invisible to the instrument.
+
+**This is the ninth instance of one finding, and the clearest.** After a daemon in a subprocess, a
+sibling package, a browser, a live node and eight example programs, `git` is the case where it is not
+an accident: it is what the suite was designed to do. Which is why the ledger's answer is a whole-file
+rule that gives up `repo.wac`'s floor and says so, rather than 343 pins claiming the file is untested.
+
+Nine instances is enough to state the rule plainly: **before writing a single pin, ask where the code
+runs when something exercises it.** A coverage prefix is a directory and cannot ask. The report line
+added with `tor` answers half of it — naming files that contributed nothing — and `git` names three
+more (`transport.wac`, `configfiles.wac` and the eight examples).
+
+The remaining 575 points are the usual: refusals in `fetch.wac`'s advertisement and packfile readers,
+`pack.wac`'s format checks, `ignore.wac`'s pattern corner cases. The corpus is GitHub, git itself and
+this package's own writers, all of which produce well-formed input.
+
+### The sweep is done: 37 drivers, 36 floors, two packages left — 2026-08-24
+
+    37/37 ran in 173s (556s of work at 4 workers) — 36 hold a coverage floor,
+    0 only check their own exemptions have not drifted, 1 report and cannot fail
+       2 package(s) have no coverage task: box, wacc
+
+From the nineteen this issue was filed about, of which fifteen could not fail. **`box` is
+`agent-c`'s** and **`wacc` is 33,575 lines and its own project**; both are somebody's decision rather
+than mine.
+
+`wactest` and `platform` were the last two, and between them they close the argument this sweep has
+been having with itself.
+
+#### `wactest` — 28.3%, and the inverse of every other finding
+
+    packages/wactest/src/built.wac    134    0    0.0
+    packages/wactest/src/oracle.wac   123   14   11.4
+    packages/wactest/src/host.wac      34    2    5.9
+
+**These are the three most-used files in the repository**: `oracle.wac` is imported by ninety files,
+`host.wac` by seventy-four, `built.wac` by thirty. Every differential test in `crypto`, `tls`, `zstd`
+and a dozen others goes through them thousands of times a run — and `wactest`'s own tests barely call
+them.
+
+Nine packages in, the story had always been code that *runs* somewhere the instrument cannot see: a
+subprocess, a browser, a live node, a spawned CLI. **This is the mirror image — the code runs
+in-process, and its callers are what live elsewhere.** Same cause, opposite direction, and the same
+fix: the union pass in `issues/system/0241b`, which would give this package's real reading out of
+thirty exercises that already run.
+
+The one gap that genuinely belongs to `wactest` is `assert.wac`'s failure-reporting arms — unreachable
+by construction from a *passing* suite, and the code that runs at the moment somebody most needs it to
+be right.
+
+#### `platform` — 38.7%, and mostly not the sort of thing coverage measures
+
+`src/` is two files. Everything else the package offers is a *declaration* — the `Core` and `Cli`
+capabilities the host implements — and a declaration has no branch points. Of the two, `stream.wac`'s
+consumer is `packages/box`, which has no driver; `frame.wac`'s seventeen uncovered points are almost
+all in `childCli`, the capability narrowing, and every one is a refusal. That is the package's whole
+subject and the part with no inputs.
+
+#### The report line, refined twice
+
+Naming files that contributed nothing turned up two false alarms worth recording, because both would
+have degraded the instrument into noise:
+
+1. **declaration-only files.** `core/read.wac` is one `enum`; it cannot contribute a point however
+   thoroughly it is used. Discriminator: a function with no branches still produces an *entry* point,
+   so zero points plus a `") {"` means not compiled, and zero points without one means nothing to
+   compile.
+2. **`example/`, `bench/`, `size/`, `audit/`.** `packages/platform` has two files in `src/` and
+   thirty-nine examples; a list led by the examples buries the one line worth reading. They are now
+   counted rather than listed — the count still moves if one appears or goes.
+
+After both, `platform` names exactly one file and `core` names none.
+
+### The ledgers are now a work list, and the first item off it was a bug — 2026-08-24
+
+`packages/webrtc`'s ledger said three things: that the bounds check on every accessor in `dtls.wac`
+had no input, that `helloGroups` alone was twelve points and the densest gap in the package, and that
+`packages/quic/test/wac/truncated_test.wac` was the shape that would close it.
+
+Writing that sweep found one of the checks missing. A ClientHello's `supported_groups` extension is a
+length-prefixed extension containing a length-prefixed list; `helloGroups` bounded the **extension**
+and then read the **list** using a length taken from the wire and never compared to it. A hello whose
+extension is four bytes and whose list claims four hundred walked four hundred bytes past the end of
+the array and trapped. Its three siblings all check their inner length against the body and were
+right — the file already knew, in three places.
+
+`dtls.wac` 64.0% → 86.5%; the package 72.0% → 76.1%.
+
+**That is the third abort-class bug this sweep has produced, and the first found by acting on a ledger
+rather than by writing one.** The other two were `packages/tls`'s `recordOpen` trapping on a peer's
+record, in both directions. All three are the same shape: a length from the wire used without being
+related to the buffer it indexes, in code that reads what a stranger sent.
+
+It is also the argument for the prose. A pin that said *"the bounds checks are unexercised"* and
+stopped would have been true and useless; what made this findable was the ledger naming the family,
+counting it, and pointing at the file in another package that had already solved it. **A ledger entry
+worth writing tells the next person what to build.**
+
+Two entries had to change as a result, and both were the two-way ratchet working: a pin on
+`dtls.wac:113` became covered, and a rule stopped speaking for anything.
+
+### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
+
+Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's
+whole output is new tests whose value is exactly that difference. So each new refusal test was run once
+against its own subject with the rule it names deleted:
+
+| package | rule deleted | test |
+|---|---|---|
+| `rlp` | the leading-zero check in a long-form length | **failed** |
+| `abi` | a bool's first thirty-one bytes must be zero | **failed** |
+| `mpt` | a hex-prefix's pad nibble must be zero | **failed** |
+| `ssz` | the backwards-offset check, then `rootAt`'s span guard | **passed both times** |
+
+Three of the four pin the check. The fourth does not, and that is the more interesting result: SSZ's
+offset table is validated in more than one place, so deleting any single guard leaves the malformed
+input still refused — by the next one. The test pins the *property* and its header now says so.
+
+**This is why a coverage floor is not a quality claim.** A floor stops a rule from becoming unreachable;
+it cannot tell whether the input that reaches it would notice the rule going away. The instrument that
+answers that is mutation score — `issues/system/0005` — and the two are complements rather than
+alternatives. The cheap version, done here, is one deletion per rule a new test claims to hold, which
+cost about a minute each and would have let one overclaiming test header through.
+
+### `tty` third — and the pattern is narrower than two packages made it look
+
+**23 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 24 drivers; the unmeasured list is 15.
+
+`tty` was picked because its oracle is a different *kind*: `ssz` and `mpt` are judged against vendored
+corpora of real Ethereum data, and this one against **the kernel**, through a live pty, with inputs
+chosen by whoever wrote the test.
+
+**The first-run numbers are strikingly alike — 90.5%, 91.2%, 91.0%.** Three packages, three quite
+different jobs, and each about nine per cent unreached. That is the number to quote for the remaining
+fifteen.
+
+**The kinds are not alike, and that corrects the claim I made after two.** `ssz` and `mpt`'s gaps were
+overwhelmingly the implementation's own *refusals* — a real-data corpus contains nothing Ethereum would
+never build. `tty`'s were not one refusal:
+
+  - `Line.pending()` and `Line.feedAll()`, **two public methods with no caller in the repository**;
+  - `^C` and `^\` in cbreak — the mode's most consequential rule, the one its own doc comment argues
+    about at length, and nothing had ever pressed either key in that mode;
+  - a tab's width, which the erase rules count backwards over: measured as two columns it rubs out one
+    character too many, and no recorded vector contains a tab.
+
+So the rule is not "differential testing hides refusals". It is that **a driver finds what the corpus
+does not reach, and what that is depends on where the corpus comes from** — vendored real data hides
+your refusals, hand-chosen inputs hide your unused API and your unentered modes. Both are worth finding
+and neither is visible from inside the package's own tests.
+
+**107 of 111**, one pin and one rule: a cbreak-with-echo the three public constructors cannot produce,
+and an example's `main`, which a driver imports as a module and never starts as a program.
+
+### `mpt` second — the same shape, and the contrast that makes it a class
+
+**22 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 23 drivers; the unmeasured list is 16.
+
+`mpt` was picked for contrast: same business as `ssz` — proofs that verify or do not — but it *already
+had* a `malformed_test.wac`, seven tests of its refusals written before any driver existed. If prior
+attention to refusals shrinks the first gap, this is where it would show.
+
+**It does not.** `ssz` opened at 90.5%, `mpt` at 91.2%, and **eleven of `mpt`'s eleven gaps were the
+same class**: refusals of malformed input in a package judged against Ethereum's published roots. Two
+packages, two corpora of real data, one shape — which is enough to call it a property of
+*differential-tested* packages rather than a fact about either one. A corpus of real proofs contains no
+proof that Ethereum would never build, and the checks that matter most guard exactly those.
+
+The one worth naming here is the **non-canonical hex-prefix header**: an even-length path pads with a
+zero nibble, and ignoring the pad would accept two encodings of one path — two hashes, and a root that
+depends on which the writer chose. **124 of 125** now, one pin.
+
+**A control earned its place**, and is the reason the number is trustworthy. The well-formed twin in
+the value test failed first, saying *a leaf's value is a byte string, and this one is a list*: a trie
+leaf holds the RLP **encoding** of an account as opaque bytes, not the account as a nested list. I had
+the data model wrong, and the two negatives beside it had been passing for a reason I had not
+established.
+
+### The cost, now that there are two
+
+Each package was about an hour, of which the mechanical part — an exercise calling the tests — is
+minutes. Both turned up an untested attack surface rather than tidy-up. That is the input the decision
+was missing; sixteen remain, `wacc` at 33,575 lines being its own project.
+
+### `ssz` — the first of the eighteen with no driver at all, done to price the decision
+
+**21 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail** — `packages/ssz` is the twenty-second task, and the first from the unmeasured eighteen.
+
+This issue's open half has been "should the eighteen have drivers" for three days. A decision with no
+input gets one by doing a package.
+
+**The cost.** The exercise is one file calling the package's 26 tests, generated by a script. First
+measurement **248 of 274**, about a minute. Everything after that was reading gaps — which is the part
+that is not mechanical and not skippable.
+
+**What it found: 23 of the 26 gaps were `return null` on malformed input**, unreached for a structural
+reason rather than a careless one. `ssz` is judged against Ethereum's fixtures, and *that corpus is a
+statement about the format; it cannot contain a statement about this implementation.* A bounds check on
+a span, a field index past the end of a type table, a container kind where a list was expected — the
+spec never asks, so no vector set answers.
+
+`test/wac/refusals_test.wac` drives them directly, including both classic SSZ aliasing shapes: an offset
+table that runs backwards, and a first offset that is zero or not a multiple of four. In a package whose
+whole purpose is Merkle roots, a missing refusal is not a crash — it is a proof that verifies against
+the wrong state, silently. **273 of 274** now, one pin.
+
+**And a caution the exercise produced, which is worth more than the number.** Deleting the
+backwards-offset comparison leaves every one of those cases still refused; so does deleting `rootAt`'s
+span guard as well. The tests pin the *property*, not the individual checks — the decoder refuses
+hostile tables in several places. Executed is not the same as load-bearing, and a branch count cannot
+tell them apart. That is `issues/system/0005`'s territory, and it is the honest limit of what any of
+these floors assert.
+
+**So the input to the decision is:** a driver for a mid-sized, well-tested package is roughly an hour,
+of which the mechanical part is minutes; and on the one package tried it turned up an untested
+attack surface rather than tidy-up. Seventeen packages remain, `wacc` at 33,575 lines being its own
+project.
 
 ### The ordering for the remaining fourteen
 

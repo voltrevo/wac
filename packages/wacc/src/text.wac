@@ -1,0 +1,63 @@
+// Splitting a line-and-tab wire, which two of this compiler's back ends both do.
+//
+// `render.wac` turns `diagnoseFiles`'s answer into something a person reads and `bindgen.wac` turns
+// the same shape — one record per line, tab-separated fields — into the glue a host calls a module
+// through. Both had their own `linesOf` and their own tab splitter, character for character the same
+// pair under two names, and on 2026-08-24 they drifted: `issues/system/0239c` needed `linesOf` to stop
+// being quadratic and only one of the two copies got the fix. That is the argument for this file
+// rather than any tidiness: the bug was fixed and still present.
+//
+// Nothing above the wire belongs here. These take a string and answer strings; the meaning of a field
+// is the caller's, which is why `render.wac` still names its own columns and `bindgen.wac` still names
+// its own record kinds.
+
+/**
+ * The lines of a text.
+ *
+ * **Sliced between the newlines rather than accumulated a character at a time.** `cur = cur + ch`
+ * allocates a fresh string per character, so one line of `n` characters costs `n²/2` character copies.
+ * That is invisible on source, where lines are short, and it is the entire cost on input with no
+ * newlines at all — a 75 KB wasm module handed to the compiler as source is one line, and rendering
+ * its diagnostics took ninety seconds and printed nothing. `issues/system/0239c`.
+ */
+export string[] linesOf(string text) {
+  i32 count = 1;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) == "\n") { count = count + 1; }
+  }
+  string[] out = string[count](fill: "");
+  i32 n = 0;
+  i32 start = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) == "\n") {
+      out[n] = text.slice(start, i);
+      n = n + 1;
+      start = i + 1;
+    }
+  }
+  out[n] = text.slice(start, text.len());
+  return out;
+}
+
+/**
+ * One tab-separated field of a line, or `""` past the end.
+ *
+ * **`""` for a field that is not there is the wire's own convention** rather than laxness: the format
+ * is deliberately ragged at the end, so a record with nothing to say about a trailing column simply
+ * stops, and a reader asking for one gets the same answer as for a column that was written empty.
+ *
+ * Sliced for the same reason as `linesOf`, though no caller has a long line today — a wire record is
+ * one diagnostic or one signature. It is written this way so the next long one is not a surprise.
+ */
+export string field(string line, i32 want) {
+  i32 n = 0;
+  i32 start = 0;
+  for (i32 i = 0; i < line.len(); i++) {
+    if (line.slice(i, i + 1) == "\t") {
+      if (n == want) { return line.slice(start, i); }
+      n = n + 1;
+      start = i + 1;
+    }
+  }
+  return n == want ? line.slice(start, line.len()) : "";
+}

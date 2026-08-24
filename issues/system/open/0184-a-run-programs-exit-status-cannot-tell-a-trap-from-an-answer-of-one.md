@@ -170,3 +170,58 @@ is the same fourth-parameter conversation as `issues/system/0182`.
 Recording it rather than doing it because the constraint above is the part that was missing: without it,
 the first attempt is a reserved code, and the reason that is wrong is not obvious until you look up what
 `main` may return.
+## Option 2's missing half exists now, and building it found a bug — agent-a, 2026-08-24
+
+The section above recommends **dying by signal** and says why it was not done: *"`packages/platform`'s
+`Exec` would need a way to report it"*. It has one. `Exec.signalled()` is `status == -1`, and `-1` was
+already what three of the four hosts wrote for a child that died by a signal — a safe sentinel because
+a POSIX status is eight bits, so no child that *exited* can produce it. What was missing was that the
+convention had a name, a docstring and a test; it was four `code ?? -1` expressions with four identical
+comments and nothing comparing them.
+
+**Comparing them found that one was wrong.** `packages/platform/test/wac/exec_probe.wac` now spawns
+`/bin/sh -c 'kill -9 $$'` and `runtimes_test.wac` holds the two JavaScript hosts to the same answer:
+
+| host | before | after |
+|---|---|---|
+| native (v8), native (wasmtime) | `-1` | `-1` |
+| Node | `-1` | `-1` |
+| **Deno** | **`137`** | `-1` |
+
+Deno fills `code` in for a signalled child with the shell's `128 + signal`, so `?? -1` never fired and a
+`SIGKILL` arrived as an ordinary exit 137 — indistinguishable from a program that returned 137. The
+fallback was dead code, with a comment above it describing behaviour it did not have. `signal` is the
+field that knows, so `statusOf` asks it.
+
+That is worth recording beyond the fix: **the differential found it on its first run**, which is the
+argument for the test rather than for the convention. The convention was right in three places and
+written down in none.
+
+What this does *not* settle is this issue's own question. A wasm trap inside `wac prog.wasm` is still
+an exit of 1, and making it a signal is a change to the run path rather than to `Exec` — but the
+caller's half is now able to see the answer, which was the stated blocker.
+
+## One of the two build targets already reserves a code — agent-a, 2026-08-24
+
+This issue's central argument is that there is no code to give a trap: *"once `main` runs the status
+belongs to it … the program's range is the whole of 0–255 … There is no value a trap could take that
+some program could not also answer."* That is sound, and it is worth knowing that **the Deno target
+already picked one anyway**.
+
+The same program, built both ways and run:
+
+| | `wac app` (native) | `build.ts --target deno` |
+|---|---:|---:|
+| `main` traps | exit **1** | exit **70** |
+| `main` returns 7 | exit 7 | exit 7 |
+| `main` returns 0 | exit 0 | exit 0 |
+
+So option 1 from the list above — *"reserve one anyway … and document that a `main` returning it is
+indistinguishable from a trap"* — is not hypothetical. Half of the toolchain does it, undocumented, at
+70; the other half returns 1 and collides with the ordinary failure this issue was filed about. A
+caller cannot rely on either, and the two disagreeing is worse than either choice made on purpose.
+
+That does not settle the decision, and it is not an argument for 70 — it is an argument that the
+decision is already being made by default, in one host, and that whatever is chosen has to land in
+both. Found while measuring `issues/system/0197`'s conversion; the *stdout* half of the same
+comparison was a plain defect and is fixed.

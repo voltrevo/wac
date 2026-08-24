@@ -1,0 +1,302 @@
+// `headerOf` — the function that turns a block hash into a trusted state root.
+//
+// Found by this package's first coverage driver on 2026-08-24 — `issues/system/0205`. The package read
+// **36.8%**, and the number was over one of its four source files: `rpc.wac`, `header.wac` and
+// `getproof.wac` — 404 of 496 lines — contributed **no branch points at all**, so they were absent from
+// the report rather than reading zero.
+//
+// The reason is worth stating precisely, because it is not "nobody wrote tests":
+//
+//   - the three tests that exercise them are `*_live_test.wac`, and they need `anvil` — a whole
+//     Ethereum execution client — running on a socket. `anvil` is absent here, so they skip;
+//   - and when it is present they still would not be measured, because they drive the library by
+//     **spawning `example/` programs as subprocesses** rather than importing it.
+//
+// `rpc_live_test.wac`'s own header names the first half of that hazard: *"a skip that prints nothing
+// reads as coverage"*. What the driver adds is the second half and the size of it.
+//
+// ## Why this function and not the other two
+//
+// `rpc.wac` and `getproof.wac` take a `Cli` and talk to a socket. `headerOf` takes a parsed JSON value
+// and an expected hash and returns a struct — **it is pure**, and it is the one that decides whether
+// the node told the truth:
+//
+//   > a block *hash* is small enough to come from somewhere else — a friend, an explorer, a checkpoint
+//   > […] and once one is in hand, this is what turns it into a trusted state root.
+//
+// So it is the security boundary of the package, it needs no node, and until now nothing called it.
+//
+// ## What this cannot check, said out loud
+//
+// **There is no real block here.** A header's hash is `keccak256(rlp(header))` and checking that this
+// implementation agrees with Ethereum needs a header Ethereum produced, which this container cannot
+// fetch and which would be worth vendoring. So the assertions below are about the *contract* — which
+// inputs are refused, which fields are appended, and that a wrong hash is caught — and not about
+// agreement with the chain. A test that recomputed the hash with the same code it is testing would
+// agree with itself perfectly and mean nothing; where that risk arises, the test varies an input and
+// asserts the hash *changed*, which is a claim the implementation can fail.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue } from "../../../json/src/value.wac";
+import { Header, headerOf } from "../../src/header.wac";
+
+/** `indexOf` with a starting offset, which the builtin does not take. */
+i32 indexFrom(string s, string needle, i32 from) {
+  if (from < 0 || from > s.len()) { return -1; }
+  i32 at = s.slice(from, s.len()).indexOf(needle);
+  return at < 0 ? -1 : at + from;
+}
+
+/** The first occurrence of `from` replaced by `to`, or `s` unchanged. There is no `String.replace`. */
+string replaceOnce(string s, string from, string to) {
+  i32 at = s.indexOf(from);
+  if (at < 0) { return s; }
+  return s.slice(0, at) + to + s.slice(at + from.len(), s.len());
+}
+
+/** The fifteen fields every block has had, as an `eth_getBlockByNumber` result would carry them. */
+string FIXED_JSON() {
+  return "\"parentHash\":\"0x1111111111111111111111111111111111111111111111111111111111111111\","
+       + "\"sha3Uncles\":\"0x2222222222222222222222222222222222222222222222222222222222222222\","
+       + "\"miner\":\"0x3333333333333333333333333333333333333333\","
+       + "\"stateRoot\":\"0x4444444444444444444444444444444444444444444444444444444444444444\","
+       + "\"transactionsRoot\":\"0x5555555555555555555555555555555555555555555555555555555555555555\","
+       + "\"receiptsRoot\":\"0x6666666666666666666666666666666666666666666666666666666666666666\","
+       + "\"logsBloom\":\"0x00\","
+       + "\"difficulty\":\"0x0\","
+       + "\"number\":\"0x112a880\","
+       + "\"gasLimit\":\"0x1c9c380\","
+       + "\"gasUsed\":\"0xf4240\","
+       + "\"timestamp\":\"0x66d0a1b0\","
+       + "\"extraData\":\"0x\","
+       + "\"mixHash\":\"0x7777777777777777777777777777777777777777777777777777777777777777\","
+       + "\"nonce\":\"0x0000000000000000\"";
+}
+
+/** A block object with `extra` spliced in — pass `""` for the pre-London fifteen alone. */
+JsonValue block(T t, string extra) {
+  string doc = "{" + FIXED_JSON() + extra + "}";
+  JsonValue? v = parse(doc.toBytes());
+  t.isTrue(!(v is null), "the test's own block JSON did not parse");
+  if (v is null) { return JsonValue.Null; }
+  return v!;
+}
+
+/** The hash `headerOf` computes for a block, with no expectation to check against. */
+u8[] hashOf(T t, string extra) {
+  Header h = headerOf(block(t, extra), u8[0]());
+  // Without a `hash` member and without an expected hash there is nothing to check against, so `ok` is
+  // false by design — the hash is still computed and is what this returns.
+  t.eqI32(h.hash.len(), 32, "the computed hash is not 32 bytes");
+  return h.hash;
+}
+
+/** `hash` as a JSON member, so a block can carry the hash this implementation computes for it. */
+string hashMember(u8[] h) {
+  string hex = "";
+  for (i32 i = 0; i < h.len(); i++) {
+    string d = "0123456789abcdef";
+    hex = hex + d.slice((h[i] >> 4) & 15, ((h[i] >> 4) & 15) + 1) + d.slice(h[i] & 15, (h[i] & 15) + 1);
+  }
+  return ",\"hash\":\"0x" + hex + "\"";
+}
+
+/**
+ * A block whose hash is the one it says it is, and one whose hash is off by a bit.
+ *
+ * The control matters more than usual here: `ok` being false is the answer to almost everything this
+ * function is asked, so a test that only checked refusals would pass against an implementation that
+ * refused every block. The accepting case is what says the refusals mean something.
+ */
+export string test_a_header_is_accepted_when_its_hash_matches_and_refused_when_it_does_not() {
+  T t = T.create();
+
+  u8[] good = hashOf(t, "");
+  Header ok = headerOf(block(t, hashMember(good)), u8[0]());
+  t.isTrue(ok.ok, "a block carrying its own computed hash was refused: " + ok.error);
+  t.eqI32(ok.stateRoot.len(), 32, "an accepted header did not answer a state root");
+  t.eqI32(ok.stateRoot[0], 0x44, "the state root is not the one in the block");
+
+  // The same block, one bit of the hash flipped.
+  u8[] bad = u8[32]();
+  for (i32 i = 0; i < 32; i++) { bad[i] = good[i]; }
+  bad[31] = bad[31] ^ 1;
+  Header no = headerOf(block(t, ""), bad);
+  t.isFalse(no.ok, "a header was accepted against a hash that differs by one bit");
+  t.isTrue(no.error.indexOf("different hash") >= 0,
+           "the refusal does not say the hashes differ: " + no.error);
+  t.eqI32(no.stateRoot.len(), 0, "a refused header still answered a state root");
+
+  // And the explicit hash wins over the block's own, which is the whole point of the argument: a hash
+  // from a friend or a checkpoint is trusted and the node's is not.
+  Header anchored = headerOf(block(t, hashMember(good)), bad);
+  t.isFalse(anchored.ok, "the block's own hash was believed over the caller's");
+  return t.report();
+}
+
+/**
+ * A block missing one of the fifteen, refused by name.
+ *
+ * Every field is dropped in turn rather than one being picked, because the loop that reads them is
+ * index-driven and an off-by-one in it would leave exactly one field unchecked — which is the shape
+ * that a single example cannot see.
+ */
+export string test_a_missing_fixed_field_is_refused_and_named() {
+  T t = T.create();
+  string[] names = string[]("parentHash", "sha3Uncles", "miner", "stateRoot", "transactionsRoot",
+                            "receiptsRoot", "logsBloom", "difficulty", "number", "gasLimit",
+                            "gasUsed", "timestamp", "extraData", "mixHash", "nonce");
+  string all = FIXED_JSON();
+  i32 checked = 0;
+  for (i32 i = 0; i < names.len(); i++) {
+    // Rebuild the object without this one member.
+    string doc = "{";
+    bool first = true;
+    for (i32 k = 0; k < names.len(); k++) {
+      if (k == i) { continue; }
+      i32 at = all.indexOf("\"" + names[k] + "\":");
+      t.isTrue(at >= 0, "the test's own field list does not match FIXED_JSON: " + names[k]);
+      if (at < 0) { continue; }
+      i32 end = indexFrom(all, ",", at + names[k].len() + 4);
+      string piece = end < 0 ? all.slice(at, all.len()) : all.slice(at, end);
+      doc = doc + (first ? "" : ",") + piece;
+      first = false;
+    }
+    doc = doc + "}";
+    JsonValue? v = parse(doc.toBytes());
+    t.isTrue(!(v is null), "the block without " + names[i] + " did not parse");
+    if (v is null) { continue; }
+    Header h = headerOf(v!, u8[0]());
+    t.isFalse(h.ok, "a block with no " + names[i] + " was accepted");
+    t.isTrue(h.error.indexOf(names[i]) >= 0,
+             "the refusal for a missing " + names[i] + " does not name it: " + h.error);
+    checked = checked + 1;
+  }
+  t.eqI32(checked, 15, "only " + itoa(checked) + " of the fifteen fixed fields were dropped");
+  return t.report();
+}
+
+/**
+ * **The fork-appended fields, and the rule that they stop at the first absent one.**
+ *
+ * This is the subtle part of the file and the part whose failure is silent. The six optional fields are
+ * appended in fork order and each is present only from its fork onwards, so a node reporting
+ * `withdrawalsRoot` without `baseFeePerGas` is describing a chain that does not exist — and encoding it
+ * anyway would produce a hash for a header nobody has, which reads as *the node is lying* rather than
+ * as *we mis-encoded it*.
+ *
+ * The assertions are about the hash **changing**, not about its value: adding a field the encoder
+ * accepts must change the hash, and adding one it is supposed to skip must not. Neither claim can be
+ * satisfied by an implementation that agrees with itself.
+ */
+export string test_the_optional_fields_are_appended_in_order_and_stop_at_the_first_gap() {
+  T t = T.create();
+
+  u8[] london = hashOf(t, "");
+  u8[] withBase = hashOf(t, ",\"baseFeePerGas\":\"0x7\"");
+  t.isFalse(sameHash(london, withBase), "appending baseFeePerGas did not change the hash");
+
+  u8[] withTwo = hashOf(t, ",\"baseFeePerGas\":\"0x7\","
+                         + "\"withdrawalsRoot\":\"0x8888888888888888888888888888888888888888888888888888888888888888\"");
+  t.isFalse(sameHash(withBase, withTwo), "appending withdrawalsRoot did not change the hash");
+
+  // **The gap.** `withdrawalsRoot` without `baseFeePerGas` must be ignored, so this hashes as the
+  // pre-London fifteen. An encoder that appended it anyway would agree with itself and disagree with
+  // every chain.
+  u8[] gap = hashOf(t, ",\"withdrawalsRoot\":\"0x8888888888888888888888888888888888888888888888888888888888888888\"");
+  t.isTrue(sameHash(london, gap),
+           "withdrawalsRoot was appended without baseFeePerGas before it, which no chain does");
+
+  // Present and zero is not absent. `blobGasUsed: "0x0"` encodes as RLP's empty string and must still
+  // occupy its position — the file's own comment says a missing field and a zero one produce different
+  // hashes, and this is the assertion behind it.
+  u8[] threeZero = hashOf(t, ",\"baseFeePerGas\":\"0x7\","
+                          + "\"withdrawalsRoot\":\"0x8888888888888888888888888888888888888888888888888888888888888888\","
+                          + "\"blobGasUsed\":\"0x0\"");
+  t.isFalse(sameHash(withTwo, threeZero), "a zero blobGasUsed was treated as absent");
+
+  // And a null is absent, which is how a node spells a field it does not have.
+  u8[] nulled = hashOf(t, ",\"baseFeePerGas\":\"0x7\",\"withdrawalsRoot\":null");
+  t.isTrue(sameHash(withBase, nulled), "an explicit null was encoded rather than treated as absent");
+  return t.report();
+}
+
+bool sameHash(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
+  return true;
+}
+
+/**
+ * Quantities are minimal and data is not, which is one rule with two spellings and was one bug.
+ *
+ * RLP has a single encoding of a number, so `gasUsed: "0x00f4240"` and `"0xf4240"` are the same value
+ * and must hash the same. A fixed-width field is the opposite: a `stateRoot` is thirty-two bytes
+ * whatever its leading byte is, and stripping its zeros changes what it means.
+ *
+ * The file's comment records what happened when one decoder served both: *"one decoder for both padded
+ * everything — including a `stateRoot` a node got wrong, which then verified against nothing (issue
+ * 0119)"*. Both directions are asserted here.
+ */
+export string test_quantities_are_minimal_and_data_is_not() {
+  T t = T.create();
+
+  u8[] plain = hashOf(t, "");
+
+  // A quantity with leading zeros is the same number, so the same hash.
+  string padded = FIXED_JSON();
+  string doc = "{" + replaceOnce(padded, "\"gasUsed\":\"0xf4240\"", "\"gasUsed\":\"0x0000f4240\"") + "}";
+  JsonValue? v = parse(doc.toBytes());
+  t.isTrue(!(v is null), "the padded-quantity block did not parse");
+  if (!(v is null)) {
+    Header h = headerOf(v!, u8[0]());
+    t.isTrue(sameHash(plain, h.hash),
+             "a quantity with leading zeros hashed differently, so it is not being minimised");
+  }
+
+  // A different quantity is a different header.
+  string other = "{" + replaceOnce(padded, "\"gasUsed\":\"0xf4240\"", "\"gasUsed\":\"0xf4241\"") + "}";
+  JsonValue? w = parse(other.toBytes());
+  t.isTrue(!(w is null), "the changed-quantity block did not parse");
+  if (!(w is null)) {
+    t.isFalse(sameHash(plain, headerOf(w!, u8[0]()).hash), "changing gasUsed did not change the hash");
+  }
+
+  // A data field's leading zero byte is part of it. `mixHash` beginning 0x00 must not be shortened —
+  // if it were, two different mix hashes would produce one header hash.
+  string zeroLead = "{" + replaceOnce(padded,
+      "\"mixHash\":\"0x7777777777777777777777777777777777777777777777777777777777777777\"",
+      "\"mixHash\":\"0x0077777777777777777777777777777777777777777777777777777777777777\"") + "}";
+  JsonValue? z = parse(zeroLead.toBytes());
+  t.isTrue(!(z is null), "the zero-leading-data block did not parse");
+  if (!(z is null)) {
+    t.isFalse(sameHash(plain, headerOf(z!, u8[0]()).hash),
+              "a data field's leading zero byte was stripped, which loses a distinction between roots");
+  }
+  return t.report();
+}
+
+/**
+ * A block with nothing to check the hash against, which is refused rather than assumed good.
+ *
+ * `expectedHash` empty and no `hash` member. The tempting answer is to return the computed hash and
+ * say `ok`, since nothing contradicts it — and that would make every caller who forgot to pass a hash
+ * believe a header they never verified.
+ */
+export string test_a_header_with_no_hash_to_check_against_is_refused() {
+  T t = T.create();
+
+  Header none = headerOf(block(t, ""), u8[0]());
+  t.isFalse(none.ok, "a header with nothing to check against was accepted");
+  t.isTrue(none.error.indexOf("no block hash") >= 0,
+           "the refusal does not say there was no hash: " + none.error);
+  t.eqI32(none.hash.len(), 32, "the computed hash is not returned when there is nothing to check it");
+
+  // An expected hash of the wrong width is not an expected hash — it falls back to the block's own,
+  // and with none present that is still a refusal rather than a silent pass.
+  Header short = headerOf(block(t, ""), u8[16](fill: 0xAB));
+  t.isFalse(short.ok, "a 16-byte expected hash was treated as an expectation");
+  return t.report();
+}

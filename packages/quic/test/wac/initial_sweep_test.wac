@@ -1,0 +1,174 @@
+// A client Initial cut short at every byte, and the server's readers asked about each prefix.
+//
+// **The lead is this package's coverage ledger**, which exempts `struct Server` with a note that is
+// really a work item: *"a client Initial missing a field, a token that does not check, a datagram too
+// short to carry what its header claims. Our server is driven by our client and by quinn, both of
+// which send well-formed Initials. Worth more than the client's half — this is the side that accepts
+// connections from strangers, and the arms below are what a stranger's first packet reaches."*
+//
+// `truncated_test.wac` is the pattern, one layer down: it cuts every frame in table 3 short at every
+// byte, *inside an opened packet*. This does the same to the packet itself, on the side that has no
+// choice about reading it.
+//
+// ## Why this needs no certificate, which is what makes it cheap
+//
+// `Server.of` takes RSA key material and uses none of it to read: it parses the long header, opens
+// the Initial under keys derived from the connection id the *client* invented — public, so it
+// authenticates a version and nothing else — and pulls the ClientHello out of the CRYPTO stream.
+// The key is not touched until `flight()` signs a transcript. So the reading arms are all reachable
+// with dummy key material, and `server_test.wac`'s two `openssl req -newkey rsa:2048` runs are not
+// needed to ask what a truncated Initial does.
+//
+// That is worth stating because the obvious way to write this test is to generate an identity first,
+// and it would then have cost several seconds a run and a dependency on openssl to exercise code
+// that never looks at a key.
+//
+// ## What is asserted
+//
+// A trap ends the process, so the run finishing is the assertion — the same shape as
+// `hostile_datagram_test.wac` and for the same reason. The per-call checks say *which* answer came
+// back, so a change that starts accepting a truncated Initial is visible rather than absorbed.
+//
+// And `ok()` is asserted to be false for every prefix, with a control at full length that is true.
+// Without the control the sweep would pass just as well against a server that read nothing at all.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Client } from "../../src/client.wac";
+import { Server } from "../../src/server.wac";
+
+/** A client Initial from our own client, which is the well-formed thing being damaged below. */
+u8[] clientInitial() {
+  u8[] s = u8[32]();
+  for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
+  u8[] r = u8[32]();
+  for (i32 i = 0; i < 32; i++) { r[i] = (i * 31 + 3) & 255; }
+  return Client.of(s, r, u8[8](), u8[4](), "localhost").initial();
+}
+
+/**
+ * A server built from key material that is the right shape and is not a key.
+ *
+ * Nothing below signs, so this is honest rather than a shortcut — see the header. `scid` is the
+ * connection id the server would choose for itself.
+ */
+Server serverOn(u8[] datagram) {
+  u8[] certDer = u8[64](fill: 0x30);
+  u8[] n = u8[256](fill: 0xAB);
+  u8[] e = u8[3]();
+  e[0] = 1; e[2] = 1;
+  u8[] d = u8[256](fill: 0xCD);
+  u8[] scalar = u8[32](fill: 0x11);
+  u8[] random = u8[32](fill: 0x22);
+  return Server.of(certDer, n, e, d, scalar, random, u8[4](fill: 0x33), datagram);
+}
+
+/** Every reader on the server, called for its side effect of being reached. */
+void askEverything(T t, Server s, string what) {
+  t.isTrue(s.clientShare().len() >= 0, "clientShare " + what);
+  t.isTrue(s.shared().len() >= 0, "shared " + what);
+  t.isTrue(s.throughServerHello().len() >= 0, "throughServerHello " + what);
+  t.isTrue(s.extensions().len() >= 0, "extensions " + what);
+  t.isTrue(s.handshakeMessages().len() >= 0, "handshakeMessages " + what);
+  t.isTrue(s.throughFinished().len() >= 0, "throughFinished " + what);
+  // The 1-RTT surface, which reaches `shared()` through `applicationKeysFor` and was the chain that
+  // ended the process. A packet to open is supplied so `openApplication` is entered rather than
+  // short-circuited on an empty argument.
+  u8[] pkt = u8[64](fill: 0x5A);
+  t.isTrue(s.openApplication(pkt).len() >= 0, "openApplication " + what);
+  t.isTrue(s.streamBytes(pkt, 0 as i64).len() >= 0, "streamBytes " + what);
+  bool fin = s.streamFinished(pkt, 0 as i64);
+  t.isTrue(fin || !fin, "streamFinished " + what);
+  t.isTrue(s.streamPacket(0 as i64, 0 as i64, "hello".toBytes(), true, 1 as i64).len() >= 0,
+           "streamPacket " + what);
+  t.isTrue(s.handshakeDone(1 as i64).len() >= 0, "handshakeDone " + what);
+}
+
+/**
+ * **The control, first, because the sweep below is meaningless without it.**
+ *
+ * A server that answered "no" to everything would pass every truncation case. This is the one input
+ * that must be read: our own client's Initial, whole.
+ */
+export string test_a_whole_client_initial_is_read() {
+  T t = T.create();
+  u8[] whole = clientInitial();
+  t.isTrue(whole.len() > 1000, "a client Initial is padded to at least 1200 bytes; got " +
+                               itoa(whole.len()));
+  Server s = serverOn(whole);
+  t.isTrue(s.ok(), "our own client's Initial was not readable by our own server");
+  t.eqI32(s.clientShare().len(), 32, "the client's x25519 share is 32 bytes once its group tag is off");
+  t.isTrue(s.shared().len() > 0, "no shared secret from a well-formed Initial");
+  t.isTrue(s.handshakeMessages().len() > 0, "no handshake messages from a well-formed Initial");
+  return t.report();
+}
+
+/**
+ * **Every prefix of that Initial, and none of them is readable.**
+ *
+ * A datagram arrives whole or not at all on UDP, so a prefix is not what a lossy path produces — it
+ * is what somebody *sends*, which needs no keys and no handshake and costs one packet. Every length
+ * from nothing up to one byte short is asked here.
+ *
+ * The step is chosen so the sweep stays a second rather than a benchmark: every byte through the
+ * header and the first part of the CRYPTO frame, where the fields are, and then every sixteenth
+ * through the padding, which is uniform by construction and where a per-byte sweep learns nothing
+ * new. Said out loud because a sampled sweep that does not say it is sampling reads as exhaustive.
+ */
+export string test_no_prefix_of_a_client_initial_is_readable() {
+  T t = T.create();
+  u8[] whole = clientInitial();
+  i32 dense = 320;
+  i32 checked = 0;
+  for (i32 n = 0; n < whole.len(); n++) {
+    if (n > dense && n % 16 != 0) { continue; }
+    u8[] cut = u8[n]();
+    for (i32 i = 0; i < n; i++) { cut[i] = whole[i]; }
+    Server s = serverOn(cut);
+    t.isFalse(s.ok(), "a client Initial cut to " + itoa(n) + " bytes was read as whole");
+    askEverything(t, s, "on a prefix of " + itoa(n) + " bytes");
+    checked = checked + 1;
+  }
+  t.isTrue(checked > 300, "only " + itoa(checked) + " prefixes were swept");
+  return t.report();
+}
+
+/**
+ * **A header that lies about what follows it**, which is the other half: the datagram is long enough,
+ * and a field inside it names a length the rest cannot supply.
+ *
+ * Each case damages one field of the long header rather than truncating, so the packet stays 1200
+ * bytes and the parser is asked to believe something instead of running out of input. That is the
+ * distinction `truncated_test.wac` draws between an incomplete frame and a malformed one, at the
+ * layer above.
+ */
+export string test_a_client_initial_whose_header_lies_is_refused() {
+  T t = T.create();
+  u8[] whole = clientInitial();
+  t.isTrue(whole.len() > 64, "the Initial is too short to damage in the ways below");
+
+  // The long header is: first byte, four version bytes, a dcid length and dcid, an scid length and
+  // scid, a token length, then the packet length. Each of these is a byte a stranger picks.
+  i32[] at = i32[](0, 1, 4, 5, 6, 13, 14, 20, 21, 22, 23, 24);
+  i32[] to = i32[](0x00, 0xFF, 0x55, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0xFF, 0x00, 0xFF, 0x40);
+  for (i32 k = 0; k < at.len(); k++) {
+    for (i32 j = 0; j < to.len(); j++) {
+      u8[] bad = u8[whole.len()]();
+      for (i32 i = 0; i < whole.len(); i++) { bad[i] = whole[i]; }
+      if (at[k] >= bad.len()) { continue; }
+      bad[at[k]] = to[j];
+      Server s = serverOn(bad);
+      string what = "byte " + itoa(at[k]) + " set to " + itoa(to[j]);
+      // Not asserted to be unreadable: byte 0's low bits are the packet number length and a
+      // different value there is a packet this server may still read. What is asserted is that it
+      // answers, and that whatever it says it says without ending the process.
+      bool read = s.ok();
+      t.isTrue(read || !read, "no answer for " + what);
+      askEverything(t, s, "with " + what);
+    }
+  }
+
+  // And the untouched packet is still readable after all that, so nothing above damaged the source.
+  t.isTrue(serverOn(whole).ok(), "the original Initial stopped being readable");
+  return t.report();
+}

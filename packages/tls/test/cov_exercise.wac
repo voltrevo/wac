@@ -1,0 +1,790 @@
+// Branch coverage for tls: the package's own tests, and nothing else.
+//
+//   deno task coverage:tls
+//   deno task coverage:tls --verbose
+//
+// The seventh of the packages `issues/system/0205` records as unmeasured, and the largest so far at
+// 4,195 lines of source against 185 tests. It is also the one with the strongest oracle in the
+// repository: `interop_test.wac`, `rsa_interop_test.wac` and `client_test.wac` speak to a real
+// OpenSSL over a real socket, and `x509_path_test.wac` checks certificate path building against it.
+//
+// **A hundred of the 185 tests expect a trap**, which is the highest proportion of any package
+// measured. They go through `trapCase` below rather than `main`: a trap in `main` ends the run, and
+// the report then looks exactly like one taken before any of them were wired in — the failure mode
+// that makes a coverage number quietly describe a third of the tests it claims to include.
+//
+// What to expect from the reading. Every package measured so far has had its gap in the refusals,
+// because its corpus was produced by something that works. This package's oracle is an implementation
+// that also *refuses* — OpenSSL rejects a malformed record, an expired certificate, a downgraded
+// suite — so the interop tests do drive refusal paths. Whether that changes the shape of the gap is
+// the question worth asking of the first number rather than answering in advance.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import {
+  test_every_single_byte_tampering_is_refused as c__every_single_byte_tampering_is_refused,
+} from "./wac/certtamper_test.wac";
+import {
+  test_client_talks_to_the_wac_server_end_to_end as c2__client_talks_to_the_wac_server_end_to_end,
+  test_client_talks_to_openssls_s_server as c2__client_talks_to_openssls_s_server,
+  test_client_refuses_a_certificate_that_does_not_cover_the_host_asked_for as c2__client_refuses_a_certificate_that_does_not_cover_the_host_asked_for,
+  test_client_refuses_a_certificate_from_an_issuer_it_does_not_trust as c2__client_refuses_a_certificate_from_an_issuer_it_does_not_trust,
+  test_client_refuses_when_the_certificate_is_outside_its_validity_window as c2__client_refuses_when_the_certificate_is_outside_its_validity_window,
+  test_client_sends_a_client_hello_a_real_server_understands as c2__client_sends_a_client_hello_a_real_server_understands,
+  test_client_completes_a_handshake_against_an_ecdsa_p256_certificate as c2__client_completes_a_handshake_against_an_ecdsa_p256_certificate,
+  test_client_completes_a_handshake_against_an_rsa_2048_certificate as c2__client_completes_a_handshake_against_an_rsa_2048_certificate,
+  test_client_completes_a_handshake_when_only_p256_key_exchange_is_offered as c2__client_completes_a_handshake_when_only_p256_key_exchange_is_offered,
+  test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_server as c2__client_negotiates_x25519mlkem768_against_a_post_quantum_only_server,
+} from "./wac/client_test.wac";
+import {
+  test_record_framing_survives_arbitrary_bytes as f__record_framing_survives_arbitrary_bytes,
+  test_record_framing_at_every_truncation as f__record_framing_at_every_truncation,
+  test_the_wire_reader_stops_at_its_end as f__the_wire_reader_stops_at_its_end,
+  test_the_client_survives_whatever_a_server_sends as f__the_client_survives_whatever_a_server_sends,
+  test_inner_plaintext_type_from_arbitrary_bytes as f__inner_plaintext_type_from_arbitrary_bytes,
+  test_feeding_a_failed_connection_is_answered_not_fatal as f__feeding_a_failed_connection_is_answered_not_fatal,
+  test_a_certificate_parser_never_aborts as f__a_certificate_parser_never_aborts,
+  test_a_malformed_certificate_is_refused_on_its_own_terms as f__a_malformed_certificate_is_refused_on_its_own_terms,
+} from "./wac/fuzz_test.wac";
+import {
+  test_the_code_point_and_the_three_lengths as h__the_code_point_and_the_three_lengths,
+  test_both_sides_reach_the_same_secret as h__both_sides_reach_the_same_secret,
+  test_the_secret_depends_on_both_halves as h__the_secret_depends_on_both_halves,
+  test_ml_kem_comes_first_in_both_directions as h__ml_kem_comes_first_in_both_directions,
+  test_a_tampered_share_gives_a_different_secret_not_an_error as h__a_tampered_share_gives_a_different_secret_not_an_error,
+  test_the_genuine_lengths_still_work as h__the_genuine_lengths_still_work,
+  test_traps_offer_refuses_a_0_byte_kem_seed as h__traps_offer_refuses_a_0_byte_kem_seed,
+  test_traps_offer_refuses_a_63_byte_kem_seed as h__traps_offer_refuses_a_63_byte_kem_seed,
+  test_traps_offer_refuses_a_65_byte_kem_seed as h__traps_offer_refuses_a_65_byte_kem_seed,
+  test_traps_offer_refuses_a_128_byte_kem_seed as h__traps_offer_refuses_a_128_byte_kem_seed,
+  test_traps_offer_refuses_a_0_byte_x25519_scalar as h__traps_offer_refuses_a_0_byte_x25519_scalar,
+  test_traps_accept_refuses_a_0_byte_x25519_scalar as h__traps_accept_refuses_a_0_byte_x25519_scalar,
+  test_traps_accept_refuses_a_0_byte_message as h__traps_accept_refuses_a_0_byte_message,
+  test_traps_finish_refuses_a_0_byte_x25519_scalar as h__traps_finish_refuses_a_0_byte_x25519_scalar,
+  test_traps_offer_refuses_a_31_byte_x25519_scalar as h__traps_offer_refuses_a_31_byte_x25519_scalar,
+  test_traps_accept_refuses_a_31_byte_x25519_scalar as h__traps_accept_refuses_a_31_byte_x25519_scalar,
+  test_traps_accept_refuses_a_31_byte_message as h__traps_accept_refuses_a_31_byte_message,
+  test_traps_finish_refuses_a_31_byte_x25519_scalar as h__traps_finish_refuses_a_31_byte_x25519_scalar,
+  test_traps_offer_refuses_a_33_byte_x25519_scalar as h__traps_offer_refuses_a_33_byte_x25519_scalar,
+  test_traps_accept_refuses_a_33_byte_x25519_scalar as h__traps_accept_refuses_a_33_byte_x25519_scalar,
+  test_traps_accept_refuses_a_33_byte_message as h__traps_accept_refuses_a_33_byte_message,
+  test_traps_finish_refuses_a_33_byte_x25519_scalar as h__traps_finish_refuses_a_33_byte_x25519_scalar,
+  test_traps_accept_refuses_a_client_share_that_is_0 as h__traps_accept_refuses_a_client_share_that_is_0,
+  test_traps_accept_refuses_a_client_share_that_is_one_byte_short as h__traps_accept_refuses_a_client_share_that_is_one_byte_short,
+  test_traps_accept_refuses_a_client_share_that_is_one_byte_long as h__traps_accept_refuses_a_client_share_that_is_one_byte_long,
+  test_traps_finish_refuses_a_server_share_that_is_0 as h__traps_finish_refuses_a_server_share_that_is_0,
+  test_traps_finish_refuses_a_server_share_that_is_one_byte_short as h__traps_finish_refuses_a_server_share_that_is_one_byte_short,
+  test_traps_finish_refuses_a_server_share_that_is_one_byte_long as h__traps_finish_refuses_a_server_share_that_is_one_byte_long,
+  test_traps_finish_refuses_a_retained_offer_that_is_0 as h__traps_finish_refuses_a_retained_offer_that_is_0,
+  test_traps_finish_refuses_a_retained_offer_that_is_one_byte_short as h__traps_finish_refuses_a_retained_offer_that_is_one_byte_short,
+  test_traps_finish_refuses_a_retained_offer_that_is_one_byte_long as h__traps_finish_refuses_a_retained_offer_that_is_one_byte_long,
+} from "./wac/hybrid_test.wac";
+import {
+  test_traps_offering_a_short_seed as ht__traps_offering_a_short_seed,
+  test_traps_offering_a_long_seed as ht__traps_offering_a_long_seed,
+  test_traps_offering_a_short_scalar as ht__traps_offering_a_short_scalar,
+  test_traps_offering_a_long_scalar as ht__traps_offering_a_long_scalar,
+  test_traps_accepting_a_short_share as ht__traps_accepting_a_short_share,
+  test_traps_accepting_a_long_share as ht__traps_accepting_a_long_share,
+  test_traps_accepting_short_randomness as ht__traps_accepting_short_randomness,
+  test_traps_accepting_long_randomness as ht__traps_accepting_long_randomness,
+  test_traps_accepting_a_long_scalar as ht__traps_accepting_a_long_scalar,
+  test_traps_finishing_with_a_long_offer as ht__traps_finishing_with_a_long_offer,
+  test_traps_finishing_with_a_short_server_share as ht__traps_finishing_with_a_short_server_share,
+  test_traps_finishing_with_a_long_server_share as ht__traps_finishing_with_a_long_server_share,
+  test_traps_finishing_with_a_long_scalar as ht__traps_finishing_with_a_long_scalar,
+  test_a_real_exchange_derives_a_shared_secret as ht__a_real_exchange_derives_a_shared_secret,
+} from "./wac/hybrid_traps_test.wac";
+import {
+  test_openssl_completes_a_tls13_handshake_and_exchanges_data as i__openssl_completes_a_tls13_handshake_and_exchanges_data,
+  test_rustls_completes_the_handshake_and_verifies_the_certificate_chain as i__rustls_completes_the_handshake_and_verifies_the_certificate_chain,
+  test_a_client_offering_no_tls13_support_is_rejected as i__a_client_offering_no_tls13_support_is_rejected,
+  test_the_connection_closes_cleanly_not_as_a_truncation as i__the_connection_closes_cleanly_not_as_a_truncation,
+  test_the_server_negotiates_x25519mlkem768_with_a_post_quantum_client as i__the_server_negotiates_x25519mlkem768_with_a_post_quantum_client,
+} from "./wac/interop_test.wac";
+import {
+  test_the_rfc_8448_chain as k__the_rfc_8448_chain,
+  test_expand_label_agrees_with_an_independent_build as k__expand_label_agrees_with_an_independent_build,
+  test_traffic_keys_come_from_the_pinned_secret as k__traffic_keys_come_from_the_pinned_secret,
+  test_every_derivation_depends_on_everything_it_should as k__every_derivation_depends_on_everything_it_should,
+  test_finished_binds_to_the_transcript_and_the_sender as k__finished_binds_to_the_transcript_and_the_sender,
+  test_the_empty_context_hash_is_sha256_of_nothing as k__the_empty_context_hash_is_sha256_of_nothing,
+  test_traps_on_a_label_longer_than_the_encoding_allows as k__traps_on_a_label_longer_than_the_encoding_allows,
+  test_traps_on_a_context_longer_than_the_encoding_allows as k__traps_on_a_context_longer_than_the_encoding_allows,
+  test_the_largest_label_and_context_that_fit_are_accepted as k__the_largest_label_and_context_that_fit_are_accepted,
+} from "./wac/keyschedule_test.wac";
+import {
+  test_every_oid_is_the_one_its_comment_says as o__every_oid_is_the_one_its_comment_says,
+  test_every_oid_in_the_source_is_in_the_table as o__every_oid_in_the_source_is_in_the_table,
+  test_the_encoder_being_checked_against_is_really_doing_the_work as o__the_encoder_being_checked_against_is_really_doing_the_work,
+} from "./wac/oids_test.wac";
+import {
+  test_round_trips_both_suites_at_every_shape as r__round_trips_both_suites_at_every_shape,
+  test_the_sequence_number_is_part_of_the_nonce as r__the_sequence_number_is_part_of_the_nonce,
+  test_the_content_type_comes_from_inside_not_the_header as r__the_content_type_comes_from_inside_not_the_header,
+  test_padding_is_invisible_to_the_reader as r__padding_is_invisible_to_the_reader,
+  test_sealing_agrees_with_the_host_aead as r__sealing_agrees_with_the_host_aead,
+  test_the_header_is_authenticated as r__the_header_is_authenticated,
+  test_the_alert_codes_are_the_ones_rfc_8446_assigns as r__the_alert_codes_are_the_ones_rfc_8446_assigns,
+  test_only_whole_records_are_offered as r__only_whole_records_are_offered,
+  test_a_chunk_of_eighty_records_with_the_last_one_split as r__a_chunk_of_eighty_records_with_the_last_one_split,
+  test_the_genuine_record_still_opens as r__the_genuine_record_still_opens,
+  test_traps_when_a_header_byte_is_flipped as r__traps_when_a_header_byte_is_flipped,
+  test_traps_when_a_ciphertext_byte_is_flipped as r__traps_when_a_ciphertext_byte_is_flipped,
+  test_traps_when_the_byte_before_the_tag_is_flipped as r__traps_when_the_byte_before_the_tag_is_flipped,
+  test_traps_when_the_first_tag_byte_is_flipped as r__traps_when_the_first_tag_byte_is_flipped,
+  test_traps_when_the_last_tag_byte_is_flipped as r__traps_when_the_last_tag_byte_is_flipped,
+  test_traps_when_a_different_key_is_offered as r__traps_when_a_different_key_is_offered,
+  test_traps_on_an_empty_record as r__traps_on_an_empty_record,
+  test_traps_on_a_four_byte_record as r__traps_on_a_four_byte_record,
+  test_traps_on_a_five_byte_record as r__traps_on_a_five_byte_record,
+  test_traps_on_a_record_with_a_header_and_no_tag as r__traps_on_a_record_with_a_header_and_no_tag,
+  test_traps_on_a_byte_after_the_announced_length as r__traps_on_a_byte_after_the_announced_length,
+  test_traps_when_the_length_field_disagrees_with_the_buffer as r__traps_when_the_length_field_disagrees_with_the_buffer,
+  test_traps_on_an_oversized_length_claim as r__traps_on_an_oversized_length_claim,
+  test_record_length_reads_the_header_and_says_when_it_cannot as r__record_length_reads_the_header_and_says_when_it_cannot,
+  test_the_plaintext_limit_is_sixteen_kilobytes as r__the_plaintext_limit_is_sixteen_kilobytes,
+  test_traps_on_plaintext_one_byte_over_the_limit as r__traps_on_plaintext_one_byte_over_the_limit,
+  test_traps_on_an_unknown_cipher_suite as r__traps_on_an_unknown_cipher_suite,
+} from "./wac/record_test.wac";
+import {
+  test_traps_opening_a_record_that_is_too_short as rt__traps_opening_a_record_that_is_too_short,
+  test_traps_when_the_length_disagrees_with_what_arrived as rt__traps_when_the_length_disagrees_with_what_arrived,
+  test_traps_when_there_is_no_room_for_the_tag as rt__traps_when_there_is_no_room_for_the_tag,
+  test_traps_opening_a_record_longer_than_tls_allows as rt__traps_opening_a_record_longer_than_tls_allows,
+  test_traps_sealing_with_an_unknown_suite as rt__traps_sealing_with_an_unknown_suite,
+  test_traps_opening_with_an_unknown_suite as rt__traps_opening_with_an_unknown_suite,
+  test_traps_sealing_with_negative_padding as rt__traps_sealing_with_negative_padding,
+  test_traps_sealing_more_content_than_the_limit as rt__traps_sealing_more_content_than_the_limit,
+  test_traps_on_inner_content_that_is_all_padding as rt__traps_on_inner_content_that_is_all_padding,
+  test_a_record_inside_the_limits_seals_and_opens as rt__a_record_inside_the_limits_seals_and_opens,
+} from "./wac/record_traps_test.wac";
+import {
+  test_the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds as r2__the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds,
+  test_a_block_that_does_not_decode_is_counted_not_silently_dropped as r2__a_block_that_does_not_decode_is_counted_not_silently_dropped,
+  test_text_between_blocks_is_skipped_rather_than_refused as r2__text_between_blocks_is_skipped_rather_than_refused,
+  test_armour_that_never_closes_ends_the_scan_rather_than_decoding_a_truncation as r2__armour_that_never_closes_ends_the_scan_rather_than_decoding_a_truncation,
+} from "./wac/roots_test.wac";
+import {
+  test_openssl_completes_a_handshake_with_our_servers_1024_bit_rsa_certificate as ri__openssl_completes_a_handshake_with_our_servers_1024_bit_rsa_certificate,
+  test_openssl_completes_a_handshake_with_our_servers_2048_bit_rsa_certificate as ri__openssl_completes_a_handshake_with_our_servers_2048_bit_rsa_certificate,
+} from "./wac/rsa_interop_test.wac";
+import {
+  test_traps_on_a_short_record_header as st__traps_on_a_short_record_header,
+  test_traps_on_a_length_past_the_end as st__traps_on_a_length_past_the_end,
+  test_traps_on_the_wrong_record_type_at_the_start as st__traps_on_the_wrong_record_type_at_the_start,
+  test_traps_on_a_message_length_mismatch as st__traps_on_a_message_length_mismatch,
+  test_traps_on_a_first_message_that_is_not_a_client_hello as st__traps_on_a_first_message_that_is_not_a_client_hello,
+  test_a_closed_connection_takes_no_more_and_a_fresh_one_starts as st__a_closed_connection_takes_no_more_and_a_fresh_one_starts,
+} from "./wac/server_traps_test.wac";
+import {
+  test_fixed_width_reads_are_big_endian as w__fixed_width_reads_are_big_endian,
+  test_expect_end_measures_what_is_left as w__expect_end_measures_what_is_left,
+  test_sub_readers_cannot_see_past_their_vector as w__sub_readers_cannot_see_past_their_vector,
+  test_the_writer_round_trips_through_the_reader as w__the_writer_round_trips_through_the_reader,
+  test_the_writer_grows_without_losing_anything as w__the_writer_grows_without_losing_anything,
+  test_traps_reading_u8_past_the_end as w__traps_reading_u8_past_the_end,
+  test_traps_reading_u16_past_the_end as w__traps_reading_u16_past_the_end,
+  test_traps_reading_u24_past_the_end as w__traps_reading_u24_past_the_end,
+  test_traps_reading_u32_past_the_end as w__traps_reading_u32_past_the_end,
+  test_traps_taking_more_than_is_there as w__traps_taking_more_than_is_there,
+  test_traps_taking_a_negative_length as w__traps_taking_a_negative_length,
+  test_traps_slicing_more_than_is_there as w__traps_slicing_more_than_is_there,
+  test_traps_slicing_a_negative_length as w__traps_slicing_a_negative_length,
+  test_traps_when_a_vec8_length_overruns_the_buffer as w__traps_when_a_vec8_length_overruns_the_buffer,
+  test_traps_when_a_vec16_length_overruns_the_buffer as w__traps_when_a_vec16_length_overruns_the_buffer,
+  test_traps_when_a_vec24_length_overruns_the_buffer as w__traps_when_a_vec24_length_overruns_the_buffer,
+  test_traps_when_a_sub8_length_overruns_the_buffer as w__traps_when_a_sub8_length_overruns_the_buffer,
+  test_traps_when_a_sub16_length_overruns_the_buffer as w__traps_when_a_sub16_length_overruns_the_buffer,
+  test_traps_on_a_trailing_byte as w__traps_on_a_trailing_byte,
+  test_traps_on_a_byte_left_over_after_a_take as w__traps_on_a_byte_left_over_after_a_take,
+  test_traps_writing_a_vec8_of_256_bytes as w__traps_writing_a_vec8_of_256_bytes,
+  test_traps_writing_a_vec16_of_65536_bytes as w__traps_writing_a_vec16_of_65536_bytes,
+} from "./wac/wire_test.wac";
+import {
+  test_traps_reading_a_u8_past_the_end as wt__traps_reading_a_u8_past_the_end,
+  test_traps_reading_a_u16_past_the_end as wt__traps_reading_a_u16_past_the_end,
+  test_traps_taking_past_the_end as wt__traps_taking_past_the_end,
+  test_traps_taking_a_negative_count as wt__traps_taking_a_negative_count,
+  test_traps_slicing_past_the_end as wt__traps_slicing_past_the_end,
+  test_traps_slicing_a_negative_length as wt__traps_slicing_a_negative_length,
+  test_traps_reading_past_the_end_of_a_slice as wt__traps_reading_past_the_end_of_a_slice,
+  test_traps_taking_past_the_end_of_a_slice as wt__traps_taking_past_the_end_of_a_slice,
+  test_traps_when_a_vec8_prefix_overruns as wt__traps_when_a_vec8_prefix_overruns,
+  test_traps_when_a_vec16_prefix_overruns as wt__traps_when_a_vec16_prefix_overruns,
+  test_traps_when_a_vec24_prefix_overruns as wt__traps_when_a_vec24_prefix_overruns,
+  test_traps_writing_a_vec8_that_is_too_long as wt__traps_writing_a_vec8_that_is_too_long,
+  test_traps_writing_a_vec16_that_is_too_long as wt__traps_writing_a_vec16_that_is_too_long,
+  test_traps_writing_a_vec24_that_is_too_long as wt__traps_writing_a_vec24_that_is_too_long,
+  test_a_round_trip_inside_the_limits as wt__a_round_trip_inside_the_limits,
+} from "./wac/wire_traps_test.wac";
+import {
+  test_the_fixtures_are_the_shape_the_tests_assume as xp__the_fixtures_are_the_shape_the_tests_assume,
+  test_a_two_deep_chain_verifies_to_a_p384_root as xp__a_two_deep_chain_verifies_to_a_p384_root,
+  test_the_path_has_to_be_built as xp__the_path_has_to_be_built,
+  test_validity_is_checked_at_the_time_given as xp__validity_is_checked_at_the_time_given,
+  test_the_host_name_is_checked_against_the_leaf as xp__the_host_name_is_checked_against_the_leaf,
+  test_tampering_and_the_anchors_own_signature as xp__tampering_and_the_anchors_own_signature,
+  test_a_root_with_the_right_name_and_wrong_key as xp__a_root_with_the_right_name_and_wrong_key,
+  test_critical_extensions_and_key_usage as xp__critical_extensions_and_key_usage,
+  test_name_constraints as xp__name_constraints,
+  test_an_rsa_chain_verifies as xp__an_rsa_chain_verifies,
+  test_a_signature_scheme_is_refused_against_the_wrong_key_type as xp__a_signature_scheme_is_refused_against_the_wrong_key_type,
+  test_an_ip_literal_matches_an_ip_san as xp__an_ip_literal_matches_an_ip_san,
+  test_an_ip_literal_never_matches_a_dns_entry as xp__an_ip_literal_never_matches_a_dns_entry,
+  test_only_a_strict_dotted_quad_is_an_address as xp__only_a_strict_dotted_quad_is_an_address,
+  test_the_system_trust_store_parses as xp__the_system_trust_store_parses,
+} from "./wac/x509_path_test.wac";
+import {
+  test_openssl_reads_and_verifies_an_ed25519_certificate as x__openssl_reads_and_verifies_an_ed25519_certificate,
+  test_openssl_reads_and_verifies_an_rsa_certificate as x__openssl_reads_and_verifies_an_rsa_certificate,
+  test_a_certificate_that_cannot_be_valid_is_not_produced as x__a_certificate_that_cannot_be_valid_is_not_produced,
+  test_der_lengths_and_integers_are_the_shortest_form as x__der_lengths_and_integers_are_the_shortest_form,
+  test_time_crosses_the_utc_boundary_correctly as x__time_crosses_the_utc_boundary_correctly,
+} from "./wac/x509gen_test.wac";
+
+import {
+  test_our_client_and_our_server_complete_a_handshake_in_one_process as lb__our_client_and_our_server_complete_a_handshake_in_one_process,
+  test_the_server_answers_and_closes_in_an_orderly_way as lb__the_server_answers_and_closes_in_an_orderly_way,
+  test_a_corrupted_server_flight_is_refused_at_every_position as lb__a_corrupted_server_flight_is_refused_at_every_position,
+  test_the_client_says_which_check_the_certificate_failed as lb__the_client_says_which_check_the_certificate_failed,
+  test_the_server_refuses_a_record_it_cannot_open as lb__the_server_refuses_a_record_it_cannot_open,
+  test_the_client_refuses_a_flight_it_cannot_open as lb__the_client_refuses_a_flight_it_cannot_open,
+} from "./wac/loopback_test.wac";
+
+import {
+  test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal as lb__a_key_share_that_is_not_a_point_is_refused_rather_than_fatal,
+  test_a_clienthello_the_server_will_not_answer_is_refused_in_the_clear as lb__a_clienthello_the_server_will_not_answer_is_refused_in_the_clear,
+} from "./wac/loopback_test.wac";
+
+import {
+  test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused as lb__a_hybrid_share_that_is_not_an_encapsulation_key_is_refused,
+} from "./wac/loopback_test.wac";
+
+import {
+  test_a_hostile_serverhello_is_refused_at_each_check as lb__a_hostile_serverhello_is_refused_at_each_check,
+  test_the_first_record_back_is_refused_on_its_framing as lb__the_first_record_back_is_refused_on_its_framing,
+} from "./wac/loopback_test.wac";
+
+import {
+  test_a_key_share_that_forces_a_zero_secret_is_refused as lb__a_key_share_that_forces_a_zero_secret_is_refused,
+} from "./wac/loopback_test.wac";
+
+import {
+  test_a_hybrid_share_with_a_dead_x25519_half_is_refused as lb__a_hybrid_share_with_a_dead_x25519_half_is_refused,
+} from "./wac/loopback_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (lb__a_hybrid_share_with_a_dead_x25519_half_is_refused().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_hybrid_share_with_a_dead_x25519_half_is_refused");
+    bad = bad + 1;
+  }
+  if (lb__a_key_share_that_forces_a_zero_secret_is_refused().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_key_share_that_forces_a_zero_secret_is_refused");
+    bad = bad + 1;
+  }
+  if (lb__the_first_record_back_is_refused_on_its_framing().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_first_record_back_is_refused_on_its_framing");
+    bad = bad + 1;
+  }
+  if (lb__a_hostile_serverhello_is_refused_at_each_check().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_hostile_serverhello_is_refused_at_each_check");
+    bad = bad + 1;
+  }
+  if (lb__a_hybrid_share_that_is_not_an_encapsulation_key_is_refused().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused");
+    bad = bad + 1;
+  }
+  if (lb__a_key_share_that_is_not_a_point_is_refused_rather_than_fatal().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal");
+    bad = bad + 1;
+  }
+  if (lb__a_clienthello_the_server_will_not_answer_is_refused_in_the_clear().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_clienthello_the_server_will_not_answer_is_refused_in_the_clear");
+    bad = bad + 1;
+  }
+  if (lb__our_client_and_our_server_complete_a_handshake_in_one_process().len() > 0) {
+    core.warn("error: FAILED loopback_test test_our_client_and_our_server_complete_a_handshake_in_one_process");
+    bad = bad + 1;
+  }
+  if (lb__the_server_answers_and_closes_in_an_orderly_way().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_server_answers_and_closes_in_an_orderly_way");
+    bad = bad + 1;
+  }
+  if (lb__a_corrupted_server_flight_is_refused_at_every_position().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_corrupted_server_flight_is_refused_at_every_position");
+    bad = bad + 1;
+  }
+  if (lb__the_client_says_which_check_the_certificate_failed().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_client_says_which_check_the_certificate_failed");
+    bad = bad + 1;
+  }
+  if (lb__the_server_refuses_a_record_it_cannot_open().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_server_refuses_a_record_it_cannot_open");
+    bad = bad + 1;
+  }
+  if (lb__the_client_refuses_a_flight_it_cannot_open().len() > 0) {
+    core.warn("error: FAILED loopback_test test_the_client_refuses_a_flight_it_cannot_open");
+    bad = bad + 1;
+  }
+  if (c__every_single_byte_tampering_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED certtamper_test test_every_single_byte_tampering_is_refused");
+    bad = bad + 1;
+  }
+  if (c2__client_talks_to_the_wac_server_end_to_end(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_talks_to_the_wac_server_end_to_end");
+    bad = bad + 1;
+  }
+  if (c2__client_talks_to_openssls_s_server(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_talks_to_openssls_s_server");
+    bad = bad + 1;
+  }
+  if (c2__client_refuses_a_certificate_that_does_not_cover_the_host_asked_for(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_refuses_a_certificate_that_does_not_cover_the_host_asked_for");
+    bad = bad + 1;
+  }
+  if (c2__client_refuses_a_certificate_from_an_issuer_it_does_not_trust(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_refuses_a_certificate_from_an_issuer_it_does_not_trust");
+    bad = bad + 1;
+  }
+  if (c2__client_refuses_when_the_certificate_is_outside_its_validity_window(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_refuses_when_the_certificate_is_outside_its_validity_window");
+    bad = bad + 1;
+  }
+  if (c2__client_sends_a_client_hello_a_real_server_understands(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_sends_a_client_hello_a_real_server_understands");
+    bad = bad + 1;
+  }
+  if (c2__client_completes_a_handshake_against_an_ecdsa_p256_certificate(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_completes_a_handshake_against_an_ecdsa_p256_certificate");
+    bad = bad + 1;
+  }
+  if (c2__client_completes_a_handshake_against_an_rsa_2048_certificate(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_completes_a_handshake_against_an_rsa_2048_certificate");
+    bad = bad + 1;
+  }
+  if (c2__client_completes_a_handshake_when_only_p256_key_exchange_is_offered(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_completes_a_handshake_when_only_p256_key_exchange_is_offered");
+    bad = bad + 1;
+  }
+  if (c2__client_negotiates_x25519mlkem768_against_a_post_quantum_only_server(core, cli).len() > 0) {
+    core.warn("error: FAILED client_test test_client_negotiates_x25519mlkem768_against_a_post_quantum_only_server");
+    bad = bad + 1;
+  }
+  if (f__record_framing_survives_arbitrary_bytes().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_record_framing_survives_arbitrary_bytes");
+    bad = bad + 1;
+  }
+  if (f__record_framing_at_every_truncation().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_record_framing_at_every_truncation");
+    bad = bad + 1;
+  }
+  if (f__the_wire_reader_stops_at_its_end().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_the_wire_reader_stops_at_its_end");
+    bad = bad + 1;
+  }
+  if (f__the_client_survives_whatever_a_server_sends(core, cli).len() > 0) {
+    core.warn("error: FAILED fuzz_test test_the_client_survives_whatever_a_server_sends");
+    bad = bad + 1;
+  }
+  if (f__inner_plaintext_type_from_arbitrary_bytes().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_inner_plaintext_type_from_arbitrary_bytes");
+    bad = bad + 1;
+  }
+  if (f__feeding_a_failed_connection_is_answered_not_fatal(core, cli).len() > 0) {
+    core.warn("error: FAILED fuzz_test test_feeding_a_failed_connection_is_answered_not_fatal");
+    bad = bad + 1;
+  }
+  if (f__a_certificate_parser_never_aborts(core, cli).len() > 0) {
+    core.warn("error: FAILED fuzz_test test_a_certificate_parser_never_aborts");
+    bad = bad + 1;
+  }
+  if (f__a_malformed_certificate_is_refused_on_its_own_terms(core, cli).len() > 0) {
+    core.warn("error: FAILED fuzz_test test_a_malformed_certificate_is_refused_on_its_own_terms");
+    bad = bad + 1;
+  }
+  if (h__the_code_point_and_the_three_lengths().len() > 0) {
+    core.warn("error: FAILED hybrid_test test_the_code_point_and_the_three_lengths");
+    bad = bad + 1;
+  }
+  if (h__both_sides_reach_the_same_secret().len() > 0) {
+    core.warn("error: FAILED hybrid_test test_both_sides_reach_the_same_secret");
+    bad = bad + 1;
+  }
+  if (h__the_secret_depends_on_both_halves().len() > 0) {
+    core.warn("error: FAILED hybrid_test test_the_secret_depends_on_both_halves");
+    bad = bad + 1;
+  }
+  if (h__ml_kem_comes_first_in_both_directions().len() > 0) {
+    core.warn("error: FAILED hybrid_test test_ml_kem_comes_first_in_both_directions");
+    bad = bad + 1;
+  }
+  if (h__a_tampered_share_gives_a_different_secret_not_an_error().len() > 0) {
+    core.warn("error: FAILED hybrid_test test_a_tampered_share_gives_a_different_secret_not_an_error");
+    bad = bad + 1;
+  }
+  if (h__the_genuine_lengths_still_work().len() > 0) {
+    core.warn("error: FAILED hybrid_test test_the_genuine_lengths_still_work");
+    bad = bad + 1;
+  }
+  if (ht__a_real_exchange_derives_a_shared_secret().len() > 0) {
+    core.warn("error: FAILED hybrid_traps_test test_a_real_exchange_derives_a_shared_secret");
+    bad = bad + 1;
+  }
+  if (i__openssl_completes_a_tls13_handshake_and_exchanges_data(core, cli).len() > 0) {
+    core.warn("error: FAILED interop_test test_openssl_completes_a_tls13_handshake_and_exchanges_data");
+    bad = bad + 1;
+  }
+  if (i__rustls_completes_the_handshake_and_verifies_the_certificate_chain(core, cli).len() > 0) {
+    core.warn("error: FAILED interop_test test_rustls_completes_the_handshake_and_verifies_the_certificate_chain");
+    bad = bad + 1;
+  }
+  if (i__a_client_offering_no_tls13_support_is_rejected(core, cli).len() > 0) {
+    core.warn("error: FAILED interop_test test_a_client_offering_no_tls13_support_is_rejected");
+    bad = bad + 1;
+  }
+  if (i__the_connection_closes_cleanly_not_as_a_truncation(core, cli).len() > 0) {
+    core.warn("error: FAILED interop_test test_the_connection_closes_cleanly_not_as_a_truncation");
+    bad = bad + 1;
+  }
+  if (i__the_server_negotiates_x25519mlkem768_with_a_post_quantum_client(core, cli).len() > 0) {
+    core.warn("error: FAILED interop_test test_the_server_negotiates_x25519mlkem768_with_a_post_quantum_client");
+    bad = bad + 1;
+  }
+  if (k__the_rfc_8448_chain(core, cli).len() > 0) {
+    core.warn("error: FAILED keyschedule_test test_the_rfc_8448_chain");
+    bad = bad + 1;
+  }
+  if (k__expand_label_agrees_with_an_independent_build(core, cli).len() > 0) {
+    core.warn("error: FAILED keyschedule_test test_expand_label_agrees_with_an_independent_build");
+    bad = bad + 1;
+  }
+  if (k__traffic_keys_come_from_the_pinned_secret(core, cli).len() > 0) {
+    core.warn("error: FAILED keyschedule_test test_traffic_keys_come_from_the_pinned_secret");
+    bad = bad + 1;
+  }
+  if (k__every_derivation_depends_on_everything_it_should().len() > 0) {
+    core.warn("error: FAILED keyschedule_test test_every_derivation_depends_on_everything_it_should");
+    bad = bad + 1;
+  }
+  if (k__finished_binds_to_the_transcript_and_the_sender().len() > 0) {
+    core.warn("error: FAILED keyschedule_test test_finished_binds_to_the_transcript_and_the_sender");
+    bad = bad + 1;
+  }
+  if (k__the_empty_context_hash_is_sha256_of_nothing(core, cli).len() > 0) {
+    core.warn("error: FAILED keyschedule_test test_the_empty_context_hash_is_sha256_of_nothing");
+    bad = bad + 1;
+  }
+  if (k__the_largest_label_and_context_that_fit_are_accepted().len() > 0) {
+    core.warn("error: FAILED keyschedule_test test_the_largest_label_and_context_that_fit_are_accepted");
+    bad = bad + 1;
+  }
+  if (o__every_oid_is_the_one_its_comment_says(core, cli).len() > 0) {
+    core.warn("error: FAILED oids_test test_every_oid_is_the_one_its_comment_says");
+    bad = bad + 1;
+  }
+  if (o__every_oid_in_the_source_is_in_the_table(core, cli).len() > 0) {
+    core.warn("error: FAILED oids_test test_every_oid_in_the_source_is_in_the_table");
+    bad = bad + 1;
+  }
+  if (o__the_encoder_being_checked_against_is_really_doing_the_work(core, cli).len() > 0) {
+    core.warn("error: FAILED oids_test test_the_encoder_being_checked_against_is_really_doing_the_work");
+    bad = bad + 1;
+  }
+  if (r__round_trips_both_suites_at_every_shape().len() > 0) {
+    core.warn("error: FAILED record_test test_round_trips_both_suites_at_every_shape");
+    bad = bad + 1;
+  }
+  if (r__the_sequence_number_is_part_of_the_nonce().len() > 0) {
+    core.warn("error: FAILED record_test test_the_sequence_number_is_part_of_the_nonce");
+    bad = bad + 1;
+  }
+  if (r__the_content_type_comes_from_inside_not_the_header().len() > 0) {
+    core.warn("error: FAILED record_test test_the_content_type_comes_from_inside_not_the_header");
+    bad = bad + 1;
+  }
+  if (r__padding_is_invisible_to_the_reader().len() > 0) {
+    core.warn("error: FAILED record_test test_padding_is_invisible_to_the_reader");
+    bad = bad + 1;
+  }
+  if (r__sealing_agrees_with_the_host_aead(core, cli).len() > 0) {
+    core.warn("error: FAILED record_test test_sealing_agrees_with_the_host_aead");
+    bad = bad + 1;
+  }
+  if (r__the_header_is_authenticated(core, cli).len() > 0) {
+    core.warn("error: FAILED record_test test_the_header_is_authenticated");
+    bad = bad + 1;
+  }
+  if (r__the_alert_codes_are_the_ones_rfc_8446_assigns().len() > 0) {
+    core.warn("error: FAILED record_test test_the_alert_codes_are_the_ones_rfc_8446_assigns");
+    bad = bad + 1;
+  }
+  if (r__only_whole_records_are_offered().len() > 0) {
+    core.warn("error: FAILED record_test test_only_whole_records_are_offered");
+    bad = bad + 1;
+  }
+  if (r__a_chunk_of_eighty_records_with_the_last_one_split().len() > 0) {
+    core.warn("error: FAILED record_test test_a_chunk_of_eighty_records_with_the_last_one_split");
+    bad = bad + 1;
+  }
+  if (r__the_genuine_record_still_opens().len() > 0) {
+    core.warn("error: FAILED record_test test_the_genuine_record_still_opens");
+    bad = bad + 1;
+  }
+  if (r__record_length_reads_the_header_and_says_when_it_cannot().len() > 0) {
+    core.warn("error: FAILED record_test test_record_length_reads_the_header_and_says_when_it_cannot");
+    bad = bad + 1;
+  }
+  if (r__the_plaintext_limit_is_sixteen_kilobytes().len() > 0) {
+    core.warn("error: FAILED record_test test_the_plaintext_limit_is_sixteen_kilobytes");
+    bad = bad + 1;
+  }
+  if (rt__a_record_inside_the_limits_seals_and_opens().len() > 0) {
+    core.warn("error: FAILED record_traps_test test_a_record_inside_the_limits_seals_and_opens");
+    bad = bad + 1;
+  }
+  if (r2__the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds(core, cli).len() > 0) {
+    core.warn("error: FAILED roots_test test_the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds");
+    bad = bad + 1;
+  }
+  if (r2__a_block_that_does_not_decode_is_counted_not_silently_dropped().len() > 0) {
+    core.warn("error: FAILED roots_test test_a_block_that_does_not_decode_is_counted_not_silently_dropped");
+    bad = bad + 1;
+  }
+  if (r2__text_between_blocks_is_skipped_rather_than_refused().len() > 0) {
+    core.warn("error: FAILED roots_test test_text_between_blocks_is_skipped_rather_than_refused");
+    bad = bad + 1;
+  }
+  if (r2__armour_that_never_closes_ends_the_scan_rather_than_decoding_a_truncation().len() > 0) {
+    core.warn("error: FAILED roots_test test_armour_that_never_closes_ends_the_scan_rather_than_decoding_a_truncation");
+    bad = bad + 1;
+  }
+  if (ri__openssl_completes_a_handshake_with_our_servers_1024_bit_rsa_certificate(core, cli).len() > 0) {
+    core.warn("error: FAILED rsa_interop_test test_openssl_completes_a_handshake_with_our_servers_1024_bit_rsa_certificate");
+    bad = bad + 1;
+  }
+  if (ri__openssl_completes_a_handshake_with_our_servers_2048_bit_rsa_certificate(core, cli).len() > 0) {
+    core.warn("error: FAILED rsa_interop_test test_openssl_completes_a_handshake_with_our_servers_2048_bit_rsa_certificate");
+    bad = bad + 1;
+  }
+  if (st__a_closed_connection_takes_no_more_and_a_fresh_one_starts().len() > 0) {
+    core.warn("error: FAILED server_traps_test test_a_closed_connection_takes_no_more_and_a_fresh_one_starts");
+    bad = bad + 1;
+  }
+  if (w__fixed_width_reads_are_big_endian().len() > 0) {
+    core.warn("error: FAILED wire_test test_fixed_width_reads_are_big_endian");
+    bad = bad + 1;
+  }
+  if (w__expect_end_measures_what_is_left().len() > 0) {
+    core.warn("error: FAILED wire_test test_expect_end_measures_what_is_left");
+    bad = bad + 1;
+  }
+  if (w__sub_readers_cannot_see_past_their_vector().len() > 0) {
+    core.warn("error: FAILED wire_test test_sub_readers_cannot_see_past_their_vector");
+    bad = bad + 1;
+  }
+  if (w__the_writer_round_trips_through_the_reader().len() > 0) {
+    core.warn("error: FAILED wire_test test_the_writer_round_trips_through_the_reader");
+    bad = bad + 1;
+  }
+  if (w__the_writer_grows_without_losing_anything().len() > 0) {
+    core.warn("error: FAILED wire_test test_the_writer_grows_without_losing_anything");
+    bad = bad + 1;
+  }
+  if (wt__a_round_trip_inside_the_limits().len() > 0) {
+    core.warn("error: FAILED wire_traps_test test_a_round_trip_inside_the_limits");
+    bad = bad + 1;
+  }
+  if (xp__the_fixtures_are_the_shape_the_tests_assume(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_the_fixtures_are_the_shape_the_tests_assume");
+    bad = bad + 1;
+  }
+  if (xp__a_two_deep_chain_verifies_to_a_p384_root(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_a_two_deep_chain_verifies_to_a_p384_root");
+    bad = bad + 1;
+  }
+  if (xp__the_path_has_to_be_built(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_the_path_has_to_be_built");
+    bad = bad + 1;
+  }
+  if (xp__validity_is_checked_at_the_time_given(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_validity_is_checked_at_the_time_given");
+    bad = bad + 1;
+  }
+  if (xp__the_host_name_is_checked_against_the_leaf(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_the_host_name_is_checked_against_the_leaf");
+    bad = bad + 1;
+  }
+  if (xp__tampering_and_the_anchors_own_signature(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_tampering_and_the_anchors_own_signature");
+    bad = bad + 1;
+  }
+  if (xp__a_root_with_the_right_name_and_wrong_key(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_a_root_with_the_right_name_and_wrong_key");
+    bad = bad + 1;
+  }
+  if (xp__critical_extensions_and_key_usage(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_critical_extensions_and_key_usage");
+    bad = bad + 1;
+  }
+  if (xp__a_signature_scheme_is_refused_against_the_wrong_key_type(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_a_signature_scheme_is_refused_against_the_wrong_key_type");
+    bad = bad + 1;
+  }
+  if (xp__an_rsa_chain_verifies(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_an_rsa_chain_verifies");
+    bad = bad + 1;
+  }
+  if (xp__name_constraints(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_name_constraints");
+    bad = bad + 1;
+  }
+  if (xp__an_ip_literal_matches_an_ip_san(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_an_ip_literal_matches_an_ip_san");
+    bad = bad + 1;
+  }
+  if (xp__an_ip_literal_never_matches_a_dns_entry(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_an_ip_literal_never_matches_a_dns_entry");
+    bad = bad + 1;
+  }
+  if (xp__only_a_strict_dotted_quad_is_an_address(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_only_a_strict_dotted_quad_is_an_address");
+    bad = bad + 1;
+  }
+  if (xp__the_system_trust_store_parses(core, cli).len() > 0) {
+    core.warn("error: FAILED x509_path_test test_the_system_trust_store_parses");
+    bad = bad + 1;
+  }
+  if (x__openssl_reads_and_verifies_an_ed25519_certificate(core, cli).len() > 0) {
+    core.warn("error: FAILED x509gen_test test_openssl_reads_and_verifies_an_ed25519_certificate");
+    bad = bad + 1;
+  }
+  if (x__openssl_reads_and_verifies_an_rsa_certificate(core, cli).len() > 0) {
+    core.warn("error: FAILED x509gen_test test_openssl_reads_and_verifies_an_rsa_certificate");
+    bad = bad + 1;
+  }
+  if (x__a_certificate_that_cannot_be_valid_is_not_produced(core, cli).len() > 0) {
+    core.warn("error: FAILED x509gen_test test_a_certificate_that_cannot_be_valid_is_not_produced");
+    bad = bad + 1;
+  }
+  if (x__der_lengths_and_integers_are_the_shortest_form(core, cli).len() > 0) {
+    core.warn("error: FAILED x509gen_test test_der_lengths_and_integers_are_the_shortest_form");
+    bad = bad + 1;
+  }
+  if (x__time_crosses_the_utc_boundary_correctly(core, cli).len() > 0) {
+    core.warn("error: FAILED x509gen_test test_time_crosses_the_utc_boundary_correctly");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("tls: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}
+
+/**
+ * The hundred tests that expect a trap, for `covdump` to call one at a time with the trap caught.
+ *
+ * A trap in `main` ends the run, and the report then looks exactly like one taken before these were
+ * wired in — so the count in the ledger's `cases()` is what says they ran.
+ */
+export void trapCase(i32 i) {
+  if (i == 0) { h__traps_offer_refuses_a_0_byte_kem_seed(); return; }   // hybrid_test traps_offer_refuses_a_0_byte_kem_seed
+  if (i == 1) { h__traps_offer_refuses_a_63_byte_kem_seed(); return; }   // hybrid_test traps_offer_refuses_a_63_byte_kem_seed
+  if (i == 2) { h__traps_offer_refuses_a_65_byte_kem_seed(); return; }   // hybrid_test traps_offer_refuses_a_65_byte_kem_seed
+  if (i == 3) { h__traps_offer_refuses_a_128_byte_kem_seed(); return; }   // hybrid_test traps_offer_refuses_a_128_byte_kem_seed
+  if (i == 4) { h__traps_offer_refuses_a_0_byte_x25519_scalar(); return; }   // hybrid_test traps_offer_refuses_a_0_byte_x25519_scalar
+  if (i == 5) { h__traps_accept_refuses_a_0_byte_x25519_scalar(); return; }   // hybrid_test traps_accept_refuses_a_0_byte_x25519_scalar
+  if (i == 6) { h__traps_accept_refuses_a_0_byte_message(); return; }   // hybrid_test traps_accept_refuses_a_0_byte_message
+  if (i == 7) { h__traps_finish_refuses_a_0_byte_x25519_scalar(); return; }   // hybrid_test traps_finish_refuses_a_0_byte_x25519_scalar
+  if (i == 8) { h__traps_offer_refuses_a_31_byte_x25519_scalar(); return; }   // hybrid_test traps_offer_refuses_a_31_byte_x25519_scalar
+  if (i == 9) { h__traps_accept_refuses_a_31_byte_x25519_scalar(); return; }   // hybrid_test traps_accept_refuses_a_31_byte_x25519_scalar
+  if (i == 10) { h__traps_accept_refuses_a_31_byte_message(); return; }   // hybrid_test traps_accept_refuses_a_31_byte_message
+  if (i == 11) { h__traps_finish_refuses_a_31_byte_x25519_scalar(); return; }   // hybrid_test traps_finish_refuses_a_31_byte_x25519_scalar
+  if (i == 12) { h__traps_offer_refuses_a_33_byte_x25519_scalar(); return; }   // hybrid_test traps_offer_refuses_a_33_byte_x25519_scalar
+  if (i == 13) { h__traps_accept_refuses_a_33_byte_x25519_scalar(); return; }   // hybrid_test traps_accept_refuses_a_33_byte_x25519_scalar
+  if (i == 14) { h__traps_accept_refuses_a_33_byte_message(); return; }   // hybrid_test traps_accept_refuses_a_33_byte_message
+  if (i == 15) { h__traps_finish_refuses_a_33_byte_x25519_scalar(); return; }   // hybrid_test traps_finish_refuses_a_33_byte_x25519_scalar
+  if (i == 16) { h__traps_accept_refuses_a_client_share_that_is_0(); return; }   // hybrid_test traps_accept_refuses_a_client_share_that_is_0
+  if (i == 17) { h__traps_accept_refuses_a_client_share_that_is_one_byte_short(); return; }   // hybrid_test traps_accept_refuses_a_client_share_that_is_one_byte_short
+  if (i == 18) { h__traps_accept_refuses_a_client_share_that_is_one_byte_long(); return; }   // hybrid_test traps_accept_refuses_a_client_share_that_is_one_byte_long
+  if (i == 19) { h__traps_finish_refuses_a_server_share_that_is_0(); return; }   // hybrid_test traps_finish_refuses_a_server_share_that_is_0
+  if (i == 20) { h__traps_finish_refuses_a_server_share_that_is_one_byte_short(); return; }   // hybrid_test traps_finish_refuses_a_server_share_that_is_one_byte_short
+  if (i == 21) { h__traps_finish_refuses_a_server_share_that_is_one_byte_long(); return; }   // hybrid_test traps_finish_refuses_a_server_share_that_is_one_byte_long
+  if (i == 22) { h__traps_finish_refuses_a_retained_offer_that_is_0(); return; }   // hybrid_test traps_finish_refuses_a_retained_offer_that_is_0
+  if (i == 23) { h__traps_finish_refuses_a_retained_offer_that_is_one_byte_short(); return; }   // hybrid_test traps_finish_refuses_a_retained_offer_that_is_one_byte_short
+  if (i == 24) { h__traps_finish_refuses_a_retained_offer_that_is_one_byte_long(); return; }   // hybrid_test traps_finish_refuses_a_retained_offer_that_is_one_byte_long
+  if (i == 25) { ht__traps_offering_a_short_seed(); return; }   // hybrid_traps_test traps_offering_a_short_seed
+  if (i == 26) { ht__traps_offering_a_long_seed(); return; }   // hybrid_traps_test traps_offering_a_long_seed
+  if (i == 27) { ht__traps_offering_a_short_scalar(); return; }   // hybrid_traps_test traps_offering_a_short_scalar
+  if (i == 28) { ht__traps_offering_a_long_scalar(); return; }   // hybrid_traps_test traps_offering_a_long_scalar
+  if (i == 29) { ht__traps_accepting_a_short_share(); return; }   // hybrid_traps_test traps_accepting_a_short_share
+  if (i == 30) { ht__traps_accepting_a_long_share(); return; }   // hybrid_traps_test traps_accepting_a_long_share
+  if (i == 31) { ht__traps_accepting_short_randomness(); return; }   // hybrid_traps_test traps_accepting_short_randomness
+  if (i == 32) { ht__traps_accepting_long_randomness(); return; }   // hybrid_traps_test traps_accepting_long_randomness
+  if (i == 33) { ht__traps_accepting_a_long_scalar(); return; }   // hybrid_traps_test traps_accepting_a_long_scalar
+  if (i == 34) { ht__traps_finishing_with_a_long_offer(); return; }   // hybrid_traps_test traps_finishing_with_a_long_offer
+  if (i == 35) { ht__traps_finishing_with_a_short_server_share(); return; }   // hybrid_traps_test traps_finishing_with_a_short_server_share
+  if (i == 36) { ht__traps_finishing_with_a_long_server_share(); return; }   // hybrid_traps_test traps_finishing_with_a_long_server_share
+  if (i == 37) { ht__traps_finishing_with_a_long_scalar(); return; }   // hybrid_traps_test traps_finishing_with_a_long_scalar
+  if (i == 38) { k__traps_on_a_label_longer_than_the_encoding_allows(); return; }   // keyschedule_test traps_on_a_label_longer_than_the_encoding_allows
+  if (i == 39) { k__traps_on_a_context_longer_than_the_encoding_allows(); return; }   // keyschedule_test traps_on_a_context_longer_than_the_encoding_allows
+  if (i == 40) { r__traps_when_a_header_byte_is_flipped(); return; }   // record_test traps_when_a_header_byte_is_flipped
+  if (i == 41) { r__traps_when_a_ciphertext_byte_is_flipped(); return; }   // record_test traps_when_a_ciphertext_byte_is_flipped
+  if (i == 42) { r__traps_when_the_byte_before_the_tag_is_flipped(); return; }   // record_test traps_when_the_byte_before_the_tag_is_flipped
+  if (i == 43) { r__traps_when_the_first_tag_byte_is_flipped(); return; }   // record_test traps_when_the_first_tag_byte_is_flipped
+  if (i == 44) { r__traps_when_the_last_tag_byte_is_flipped(); return; }   // record_test traps_when_the_last_tag_byte_is_flipped
+  if (i == 45) { r__traps_when_a_different_key_is_offered(); return; }   // record_test traps_when_a_different_key_is_offered
+  if (i == 46) { r__traps_on_an_empty_record(); return; }   // record_test traps_on_an_empty_record
+  if (i == 47) { r__traps_on_a_four_byte_record(); return; }   // record_test traps_on_a_four_byte_record
+  if (i == 48) { r__traps_on_a_five_byte_record(); return; }   // record_test traps_on_a_five_byte_record
+  if (i == 49) { r__traps_on_a_record_with_a_header_and_no_tag(); return; }   // record_test traps_on_a_record_with_a_header_and_no_tag
+  if (i == 50) { r__traps_on_a_byte_after_the_announced_length(); return; }   // record_test traps_on_a_byte_after_the_announced_length
+  if (i == 51) { r__traps_when_the_length_field_disagrees_with_the_buffer(); return; }   // record_test traps_when_the_length_field_disagrees_with_the_buffer
+  if (i == 52) { r__traps_on_an_oversized_length_claim(); return; }   // record_test traps_on_an_oversized_length_claim
+  if (i == 53) { r__traps_on_plaintext_one_byte_over_the_limit(); return; }   // record_test traps_on_plaintext_one_byte_over_the_limit
+  if (i == 54) { r__traps_on_an_unknown_cipher_suite(); return; }   // record_test traps_on_an_unknown_cipher_suite
+  if (i == 55) { rt__traps_opening_a_record_that_is_too_short(); return; }   // record_traps_test traps_opening_a_record_that_is_too_short
+  if (i == 56) { rt__traps_when_the_length_disagrees_with_what_arrived(); return; }   // record_traps_test traps_when_the_length_disagrees_with_what_arrived
+  if (i == 57) { rt__traps_when_there_is_no_room_for_the_tag(); return; }   // record_traps_test traps_when_there_is_no_room_for_the_tag
+  if (i == 58) { rt__traps_opening_a_record_longer_than_tls_allows(); return; }   // record_traps_test traps_opening_a_record_longer_than_tls_allows
+  if (i == 59) { rt__traps_sealing_with_an_unknown_suite(); return; }   // record_traps_test traps_sealing_with_an_unknown_suite
+  if (i == 60) { rt__traps_opening_with_an_unknown_suite(); return; }   // record_traps_test traps_opening_with_an_unknown_suite
+  if (i == 61) { rt__traps_sealing_with_negative_padding(); return; }   // record_traps_test traps_sealing_with_negative_padding
+  if (i == 62) { rt__traps_sealing_more_content_than_the_limit(); return; }   // record_traps_test traps_sealing_more_content_than_the_limit
+  if (i == 63) { rt__traps_on_inner_content_that_is_all_padding(); return; }   // record_traps_test traps_on_inner_content_that_is_all_padding
+  if (i == 64) { st__traps_on_a_short_record_header(); return; }   // server_traps_test traps_on_a_short_record_header
+  if (i == 65) { st__traps_on_a_length_past_the_end(); return; }   // server_traps_test traps_on_a_length_past_the_end
+  if (i == 66) { st__traps_on_the_wrong_record_type_at_the_start(); return; }   // server_traps_test traps_on_the_wrong_record_type_at_the_start
+  if (i == 67) { st__traps_on_a_message_length_mismatch(); return; }   // server_traps_test traps_on_a_message_length_mismatch
+  if (i == 68) { st__traps_on_a_first_message_that_is_not_a_client_hello(); return; }   // server_traps_test traps_on_a_first_message_that_is_not_a_client_hello
+  if (i == 69) { w__traps_reading_u8_past_the_end(); return; }   // wire_test traps_reading_u8_past_the_end
+  if (i == 70) { w__traps_reading_u16_past_the_end(); return; }   // wire_test traps_reading_u16_past_the_end
+  if (i == 71) { w__traps_reading_u24_past_the_end(); return; }   // wire_test traps_reading_u24_past_the_end
+  if (i == 72) { w__traps_reading_u32_past_the_end(); return; }   // wire_test traps_reading_u32_past_the_end
+  if (i == 73) { w__traps_taking_more_than_is_there(); return; }   // wire_test traps_taking_more_than_is_there
+  if (i == 74) { w__traps_taking_a_negative_length(); return; }   // wire_test traps_taking_a_negative_length
+  if (i == 75) { w__traps_slicing_more_than_is_there(); return; }   // wire_test traps_slicing_more_than_is_there
+  if (i == 76) { w__traps_slicing_a_negative_length(); return; }   // wire_test traps_slicing_a_negative_length
+  if (i == 77) { w__traps_when_a_vec8_length_overruns_the_buffer(); return; }   // wire_test traps_when_a_vec8_length_overruns_the_buffer
+  if (i == 78) { w__traps_when_a_vec16_length_overruns_the_buffer(); return; }   // wire_test traps_when_a_vec16_length_overruns_the_buffer
+  if (i == 79) { w__traps_when_a_vec24_length_overruns_the_buffer(); return; }   // wire_test traps_when_a_vec24_length_overruns_the_buffer
+  if (i == 80) { w__traps_when_a_sub8_length_overruns_the_buffer(); return; }   // wire_test traps_when_a_sub8_length_overruns_the_buffer
+  if (i == 81) { w__traps_when_a_sub16_length_overruns_the_buffer(); return; }   // wire_test traps_when_a_sub16_length_overruns_the_buffer
+  if (i == 82) { w__traps_on_a_trailing_byte(); return; }   // wire_test traps_on_a_trailing_byte
+  if (i == 83) { w__traps_on_a_byte_left_over_after_a_take(); return; }   // wire_test traps_on_a_byte_left_over_after_a_take
+  if (i == 84) { w__traps_writing_a_vec8_of_256_bytes(); return; }   // wire_test traps_writing_a_vec8_of_256_bytes
+  if (i == 85) { w__traps_writing_a_vec16_of_65536_bytes(); return; }   // wire_test traps_writing_a_vec16_of_65536_bytes
+  if (i == 86) { wt__traps_reading_a_u8_past_the_end(); return; }   // wire_traps_test traps_reading_a_u8_past_the_end
+  if (i == 87) { wt__traps_reading_a_u16_past_the_end(); return; }   // wire_traps_test traps_reading_a_u16_past_the_end
+  if (i == 88) { wt__traps_taking_past_the_end(); return; }   // wire_traps_test traps_taking_past_the_end
+  if (i == 89) { wt__traps_taking_a_negative_count(); return; }   // wire_traps_test traps_taking_a_negative_count
+  if (i == 90) { wt__traps_slicing_past_the_end(); return; }   // wire_traps_test traps_slicing_past_the_end
+  if (i == 91) { wt__traps_slicing_a_negative_length(); return; }   // wire_traps_test traps_slicing_a_negative_length
+  if (i == 92) { wt__traps_reading_past_the_end_of_a_slice(); return; }   // wire_traps_test traps_reading_past_the_end_of_a_slice
+  if (i == 93) { wt__traps_taking_past_the_end_of_a_slice(); return; }   // wire_traps_test traps_taking_past_the_end_of_a_slice
+  if (i == 94) { wt__traps_when_a_vec8_prefix_overruns(); return; }   // wire_traps_test traps_when_a_vec8_prefix_overruns
+  if (i == 95) { wt__traps_when_a_vec16_prefix_overruns(); return; }   // wire_traps_test traps_when_a_vec16_prefix_overruns
+  if (i == 96) { wt__traps_when_a_vec24_prefix_overruns(); return; }   // wire_traps_test traps_when_a_vec24_prefix_overruns
+  if (i == 97) { wt__traps_writing_a_vec8_that_is_too_long(); return; }   // wire_traps_test traps_writing_a_vec8_that_is_too_long
+  if (i == 98) { wt__traps_writing_a_vec16_that_is_too_long(); return; }   // wire_traps_test traps_writing_a_vec16_that_is_too_long
+  if (i == 99) { wt__traps_writing_a_vec24_that_is_too_long(); return; }   // wire_traps_test traps_writing_a_vec24_that_is_too_long
+}

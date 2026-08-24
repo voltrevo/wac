@@ -1,0 +1,463 @@
+// tls's coverage, and the package where the number was a fact about the harness.
+//
+//   deno task coverage:tls
+//   deno task coverage:tls --verbose
+//
+// **1063 of 1279**, from 924 on the first run. `issues/system/0205`.
+//
+// **A second remote abort was found here on 2026-08-24, after the first fix.** A ClientHello carrying
+// sixty-five bytes that are not a point on P-256 aborted the server: `serverFlight` takes the client's
+// key share straight out of the hello and hands it to `p256Ecdh`, whose contract is to validate the
+// peer's point — the defence against an invalid-curve attack — and which validated by trapping. The
+// first message a stranger sends, before any keys exist. The client had the same hole on the
+// ServerHello's share, and `packages/tor` is a client that dials relays from a public directory.
+//
+// `packages/crypto` already had the non-trapping form and had said why: `curveDecodes` exists
+// *"because a `bool` verifier must answer, and a trap is not an answer"*. It was reachable only
+// through `weierstrass.wac`; `p256Decodes` is now beside `p256Ecdh`, where the caller who has to ask
+// is looking. See `test/wac/loopback_test.wac`.
+//
+// ## The first reading, and why it was not what it looked like
+//
+// 74.5% — the lowest first run of any package measured — and the shape was not a scatter:
+//
+//     packages/tls/src/client.wac      168   136   81.0
+//     packages/tls/src/handshake.wac   108    26   24.1
+//     packages/tls/src/server.wac      143    37   25.9
+//
+// Our server is tested thoroughly, against OpenSSL and against rustls, **in another process**.
+// `interop_test.wac`, `rsa_interop_test.wac` and `client_test.wac` build `test/wac/tlsserved.wac` into
+// its own binary and start it as a daemon, because a handshake needs both ends running at once and a
+// wac test is one thread. So the instrument watched one side of a conversation the harness drove both
+// ends of, and the 37 points it saw in `server.wac` were `server_traps_test.wac`'s six tests feeding
+// malformed records to a fresh state.
+//
+// **Two hundred pins saying "the server is untested" would have been false.** That is the trap this
+// file exists to avoid, and it is worth stating plainly: a low number is a claim about the tests, and
+// this one was a claim about where they run.
+//
+// ## What closed it, and what it found
+//
+// Both state machines are documented as pure functions from `(state, bytes)` to `(state, bytes)`, so
+// `test/wac/loopback_test.wac` introduces them to each other directly — a whole handshake, an HTTP
+// request, a reply and an orderly close, in one process with no socket, no daemon and no build step.
+// `handshake.wac` went 24.1% → 66.7% and `server.wac` 25.9% → 57.6%.
+//
+// Writing it turned up a **remotely-triggerable abort in both directions**, fixed in the commit that
+// added this file: `recordOpen` trapped when a tag did not verify, and both state machines called it
+// on bytes a stranger chose. A peer that completed a ClientHello exchange could abort the server
+// process; one flipped byte in a server flight could abort a client, which `packages/tor` is. See
+// `src/record.wac`'s `recordTryOpen` for the fix and the argument that had gone stale.
+//
+// Also fixed on the way: `src/x509gen.wac` emitted no `subjectAltName`, and `certMatchesHost` consults
+// nothing else, so nothing this repository could generate was acceptable to its own client by name.
+//
+// ## What is left — and the same distinction, one level down
+//
+// 232 points, and most of them are the *other* thing the first reading confused. Three kinds, and the
+// rules below say which each one is:
+//
+//   - **exercised in the subprocess.** The RSA identity, the P-256 key share, ALPN, ChaCha20, the
+//     HelloRetryRequest path: all driven by the interop tests, against OpenSSL, where this cannot see
+//     them. Tested and unmeasured, which is exactly what the whole file above is about.
+//   - **a peer's mistake nobody has built.** The refusal arms in both state machines. `fuzz_test.wac`
+//     and `certtamper_test.wac` reach some; the rest are reachable and unbuilt.
+//   - **a caller's own bug.** The `trap` preconditions on the public entry points, which no peer can
+//     reach because they are checked before any byte is read.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/tls/test/cov_exercise.wac";
+const string PREFIX = "packages/tls/";
+
+/** Sockets to OpenSSL, a process to start it, the vendored certificates, and a temp dir to write. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+/**
+ * A hundred of the 191 tests expect a trap — the highest proportion of any package measured.
+ *
+ * They go through the exercise's `trapCase` rather than its `main`: a trap in `main` ends the run, and
+ * the report then looks exactly like one taken before any of them were wired in. This number is what
+ * says they ran.
+ */
+string[] cases() { return string[]("trapCase:100"); }
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/tls/src/server.wac", "{ trap; }", "line", true,
+         "**Preconditions on this package's own entry points, checked before a byte is read.** " +
+         "`tlsServerInit` and `tlsServerInitRsa` refuse a seed, key or random of the wrong width, and " +
+         "`tlsServerSend` refuses to be called on a connection that is not established. A peer cannot " +
+         "reach any of them: they are about what the *program embedding this server* passed in.\n" +
+         "         Kept as traps rather than refusals, and the distinction is the one this whole " +
+         "file is about — a peer's mistake earns an alert, and a caller's earns a stack. Confusing " +
+         "the two in the other direction is what `recordTryOpen` was written to fix."),
+    Rule("packages/tls/src/server.wac", "failPlain(c,", "line", false,
+         "**ClientHello refusals, sent in the clear because there are no keys yet.** A hello that " +
+         "does not offer TLS 1.3, or the suite we chose, or a signature algorithm our certificate can " +
+         "produce, or a key share we recognise. Every one is reachable by a peer and none is built " +
+         "here: `server_traps_test.wac` feeds malformed *records*, and these need a well-framed record " +
+         "carrying a deliberately unacceptable hello.\n" +
+         "         `test/wac/loopback_test.wac` is where they belong now that a test can construct a " +
+         "hello and hand it straight to `tlsServerFeed`, which is the thing that was impossible " +
+         "while the server only ran in another process."),
+    Rule("packages/tls/src/server.wac", "c.rsaN.len() > 0", "line", false,
+         "**The RSA identity, which is a second signing path rather than a variation on one.** TLS " +
+         "1.3 removed PKCS#1 v1.5 from signing, so an RSA certificate means `rsa_pss_rsae_sha256` in " +
+         "CertificateVerify — a different signer over a different key reached through a different " +
+         "entry point, as `tlsserved.wac` says.\n" +
+         "         **Exercised, in the subprocess.** `rsa_interop_test.wac` generates 1024- and " +
+         "2048-bit identities and completes handshakes with OpenSSL against both. The loopback could " +
+         "take an RSA identity too, and deliberately does not: the key material comes from shelling " +
+         "out to `openssl req` and caching it, and that is the external dependency that file exists " +
+         "to be free of. Measuring it would cost the determinism that makes it worth having."),
+    Rule("packages/tls/src/client.wac", "{ trap; }", "line", true,
+         "The client's half of the same precondition family — see the rule over `server.wac`. " +
+         "`tlsClientInit` refuses keys of the wrong width and `tlsClientSend` refuses an " +
+         "unestablished connection, both before any peer byte is involved.\n" +
+         "         The two at `:472` and `:474` are different and are the reason this is `proven: " +
+         "true` rather than false: they check that the caller handed over whole records, which is " +
+         "`recordsReady`'s job and which every caller in this repository does. A caller that did not " +
+         "would be feeding the state machine a fragment of a record, and there is no answer to give."),
+    Rule("packages/tls/src/client.wac", "return fail(c,", "line", false,
+         "**Refusals of a server message that is well-framed and wrong**: a ServerHello that is not " +
+         "one, a suite we did not offer, a key share too short, an empty certificate list, a " +
+         "CertificateVerify whose signature does not check, a Finished that does not match.\n" +
+         "         Several *are* driven — `certtamper_test.wac` corrupts certificates and " +
+         "`test_a_corrupted_server_flight_is_refused_at_every_position` now reaches the decryption " +
+         "ones. What is left needs a hostile server that is malformed in one specific way, which " +
+         "the loopback can now build and nobody has. That is the most valuable unbuilt work in this " +
+         "package: each one is a `fail` a real server could provoke."),
+    Rule("packages/tls/src/x509.wac", "acc", "line", false,
+         "**Name constraints — `joinName` and the walk that uses it.** RFC 5280 §4.2.1.10 permits a " +
+         "CA to be limited to a set of names, and `namesAllowed` enforces it.\n" +
+         "         **This used to end \"no certificate in any corpus here carries the extension, so " +
+         "the whole machinery is written and unentered\", and that stopped being true.** Seven " +
+         "`p384_nc_*.pem` fixtures carry it and `test_name_constraints` asserts on each: the right " +
+         "namespace, the wrong one, an excluded subtree, a constraint form we do not enforce, a " +
+         "suffix that is not a subtree, capitals, and a base the same length as the name. So the " +
+         "machinery is entered and what is left is five arms inside it — which ones was not " +
+         "determined, and the previous sentence is the reason to say so rather than guess again.\n" +
+         "         Reachable with one generated CA and `proven: false` for that reason. It is also " +
+         "the piece of `x509.wac` where being wrong is quietest: a constraint that is never applied " +
+         "and a constraint that is applied and always passes look identical from outside."),
+    Rule("packages/tls/src/x509gen.wac", "return u8[0]();", "line", true,
+         "**Refusals of the caller's own arguments**: a signature of the wrong width, an inverted " +
+         "validity window, a public key that is not an uncompressed point. This file's inputs come " +
+         "from the program using it, never from a peer, so these are the generator's preconditions " +
+         "spelled as an empty answer rather than a trap — which the header explains: a certificate " +
+         "whose `notAfter` precedes its `notBefore` parses and is never valid, and that is worse than " +
+         "not existing."),
+    Rule("packages/tls/src/handshake.wac", "parseServerHello", "decl", false,
+         "**`parseServerHello` and `clientHello`, which this package does not call.** `client.wac` " +
+         "reads a ServerHello inline; these are the shared spellings, and the caller is " +
+         "`packages/quic/src/client.wac`.\n" +
+         "         Written first as \"quic and webrtc\", which was wrong and was caught within the " +
+         "day by `packages/webrtc`'s own driver measuring zero points in this file: " +
+         "`webrtc/src/dtls.wac` **declares its own** `clientHello` and `serverHello`, because DTLS " +
+         "1.2's handshake is a different wire format. A claim that somebody else covers a line is " +
+         "the one kind of ledger entry nothing checks, and this one was half wrong the moment it was " +
+         "written — see `issues/system/0241b`, which this is now the worked example for.\n" +
+         "         Tested elsewhere, and this is the third kind of elsewhere this package has " +
+         "turned up: `server.wac` was tested in another **process**, the RSA path in another process " +
+         "too, and this in another **package**. A ledger's prefix is a directory, so a shared helper " +
+         "reads as dead from the side that exports it. Named rather than pinned because the fix is " +
+         "not a test here — it is knowing which consumer to run, and `deno task coverage:quic` does " +
+         "not exist yet."),
+    Rule("packages/tls/src/handshake.wac", "parseClientHello", "decl", false,
+         "The HelloRetryRequest comparison, whose constant is pinned at `:105` — see there."),
+    Rule("packages/tls/src/server.wac", "tlsServerFeed", "decl", false,
+         "**KeyUpdate, and the whole post-handshake message path with it.** RFC 8446 §4.6.3: a peer " +
+         "moves its write key on and may ask us to move ours. Neither end here ever sends one — the " +
+         "client has no API for it — so the server's handler, its `request_update` reply and its " +
+         "refusal of a malformed body are all unentered, along with the alert and handshake arms of " +
+         "the established-phase dispatch beside them.\n" +
+         "         Reachable and worth building: rekeying is the part of an established connection " +
+         "with state on both sides, and a bug in it looks like a connection that silently stops " +
+         "decrypting after a while."),
+    Rule("packages/tls/src/server.wac", "serverFlight", "decl", false,
+         "A client Finished that decrypts and does not match — the proof that both ends saw the same " +
+         "handshake, failing. Reachable only from a peer that holds the handshake keys and computed " +
+         "the wrong transcript, which is a specific hostile client the loopback can now build."),
+    Rule("packages/tls/src/server.wac", "tlsRecordNeeded", "decl", false,
+         "How many more bytes a caller needs before it has a whole record. Called by " +
+         "`test/wac/tlsserved.wac`, in the subprocess, on every read from the socket — so it is " +
+         "exercised on every interop run and measured on none."),
+    Rule("packages/tls/src/server.wac", "tlsServerAlert", "decl", false,
+         "Sending an alert on demand, which no in-process caller does: the loopback's refusals come " +
+         "from `tlsServerFeed` deciding, not from an embedder choosing. `tlsserved.wac` does not use " +
+         "it either — it is API for a program that wants to reject a connection for its own reasons."),
+    Rule("packages/tls/src/x509.wac", "certSignedBy", "decl", false,
+         "**A certificate whose signature algorithm names a key type its signer does not have** — " +
+         "`signer.keyType != 3` on the RSA arms, and the neighbouring arms for the same confusion " +
+         "with EC. On the wire that is a peer asking to have one kind of key checked as though it " +
+         "were another; no CA issues such a certificate, because whoever issued it used the key they " +
+         "had, so it cannot come out of a corpus and has to be built.\n" +
+         "         **This used to say something else and all three of its claims had expired.** It " +
+         "read *\"`x509_path_test.wac`'s chains are ed25519 and P-256; the RSA leaf is in " +
+         "`rsa_interop_test.wac`, in the subprocess; `test/data/make-p384.sh` exists to generate a " +
+         "P-384 chain and nothing reads what it makes\"*. The chains are P-384 and P-256; " +
+         "`test_an_rsa_chain_verifies` verifies a real RSA chain in-process since 2026-08-24 from " +
+         "`rsa_ca.pem` and `rsa_leaf.pem`, which sat unread in `test/data` from the commit that " +
+         "added them; and `test_a_two_deep_chain_verifies_to_a_p384_root` reads what the script " +
+         "makes. The third of those sentences was in three separate entries in this file — see " +
+         "`constraintsUnderstood` and the `x509gen.wac:184` pin, both corrected the same day.\n" +
+         "         The CertificateVerify half of the same table is covered now, by " +
+         "`test_a_signature_scheme_is_refused_against_the_wrong_key_type`, which asks " +
+         "`certVerifySignature` its fifteen mismatched cells directly rather than hand-patching an " +
+         "algorithm OID into DER. This copy sits behind `verifyPath` instead, so the same trick does " +
+         "not reach it — a certificate is needed, not a call."),
+    Rule("packages/tls/src/x509.wac", "constraintsUnderstood", "decl", false,
+         "**Two arms of the understood-or-refuse check, and they are not the ones this entry used to " +
+         "name.** It said *no certificate in any corpus here carries the extension, so the whole walk " +
+         "is written and unentered*, and that it needed the CA-issuing generator " +
+         "`x509gen.wac:183` pins. Both were false and had been for a while: seven `p384_nc_*.pem` " +
+         "fixtures carry `nameConstraints`, `test_name_constraints` asserts on each, and they came " +
+         "from `test/data/make-p384.sh` rather than from the generator — a different route to the " +
+         "same place, which is why the blocker went unnoticed after it stopped blocking.\n" +
+         "         What is genuinely left is `:410` and `:416` — a top-level element that is neither " +
+         "`permittedSubtrees` nor `excludedSubtrees`, and a `GeneralSubtree` carrying a `minimum` or " +
+         "`maximum`. The IP-subtree arm beside them *is* covered, by `p384_nc_ip`. Both need DER more " +
+         "irregular than openssl emits by default — RFC 5280 §4.2.1.10 requires minimum to be zero " +
+         "and maximum absent, so nothing generates one — and `openssl -addext` will take raw " +
+         "`DER:` bytes, which is the route.\n" +
+         "         The sentence about this being where being wrong is quietest still stands, and is " +
+         "the reason it was worth checking rather than re-reading: a constraint never applied and a " +
+         "constraint always passing look identical from outside, so an entry claiming the machinery " +
+         "was unentered was itself the thing that could not be told apart from the truth."),
+    Rule("packages/tls/src/x509.wac", "continue;", "line", false,
+         "**`verifyPath`'s skip arms: a candidate issuer that is unusable rather than wrong.** An " +
+         "algorithm we cannot check, an unhonourable critical extension, a certificate that is not a " +
+         "CA, one that may not sign certificates, one outside its dates, one used deeper than its " +
+         "`pathLenConstraint` allows. Each `continue`s rather than failing, so that two authorities " +
+         "sharing a subject name do not let the wrong one veto the right one.\n" +
+         "         Every one needs a chain assembled to be wrong in one specific way, and the corpus " +
+         "is chains that work. `proven: false` throughout — this is unbuilt, not unreachable."),
+    Rule("packages/tls/src/x509.wac", "verifyChain", "decl", false,
+         "**`verifyOne`'s verdicts, which are `verifyPath`'s verdicts written a second time** for a " +
+         "caller checking a single certificate against a single root. `loopback_test.wac` and " +
+         "`x509_path_test.wac` both go through `verifyPath`, so this copy is unexercised even where " +
+         "its twin is covered.\n" +
+         "         Two implementations of one rule, which the repository's own guidance says to " +
+         "collapse — and worth someone deciding rather than pinning forever. Recorded here because " +
+         "the ledger is where the second copy became visible."),
+    Rule("packages/tls/src/client.wac", "serverShare", "decl", false,
+         "The client's own ServerHello reading, for a P-256 key share and a `supported_versions` it " +
+         "did not expect. The P-256 arms are driven now — `test/wac/loopback_test.wac` offers each " +
+         "group in turn — so what is left here is the version mismatch."),
+    Rule("packages/tls/src/client.wac", "tlsClientFeed", "decl", false,
+         "The client's CertificateVerify and Finished arms, and the refusals under them. Reached " +
+         "only by a server that is malformed in one specific way; `certtamper_test.wac` corrupts " +
+         "certificates and the rest await a hostile server the loopback can now build."),
+    Rule("packages/tls/src/client.wac", "tlsClientSend", "decl", false,
+         "`tlsClientSend` splitting data across records, which needs more than 16 KB in one call. " +
+         "Every caller here sends an HTTP request. The server's copy at `:570` is the same gap."),
+    Rule("packages/tls/src/x509.wac", "baseCovers", "decl", false,
+         "One of five small helpers under the name-constraints walk — see the rule over " +
+         "`constraintsUnderstood`. Named separately because a rule matches one declaration."),
+    Rule("packages/tls/src/x509.wac", "eqHost", "decl", false,
+         "Case-folded host comparison, reached only from the name-constraints walk and from a " +
+         "wildcard match nothing supplies — see `constraintsUnderstood`."),
+    Rule("packages/tls/src/x509.wac", "namesAllowed", "decl", false,
+         "The entry point of the name-constraints walk — see `constraintsUnderstood`."),
+    Rule("packages/tls/src/x509.wac", "matchesOne", "decl", false,
+         "Wildcard matching on the leftmost label, for a certificate carrying `*.example.com`. No " +
+         "corpus certificate does; every one names a host exactly."),
+    Rule("packages/tls/src/x509.wac", "ecdsaCheck", "decl", false,
+         "The P-384 arm of ECDSA verification — see the rule over `certSignedBy` for why every " +
+         "algorithm outside ed25519 and P-256 is dark."),
+    Rule("packages/tls/src/x509.wac", "certVerifySignature", "decl", false,
+         "The scheme-to-key-type table, refusing a signature whose algorithm does not match the key " +
+         "it is offered against.\n" +
+         "         **Its fifteen mismatched cells are driven since 2026-08-24** by " +
+         "`test_a_signature_scheme_is_refused_against_the_wrong_key_type`, which calls this exported " +
+         "function directly with a certificate of each key type. The `scheme ==` line rule that used " +
+         "to sit here went with it: the ratchet reported it matched nothing.\n" +
+         "         **A `keyType != 4` line rule used to sit beside this one and said P-384 was " +
+         "\"implemented, and the corpus is P-256\" with `test/data/make-p384.sh` generating a chain " +
+         "\"nothing reads\".** Both halves were false — `x509_path_test.wac` reads what that script " +
+         "makes, in `test_a_two_deep_chain_verifies_to_a_p384_root` and in the seven `p384_nc_*` " +
+         "fixtures — and it survived because its single point sits inside this declaration, so it " +
+         "never matched nothing and never tripped the ratchet. Deleted 2026-08-24, and " +
+         "`tools/wac/covledger.wac` now says when a rule has no point of its own."),
+    Rule("packages/tls/src/x509.wac", "parseCert", "decl", false,
+         "Certificate fields no corpus certificate carries: an ed25519 or P-384 public key where the " +
+         "corpus has P-256 and RSA, a two-byte `pathLenConstraint`, an RSA-PSS signature algorithm. " +
+         "Reachable by presenting one, and every certificate here came out of OpenSSL with defaults."),
+    Rule("packages/tls/src/x509.wac", "export i32 sigRsa", "line", false,
+         "The RSA-SHA384, RSA-SHA512 and RSA-PSS algorithm constants, unread because nothing hands " +
+         "this package a certificate signed that way — see the rule over `certSignedBy`."),
+    Rule("packages/tls/src/handshake.wac", "serverHello(", "decl", false,
+         "Building a ServerHello with a session id to echo, or a group other than the hybrid one. " +
+         "Our server echoes what it was sent and offers one group, so the alternatives are for " +
+         "`packages/quic` and `packages/webrtc`, which build their own."),
+    Rule("packages/tls/src/handshake.wac", "certificateVerifyContent", "decl", false,
+         "The client half of the CertificateVerify context string. Client certificates are not " +
+         "implemented, so only the server half is ever built — and the argument exists because " +
+         "getting the two contexts the same way round is the classic way to make a signature that " +
+         "verifies in the wrong direction."),
+    Rule("packages/tls/src/server.wac", "tlsServerSend", "decl", false,
+         "Splitting application data across records, which needs more than 16 KB in one call. Every " +
+         "caller here sends a short reply; `client.wac`'s copy has the same gap."),
+    Rule("packages/tls/src/server.wac", "tlsServerClose", "decl", false,
+         "Closing a connection that never got past the ClientHello, which sends a plaintext " +
+         "`close_notify` because there are no keys. Reachable by an embedder that gives up early."),
+    Rule("packages/tls/src/server.wac", "tlsServerInit(", "decl", false,
+         "A precondition arm on the ed25519 entry point — see the `{ trap; }` rule above."),
+    Rule("packages/tls/src/x509gen.wac", "extensions(bool isCa", "decl", false,
+         "The `isCa: true` arm — see the pin on `:183`."),
+    Rule("packages/tls/src/asn1.wac", "buf.len()", "line", false,
+         "The clamps inside `Der.over` — see the pin on `:87`, the function nothing calls."),
+    Rule("packages/tls/src/handshake.wac", "if (msg.len() < 4) { trap; }", "line", true,
+         "`messageType` and `messageBody` on a handshake message shorter than its own header. Both " +
+         "are called only after the record layer has framed a message, so the four bytes are there " +
+         "by construction — the callers in `client.wac` and `server.wac` check the length against the " +
+         "record before either is reached.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/tls/src/handshake.wac", 458, "if (4 + len != msg.len()) { trap; }", true,
+        "`messageBody` on a handshake message whose declared length disagrees with the bytes it was " +
+        "given. Both state machines check that equality against the record before calling, so a " +
+        "caller inside this package cannot reach it — it guards the entry point for one that has " +
+        "framed a message itself."),
+    Pin("packages/tls/src/handshake.wac", 39, "export i32 extAlpn() { return 16; }", false,
+        "**ALPN, offered only when a caller names a protocol, and no in-process caller does.** " +
+        "`interop_test.wac` negotiates `http/1.1` with OpenSSL in the subprocess. One line, and it is " +
+        "here rather than in a rule because the extension is a whole feature and a reader looking for " +
+        "why it is dark deserves to find it named."),
+    Pin("packages/tls/src/handshake.wac", 105, "u8[] helloRetryRandom() {", false,
+        "**HelloRetryRequest**: the server telling a client its key share was in a group the server " +
+        "will not use, identified by a fixed magic `random`. Ours never sends one — it offers one " +
+        "group and accepts or refuses — so the constant and the comparison at `:151` are for reading " +
+        "a *peer's* retry, which no test peer produces. OpenSSL can be made to send one; nothing " +
+        "asks it to."),
+    Pin("packages/tls/src/hybrid.wac", 71, "if (share.len() != hybridClientShareLen()) { return false; }", true,
+        "**A width its only caller has already enforced.** `hybridClientShareValid` is asked by " +
+        "`server.wac` about a share `parseClientHello` accepted, and that parser takes a hybrid share " +
+        "only at exactly 1,216 bytes — so anything else arrives as no share at all and is refused " +
+        "before this is reached.\n" +
+        "         Kept because the function slices 1,184 bytes out of what it is given and would trap " +
+        "on a short one, which is the failure it exists to prevent rather than to have. It is a " +
+        "public entry point and the next caller may not have a parser in front of it."),
+    Pin("packages/tls/src/record.wac", 36, "if (suite == 0x1303) { return 32; }", false,
+        "**ChaCha20-Poly1305's key length, and with it the whole second suite.** Both AEADs are " +
+        "implemented and `record_test.wac` seals and opens under each, but the *state machines* pin " +
+        "`suiteAes128Gcm` and never negotiate the other, so every ChaCha arm in `record.wac` is " +
+        "reached only by the record tests and none by a handshake. A loopback that set the suite on " +
+        "both ends would close this and several arms below it."),
+    Pin("packages/tls/src/record.wac", 189, "if (sealedLen < 16) { return null; }", false,
+        "A record whose sealed payload is shorter than its own authentication tag. `recordTryOpen`'s " +
+        "framing checks were traps until 2026-08-24 and `record_traps_test.wac` drives each one " +
+        "through the wrapper; this is the same check reached through the nullable spelling, which " +
+        "only a state machine does. Reachable by a peer and worth a case in `loopback_test.wac`."),
+    Pin("packages/tls/src/record.wac", 243, "if (inner[i] != 0) { return true; }", false,
+        "`hasContentType` answering yes on the first byte it looks at. The loop is entered from the " +
+        "end, so this is the ordinary case — and it is uncovered because the *exercise* only reaches " +
+        "`hasContentType` through records that do have a type, where the callers ask `recordType` " +
+        "instead. New on 2026-08-24 with the abort fix."),
+    Pin("packages/tls/src/x509.wac", 215, "if (hour > 23 || minute > 59 || second > 60) { return TIME_UNREADABLE; }", false,
+        "A certificate whose time field parses as digits and is not a time — hour 27, or the leap " +
+        "second's 60 in a field that is not the last of a minute. Reachable by any peer that presents " +
+        "one and unbuilt: every certificate in every corpus here was produced by OpenSSL."),
+    Pin("packages/tls/src/x509.wac", 302, "if (t.nextIs(tagContextPrim(1))) { t.skip(); }", true,
+        "`issuerUniqueID`, a v2 field X.509 has deprecated and RFC 5280 §4.1.2.8 says conforming CAs " +
+        "must not generate. Skipped rather than refused because a certificate carrying one is " +
+        "otherwise readable, and nothing in any corpus has one — nor should."),
+    Pin("packages/tls/src/x509.wac", 745, "if (!root.isCa) { return 4; }", false,
+        "Verdict 4, a trust anchor without `basicConstraints cA`. **Reachable and reached** — a " +
+        "self-signed leaf offered as its own root is exactly this, which is why " +
+        "`loopback_test.wac` uses an empty store rather than trusting the certificate it generates. " +
+        "Uncovered because this is `verifyOne`'s copy of the check and the loopback goes through " +
+        "`verifyPath`, whose equivalent at `:850` is a `continue` rather than a return."),
+    Pin("packages/tls/src/asn1.wac", 87, "Der over(u8[] buf, i32 start, i32 end) {", false,
+        "**A sub-reader over an explicit byte range, with both ends clamped into the buffer.** " +
+        "Nothing in the parser calls it: every nested structure is entered with `inner`, which takes " +
+        "its bounds from a tag it just read and cannot be out of range. So this is the entry point " +
+        "for a caller that computed a range itself, and the clamping at `:88` and `:89` is what makes " +
+        "that safe.\n" +
+        "         An uncovered *entry* is the strongest form of lead a ledger has — not a branch " +
+        "nobody took but a function nobody called. Kept because the clamp is the whole point of " +
+        "offering it at all; if it goes, the reason it existed goes with it."),
+    Pin("packages/tls/src/asn1.wac", 103, "i32 remaining(const this) { return this.end - this.pos; }", false,
+        "An accessor nothing reads. Same family as `:87` — part of `Der`'s surface rather than of any " +
+        "path through it."),
+    Pin("packages/tls/src/asn1.wac", 136, "if (v < 0) { this.reject(); return 0; }", false,
+        "An ASN.1 INTEGER that is negative where the caller wanted a length or a version. Reachable " +
+        "by a crafted certificate and unbuilt — `fuzz_test.wac` mutates real certificates, which " +
+        "changes bytes rather than choosing a shape."),
+    Pin("packages/tls/src/derwrite.wac", 84, "if (n == 0) {", false,
+        "Writing a DER INTEGER of zero, which is one `0x00` byte rather than none. No certificate " +
+        "this file generates has a zero serial — RFC 5280 §4.1.2.2 requires a positive one — so the " +
+        "arm exists for the general encoder and the generator never asks for it."),
+    Pin("packages/tls/src/derwrite.wac", 97, "if (value < 0) { return u8[0](); }", true,
+        "A negative small integer, refused. Its callers pass a serial and a version, both of which " +
+        "this file's own entry points have already established are not negative."),
+    Pin("packages/tls/src/derwrite.wac", 149, "if (p[0] < 0 || p[0] > 9999) { return u8[0](); }", false,
+        "A year outside four digits, which is a `notBefore` before year 0 or after 9999. Reachable " +
+        "from `selfSignedEd25519` with an absurd `notBefore`, and the arithmetic that produces it is " +
+        "pinned beside it at `:188` and `:193`."),
+    Pin("packages/tls/src/derwrite.wac", 188, "if (rem < 0) {", false,
+        "The civil-from-days conversion for a negative day count — a time before the epoch. Same " +
+        "family as `:149`: reachable by a caller who asks for one, and no caller does."),
+    Pin("packages/tls/src/derwrite.wac", 193, "i64 era = (z >= 0 ? z : z - 146096) / 146097;", false,
+        "The negative branch of the era calculation — see `:188`."),
+    Pin("packages/tls/src/x509gen.wac", 184, "ext[2] = derTlv(0x04, derSequence(isCa ? derTlv(0x01, caTrue()) : u8[0]()));", false,
+        "**`isCa: true`, which nothing asks for.** All three generators pass `false`, so this file can " +
+        "only make leaves — which is why `loopback_test.wac` cannot trust the certificate it " +
+        "generates and uses an empty store instead.\n" +
+        "        **This used to end \"a generator that could issue one certificate under another " +
+        "would close this, several arms of `verifyPath`, and the name-constraints rule above; it is " +
+        "the single most useful thing missing from this package's test surface\".** The second half " +
+        "was already met by another route: `test/data/make-p384.sh` builds a root, an intermediate " +
+        "and seven constrained CAs with openssl, and `x509_path_test.wac` drives the chain arms and " +
+        "the name constraints from them. So what a CA-issuing generator would still close is this " +
+        "arm and the `loopback_test.wac` trust store — worth having, and no longer the most useful " +
+        "thing missing. Corrected 2026-08-24; the claim outlived the shell script that answered it."),
+    Pin("packages/tls/src/x509gen.wac", 185, "u8[][] all = u8[][dns.len() > 0 ? 2 : 1]();", false,
+        "The one-extension case, taken when a caller generates a certificate with no name. New on " +
+        "2026-08-24 with `subjectAltName`; every present caller passes a subject, so the arm that " +
+        "omits it is unentered."),
+    Pin("packages/tls/src/x509gen.wac", 109, "if (raw.len() != 64) { return u8[0](); }", true,
+        "An ECDSA signature that is not two 32-byte halves. `p256Sign` returns 64 bytes or traps, so " +
+        "the only caller cannot supply anything else."),
+    Pin("packages/tls/src/client.wac", 211, "if (c.host.len() > 0) {", false,
+        "A ClientHello with **no** server name, which is what a client dialling an IP literal sends. " +
+        "Every caller here names a host. Reachable and one line of test away."),
+    Pin("packages/tls/src/client.wac", 386, "if (c.phase >= 1) {", false,
+        "A second `tlsClientInit` on a state that has already sent its hello — a caller's error " +
+        "rather than a peer's, and refused rather than trapped because it is recoverable."),
+    Pin("packages/tls/src/client.wac", 324, "if (!sawTls13) { return u8[0](); }", false,
+        "A ServerHello whose `supported_versions` does not say 1.3 — a server that answered a TLS 1.3 " +
+        "hello with something else, which is the downgrade this extension exists to make impossible " +
+        "to miss. Reachable by a hostile server and unbuilt; the loopback can now build one."),
+    Pin("packages/tls/src/server.wac", 213, "if (c.transcript.len() + msg.len() > maxTranscript()) { trap; }", false,
+        "The transcript growing past its bound, which needs a peer to send more handshake bytes than " +
+        "a handshake can contain. **A trap on a peer-reachable path**, and so the same family as the " +
+        "abort fixed on 2026-08-24 — reached differently and not yet reached at all. Worth building " +
+        "before it is worth arguing about."),
+    Pin("packages/tls/src/client.wac", 156, "if (c.transcript.len() + msg.len() > 65536) { trap; }", false,
+        "The client's copy of the same bound — see `server.wac:212`. Both should refuse rather than " +
+        "trap, and neither has an input yet that proves it.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), cases());
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

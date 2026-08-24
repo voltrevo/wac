@@ -13,14 +13,15 @@ got the order wrong twice from reasoning about it.
 
 ## Where this stands — 2026-08-20
 
-**17,244 lines of `.test.ts` under `packages/`, in 64 files**, and every one accounted for — not
-"looked at": each has a determination here.
+**17,491 lines of `.test.ts` under `packages/`, in 65 files**, and every one accounted for — not
+"looked at": each has a determination here. (Re-derived 2026-08-24; it read 17,244 in 64, and the rows
+below were already current — see the note at the end of "The two \"not applicable\" rows were wrong".)
 
 | where | lines | files | what it is |
 |---|---|---|---|
-| `box`, `sh` | 5,680 + 1,570 | 17 + 4 | another agent's packages |
-| `platform` | 6,382 | 29 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20 |
-| `wacc` | 2,190 | 11 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
+| `box`, `sh` | 5,696 + 1,570 | 17 + 4 | another agent's packages |
+| `platform` | 6,522 | 30 | the subject is TypeScript in every one. **"Nothing convertible left" was said on 2026-08-19 and was wrong once**: `trapMessage`'s built-app case moved on 2026-08-20. Re-checked on 2026-08-24 and it holds — see below |
+| `wacc` | 2,281 | 11 | **eight wait on a decision that is the operator's**, three stay. `tour` came off that list on 2026-08-20 — see below, the port that removes the reference rather than carrying it |
 | `webrtc`, `raster`, `stream` | 909 + 217 + 296 | 1 + 1 + 1 | a real browser, a real canvas, a `TransformStream` — and in `stream`'s case `host/bridge.ts` *is* the subject |
 
 **The classification is checked now, and the arithmetic is deliberately not.**
@@ -157,6 +158,32 @@ the failure and says how to find it, and the `double(21)` canary demonstrates th
 the tour perturbed, `selfTest()` reports "some conjunct disagrees" while the canary reports
 "got 43, want 42".
 
+### `platform`'s row re-checked, and it holds — 2026-08-24
+
+The row carries its own warning — *"Nothing convertible left" was said on 2026-08-19 and was wrong
+once* — which is a standing invitation to re-check rather than re-read. Done, by asking each of the
+thirty files the discriminating question: **is the subject the TypeScript host, or is it wac code?**
+
+Seventeen of the thirty do not mention a `.wac` file at all, so the question does not arise. The
+thirteen that do were read:
+
+- `project` tests `harness/wacFiles.ts` — the `@/` root search, which is TypeScript;
+- `keydown` tests the browser host translating a `keydown` into the bytes a terminal would send;
+- `pointer` tests what the host puts in a pointer event, after it sent `ev.offsetX` for a field
+  documented as relative to the element the capability names;
+- `ring` uses **the worker API directly**, and says why: the rest of the suite drives the bridge
+  through wac programs that issue one call at a time, so nothing there would notice if the ring served
+  them in order and the slots were decoration.
+
+In each the wac file is a *fixture* — a program built and run so the host has something to host. A
+port would have to run it through the wac binary's host instead, which is a different subject, so it
+would not be the same test.
+
+**So the row stands, and this is what checking it looks like** rather than what re-reading it looks
+like. The figures above are also refreshed to today: `platform` 6,382 → 6,522 across 29 → 30 files,
+`wacc` 2,190 → 2,281, `box` 5,680 → 5,696. Nobody should pin those — `tools/wac/testtsclassified_test.wac`
+explains at length why the arithmetic is not checked and the classification is.
+
 ### The eight, and what each would need — 2026-08-20
 
 `tour` came off this list by removing the reference rather than porting it, which is the test to apply
@@ -185,6 +212,63 @@ So the eight are really three questions, not one:
 3. **`mutateCheck` and `corpusMutate` are not about the reference's correctness at all.** They use it
    to *build* broken programs. If the principle is "its only job is bootstrapping", using it as a
    mutation source is a different use of the word "job", and the issue said so from the start.
+
+### The two "not applicable" rows were wrong, and the decision is uniform — 2026-08-24
+
+The table above splits the nine by what the reference *is*, and puts `mutateCheck` and `corpusMutate`
+on the generator side: *"Not applicable. Only wacc is asked whether it notices; nothing asserts what
+the reference computed."* That sentence was written from what the files are *for* rather than from
+what they assert, and it is false in both.
+
+Both compare **diagnostic positions** against the reference, which is the same use `parse_errors`
+makes of it:
+
+- `corpusMutate.test.ts:370` throws with *"on a mutant the reference answers with one diagnostic, we
+  point elsewhere"*. Its header states the rule as a contract — *"the assertion is exact where the
+  comparison is exact: on a mutant the reference answers with one diagnostic, every position we
+  report must be that one"*.
+- `mutateCheck.test.ts:212` builds `theirPos` out of the reference's `line:col` pairs and counts
+  every position of ours that is not in it as a contradiction; its header opens with *"every position
+  we report on a rejected program is one the reference mentions"*.
+
+So the reference is doing two jobs in these two files at once — it builds the broken program *and* it
+says where the fault is — and the second job is the one the principle is about. Reading only the
+first is what produced the wrong row.
+
+**What changes is the shape of the decision, not the status of any file.** All nine were blocked and
+all nine still are. But the question is not "seven files where the reference is an oracle, plus two
+that are something else"; it is **nine files, uniformly**, and whichever way *"the reference's only
+job is bootstrapping"* is decided, it reaches all of them. That is a simpler question to answer than
+the three-part one this issue posed, and it removes the temptation to move the two mutation files
+first on the grounds that they were exempt.
+
+It also changes what a port of them would cost. The issue's own test — *a port that deletes the
+reference is safe whichever way the decision goes* — applies here and returns the same answer as for
+`sweep` and its siblings: a generated mutant carries no expected position, so deleting the reference
+deletes the position check and leaves only "wacc said something", which is the recall count the files
+already print and deliberately do not assert on its own.
+
+**The lesson is the one this issue keeps relearning at a different level.** Twice now a row here has
+been written from a file's *purpose* — "it generates input", "nothing convertible left" — and been
+wrong about the file's *assertions*. A classification that decides something should be read off the
+`throw`s and the comparisons, which are mechanical to find, rather than off the header prose, which
+describes intent. `grep -n "assert\|throw" ` on each of the nine would have caught this on the day the
+table was written.
+
+**The other seven were re-checked the same way, and they hold.** `parse_errors` *"compares parsers"*;
+`checkSweep` asserts *"for every program the reference accepts, we…"*; `emitSweep` *"every answer
+agrees"*; `linkEmit` *"run what both compilers emit"*; `specEmit` throws on *"spec answers differ"*;
+`sweep` on *"false alarms on programs the reference accepts"*. Each names the reference in the thing
+it throws on. So the correction is exactly two rows and the enumeration is finished rather than
+sampled — which is the part that makes it safe to act on.
+
+**And the arithmetic, re-derived on the same day.** `find packages -name '*.test.ts' | xargs wc -l`
+reads **17,491 in 65 files**, and the rows in the table above now add to exactly that — 5,696 + 6,522
++ 217 + 1,570 + 296 + 2,281 + 909. That is the first time the headline, the rows and the tree have
+agreed since this issue started recording all three, and it is worth one sentence only because the
+paragraph above it explains at length why they usually do not. The headline read 17,244; the rows were
+already current. Which is the expected failure mode — a total is copied once and the rows are edited
+when a package is touched.
 
 ### `specEmit`, and why it is its own question
 
@@ -221,6 +305,52 @@ true of the *binary* or of the *language*, and neither was ever the only thing a
 
 The question that would have caught all five: **not "can wac do this", but "is there a program that
 does this, and can a wac test run it?"**
+
+### `docSignatures` is a decision *and* a missing API, which was not known — 2026-08-24
+
+The entry above says a wac port *"would use `packages/wacc`'s parser instead, which is not a downgrade
+and is not the same claim"*, and leaves it as a decision about meaning. Reading both sides, the
+decision is real and there is something under it that has to happen first.
+
+**What the check needs is every name a declaration introduces**, and it says so at
+`tools/docSignatures.test.ts:102`: *"functions, types, variants, fields, methods"*. Two sets come out
+of that walk and they are not the same set — `signatures`, gated on `item.exported`, is what a ```wac
+fence is matched against; `names` is ungated and is what a backticked `` `foo(…)` `` in prose is
+resolved against. The second is the larger one and it is the one with non-exported functions,
+enum variants and methods in it.
+
+**What `packages/wacc` exposes today answers a different question.** Its API is
+`exportSigsFiles` — *"the exported functions and their wac types"*, described in its own doc comment
+as *"the metadata half of bindgen — which functions a host may call"* — and `bindTypesFiles`, *"the
+structs and enums a host can hold"*. Both are scoped to **what a host can reach**. `names(src)` is
+narrower still: the *emitted* functions in order, for turning a wasm "function #N" back into a name.
+
+So the sets line up like this:
+
+| what `docSignatures` walks | what wacc can answer with |
+|---|---|
+| exported function signatures | `exportSigsFiles` — the same set |
+| struct and enum declarations | `bindTypesFiles` — the host-holdable subset |
+| **non-exported functions, methods, enum variants** | **nothing** |
+
+A port built on today's API would therefore keep the fence check intact and quietly narrow the prose
+check, which is the half that catches a README naming something that does not exist — the failure the
+whole file was written for, and the one it found twice. That is not the "change to what the check
+means" the entry anticipated; it is a second, unintended one on top of it.
+
+**So the order is: wacc grows a declaration dump, then the port is a translation.** The dump is the
+thing `wacParse` gives the reference for free — walk the program and emit every introduced name with
+its rendered signature — and `packages/wacc/src/print.wac` already has `printProgram`, so the
+rendering half exists. Filed as an issue rather than done here because it is an addition to another
+package's public API and wants to be someone's deliberate design rather than the by-product of moving
+a test.
+
+**And the general point, which is the reusable one.** *"Port it to use our own parser"* sounds like a
+change of dependency and is really a change of **question**. The reference is asked *what does this
+program declare*; wacc's API is asked *what can a host reach*. Those coincide for most of a package
+and diverge exactly at the private surface, which is where a README is most likely to be wrong,
+because nothing else checks it. Before porting a check onto a different implementation, write down the
+question each side actually answers — not the data structure each returns.
 
 ## Where this stood, and what was blocking — 2026-08-17, second pass
 
@@ -347,17 +477,19 @@ and each is now written where the next person to touch that code will read it.
 - `tools/docSignatures.test.ts` is portable — `bindTypesFiles` exposes struct fields and method
   signatures — but it swaps the oracle from the reference compiler to wacc. That is arguably better
   and it is a change in what is claimed, so it wants the side-by-side treatment.
-- `packages/crypto/test/wac/constanttime_test.wac` needs the compiler's **trace mode**, through
-  `harness/ctTrace.ts`. ~~wacc has no equivalent, so this is a compiler feature rather than a
-  port.~~ **Stale as of 2026-08-18, and the blocker is smaller than this says.** wacc has
-  instrumented since `issues/lang/0105` closed and is now the *default* — `harness/ctTrace.ts` says
-  so in its own header, with `WAC_CT_FROM=reference` to go back — and `packages/wacc/src/api.wac`
-  exports `emitFilesTraced`, `emitFilesTracedSlots` and `traceTableFiles`. So the compiler half is
-  done. What is missing is the two ends around it: a CLI surface that runs a traced module, and a
-  way to get the event log out of it, since `ctTrace.ts` reads it by instantiating in JavaScript and
-  a wac test cannot instantiate. That is the shape `wac covdump` already has — run `main` under the
-  instrumentation and print the table — so the work is a `wac tracedump` beside it rather than
-  anything in the compiler.
+~~- `packages/crypto/test/wac/constanttime_test.wac` needs the compiler's trace mode, through
+`harness/ctTrace.ts` … so the work is a `wac tracedump` beside `covdump` rather than anything in the
+compiler.~~ **Done on 2026-08-19, and the item is now two entries below its own resolution** — see
+*"`crypto/constanttime.test.ts` stays — but not for the reason written here"* further down, which is
+where the argument lives and is more detailed than this was. `harness/ctTrace.ts` no longer exists.
+
+Worth keeping the wrong half, because the prediction failed in a way this list can repeat: **the tool
+that got built was not `tracedump`.** Getting the journal *out* is the obvious shape and the wrong one —
+`p256PublicKey` produces about three million events, so one line per slot is tens of megabytes of text
+to parse twice per comparison. `wac ctcompare` does the comparison where the modules already are and
+answers in a line, in about half a second. The lesson for the two items still above: *"a CLI surface
+that prints X"* is a guess at the interface, and the cheaper command is often the one that answers the
+question rather than the one that exports the data.
 
 **And what stays.** `compiler/` and the 21 `packages/wacc` tests that measure wacc against it are
 the bootstrap. `harness/wac/hostless.test.ts` is the alternative-host check and is the point rather

@@ -11,7 +11,9 @@
 // make the comparison agree with itself.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { DirDocuments, dirRoute, dirResponse, stripDotZ } from "../../src/dirserve.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { DirDocuments, dirRoute, dirResponse, dirSourceFingerprint, stripDotZ }
+         from "../../src/dirserve.wac";
 import { encodeUpper, decoded } from "../../../codec/src/hex.wac";
 import { b64Unpadded } from "../../src/routerdesc.wac";
 import { Lines, Answers, ask, word } from "../../../wactest/src/oracle.wac";
@@ -246,4 +248,95 @@ bool contains(u8[] s, string text) {
     if (hit) { return true; }
   }
   return false;
+}
+
+/**
+ * **The `dir-source` line, and every way a stranger can write one wrong.**
+ *
+ * `dirSourceFingerprint` reads the identity digest of the authority a consensus claims to come from
+ * — the first thing a relay learns about who is talking to it. The coverage ledger pinned it as an
+ * uncovered entry and said *"the whole function, eight points, never called"*, which was measured
+ * correctly and concluded wrongly: `dird.wac:94` and `relayd.wac:1108` both call it. They are
+ * daemons, so they run in a spawned process the instrument cannot see. A coverage prefix is a
+ * directory and cannot ask where the code runs.
+ *
+ * That makes this the ordinary case rather than dead code, and it also makes it worth a direct test,
+ * because the input is a document somebody else wrote. The function's own comment says so — it
+ * reaches for `clamped` rather than `slice` because *"a `dir-source` line truncated at the end of the
+ * buffer leaves `at` one past it — which a trapping slice would answer by taking the relay down."*
+ * Nothing had ever handed it such a line.
+ */
+export string test_a_dir_source_line_a_stranger_wrote() {
+  T t = T.create();
+  string fp = "A1B2C3D4E5F60718293A4B5C6D7E8F9012345678";
+
+  // The control: a well-formed line, and the digest comes back as twenty bytes.
+  u8[] good = ("network-status-version 3\n" +
+               "dir-source someauth " + fp + " 1.2.3.4 1.2.3.4 80 443\n" +
+               "contact nobody\n").toBytes();
+  u8[] got = dirSourceFingerprint(good);
+  t.eqI32(got.len(), 20, "a well-formed dir-source line did not yield twenty bytes");
+  t.eqStr(string.fromBytes(encodeUpper(got)), fp,
+          "the digest is not the fingerprint on the line");
+
+  // The first line of the document, with no newline before it — the `i != 0` arm.
+  t.eqI32(dirSourceFingerprint(("dir-source a " + fp + " x\n").toBytes()).len(), 20,
+          "a dir-source line at offset zero was skipped");
+
+  // Not at the start of a line. A consensus is full of text somebody else chose, and matching
+  // mid-line would let any of it name the authority.
+  t.eqI32(dirSourceFingerprint(("network-status-version 3\n" +
+                                "r xdir-source someauth " + fp + " x\n").toBytes()).len(), 0,
+          "a dir-source occurring mid-line was read as one");
+
+  // Nothing to find.
+  t.eqI32(dirSourceFingerprint(u8[0]()).len(), 0, "an empty document named an authority");
+  t.eqI32(dirSourceFingerprint("network-status-version 3\n".toBytes()).len(), 0,
+          "a document with no dir-source named an authority");
+
+  // Truncated at every point inside the line, which is the case `clamped` is there for: each of
+  // these leaves the scan's offsets somewhere the buffer does not reach.
+  u8[] line = ("\ndir-source someauth " + fp + " 1.2.3.4\n").toBytes();
+  for (i32 n = 1; n <= line.len(); n++) {
+    u8[] cut = u8[n]();
+    for (i32 i = 0; i < n; i++) { cut[i] = line[i]; }
+    i32 len = dirSourceFingerprint(cut).len();
+    // **A cut line yields a *partial* digest, not an empty one**, which is what it should do and is
+    // not what I assumed: the field is hex and `decode` answers for whatever hex is there. So the
+    // property worth pinning is not "empty or complete" — it is that a truncation never produces
+    // something a caller would mistake for a whole fingerprint. Twenty bytes requires the whole
+    // forty-character field to have arrived, which is byte 61 of this line.
+    t.isTrue(len <= 20, "a line cut to " + itoa(n) + " bytes yielded " + itoa(len) + " bytes");
+    t.isTrue(len < 20 || n >= 61,
+             "a line cut to " + itoa(n) + " bytes yielded a full-length fingerprint");
+  }
+  // And the boundary itself, so the 61 above is a fact rather than an arithmetic guess.
+  u8[] justEnough = u8[61]();
+  for (i32 i = 0; i < 61; i++) { justEnough[i] = line[i]; }
+  t.eqI32(dirSourceFingerprint(justEnough).len(), 20,
+          "the whole fingerprint field arrived and did not decode");
+  // One character short is not nineteen bytes — it is nothing, because thirty-nine hex characters
+  // are an odd number of nibbles and `decode` refuses the whole field rather than dropping one.
+  // Worth pinning: it means a truncation that lands mid-byte is refused outright, and one that lands
+  // on a byte boundary is not, which is a distinction a caller checking only for empty would miss.
+  u8[] oddCut = u8[60]();
+  for (i32 i = 0; i < 60; i++) { oddCut[i] = line[i]; }
+  t.eqI32(dirSourceFingerprint(oddCut).len(), 0,
+          "an odd number of hex characters decoded to something");
+  u8[] evenCut = u8[59]();
+  for (i32 i = 0; i < 59; i++) { evenCut[i] = line[i]; }
+  t.eqI32(dirSourceFingerprint(evenCut).len(), 19,
+          "thirty-eight hex characters did not yield nineteen bytes");
+
+  // A fingerprint that is not hex, which `decode` refuses by returning null rather than by trapping.
+  t.eqI32(dirSourceFingerprint("\ndir-source someauth ZZZZ x\n".toBytes()).len(), 0,
+          "a non-hex fingerprint was decoded anyway");
+  // Hex, but not twenty bytes. The function returns what it decoded; the caller's business is the
+  // length, and asserting it here pins that this does not pad or trap.
+  t.eqI32(dirSourceFingerprint("\ndir-source someauth AABB x\n".toBytes()).len(), 2,
+          "a short hex fingerprint did not come back as the bytes it spells");
+  // A line with a nickname and nothing after it.
+  t.eqI32(dirSourceFingerprint("\ndir-source someauth\n".toBytes()).len(), 0,
+          "a dir-source line with no fingerprint field named an authority");
+  return t.report();
 }

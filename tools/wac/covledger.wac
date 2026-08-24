@@ -35,9 +35,10 @@
 // cost is that a line carrying both a covered and an uncovered point reads as uncovered, which is the
 // safe direction — it asks for an entry rather than hiding one.
 
-import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, execReason } from "std/platform.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { contains, startsWith, endsWith, trimmed } from "../../packages/wactest/src/strings.wac";
+import { sourceFiles } from "../../packages/wactest/src/repo.wac";
 
 /** One instrumented point: where it is and what kind. */
 export struct Point {
@@ -274,8 +275,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   build[5 + grants.len()] = "--quiet";
   Exec built = cli.exec(binary(cli), build, u8[0]()).wait();
   if (!built.ran() || built.status != 0) {
-    core.warn("error: " + entry + " did not build — " + built.error +
-              string.fromBytes(built.stderr));
+    core.warn("error: " + entry + " did not build — " + execReason(built));
     cli.remove(dir, true).wait();
     return none;
   }
@@ -292,7 +292,7 @@ export Measured measure(Core core, Cli cli, string entry, string[] grants, strin
   for (i32 i = 0; i < exports.len(); i++) { dump[2 + i] = exports[i]; }
   Exec dumped = cli.exec(binary(cli), dump, u8[0]()).wait();
   if (!dumped.ran() || dumped.status != 0) {
-    core.warn("error: covdump — " + dumped.error + string.fromBytes(dumped.stderr));
+    core.warn("error: covdump — " + execReason(dumped));
     cli.remove(dir, true).wait();
     return none;
   }
@@ -605,10 +605,42 @@ bool opensDecl(string l) {
   return endsWith(t, "{") || (contains(t, "{") && endsWith(t, "}"));
 }
 
-/** The enclosing declaration of `line`, 1-based, or "". */
+/**
+ * The enclosing declaration of `line`, 1-based, or "" — the whole signature when it spans lines.
+ *
+ * **A signature that spans lines opens on its last one**, which is a bare `) {` in column zero:
+ *
+ *     export u8[] voteDocument(
+ *       VoteInfo info, AuthorityKeys keys, u8[] certificate, RelayOpinion[] relays
+ *     ) {
+ *
+ * That satisfies `opensDecl` and carries none of the declaration — not the name, not the types. So a
+ * rule over such a function could only be written `holds: ") {"`, and `") {"` is the last two
+ * characters of nearly every declaration in the file. `packages/tor`'s ledger had two of them, one
+ * per file, each claiming **all twelve** uncovered points in its file: a blanket exemption that can
+ * never fail and absorbs any new dark code silently. That is the opposite of what a ledger is for,
+ * and the rules were not wrong to be written that way — there was no other spelling available.
+ *
+ * So walk back over the continuation and return the signature joined, and a rule can name the
+ * function. Rules that already say `") {"` keep matching, since the joined text still contains it.
+ */
 string declOf(string[] ls, i32 line) {
   for (i32 i = line - 1; i >= 0; i--) {
-    if (i < ls.len() && opensDecl(ls[i])) { return ls[i]; }
+    if (i < ls.len() && opensDecl(ls[i])) {
+      string acc = ls[i];
+      if (!startsWith(trimmed(ls[i]), ")")) { return acc; }
+      for (i32 k = i - 1; k >= 0; k--) {
+        acc = ls[k] + " " + acc;
+        string t = trimmed(ls[k]);
+        // The line that opens the parameter list is the first one worth having, and anything that
+        // closes a previous statement means the signature did not start here.
+        if (contains(t, "(") || t.len() == 0 || endsWith(t, ";") || endsWith(t, "}") ||
+            endsWith(t, "{")) {
+          return acc;
+        }
+      }
+      return acc;
+    }
   }
   return "";
 }
@@ -631,6 +663,27 @@ bool rulePicks(Rule rule, string[] ls, string file, i32 line) {
   if (rule.scope == "decl") { return contains(declOf(ls, line), rule.holds); }
   if (rule.scope == "struct") { return contains(structOf(ls, line), rule.holds); }
   return line >= 1 && line <= ls.len() && contains(ls[line - 1], rule.holds);
+}
+
+/**
+ * How many uncovered points this rule is the **only** claimant of.
+ *
+ * `claims[i]` is how many rules pick point `i` in total, computed once by the caller. Zero here
+ * means every point this rule speaks for is also spoken for by another, so deleting it would change
+ * what the ratchet accepts by nothing at all — see the note in `ratchet` for why that matters and
+ * why it is reported rather than failed.
+ *
+ * Separated from the reporting so it can be tested: the note itself is a log line, and `ratchet`
+ * answers with one bool for the whole run.
+ */
+export i32 onlyClaims(Rule rule, string[] ls, string[] uncovered, i32 nUncovered, i32[] claims) {
+  i32 only = 0;
+  for (i32 i = 0; i < nUncovered && i < claims.len(); i++) {
+    if (claims[i] == 1 && rulePicks(rule, ls, fileOf(uncovered[i]), lineOfKey(uncovered[i]))) {
+      only = only + 1;
+    }
+  }
+  return only;
 }
 
 /**
@@ -660,9 +713,93 @@ i32 lineOfKey(string where) {
   return v;
 }
 
+
+/**
+ * Source files under `prefix` that contributed **no branch points at all**, named on the report.
+ *
+ * A file with one uncovered point appears in the table reading 0%. A file with none does not appear
+ * at all — the report is built from the points the exercise produced, so a file nothing imports is
+ * not low, it is *absent*, and a reader scanning the table has no way to notice it is missing.
+ *
+ * **`packages/tor` is why this exists.** A third of that package is programs — eleven files and 5,334
+ * of its 15,913 lines — and its tests build them into binaries and spawn them rather than importing
+ * them. Ten of the eleven contribute nothing, so the first reading of that package showed a table of
+ * forty files and silently omitted `network.wac`, `socks.wac`, `gendesc.wac`, `hsconnect.wac` and six
+ * more. `relayd.wac` is only visible because one constant of its 1,890 lines happens to be reachable
+ * from elsewhere.
+ *
+ * **Reported and not failed, deliberately.** Making it fail would turn every ledger red at once for a
+ * question none of them has answered yet — whether a program should be measured, and how — and that
+ * is a decision rather than a bug. `issues/system/0241b`. What it costs to say nothing is that ten
+ * files disappeared from a report somebody was reading closely, and nobody noticed for a day.
+ *
+ * ## Declaration-only files are not a gap, and the first version said they were
+ *
+ * `core/read.wac` is one `enum` and `core/jsx.wac` is two `struct`s. Neither holds a line that can
+ * execute, so neither contributes a point *however thoroughly it is used* — and the first version of
+ * this named both, under a `core` ledger reading 100%, as though something were missing.
+ *
+ * The discriminator is that **a function with no branches still produces an entry point.** So a file
+ * with zero points and at least one function declaration was not compiled; a file with zero points
+ * and no function declaration has nothing to compile. `") {"` is what tells them apart: a function
+ * signature has a parameter list and a `struct`, `enum` or `const` does not.
+ */
+/** Whether a path is in a directory that holds programs rather than library code. */
+bool isProgramDir(string path) {
+  return contains(path, "/example/") || contains(path, "/bench/")
+      || contains(path, "/size/") || contains(path, "/audit/");
+}
+
+void nameFilesWithNoPoints(Core core, Cli cli, Point[] points, i32 nPoints, string prefix) {
+  string[] all = sourceFiles(core, cli, string[](".wac"), string[0](fill: ""));
+  string[] missing = string[all.len() > 0 ? all.len() : 1](fill: "");
+  i32 nMissing = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    string f = all[i];
+    if (!startsWith(f, prefix) || isTest(f)) { continue; }
+    seen = seen + 1;
+    bool has = false;
+    for (i32 k = 0; k < nPoints && !has; k++) { if (points[k].file == f) { has = true; } }
+    if (has) { continue; }
+    // Nothing to compile is not the same as not compiled — see the note above.
+    FileResult src = cli.readFile(f).wait();
+    if (!src.ok) { continue; }
+    if (!contains(string.fromBytes(src.bytes), ") {")) { continue; }
+    missing[nMissing] = f;
+    nMissing = nMissing + 1;
+  }
+  if (nMissing == 0) { return; }
+  // **`example/`, `bench/`, `size/` and `audit/` hold programs by convention, and naming them every
+  // run is noise.** `packages/platform` has two files in `src/` and thirty-nine examples; a list that
+  // led with the examples would bury the one thing worth reading. They are counted rather than listed
+  // — the count still moves if one appears or goes, and the reader is not asked to skim past it.
+  i32 library = 0;
+  for (i32 i = 0; i < nMissing; i++) {
+    if (!isProgramDir(missing[i])) { library = library + 1; }
+  }
+  core.log("");
+  if (library > 0) {
+    core.log(itoa(library) + " of " + itoa(seen) + " source file(s) under " + prefix +
+             " contributed no branch points — nothing the exercise compiled imports them, so they are "
+             + "absent from the table above rather than reading zero:");
+    for (i32 i = 0; i < nMissing; i++) {
+      if (isProgramDir(missing[i])) { continue; }
+      core.log("  " + missing[i]);
+    }
+    core.log("  A program that a test builds and spawns lands here. Reported, not failed — see "
+             + "`issues/system/0241b`.");
+  }
+  if (nMissing > library) {
+    core.log("  ...and " + itoa(nMissing - library) + " under example/, bench/, size/ or audit/, "
+             + "which hold programs by convention and are counted rather than listed.");
+  }
+}
+
 export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] counts, string prefix,
                     Pin[] pins, Rule[] rules) {
   bool failed = false;
+  nameFilesWithNoPoints(core, cli, points, nPoints, prefix);
   string[] uncovered = string[nPoints > 0 ? nPoints : 1](fill: "");
   i32 nUncovered = uncoveredLines(points, nPoints, counts, prefix, uncovered);
   // **Which points have been spoken for, as a set.** A point named by a pin *and* matched by a rule was
@@ -723,6 +860,36 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
     }
   }
 
+  // **How many rules claim each point**, computed before any of them is reported.
+  //
+  // The ratchet already fails a rule that matches *nothing* — "the rule explains something that is
+  // gone". What it could not see until 2026-08-24 is a rule every one of whose points is also
+  // claimed by another rule: it matches, so it never trips that check, and its prose goes on being
+  // read as an independent statement about the code long after it stopped being one.
+  //
+  // The instance that prompted this: `packages/tls`'s ledger carried a `keyType != 4` line rule
+  // whose single point sits inside `certVerifySignature`, which a `decl` rule over the same file
+  // already covered. Deleting the line rule changed nothing — and its prose said a P-384 chain
+  // "exists to generate and nothing reads what it makes", which had been false since somebody wrote
+  // `test_a_two_deep_chain_verifies_to_a_p384_root`. A reader looking for work would have gone and
+  // built a fixture that was already there.
+  //
+  // Reported rather than failed, deliberately. Thirty-seven drivers run this, and a new failing
+  // condition applied to all of them at once would make the shared suite red for everyone over
+  // something that is untidy rather than wrong. What it costs to leave as a report is that it can be
+  // ignored; what it costs to make it fail is everybody else's afternoon.
+  i32[] claims = i32[nUncovered > 0 ? nUncovered : 1]();
+  for (i32 r = 0; r < rules.len(); r++) {
+    FileResult csrc = cli.readFile(rules[r].file).wait();
+    if (!csrc.ok) { continue; }
+    string[] cls = linesOf(string.fromBytes(csrc.bytes));
+    for (i32 i = 0; i < nUncovered; i++) {
+      if (rulePicks(rules[r], cls, fileOf(uncovered[i]), lineOfKey(uncovered[i]))) {
+        claims[i] = claims[i] + 1;
+      }
+    }
+  }
+
   // Rules, applied to the points that are actually uncovered.
   for (i32 r = 0; r < rules.len(); r++) {
     Rule rule = rules[r];
@@ -748,10 +915,16 @@ export bool ratchet(Core core, Cli cli, Point[] points, i32 nPoints, i32[] count
       failed = true;
       continue;
     }
+    i32 only = onlyClaims(rule, ls, uncovered, nUncovered, claims);
     core.log("");
     core.log(itoa(hits) + "x " + (rule.proven ? "unreachable" : "reachable, NOT COVERED") + ": " +
              rule.file + " — " + rule.holds);
     core.log("  " + rule.why);
+    if (only == 0) {
+      core.log("  note: every point this claims is claimed by another rule too, so deleting it " +
+               "would change nothing. Its reason is being read as a separate fact about the code " +
+               "and has nothing of its own to keep it true — check it, then merge or delete it.");
+    }
   }
 
   // What is uncovered and unspoken for. Named rather than counted, because a count is a number

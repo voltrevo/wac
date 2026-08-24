@@ -1,0 +1,204 @@
+// git's coverage, and a suite that tests the command rather than the library.
+//
+//   deno task coverage:git
+//   deno task coverage:git --verbose
+//
+// **844 of 1419 — 59.5%**, the lowest of any package `issues/system/0205` has measured, and one file
+// is most of it:
+//
+//     packages/git/src/repo.wac   362   19   5.2
+//
+// **Seven of this package's eighteen test files build an `example/` program and spawn it.**
+// `checkout_test`, `commit_test`, `clone_test`, `push_test`, `pull_test`, `fetchlive_test` and
+// `configchain_test` each call `builtProgram(...)` on `gitco`, `gitci`, `gitclone`, `gitpush`,
+// `gitpull` or `gitfetch`, run it, and check what it did to a repository on disk.
+//
+// That is a good way to test a git client — it exercises the thing a user runs, end to end, against
+// real object files — and it is invisible here, because the work happens in another process. Only
+// `packwrite_test.wac` imports `repo.wac`, which is where its nineteen points come from. Three more
+// files (`transport.wac`, `configfiles.wac`, and the eight examples) contribute nothing at all and are
+// named under the report rather than appearing in the table.
+//
+// This is the ninth instance of one finding in this sweep — after a daemon, a sibling package, a
+// browser, a live node — and `git` is the clearest of them, because here it is not an accident. It is
+// the suite's design.
+//
+// ## The rest is the same finding as everywhere else
+//
+// Refusals. `fetch.wac`'s `parseAdvertisement`, `shallowsIn` and `findPack` read what a server sent;
+// `pack.wac` refuses a packfile that is not one; `ignore.wac` matches patterns whose corner cases the
+// fixtures avoid. The corpus is GitHub, git itself, and this package's own writers — all of which
+// produce well-formed input.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/git/test/cov_exercise.wac";
+const string PREFIX = "packages/git/";
+
+/** A network for the live fetch, a process to build the examples, and a temp dir to work in. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/git/src/repo.wac", "", "line", false,
+         "**The repository layer — 1,018 lines, 362 branch points, 19 of them reachable from " +
+         "here — and it is tested by seven tests that build a CLI and run it.** \n" +
+         "`checkout_test.wac`, `commit_test.wac`, `clone_test.wac`, `push_test.wac`, " +
+         "`pull_test.wac`, `fetchlive_test.wac` and `configchain_test.wac` each call " +
+         "`builtProgram(...)` on an `example/` program — `gitco`, `gitci`, `gitclone`, " +
+         "`gitpush`, `gitpull`, `gitfetch` — spawn it, and check what it did to a repository " +
+         "on disk. That is a good way to test a git client: it exercises the thing a user " +
+         "runs, end to end, against real object files. It is also invisible to this " +
+         "instrument, because the work happens in another process. \n" +
+         "Only `packwrite_test.wac` imports this file, which is where the 19 come from. Nine " +
+         "packages into `issues/system/0205`'s sweep this is the ninth instance of one " +
+         "finding, and `git` is the clearest: the pattern is not an accident here, it is the " +
+         "suite's design. \n" +
+         "A whole-file rule, giving up this file's floor deliberately — a floor over 19 of 362 " +
+         "points is not a floor. `packages/tls/test/wac/loopback_test.wac` is the shape that " +
+         "would earn one back, and this package is unusually well placed for it: a repository " +
+         "is a directory, `cli` can make one in a temp dir, and every operation these examples " +
+         "perform is a function in this file."),
+    Rule("packages/git/src/commit.wac", "return", "line", false,
+         "Commit formatting and parsing arms for headers the corpus does not carry."),
+    Rule("packages/git/src/fetch.wac", "return", "line", false,
+         "**The fetch protocol's parsers, and the largest gap outside `repo.wac`.** " +
+         "`shallowsIn`, `parseAdvertisement`, `symrefOfHead` and `findPack` read what a server " +
+         "sent — a ref advertisement, a shallow list, a packfile response — and every arm here " +
+         "is for a server that sent something else. The corpus is GitHub and our own " +
+         "`dirserve`, both of which speak the protocol correctly. \n" +
+         "Worth building: a git client talks to whatever URL it is given, and these are the " +
+         "functions that meet a hostile or broken server first."),
+    Rule("packages/git/src/idx.wac", "return", "line", false,
+         "Pack index refusals — a fanout table that does not increase, a name lookup past the " +
+         "end."),
+    Rule("packages/git/src/ignore.wac", "return", "line", false,
+         "`.gitignore` pattern matching for the syntax the fixtures do not use: character " +
+         "classes, ranges, negations inside them, and patterns that never terminate. The " +
+         "matcher is a small language and its corner cases are where a file is silently not " +
+         "ignored."),
+    Rule("packages/git/src/index.wac", "return", "line", false,
+         "Index-file parsing arms for entries the corpus does not contain."),
+    Rule("packages/git/src/object.wac", "return", "line", false,
+         "Loose object refusals — a header that does not parse, a type that is not one of the " +
+         "four, a length that disagrees with the body."),
+    Rule("packages/git/src/pack.wac", "return", "line", false,
+         "Packfile refusals: a header that is not `PACK`, a version we do not read, an object " +
+         "type outside the seven, a delta whose base is not in the pack, an offset past the " +
+         "end. Every packfile in the corpus was produced by git or by this package's own " +
+         "writer."),
+    Rule("packages/git/src/receive.wac", "return", "line", false,
+         "The receive-pack side's report parsing — a server's reply to a push, with statuses " +
+         "this package's own server never returns."),
+    Rule("packages/git/src/refs.wac", "return", "line", false,
+         "Packed-refs parsing arms for lines the corpus does not contain, including the " +
+         "peeled-tag form."),
+    Rule("packages/git/src/tree.wac", "return", "line", false,
+         "Refusals in `tree.wac` for input the corpus does not contain — see `fetch.wac`."),
+    Rule("packages/git/src/zlib.wac", "return", "line", false,
+         "Refusals in `zlib.wac` for input the corpus does not contain — see `fetch.wac`."),
+    Rule("packages/git/src/fetch.wac", "shallowsIn", "decl", false,
+         "`shallowsIn`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/config.wac", "parseConfig", "decl", false,
+         "`parseConfig`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/fetch.wac", "symrefOfHead", "decl", false,
+         "`symrefOfHead`'s remaining arms — the branches a well-formed input does not take. " +
+         "See the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/fetch.wac", "parseAdvertisement", "decl", false,
+         "`parseAdvertisement`'s remaining arms — the branches a well-formed input does not " +
+         "take. See the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/pack.wac", "indexPack", "decl", false,
+         "`indexPack`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/receive.wac", "readReport", "decl", false,
+         "`readReport`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/ignore.wac", "parseIgnore", "decl", false,
+         "`parseIgnore`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/fetch.wac", "findPack", "decl", false,
+         "`findPack`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/ignore.wac", "inClass", "decl", false,
+         "`inClass`'s remaining arms — the branches a well-formed input does not take. See the " +
+         "`return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/ignore.wac", "matchFrom", "decl", false,
+         "`matchFrom`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/index.wac", "parseIndex", "decl", false,
+         "`parseIndex`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/pack.wac", "rawAt", "decl", false,
+         "`rawAt`'s remaining arms — the branches a well-formed input does not take. See the " +
+         "`return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/pack.wac", "objectAt", "decl", false,
+         "`objectAt`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/receive.wac", "advertisedTargets", "decl", false,
+         "`advertisedTargets`'s remaining arms — the branches a well-formed input does not " +
+         "take. See the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/receive.wac", "updateRequest", "decl", false,
+         "`updateRequest`'s remaining arms — the branches a well-formed input does not take. " +
+         "See the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/refs.wac", "parsePackedRefs", "decl", false,
+         "`parsePackedRefs`'s remaining arms — the branches a well-formed input does not take. " +
+         "See the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/commit.wac", "formatCommit", "decl", false,
+         "`formatCommit`'s remaining arms — the branches a well-formed input does not take. " +
+         "See the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/idx.wac", "nameAt", "decl", false,
+         "`nameAt`'s remaining arms — the branches a well-formed input does not take. See the " +
+         "`return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/idx.wac", "parseIdx", "decl", false,
+         "`parseIdx`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/ignore.wac", "classEnd", "decl", false,
+         "`classEnd`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/ignore.wac", "ruleHits", "decl", false,
+         "`ruleHits`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/pack.wac", "kindOf", "decl", false,
+         "`kindOf`'s remaining arms — the branches a well-formed input does not take. See the " +
+         "`return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/commit.wac", "parseTag", "decl", false,
+         "`parseTag`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/fetch.wac", "wantRequest", "decl", false,
+         "`wantRequest`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/index.wac", "writeIndex", "decl", false,
+         "`writeIndex`'s remaining arms — the branches a well-formed input does not take. See " +
+         "the `return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/receive.wac", "endOf", "decl", false,
+         "`endOf`'s remaining arms — the branches a well-formed input does not take. See the " +
+         "`return` rule over this file for the corpus that shapes them."),
+    Rule("packages/git/src/zlib.wac", "zlibDecompress", "decl", false,
+         "`zlibDecompress`'s remaining arms — the branches a well-formed input does not take. " +
+         "See the `return` rule over this file for the corpus that shapes them.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[0](fill: Pin("", 0, "", true, ""));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

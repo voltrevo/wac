@@ -23,6 +23,7 @@
 
 import { gcmEncrypt, gcmTag, gcmDecrypt } from "../../crypto/src/aesgcm.wac";
 import { aeadEncrypt, aeadTag, aeadDecrypt } from "../../crypto/src/aead.wac";
+import { ctEqualN } from "../../crypto/src/ct.wac";
 
 /** TLS_AES_128_GCM_SHA256. */
 export i32 suiteAes128Gcm() { return 0x1301; }
@@ -151,24 +152,44 @@ export i32 recordsReady(u8[] buf) {
 }
 
 /**
- * Open one record, returning the inner plaintext with the content type as its last byte.
+ * Open one record, or `null` if it is not one this key opens.
  *
- * Traps if the tag does not verify, if the framing is wrong, or if the plaintext is all
- * zeros — that last one being a record with padding and no content type, which RFC 8446
- * §5.4 says to treat as `unexpected_message` rather than as an empty anything.
+ * **`null` is the ordinary case, not the exceptional one.** Every byte a peer sends arrives here, and
+ * "the tag does not verify" is a thing that happens to a correct implementation talking to a hostile
+ * one — RFC 8446 §5.2 says the receiver *"MUST terminate the connection with a `bad_record_mac`
+ * alert"*, which is an alert on a socket, not a dead process.
  *
- * The caller gets content type and content together because separating them would mean
- * either two return values or two passes; `recordType` and `recordContent` below split
- * the result.
+ * `recordOpen` below is the trapping wrapper, for a caller whose input is its own.
+ *
+ * ## Why this exists — 2026-08-24, `issues/system/0205`
+ *
+ * `recordOpen` was the only spelling, and both `tlsClientFeed` and `tlsServerFeed` called it on bytes
+ * a stranger chose. So a peer who completed a ClientHello exchange and then sent one record that did
+ * not authenticate aborted the server *process*, taking every other connection with it; and an
+ * on-path attacker who flipped one byte of a server flight aborted a client, which `packages/tor` is.
+ *
+ * The trap was deliberate at the layer below and the argument there is still a good one — an AEAD
+ * whose failure can be ignored is the classic misuse. What had gone stale is the reason given for the
+ * shape: *"wac cannot express a result the caller is forced to inspect"*. It can. A `u8[]?` cannot be
+ * used without `is null` or `!`, and `!` on a null still traps — so a careless caller fails exactly as
+ * loudly as before, and a careful one gets to answer.
+ *
+ * ## The cost, stated because it is real
+ *
+ * The tag is computed here and again inside the AEAD's own decrypt, so an accepted record costs two
+ * tag computations instead of one. That is the price of not changing `packages/crypto`'s contract in
+ * the same change as fixing a remote abort. The right end state is a nullable AEAD and one
+ * computation; this is correct now.
  */
-export u8[] recordOpen(i32 suite, u8[] key, u8[] iv, i64 seq, u8[] record) {
-  if (record.len() < 5 + 16) { trap; }
+export u8[]? recordTryOpen(i32 suite, u8[] key, u8[] iv, i64 seq, u8[] record) {
+  if (suite != 0x1301 && suite != 0x1303) { return null; }
+  if (record.len() < 5 + 16) { return null; }
   i32 sealedLen = (record[3] << 8) | record[4];
-  if (5 + sealedLen != record.len()) { trap; }
-  if (sealedLen < 16) { trap; }
+  if (5 + sealedLen != record.len()) { return null; }
+  if (sealedLen < 16) { return null; }
   // A sealed payload longer than the plaintext limit plus its own overhead cannot be
   // legitimate, and admitting one is how a peer makes us allocate on demand.
-  if (sealedLen > maxPlaintext() + 256) { trap; }
+  if (sealedLen > maxPlaintext() + 256) { return null; }
 
   u8[] hdr = u8[5]();
   for (i32 i = 0; i < 5; i++) { hdr[i] = record[i]; }
@@ -179,15 +200,49 @@ export u8[] recordOpen(i32 suite, u8[] key, u8[] iv, i64 seq, u8[] record) {
   for (i32 i = 0; i < 16; i++) { tag[i] = record[5 + ctLen + i]; }
 
   u8[] nonce = recordNonce(iv, seq);
-  u8[] inner = u8[0]();
-  if (suite == 0x1301) {
-    inner = gcmDecrypt(key, nonce, hdr, ct, tag);
-  } else if (suite == 0x1303) {
-    inner = aeadDecrypt(key, nonce, hdr, ct, tag);
-  } else {
-    trap;
+  // Constant-time, because the value being compared against is one the peer chose. A byte-at-a-time
+  // comparison that returned early would say how much of a forged tag was right.
+  u8[] want = suite == 0x1301 ? gcmTag(key, nonce, hdr, ct) : aeadTag(key, nonce, hdr, ct);
+  if (!ctEqualN(want, tag, 16)) { return null; }
+
+  return suite == 0x1301
+    ? gcmDecrypt(key, nonce, hdr, ct, tag)
+    : aeadDecrypt(key, nonce, hdr, ct, tag);
+}
+
+/**
+ * Open one record, returning the inner plaintext with the content type as its last byte.
+ *
+ * Traps if the tag does not verify, if the framing is wrong, or if the plaintext is all
+ * zeros — that last one being a record with padding and no content type, which RFC 8446
+ * §5.4 says to treat as `unexpected_message` rather than as an empty anything.
+ *
+ * The caller gets content type and content together because separating them would mean
+ * either two return values or two passes; `recordType` and `recordContent` below split
+ * the result.
+ *
+ * **For a caller whose input is its own.** Anything holding bytes a peer sent wants
+ * `recordTryOpen` above, and the two TLS state machines in this package use it — see there for what
+ * trapping on a peer's record cost.
+ */
+export u8[] recordOpen(i32 suite, u8[] key, u8[] iv, i64 seq, u8[] record) {
+  u8[]? inner = recordTryOpen(suite, key, iv, seq, record);
+  if (inner is null) { trap; }
+  return inner!;
+}
+
+/**
+ * Whether an opened record has a content type at all — a non-zero byte somewhere.
+ *
+ * All padding and no type is a record RFC 8446 §5.4 says to answer with `unexpected_message`, and
+ * `recordType` and `recordContent` both trap on it. That is right for a caller opening records it
+ * sealed itself and wrong for one holding a peer's, which is the same split `recordTryOpen` makes.
+ */
+export bool hasContentType(u8[] inner) {
+  for (i32 i = inner.len() - 1; i >= 0; i--) {
+    if (inner[i] != 0) { return true; }
   }
-  return inner;
+  return false;
 }
 
 /** The real content type: the last non-zero byte of an opened record. */

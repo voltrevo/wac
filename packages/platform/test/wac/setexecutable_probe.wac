@@ -1,0 +1,17 @@
+// Set or clear the execute bits on a file, from inside a program, so a test can compare hosts.
+//
+// `setexecutable_test.wac` builds this for the Deno host and the native one and reads the mode each
+// leaves behind. **It does nothing but the one capability**: the file and its starting mode are the
+// test's to arrange, because a file this program created would carry whatever the umask of whoever
+// ran the suite allowed, and "execute follows read" makes the answer depend on that. With the start
+// pinned from outside, the expected mode is the same on every machine.
+//
+// Arguments: the path, then `on` or `off`.
+
+import { Core, Cli } from "std/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  string path = string.fromBytes(cli.arg(0).wait());
+  bool on = string.fromBytes(cli.arg(1).wait()) == "on";
+  return cli.setExecutable(path, on).wait().ok() ? 0 : 1;
+}

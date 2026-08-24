@@ -37,6 +37,8 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decodeCreated2 } from "../../src/cell.wac";
 import { ntorClientRequest, ntorClientFinish, ntorServerRespond } from "../../src/ntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
@@ -292,6 +294,67 @@ export string test_agrees_with_tors_own_implementation(Core core, Cli cli) {
       t.eqI32(slice(keys, 0, 72).len(), 72, "the first seventy-two are the hop's");
       t.eqI32(slice(keys, 72, 92).len(), 20, "and the last twenty are KH");
     }
+  }
+  return t.report();
+}
+
+/**
+ * **A relay choosing the length of its own handshake reply aborted the client.**
+ *
+ * `ntorClientFinish` refused a reply that is not sixty-four bytes by trapping, and the reply comes
+ * straight off the wire: `bootstrap.wac` calls it with `decodeCreated2(cellPayload(cell))` for the
+ * guard's CREATED2 and with `extendedReply(got.data)` for the middle and exit relays' EXTENDED2. Both
+ * of those return a length **the relay wrote into the cell**.
+ *
+ * So any relay could end the process of any client that built a circuit through it, and a guard is
+ * picked out of a public directory. One cell. No keys, no timing, nothing to guess.
+ *
+ * **`decodeCreated2`'s own comment had the case exactly inverted**, which is what makes this worth a
+ * long note:
+ *
+ *   > Empty rather than a trap: the relay chose this length, and an empty handshake reply fails
+ *   > ntor's AUTH check, which is the right outcome and does not abort the process.
+ *
+ * Right about the danger, wrong about which value carries it. `HLEN` of zero returns an empty array,
+ * and an empty array is not sixty-four bytes, so the graceful case named there was the one that
+ * aborted — while `HLEN` of 64 with the wrong bytes was the one that failed gracefully.
+ *
+ * The fix keeps the other three checks as traps. `identity`, `onionKey` and `ephemeralPriv` are the
+ * *caller's* own values, and a caller passing a 31-byte private key has a bug that should stop it.
+ * Only `reply` comes from a stranger, and for it the function already had a documented answer: *an
+ * empty array if the relay did not prove it holds the onion key*. A reply of the wrong width is a
+ * relay that did not prove it.
+ */
+export string test_a_relay_cannot_choose_the_length_of_its_own_reply() {
+  T t = T.create();
+  u8[] identity = u8[20](fill: 1);
+  u8[] onionKey = u8[32](fill: 2);
+  u8[] ephemeral = u8[32](fill: 3);
+
+  // The control: a reply of the right width and the wrong contents fails the AUTH check, which is
+  // the graceful refusal this function documents. Without it every assertion below would be
+  // satisfied by a function that returned empty for everything.
+  t.eqI32(ntorClientFinish(identity, onionKey, ephemeral, u8[64](fill: 0xAB), 72).len(), 0,
+          "a 64-byte reply with wrong contents did not fail the AUTH check");
+
+  // Every width a relay could name, including the two the wire makes easiest.
+  i32[] widths = i32[](0, 1, 2, 31, 32, 33, 63, 65, 96, 128, 507);
+  for (i32 i = 0; i < widths.len(); i++) {
+    t.eqI32(ntorClientFinish(identity, onionKey, ephemeral, u8[widths[i]](fill: 0xAB), 72).len(), 0,
+            "a reply of " + itoa(widths[i]) + " bytes was not refused");
+  }
+
+  // And through the framing a relay actually controls: `decodeCreated2` hands on whatever length the
+  // cell's HLEN names, so this is the path rather than a hand-made array.
+  i32[] hlens = i32[](0, 10, 63, 64, 65, 400);
+  for (i32 i = 0; i < hlens.len(); i++) {
+    u8[] payload = u8[509]();
+    payload[0] = (hlens[i] >> 8) & 0xFF;
+    payload[1] = hlens[i] & 0xFF;
+    for (i32 k = 0; k < hlens[i] && 2 + k < 509; k++) { payload[2 + k] = 0xAB; }
+    u8[] reply = decodeCreated2(payload);
+    t.eqI32(ntorClientFinish(identity, onionKey, ephemeral, reply, 72).len(), 0,
+            "a CREATED2 with HLEN " + itoa(hlens[i]) + " was not refused");
   }
   return t.report();
 }

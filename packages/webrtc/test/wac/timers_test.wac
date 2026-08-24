@@ -112,19 +112,29 @@ export string test_the_cumulative_point_only_advances_in_order() {
   // message it belonged to is never completed — intermittently, since it needs a reorder to show.
   T t = T.create();
   Association a = associated();
-  // Nothing received yet — which is a separate flag rather than a reserved TSN, so this asserts the
-  // behaviour (the first chunk is taken wherever it is) rather than a placeholder value. -1 used to
-  // be the placeholder and is 0xFFFFFFFF, a TSN a peer really sends.
-  t.isTrue(associationAccept(a, 5), "the first chunk sets the point wherever it is");
-  t.eqI32(associationCumulative(a), 5, "at five");
-  t.isTrue(associationAccept(a, 6), "the successor advances it");
-  t.isFalse(associationAccept(a, 8), "a gap does not");
-  t.eqI32(associationCumulative(a), 6, "so the peer is told 6 and resends 7");
-  // But 8 is remembered rather than thrown away, and the SACK says so as a gap block, so the peer
-  // resends 7 alone. Closing the hole then moves the point over both at once.
-  t.isTrue(associationAccept(a, 7), "7 arrives");
-  t.eqI32(associationCumulative(a), 8, "7 arrived and 8 was already here");
-  t.isFalse(associationAccept(a, 8), "8 again is a duplicate now, not the next one");
+  // **The numbers here start at 1 because `associated()`'s INIT says the peer starts at 1**, and
+  // since 2026-08-24 the association believes it — see
+  // `sctp_test.wac`'s `test_the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive`.
+  //
+  // This used to open at TSN 5 over a comment saying *the first chunk is taken wherever it is*.
+  // That was a true description of the code and the code was wrong: adopting whatever arrives first
+  // as the cumulative point is a claim that everything below it arrived, which is the same lie this
+  // test was written to catch, one chunk earlier. So the sequence is renumbered rather than the
+  // assertion relaxed — what is pinned below is unchanged, and the setup is now consistent with what
+  // the peer announced.
+  t.isTrue(associationAccept(a, 1), "the chunk the peer said it would start at is the next one");
+  t.eqI32(associationCumulative(a), 1, "at one");
+  t.isTrue(associationAccept(a, 2), "the successor advances it");
+  t.isFalse(associationAccept(a, 4), "a gap does not");
+  t.eqI32(associationCumulative(a), 2, "so the peer is told 2 and resends 3");
+  // But 4 is remembered rather than thrown away, and the SACK says so as a gap block, so the peer
+  // resends 3 alone. Closing the hole then moves the point over both at once.
+  t.isTrue(associationAccept(a, 3), "3 arrives");
+  t.eqI32(associationCumulative(a), 4, "3 arrived and 4 was already here");
+  t.isFalse(associationAccept(a, 4), "4 again is a duplicate now, not the next one");
+  // And a chunk below the declared start is a duplicate too, which is the arm the renumbering
+  // exposes: before the seeding there was no point below which anything could be.
+  t.isFalse(associationAccept(a, 0), "a TSN below what the peer said it would start at was accepted");
   return t.report();
 }
 

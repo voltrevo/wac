@@ -1,0 +1,59 @@
+// A program that stopped compiling must not be replaced by the last one that did.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/wactest/test/wac/built_test.wac
+//
+// `builtProgram` caches: it compares the artefact's mtime against the newest file in the entry's
+// closure and against the binary, and rebuilds when either is newer. What it did not do is look at
+// whether the rebuild **worked** — `cli.exec(wac, args, …)` with the answer dropped on the floor — so a
+// build that failed left the previous `.wasm` exactly where it was and handed its path back.
+//
+// The caller then runs it, and it runs, because it is a real module: the one that was built before the
+// program broke. **The test passes, against code that no longer compiles.** That is worth more than the
+// usual "silent is bad" argument because it is silent in the direction of *green*, and it cost a
+// diagnosis the day this was written: an edit to `exec_probe.wac` appeared to have no effect, and the
+// reason was that the probe had stopped compiling and the harness was running yesterday's build of it.
+//
+// Deleting on failure rather than returning an error, because the signature has 29 callers and every
+// one of them then runs what it was handed. A missing artefact fails all 29 loudly; a status they
+// would each have to check fails the ones that remembered.
+
+import { T } from "../../src/assert.wac";
+import { Core, Cli, Stat } from "std/platform.wac";
+import { builtProgram } from "../../src/built.wac";
+import { freshDir, putFile } from "../../src/host.wac";
+
+const string GOOD = "import { Core, Cli } from \"std/platform.wac\";\n"
+  + "export i32 main(Core core, Cli cli) { return 0; }\n";
+/** Same shape, and it does not compile: nothing declares `nosuchthing`. */
+const string BROKEN = "import { Core, Cli } from \"std/platform.wac\";\n"
+  + "export i32 main(Core core, Cli cli) { return nosuchthing(); }\n";
+
+export string test_a_program_that_stopped_compiling_is_not_served_from_before(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/built-probe-src";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  string entry = dir + "/p.wac";
+  t.isTrue(putFile(cli, entry, GOOD) == "", "could not write the program");
+
+  string built = builtProgram(cli, entry, "builtprobe", string[0](fill: ""));
+  Stat first = cli.stat(built).wait();
+  t.isTrue(first.exists && first.size > 8, "the first build wrote nothing to " + built);
+  if (!first.exists) { return t.report(); }
+
+  // Break it. The mtime moves, so the cache knows it must rebuild; the rebuild then fails.
+  t.isTrue(putFile(cli, entry, BROKEN) == "", "could not break the program");
+  string again = builtProgram(cli, entry, "builtprobe", string[0](fill: ""));
+  Stat after = cli.stat(again).wait();
+  t.isTrue(!after.exists,
+      "a failed build left the artefact from before it broke, so every caller of `builtProgram` runs "
+      + "the last version that compiled and passes against code that does not");
+
+  // And it recovers: fixing the program builds again, so the deletion is not a latch.
+  t.isTrue(putFile(cli, entry, GOOD) == "", "could not restore the program");
+  Stat fixed = cli.stat(builtProgram(cli, entry, "builtprobe", string[0](fill: ""))).wait();
+  t.isTrue(fixed.exists && fixed.size > 8, "a fixed program did not build again");
+
+  cli.remove(dir, true).wait();
+  cli.remove(cli.cwd().wait() + "/.cache/built-builtprobe", true).wait();
+  return t.report();
+}

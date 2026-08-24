@@ -420,6 +420,13 @@ export u8[] openShort(u8[] packet, i32 at, InitialKeys keys, i32 cidLen, bool gr
  * caller that cannot open a packet deserves to know whether the reason is that the keys moved.
  */
 export i32 shortKeyPhase(u8[] packet, i32 at, InitialKeys keys, i32 cidLen) {
+  // The two guards `shortPacketNumber` has carried since it was written, and for the same reason:
+  // `headerMask` bounds the offset it *samples* from — `at + 5 + cidLen + 16` — and says nothing
+  // about `at`. A negative `at` can put the sample back inside the packet while `at` itself is
+  // outside it, so the mask check passes and `packet[at]` below is an out-of-bounds read, which
+  // traps. Nothing here passes one; the pair disagreeing about its own arguments is the defect.
+  if (at < 0 || at >= packet.len()) { return -1; }
+  if (cidLen < 0 || cidLen > MAX_CID()) { return -1; }
   i32 numberAt = at + 1 + cidLen;
   u8[] mask = headerMask(keys.hp, packet, numberAt + 4);
   if (mask.len() == 0) { return -1; }

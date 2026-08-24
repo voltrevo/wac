@@ -37,6 +37,7 @@ wac check   main.wac                 # diagnostics, and nothing written
 wac compile main.wac [out.wasm]      # a module
 wac build   main.wac -o stem         # one module, carrying its own manifest
 wac build   main.wac --trace -o stem # ...instrumented for a trace, and stem.trace beside it
+wac build   main.wac --no-cache -o stem # ...compiled rather than answered from the build cache
 wac bindgen main.wac [--js]          # the glue a host calls it through
 wac run     main.wac [args…]         # compile into a temporary file and run it
 wac test    [path…] [--ignore p,…]   # every `test*` export under each path
@@ -131,6 +132,34 @@ build would be an error under a softer name.
 'chekc' — check, compile, build or bindgen` — and is a usage error, exit 2. **The command is checked
 before the entry is read**, which is the difference between that message and *cannot read chekc.wac*
 on a line where both were mistyped: reading first diagnoses the typo you did not make.
+
+### build: what it remembers
+
+`[§wac-cli-build-cache-7pk3mq9]` `build` remembers what it built, under `$WAC_HOME/cache/build`, and a
+hit writes the same bytes a compile would have written. The key is everything that reaches the
+artefact: the compiler, the entry, the content of every source read, the grants, and the output's base
+*name* — the name is in the manifest, so two names are two artefacts, while two directories under one
+name are the same one. A build with `--coverage` or `--trace` is never cached, because those write a
+table beside the module that a hit would not produce, and neither is a build with no `$WAC_HOME` to put
+it in or no `-o` to name it.
+
+`[§wac-cli-build-cache-7pk3mq9]` **A build that warned is not remembered either.** A hit answers above
+the diagnostics pass, so an entry for a warned program would print its warning once and never again —
+which is the one thing `[§wac-cli-usage-3nkq8wj]` says must not happen to a warning. Such a program
+compiles in full every time; that is the cost of the rule, and the way out of it is to fix the warning.
+
+`[§wac-cli-build-cache-7pk3mq9]` **A hit says so** — `stem.wasm: 1782 bytes from cache, 1 file(s)
+unchanged`, against `1782 bytes from 1 file(s)` for a compile. That distinction is the point rather
+than a courtesy: without it a caller cannot tell a compile from a lookup, and something that needs a
+real build has no way to check it got one.
+
+`[§wac-cli-build-nocache-2wq9nk4]` `--no-cache` is neither read nor written. It exists for builds whose
+*subject* is the compiler: `packages/wacc/test/wac/selfhost_test.wac` builds wacc twice and requires
+the two artefacts to be byte-identical, and both builds share compiler, sources, grants and output
+name, so a cache answers the second from the first and the test compares one artefact with itself.
+`$WAC_BUILD_CACHE_KEEP=0` turns the cache off the same way, lookup included, and is the spelling for a
+caller that cannot rely on the flag existing — an unknown variable is ignored where an unknown flag is
+refused.
 
 ### run: a program, or one exported function
 

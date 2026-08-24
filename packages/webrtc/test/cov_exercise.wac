@@ -1,0 +1,436 @@
+// Branch coverage for webrtc: the package's own tests, and nothing else.
+//
+//   deno task coverage:webrtc
+//   deno task coverage:webrtc --verbose
+//
+// The ninth of the packages `issues/system/0205` records as unmeasured, and the third and last
+// consumer of `packages/tls/src/handshake.wac` — after `packages/tls` itself and `packages/quic`.
+// `issues/system/0241b` is about what those two measurements did not add up to; this is the third
+// term.
+//
+// None of the 76 tests expects a trap.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+import {
+  test_openssl_answers_our_clienthello_with_a_helloverifyrequest as dtl__openssl_answers_our_clienthello_with_a_helloverifyrequest,
+  test_a_clienthello_with_a_wrong_cookie_is_refused as dtl__a_clienthello_with_a_wrong_cookie_is_refused,
+  test_the_framing_round_trips_and_says_when_a_record_is_not_whole as dtl__the_framing_round_trips_and_says_when_a_record_is_not_whole,
+  test_the_abandoned_server_pattern_discriminates as dtl__the_abandoned_server_pattern_discriminates,
+  test_a_clientkeyexchange_of_the_wrong_width_is_refused as dtl__a_clientkeyexchange_of_the_wrong_width_is_refused,
+} from "./wac/dtls_test.wac";
+import {
+  test_our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_block_boundary as dtl2__our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_block_boundary,
+  test_the_master_secret_and_the_key_block_with_their_labels_and_their_seed_order as dtl2__the_master_secret_and_the_key_block_with_their_labels_and_their_seed_order,
+  test_a_sealed_record_is_what_aes_gcm_opens_with_the_nonce_and_aad_we_claim as dtl2__a_sealed_record_is_what_aes_gcm_opens_with_the_nonce_and_aad_we_claim,
+  test_and_opening_refuses_a_record_whose_tag_aad_or_sequence_does_not_match as dtl2__and_opening_refuses_a_record_whose_tag_aad_or_sequence_does_not_match,
+} from "./wac/dtlskeys_test.wac";
+import {
+  test_openssl_s_client_completes_a_handshake_with_our_server_role as dtl3__openssl_s_client_completes_a_handshake_with_our_server_role,
+  test_and_a_lost_flight_is_resent as dtl3__and_a_lost_flight_is_resent,
+} from "./wac/dtlsserver_test.wac";
+import {
+  test_the_example_runs_as_a_program as exa__the_example_runs_as_a_program,
+} from "./wac/example_test.wac";
+import {
+  test_openssl_completes_a_dtls_handshake_with_us as han__openssl_completes_a_dtls_handshake_with_us,
+} from "./wac/handshake_test.wac";
+import {
+  test_aioice_completes_ice_against_us as ice__aioice_completes_ice_against_us,
+  test_aioice_validates_a_check_we_build as ice__aioice_validates_a_check_we_build,
+  test_aioice_accepts_a_consent_check_as_an_authenticated_binding_request as ice__aioice_accepts_a_consent_check_as_an_authenticated_binding_request,
+  test_a_candidate_line_is_the_shape_aioice_parses as ice__a_candidate_line_is_the_shape_aioice_parses,
+  test_a_check_for_somebody_else_is_told_apart_from_a_good_one as ice__a_check_for_somebody_else_is_told_apart_from_a_good_one,
+  test_the_response_reports_the_peers_address_not_ours as ice__the_response_reports_the_peers_address_not_ours,
+  test_the_priority_formulae_against_rfc_8445s_own_arithmetic as ice__the_priority_formulae_against_rfc_8445s_own_arithmetic,
+  test_consent_has_to_be_renewed_and_one_lost_check_does_not_end_it as ice__consent_has_to_be_renewed_and_one_lost_check_does_not_end_it,
+  test_a_consent_response_only_counts_if_it_is_the_one_we_asked_for as ice__a_consent_response_only_counts_if_it_is_the_one_we_asked_for,
+} from "./wac/ice_test.wac";
+import {
+  test_crc32c_is_castagnolis_not_the_one_packages_gzip_has as sct__crc32c_is_castagnolis_not_the_one_packages_gzip_has,
+  test_aiortc_parses_our_init_checksum_and_all as sct__aiortc_parses_our_init_checksum_and_all,
+  test_and_refuses_one_whose_checksum_we_corrupt as sct__and_refuses_one_whose_checksum_we_corrupt,
+  test_a_cookie_echo_carries_the_peers_tag_and_the_cookie_unchanged as sct__a_cookie_echo_carries_the_peers_tag_and_the_cookie_unchanged,
+  test_a_chunk_length_under_four_is_refused_rather_than_walked as sct__a_chunk_length_under_four_is_refused_rather_than_walked,
+  test_aiortc_reads_our_data_chunk_field_for_field as sct__aiortc_reads_our_data_chunk_field_for_field,
+  test_and_our_sack_which_is_a_cumulative_point_and_not_a_list as sct__and_our_sack_which_is_a_cumulative_point_and_not_a_list,
+  test_a_data_channel_is_opened_by_a_dcep_message_inside_a_data_chunk as sct__a_data_channel_is_opened_by_a_dcep_message_inside_a_data_chunk,
+  test_an_empty_string_has_its_own_protocol_identifier as sct__an_empty_string_has_its_own_protocol_identifier,
+  test_a_message_reassembles_when_its_chunks_are_reordered_on_the_path as sct__a_message_reassembles_when_its_chunks_are_reordered_on_the_path,
+  test_the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive as sc__the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive,
+  test_and_it_reassembles_when_the_tsns_are_negative_as_an_i32 as sct__and_it_reassembles_when_the_tsns_are_negative_as_an_i32,
+  test_a_duplicate_of_a_piece_already_consumed_is_ignored as sct__a_duplicate_of_a_piece_already_consumed_is_ignored,
+  test_tsn_comparison_is_serial_so_it_survives_the_wrap_at_2_32 as sct__tsn_comparison_is_serial_so_it_survives_the_wrap_at_2_32,
+  test_an_acknowledgement_clears_what_it_covers_across_2_31 as sct__an_acknowledgement_clears_what_it_covers_across_2_31,
+  test_the_receivers_cumulative_point_starts_empty as sct__the_receivers_cumulative_point_starts_empty,
+  test_a_sack_reports_the_chunks_that_arrived_out_of_order as sct__a_sack_reports_the_chunks_that_arrived_out_of_order,
+  test_three_sacks_reporting_a_tsn_missing_resend_it as sct__three_sacks_reporting_a_tsn_missing_resend_it,
+  test_aiortc_reads_our_gap_blocks_back_as_the_runs_we_meant as sct__aiortc_reads_our_gap_blocks_back_as_the_runs_we_meant,
+  test_and_a_sack_with_nothing_out_of_order_still_parses as sct__and_a_sack_with_nothing_out_of_order_still_parses,
+  test_an_association_shuts_down_in_three_chunks as sct__an_association_shuts_down_in_three_chunks,
+  test_and_the_other_side_of_it_a_peers_shutdown_is_answered as sct__and_the_other_side_of_it_a_peers_shutdown_is_answered,
+  test_an_abort_closes_the_association_at_once as sct__an_abort_closes_the_association_at_once,
+} from "./wac/sctp_test.wac";
+import {
+  test_aiortc_parses_our_offer_and_gets_everything_it_needs as sdp__aiortc_parses_our_offer_and_gets_everything_it_needs,
+  test_and_we_parse_the_sdp_a_real_rtcpeerconnection_generates as sdp__and_we_parse_the_sdp_a_real_rtcpeerconnection_generates,
+  test_a_fingerprint_is_written_the_way_an_sdp_wants_it as sdp__a_fingerprint_is_written_the_way_an_sdp_wants_it,
+  test_bare_lf_is_read_as_well_as_crlf as sdp__bare_lf_is_read_as_well_as_crlf,
+} from "./wac/sdp_test.wac";
+import {
+  test_a_connectivity_check_is_answered_and_the_answer_carries_the_senders_address as ses__a_connectivity_check_is_answered_and_the_answer_carries_the_senders_address,
+  test_a_check_that_does_not_authenticate_is_not_answered_at_all as ses__a_check_that_does_not_authenticate_is_not_answered_at_all,
+  test_dispatch_is_by_the_first_byte_which_is_how_stun_and_dtls_share_one_port as ses__dispatch_is_by_the_first_byte_which_is_how_stun_and_dtls_share_one_port,
+  test_the_chunk_size_leaves_room_for_the_headers_wrapped_around_it as ses__the_chunk_size_leaves_room_for_the_headers_wrapped_around_it,
+} from "./wac/session_test.wac";
+import {
+  test_rfc_5769_2_1_an_ice_connectivity_check_integrity_and_fingerprint as stu__rfc_5769_2_1_an_ice_connectivity_check_integrity_and_fingerprint,
+  test_rfc_5769_2_2_and_2_3_the_addresses_ipv4_and_ipv6 as stu__rfc_5769_2_2_and_2_3_the_addresses_ipv4_and_ipv6,
+  test_rfc_5769_2_4_a_non_ascii_username_padded_parsed_but_not_verified as stu__rfc_5769_2_4_a_non_ascii_username_padded_parsed_but_not_verified,
+  test_coturn_answers_our_binding_request as stu__coturn_answers_our_binding_request,
+  test_and_a_message_with_an_attribute_so_the_padding_is_on_the_wire as stu__and_a_message_with_an_attribute_so_the_padding_is_on_the_wire,
+  test_aioice_parses_what_we_build_attribute_for_attribute as stu__aioice_parses_what_we_build_attribute_for_attribute,
+  test_and_we_parse_what_aioice_builds as stu__and_we_parse_what_aioice_builds,
+  test_an_address_survives_our_own_encode_and_decode as stu__an_address_survives_our_own_encode_and_decode,
+  test_message_integrity_aioice_verifies_ours_and_we_verify_aioices as stu__message_integrity_aioice_verifies_ours_and_we_verify_aioices,
+  test_a_wrong_key_a_changed_byte_and_no_integrity_are_all_refused as stu__a_wrong_key_a_changed_byte_and_no_integrity_are_all_refused,
+  test_fingerprint_aioice_agrees_with_our_crc as stu__fingerprint_aioice_agrees_with_our_crc,
+  test_what_is_not_stun_is_refused_rather_than_read as stu__what_is_not_stun_is_refused_rather_than_read,
+} from "./wac/stun_test.wac";
+import {
+  test_a_chunk_is_not_due_before_its_timer_and_is_due_after as tim__a_chunk_is_not_due_before_its_timer_and_is_due_after,
+  test_and_the_timeout_doubles_per_attempt as tim__and_the_timeout_doubles_per_attempt,
+  test_an_acknowledged_chunk_stops_being_due_at_all as tim__an_acknowledged_chunk_stops_being_due_at_all,
+  test_a_cumulative_acknowledgement_covers_everything_below_it as tim__a_cumulative_acknowledgement_covers_everything_below_it,
+  test_the_cumulative_point_only_advances_in_order as tim__the_cumulative_point_only_advances_in_order,
+  test_a_dtls_flight_is_due_on_the_same_rule as tim__a_dtls_flight_is_due_on_the_same_rule,
+  test_the_timeout_is_measured_rather_than_assumed as tim__the_timeout_is_measured_rather_than_assumed,
+  test_the_congestion_window_paces_a_large_message as tim__the_congestion_window_paces_a_large_message,
+  test_and_a_timeout_closes_it_hard as tim__and_a_timeout_closes_it_hard,
+} from "./wac/timers_test.wac";
+
+import {
+  test_a_group_list_longer_than_its_extension_is_refused as mf__a_group_list_longer_than_its_extension_is_refused,
+  test_every_prefix_of_a_hello_is_survived_by_every_reader as mf__every_prefix_of_a_hello_is_survived_by_every_reader,
+  test_a_record_or_handshake_header_that_does_not_add_up_is_refused as mf__a_record_or_handshake_header_that_does_not_add_up_is_refused,
+  test_the_nested_lengths_that_were_already_checked_stay_checked as mf__the_nested_lengths_that_were_already_checked_stay_checked,
+} from "./wac/malformed_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (dtl__a_clientkeyexchange_of_the_wrong_width_is_refused().len() > 0) {
+    core.warn("error: FAILED dtls_test test_a_clientkeyexchange_of_the_wrong_width_is_refused");
+    bad = bad + 1;
+  }
+  if (mf__a_group_list_longer_than_its_extension_is_refused().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_group_list_longer_than_its_extension_is_refused");
+    bad = bad + 1;
+  }
+  if (mf__every_prefix_of_a_hello_is_survived_by_every_reader().len() > 0) {
+    core.warn("error: FAILED malformed_test test_every_prefix_of_a_hello_is_survived_by_every_reader");
+    bad = bad + 1;
+  }
+  if (mf__a_record_or_handshake_header_that_does_not_add_up_is_refused().len() > 0) {
+    core.warn("error: FAILED malformed_test test_a_record_or_handshake_header_that_does_not_add_up_is_refused");
+    bad = bad + 1;
+  }
+  if (mf__the_nested_lengths_that_were_already_checked_stay_checked().len() > 0) {
+    core.warn("error: FAILED malformed_test test_the_nested_lengths_that_were_already_checked_stay_checked");
+    bad = bad + 1;
+  }
+  if (dtl__openssl_answers_our_clienthello_with_a_helloverifyrequest(core, cli).len() > 0) {
+    core.warn("error: FAILED dtls_test test_openssl_answers_our_clienthello_with_a_helloverifyrequest");
+    bad = bad + 1;
+  }
+  if (dtl__a_clienthello_with_a_wrong_cookie_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED dtls_test test_a_clienthello_with_a_wrong_cookie_is_refused");
+    bad = bad + 1;
+  }
+  if (dtl__the_framing_round_trips_and_says_when_a_record_is_not_whole().len() > 0) {
+    core.warn("error: FAILED dtls_test test_the_framing_round_trips_and_says_when_a_record_is_not_whole");
+    bad = bad + 1;
+  }
+  if (dtl__the_abandoned_server_pattern_discriminates(core, cli).len() > 0) {
+    core.warn("error: FAILED dtls_test test_the_abandoned_server_pattern_discriminates");
+    bad = bad + 1;
+  }
+  if (dtl2__our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_block_boundary(core, cli).len() > 0) {
+    core.warn("error: FAILED dtlskeys_test test_our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_block_boundary");
+    bad = bad + 1;
+  }
+  if (dtl2__the_master_secret_and_the_key_block_with_their_labels_and_their_seed_order(core, cli).len() > 0) {
+    core.warn("error: FAILED dtlskeys_test test_the_master_secret_and_the_key_block_with_their_labels_and_their_seed_order");
+    bad = bad + 1;
+  }
+  if (dtl2__a_sealed_record_is_what_aes_gcm_opens_with_the_nonce_and_aad_we_claim(core, cli).len() > 0) {
+    core.warn("error: FAILED dtlskeys_test test_a_sealed_record_is_what_aes_gcm_opens_with_the_nonce_and_aad_we_claim");
+    bad = bad + 1;
+  }
+  if (dtl2__and_opening_refuses_a_record_whose_tag_aad_or_sequence_does_not_match().len() > 0) {
+    core.warn("error: FAILED dtlskeys_test test_and_opening_refuses_a_record_whose_tag_aad_or_sequence_does_not_match");
+    bad = bad + 1;
+  }
+  if (dtl3__openssl_s_client_completes_a_handshake_with_our_server_role(core, cli).len() > 0) {
+    core.warn("error: FAILED dtlsserver_test test_openssl_s_client_completes_a_handshake_with_our_server_role");
+    bad = bad + 1;
+  }
+  if (dtl3__and_a_lost_flight_is_resent(core, cli).len() > 0) {
+    core.warn("error: FAILED dtlsserver_test test_and_a_lost_flight_is_resent");
+    bad = bad + 1;
+  }
+  if (exa__the_example_runs_as_a_program(core, cli).len() > 0) {
+    core.warn("error: FAILED example_test test_the_example_runs_as_a_program");
+    bad = bad + 1;
+  }
+  if (han__openssl_completes_a_dtls_handshake_with_us(core, cli).len() > 0) {
+    core.warn("error: FAILED handshake_test test_openssl_completes_a_dtls_handshake_with_us");
+    bad = bad + 1;
+  }
+  if (ice__aioice_completes_ice_against_us(core, cli).len() > 0) {
+    core.warn("error: FAILED ice_test test_aioice_completes_ice_against_us");
+    bad = bad + 1;
+  }
+  if (ice__aioice_validates_a_check_we_build(core, cli).len() > 0) {
+    core.warn("error: FAILED ice_test test_aioice_validates_a_check_we_build");
+    bad = bad + 1;
+  }
+  if (ice__aioice_accepts_a_consent_check_as_an_authenticated_binding_request(core, cli).len() > 0) {
+    core.warn("error: FAILED ice_test test_aioice_accepts_a_consent_check_as_an_authenticated_binding_request");
+    bad = bad + 1;
+  }
+  if (ice__a_candidate_line_is_the_shape_aioice_parses(core, cli).len() > 0) {
+    core.warn("error: FAILED ice_test test_a_candidate_line_is_the_shape_aioice_parses");
+    bad = bad + 1;
+  }
+  if (ice__a_check_for_somebody_else_is_told_apart_from_a_good_one().len() > 0) {
+    core.warn("error: FAILED ice_test test_a_check_for_somebody_else_is_told_apart_from_a_good_one");
+    bad = bad + 1;
+  }
+  if (ice__the_response_reports_the_peers_address_not_ours().len() > 0) {
+    core.warn("error: FAILED ice_test test_the_response_reports_the_peers_address_not_ours");
+    bad = bad + 1;
+  }
+  if (ice__the_priority_formulae_against_rfc_8445s_own_arithmetic().len() > 0) {
+    core.warn("error: FAILED ice_test test_the_priority_formulae_against_rfc_8445s_own_arithmetic");
+    bad = bad + 1;
+  }
+  if (ice__consent_has_to_be_renewed_and_one_lost_check_does_not_end_it().len() > 0) {
+    core.warn("error: FAILED ice_test test_consent_has_to_be_renewed_and_one_lost_check_does_not_end_it");
+    bad = bad + 1;
+  }
+  if (ice__a_consent_response_only_counts_if_it_is_the_one_we_asked_for().len() > 0) {
+    core.warn("error: FAILED ice_test test_a_consent_response_only_counts_if_it_is_the_one_we_asked_for");
+    bad = bad + 1;
+  }
+  if (sct__crc32c_is_castagnolis_not_the_one_packages_gzip_has(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_crc32c_is_castagnolis_not_the_one_packages_gzip_has");
+    bad = bad + 1;
+  }
+  if (sct__aiortc_parses_our_init_checksum_and_all(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_aiortc_parses_our_init_checksum_and_all");
+    bad = bad + 1;
+  }
+  if (sct__and_refuses_one_whose_checksum_we_corrupt(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_and_refuses_one_whose_checksum_we_corrupt");
+    bad = bad + 1;
+  }
+  if (sct__a_cookie_echo_carries_the_peers_tag_and_the_cookie_unchanged(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_a_cookie_echo_carries_the_peers_tag_and_the_cookie_unchanged");
+    bad = bad + 1;
+  }
+  if (sct__a_chunk_length_under_four_is_refused_rather_than_walked().len() > 0) {
+    core.warn("error: FAILED sctp_test test_a_chunk_length_under_four_is_refused_rather_than_walked");
+    bad = bad + 1;
+  }
+  if (sct__aiortc_reads_our_data_chunk_field_for_field(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_aiortc_reads_our_data_chunk_field_for_field");
+    bad = bad + 1;
+  }
+  if (sct__and_our_sack_which_is_a_cumulative_point_and_not_a_list(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_and_our_sack_which_is_a_cumulative_point_and_not_a_list");
+    bad = bad + 1;
+  }
+  if (sct__a_data_channel_is_opened_by_a_dcep_message_inside_a_data_chunk(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_a_data_channel_is_opened_by_a_dcep_message_inside_a_data_chunk");
+    bad = bad + 1;
+  }
+  if (sct__an_empty_string_has_its_own_protocol_identifier().len() > 0) {
+    core.warn("error: FAILED sctp_test test_an_empty_string_has_its_own_protocol_identifier");
+    bad = bad + 1;
+  }
+  if (sc__the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive().len() > 0) {
+    core.warn("error: FAILED sctp_test test_the_peers_declared_first_tsn_is_believed_over_the_first_to_arrive");
+    bad = bad + 1;
+  }
+  if (sct__a_message_reassembles_when_its_chunks_are_reordered_on_the_path().len() > 0) {
+    core.warn("error: FAILED sctp_test test_a_message_reassembles_when_its_chunks_are_reordered_on_the_path");
+    bad = bad + 1;
+  }
+  if (sct__and_it_reassembles_when_the_tsns_are_negative_as_an_i32().len() > 0) {
+    core.warn("error: FAILED sctp_test test_and_it_reassembles_when_the_tsns_are_negative_as_an_i32");
+    bad = bad + 1;
+  }
+  if (sct__a_duplicate_of_a_piece_already_consumed_is_ignored().len() > 0) {
+    core.warn("error: FAILED sctp_test test_a_duplicate_of_a_piece_already_consumed_is_ignored");
+    bad = bad + 1;
+  }
+  if (sct__tsn_comparison_is_serial_so_it_survives_the_wrap_at_2_32().len() > 0) {
+    core.warn("error: FAILED sctp_test test_tsn_comparison_is_serial_so_it_survives_the_wrap_at_2_32");
+    bad = bad + 1;
+  }
+  if (sct__an_acknowledgement_clears_what_it_covers_across_2_31().len() > 0) {
+    core.warn("error: FAILED sctp_test test_an_acknowledgement_clears_what_it_covers_across_2_31");
+    bad = bad + 1;
+  }
+  if (sct__the_receivers_cumulative_point_starts_empty().len() > 0) {
+    core.warn("error: FAILED sctp_test test_the_receivers_cumulative_point_starts_empty");
+    bad = bad + 1;
+  }
+  if (sct__a_sack_reports_the_chunks_that_arrived_out_of_order().len() > 0) {
+    core.warn("error: FAILED sctp_test test_a_sack_reports_the_chunks_that_arrived_out_of_order");
+    bad = bad + 1;
+  }
+  if (sct__three_sacks_reporting_a_tsn_missing_resend_it().len() > 0) {
+    core.warn("error: FAILED sctp_test test_three_sacks_reporting_a_tsn_missing_resend_it");
+    bad = bad + 1;
+  }
+  if (sct__aiortc_reads_our_gap_blocks_back_as_the_runs_we_meant(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_aiortc_reads_our_gap_blocks_back_as_the_runs_we_meant");
+    bad = bad + 1;
+  }
+  if (sct__and_a_sack_with_nothing_out_of_order_still_parses(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_and_a_sack_with_nothing_out_of_order_still_parses");
+    bad = bad + 1;
+  }
+  if (sct__an_association_shuts_down_in_three_chunks(core, cli).len() > 0) {
+    core.warn("error: FAILED sctp_test test_an_association_shuts_down_in_three_chunks");
+    bad = bad + 1;
+  }
+  if (sct__and_the_other_side_of_it_a_peers_shutdown_is_answered().len() > 0) {
+    core.warn("error: FAILED sctp_test test_and_the_other_side_of_it_a_peers_shutdown_is_answered");
+    bad = bad + 1;
+  }
+  if (sct__an_abort_closes_the_association_at_once().len() > 0) {
+    core.warn("error: FAILED sctp_test test_an_abort_closes_the_association_at_once");
+    bad = bad + 1;
+  }
+  if (sdp__aiortc_parses_our_offer_and_gets_everything_it_needs(core, cli).len() > 0) {
+    core.warn("error: FAILED sdp_test test_aiortc_parses_our_offer_and_gets_everything_it_needs");
+    bad = bad + 1;
+  }
+  if (sdp__and_we_parse_the_sdp_a_real_rtcpeerconnection_generates(core, cli).len() > 0) {
+    core.warn("error: FAILED sdp_test test_and_we_parse_the_sdp_a_real_rtcpeerconnection_generates");
+    bad = bad + 1;
+  }
+  if (sdp__a_fingerprint_is_written_the_way_an_sdp_wants_it().len() > 0) {
+    core.warn("error: FAILED sdp_test test_a_fingerprint_is_written_the_way_an_sdp_wants_it");
+    bad = bad + 1;
+  }
+  if (sdp__bare_lf_is_read_as_well_as_crlf().len() > 0) {
+    core.warn("error: FAILED sdp_test test_bare_lf_is_read_as_well_as_crlf");
+    bad = bad + 1;
+  }
+  if (ses__a_connectivity_check_is_answered_and_the_answer_carries_the_senders_address().len() > 0) {
+    core.warn("error: FAILED session_test test_a_connectivity_check_is_answered_and_the_answer_carries_the_senders_address");
+    bad = bad + 1;
+  }
+  if (ses__a_check_that_does_not_authenticate_is_not_answered_at_all().len() > 0) {
+    core.warn("error: FAILED session_test test_a_check_that_does_not_authenticate_is_not_answered_at_all");
+    bad = bad + 1;
+  }
+  if (ses__dispatch_is_by_the_first_byte_which_is_how_stun_and_dtls_share_one_port().len() > 0) {
+    core.warn("error: FAILED session_test test_dispatch_is_by_the_first_byte_which_is_how_stun_and_dtls_share_one_port");
+    bad = bad + 1;
+  }
+  if (ses__the_chunk_size_leaves_room_for_the_headers_wrapped_around_it().len() > 0) {
+    core.warn("error: FAILED session_test test_the_chunk_size_leaves_room_for_the_headers_wrapped_around_it");
+    bad = bad + 1;
+  }
+  if (stu__rfc_5769_2_1_an_ice_connectivity_check_integrity_and_fingerprint().len() > 0) {
+    core.warn("error: FAILED stun_test test_rfc_5769_2_1_an_ice_connectivity_check_integrity_and_fingerprint");
+    bad = bad + 1;
+  }
+  if (stu__rfc_5769_2_2_and_2_3_the_addresses_ipv4_and_ipv6().len() > 0) {
+    core.warn("error: FAILED stun_test test_rfc_5769_2_2_and_2_3_the_addresses_ipv4_and_ipv6");
+    bad = bad + 1;
+  }
+  if (stu__rfc_5769_2_4_a_non_ascii_username_padded_parsed_but_not_verified().len() > 0) {
+    core.warn("error: FAILED stun_test test_rfc_5769_2_4_a_non_ascii_username_padded_parsed_but_not_verified");
+    bad = bad + 1;
+  }
+  if (stu__coturn_answers_our_binding_request(core, cli).len() > 0) {
+    core.warn("error: FAILED stun_test test_coturn_answers_our_binding_request");
+    bad = bad + 1;
+  }
+  if (stu__and_a_message_with_an_attribute_so_the_padding_is_on_the_wire(core, cli).len() > 0) {
+    core.warn("error: FAILED stun_test test_and_a_message_with_an_attribute_so_the_padding_is_on_the_wire");
+    bad = bad + 1;
+  }
+  if (stu__aioice_parses_what_we_build_attribute_for_attribute(core, cli).len() > 0) {
+    core.warn("error: FAILED stun_test test_aioice_parses_what_we_build_attribute_for_attribute");
+    bad = bad + 1;
+  }
+  if (stu__and_we_parse_what_aioice_builds(core, cli).len() > 0) {
+    core.warn("error: FAILED stun_test test_and_we_parse_what_aioice_builds");
+    bad = bad + 1;
+  }
+  if (stu__an_address_survives_our_own_encode_and_decode().len() > 0) {
+    core.warn("error: FAILED stun_test test_an_address_survives_our_own_encode_and_decode");
+    bad = bad + 1;
+  }
+  if (stu__message_integrity_aioice_verifies_ours_and_we_verify_aioices(core, cli).len() > 0) {
+    core.warn("error: FAILED stun_test test_message_integrity_aioice_verifies_ours_and_we_verify_aioices");
+    bad = bad + 1;
+  }
+  if (stu__a_wrong_key_a_changed_byte_and_no_integrity_are_all_refused().len() > 0) {
+    core.warn("error: FAILED stun_test test_a_wrong_key_a_changed_byte_and_no_integrity_are_all_refused");
+    bad = bad + 1;
+  }
+  if (stu__fingerprint_aioice_agrees_with_our_crc(core, cli).len() > 0) {
+    core.warn("error: FAILED stun_test test_fingerprint_aioice_agrees_with_our_crc");
+    bad = bad + 1;
+  }
+  if (stu__what_is_not_stun_is_refused_rather_than_read().len() > 0) {
+    core.warn("error: FAILED stun_test test_what_is_not_stun_is_refused_rather_than_read");
+    bad = bad + 1;
+  }
+  if (tim__a_chunk_is_not_due_before_its_timer_and_is_due_after().len() > 0) {
+    core.warn("error: FAILED timers_test test_a_chunk_is_not_due_before_its_timer_and_is_due_after");
+    bad = bad + 1;
+  }
+  if (tim__and_the_timeout_doubles_per_attempt().len() > 0) {
+    core.warn("error: FAILED timers_test test_and_the_timeout_doubles_per_attempt");
+    bad = bad + 1;
+  }
+  if (tim__an_acknowledged_chunk_stops_being_due_at_all().len() > 0) {
+    core.warn("error: FAILED timers_test test_an_acknowledged_chunk_stops_being_due_at_all");
+    bad = bad + 1;
+  }
+  if (tim__a_cumulative_acknowledgement_covers_everything_below_it().len() > 0) {
+    core.warn("error: FAILED timers_test test_a_cumulative_acknowledgement_covers_everything_below_it");
+    bad = bad + 1;
+  }
+  if (tim__the_cumulative_point_only_advances_in_order().len() > 0) {
+    core.warn("error: FAILED timers_test test_the_cumulative_point_only_advances_in_order");
+    bad = bad + 1;
+  }
+  if (tim__a_dtls_flight_is_due_on_the_same_rule().len() > 0) {
+    core.warn("error: FAILED timers_test test_a_dtls_flight_is_due_on_the_same_rule");
+    bad = bad + 1;
+  }
+  if (tim__the_timeout_is_measured_rather_than_assumed().len() > 0) {
+    core.warn("error: FAILED timers_test test_the_timeout_is_measured_rather_than_assumed");
+    bad = bad + 1;
+  }
+  if (tim__the_congestion_window_paces_a_large_message().len() > 0) {
+    core.warn("error: FAILED timers_test test_the_congestion_window_paces_a_large_message");
+    bad = bad + 1;
+  }
+  if (tim__and_a_timeout_closes_it_hard().len() > 0) {
+    core.warn("error: FAILED timers_test test_and_a_timeout_closes_it_hard");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("webrtc: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}

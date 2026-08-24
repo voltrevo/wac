@@ -152,25 +152,41 @@ deno task app:build <entry.wac> --target browser -o page/index.html  # ...or a b
 deno task app:build <entry.wac> --worker -o child.worker.js  # ...or something `spawn` can run
 deno task map             # regenerate MAP.md; the suite fails if it is stale
 deno task coverage        # branch coverage of every package, from its wac-native tests
+deno task coverage:abi
+deno task coverage:bls
 deno task coverage:bignum # ...and the host-driven exercises, per package
 deno task coverage:bytes
 deno task coverage:codec
 deno task coverage:core
     deno task coverage:crypto
 deno task coverage:datetime
+deno task coverage:ens
+deno task coverage:ethrpc
 deno task coverage:fmt
 deno task coverage:fs
 deno task coverage:gzip
+deno task coverage:git
 deno task coverage:http
 deno task coverage:json
+deno task coverage:lightclient
+deno task coverage:mpt
+deno task coverage:platform
+deno task coverage:quic
 deno task coverage:regex
+deno task coverage:rlp
 deno task coverage:raster
 deno task coverage:server
 deno task coverage:sh
 deno task coverage:ssh
+deno task coverage:ssz
 deno task coverage:stream
+deno task coverage:tor
+deno task coverage:tty
+deno task coverage:tls
 deno task coverage:unicode
+deno task coverage:webrtc
 deno task coverage:url
+deno task coverage:wactest
 deno task coverage:wacpkg
 deno task coverage:zstd
 deno task coverage:all    # every one of them in turn, and says which are red

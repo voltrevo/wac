@@ -20,10 +20,10 @@
 // is made of; and reading them is here, where the capabilities are. Each half is testable without
 // the other.
 
-import { CallResult, Change, Child, Cli, Core, FileResult, LoadedModule, Pending, faultWords }
+import { CallResult, Change, Child, Cli, Core, FileResult, LoadedModule, Pending, Stat, faultWords }
   from "std/platform.wac";
 import { Read } from "core";
-import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, buildFilesIn,
          covTableFilesIn, describeSeparator, diagnoseGraphIn, exportSigsFilesIn, missingImportFilesIn,
@@ -195,6 +195,158 @@ string wacHomeOf(Cli cli) {
   u8[]? home = cli.env("HOME").wait();
   if ((home is null) || home!.len() == 0) { return ""; }
   return string.fromBytes(home!) + "/.wac";
+}
+
+/**
+ * A 64-bit FNV-1a over the pieces of a build, as sixteen hex digits.
+ *
+ * The same construction the host uses for `test_module_key` and `$WAC_COMPILER_ID`, so that a reader
+ * comparing the two caches is comparing like with like. **64 bits and not `core/hash.wac`'s 32**: a
+ * collision here does not lose a lookup, it serves a *different program's module*, and 32 bits is one
+ * birthday away from that at a few tens of thousands of entries.
+ */
+struct Fnv {
+  i64 h;
+  Fnv start() { return Fnv(0xcbf29ce484222325); }
+  void eat(this, string s) {
+    u8[] b = s.toBytes();
+    for (i32 i = 0; i < b.len(); i++) {
+      this.h = this.h ^ (b[i] as i64);
+      this.h = this.h * 0x100000001b3;
+    }
+    // A length after each piece, so that eating "ab" then "c" differs from "a" then "bc" — without it
+    // two different file sets with the same concatenation share a key.
+    this.h = this.h ^ (b.len() as i64);
+    this.h = this.h * 0x100000001b3;
+  }
+  string hex(const this) {
+    string out = "";
+    for (i32 i = 15; i >= 0; i--) {
+      i64 nib = (this.h >> ((i * 4) as i64)) & 15;
+      i32 d = nib as! i32;
+      out = out + "0123456789abcdef".slice(d, d + 1);
+    }
+    return out;
+  }
+}
+
+/**
+ * How many built artefacts to keep. See `sweepBuildCache` for why this is a number and not "plenty".
+ *
+ * `$WAC_BUILD_CACHE_KEEP` overrides it, which is the only way to test the bound: proving it evicts
+ * otherwise costs sixty-five real builds of real programs, and a test that slow is a test nobody runs.
+ * The same reason `$WAC_TESTMOD_DIR` exists on the host's side of this.
+ */
+i32 keepBuilds(Cli cli) {
+  u8[]? set = cli.env("WAC_BUILD_CACHE_KEEP").wait();
+  if ((set is null) || set!.len() == 0) { return 64; }
+  // `atoi` answers 0 for anything that is not a number, and 0 is a legitimate bound — "keep none" is
+  // how a caller turns the cache off — so a malformed value is taken at its word rather than guessed at.
+  return atoi(string.fromBytes(set!));
+}
+
+/**
+ * Bound the build cache: keep the newest `keepBuilds()` entries and delete the rest.
+ *
+ * **A number with a reason.** These are whole programs rather than the test lane's aggregates — box's
+ * shell is about a megabyte — so sixty-four is roughly 60 MB. `issues/system/0136` is the day this
+ * filesystem filled and the reason an unbounded cache is not an option: a directory that only ever
+ * grows is a disk that only ever shrinks.
+ *
+ * **Newest by write time, not by use.** The host's own module cache touches an entry when it hits, so
+ * its bound is least-recently-*used*; there is no `utime` in this world, so this one is
+ * least-recently-*written*. The difference would matter if the working set were near the bound — a
+ * program built once and used daily would age out — and at sixty-four against the handful of
+ * applications this repository builds, it is not near it. Worth knowing before raising the traffic.
+ */
+void sweepBuildCache(Cli cli, string dir) {
+  string[]? names = cli.readDir(dir).wait();
+  if (names is null) { return; }
+  i32 n = names!.len();
+  i32 keep = keepBuilds(cli);
+  if (n <= keep) { return; }
+  // Ages in the same order as the names, so the two can be sorted together.
+  i64[] when = i64[n]();
+  for (i32 i = 0; i < n; i++) {
+    Stat s = cli.stat(dir + "/" + names![i]).wait();
+    when[i] = s.exists ? s.modifiedMillis : (0 as i64);
+  }
+  // Selection sort, newest first: `n` is bounded by the entries in one directory and this runs only
+  // on the write that crosses the bound, so the shape of the sort is not worth more than its clarity.
+  for (i32 i = 0; i < n; i++) {
+    i32 best = i;
+    for (i32 j = i + 1; j < n; j++) { if (when[j] > when[best]) { best = j; } }
+    if (best != i) {
+      i64 tw = when[i]; when[i] = when[best]; when[best] = tw;
+      string tn = names![i]; names![i] = names![best]; names![best] = tn;
+    }
+  }
+  for (i32 i = keep; i < n; i++) { cli.remove(dir + "/" + names![i], false).wait(); }
+}
+
+/** Everything before the last `/`, which is the directory a cache entry needs to exist in. */
+string dirOf(string path) {
+  i32 cut = 0 - 1;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { cut = i; } }
+  return cut <= 0 ? "." : path.slice(0, cut);
+}
+
+/**
+ * Where this build's artefact would be cached, or `""` when it must not be.
+ *
+ * `issues/system/0204`. The key is everything that changes the bytes written: the compiler, the entry,
+ * every source's content, the grants — they go *into* the manifest — and the output's base name, which
+ * is in the manifest too, so two destinations are two artefacts.
+ *
+ * **`""` for anything that is not a plain build.** A coverage or traced build writes a table beside the
+ * module that would have to be cached with it; `wac build` without `-o` writes elsewhere; and without
+ * `$WAC_HOME` there is nowhere to put it. Each of those is a miss forever rather than a wrong hit.
+ *
+ * **The compiler's identity comes from the host** — a wac program cannot hash the seed it is running
+ * inside. Absent it, this answers `""` rather than keying on nothing, because an entry that cannot say
+ * which compiler made it is the stale hit this whole cache has to avoid.
+ *
+ * **`--no-cache` is neither read nor write**, and it exists because a build that has to prove something
+ * about the compiler cannot be answered from disk. `packages/wacc/test/wac/selfhost_test.wac` builds
+ * wacc twice and requires byte equality; served from cache that is one file compared with itself, which
+ * `issues/system/0204` predicted before this cache existed and which measured 194 ms against a
+ * documented 3 s once it did. `tools/seed.sh` has the same shape in its fixpoint loop, in the steady
+ * state where consecutive rounds run the same compiler over the same sources.
+ *
+ * **And an unvalidated command line gets no hit.** The lookup happens above the dispatch, where the
+ * sources are already gathered and the flags are not yet checked — so a hit used to return 0 before
+ * `unknownFlag` ever ran, and `wac build --nonsense` succeeded silently on a warm cache while failing
+ * correctly on a cold one. Refusing to key a command line the program has not accepted keeps the two
+ * answers the same; the caller still gets the ordinary error, one compile later.
+ */
+string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] paths, string[] texts,
+                      string stem) {
+  if (cmd != "build" || stem == "") { return ""; }
+  if (hasFlag(cli, argc, "--coverage") || hasFlag(cli, argc, "--trace")) { return ""; }
+  if (hasFlag(cli, argc, "--no-cache")) { return ""; }
+  if (unknownFlag(cli, argc) != "") { return ""; }
+  // **A bound of zero turns the cache off, lookup included.** Sweeping to nothing is not the same as
+  // being off: entries written before still answer, so a caller who set this because they suspect a
+  // stale hit would go on getting hits until the first build swept them away. Measured — a self-build
+  // that should have recompiled came back in 160 ms with the bound at zero.
+  if (keepBuilds(cli) <= 0) { return ""; }
+  string home = wacHomeOf(cli);
+  if (home == "") { return ""; }
+  u8[]? id = cli.env("WAC_COMPILER_ID").wait();
+  if ((id is null) || id!.len() == 0) { return ""; }
+
+  Fnv h = Fnv.start();
+  h.eat("wac-build 1");
+  h.eat(string.fromBytes(id!));
+  h.eat(entry);
+  h.eat(baseName(stem) + ".wasm");
+  // A bitmask, not a list — `grantsIn` answers the five bits that go into the manifest.
+  h.eat(itoa(grantsIn(cli, argc)));
+  for (i32 i = 0; i < paths.len(); i++) {
+    h.eat(paths[i]);
+    h.eat(texts[i]);
+  }
+  return home + "/cache/build/" + h.hex() + ".wasm";
 }
 
 /** A specifier that named a mapping, resolved to a file on disk — `design/lang/0009` D9-D11. */
@@ -1598,7 +1750,7 @@ string unknownFlag(Cli cli, i32 argc) {
     if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
     if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
         && a != "--allow-run" && a != "--quiet" && a != "--js" && a != "--coverage"
-        && a != "--trace" && a != "--trace-slots") {
+        && a != "--trace" && a != "--trace-slots" && a != "--no-cache") {
       return a;
     }
   }
@@ -1790,6 +1942,34 @@ export i32 main(Core core, Cli cli) {
   Res res = Res(exactly(src.roots, src.n),
                 exactly(src.mapFrom, src.mapN), exactly(src.mapSpec, src.mapN),
                 exactly(src.mapTo, src.mapN), src.base);
+
+  // **The artefact this build would write, if it has been written before.** `issues/system/0204`:
+  // `wac build` compiled from source every time, and the box tests that build an application and run
+  // it pay ~2 s of that per run — which is what stops the rest of `issues/system/0161` converting.
+  //
+  // Above the compile and below the gather, because the sources *are* the key: there is no way to know
+  // a build is a repeat without reading what it reads. Gathering is the cheap half.
+  string cachePath = buildCachePath(cli, argc, cmd, entry, paths, texts, outStem(cli, argc));
+  if (cachePath != "") {
+    FileResult hit = fs.readFile(cachePath);
+    if (hit.ok && hit.bytes.len() > 8) {
+      string stemHit = outStem(cli, argc);
+      Change wroteHit = fs.writeFile(stemHit + ".wasm", hit.bytes);
+      if (!wroteHit.ok()) {
+        core.warn("wacc: cannot write " + stemHit + ".wasm — " + wroteHit.message);
+        return 1;
+      }
+      // **A hit says so.** This printed the line a real build prints, so nothing downstream could tell
+      // a compile from a lookup — which is how a determinism test came to pass without compiling
+      // anything. `--no-cache` is the way to refuse one; naming it here is what lets a caller *check*
+      // that it worked, rather than trusting that it did.
+      if (!hasFlag(cli, argc, "--quiet")) {
+        core.log(stemHit + ".wasm: " + itoa(hit.bytes.len()) + " bytes from cache, "
+                 + itoa(src.n) + " file(s) unchanged");
+      }
+      return 0;
+    }
+  }
 
   // Diagnostics first for either command: compiling a program the checker refuses would write a
   // module built from a tree nobody approved.
@@ -2064,6 +2244,41 @@ export i32 main(Core core, Cli cli) {
     if (!wroteWasm.ok()) {
       core.warn("wacc: cannot write " + stem + ".wasm — " + wroteWasm.message);
       return 1;
+    }
+    // Remembered under the key computed before the compile. A failure to write the cache is not a
+    // failure to build: the artefact the caller asked for is already on disk, and the next run simply
+    // compiles again.
+    //
+    // **A build that warned is not remembered.** A hit returns above the diagnostics pass, so an entry
+    // for a warned program would make its warning print once and never again — the same source and the
+    // same command line saying two different things, decided by whether anybody had built it before.
+    // `spec/cli/wac.md` `[§wac-cli-usage-3nkq8wj]` is explicit that warnings are *"not held back … or
+    // suppressed on a command that also writes a file"*, so the cache must not be the thing that holds
+    // them back. Declining to store is the cheap half of the choice: the alternative is keeping the
+    // rendered diagnostics beside the artefact, which is a second file to write, evict and validate for
+    // a case worth fixing rather than caching. A warned program pays full price every build, and any
+    // `diags` still here is a warning — `wireHasErrors` returned above.
+    if (cachePath != "" && diags == "") {
+      string cacheDir = dirOf(cachePath);
+      cli.mkdir(cacheDir, true).wait();
+      // **Written beside and moved into place**, because three agents share this machine and a reader
+      // that catches a half-written entry gets a truncated module rather than a miss. `rename` is
+      // atomic on every filesystem this runs on — `std/platform.wac` says so where it explains why
+      // `rename` is in the same tier as `writeFile` — so a concurrent build sees the old entry or the
+      // new one and never part of either.
+      //
+      // The temporary name carries the *destination*, since this world has no pid: two builds racing
+      // on one key are building the same program, and what distinguishes them is where each was asked
+      // to put it. Two that also share a destination are already in conflict over the artefact itself.
+      Fnv u = Fnv.start();
+      u.eat(stem);
+      string tmp = cachePath + ".tmp" + u.hex();
+      Change wroteTmp = cli.writeFile(tmp, whole).wait();
+      if (wroteTmp.ok()) {
+        Change moved = cli.rename(tmp, cachePath).wait();
+        if (!moved.ok()) { cli.remove(tmp, false).wait(); }
+      }
+      sweepBuildCache(cli, cacheDir);
     }
     // **Inside the module, and only there.** A `.json` went beside it until 2026-08-20, because the
     // wasmtime host predated the section and took a manifest path as its argument. Both hosts read the

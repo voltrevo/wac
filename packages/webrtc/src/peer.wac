@@ -32,7 +32,7 @@ import { Record, certificateMessage, certificateRequest, clientPublic, curveX255
          typeHandshake, versionDtls10, versionDtls12 } from "./dtls.wac";
 import { keyBlock, masterSecret, open, seal, verifyData } from "./dtlskeys.wac";
 import { p256Sign } from "../../crypto/src/p256.wac";
-import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { x25519, x25519Base, x25519Shared } from "../../crypto/src/x25519.wac";
 import { derInteger, derSequence } from "../../tls/src/derwrite.wac";
 import { Cert, certVerifySignature, parseCert } from "../../tls/src/x509.wac";
 
@@ -350,7 +350,23 @@ export struct Peer {
     if (kind == 11 || kind == 15) { return out; }             // a retransmission; already folded
     if (kind == 16 && !this.keysReady) {                      // ClientKeyExchange
       this.remember(16, seq, body);
-      u8[] pms = x25519(this.scalar, clientPublic(body));
+      // **A peer's public key has to be thirty-two bytes, and asking was a trap until 2026-08-24.**
+      // `clientPublic` hands on whatever length the leading byte names — and returns *empty* when
+      // that length overruns the message — while `x25519` traps on anything else. This is the
+      // plaintext phase, before any key exists, so the cost to an attacker was a cookie exchange and
+      // one more datagram.
+      //
+      // Declined the way every other unusable message here is declined, with `return out`: a peer
+      // that sent this is not one we can finish a handshake with, and there is nothing to say back
+      // that it would understand.
+      u8[] peerKey = clientPublic(body);
+      if (peerKey.len() != 32) { return out; }
+      // **And a small-order point makes the premaster secret all zeros for every scalar**, so a peer
+      // sending one would hold the session's keys without any private key. RFC 7748 §6; the same rule
+      // `packages/tor` and `packages/ssh` carry.
+      u8[]? dh = x25519Shared(this.scalar, peerKey);
+      if (dh is null) { return out; }
+      u8[] pms = dh!;
       this.master = masterSecret(pms, this.clientRandom, this.random);
       u8[] block = keyBlock(this.master, this.random, this.clientRandom, 40);
       this.clientWriteKey = slice(block, 0, 16);

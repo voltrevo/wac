@@ -1,0 +1,267 @@
+// webrtc's coverage, and the fourth kind of elsewhere.
+//
+//   deno task coverage:webrtc
+//   deno task coverage:webrtc --verbose
+//
+// **743 of 976 — 76.1%**, from 701 of 973 (72.0%) on the first run, which was the lowest any package
+// in `issues/system/0205`'s sweep had produced, and for the fourth distinct reason in three packages.
+//
+// ## Where the code runs when it is exercised
+//
+// `packages/tls` read 25.9% on its server because the server runs in a **subprocess**.
+// `packages/tls`'s `handshake.wac` read low because its other caller is in another **package**.
+// Here `session.wac` reads **32.5%**, and its real exercise is `test/browser.test.ts`:
+//
+//   > Interop with a real browser: Chromium's WebRTC stack, which is libwebrtc. […] **libwebrtc is
+//   > what WebRTC is** — every other stack was written to talk to it […] a browser completes ICE
+//   > against a wac peer.
+//
+// That test drives `Session`, `Peer` and `ice.wac` end to end against Chromium, and this driver
+// cannot see one line of it: it is TypeScript, it is a different **host**, and `cov_exercise.wac`
+// compiles wac. The second-largest driver of the same code is `example/answer.wac`, a program run on
+// its own.
+//
+// **So the low number is again a fact about where the tests run rather than whether they exist**, and
+// this package makes it a rule rather than a coincidence: every time a subsystem here reads far below
+// its neighbours, something outside the wac test tree turns out to be the thing exercising it. That
+// is worth a reader's suspicion before it is worth their pins — see `issues/system/0241b`, which is
+// about the one exemption reason nothing verifies, and which this package's driver corrected a wrong
+// instance of on the day it was filed.
+//
+// ## What is genuinely untested, as against unmeasured
+//
+// The two are separable and the rules below separate them. `dtls.wac`'s hello parsers, `sctp.wac`'s
+// chunk accessors and `stun.wac`'s attribute readers are dark in the ordinary way: they have
+// not-found arms for a peer message missing the thing being asked for, and every peer in the corpus —
+// aiortc, coturn, OpenSSL, Chromium — sends well-formed messages. `packages/quic`'s
+// `test/wac/truncated_test.wac` is the shape that closes that class, and it has not been done here.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/webrtc/test/cov_exercise.wac";
+const string PREFIX = "packages/webrtc/";
+
+/** Datagram sockets for the live tests, a process for aiortc and coturn, and the vendored captures. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/webrtc/src/session.wac", "struct Session", "struct", false,
+         "**The file whose exercise is a browser.** `Session` joins seven hundred lines of ordering — " +
+         "which datagram is a STUN check and which is DTLS, where an application record sits inside a " +
+         "datagram, that an SCTP packet holds several chunks, that DCEP's open must be answered " +
+         "before anything flows — and its header says every one of those has been got wrong here at " +
+         "least once.\n" +
+         "         `test/browser.test.ts` drives all of it against Chromium and `example/answer.wac` " +
+         "drives it as a program; `session_test.wac`'s four tests are what this driver can call. So " +
+         "these twenty-eight points are *unmeasured* rather than untested, and telling those apart is " +
+         "the whole reason this file has prose in it.\n" +
+         "         What would settle it: `session.wac` is a state machine over datagrams, the same " +
+         "shape `packages/tls`'s `loopback_test.wac` exploited to bring a subprocess in-process. Two " +
+         "`Session`s handed each other's output would run the join in one process, deterministically, " +
+         "and would be able to damage a datagram mid-conversation — which is what found a remote " +
+         "abort in `packages/tls`."),
+    Rule("packages/webrtc/src/peer.wac", "struct Peer", "struct", false,
+         "The DTLS peer state machine, driven by the same browser test and the same example. Its " +
+         "in-process tests cover the handshake it completes with OpenSSL; what is dark is the arms " +
+         "for a peer that does something else.\n" +
+         "         One of those is not hypothetical: `issues/system/0151` records Chromium rejecting " +
+         "our ServerKeyExchange with `decrypt_error` where OpenSSL accepts the same signature over " +
+         "the same construction. The browser test asserts that failure so that the boundary moving is " +
+         "what breaks the test — and the arm it lands on is invisible from here."),
+    Rule("packages/webrtc/src/sctp.wac", "struct Association", "struct", false,
+         "**SCTP's association state machine, and the largest genuinely-untested block in the " +
+         "package.** Twenty-seven points across retransmission, out-of-order delivery, the cookie " +
+         "exchange's failure arms and a message spanning several DATA chunks.\n" +
+         "         Unlike `Session` above, this one is not hidden by a host: `sctp_test.wac` has " +
+         "twenty-two tests and calls these directly. They are the cases it does not construct — every " +
+         "one reachable by handing the association a chunk sequence, and none built. This is where " +
+         "the next test in this package belongs."),
+    Rule("packages/webrtc/src/dtls.wac", ".len()", "line", false,
+         "**The bounds check on every accessor in the file, and the largest single family in the " +
+         "package.** DTLS messages are read field by field out of a byte array a peer sent, and each " +
+         "reader begins by asking whether the bytes it is about to index are there: `body.len() < 4`, " +
+         "`3 + len > body.len()`, `35 + idLen + 2 > body.len()`.\n" +
+         "         Not one has an input. Every hello, certificate and key exchange in this package's " +
+         "corpus comes from OpenSSL, aiortc or Chromium, and those send complete messages — so the " +
+         "arms that exist for an incomplete one have never run. That is the same finding " +
+         "`packages/quic`'s driver made about `nextIn`'s thirty-two truncation guards, and " +
+         "`packages/quic/test/wac/truncated_test.wac` is the shape that closes it: build a message, " +
+         "cut it at every byte, assert the reader refuses rather than reads past the end.\n" +
+         "         Worth doing here for the same reason it was worth doing there. A DTLS record " +
+         "arrives in a UDP datagram from anybody who can reach the port, and truncating one costs " +
+         "nothing."),
+    Rule("packages/webrtc/src/sctp.wac", ".len()", "line", false,
+         "The same family in SCTP: a chunk, parameter or accessor asked for a field past the end of " +
+         "the value it was given. An SCTP packet is a run of length-prefixed chunks, so a short one " +
+         "is the natural malformation, and the corpus is aiortc's well-formed packets.\n" +
+         "         The `sackGap` accessors are the ones to build first — they index into an array by " +
+         "a count the packet itself supplies, which is the shape where a bounds check being wrong " +
+         "reads memory rather than returning a wrong answer."),
+    Rule("packages/webrtc/src/stun.wac", ".len()", "line", false,
+         "The same family in STUN: a message, attribute or address shorter than the field being read " +
+         "out of it. `looksLikeStun`, `parse`, `integrityOk` and `fingerprintOk` each have one, and " +
+         "the last two matter most — they decide whether a datagram is authentic, and they are " +
+         "reached by anything that arrives on the socket."),
+    Rule("packages/webrtc/src/session.wac", ".len()", "line", false,
+         "The same family in the session layer's helpers — `labelOf` and `transactionOf` reading a " +
+         "message too short to carry what is being asked for. Reached through `Session.receive`, " +
+         "which is the entry the browser test drives and this driver cannot see."),
+    Rule("packages/webrtc/src/stun.wac", "export i32 ", "line", false,
+         "**Attribute and method identifiers from RFC 5389's table that nothing here compares " +
+         "against.** MAPPED-ADDRESS (superseded by the XOR form), ERROR-CODE, UNKNOWN-ATTRIBUTES, " +
+         "REALM, NONCE, ALTERNATE-SERVER, the Binding indication and error responses.\n" +
+         "         They are declared rather than omitted because the table is the specification and a " +
+         "reader checking this file against the RFC should find the whole of it. `proven: false`: an " +
+         "attribute the parser does not know is skipped, so a peer sending one reaches nothing — but " +
+         "the constants become live the moment somebody implements TURN, which needs REALM and NONCE."),
+    Rule("packages/webrtc/src/dtls.wac", "export i32 hs", "line", false,
+         "DTLS handshake message types this implementation neither sends nor branches on: " +
+         "ServerHelloDone, ClientKeyExchange, Finished, ServerKeyExchange. The state machine keys off " +
+         "the ones it needs and the rest are here to name the protocol's table."),
+    Rule("packages/webrtc/src/sctp.wac", "export i32 ppid", "line", false,
+         "SCTP payload protocol identifiers for message kinds a data channel can carry and this " +
+         "package's tests do not send — binary, and the zero-length binary form. The empty variants " +
+         "exist because SCTP cannot carry a zero-length DATA chunk, so an empty message is signalled " +
+         "by its PPID rather than by its length, which is the kind of detail that is wrong until " +
+         "something sends one."),
+    Rule("packages/webrtc/src/session.wac", "export i32 dcep", "line", false,
+         "The DCEP message types. `Session` answers an open with an ack, so both are used at run " +
+         "time — through the browser test and the example, neither of which this driver sees."),
+    Rule("packages/webrtc/src/ice.wac", "msg", "decl", false,
+         "**ICE's refusal arms: a connectivity check that is rejected rather than answered.** " +
+         "`checkRejected` distinguishes a check for another agent's credentials from one that is " +
+         "malformed, and `roleTiebreaker` reads the ICE-CONTROLLING or ICE-CONTROLLED attribute that " +
+         "resolves a role conflict.\n" +
+         "         A role conflict happens when both agents believe they are controlling, which is a " +
+         "real interoperability case rather than a hostile one — and the corpus is coturn and " +
+         "Chromium, both of which agree with us about roles."),
+    Rule("packages/webrtc/src/dtls.wac", "hello", "decl", false,
+         "**The hello parsers' not-found arms**: a ClientHello with no cookie, no supported groups, " +
+         "or without the suite being asked about. Every hello in the corpus comes from OpenSSL, " +
+         "aiortc or Chromium and carries everything.\n" +
+         "         `helloGroups` was twelve points and the densest gap in the package. " +
+         "`test/wac/malformed_test.wac` closed it on 2026-08-24 and **found an out-of-bounds read " +
+         "doing so**: the extension was bounded and the group list inside it was not, so a hello " +
+         "claiming a four-hundred-byte list in a four-byte extension walked off the end of the " +
+         "array. What is left in this family is the rest of the hello readers — a cookie where one " +
+         "is required, a HelloVerifyRequest this client does not send."),
+    Rule("packages/webrtc/src/dtls.wac", "Certificate", "decl", false,
+         "Reading a peer's certificate chain out of a DTLS Certificate message when it is absent, " +
+         "empty, or shorter than its own length prefix. The peers in the corpus all send one."),
+    Rule("packages/webrtc/src/sctp.wac", "chunk", "decl", false,
+         "The chunk accessors asked for a chunk that is not there — an index past the end, a length " +
+         "field that overruns the packet, a value shorter than its own header. An SCTP packet carries " +
+         "several chunks and the walk is length-driven, so this is the same family as QUIC's frame " +
+         "truncations and has the same fix."),
+    Rule("packages/webrtc/src/sctp.wac", "stateCookie", "decl", false,
+         "A state cookie shorter than the fields read out of it. The cookie is ours, echoed back by " +
+         "the peer, so a short one means a peer that damaged it — reachable and unbuilt."),
+    Rule("packages/webrtc/src/sctp.wac", "initiateTag", "decl", false,
+         "The initiate tag read from an INIT that is too short to hold one — see `stateCookie`."),
+    Rule("packages/webrtc/src/stun.wac", "xorMapped", "decl", false,
+         "XOR-MAPPED-ADDRESS for IPv6, and for an attribute whose length disagrees with its family. " +
+         "Every peer here is on IPv4 over loopback, so the 128-bit path is written and unentered — " +
+         "and it is the one that matters on a real network, where a browser offers both."),
+    Rule("packages/webrtc/src/stun.wac", "integrityAt", "decl", false,
+         "Finding MESSAGE-INTEGRITY in a message that does not have one, or has it in the wrong " +
+         "place. The attribute must be the last but one and everything in the corpus puts it there."),
+    Rule("packages/webrtc/src/dtlskeys.wac", "nonce", "decl", false,
+         "The explicit-nonce path for a record whose fixed and explicit parts do not add to twelve " +
+         "bytes. Both callers construct the parts themselves.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/webrtc/src/sctp.wac", 208, "export i32 initWindow(u8[] value) {", false,
+        "**An uncovered entry.** The advertised receive window out of an INIT — the peer telling us " +
+        "how much it will accept before an acknowledgement. Nothing reads it, which means nothing " +
+        "here does receiver-side flow control, which is a gap in the implementation rather than in " +
+        "the tests. Now filed as `issues/system/0251b` rather than only recorded here — a coverage " +
+        "ledger is read by someone moving a number, and an implementation gap has to be findable by " +
+        "someone deciding what to implement.\n" +
+        "         **Its twin `initTsn` was the same shape and was a bug, not a gap**, fixed " +
+        "2026-08-24: the association adopted whichever DATA chunk arrived first as its cumulative " +
+        "point, which claims everything below it arrived. One reorder and a chunk still in flight " +
+        "was acknowledged, refused as a duplicate when it landed, and never named in a gap block. " +
+        "Worth the sentence here because the two pins were written together and read the same, and " +
+        "only one of them was harmless."),
+    Pin("packages/webrtc/src/session.wac", 266, "u8[] labelOf(u8[] msg) {", false,
+        "The DCEP label accessor's entry — see the pin on `:271` for its body and for why the whole " +
+        "function is reached only through the browser test."),
+    Pin("packages/webrtc/src/session.wac", 276, "u8[][] append(u8[][] list, u8[] one) {", false,
+        "**A private helper nothing in this file calls**, growing a list of datagrams by one. " +
+        "`sctp.wac` has its own `appendPacket` doing the identical job, also uncovered. Two copies of " +
+        "six lines, neither reached by a test, which is the shape this repository's guidance says to " +
+        "collapse — recorded rather than done because both are in a package with an owner."),
+    Pin("packages/webrtc/src/stun.wac", 367, "if (((msg[at] << 8) | msg[at + 1]) != attrFingerprint()) { return false; }", false,
+        "FINGERPRINT not being the last attribute, which RFC 5389 §15.5 requires it to be. A message " +
+        "that puts it elsewhere is refused, and every message in the corpus puts it last."),
+    Pin("packages/webrtc/src/stun.wac", 368, "if (((msg[at + 2] << 8) | msg[at + 3]) != 4) { return false; }", false,
+        "A FINGERPRINT attribute whose length is not four. Same family as `:367` — the attribute is " +
+        "fixed-width by definition and nothing has ever sent one that is not."),
+    Pin("packages/webrtc/src/dtls.wac", 365, "export i32 curveSecp256r1() { return 0x0017; }", false,
+        "The named-curve identifier, never compared against because the ServerKeyExchange reader " +
+        "takes the curve the peer names rather than checking it is the one we offered. That is worth " +
+        "a second look rather than a pin — an unchecked curve is how a peer moves a key exchange to " +
+        "a group it prefers — but it is `packages/webrtc`'s call, and `issues/system/0151` is already " +
+        "open about this message."),
+    Pin("packages/webrtc/src/dtls.wac", 565, "if (!r.ok) { return \"not a record\"; }", false,
+        "`describe` on a record that did not parse. A diagnostic helper, reached only when something " +
+        "wants to print a malformed record — which is the situation the tests do not produce because " +
+        "they do not produce malformed records."),
+    Pin("packages/webrtc/src/dtls.wac", 36, "export i32 typeApplicationData() { return 23; }", false,
+        "The application-data record type. Every application record in this package goes through " +
+        "`Session`, whose exercise is the browser test — so the constant is read at run time and not " +
+        "here. Same reason as `session.wac`'s DCEP constants."),
+    Pin("packages/webrtc/src/sctp.wac", 86, "if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[0]()); }", false,
+        "A chunk header too short to hold its own length. The entry to every SCTP walk, and the one " +
+        "malformation the corpus does not contain."),
+    Pin("packages/webrtc/src/sctp.wac", 1272, "return t > (60000 as i64) ? (60000 as i64) : t;", false,
+        "**The retransmission backoff hitting its sixty-second ceiling.** RFC 4960 §6.3.3 caps RTO " +
+        "doubling, and reaching the cap needs six consecutive timeouts — about two minutes of a peer " +
+        "not answering. No test waits that long and none should; a test that wanted this would inject " +
+        "the try count rather than the time, which `backoff` already takes as an argument."),
+    Pin("packages/webrtc/src/sctp.wac", 245, "export i32 dataFlagUnordered() { return 0x04; }", false,
+        "The unordered-delivery flag. A data channel can be negotiated unordered and nothing here " +
+        "negotiates one, so the flag is defined and never set or tested."),
+    Pin("packages/webrtc/src/session.wac", 271, "for (i32 i = 0; i < labelLen; i++) { out[i] = msg[12 + i]; }", false,
+        "Copying a DCEP channel label out of an open message — reached whenever a label is non-empty, " +
+        "which is every real channel and no test channel. Through `Session.receive`, which the " +
+        "browser test drives."),
+    Pin("packages/webrtc/src/stun.wac", 129, "if ((b[0] & 0xC0) != 0) { return false; }", false,
+        "The two most significant bits of a STUN message must be zero, which is what lets a peer " +
+        "demultiplex STUN from DTLS and from RTP on one port. **This is the check `Session` depends " +
+        "on to decide what a datagram is**, and nothing has ever handed it a datagram that is not " +
+        "STUN — because the tests that do are the browser test and the example."),
+    Pin("packages/webrtc/src/stun.wac", 163, "if (at + step > end) { break; }", false,
+        "An attribute whose length runs past the end of the message, stopping the walk. Same family " +
+        "as the `.len()` rule over this file and worth naming separately: this one is inside the " +
+        "attribute loop, so it is the arm a peer reaches by lying about one attribute's length rather " +
+        "than by truncating the datagram."),
+    Pin("packages/webrtc/src/stun.wac", 363, "if (!looksLikeStun(msg)) { return false; }", false,
+        "FINGERPRINT checked on something that is not a STUN message. Guarded by callers that have " +
+        "already asked `looksLikeStun`, so this is defence in depth — and cheap to keep, since the " +
+        "alternative is an accessor that trusts its caller about the one thing the caller got from a " +
+        "socket.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

@@ -1586,10 +1586,21 @@ fn test_command(rest: &[String]) -> i32 {
 /// engine trap, which writes nothing: a bounds check reporting the *previous* `trap`'s sentence would
 /// be worse than reporting none, so the caller gets a tail it can print unconditionally.
 fn trap_said(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String {
-    let said = get_export(scope, exports, "$trap$message")
-        .and_then(|f| f.call(scope, exports.into(), &[]))
-        .map(|v| read_string(scope, v))
-        .unwrap_or_default();
+    // **Inside a `TryCatch`, because this is asked *of a module that has just trapped*.** Its state is
+    // gone, so the call is liable to trap in its own right — and an uncaught one is announced by V8's
+    // default handler on **stdout**, in the middle of the test runner's output. `unwrap_or_default()`
+    // already reads a failed call as "it said nothing", which is the right answer; what was missing was
+    // stopping the engine saying otherwise on the wrong stream.
+    let said = {
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let mut tc = tc.init();
+        let got = get_export(&mut tc, exports, "$trap$message")
+            .and_then(|f| f.call(&mut tc, exports.into(), &[]))
+            .map(|v| read_string(&mut tc, v))
+            .unwrap_or_default();
+        tc.reset();
+        got
+    };
     if said.is_empty() { String::new() } else { format!(": {said}") }
 }
 
@@ -2057,8 +2068,43 @@ fn sweep_stale_runs() {
     }
 }
 
+/// Which compiler this binary *is*, as sixteen hex digits.
+///
+/// The same two inputs `test_module_key` hashes to decide whether a cached module was built by this
+/// compiler: the embedded seed, and the binary's own version because the manifest shape is its. A wac
+/// program cannot compute this — the seed is inside the executable and there is no file to read — so
+/// the host supplies it, which is the one thing `issues/system/0204` says has to come from here before
+/// a build cache can live on the wac side.
+///
+/// **Sixteen hex digits and not a path or a number**: it is compared, never parsed, and a fixed width
+/// makes a cache filename out of it without a separator.
+fn compiler_id() -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut eat = |bytes: &[u8]| {
+        for b in bytes {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    };
+    eat(b"wac-compiler 1");
+    eat(env!("CARGO_PKG_VERSION").as_bytes());
+    eat(SEED.unwrap_or(&[]));
+    format!("{h:016x}")
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // **Every payload can ask which compiler is running it.** Set here rather than per command so
+    // that `build`, `run` and `test` all see the same answer, and set unconditionally so that a
+    // program reading it never has to distinguish "no compiler" from "not told". Reading it needs the
+    // `env` grant the compiler already holds for `$WAC_HOME`. `issues/system/0204`.
+    //
+    // Not overwritten if the caller set one: a test that wants to force a cache miss says so, and a
+    // host that has already decided its identity is not second-guessed here.
+    if std::env::var_os("WAC_COMPILER_ID").is_none() {
+        // SAFETY: single-threaded, before V8 starts and before any payload runs.
+        unsafe { std::env::set_var("WAC_COMPILER_ID", compiler_id()) };
+    }
     // **Asked for help, or given nothing.** The commands are in two places because they are
     // implemented in two places — the compiler inside answers `check`, `compile` and `build`, and
     // `run` is this host's. So the seed prints its own usage and this adds the one line it cannot
@@ -2558,7 +2604,17 @@ fn counters_of(path: &str) -> Result<Vec<i32>, String> {
     };
     init.call(scope, exports.into(), &[]);
     if let Some(main) = get_export(scope, exports, "main") {
-        main.call(scope, exports.into(), &[]);
+        // **A `TryCatch`, because a trap here is expected and tolerated.** The next lines say so: the
+        // counters stand after a trap and they are what was asked for. Without one, V8's default
+        // handler announces the trap on **stdout** — which is the stream `tracestat` prints its one
+        // line of numbers to and `ctcompare` prints its verdict to, and `ct.wac` and
+        // `packages/crypto/test/wac/constanttime_test.wac` both parse. Measured before the fix: a
+        // trapping module gave `tracestat` one stray line and `ctcompare` two, since it reads two
+        // modules through here.
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let mut tc = tc.init();
+        main.call(&mut tc, exports.into(), &[]);
+        tc.reset();
     }
 
     let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
@@ -3280,7 +3336,24 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             return 1;
         }
     };
-    let r = match main_fn.call(scope, exports.into(), &args) {
+    // **A `TryCatch` around the program's own call.** Without one, an uncaught trap is reported by
+    // V8's *default* handler as well as by this host — and V8's goes to **stdout**, so
+    // `wasm://wasm/000eca36:51437: Uncaught RuntimeError: array element access out of bounds` lands in
+    // the middle of the program's own output. A program's stdout belongs to the program: a caller
+    // reading it gets engine text mixed into the answer, and the same program built for the Deno host
+    // writes one clean line to stderr and nothing to stdout.
+    //
+    // The host still says what it has to say, on stderr, immediately below — so this removes a
+    // duplicate report rather than a report. `reset()` clears the caught exception before the branch
+    // below uses the scope again, which is the same care the `TryCatch` above `compile` takes.
+    let called = {
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let mut tc = tc.init();
+        let out = main_fn.call(&mut tc, exports.into(), &args);
+        tc.reset();
+        out
+    };
+    let r = match called {
         Some(v) => v,
         None => {
             // **What the program said, if it said anything.** `trap "the ring is full"` puts the message
@@ -3288,10 +3361,22 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             // `$trap$message` reads it once the trap has unwound. Empty for an engine trap — a bounds
             // check, a null dereference — which writes nothing, and reporting a previous message for one
             // of those would be worse than reporting none. `issues/lang/0147`.
-            let said = get_export(scope, exports, "$trap$message")
-                .and_then(|f| f.call(scope, exports.into(), &[]))
-                .map(|v| read_string(scope, v))
-                .unwrap_or_default();
+            // **And a `TryCatch` around *this* call too**, because asking a trapped module a question
+            // is itself liable to trap: after an engine trap the module's own state is gone, and
+            // `$trap$message` came back as `dereferencing a null pointer` — reported by V8's default
+            // handler, on stdout, in the middle of the program's output. The `unwrap_or_default()`
+            // already treats a failed call as "it said nothing", which is the right answer; what was
+            // missing was stopping the engine announcing the failure on the program's own stream.
+            let said = {
+                let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                let mut tc = tc.init();
+                let got = get_export(&mut tc, exports, "$trap$message")
+                    .and_then(|f| f.call(&mut tc, exports.into(), &[]))
+                    .map(|v| read_string(&mut tc, v))
+                    .unwrap_or_default();
+                tc.reset();
+                got
+            };
             if said.is_empty() {
                 eprintln!("wac: {} trapped", m.entry);
             } else {
@@ -3494,21 +3579,28 @@ fn run_tests(
             Vec::new()
         };
         let began = std::time::Instant::now();
-        // **Caught, not merely observed.** This was a bare `f.call`, so a trapping test left its
-        // exception pending on the isolate and V8's default handler printed
-        // `Uncaught RuntimeError: unreachable` on stderr — once per `test_traps_*`, of which this
-        // repository has 389. Noise was the small half. The large half is the hazard the module
-        // loop already documents: a pending exception makes the *next* `compile` walk into V8's own
+        // **A `TryCatch` around the test itself.** A whole category of tests — `test_traps_*` — is
+        // *expected* to trap, so this is the ordinary path rather than an edge of it, and without one
+        // V8's default handler announced every trap on **stdout**: one passing file,
+        // `packages/crypto/test/wac/traps_test.wac`, printed 108 lines of
+        // `wasm://wasm/00083c3e:39651: Uncaught RuntimeError: unreachable` around the single line of
+        // its own report. The runner already says what happened, and says it better — it knows which
+        // test trapped and whether the test wanted to.
+        //
+        // **And the noise was the smaller half.** An uncaught trap leaves its exception *pending on
+        // the isolate*, and a pending exception makes the next `compile` walk into V8's own
         // `Check failed: maybe_compiled.is_null() == i_isolate->has_exception()` and abort the
-        // process. Nothing here compiled twice until `Cli.load` existed. `issues/system/0240c`.
+        // process — the hazard the module loop in `validate_modules` already documents. Nothing here
+        // compiled twice until `Cli.load` existed (`issues/system/0240c`), which is why it had never
+        // been reached. Two agents found this from opposite ends within an hour; see the merge in
+        // this file's history.
         let outcome = {
             let tc = std::pin::pin!(v8::TryCatch::new(scope));
             let mut tc = tc.init();
-            let out = f.call(&tc, exports.into(), &args).map(|v| v8::Global::new(&tc, v));
+            let out = f.call(&mut tc, exports.into(), &args);
             tc.reset();
             out
-        }
-        .map(|g| v8::Local::new(scope, g));
+        };
         if profile_dir.is_some() && cov.is_some() {
             let after = counters_now(scope, exports);
             let mut mine: Vec<String> = Vec::new();
@@ -5448,9 +5540,23 @@ fn dispatch(
                         std::fs::metadata(&a).and_then(|md| {
                             let mut perm = md.permissions();
                             let mode = perm.mode();
-                            // **The owner-execute bit and nothing else**, which is what
-                            // `setExecutable` is: git's 100644 against its 100755.
-                            perm.set_mode(if on { mode | 0o100 } else { mode & !0o100 });
+                            // **Execute follows read, and clearing clears all three** — the rule the
+                            // other three hosts implement and this one did not. It said "the
+                            // owner-execute bit and nothing else, which is what `setExecutable` is:
+                            // git's 100644 against its 100755", and git's 100755 is `0755` on checkout,
+                            // not `0744`. Measured before the change: the same program setting the same
+                            // file gave **744** here and **755** under Deno.
+                            //
+                            // `chmod +x`'s rule is what `packages/platform/host/deno.ts` and `node.ts`
+                            // both carry with the reason — a file readable only by its owner becomes
+                            // executable only by its owner — and `native/src/main.rs`, the wasmtime
+                            // host, already had it. Clearing matters as much: `& !0o100` left group and
+                            // other executable, so a file could go non-executable to its owner alone.
+                            //
+                            // `issues/system/0132`, and `conformance_test.wac` named this as a gap:
+                            // "the arithmetic is duplicated three times and only the Deno copy is
+                            // exercised, so a wrong mask in the other two would not be caught here".
+                            perm.set_mode(if on { mode | ((mode & 0o444) >> 2) } else { mode & !0o111 });
                             std::fs::set_permissions(&a, perm)
                         })
                     }

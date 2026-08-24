@@ -487,18 +487,38 @@ export u8[] mlkemKeyGen(u8[] seed) {
  * encapsulation key whose coefficients are not all below q is not a valid key, and
  * accepting one lets an attacker choose the arithmetic.
  */
-export u8[] mlkemEncaps(u8[] ek, u8[] m) {
-  if (ek.len() != ekSize()) { trap; }
-  if (m.len() != 32) { trap; }
-  // Round-trip the encoding: re-encoding what we decoded must give back the same bytes,
-  // which is exactly the condition that every coefficient was below q.
+/**
+ * Whether `ek` is a valid encapsulation key — the modulus check, asked instead of enforced.
+ *
+ * **`mlkemEncaps` performs this check and traps.** That is right for a caller encapsulating under a
+ * key it fetched from somewhere it trusts, and wrong for one holding a key a stranger sent: a TLS
+ * ClientHello offering X25519MLKEM768 carries 1,184 bytes of encapsulation key, and 1,184 bytes of
+ * `0xFF` decode to coefficients above q, so it aborted the server process. `packages/tls`,
+ * 2026-08-24 — the third time in this repository that a correct check enforced by a trap turned into
+ * a remote abort, after `recordOpen` and `curveDecode`.
+ *
+ * The check itself is not decoration and the note on `mlkemEncaps` says why: an encapsulation key
+ * whose coefficients are not all below q is not a valid key, and accepting one lets an attacker
+ * choose the arithmetic. What changes here is only who gets to answer.
+ */
+export bool mlkemEkValid(u8[] ek) {
+  if (ek.len() != ekSize()) { return false; }
   for (i32 i = 0; i < kk(); i++) {
     i32[] ti = byteDecode(ek, i * 384, 12);
     u8[] re = byteEncode(ti, 12);
     for (i32 b = 0; b < 384; b++) {
-      if (re[b] != ek[i * 384 + b]) { trap; }
+      if (re[b] != ek[i * 384 + b]) { return false; }
     }
   }
+  return true;
+}
+
+export u8[] mlkemEncaps(u8[] ek, u8[] m) {
+  if (m.len() != 32) { trap; }
+  // Round-trip the encoding: re-encoding what we decoded must give back the same bytes, which is
+  // exactly the condition that every coefficient was below q. `mlkemEkValid` is the same question
+  // for a caller who has to answer rather than abort.
+  if (!mlkemEkValid(ek)) { trap; }
 
   u8[] h = sha3_256(ek);
   u8[] gIn = u8[64]();

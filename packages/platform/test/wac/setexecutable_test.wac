@@ -1,0 +1,135 @@
+// `setExecutable` puts the same bits on a file whichever host ran the program.
+//
+//     wac test --allow-read --allow-write --allow-run --allow-env packages/platform/test/wac/setexecutable_test.wac
+//
+// **This closes a gap `conformance_test.wac` had written down, and the gap had already cost a bug.**
+// That ledger's `SET_EXECUTABLE` entry said the arithmetic is duplicated across the hosts and only the
+// Deno copy is exercised, so a wrong mask elsewhere would not be caught. On 2026-08-24 the V8 native
+// host was setting `mode | 0o100` and clearing `mode & !0o100` — owner-execute alone — where Deno,
+// Node and the wasmtime host all do `mode | ((mode & 0o444) >> 2)` and clear `0o111`. The same program
+// on the same file gave **744** natively and **755** under Deno.
+//
+// **The capability's only other oracle could not see it.** `packages/git/test/wac/checkout_test.wac`
+// requires an executable file to survive a checkout with clean porcelain, and it passed before and
+// after: git reads *any* execute bit as mode 100755, so 744 satisfied it. A sharper oracle for one
+// question is not an oracle for a neighbouring one.
+//
+// **Why a program rather than a case in `native_hostfs_test.wac`**, which is where filesystem
+// capabilities are normally compared: that file drives the hosts through shell scripts, and there is
+// no `chmod` applet, so `setExecutable` cannot be reached from one. Its only caller in the repository
+// is a git checkout. So the comparison needs something built for the purpose.
+//
+// **The starting mode is set explicitly rather than inherited.** A file's creation mode depends on the
+// umask of whoever is running the suite, and "execute follows read" makes the answer depend on it —
+// so the expectation would move with the environment. `chmod 644` first makes 755 the answer on any
+// machine, which is what lets this assert the *value* and not merely that two hosts agree. Two hosts
+// agreeing is the weaker half: they agreed on 744 and 755 being different, and they could as easily
+// agree on something wrong.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "std/platform.wac";
+import { freshDir } from "../../../wactest/src/host.wac";
+import { wacBinary } from "../../../wactest/src/built.wac";
+
+const string PROBE = "packages/platform/test/wac/setexecutable_probe.wac";
+
+/** Build for the Deno host, as `runtimes_test.wac` does. */
+bool buildDeno(T t, Cli cli, string out) {
+  Exec r = cli.exec("deno", string[]("run", "-A", "packages/platform/build.ts", PROBE,
+                                     "--target", "deno", "--allow-read", "--allow-write", "-o", out),
+                    u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           "the probe built for deno — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+  return r.ran() && r.status == 0;
+}
+
+/**
+ * Build for the native host — `wac app`, which writes an executable that execs `wac app-run`.
+ *
+ * It needs `wac` on `PATH`, and says so with exit 127 when it is absent; the runner has it because
+ * this test spawns it by the path `wacBinary` answers and hands that directory over below.
+ */
+bool buildNative(T t, Cli cli, string out) {
+  Exec r = cli.exec(wacBinary(cli),
+                    string[]("app", PROBE, "-o", out, "--allow-read", "--allow-write"),
+                    u8[0]()).wait();
+  t.isTrue(r.ran() && r.status == 0,
+           "the probe built for native — " + string.fromBytes(r.stderr) + string.fromBytes(r.stdout));
+  return r.ran() && r.status == 0;
+}
+
+/** `stat -c %a`, because `Stat` carries no mode — the gap `runtimes_test.wac` notes for `cd` too. */
+string modeOf(Cli cli, string path) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", "stat -c %a " + path), u8[0]()).wait();
+  if (!r.ran()) { return "(stat did not run: " + r.error + ")"; }
+  string out = string.fromBytes(r.stdout);
+  i32 nl = out.indexOf("\n");
+  return nl < 0 ? out : out.slice(0, nl);
+}
+
+/**
+ * Put `file` there with a known mode, then run one built probe on it.
+ *
+ * The starting mode is set here rather than by the probe, because a file the probe created would
+ * carry the umask of whoever is running the suite — and "execute follows read" makes the answer
+ * depend on it, so the expectation would move with the machine. Pinned from outside, 644 always
+ * becomes 755 and 755 always becomes 644.
+ *
+ * `PATH` carries the binary's own directory because a `wac app` executable execs `wac app-run`, and
+ * says so with exit 127 when it cannot find it.
+ */
+i32 runProbe(Cli cli, string app, string file, string mode, string start) {
+  string bin = wacBinary(cli);
+  i32 cut = 0 - 1;
+  for (i32 i = 0; i < bin.len(); i++) { if (bin.slice(i, i + 1) == "/") { cut = i; } }
+  string dir = cut <= 0 ? "." : bin.slice(0, cut);
+  Exec r = cli.exec("/bin/sh",
+      string[]("-c", "printf x > " + file + " && chmod " + start + " " + file
+               + " && PATH=" + dir + ":$PATH " + app + " " + file + " " + mode),
+      u8[0]()).wait();
+  return r.ran() ? r.status : 0 - 1;
+}
+
+export string test_setexecutable_puts_the_same_bits_on_under_either_host(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/setexecutable";
+  string why = freshDir(cli, dir);
+  t.isTrue(why == "", why);
+  if (why != "") { return t.report(); }
+
+  if (!buildDeno(t, cli, dir + "/probe-deno")) { return t.report(); }
+  if (!buildNative(t, cli, dir + "/probe-native")) { return t.report(); }
+
+  // **Setting.** From 644 the rule gives 755 — execute wherever read already is.
+  string dm = "";
+  string nm = "";
+  for (i32 i = 0; i < 2; i++) {
+    string who = i == 0 ? "deno" : "native";
+    string f = dir + "/on-" + who;
+    t.eqI32(runProbe(cli, dir + "/probe-" + who, f, "on", "644"), 0, who + "'s probe did not run");
+    string got = modeOf(cli, f);
+    if (i == 0) { dm = got; } else { nm = got; }
+  }
+  t.eqStr(nm, dm, "the two hosts left different bits on the file after setExecutable(true)");
+  t.eqStr(dm, "755",
+      "setExecutable(true) on a 644 file should give 755 — execute follows read, which is `chmod +x`'s "
+      + "rule and what a git checkout is compared against. Two hosts agreeing on another number is "
+      + "the weaker half of this test and would pass the line above");
+
+  // **And clearing takes all three away**, which is the half the V8 host also had wrong: `& !0o100`
+  // left a file executable by its group and by everyone else.
+  string dc = "";
+  string nc = "";
+  for (i32 i = 0; i < 2; i++) {
+    string who = i == 0 ? "deno" : "native";
+    string f = dir + "/off-" + who;
+    t.eqI32(runProbe(cli, dir + "/probe-" + who, f, "off", "755"), 0, who + "'s probe did not run");
+    string got = modeOf(cli, f);
+    if (i == 0) { dc = got; } else { nc = got; }
+  }
+  t.eqStr(nc, dc, "the two hosts left different bits on the file after setExecutable(false)");
+  t.eqStr(dc, "644", "setExecutable(false) on a 755 file should clear all three execute bits");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

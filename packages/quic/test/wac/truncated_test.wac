@@ -1,0 +1,345 @@
+// Every frame in table 3, cut short at every byte, in a 1-RTT packet.
+//
+// Found by this package's first coverage driver on 2026-08-24 — `issues/system/0205`. `nextIn` had
+// **33 uncovered branch points and 32 of them were the same check**: `return stop(Frame.Incomplete)`,
+// the answer for a frame whose next field ran off the end of the datagram.
+//
+// That is the cheapest hostile input QUIC has. A datagram arrives from anyone, at any time, to a
+// four-tuple; truncating one needs no keys, no handshake and no timing. There are thirty-two places
+// in this file that decide what to do about it and no test had reached one.
+//
+// **`Incomplete` is documented as ordinary rather than as an error** — the enum says so on its first
+// variant — because a QUIC packet legitimately ends mid-nothing and the walk has to stop cleanly. So
+// the failure this guards against is not a crash: it is the walk mistaking a truncated frame for a
+// complete one, reading a length from bytes that are not there, and either surfacing a frame nobody
+// sent or running the reader off the end of the buffer. Each of the thirty-two is a different field
+// at which that can happen.
+//
+// ## How this is built, and why not with the writers
+//
+// `frame.wac` exports three writers — `writeCrypto`, `writeStream`, `writeAck` — and `nextIn` reads
+// nineteen frame types. So the frames here are written out as bytes, which is not a shortcut but the
+// point: a truncation test built from this package's own writers would only ever reach the fields its
+// own writers emit, and the untested types are exactly the ones nothing here can write.
+//
+// Every varint below is in the one-byte form, which QUIC uses for values under 64 — top two bits
+// clear and the value in the low six. That keeps each frame short enough that sweeping every prefix
+// is a handful of calls rather than a benchmark.
+//
+// ## What this pins, canaried rather than assumed
+//
+// Each guard was deleted in turn and the sweep re-run. The answer differs by *kind* of field, and
+// saying so is the difference between this file being a property test and a claim it cannot support:
+//
+//   - **the varint guards are defence in depth.** Delete `nextIn`'s `code.size == 0` in
+//     CONNECTION_CLOSE and every case here still passes — the truncation is caught by the next
+//     `size == 0` along. So the sweep pins the *property* (a short frame is `Incomplete`), not any
+//     one of those thirty-two lines. That is worth knowing before anyone reads a green run as
+//     evidence about a particular check.
+//   - **the fixed-width guards are load-bearing.** Delete PATH_CHALLENGE's `p + 8 > b.len()` and
+//     `test_a_frame_of_fixed_width_cut_short_is_incomplete` fails; there is no second check behind it.
+//   - **and one of them is holding back an out-of-bounds read.** Delete NEW_CONNECTION_ID's
+//     `p >= b.len()` and the sweep does not fail, it **traps** — the reader runs off the end of the
+//     datagram. That is the strongest thing here: the input is a truncated datagram from anybody, and
+//     the guard is the only thing between it and reading memory that is not there.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Frame, Next, nextIn, EPOCH_1RTT, EPOCH_INITIAL } from "../../src/frame.wac";
+
+/** Whether a `Next` is the `Incomplete` answer. */
+bool isIncomplete(Next n) {
+  match (n.frame) {
+    case Incomplete: { return true; }
+    else: { return false; }
+  }
+}
+
+/** A short name for what came back, so a failure says which wrong answer was given. */
+string named(Next n) {
+  match (n.frame) {
+    case Incomplete: { return "Incomplete"; }
+    case Unknown(kind): { return "Unknown(" + itoa(kind as! i32) + ")"; }
+    case NotPermitted(kind): { return "NotPermitted(" + itoa(kind as! i32) + ")"; }
+    case Padding(count): { return "Padding(" + itoa(count) + ")"; }
+    case Ping: { return "Ping"; }
+    case Ack(largest, delay): { return "Ack"; }
+    case Crypto(offset, data): { return "Crypto"; }
+    case ConnectionClose(code, reason): { return "ConnectionClose"; }
+    case ResetStream(id, code, finalSize): { return "ResetStream"; }
+    case StopSending(id, code): { return "StopSending"; }
+    case NewToken(token): { return "NewToken"; }
+    case Stream(id, offset, data, fin): { return "Stream"; }
+    case MaxData(max): { return "MaxData"; }
+    case MaxStreamData(id, max): { return "MaxStreamData"; }
+    case MaxStreams(uni, max): { return "MaxStreams"; }
+    case DataBlocked(at): { return "DataBlocked"; }
+    case StreamDataBlocked(id, at): { return "StreamDataBlocked"; }
+    case StreamsBlocked(uni, at): { return "StreamsBlocked"; }
+    case NewConnectionId(seq, retire, cid, token): { return "NewConnectionId"; }
+    case RetireConnectionId(seq): { return "RetireConnectionId"; }
+    case PathChallenge(data): { return "PathChallenge"; }
+    case PathResponse(data): { return "PathResponse"; }
+    case HandshakeDone: { return "HandshakeDone"; }
+  }
+}
+
+/** The first `n` bytes of `b`. */
+u8[] prefix(u8[] b, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
+  return out;
+}
+
+/**
+ * One frame, swept: the whole thing must parse and consume exactly itself, and every proper prefix
+ * must answer `Incomplete`.
+ *
+ * The two halves check each other. Without the first, a `nextIn` that answered `Incomplete` to
+ * everything would pass every sweep in this file; without the second, the frame is merely another
+ * round-trip case. `size` is asserted rather than ignored because a walk that read the right frame
+ * and the wrong length would desynchronise every frame after it — and there is no frame after it in
+ * a one-frame buffer, which is exactly why a test has to say so out loud.
+ */
+i32 sweep(T t, string name, u8[] frame, i32 epoch, string want) {
+  Next whole = nextIn(frame, 0, epoch);
+  t.eqStr(named(whole), want, name + ": the complete frame did not parse as itself");
+  t.eqI32(whole.size, frame.len(), name + ": the complete frame consumed the wrong number of bytes");
+
+  i32 cut = 0;
+  for (i32 n = 1; n < frame.len(); n++) {
+    Next part = nextIn(prefix(frame, n), 0, epoch);
+    t.isTrue(isIncomplete(part),
+             name + ": " + itoa(n) + " of " + itoa(frame.len()) + " bytes answered " + named(part) +
+             " rather than Incomplete");
+    t.eqI32(part.size, 0, name + ": a truncated frame reported a size at " + itoa(n) + " bytes");
+    cut = cut + 1;
+  }
+  return cut;
+}
+
+/**
+ * The frames whose fields are all varints — the largest family, and the one where a truncation is
+ * hardest to see, because a varint's first byte says how long it is.
+ *
+ * That is the specific hazard: a one-byte varint header can promise eight bytes, so "the field is
+ * there" and "the field's first byte is there" are different questions, and a reader that asks the
+ * second walks off the end. Each frame below is cut at every position, which asks the first question
+ * at every field boundary and inside every field.
+ */
+export string test_a_frame_of_varints_cut_short_is_incomplete() {
+  T t = T.create();
+  i32 e = EPOCH_1RTT();
+  i32 cuts = 0;
+
+  // type, id, code, finalSize
+  cuts = cuts + sweep(t, "RESET_STREAM", u8[](0x04, 0x01, 0x02, 0x03), e, "ResetStream");
+  // type, id, code
+  cuts = cuts + sweep(t, "STOP_SENDING", u8[](0x05, 0x01, 0x02), e, "StopSending");
+  // type, max
+  cuts = cuts + sweep(t, "MAX_DATA", u8[](0x10, 0x20), e, "MaxData");
+  // type, id, max
+  cuts = cuts + sweep(t, "MAX_STREAM_DATA", u8[](0x11, 0x01, 0x20), e, "MaxStreamData");
+  // type, max — bidirectional and unidirectional are different types, one arm each
+  cuts = cuts + sweep(t, "MAX_STREAMS", u8[](0x12, 0x08), e, "MaxStreams");
+  cuts = cuts + sweep(t, "MAX_STREAMS_UNI", u8[](0x13, 0x08), e, "MaxStreams");
+  // type, at
+  cuts = cuts + sweep(t, "DATA_BLOCKED", u8[](0x14, 0x20), e, "DataBlocked");
+  cuts = cuts + sweep(t, "STREAM_DATA_BLOCKED", u8[](0x15, 0x01, 0x20), e, "StreamDataBlocked");
+  cuts = cuts + sweep(t, "STREAMS_BLOCKED", u8[](0x16, 0x08), e, "StreamsBlocked");
+  cuts = cuts + sweep(t, "STREAMS_BLOCKED_UNI", u8[](0x17, 0x08), e, "StreamsBlocked");
+  // type, seq
+  cuts = cuts + sweep(t, "RETIRE_CONNECTION_ID", u8[](0x19, 0x03), e, "RetireConnectionId");
+
+  t.isTrue(cuts >= 15, "only " + itoa(cuts) + " truncations were tried, which is too few to mean much");
+  return t.report();
+}
+
+/**
+ * The frames carrying a length and then that many bytes, which is where a truncation can lie.
+ *
+ * A length field is a promise about bytes that follow, and the reader has to check the promise
+ * against what actually arrived rather than against what the length says. These are the frames where
+ * getting that backwards reads past the end of the datagram.
+ */
+export string test_a_frame_with_a_length_cut_short_is_incomplete() {
+  T t = T.create();
+  i32 cuts = 0;
+  i32 e = EPOCH_1RTT();
+
+  // CRYPTO: type, offset, length, data
+  cuts = cuts + sweep(t, "CRYPTO", u8[](0x06, 0x00, 0x03, 0xAA, 0xBB, 0xCC), e, "Crypto");
+  // NEW_TOKEN: type, length, token
+  cuts = cuts + sweep(t, "NEW_TOKEN", u8[](0x07, 0x02, 0xDE, 0xAD), e, "NewToken");
+  // **STREAM without the LEN bit cannot be truncated, and that is the point of it.** RFC 9000
+  // §19.8: a STREAM frame with no length field runs to the end of the datagram, so "cut it short"
+  // and "send a shorter frame" are the same thing and every prefix past the id is a *complete*
+  // frame carrying less data. Swept by hand rather than by `sweep`, because asserting Incomplete
+  // here would be asserting a bug.
+  t.eqStr(named(nextIn(u8[](0x08, 0x04, 0x11, 0x22), 0, e)), "Stream",
+          "a STREAM frame without a length did not parse");
+  t.eqI32(nextIn(u8[](0x08, 0x04, 0x11, 0x22), 0, e).size, 4,
+          "a STREAM frame without a length did not consume the whole datagram");
+  t.eqStr(named(nextIn(u8[](0x08, 0x04), 0, e)), "Stream",
+          "a STREAM frame with no data left is not a complete frame carrying nothing");
+  t.eqI32(nextIn(u8[](0x08, 0x04), 0, e).size, 2, "an empty STREAM frame is not two bytes");
+  // The id itself can still be missing, which is the one truncation this shape has.
+  t.isTrue(isIncomplete(nextIn(u8[](0x08), 0, e)), "a STREAM frame with no id was accepted");
+  cuts = cuts + 1;
+  // STREAM with LEN: type, id, length, data
+  cuts = cuts + sweep(t, "STREAM_LEN", u8[](0x0A, 0x04, 0x02, 0x11, 0x22), e, "Stream");
+  // STREAM with OFF and LEN: type, id, offset, length, data
+  cuts = cuts + sweep(t, "STREAM_OFF_LEN", u8[](0x0E, 0x04, 0x10, 0x02, 0x11, 0x22), e, "Stream");
+  // CONNECTION_CLOSE, transport: type, code, frameType, reasonLength, reason
+  cuts = cuts + sweep(t, "CONNECTION_CLOSE", u8[](0x1C, 0x02, 0x00, 0x02, 0x68, 0x69), e,
+                      "ConnectionClose");
+  // CONNECTION_CLOSE, application: no frameType field, which is the arm the other one skips
+  cuts = cuts + sweep(t, "CONNECTION_CLOSE_APP", u8[](0x1D, 0x02, 0x02, 0x68, 0x69), e,
+                      "ConnectionClose");
+
+  t.isTrue(cuts >= 20, "only " + itoa(cuts) + " truncations were tried across the length-carrying frames");
+  return t.report();
+}
+
+/**
+ * The frames with fixed-width fields, where the check is arithmetic rather than a varint.
+ *
+ * PATH_CHALLENGE and PATH_RESPONSE carry exactly eight bytes and NEW_CONNECTION_ID ends with a
+ * sixteen-byte stateless-reset token. A fixed width is the case that looks too simple to get wrong,
+ * and it is the one where `p + 8 > b.len()` is the only thing between the reader and the end of the
+ * buffer.
+ */
+export string test_a_frame_of_fixed_width_cut_short_is_incomplete() {
+  T t = T.create();
+  i32 e = EPOCH_1RTT();
+  i32 cuts = 0;
+
+  cuts = cuts + sweep(t, "PATH_CHALLENGE",
+                      u8[](0x1A, 1, 2, 3, 4, 5, 6, 7, 8), e, "PathChallenge");
+  cuts = cuts + sweep(t, "PATH_RESPONSE",
+                      u8[](0x1B, 1, 2, 3, 4, 5, 6, 7, 8), e, "PathResponse");
+
+  // NEW_CONNECTION_ID: type, seq, retirePriorTo, cidLen, cid, and a 16-byte token.
+  u8[] nci = u8[4 + 4 + 16]();
+  nci[0] = 0x18; nci[1] = 0x01; nci[2] = 0x00; nci[3] = 4;
+  for (i32 i = 0; i < 4; i++) { nci[4 + i] = 0xC0 + i; }
+  for (i32 i = 0; i < 16; i++) { nci[8 + i] = 0x50 + i; }
+  cuts = cuts + sweep(t, "NEW_CONNECTION_ID", nci, e, "NewConnectionId");
+
+  t.isTrue(cuts >= 25, "only " + itoa(cuts) + " truncations were tried across the fixed-width frames");
+  return t.report();
+}
+
+/**
+ * ACK, which is the only frame whose length depends on its own contents.
+ *
+ * The range count says how many `(gap, length)` pairs follow, so a truncated ACK can promise more
+ * ranges than the datagram holds — and the reader has to bound the walk by what arrived rather than
+ * by what the count says. `nextIn` checks that twice, against a negative count and against the room
+ * remaining, and both were unexercised.
+ *
+ * ACK_ECN adds three more varints after the ranges, which is a fourth place the same frame can be
+ * cut, so both spellings are swept.
+ */
+export string test_an_ack_cut_short_is_incomplete() {
+  T t = T.create();
+  i32 e = EPOCH_1RTT();
+
+  // type, largest, delay, rangeCount, firstRange
+  i32 cuts = sweep(t, "ACK", u8[](0x02, 0x0A, 0x01, 0x00, 0x05), e, "Ack");
+  // One additional range: gap, length
+  cuts = cuts + sweep(t, "ACK_RANGES", u8[](0x02, 0x0A, 0x01, 0x01, 0x02, 0x01, 0x01), e, "Ack");
+  // ACK_ECN: the same, then ect0, ect1, ce
+  cuts = cuts + sweep(t, "ACK_ECN", u8[](0x03, 0x0A, 0x01, 0x00, 0x05, 0x00, 0x00, 0x00), e, "Ack");
+
+  // A range count larger than the bytes that follow could possibly hold. Not a truncation of a valid
+  // frame — a frame that lies about its own shape, which is the same guard reached the other way.
+  Next lying = nextIn(u8[](0x02, 0x0A, 0x01, 0x3F, 0x05), 0, e);
+  t.isTrue(isIncomplete(lying),
+           "an ACK claiming 63 ranges in five bytes answered " + named(lying));
+
+  t.isTrue(cuts >= 15, "only " + itoa(cuts) + " truncations were tried across the ACK spellings");
+  return t.report();
+}
+
+/**
+ * The frames with no fields at all, and the one whose field is its own repetition.
+ *
+ * There is nothing to truncate in a PING or a HANDSHAKE_DONE, so what is checked here is the other
+ * half of `sweep`'s contract — that a complete frame is recognised and reports its own length. A
+ * one-byte frame reporting a size of two is how a walk starts reading the next frame from the middle
+ * of this one.
+ *
+ * PADDING is included because its length is a run: an Initial is padded to 1200 bytes and is mostly
+ * this, so `count` is the one field in the file derived by looking forward rather than by reading.
+ */
+export string test_the_frames_with_nothing_to_truncate() {
+  T t = T.create();
+  i32 e = EPOCH_1RTT();
+
+  Next ping = nextIn(u8[](0x01), 0, e);
+  t.eqStr(named(ping), "Ping", "a lone PING did not parse");
+  t.eqI32(ping.size, 1, "PING is not one byte");
+
+  Next done = nextIn(u8[](0x1E), 0, e);
+  t.eqStr(named(done), "HandshakeDone", "a lone HANDSHAKE_DONE did not parse");
+  t.eqI32(done.size, 1, "HANDSHAKE_DONE is not one byte");
+
+  // Padding is run-length encoded, so four zero bytes are one frame of four rather than four frames.
+  Next pad = nextIn(u8[](0x00, 0x00, 0x00, 0x00), 0, e);
+  t.eqStr(named(pad), "Padding(4)", "four zero bytes are not one padding run of four");
+  t.eqI32(pad.size, 4, "the padding run reported the wrong size");
+
+  // A run that reaches the end of the datagram is complete, not truncated — the distinction the
+  // `Incomplete` variant's own comment draws, and the one case where running out of bytes is right.
+  Next toEnd = nextIn(u8[](0x00), 0, e);
+  t.eqStr(named(toEnd), "Padding(1)", "one zero byte at the end of a datagram is not padding");
+
+  // Nothing at all: reading past the end of an empty buffer.
+  Next empty = nextIn(u8[0](), 0, e);
+  t.isTrue(isIncomplete(empty), "an empty datagram answered " + named(empty));
+
+  // And past the end of a non-empty one, which is what a walk does when it has consumed everything.
+  Next past = nextIn(u8[](0x01), 1, e);
+  t.isTrue(isIncomplete(past), "reading past the last byte answered " + named(past));
+  return t.report();
+}
+
+/**
+ * The same frames in an Initial packet, where table 3 says most of them may not appear.
+ *
+ * `NotPermitted` and `Incomplete` are different faults and the ordering between them matters: a
+ * truncated STREAM frame in an Initial is a protocol violation *and* a short read, and answering
+ * `Incomplete` would let a peer smuggle a forbidden frame type past the check by cutting it short.
+ *
+ * `nextIn` decides permission from the type byte, before reading any field, which is the order that
+ * makes that impossible. This says so.
+ */
+export string test_a_forbidden_frame_is_refused_before_it_is_read() {
+  T t = T.create();
+  i32 e = EPOCH_INITIAL();
+
+  // A complete STREAM frame, forbidden in an Initial.
+  Next whole = nextIn(u8[](0x0A, 0x04, 0x02, 0x11, 0x22), 0, e);
+  t.eqStr(named(whole), "NotPermitted(10)", "a STREAM frame was allowed in an Initial packet");
+
+  // The same frame cut to its type byte alone. Still the protocol violation, not a short read.
+  Next cut = nextIn(u8[](0x0A), 0, e);
+  t.eqStr(named(cut), "NotPermitted(10)",
+          "a truncated STREAM frame in an Initial was reported as a short read, which would let a "
+          + "forbidden frame past the check by cutting it short");
+
+  // MAX_DATA likewise, and a control: CRYPTO and ACK are permitted in an Initial.
+  t.eqStr(named(nextIn(u8[](0x10), 0, e)), "NotPermitted(16)",
+          "a truncated MAX_DATA in an Initial was not refused as forbidden");
+  t.eqStr(named(nextIn(u8[](0x06, 0x00, 0x01, 0xAA), 0, e)), "Crypto",
+          "CRYPTO is not permitted in an Initial, which cannot be right");
+  t.eqStr(named(nextIn(u8[](0x02, 0x0A, 0x01, 0x00, 0x05), 0, e)), "Ack",
+          "ACK is not permitted in an Initial, which cannot be right");
+
+  // And a truncated CRYPTO in an Initial *is* a short read, because it is permitted there. Without
+  // this the assertions above would pass on a `nextIn` that answered NotPermitted to everything.
+  t.isTrue(isIncomplete(nextIn(u8[](0x06, 0x00), 0, e)),
+           "a truncated CRYPTO in an Initial was not reported as a short read");
+  return t.report();
+}

@@ -1,10 +1,20 @@
 # 0204 — `wac test` recompiles every directory on every run — worth ~8s, not the lane's 104s
 
-- **Status:** open
+- **Status:** open — **the code work is done; what is left is a decision, and it is not mine**
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** performance
 - **Symptom:** no error
+
+**Both halves have landed and each has a canaried test**: `wac test`'s per-directory and lone-file
+module cache (agent-c, 2026-08-19, `tools/wac/testmodcache_test.wac`) and `wac build`'s artefact cache
+(agent-a, 2026-08-24, `tools/wac/buildcache_test.wac`), measured at 4 192 ms → 245 ms on `box.wac`.
+This stays open for one reason: **the section headed "`wac build` is deliberately *not* cached"
+below is a decision this repository recorded and I then reversed.** The hazard it named was real and
+arrived exactly as written — see the two sections at the end — and the fix is `--no-cache` plus a hit
+that says so, rather than not caching. That is a defensible answer and it is not the one the issue
+reached, so ratifying it belongs to whoever wrote that section or to the operator, not to the agent who
+overrode it. Nothing is blocked on the answer; the code is in and green either way.
 
 ## What it is
 
@@ -277,3 +287,219 @@ since it was computed on the assumption that the cache covered the directories i
 for the same reason: the build-and-run path shares `cached_module`, and whether *it* was reaching a
 complete closure is the same question asked one call site along.
 
+## The compiler identity, which was the named blocker — agent-a, 2026-08-24
+
+*"That is one small thing the host must supply … and it is the part to design first."* Done:
+`$WAC_COMPILER_ID`, sixteen hex digits, set by the host before any payload runs, over the same two
+inputs `test_module_key` already hashes — the embedded seed and `CARGO_PKG_VERSION`.
+
+Verified by recomputing it outside the binary from `native/v8/seed/wacc.wasm` and the version in
+`Cargo.toml`: `e19c273b281e5b92` both ways. So it is provably a function of those two things and
+changes exactly when the compiler does.
+
+An environment variable rather than a host function, deliberately. Reading it needs the `env` grant the
+compiler already holds for `$WAC_HOME`; a host function would have to be written three times — native,
+Deno, browser — for a value that is *information* rather than authority. The caller's value wins if one
+is already set, which is how a test forces a miss.
+`tools/wac/compilerid_test.wac` pins all three properties, canaried by taking the `set_var` out: *"the
+payload was not told which compiler is running it — got `(unset)`"*.
+
+### And the shape of the cache itself, now that the ingredients are in hand
+
+Read out of `packages/wacc/example/wacc.wac` rather than guessed, because the first design was wrong in
+a way worth recording.
+
+**Cache the bytes that get written, not the compiler's intermediates.** The obvious reading is to cache
+`wasm` from `buildFilesIn`, but a hit would then also need `sigs` and `types`, because
+`manifestWire(wasm, types, sigs, …)` builds the manifest from them and `withManifestSection` is what
+actually reaches the disk. Caching `whole` — the bytes written — needs none of that: one blob in, one
+file out.
+
+**What the key has to contain**, all of it already in scope at the write site: the compiler id, the
+entry, every `(path, text)` pair from the gather, the `--coverage`/`--trace` flags, the **grants**
+(they go into the manifest) and the output's **base name** (`baseName(stem) + ".wasm"` is *in* the
+manifest, so two destinations are two artefacts).
+
+**The obstacle, which is why this is not in this commit.** The compile happens at `buildFilesIn` on a
+path shared by `build`, `bindgen`, `app` and the check commands; `stem` is not read until ~140 lines
+later. Skipping the compile means hoisting the key computation above a branch several commands go
+through, and that is a restructure of the path every build in the repository takes — not a change to
+make in the same commit as the thing it depends on, and not one to make the same week
+`issues/lang/0241c` cost two wrong diagnoses to a stale artefact cache.
+
+The hit path still gathers, because the sources *are* the key; what it skips is the compile. On the
+numbers in this issue that is the whole of the 2 s.
+
+## The build cache, and it beats the TypeScript path it was losing to — agent-a, 2026-08-24
+
+`wac build` now remembers what it built, keyed on the compiler identity above plus the entry, every
+source's content, the grants and the output's base name. Measured on the seeded binary, box's shell:
+
+    cold   5294 ms
+    warm    337 ms      byte-identical to the cold build
+    warm    357 ms
+
+**Which closes the argument this issue was really about.** The conversion blocker was recorded as
+*"375 ms warm as TypeScript, 2 317 ms as a wac file on its own"* — the wac path is **337 ms** now, so
+it is no longer the slower of the two and the seventeen `packages/box` build-and-run tests can convert
+without paying for it.
+
+### What it caches, and what it refuses to
+
+**The bytes that get written, not the compiler's intermediates.** Caching `wasm` from `buildFilesIn`
+would also need `sigs` and `types`, because the manifest is built from them and `withManifestSection`
+is what reaches the disk. Caching `whole` needs none of that.
+
+**The key** is the compiler id, the entry, every `(path, text)` pair, the grants as the bitmask
+`grantsIn` answers, and `baseName(stem) + ".wasm"` — the output name is *in* the manifest, so two
+destinations really are two artefacts. Confirmed rather than assumed: the same program built to `t1`
+and to `t2` differs by exactly the five bytes their names differ by.
+
+**`""` — no caching at all — for a coverage or traced build** (each writes a table beside the module
+that would have to be cached with it), for a build with no `-o`, without `$WAC_HOME`, and **without a
+compiler identity**. That last one is the point of the identity: an entry that cannot say which
+compiler made it is the stale hit, so its absence is a permanent miss rather than a guess.
+
+### The test, and the claim byte equality alone cannot make
+
+A fresh compile is deterministic, so *"cold and warm agree"* is equally true of a cache that stores and
+never reads — the test would have passed on a cache that saved nothing. `tools/wac/buildcache_test.wac`
+closes that by **poisoning**: after a build, the single entry is overwritten with a recognisable string
+and the build run again, which must hand back the marker. The only way to produce it is to have read
+the cache.
+
+It runs the checkout's own `wacc.wac` as a program rather than calling `wac build`, because the binary
+carries a *seed* and `wac build` would test the compiler the change is not in. Canaried by disabling
+the cache: all three tests fail, on the entry count, the miss and the bound.
+
+### Bounded, and why the number has a measurement beside it
+
+Sixty-four entries. These are whole programs rather than the test lane's aggregates — box's shell is
+about a megabyte — so that is roughly 60 MB, against a filesystem that was at 99% four days ago
+(`issues/system/0136`). Eviction is newest-by-write rather than by use, because this world has no
+`utime`; at sixty-four against the handful of applications built here the difference cannot bite, and
+saying so is cheaper than discovering it. `$WAC_BUILD_CACHE_KEEP` overrides the bound, and `0` turns
+the cache off — which is the switch to reach for when a cache is the thing under suspicion.
+
+### The off-switch was not off, and the seed is the bigger win
+
+`$WAC_BUILD_CACHE_KEEP=0` was documented as turning the cache off and only stopped *retention*: entries
+written before still answered, so a caller who set it *because they suspected a stale hit* went on
+getting hits until the first build swept them away. Found by measurement rather than review — a
+self-build that should have recompiled came back in 160 ms with the bound at zero. A bound of zero
+skips the lookup now.
+
+Which invalidated the first seed measurement, where both arms were hitting. Honestly:
+
+    wac build packages/wacc/example/wacc.wac       161 ms cached, 3731 ms not — 23×
+    deno task seed                               12 188 ms cached, 27 221 ms not — 15 s
+
+**The seed is the wider win of the two.** Every agent reseeds after any pull that touches
+`packages/wacc/src` and before every gate, so fifteen seconds is paid several times an hour across the
+box — where box's shell at 5 s is paid by whoever is converting that package. `CLAUDE.md`'s "about
+34 s" for a seed is now about 12.
+
+And a note for whoever measures next: `-o` **is** part of the key, so timing a repeat build to a fresh
+temporary name measures a miss and looks like the cache doing nothing. Time it to the same destination,
+or use the switch.
+
+
+## `wac build` was cached after all, and the argument above was right — agent-a, 2026-08-24
+
+The section before this says `wac build` is deliberately not cached, and gives as its first reason that
+a content-keyed cache would hollow out `packages/wacc/test/wac/selfhost_test.wac`: *"the comparison
+becomes 'these bytes equal themselves' — a test that cannot fail, still passing, with nobody told."*
+The cache was built anyway, on 2026-08-24, for the reason the section before *that* gives — the
+build-and-run conversions in `issues/system/0161` pay ~2 s a run without it. **The prediction was
+correct in every particular, and it took a day to notice.**
+
+What it cost, measured rather than reasoned about:
+
+| | hollowed | with the cache refused |
+| --- | ---: | ---: |
+| `selfhost_test.wac` | **194 ms** | 5 392 ms |
+| `deno task seed` | 12 200 ms | 27 240 ms |
+
+Both builds in `selfhost_test` share compiler, sources, grants and output *base name* — the two
+directories differ and the name deliberately does not, because the name is what reaches the manifest.
+So the second build is a hit on the first. `tools/seed.sh` has the same shape one level up: in the
+steady state the seed is already the fixed point, so round 1 reproduces it, `install_seed` puts the
+same bytes back, `cargoBuild` embeds the same seed, and round 2's key is round 1's. **The fifteen
+seconds this issue recorded as a saving was the fixpoint check not running.**
+
+**It still passed after the entry was replaced with a different valid module.** That is the canary
+worth keeping: poisoning the entry with *garbage* does not show it, because `wac build` validates what
+it writes and the host refuses an invalid module — a real safety net, and one that catches nothing
+about determinism. Substituting an older `wacc.wasm`, valid and 1 byte shorter, made the test certify a
+fixed point it had not computed.
+
+### What changed
+
+- `--no-cache` on `wac build`, neither read nor written, documented at
+  `[§wac-cli-build-nocache-2wq9nk4]`. `selfhost_test.wac` passes it.
+- **A hit says so** — `1782 bytes from cache, 1 file(s) unchanged` against `1782 bytes from 1 file(s)`.
+  Without that there is no observable separating a compile from a lookup, so `--no-cache` could only be
+  trusted, not checked. `built()` in `selfhost_test.wac` now fails on `from cache`, which is what makes
+  the flag's removal a red test rather than a fast one. Canaried by removing it: run 1 passed and run 2
+  failed, because a cold cache hides the hole — the reason this was not caught by the suite.
+- `tools/seed.sh` sets `WAC_BUILD_CACHE_KEEP=0` around the fixpoint rounds rather than passing the
+  flag: round 1 runs whichever binary is already installed, which may predate the flag, and an unknown
+  flag is refused where an unknown variable is ignored. No flag day.
+
+### And a second hole, found by the first
+
+The lookup runs where the sources have been gathered and the flags have not yet been checked, so a hit
+returned 0 **before `unknownFlag` ever ran**. `wac build --nonsense` therefore exited 2 on a cold cache
+and 0 on a warm one — the same command line, two answers, decided by whether somebody had built that
+program before. Found because `--no-cache` was silently accepted while it was still unknown, which is
+how the test written to fail first failed for a better reason than the one intended. `buildCachePath`
+now declines to key a command line the program has not accepted; the caller gets the ordinary error,
+one compile later.
+
+`fixpointemit_test.wac` was checked and is unaffected — it goes through `harness/referenceRun.ts`, not
+`wac build`.
+
+## The saving it was built for, measured — agent-a, 2026-08-24
+
+The case this cache was justified by, rather than the one it was filed about. `packages/box/src/box.wac`
+is the five seconds of shell that section names, built four ways in a row:
+
+| | |
+| --- | ---: |
+| cold, `WAC_BUILD_CACHE_KEEP=0` | 4 192 ms |
+| cold, cache on (a miss, and a store) | 4 211 ms |
+| warm | **245 ms** |
+| warm again | **234 ms** |
+
+**17×, and the 19 ms between the two cold runs is what the cache costs when it misses** — hashing the
+sources it already had to read. The warm figure is not zero because the key *is* the sources: every
+`.wac` in the graph is read and hashed before the lookup can happen, so ~240 ms is the floor for a
+build of this size and no cache can go under it.
+
+That is the number this issue owed `issues/system/0193` and the rest of `issues/system/0161`. The
+argument recorded above was that every remaining build-and-run conversion trades 375 ms of TypeScript
+for ~2 s of `wac build`, seventeen files, about 30 s a run. On this measurement the trade is 375 ms for
+about 245 ms, so the conversion is now *cheaper* than the thing it replaces rather than four times
+dearer. `packages/box` is another agent's package and the conversion is theirs to do; this is the
+measurement that says it is no longer blocked.
+
+### A third hole, of the same shape — agent-a, 2026-08-24
+
+The hit returns above the diagnostics pass, and the flag check was not the only thing up there.
+**A warning printed on the first build of a program and on no later one.** `spec/cli/wac.md`
+`[§wac-cli-usage-3nkq8wj]` says warnings *"are not held back for `check` or suppressed on a command
+that also writes a file"*, and a warned program built twice showed `warning: these types share no
+ancestor, so the test is always false` and then nothing — the same source, the same command line, two
+answers, decided by whether anybody had built it before.
+
+Fixed by **not storing a build that warned**, which needs nothing at lookup time and cannot go quietly
+wrong; a warned program recompiles every time. The alternative is keeping the rendered diagnostics
+beside the artefact, and that is a second file to write, evict and validate for a case the repository
+would rather fix than cache.
+
+**Three holes now, all the same sentence**: things that used to happen between "gather the sources" and
+"write the module" no longer happen on a hit. Flag validation, diagnostics, and — checked and clear —
+the module validation the host does after the payload returns, which covers both paths because it is
+the host's rather than the compiler's. Anything added to that stretch in future has to ask the same
+question, and the general answer is that the cache is stored *after* those things and can be declined
+there, rather than replayed.

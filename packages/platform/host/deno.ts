@@ -133,6 +133,22 @@ export type DenoWorldOptions = {
   parentFs?: { req: ByteQueue; rep: ByteQueue };
 };
 
+/**
+ * A child's exit code, or `-1` when a signal killed it — `std/platform.wac`'s `Exec.status`.
+ *
+ * **`?? -1` was the wrong test and never fired.** Deno fills `code` in for a signalled child with the
+ * shell's `128 + signal`, so `kill -9` arrived here as a perfectly ordinary `137` and
+ * `Exec.signalled()` answered no — while Node, whose `code` really is null then, answered `-1`. Two
+ * hosts serving one opcode and disagreeing about what happened to the child, with the same comment
+ * above each. `signal` is the field that knows, so it is the field that is asked.
+ *
+ * Found by `packages/platform/test/wac/exec_probe.wac` the first time anything compared the four
+ * implementations of this convention.
+ */
+function statusOf(s: { code: number; signal?: Deno.Signal | null }): number {
+  return s.signal ? -1 : s.code;
+}
+
 const EMPTY = new Uint8Array(0);
 
 /**
@@ -1043,7 +1059,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
           // anyway. The status is still the status.
           await feed(child.stdin, stdin);
           const s = await child.status;
-          return execBytes(s.code ?? -1, EMPTY, EMPTY, "");
+          return execBytes(statusOf(s), EMPTY, EMPTY, "");
         }
         // **The output is awaited before the write, not after.** A child that answers while it is
         // still being fed — `cat`, `grep`, any filter — blocks on its own output once the pipe
@@ -1053,8 +1069,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         const outcome = child.output();
         await feed(child.stdin, stdin);
         const r = await outcome;
-        // A signalled child has no code; -1 rather than 0, so it is never read as success.
-        return execBytes(r.code ?? -1, r.stdout, r.stderr, "");
+        return execBytes(statusOf(r), r.stdout, r.stderr, "");
       } catch (e) {
         return execBytes(0, EMPTY, EMPTY, `${path}: ${e instanceof Error ? e.message : e}`);
       }

@@ -1,0 +1,75 @@
+// rlp's coverage, and the package where both patterns showed up at once.
+//
+//   deno task coverage:rlp
+//   deno task coverage:rlp --verbose
+//
+// **89 of 91**, from 77 on the first run. `issues/system/0205`.
+//
+// ## The lowest first run of the four, and why
+//
+// `ssz` opened at 90.5%, `mpt` at 91.2%, `tty` at 91.0% — and `rlp` at **84.6%**, because its gaps came
+// in *both* of the kinds the other three showed separately:
+//
+//   - **`bytesOf`, `itemsOf` and `isList` were entirely uncovered** — nine points, three public
+//     accessors, and every one of them used constantly by `packages/mpt` on trie nodes and
+//     `packages/ssz` on containers. A package's own tests exercise what it *does*; its accessors are
+//     what its *consumers* do, and nobody in this package was standing where they stand. That is
+//     `packages/tty`'s shape;
+//   - **the canonical-length refusals** — a truncated prefix, a leading zero, a long form that fits the
+//     short one, and a four-byte length an `i32` cannot hold. That is `ssz` and `mpt`'s shape, for the
+//     same reason: the published vectors are Ethereum's, and Ethereum never emits a non-canonical
+//     length.
+//
+// The second kind is the one with teeth. A decoder that accepts a non-minimal length accepts two
+// encodings of one value, and two encodings are two hashes for one object — which for a trie node or a
+// beacon container is the difference between a proof and a forgery.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/rlp/test/cov_exercise.wac";
+const string PREFIX = "packages/rlp/";
+
+/** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/rlp/src/rlp.wac", 134, "if (len < 0) { trap; }", true,
+        "**Both callers pass a length they just measured.** `header` is called at `:102` with the " +
+        "summed size of an encoded list and at `:119` with `v.len()`, and neither can be negative — an " +
+        "array's length is not, and the sum of non-negative sizes is not until it overflows, which is " +
+        "`issues/system/0005`'s territory rather than this line's.\n" +
+        "         Kept as a trap rather than a clamp because of what the alternative writes: a negative " +
+        "length reaching `u8[](short + len)` produces a *prefix byte* below the base, which is a " +
+        "different, valid RLP tag. The failure would be a well-formed encoding of the wrong thing."),
+    Pin("packages/rlp/src/rlp.wac", 205, "if (c.error != \"\") { return empty; }", true,
+        "**Every caller checks first.** The list loop at `:261` reads `c.error` immediately after each " +
+        "`item` and returns on it, so a cursor that has failed is never handed to `item` again.\n" +
+        "         Tried and did not reach it: a four-byte list whose first member is a truncated " +
+        "length prefix, with two more bytes after it. The first `item` records the fault, `:263` " +
+        "returns, and the coverage does not move.\n" +
+        "         Kept because it is what makes `item`'s contract — *leaves `c.error` set and the " +
+        "cursor wherever it stopped* — safe to compose. `packages/mpt`'s `step` carries the identical " +
+        "guard for the identical reason, and both are pinned; a decoder whose second failure " +
+        "overwrote its first would name the last thing examined rather than the thing that was wrong.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[]("trapCase:5"));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

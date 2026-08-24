@@ -1,9 +1,15 @@
 // Whether the machine can afford a full suite right now, and whether you have just had one.
 //
-// `tools/suiteGate.ts`, `tools/suiteGuard.ts` and `tools/killedLane.ts` in wac, for
-// `tools/runTests.wac`. The arguments and the numbers are theirs and are not restated here — read
-// those files for *why* 5500 MB, why swap is not a threshold, and why the gate refuses rather than
-// queueing. What follows is what is different about doing it from wac.
+// `tools/suiteGate.ts` and `tools/suiteGuard.ts` in wac, for `tools/runTests.wac`. What follows is
+// what is different about doing it from wac.
+//
+// **The numbers are stated where the constants are, not referenced.** This header used to send the
+// reader to those two files and to `tools/killedLane.ts` for *why* 5500 MB, why swap is not a
+// threshold, and why the gate refuses rather than queueing — and by 2026-08-24 `killedLane.ts` had
+// been deleted and `suiteGate.ts` rewritten down to the sixty lines that announce a heavy runner, so
+// the argument for the one number that stops every push on a busy machine was reachable only through
+// `git log -S`. It is back beside `minAvailableMb`, with its date and the size of the suite it was
+// taken against.
 //
 // **The lock file's format is a compatibility surface, not an internal detail.** Every agent shares
 // `/tmp`, and until the TypeScript runner is deleted the two will be alive at the same time in
@@ -46,7 +52,33 @@ string heavyPath(i32 pid) { return "/tmp/wac-heavy-" + itoa(pid); }
 
 /** Minutes before the same agent should run a full suite again. */
 i32 cooldownMin() { return 20; }
-/** Megabytes of available memory below which a suite is likely to be killed rather than finish. */
+/**
+ * Megabytes of available memory below which a suite is likely to be killed rather than finish.
+ *
+ * **Measured, on an idle machine, 2026-08-13** — `issues/system/0142`, the commit that raised this
+ * from 3000. The table is here rather than referenced because the last time it was referenced it was
+ * lost: this file's header used to send the reader to `tools/suiteGate.ts` and `tools/killedLane.ts`
+ * for the argument, and the first no longer carries it while the second no longer exists.
+ *
+ *     jobs   wall      peak      rise   result
+ *     1      893s    5439MB    2635MB   3230 passed
+ *     2      522s    6642MB    3821MB   3230 passed
+ *     3      347s    7302MB    5014MB   3230 passed
+ *     4      317s    7466MB    4883MB   3230 passed    <- the default
+ *     5         -         -         -   FAILED exit=137, killed after 303s, no summary
+ *
+ * At the default width the suite *rises* 4.9 GB and peaks at 7.5, so 3000 admitted runs that then
+ * died — three in one afternoon, each looking like a red test in a package rather than a machine that
+ * ran out of memory. That is what this number is defending against, and why the refusal is worth more
+ * than the run it declines.
+ *
+ * **The reading it replaced was stale for the reason this one will be.** `runTests.ts` said "memory
+ * barely moves; the rise is 2.5–3.3 GB whether one worker runs or four", true of a suite a third the
+ * size, and it outlived its measurement because the sweep that produces it had quietly stopped
+ * running. The suite was 3230 tests in the parallel pass when the table above was taken and is larger
+ * now, so **5500 is a floor nobody has re-measured**, and if it is wrong today it is wrong by being
+ * too low. Re-run the sweep before trusting it against a machine that is close to the line.
+ */
 i32 minAvailableMb() { return 5500; }
 /** One-minute load average above which five cores are already spoken for — 8, in tenths. */
 i32 maxLoadTenths() { return 80; }

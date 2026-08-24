@@ -1,0 +1,203 @@
+// Branch coverage for ssz: the package's own tests, and nothing else.
+//
+//   deno task coverage:ssz
+//   deno task coverage:ssz --verbose
+//
+// **The first of the eighteen packages `issues/system/0205` records as having no coverage driver at
+// all.** That issue's open half is not "should these numbers be floors" — every driver that exists is
+// one now — but whether the eighteen unmeasured packages should have drivers, which is 82,762 source
+// lines against 36,918 measured. A decision that has sat for three days wants an input rather than an
+// argument: this is one package done, to find out what it costs and what it turns up.
+//
+// `ssz` was picked because it is representative rather than easy — 799 lines, 26 tests, twenty of them
+// against Ethereum's own roots — and because of what a gap here would mean. A wrong Merkle root is not
+// a crash: it is a proof that verifies against the wrong state, silently.
+//
+// There is no probe and no hand-written corpus. Every one of the 26 tests is called directly, which is
+// what `issues/system/0221` made possible — twenty take `(Core, Cli)` because they read the vendored
+// fixtures and ask a host-side oracle, and before that a driver could call none of them.
+//
+// None of them expects a trap, so there is no `trapCase` sweep.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import {
+  test_container_spans_refuses_every_malformed_offset_table as rf__container_spans_refuses_every_malformed_offset_table,
+  test_the_field_readers_refuse_what_the_data_cannot_support as rf__the_field_readers_refuse_what_the_data_cannot_support,
+  test_a_boolean_field_is_one_fixed_byte_and_a_variable_field_is_an_offset as rf__a_boolean_field_is_one_fixed_byte_and_a_variable_field_is_an_offset,
+  test_merkle_refuses_a_leaf_a_root_or_a_branch_of_the_wrong_length as rf__merkle_refuses_a_leaf_a_root_or_a_branch_of_the_wrong_length,
+  test_a_list_of_variable_elements_refuses_a_hostile_offset_table as rf__a_list_of_variable_elements_refuses_a_hostile_offset_table,
+  test_the_shapes_that_are_not_ssz_at_all as rf__the_shapes_that_are_not_ssz_at_all,
+} from "./wac/refusals_test.wac";
+import {
+  test_every_light_client_container_merkleizes_to_ethereums_root as bc__every_light_client_container_merkleizes_to_ethereums_root,
+  test_the_descriptors_serialized_sizes_are_ethereums as bc__the_descriptors_serialized_sizes_are_ethereums,
+  test_a_wrong_length_update_is_refused_rather_than_merkleized as bc__a_wrong_length_update_is_refused_rather_than_merkleized,
+  test_every_named_intermediate_type_is_the_shape_its_name_claims as bc__every_named_intermediate_type_is_the_shape_its_name_claims,
+} from "./wac/beacon_test.wac";
+import {
+  test_the_classic_ssz_generic_containers_merkleize_to_ethereums_roots as ct__the_classic_ssz_generic_containers_merkleize_to_ethereums_roots,
+  test_fixed_and_variable_are_classified_the_way_the_offsets_depend_on as ct__fixed_and_variable_are_classified_the_way_the_offsets_depend_on,
+  test_malformed_offsets_are_refused_not_decoded as ct__malformed_offsets_are_refused_not_decoded,
+} from "./wac/container_test.wac";
+import {
+  test_every_invalid_ssz_generic_encoding_is_refused as iv__every_invalid_ssz_generic_encoding_is_refused,
+  test_the_refusals_are_not_vacuous_the_same_shapes_valid_are_accepted as iv__the_refusals_are_not_vacuous_the_same_shapes_valid_are_accepted,
+} from "./wac/invalid_test.wac";
+import {
+  test_every_schema_free_case_merkleizes_to_ethereums_root as mk__every_schema_free_case_merkleizes_to_ethereums_root,
+  test_the_limit_is_what_fixes_the_tree_not_the_datas_length as mk__the_limit_is_what_fixes_the_tree_not_the_datas_length,
+  test_zerohash_is_the_padded_subtree_it_stands_in_for as mk__zerohash_is_the_padded_subtree_it_stands_in_for,
+  test_a_bitlists_delimiter_is_measured_not_merkleized as mk__a_bitlists_delimiter_is_measured_not_merkleized,
+  test_isvalidmerklebranch_accepts_every_position_and_rejects_perturbations as mk__isvalidmerklebranch_accepts_every_position_and_rejects_perturbations,
+  test_the_normalized_branch_check_requires_the_surplus_nodes_to_be_zero as mk__the_normalized_branch_check_requires_the_surplus_nodes_to_be_zero,
+} from "./wac/merkle_test.wac";
+import {
+  test_three_proofs_into_one_state_fold_to_one_root_per_fork as pf__three_proofs_into_one_state_fold_to_one_root_per_fork,
+  test_wac_verifies_every_real_branch_and_rejects_every_perturbation_of_one as pf__wac_verifies_every_real_branch_and_rejects_every_perturbation_of_one,
+  test_the_generalized_indices_are_fork_dependent_which_is_why_normalized_branches_exist as pf__the_generalized_indices_are_fork_dependent_which_is_why_normalized_branches_exist,
+} from "./wac/proof_test.wac";
+import {
+  test_every_sync_case_has_the_steps_and_updates_the_vendoring_recorded as sy__every_sync_case_has_the_steps_and_updates_the_vendoring_recorded,
+  test_every_step_is_one_the_sync_protocol_defines_and_names_data_that_is_present as sy__every_step_is_one_the_sync_protocol_defines_and_names_data_that_is_present,
+  test_the_bootstrap_and_updates_are_minimal_config_sizes as sy__the_bootstrap_and_updates_are_minimal_config_sizes,
+  test_the_metadata_carries_what_initialising_a_store_needs as sy__the_metadata_carries_what_initialising_a_store_needs,
+  test_the_minimal_descriptor_table_reproduces_the_vendored_objects_sizes as sy__the_minimal_descriptor_table_reproduces_the_vendored_objects_sizes,
+  test_every_vendored_bootstrap_and_update_merkleizes_under_the_minimal_table as sy__every_vendored_bootstrap_and_update_merkleizes_under_the_minimal_table,
+  test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_own_checks as sy__reading_fields_out_of_a_real_update_agrees_with_the_vectors_own_checks,
+  test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused as sy__signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused,
+} from "./wac/sync_fixture_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (rf__container_spans_refuses_every_malformed_offset_table().len() > 0) {
+    core.warn("error: FAILED refusals_test test_container_spans_refuses_every_malformed_offset_table");
+    bad = bad + 1;
+  }
+  if (rf__the_field_readers_refuse_what_the_data_cannot_support().len() > 0) {
+    core.warn("error: FAILED refusals_test test_the_field_readers_refuse_what_the_data_cannot_support");
+    bad = bad + 1;
+  }
+  if (rf__a_boolean_field_is_one_fixed_byte_and_a_variable_field_is_an_offset().len() > 0) {
+    core.warn("error: FAILED refusals_test test_a_boolean_field_is_one_fixed_byte_and_a_variable_field_is_an_offset");
+    bad = bad + 1;
+  }
+  if (rf__the_shapes_that_are_not_ssz_at_all().len() > 0) {
+    core.warn("error: FAILED refusals_test test_the_shapes_that_are_not_ssz_at_all");
+    bad = bad + 1;
+  }
+  if (rf__a_list_of_variable_elements_refuses_a_hostile_offset_table().len() > 0) {
+    core.warn("error: FAILED refusals_test test_a_list_of_variable_elements_refuses_a_hostile_offset_table");
+    bad = bad + 1;
+  }
+  if (rf__merkle_refuses_a_leaf_a_root_or_a_branch_of_the_wrong_length().len() > 0) {
+    core.warn("error: FAILED refusals_test test_merkle_refuses_a_leaf_a_root_or_a_branch_of_the_wrong_length");
+    bad = bad + 1;
+  }
+  if (bc__every_light_client_container_merkleizes_to_ethereums_root(core, cli).len() > 0) {
+    core.warn("error: FAILED beacon_test test_every_light_client_container_merkleizes_to_ethereums_root");
+    bad = bad + 1;
+  }
+  if (bc__the_descriptors_serialized_sizes_are_ethereums(core, cli).len() > 0) {
+    core.warn("error: FAILED beacon_test test_the_descriptors_serialized_sizes_are_ethereums");
+    bad = bad + 1;
+  }
+  if (bc__a_wrong_length_update_is_refused_rather_than_merkleized(core, cli).len() > 0) {
+    core.warn("error: FAILED beacon_test test_a_wrong_length_update_is_refused_rather_than_merkleized");
+    bad = bad + 1;
+  }
+  if (bc__every_named_intermediate_type_is_the_shape_its_name_claims().len() > 0) {
+    core.warn("error: FAILED beacon_test test_every_named_intermediate_type_is_the_shape_its_name_claims");
+    bad = bad + 1;
+  }
+  if (ct__the_classic_ssz_generic_containers_merkleize_to_ethereums_roots(core, cli).len() > 0) {
+    core.warn("error: FAILED container_test test_the_classic_ssz_generic_containers_merkleize_to_ethereums_roots");
+    bad = bad + 1;
+  }
+  if (ct__fixed_and_variable_are_classified_the_way_the_offsets_depend_on().len() > 0) {
+    core.warn("error: FAILED container_test test_fixed_and_variable_are_classified_the_way_the_offsets_depend_on");
+    bad = bad + 1;
+  }
+  if (ct__malformed_offsets_are_refused_not_decoded(core, cli).len() > 0) {
+    core.warn("error: FAILED container_test test_malformed_offsets_are_refused_not_decoded");
+    bad = bad + 1;
+  }
+  if (iv__every_invalid_ssz_generic_encoding_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED invalid_test test_every_invalid_ssz_generic_encoding_is_refused");
+    bad = bad + 1;
+  }
+  if (iv__the_refusals_are_not_vacuous_the_same_shapes_valid_are_accepted().len() > 0) {
+    core.warn("error: FAILED invalid_test test_the_refusals_are_not_vacuous_the_same_shapes_valid_are_accepted");
+    bad = bad + 1;
+  }
+  if (mk__every_schema_free_case_merkleizes_to_ethereums_root(core, cli).len() > 0) {
+    core.warn("error: FAILED merkle_test test_every_schema_free_case_merkleizes_to_ethereums_root");
+    bad = bad + 1;
+  }
+  if (mk__the_limit_is_what_fixes_the_tree_not_the_datas_length().len() > 0) {
+    core.warn("error: FAILED merkle_test test_the_limit_is_what_fixes_the_tree_not_the_datas_length");
+    bad = bad + 1;
+  }
+  if (mk__zerohash_is_the_padded_subtree_it_stands_in_for().len() > 0) {
+    core.warn("error: FAILED merkle_test test_zerohash_is_the_padded_subtree_it_stands_in_for");
+    bad = bad + 1;
+  }
+  if (mk__a_bitlists_delimiter_is_measured_not_merkleized().len() > 0) {
+    core.warn("error: FAILED merkle_test test_a_bitlists_delimiter_is_measured_not_merkleized");
+    bad = bad + 1;
+  }
+  if (mk__isvalidmerklebranch_accepts_every_position_and_rejects_perturbations(core, cli).len() > 0) {
+    core.warn("error: FAILED merkle_test test_isvalidmerklebranch_accepts_every_position_and_rejects_perturbations");
+    bad = bad + 1;
+  }
+  if (mk__the_normalized_branch_check_requires_the_surplus_nodes_to_be_zero(core, cli).len() > 0) {
+    core.warn("error: FAILED merkle_test test_the_normalized_branch_check_requires_the_surplus_nodes_to_be_zero");
+    bad = bad + 1;
+  }
+  if (pf__three_proofs_into_one_state_fold_to_one_root_per_fork(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_three_proofs_into_one_state_fold_to_one_root_per_fork");
+    bad = bad + 1;
+  }
+  if (pf__wac_verifies_every_real_branch_and_rejects_every_perturbation_of_one(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_wac_verifies_every_real_branch_and_rejects_every_perturbation_of_one");
+    bad = bad + 1;
+  }
+  if (pf__the_generalized_indices_are_fork_dependent_which_is_why_normalized_branches_exist(core, cli).len() > 0) {
+    core.warn("error: FAILED proof_test test_the_generalized_indices_are_fork_dependent_which_is_why_normalized_branches_exist");
+    bad = bad + 1;
+  }
+  if (sy__every_sync_case_has_the_steps_and_updates_the_vendoring_recorded(core, cli).len() > 0) {
+    core.warn("error: FAILED sync_fixture_test test_every_sync_case_has_the_steps_and_updates_the_vendoring_recorded");
+    bad = bad + 1;
+  }
+  if (sy__every_step_is_one_the_sync_protocol_defines_and_names_data_that_is_present(core, cli).len() > 0) {
+    core.warn("error: FAILED sync_fixture_test test_every_step_is_one_the_sync_protocol_defines_and_names_data_that_is_present");
+    bad = bad + 1;
+  }
+  if (sy__the_bootstrap_and_updates_are_minimal_config_sizes(core, cli).len() > 0) {
+    core.warn("error: FAILED sync_fixture_test test_the_bootstrap_and_updates_are_minimal_config_sizes");
+    bad = bad + 1;
+  }
+  if (sy__the_metadata_carries_what_initialising_a_store_needs(core, cli).len() > 0) {
+    core.warn("error: FAILED sync_fixture_test test_the_metadata_carries_what_initialising_a_store_needs");
+    bad = bad + 1;
+  }
+  if (sy__the_minimal_descriptor_table_reproduces_the_vendored_objects_sizes(core, cli).len() > 0) {
+    core.warn("error: FAILED sync_fixture_test test_the_minimal_descriptor_table_reproduces_the_vendored_objects_sizes");
+    bad = bad + 1;
+  }
+  if (sy__every_vendored_bootstrap_and_update_merkleizes_under_the_minimal_table(core, cli).len() > 0) {
+    core.warn("error: FAILED sync_fixture_test test_every_vendored_bootstrap_and_update_merkleizes_under_the_minimal_table");
+    bad = bad + 1;
+  }
+  if (sy__reading_fields_out_of_a_real_update_agrees_with_the_vectors_own_checks(core, cli).len() > 0) {
+    core.warn("error: FAILED sync_fixture_test test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_own_checks");
+    bad = bad + 1;
+  }
+  if (sy__signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED sync_fixture_test test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("ssz: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}

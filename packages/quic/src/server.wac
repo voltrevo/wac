@@ -38,7 +38,7 @@ import { finishedVerify } from "../../tls/src/keyschedule.wac";
 import { suiteAes128Gcm } from "../../tls/src/record.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { rsaSignPss } from "../../crypto/src/rsa.wac";
-import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { x25519, x25519Base, x25519Shared } from "../../crypto/src/x25519.wac";
 import { clamped } from "./client.wac";
 import { serverParameters, parametersExtension } from "./params.wac";
 import { encodedLength } from "./varint.wac";
@@ -128,6 +128,21 @@ export struct Server {
    * two bytes of group id and 30 bytes of somebody else's curve.
    */
   u8[] clientShare(const this) {
+    // **`ok()` is a contract this used to make the caller keep**, and `this.clientHello` is bytes a
+    // stranger's datagram supplied. When `of` could not read one it is empty, and `messageBody`
+    // traps on anything shorter than a four-byte header — so every reader below this one ended the
+    // process rather than answering, on a first packet anybody can send.
+    //
+    // `flight()` checks `ok()` and was safe; `openApplication` and the three 1-RTT readers behind it
+    // call `shared()` *before* their own guard, so they were not. Nothing outside this package's
+    // tests builds a `Server` today, which is why this is a hazard on the surface rather than a
+    // crash somebody has had — but the surface is the point of the file.
+    //
+    // One guard here covers the chain: `shared`, `applicationKeysFor`, `openApplication`,
+    // `streamBytes`, `streamFinished`, `streamPacket` and `handshakeDone` all reach the empty answer
+    // from this one. `packages/ssh` is the model the rest of this repository follows — trap on the
+    // caller's own values, return a value for every byte a peer sent.
+    if (!this.ok()) { return u8[0](); }
     u8[] tagged = parseClientHello(messageBody(this.clientHello), suiteAes128Gcm()).keyShare;
     if (tagged.len() != 34) { return u8[0](); }
     i32 group = (tagged[0] << 8) | tagged[1];
@@ -141,7 +156,11 @@ export struct Server {
   u8[] shared(const this) {
     u8[] theirs = this.clientShare();
     if (theirs.len() != 32) { return u8[0](); }
-    return x25519(this.scalar, theirs);
+    // **A small-order point makes this all zeros for every scalar**, so a client sending one would
+    // hand the session's keys to anyone watching. Empty is already this function's failure answer.
+    // RFC 7748 §6; `packages/tor` and `packages/ssh` have carried the rule and this did not.
+    u8[]? dh = x25519Shared(this.scalar, theirs);
+    return dh is null ? u8[0]() : dh!;
   }
 
   /** The transcript through the ServerHello, where the handshake keys are taken. */

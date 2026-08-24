@@ -17,6 +17,25 @@
 // Positions rather than messages, as `parse_errors` does and for the same reason: our side reports
 // numeric codes and the reference reports English.
 //
+// ## The corpus is the limit, and it had a hole worth naming — 2026-08-24
+//
+// `CLEAN` grew eight cases in one sitting, all false alarms, all found the same way: **take two
+// features that each work, cross them, and ask the reference.** The pair was inheritance × generics
+// and inheritance × nullable, and neither combination had a single cell here or in the grids below —
+// each feature was covered alone and the corpus said "0 false alarms" throughout.
+//
+// A child into a *nullable* parent reported in every position a value can be written — local,
+// parameter, return, field, array element, later assignment — while `Base? b = Base(9)` and
+// `Base? b = k` for a `Kid? k` both worked, because the exact-name line answered one and the
+// both-nullable line recursed onto exactly the rule that was missing for the third. That is the shape
+// to look for: when two neighbours of a rule pass, the gap is the spelling between them.
+//
+// So a clean run of this file is evidence about the cells it has, and adding a cell is worth more than
+// adding an assertion. The cheap generator is a handful of programs with no imports, `wac check` and
+// `harness/referenceCheck.ts` side by side, and a column that says which disagreed — and it wants
+// negative controls in the same batch, because a widening that fixes a false alarm by accepting
+// everything looks identical from the accepted side.
+//
 // ## Host-side until 2026-08-18, `issues/system/0161`
 //
 // The reference stays TypeScript — it is the reference — behind `reference.ts`'s `checkpos`, which is
@@ -50,7 +69,24 @@ string[] WRONG() {
     "export f64 f() { return true; }",
     "export i32 w(bool c) { while (c) { return \"loop\"; } return 0; }",
     "export string t(i32 n) { switch (n) { case 1: { return 5; } } return \"d\"; }",
-    "export i32 nested(bool c) { if (c) { if (c) { return \"deep\"; } } return 0; }");
+    "export i32 nested(bool c) { if (c) { if (c) { return \"deep\"; } } return 0; }",
+    // **An upcast written with `as!`, through a generic.** The reference says *"upcast to 'Task' is
+    // always safe — use 'as'"*, and wacc says the same thing about the plain `k as! Base` — it has the
+    // rule. It could not see this spelling, because `descendsFrom` matched a declared name and a use
+    // site writes `Cont<string>`. So the same blind spot showed as a *missing* diagnostic here and as
+    // an invented one in `CLEAN` below, which is what said to fix the helper rather than either
+    // caller. Soundness is what this list asserts, so the position is compared too.
+    "struct Task { i32 id; }\nstruct Cont<T> : Task { T v; }\n"
+      + "export i32 f() { Cont<string> c = Cont<string>(7, \"x\"); Task t = c as! Task; return t.id; }",
+    // **`is` against a *parent* must not narrow away the `?`.** `narrowingsOf` already declines to
+    // retype `p is P` on a `P?` — its comment says why: the knowledge changes and the type does not,
+    // and the next thing such code writes is `p!.v`, which a retyped `p` has nothing left to unwrap.
+    // The guard was `withoutNull(cur) == t`, an exact name match, so the same test against an
+    // *ancestor* fell through it and dropped the nullability. wacc then accepted `k.v` where the
+    // reference asks for the unwrap — the one spelling in this family where the two disagreed, and
+    // `k is K` right beside it is refused by both.
+    "struct S { i32 v; }\nstruct K : S { i32 w; }\n"
+      + "export i32 f(K? k) { if (k is S) { return k.v; } return 0; }");
 }
 
 /**
@@ -77,7 +113,33 @@ string[] CLEAN() {
     "export string s() { return \"x\"; }",
     "export bool t() { return true; }",
     "export void v() { return; }",
-    "export i32 add(i32 a, i32 b) { return a + b; }");
+    "export i32 add(i32 a, i32 b) { return a + b; }",
+    // **A generic struct assigned to its non-generic parent.** The reference accepts this, emits it
+    // and runs it — it answers 7 — and wacc refused it: *"expected Task, found Cont<string>"*. The
+    // type is spelled with its arguments, so `parentOf`, which matches a declared name, found no
+    // declaration called `Cont<string>` and the inheritance walk never started.
+    //
+    // Here rather than in a file of its own because it is a false alarm, and this is the test whose
+    // job is that: the case is only meaningful while the reference still accepts it, and the loop
+    // below checks that first. `issues/lang/0144` recorded this as a consequence of its own
+    // undecided question about dispatch — it is not one, because the reference has no such limit,
+    // and reading it that way is what left it sitting behind a decision for a week.
+    "struct Task { i32 id; i32 fire(const this) { return 0; } }\n"
+      + "struct Cont<T> : Task { T v; override i32 fire(const this) { return this.id; } }\n"
+      + "export i32 f() { Cont<string> c = Cont<string>(7, \"hi\"); Task t = c; return t.id; }",
+    // **A child into a *nullable* parent slot**, which is the same widening one `?` along and was
+    // missed in every position: local, parameter, return, field, array element and a later
+    // assignment all reported, and the reference accepts, emits and runs each of them — every one
+    // answers 2. The two neighbours that already worked are what make the shape obvious: `Base? b =
+    // Base(9)` is handled by the exact-name line, and `Base? b = k` for a `Kid? k` is handled by the
+    // both-nullable line, which recurses onto exactly the rule that was missing when the source is
+    // *not* nullable. So the one spelling nobody had was the ordinary one.
+    "struct Base { i32 id; }\nstruct Kid : Base { i32 x; }\n"
+      + "export i32 f() { Base? b = Kid(2, 38); return b is null ? 0 : b!.id; }",
+    // The same fact through a field, because it is a different check site rather than the same one
+    // twice — a struct literal's arguments are checked where a declaration's initialiser is not.
+    "struct Base { i32 id; }\nstruct Kid : Base { i32 x; }\nstruct H { Base? b; }\n"
+      + "export i32 f() { H h = H(Kid(2, 38)); return h.b is null ? 0 : h.b!.id; }");
 }
 
 export string test_rung3_every_diagnostic_we_report_the_reference_reports_in_the_same_place(
@@ -1217,10 +1279,26 @@ export string test_rung3_every_operator_against_every_type(Core core, Cli cli) {
  */
 export string test_rung3_every_type_into_every_other_types_slot(Core core, Cli cli) {
   T t = T.create();
-  string prelude = "struct S { i32 v; } enum E { A, B }\n";
+  // **A child and a generic child, added 2026-08-24 — and the grid would have found all three.**
+  //
+  // The list was eighteen types with no inheritance and no generic in it, so every rule about a
+  // *related* pair of struct types was outside the grid entirely. Three defects lived in that gap and
+  // were found by hand instead, one of them a week after being filed as a language question:
+  //
+  //   - `S? r = k` for a `K k` — refused, and the reference accepts, emits and runs it. The spec says
+  //     so too: `spec/tour.wac` §14, *"`T` widens to `T?` implicitly"*.
+  //   - `S r = g` for a `G<i32> g` — refused, same story.
+  //   - `g as! S` — accepted, where the reference says *"upcast to 'S' is always safe — use 'as'"*.
+  //
+  // One helper was blind to a spelling in both directions. Five types is 529 cells against 324, and
+  // the pairs that matter are the ones no hand-written list reaches for: child into parent, child into
+  // *nullable* parent, generic child into parent, and each of those backwards, which must stay refused.
+  string prelude = "struct S { i32 v; } struct K : S { i32 w; } struct G<T> : S { T g; } "
+                   + "enum E { A, B }\n";
   string[] types = string[](
     "i32", "i64", "f64", "bool", "string", "string?", "S", "S?", "E", "E?",
-    "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref", "i8", "u32", "f32");
+    "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref", "i8", "u32", "f32",
+    "K", "K?", "G<i32>", "G<i32>?", "anyref?");
   i32 total = types.len() * types.len();
   string[] sources = string[total](fill: "");
   string[] labels = string[total](fill: "");
@@ -1246,6 +1324,63 @@ export string test_rung3_every_type_into_every_other_types_slot(Core core, Cli c
   t.eqI32(g.silentN, 0, itoa(g.silentN) + " of " + itoa(g.cells) +
                         " cells the reference rejects and we say nothing about:\n  " + g.silent);
   core.log("    slot grid: " + itoa(g.cells) + " cells, " + itoa(g.accepted) + " accepted");
+  return t.report();
+}
+
+/**
+ * **Every reference type through every cast operator**, with the reference deciding.
+ *
+ * The neighbouring cast grid is deliberately numeric — it re-derives `losslessCast` and `rawCast`,
+ * which are tables no formula fits. That leaves the *other* kind of cast, the one between reference
+ * types, covered by nothing: which of `as`, `as!` and `as~` is right for a pair depends on whether the
+ * conversion widens, and "widens" is the inheritance lattice plus `anyref` at the top.
+ *
+ * It found ten of ninety cells on the run that introduced it, five each way and all one fact:
+ * **`anyref` is the top type and the cast rule did not know it.** `assignable` did — that is the same
+ * lattice asked a different question — so `s as anyref` was reported as a downcast while `S r = s`
+ * beside it was fine. Both operators came out backwards, which is the useful shape: an upcast that is
+ * not recognised does not go quiet, it swaps the advice, so `as` is refused *and* `as!` is waved
+ * through, and a grid sees both halves where a hand-written case sees one.
+ *
+ * The four nullable rows needed the fact twice, because widening the type and widening the
+ * nullability are separate conditions here by design: `S? as anyref` takes nothing away either.
+ */
+export string test_rung3_every_reference_cast_against_every_operator(Core core, Cli cli) {
+  T t = T.create();
+  string prelude = "struct S { i32 v; } struct K : S { i32 w; } struct G<T> : S { T g; }\n";
+  string[] types = string[]("S", "K", "G<i32>", "S?", "K?", "anyref");
+  string[] ops = string[]("as", "as!", "as~");
+  i32 total = types.len() * types.len() * ops.len();
+  string[] sources = string[total](fill: "");
+  string[] labels = string[total](fill: "");
+  i32 n = 0;
+  for (i32 a = 0; a < types.len(); a++) {
+    for (i32 b = 0; b < types.len(); b++) {
+      if (types[a] == types[b]) { continue; }
+      for (i32 o = 0; o < ops.len(); o++) {
+        // The slot is the cast's own target, so the cast is the only thing that can be wrong — the
+        // discipline the unary grid states: a grid is only as good as the thing it isolates.
+        sources[n] = prelude + "export void f(" + types[a] + " a) { "
+                     + types[b] + " r = a " + ops[o] + " " + types[b] + "; }";
+        labels[n] = types[a] + " " + ops[o] + " " + types[b];
+        n = n + 1;
+      }
+    }
+  }
+  string[] cells = string[n](fill: "");
+  string[] names = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { cells[i] = sources[i]; names[i] = labels[i]; }
+  Grid g = gridOf(t, cli, cells, names);
+
+  t.isTrue(g.cells >= 80, "only " + itoa(g.cells) + " cells reached the comparison");
+  t.isTrue(g.accepted >= 5 && g.accepted <= g.cells - 20,
+           itoa(g.accepted) + " of " + itoa(g.cells) +
+           " accepted — the grid has stopped containing both kinds");
+  t.eqI32(g.alarmsN, 0, itoa(g.alarmsN) + " cells we refuse that the reference accepts:\n  " +
+                        g.alarms);
+  t.eqI32(g.silentN, 0, itoa(g.silentN) + " of " + itoa(g.cells) +
+                        " cells the reference rejects and we say nothing about:\n  " + g.silent);
+  core.log("    reference-cast grid: " + itoa(g.cells) + " cells, " + itoa(g.accepted) + " accepted");
   return t.report();
 }
 

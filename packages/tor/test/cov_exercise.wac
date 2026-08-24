@@ -1,0 +1,1710 @@
+// Branch coverage for tor: the package's own tests, and nothing else.
+//
+//   deno task coverage:tor
+//   deno task coverage:tor --verbose
+//
+// The tenth of the packages `issues/system/0205` records as unmeasured, and by a wide margin the
+// largest: 15,913 lines of source and 313 tests across 47 files.
+//
+// **Expect a low number and read it carefully.** Three packages before this one opened below 80% and
+// in every case the cause was where the tests run rather than whether they exist — a daemon in a
+// subprocess, a sibling package, a browser. This package spawns the **real C tor** in
+// `network_tor_test.wac` and `ctor_live_test.wac`, which between them are 21 of the suite's 50
+// seconds, so the same question has to be asked here before a single pin is written: our code runs
+// in-process and C tor is the peer, or our code runs somewhere this cannot see?
+//
+// None of the 313 tests expects a trap.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+import {
+  test_the_certificate_tor_accepted_is_reproduced as auth__the_certificate_tor_accepted_is_reproduced,
+  test_each_signature_was_made_by_the_key_that_should_have_made_it as auth__each_signature_was_made_by_the_key_that_should_have_made_it,
+} from "./wac/authcert_test.wac";
+import {
+  test_the_vectors_are_what_the_tests_assume as blin__the_vectors_are_what_the_tests_assume,
+  test_the_blinded_secret_is_tors as blin__the_blinded_secret_is_tors,
+  test_the_public_half_agrees_with_tors as blin__the_public_half_agrees_with_tors,
+  test_the_blinded_key_signs as blin__the_blinded_key_signs,
+  test_the_identity_key_is_the_seeds as blin__the_identity_key_is_the_seeds,
+  test_blinding_refuses_what_it_should as blin__blinding_refuses_what_it_should,
+} from "./wac/blind_test.wac";
+import {
+  test_each_capture_tool_writes_the_vectors_that_are_committed as capt__each_capture_tool_writes_the_vectors_that_are_committed,
+} from "./wac/capturetools_test.wac";
+import {
+  test_a_circuit_id_is_never_read_as_a_command as cell__a_circuit_id_is_never_read_as_a_command,
+  test_a_fixed_cell_is_always_514_bytes as cell__a_fixed_cell_is_always_514_bytes,
+  test_versions_uses_a_two_byte_circuit_id as cell__versions_uses_a_two_byte_circuit_id,
+  test_version_negotiation_takes_the_highest_common as cell__version_negotiation_takes_the_highest_common,
+  test_variable_cells_carry_their_length as cell__variable_cells_carry_their_length,
+  test_a_partial_cell_is_reported_as_incomplete as cell__a_partial_cell_is_reported_as_incomplete,
+  test_cells_can_be_read_back_to_back_from_a_stream as cell__cells_can_be_read_back_to_back_from_a_stream,
+  test_create2_carries_the_handshake_and_created2_gives_it_back as cell__create2_carries_the_handshake_and_created2_gives_it_back,
+  test_netinfo_tells_the_relay_nothing_about_us as cell__netinfo_tells_the_relay_nothing_about_us,
+  test_a_padding_negotiate_has_the_layout_the_spec_states as cell__a_padding_negotiate_has_the_layout_the_spec_states,
+  test_an_inverted_padding_range_is_refused_here as cell__an_inverted_padding_range_is_refused_here,
+  test_a_padding_cell_is_empty_and_full_length as cell__a_padding_cell_is_empty_and_full_length,
+  test_the_padding_range_is_a_floor_not_a_setting as cell__the_padding_range_is_a_floor_not_a_setting,
+} from "./wac/cell_test.wac";
+import {
+  test_a_stream_carries_data_both_ways as circ__a_stream_carries_data_both_ways,
+  test_three_layers_go_on_and_come_off as circ__three_layers_go_on_and_come_off,
+  test_a_cell_no_hop_recognises_kills_the_circuit as circ__a_cell_no_hop_recognises_kills_the_circuit,
+  test_a_destroy_is_reported_rather_than_decrypted as circ__a_destroy_is_reported_rather_than_decrypted,
+  test_a_sendme_arrives_after_a_hundred_data_cells as circ__a_sendme_arrives_after_a_hundred_data_cells,
+  test_the_windows_stop_a_sender_that_gets_no_credit as circ__the_windows_stop_a_sender_that_gets_no_credit,
+  test_a_hop_cannot_crash_us_with_a_bad_length_field as circ__a_hop_cannot_crash_us_with_a_bad_length_field,
+  test_the_circuit_nonce_follows_the_last_hop as circ__the_circuit_nonce_follows_the_last_hop,
+} from "./wac/circuit_test.wac";
+import {
+  test_the_signed_portion_ends_at_the_token as cons__the_signed_portion_ends_at_the_token,
+  test_the_digest_covers_the_signed_portion_only as cons__the_digest_covers_the_signed_portion_only,
+  test_a_public_key_is_read_out_of_its_der as cons__a_public_key_is_read_out_of_its_der,
+  test_a_genuine_signature_verifies as cons__a_genuine_signature_verifies,
+  test_everything_that_must_be_refused as cons__everything_that_must_be_refused,
+  test_a_signature_from_the_wrong_key_is_refused as cons__a_signature_from_the_wrong_key_is_refused,
+  test_a_fingerprint_is_the_sha1_of_the_key as cons__a_fingerprint_is_the_sha1_of_the_key,
+  test_the_chain_accepts_a_genuine_consensus as cons__the_chain_accepts_a_genuine_consensus,
+  test_everything_the_chain_must_refuse as cons__everything_the_chain_must_refuse,
+  test_a_malformed_directory_signature_line_is_not_counted as cons__a_malformed_directory_signature_line_is_not_counted,
+  test_a_signing_key_its_identity_never_certified as cons__a_signing_key_its_identity_never_certified,
+  test_a_signature_names_which_signing_key_made_it as cons__a_signature_names_which_signing_key_made_it,
+  test_a_utc_timestamp_is_not_read_as_local as cons__a_utc_timestamp_is_not_read_as_local,
+  test_a_malformed_consensus_is_refused_without_trapping as cons__a_malformed_consensus_is_refused_without_trapping,
+} from "./wac/consensus_test.wac";
+import {
+  test_the_consensus_tor_found_wellformed_is_reproduced as cons2__the_consensus_tor_found_wellformed_is_reproduced,
+  test_the_signature_is_over_the_span_and_by_the_signing_key as cons2__the_signature_is_over_the_span_and_by_the_signing_key,
+  test_the_microdesc_flavour_differs_from_the_plain_one_in_four_stated_ways as cons2__the_microdesc_flavour_differs_from_the_plain_one_in_four_stated_ways,
+} from "./wac/consensusgen_test.wac";
+import {
+  test_a_c_tor_bootstraps_from_our_authority_and_through_our_relays as ctor__a_c_tor_bootstraps_from_our_authority_and_through_our_relays,
+  test_a_c_tor_carries_a_stream_through_our_relays_both_directions as ctor__a_c_tor_carries_a_stream_through_our_relays_both_directions,
+} from "./wac/ctor_live_test.wac";
+import {
+  test_request_paths as dirc__request_paths,
+  test_valid_until_is_read_as_utc as dirc__valid_until_is_read_as_utc,
+  test_the_refresh_window_opens_at_fresh_until_and_keeps_slack as dirc__the_refresh_window_opens_at_fresh_until_and_keeps_slack,
+  test_the_refresh_time_is_spread_across_the_window as dirc__the_refresh_time_is_spread_across_the_window,
+  test_a_consensus_with_no_schedule_gets_no_refresh_time as dirc__a_consensus_with_no_schedule_gets_no_refresh_time,
+  test_a_short_lived_consensus_still_lands_inside_its_life as dirc__a_short_lived_consensus_still_lands_inside_its_life,
+  test_an_http_response_splits_at_the_blank_line as dirc__an_http_response_splits_at_the_blank_line,
+  test_a_body_we_did_not_ask_to_be_compressed_is_noticed as dirc__a_body_we_did_not_ask_to_be_compressed_is_noticed,
+  test_microdescriptors_are_batched_so_a_url_stays_answerable as dirc__microdescriptors_are_batched_so_a_url_stays_answerable,
+} from "./wac/dirclient_test.wac";
+import {
+  test_dird_publishes_and_serves_an_onion_service_descriptor as dird__dird_publishes_and_serves_an_onion_service_descriptor,
+} from "./wac/dird_test.wac";
+import {
+  test_relays_match_the_typescript_parser as dire__relays_match_the_typescript_parser,
+  test_onion_keys_and_policies_match as dire__onion_keys_and_policies_match,
+  test_a_digest_that_does_not_match_attaches_nothing as dire__a_digest_that_does_not_match_attaches_nothing,
+  test_policy_summaries as dire__policy_summaries,
+  test_an_integer_field_is_not_lenient as dire__an_integer_field_is_not_lenient,
+} from "./wac/directory_test.wac";
+import {
+  test_the_targets_a_bootstrapping_tor_builds as dirs__the_targets_a_bootstrapping_tor_builds,
+  test_microdescriptors_are_batched_with_a_hyphen as dirs__microdescriptors_are_batched_with_a_hyphen,
+  test_the_compression_suffix_is_a_request_not_a_name as dirs__the_compression_suffix_is_a_request_not_a_name,
+  test_the_response_is_framed_for_a_client as dirs__the_response_is_framed_for_a_client,
+  test_a_dir_source_line_a_stranger_wrote as dirs__a_dir_source_line_a_stranger_wrote,
+} from "./wac/dirserve_test.wac";
+import {
+  test_the_sequences_can_show_the_rule as dirs2__the_sequences_can_show_the_rule,
+  test_nothing_is_answered_before_the_last_byte as dirs2__nothing_is_answered_before_the_last_byte,
+  test_a_refused_upload_files_nothing as dirs2__a_refused_upload_files_nothing,
+  test_the_other_routes_still_answer as dirs2__the_other_routes_still_answer,
+  test_republishing_replaces as dirs2__republishing_replaces,
+  test_a_second_upload_follows_tors_rule as dirs2__a_second_upload_follows_tors_rule,
+  test_another_services_revision_does_not_block_this_one as dirs2__another_services_revision_does_not_block_this_one,
+  test_the_revision_comes_from_the_document as dirs2__the_revision_comes_from_the_document,
+} from "./wac/dirstep_test.wac";
+import {
+  test_every_entry_file_compiles as entr__every_entry_file_compiles,
+} from "./wac/entries_test.wac";
+import {
+  test_cell_framing_survives_arbitrary_bytes as fuzz__cell_framing_survives_arbitrary_bytes,
+  test_cell_framing_survives_truncation_at_every_offset as fuzz__cell_framing_survives_truncation_at_every_offset,
+  test_a_relay_cell_body_with_a_hostile_length as fuzz__a_relay_cell_body_with_a_hostile_length,
+  test_the_variable_length_bodies as fuzz__the_variable_length_bodies,
+  test_directory_documents_survive_arbitrary_text as fuzz__directory_documents_survive_arbitrary_text,
+  test_a_consensus_shaped_document_with_wrong_fields as fuzz__a_consensus_shaped_document_with_wrong_fields,
+  test_http_responses_from_a_hostile_cache as fuzz__http_responses_from_a_hostile_cache,
+  test_the_small_decoders as fuzz__the_small_decoders,
+  test_fuzz_socks_requests as fuzz__fuzz_socks_requests,
+  test_fuzz_socks_requests_arriving_in_pieces as fuzz__fuzz_socks_requests_arriving_in_pieces,
+  test_fuzz_end_reason_mapping as fuzz__fuzz_end_reason_mapping,
+} from "./wac/fuzz_test.wac";
+import {
+  test_the_vector_file_holds_one_blinding_case as hsbl__the_vector_file_holds_one_blinding_case,
+  test_a_real_onion_address_decodes_to_the_services_identity_key as hsbl__a_real_onion_address_decodes_to_the_services_identity_key,
+  test_every_address_in_the_specification_decodes as hsbl__every_address_in_the_specification_decodes,
+  test_a_mistyped_address_is_refused as hsbl__a_mistyped_address_is_refused,
+  test_the_blinded_key_matches_the_one_tor_used as hsbl__the_blinded_key_matches_the_one_tor_used,
+  test_the_blinded_key_depends_on_every_input as hsbl__the_blinded_key_depends_on_every_input,
+  test_time_periods_are_computed_as_tor_computes_them as hsbl__time_periods_are_computed_as_tor_computes_them,
+} from "./wac/hsblind_test.wac";
+import {
+  test_the_vector_is_the_shape_the_tests_assume as hsde__the_vector_is_the_shape_the_tests_assume,
+  test_the_outer_descriptor_parses as hsde__the_outer_descriptor_parses,
+  test_both_layers_decrypt_to_what_tor_encrypted as hsde__both_layers_decrypt_to_what_tor_encrypted,
+  test_a_tampered_layer_is_refused as hsde__a_tampered_layer_is_refused,
+  test_the_document_reader_does_not_match_mid_line as hsde__the_document_reader_does_not_match_mid_line,
+  test_the_introduction_points_are_the_ones_tor_published as hsde__the_introduction_points_are_the_ones_tor_published,
+  test_link_specifiers_are_read_without_being_rebuilt as hsde__link_specifiers_are_read_without_being_rebuilt,
+  test_the_cells_have_the_layout_the_spec_fixes as hsde__the_cells_have_the_layout_the_spec_fixes,
+  test_an_introduce1_cell_macs_the_right_span as hsde__an_introduce1_cell_macs_the_right_span,
+} from "./wac/hsdesc_test.wac";
+import {
+  test_the_two_vector_files_agree as hsde2__the_two_vector_files_agree,
+  test_the_intro_count_shows_inside_and_not_outside as hsde2__the_intro_count_shows_inside_and_not_outside,
+  test_the_name_follows_the_period as hsde2__the_name_follows_the_period,
+  test_tor_found_what_was_built as hsde2__tor_found_what_was_built,
+  test_a_directory_would_accept_what_was_built as hsde2__a_directory_would_accept_what_was_built,
+  test_what_cannot_be_built as hsde2__what_cannot_be_built,
+} from "./wac/hsdescbuild_test.wac";
+import {
+  test_the_fixture_is_a_v3_descriptor as hsde3__the_fixture_is_a_v3_descriptor,
+  test_the_document_tor_decoded_is_reproduced as hsde3__the_document_tor_decoded_is_reproduced,
+  test_the_signed_span_is_where_tor_stops as hsde3__the_signed_span_is_where_tor_stops,
+  test_a_layer_round_trips_and_is_shaped_right as hsde3__a_layer_round_trips_and_is_shaped_right,
+  test_bad_inputs_make_no_descriptor as hsde3__bad_inputs_make_no_descriptor,
+  test_the_middle_layer_tor_decrypted_is_reproduced as hsde3__the_middle_layer_tor_decrypted_is_reproduced,
+  test_the_decoy_clients_are_written as hsde3__the_decoy_clients_are_written,
+  test_the_inner_layer_tor_read_is_reproduced as hsde3__the_inner_layer_tor_read_is_reproduced,
+  test_a_bad_introduction_point_is_refused as hsde3__a_bad_introduction_point_is_refused,
+  test_the_chain_from_identity_to_subcredential as hsde3__the_chain_from_identity_to_subcredential,
+} from "./wac/hsdescgen_test.wac";
+import {
+  test_the_capture_can_discriminate as hsdi__the_capture_can_discriminate,
+  test_every_relay_index_is_the_one_tor_computed as hsdi__every_relay_index_is_the_one_tor_computed,
+  test_we_choose_the_directories_tor_chose as hsdi__we_choose_the_directories_tor_chose,
+  test_the_trailing_field_order_differs_between_the_two_indices as hsdi__the_trailing_field_order_differs_between_the_two_indices,
+  test_the_ring_wraps as hsdi__the_ring_wraps,
+  test_index_comparison_is_unsigned as hsdi__index_comparison_is_unsigned,
+  test_the_disaster_srv_is_deterministic as hsdi__the_disaster_srv_is_deterministic,
+  test_the_directories_are_chosen_from_a_parsed_consensus as hsdi__the_directories_are_chosen_from_a_parsed_consensus,
+  test_the_descriptor_path_is_the_one_an_hsdir_answers as hsdi__the_descriptor_path_is_the_one_an_hsdir_answers,
+  test_only_flagged_relays_with_an_identity_are_candidates as hsdi__only_flagged_relays_with_an_identity_are_candidates,
+  test_a_service_publishes_for_the_two_periods_tor_did as hsdi__a_service_publishes_for_the_two_periods_tor_did,
+  test_the_stretch_between_a_period_and_an_srv as hsdi__the_stretch_between_a_period_and_an_srv,
+  test_the_plan_reaches_the_directories_tor_used as hsdi__the_plan_reaches_the_directories_tor_used,
+  test_a_consensus_with_no_srv_falls_back as hsdi__a_consensus_with_no_srv_falls_back,
+} from "./wac/hsdir_test.wac";
+import {
+  test_the_vectors_are_what_the_tests_assume as hsin__the_vectors_are_what_the_tests_assume,
+  test_one_introduction_end_to_end as hsin__one_introduction_end_to_end,
+  test_a_replay_is_refused_before_any_crypto as hsin__a_replay_is_refused_before_any_crypto,
+  test_the_same_cookie_again_is_dropped as hsin__the_same_cookie_again_is_dropped,
+  test_where_the_client_wants_to_meet as hsin__where_the_client_wants_to_meet,
+  test_what_is_refused as hsin__what_is_refused,
+} from "./wac/hsintroduce_test.wac";
+import {
+  test_the_limits_are_tors as hsin2__the_limits_are_tors,
+  test_either_limit_expires_it as hsin2__either_limit_expires_it,
+  test_a_circuit_outranks_the_retry_count as hsin2__a_circuit_outranks_the_retry_count,
+  test_how_many_to_establish as hsin2__how_many_to_establish,
+} from "./wac/hsintropoint_test.wac";
+import {
+  test_the_introduce1_keys_are_tors as hsnt__the_introduce1_keys_are_tors,
+  test_the_service_derives_the_same_introduce_keys as hsnt__the_service_derives_the_same_introduce_keys,
+  test_the_service_refuses_what_it_should as hsnt__the_service_refuses_what_it_should,
+  test_the_rendezvous_keys_are_tors as hsnt__the_rendezvous_keys_are_tors,
+  test_the_service_derives_the_same_rendezvous_keys as hsnt__the_service_derives_the_same_rendezvous_keys,
+  test_the_service_rendezvous_refuses_what_it_should as hsnt__the_service_rendezvous_refuses_what_it_should,
+  test_every_input_changes_the_keys as hsnt__every_input_changes_the_keys,
+  test_a_degenerate_key_is_refused as hsnt__a_degenerate_key_is_refused,
+  test_the_mac_binds_its_key_length as hsnt__the_mac_binds_its_key_length,
+  test_the_rendezvous_hop_keys_are_a_full_hop as hsnt__the_rendezvous_hop_keys_are_a_full_hop,
+} from "./wac/hsntor_test.wac";
+import {
+  test_the_vector_is_about_this_descriptor as hspu__the_vector_is_about_this_descriptor,
+  test_the_fetch_name_is_the_one_the_directory_chose as hspu__the_fetch_name_is_the_one_the_directory_chose,
+  test_the_upload_is_shaped_like_tors as hspu__the_upload_is_shaped_like_tors,
+  test_a_publish_target_is_recognised as hspu__a_publish_target_is_recognised,
+  test_what_was_stored_is_what_is_served as hspu__what_was_stored_is_what_is_served,
+  test_the_publish_answers_are_tors as hspu__the_publish_answers_are_tors,
+} from "./wac/hspublish_test.wac";
+import {
+  test_a_usable_rendezvous_point as hsre__a_usable_rendezvous_point,
+  test_a_stranger_cannot_choose_a_private_address as hsre__a_stranger_cannot_choose_a_private_address,
+  test_what_is_required as hsre__what_is_required,
+  test_which_addresses_are_allowed as hsre__which_addresses_are_allowed,
+} from "./wac/hsrendpoint_test.wac";
+import {
+  test_the_second_time_is_a_replay as hsre2__the_second_time_is_a_replay,
+  test_the_two_caches_forget_differently as hsre2__the_two_caches_forget_differently,
+  test_a_replay_refreshes_what_it_hit as hsre2__a_replay_refreshes_what_it_hit,
+  test_the_cache_is_bounded as hsre2__the_cache_is_bounded,
+} from "./wac/hsreplay_test.wac";
+import {
+  test_the_fixture_can_discriminate as hsse__the_fixture_can_discriminate,
+  test_the_cell_tor_accepted_is_reproduced as hsse__the_cell_tor_accepted_is_reproduced,
+  test_the_spans_are_where_tor_says as hsse__the_spans_are_where_tor_says,
+  test_the_mac_is_keyed_with_the_circuit as hsse__the_mac_is_keyed_with_the_circuit,
+  test_the_signature_is_over_the_prefixed_span as hsse__the_signature_is_over_the_prefixed_span,
+  test_bad_inputs_make_no_cell as hsse__bad_inputs_make_no_cell,
+  test_the_relay_accepts_what_tor_built as hsse__the_relay_accepts_what_tor_built,
+} from "./wac/hsservice_test.wac";
+import {
+  test_the_controls_are_what_the_tests_assume as hsst__the_controls_are_what_the_tests_assume,
+  test_the_descriptor_tor_stored_is_stored as hsst__the_descriptor_tor_stored_is_stored,
+  test_every_descriptor_tor_refused_is_refused as hsst__every_descriptor_tor_refused_is_refused,
+  test_the_reasons_are_the_right_ones as hsst__the_reasons_are_the_right_ones,
+  test_the_limits_are_tors as hsst__the_limits_are_tors,
+  test_the_certificate_stands_on_its_own_key as hsst__the_certificate_stands_on_its_own_key,
+} from "./wac/hsstore_test.wac";
+import {
+  test_the_two_ends_agree as hsup__the_two_ends_agree,
+  test_a_rejection_is_not_a_surprise as hsup__a_rejection_is_not_a_surprise,
+  test_one_rejection_indicts_the_descriptor as hsup__one_rejection_indicts_the_descriptor,
+} from "./wac/hsupload_test.wac";
+import {
+  test_the_cells_are_tors_and_are_padded as intr__the_cells_are_tors_and_are_padded,
+  test_a_cell_tor_built_is_understood as intr__a_cell_tor_built_is_understood,
+  test_the_link_specifiers_stop_before_the_padding as intr__the_link_specifiers_stop_before_the_padding,
+  test_a_tampered_cell_is_refused as intr__a_tampered_cell_is_refused,
+  test_a_malformed_cell_is_refused as intr__a_malformed_cell_is_refused,
+  test_the_rendezvous1_cell_is_cookie_then_handshake as intr__the_rendezvous1_cell_is_cookie_then_handshake,
+} from "./wac/introduce_test.wac";
+import {
+  test_the_fixtures_are_what_the_tests_assume as intr2__the_fixtures_are_what_the_tests_assume,
+  test_a_circuit_is_claimed_and_found as intr2__a_circuit_is_claimed_and_found,
+  test_what_a_relay_refuses as intr2__what_a_relay_refuses,
+  test_an_introduction_is_routed_or_refused as intr2__an_introduction_is_routed_or_refused,
+  test_what_goes_away as intr2__what_goes_away,
+  test_the_ack_body as intr2__the_ack_body,
+} from "./wac/introrelay_test.wac";
+import {
+  test_the_vectors_can_discriminate as micr__the_vectors_can_discriminate,
+  test_the_bytes_tor_accepted as micr__the_bytes_tor_accepted,
+  test_the_digest_is_the_one_the_m_line_names as micr__the_digest_is_the_one_the_m_line_names,
+  test_a_corrupted_microdescriptor_gets_a_different_digest as micr__a_corrupted_microdescriptor_gets_a_different_digest,
+  test_the_default_policy_writes_no_p_line as micr__the_default_policy_writes_no_p_line,
+  test_an_unusable_descriptor_makes_no_microdescriptor as micr__an_unusable_descriptor_makes_no_microdescriptor,
+  test_a_run_of_microdescriptors_splits_back_apart as micr__a_run_of_microdescriptors_splits_back_apart,
+} from "./wac/microdesc_test.wac";
+import {
+  test_a_network_comes_up_work_runs_and_everything_stops as netw__a_network_comes_up_work_runs_and_everything_stops,
+  test_a_node_that_never_announces_itself_fails_the_run as netw__a_node_that_never_announces_itself_fails_the_run,
+  test_the_exit_code_of_the_work_is_the_exit_code_of_the_run as netw__the_exit_code_of_the_work_is_the_exit_code_of_the_run,
+  test_a_description_with_nothing_to_run_is_a_failure as netw__a_description_with_nothing_to_run_is_a_failure,
+  test_a_bundle_that_is_not_there_is_reported_against_the_node as netw__a_bundle_that_is_not_there_is_reported_against_the_node,
+  test_a_nodes_ready_line_supplies_an_argument_to_the_work as netw__a_nodes_ready_line_supplies_an_argument_to_the_work,
+  test_a_reference_to_a_node_not_in_the_description_fails as netw__a_reference_to_a_node_not_in_the_description_fails,
+  test_braces_that_are_not_references_are_left_alone as netw__braces_that_are_not_references_are_left_alone,
+  test_wait_holds_the_next_step_until_a_node_reaches_a_later_state as netw__wait_holds_the_next_step_until_a_node_reaches_a_later_state,
+  test_a_wait_for_something_a_node_never_says_fails as netw__a_wait_for_something_a_node_never_says_fails,
+  test_a_wait_naming_a_node_that_does_not_exist_fails as netw__a_wait_naming_a_node_that_does_not_exist_fails,
+  test_a_wait_captures_even_when_the_node_had_already_said_it as netw__a_wait_captures_even_when_the_node_had_already_said_it,
+  test_a_node_after_a_run_starts_after_it as netw__a_node_after_a_run_starts_after_it,
+} from "./wac/network_test.wac";
+import {
+  test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from as netw2__a_tor_network_with_no_c_in_it_stood_up_and_fetched_from,
+  test_an_onion_service_published_on_that_network_and_a_page_fetched_from_it as netw2__an_onion_service_published_on_that_network_and_a_page_fetched_from_it,
+} from "./wac/network_tor_test.wac";
+import {
+  test_both_sides_derive_the_same_keys as ntor__both_sides_derive_the_same_keys,
+  test_the_relay_must_prove_it_holds_the_onion_key as ntor__the_relay_must_prove_it_holds_the_onion_key,
+  test_the_identity_is_bound_into_the_keys as ntor__the_identity_is_bound_into_the_keys,
+  test_every_input_moves_the_key_material as ntor__every_input_moves_the_key_material,
+  test_a_small_order_reply_is_refused as ntor__a_small_order_reply_is_refused,
+  test_agrees_with_tors_own_implementation as ntor__agrees_with_tors_own_implementation,
+  test_a_relay_cannot_choose_the_length_of_its_own_reply as ntor__a_relay_cannot_choose_the_length_of_its_own_reply,
+} from "./wac/ntor_test.wac";
+import {
+  test_the_distribution_is_exactly_proportional as path__the_distribution_is_exactly_proportional,
+  test_a_zero_weight_relay_is_never_returned as path__a_zero_weight_relay_is_never_returned,
+  test_no_eligible_relay_is_reported_not_papered_over as path__no_eligible_relay_is_reported_not_papered_over,
+  test_the_flag_combination_picks_the_right_weight as path__the_flag_combination_picks_the_right_weight,
+  test_weighting_survives_a_bandwidth_that_overflows_32_bits as path__weighting_survives_a_bandwidth_that_overflows_32_bits,
+  test_weighting_scales_by_the_position as path__weighting_scales_by_the_position,
+  test_two_relays_in_one_slash_sixteen_cannot_share_a_path as path__two_relays_in_one_slash_sixteen_cannot_share_a_path,
+  test_a_relay_cannot_appear_twice_in_one_path as path__a_relay_cannot_appear_twice_in_one_path,
+  test_family_members_cannot_share_a_path as path__family_members_cannot_share_a_path,
+  test_a_one_sided_family_entry_still_excludes as path__a_one_sided_family_entry_still_excludes,
+  test_choose_excludes_what_the_path_forbids as path__choose_excludes_what_the_path_forbids,
+  test_a_fully_constrained_position_reports_no_candidate as path__a_fully_constrained_position_reports_no_candidate,
+  test_an_accept_policy_permits_only_what_it_lists as path__an_accept_policy_permits_only_what_it_lists,
+  test_a_reject_policy_permits_everything_it_does_not_list as path__a_reject_policy_permits_everything_it_does_not_list,
+  test_the_degenerate_policies_are_the_right_way_round as path__the_degenerate_policies_are_the_right_way_round,
+  test_bandwidth_weights_are_read_or_defaulted as path__bandwidth_weights_are_read_or_defaulted,
+  test_a_family_claim_counts_only_when_mutual as path__a_family_claim_counts_only_when_mutual,
+  test_a_family_named_by_fingerprint_resolves as path__a_family_named_by_fingerprint_resolves,
+  test_a_relay_must_be_usable_and_right_for_the_position as path__a_relay_must_be_usable_and_right_for_the_position,
+  test_pick_respects_flags_policy_and_the_path as path__pick_respects_flags_policy_and_the_path,
+  test_wge_is_zero_because_nobody_publishes_it as path__wge_is_zero_because_nobody_publishes_it,
+  test_exits_anything_is_not_eligible_with_port_zero as path__exits_anything_is_not_eligible_with_port_zero,
+} from "./wac/pathsel_test.wac";
+import {
+  test_two_isolation_keys_never_share_a_circuit as pool__two_isolation_keys_never_share_a_circuit,
+  test_a_circuit_stops_taking_streams_at_max_dirtiness as pool__a_circuit_stops_taking_streams_at_max_dirtiness,
+  test_a_clean_circuit_never_expires as pool__a_clean_circuit_never_expires,
+  test_a_broken_circuit_is_never_handed_out as pool__a_broken_circuit_is_never_handed_out,
+  test_dirty_circuits_are_used_before_clean_ones_oldest_first as pool__dirty_circuits_are_used_before_clean_ones_oldest_first,
+  test_a_busy_circuit_is_not_retired_under_its_stream as pool__a_busy_circuit_is_not_retired_under_its_stream,
+  test_a_broken_circuit_is_retired_even_while_busy as pool__a_broken_circuit_is_retired_even_while_busy,
+} from "./wac/pool_test.wac";
+import {
+  test_a_cell_arrives_at_the_other_end as rela__a_cell_arrives_at_the_other_end,
+  test_two_identical_cells_differ_on_the_wire as rela__two_identical_cells_differ_on_the_wire,
+  test_a_long_run_of_cells_stays_in_step as rela__a_long_run_of_cells_stays_in_step,
+  test_the_digest_changes_even_when_nothing_else_does as rela__the_digest_changes_even_when_nothing_else_does,
+  test_a_tampered_cell_is_refused_and_costs_nothing as rela__a_tampered_cell_is_refused_and_costs_nothing,
+  test_recognized_is_checked_before_the_digest as rela__recognized_is_checked_before_the_digest,
+  test_a_full_payload_fits_and_one_more_byte_does_not as rela__a_full_payload_fits_and_one_more_byte_does_not,
+  test_a_begin_body_is_a_string_and_four_zeros as rela__a_begin_body_is_a_string_and_four_zeros,
+  test_an_extend2_body_has_the_layout_the_spec_states as rela__an_extend2_body_has_the_layout_the_spec_states,
+  test_an_extended2_reply_is_cut_at_its_length as rela__an_extended2_reply_is_cut_at_its_length,
+  test_a_request_longer_than_a_cell_is_split as rela__a_request_longer_than_a_cell_is_split,
+  test_a_rendezvous_hop_carries_cells_both_ways as rela__a_rendezvous_hop_carries_cells_both_ways,
+} from "./wac/relay_test.wac";
+import {
+  test_every_certificate_tor_made_verifies as rela2__every_certificate_tor_made_verifies,
+  test_a_certificate_we_build_is_byte_for_byte_reproducible as rela2__a_certificate_we_build_is_byte_for_byte_reproducible,
+  test_a_link_certificate_names_the_tls_certificate as rela2__a_link_certificate_names_the_tls_certificate,
+  test_the_rsa_crosscert_has_its_own_shape as rela2__the_rsa_crosscert_has_its_own_shape,
+  test_a_certs_cell_carries_one_of_each as rela2__a_certs_cell_carries_one_of_each,
+  test_the_onion_key_crosscert_binds_both_identities as rela2__the_onion_key_crosscert_binds_both_identities,
+} from "./wac/relaycert_test.wac";
+import {
+  test_a_client_and_this_relay_agree_on_a_circuit as rela3__a_client_and_this_relay_agree_on_a_circuit,
+  test_the_relays_key_material_is_the_other_way_round as rela3__the_relays_key_material_is_the_other_way_round,
+  test_a_middle_relay_forwards_what_is_not_for_it as rela3__a_middle_relay_forwards_what_is_not_for_it,
+  test_a_create2_that_is_not_ntor_is_refused as rela3__a_create2_that_is_not_ntor_is_refused,
+  test_a_destroy_cell_says_why as rela3__a_destroy_cell_says_why,
+  test_an_extend2_names_a_next_hop_and_carries_a_handshake_untouched as rela3__an_extend2_names_a_next_hop_and_carries_a_handshake_untouched,
+  test_an_extend2_that_is_malformed_is_refused as rela3__an_extend2_that_is_malformed_is_refused,
+  test_create_fast_agrees_with_kdf_tor as rela3__create_fast_agrees_with_kdf_tor,
+  test_a_begin_says_where_to_connect as rela3__a_begin_says_where_to_connect,
+  test_both_ends_agree_about_the_circuit_nonce as rela3__both_ends_agree_about_the_circuit_nonce,
+  test_a_relay_will_not_extend_to_itself as rela3__a_relay_will_not_extend_to_itself,
+} from "./wac/relaycircuit_test.wac";
+import {
+  test_the_reply_is_four_cells_in_the_order_the_spec_fixes as rela4__the_reply_is_four_cells_in_the_order_the_spec_fixes,
+  test_a_constant_challenge_is_refused as rela4__a_constant_challenge_is_refused,
+  test_a_relays_netinfo_states_what_a_clients_does_not as rela4__a_relays_netinfo_states_what_a_clients_does_not,
+  test_the_version_we_pick_is_the_highest_in_common as rela4__the_version_we_pick_is_the_highest_in_common,
+  test_the_initiators_netinfo_tells_us_our_own_address as rela4__the_initiators_netinfo_tells_us_our_own_address,
+} from "./wac/relaylink_test.wac";
+import {
+  test_connections_alone_never_reach_the_ring as rela5__connections_alone_never_reach_the_ring,
+  test_the_ring_is_never_exceeded as rela5__the_ring_is_never_exceeded,
+  test_it_answers_yes_then_no_and_stays_no as rela5__it_answers_yes_then_no_and_stays_no,
+  test_the_worst_case_the_caps_permit_is_still_far_past_the_ring as rela5__the_worst_case_the_caps_permit_is_still_far_past_the_ring,
+} from "./wac/relayring_test.wac";
+import {
+  test_a_cookie_joins_two_circuits as rend__a_cookie_joins_two_circuits,
+  test_a_duplicate_cookie_is_refused as rend__a_duplicate_cookie_is_refused,
+  test_the_lengths_are_checked_differently as rend__the_lengths_are_checked_differently,
+  test_refusals_and_lifetimes as rend__refusals_and_lifetimes,
+  test_the_right_one_is_joined as rend__the_right_one_is_joined,
+} from "./wac/rendrelay_test.wac";
+import {
+  test_the_fixture_covers_both_sign_bits as rout__the_fixture_covers_both_sign_bits,
+  test_the_conversion_matches_the_certificates_tor_signed as rout__the_conversion_matches_the_certificates_tor_signed,
+  test_the_crosscert_body_is_reproduced_byte_for_byte as rout__the_crosscert_body_is_reproduced_byte_for_byte,
+  test_the_secret_derivation_is_tors as rout__the_secret_derivation_is_tors,
+  test_the_document_digests_are_tors as rout__the_document_digests_are_tors,
+  test_a_digest_span_stops_where_tor_stops as rout__a_digest_span_stops_where_tor_stops,
+  test_a_pem_block_is_wrapped_the_way_tor_wraps_one as rout__a_pem_block_is_wrapped_the_way_tor_wraps_one,
+  test_the_field_formats_are_tors as rout__the_field_formats_are_tors,
+  test_the_descriptor_tor_accepted_is_reproduced as rout__the_descriptor_tor_accepted_is_reproduced,
+} from "./wac/routerdesc_test.wac";
+import {
+  test_addresses_and_names_parse as sock__addresses_and_names_parse,
+  test_every_short_prefix_says_wait as sock__every_short_prefix_says_wait,
+  test_unusable_address_types_are_refused_not_awaited as sock__unusable_address_types_are_refused_not_awaited,
+  test_end_reasons_map_to_what_a_person_can_act_on as sock__end_reasons_map_to_what_a_person_can_act_on,
+  test_the_reply_is_ten_bytes_of_socks5 as sock__the_reply_is_ten_bytes_of_socks5,
+} from "./wac/socks5_test.wac";
+import {
+  test_the_signed_span_is_tors as vote__the_signed_span_is_tors,
+  test_the_entries_are_ordered_by_identity_digest as vote__the_entries_are_ordered_by_identity_digest,
+  test_the_order_is_on_bytes_not_on_the_base64 as vote__the_order_is_on_bytes_not_on_the_base64,
+  test_the_vote_tor_accepted_is_reproduced as vote__the_vote_tor_accepted_is_reproduced,
+} from "./wac/vote_test.wac";
+import {
+  test_the_r_line_is_the_one_tors_authority_wrote as vote2__the_r_line_is_the_one_tors_authority_wrote,
+  test_the_r_line_skips_the_descriptors_dead_field as vote2__the_r_line_skips_the_descriptors_dead_field,
+} from "./wac/votestatus_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (cons__a_malformed_consensus_is_refused_without_trapping(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_malformed_consensus_is_refused_without_trapping");
+    bad = bad + 1;
+  }
+  if (ntor__a_relay_cannot_choose_the_length_of_its_own_reply().len() > 0) {
+    core.warn("error: FAILED ntor_test test_a_relay_cannot_choose_the_length_of_its_own_reply");
+    bad = bad + 1;
+  }
+  if (auth__the_certificate_tor_accepted_is_reproduced(core, cli).len() > 0) {
+    core.warn("error: FAILED authcert_test test_the_certificate_tor_accepted_is_reproduced");
+    bad = bad + 1;
+  }
+  if (auth__each_signature_was_made_by_the_key_that_should_have_made_it(core, cli).len() > 0) {
+    core.warn("error: FAILED authcert_test test_each_signature_was_made_by_the_key_that_should_have_made_it");
+    bad = bad + 1;
+  }
+  if (blin__the_vectors_are_what_the_tests_assume(core, cli).len() > 0) {
+    core.warn("error: FAILED blind_test test_the_vectors_are_what_the_tests_assume");
+    bad = bad + 1;
+  }
+  if (blin__the_blinded_secret_is_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED blind_test test_the_blinded_secret_is_tors");
+    bad = bad + 1;
+  }
+  if (blin__the_public_half_agrees_with_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED blind_test test_the_public_half_agrees_with_tors");
+    bad = bad + 1;
+  }
+  if (blin__the_blinded_key_signs(core, cli).len() > 0) {
+    core.warn("error: FAILED blind_test test_the_blinded_key_signs");
+    bad = bad + 1;
+  }
+  if (blin__the_identity_key_is_the_seeds(core, cli).len() > 0) {
+    core.warn("error: FAILED blind_test test_the_identity_key_is_the_seeds");
+    bad = bad + 1;
+  }
+  if (blin__blinding_refuses_what_it_should(core, cli).len() > 0) {
+    core.warn("error: FAILED blind_test test_blinding_refuses_what_it_should");
+    bad = bad + 1;
+  }
+  if (capt__each_capture_tool_writes_the_vectors_that_are_committed(core, cli).len() > 0) {
+    core.warn("error: FAILED capturetools_test test_each_capture_tool_writes_the_vectors_that_are_committed");
+    bad = bad + 1;
+  }
+  if (cell__a_circuit_id_is_never_read_as_a_command().len() > 0) {
+    core.warn("error: FAILED cell_test test_a_circuit_id_is_never_read_as_a_command");
+    bad = bad + 1;
+  }
+  if (cell__a_fixed_cell_is_always_514_bytes().len() > 0) {
+    core.warn("error: FAILED cell_test test_a_fixed_cell_is_always_514_bytes");
+    bad = bad + 1;
+  }
+  if (cell__versions_uses_a_two_byte_circuit_id().len() > 0) {
+    core.warn("error: FAILED cell_test test_versions_uses_a_two_byte_circuit_id");
+    bad = bad + 1;
+  }
+  if (cell__version_negotiation_takes_the_highest_common().len() > 0) {
+    core.warn("error: FAILED cell_test test_version_negotiation_takes_the_highest_common");
+    bad = bad + 1;
+  }
+  if (cell__variable_cells_carry_their_length().len() > 0) {
+    core.warn("error: FAILED cell_test test_variable_cells_carry_their_length");
+    bad = bad + 1;
+  }
+  if (cell__a_partial_cell_is_reported_as_incomplete().len() > 0) {
+    core.warn("error: FAILED cell_test test_a_partial_cell_is_reported_as_incomplete");
+    bad = bad + 1;
+  }
+  if (cell__cells_can_be_read_back_to_back_from_a_stream().len() > 0) {
+    core.warn("error: FAILED cell_test test_cells_can_be_read_back_to_back_from_a_stream");
+    bad = bad + 1;
+  }
+  if (cell__create2_carries_the_handshake_and_created2_gives_it_back().len() > 0) {
+    core.warn("error: FAILED cell_test test_create2_carries_the_handshake_and_created2_gives_it_back");
+    bad = bad + 1;
+  }
+  if (cell__netinfo_tells_the_relay_nothing_about_us().len() > 0) {
+    core.warn("error: FAILED cell_test test_netinfo_tells_the_relay_nothing_about_us");
+    bad = bad + 1;
+  }
+  if (cell__a_padding_negotiate_has_the_layout_the_spec_states().len() > 0) {
+    core.warn("error: FAILED cell_test test_a_padding_negotiate_has_the_layout_the_spec_states");
+    bad = bad + 1;
+  }
+  if (cell__an_inverted_padding_range_is_refused_here().len() > 0) {
+    core.warn("error: FAILED cell_test test_an_inverted_padding_range_is_refused_here");
+    bad = bad + 1;
+  }
+  if (cell__a_padding_cell_is_empty_and_full_length().len() > 0) {
+    core.warn("error: FAILED cell_test test_a_padding_cell_is_empty_and_full_length");
+    bad = bad + 1;
+  }
+  if (cell__the_padding_range_is_a_floor_not_a_setting().len() > 0) {
+    core.warn("error: FAILED cell_test test_the_padding_range_is_a_floor_not_a_setting");
+    bad = bad + 1;
+  }
+  if (circ__a_stream_carries_data_both_ways().len() > 0) {
+    core.warn("error: FAILED circuit_test test_a_stream_carries_data_both_ways");
+    bad = bad + 1;
+  }
+  if (circ__three_layers_go_on_and_come_off().len() > 0) {
+    core.warn("error: FAILED circuit_test test_three_layers_go_on_and_come_off");
+    bad = bad + 1;
+  }
+  if (circ__a_cell_no_hop_recognises_kills_the_circuit().len() > 0) {
+    core.warn("error: FAILED circuit_test test_a_cell_no_hop_recognises_kills_the_circuit");
+    bad = bad + 1;
+  }
+  if (circ__a_destroy_is_reported_rather_than_decrypted().len() > 0) {
+    core.warn("error: FAILED circuit_test test_a_destroy_is_reported_rather_than_decrypted");
+    bad = bad + 1;
+  }
+  if (circ__a_sendme_arrives_after_a_hundred_data_cells().len() > 0) {
+    core.warn("error: FAILED circuit_test test_a_sendme_arrives_after_a_hundred_data_cells");
+    bad = bad + 1;
+  }
+  if (circ__the_windows_stop_a_sender_that_gets_no_credit().len() > 0) {
+    core.warn("error: FAILED circuit_test test_the_windows_stop_a_sender_that_gets_no_credit");
+    bad = bad + 1;
+  }
+  if (circ__a_hop_cannot_crash_us_with_a_bad_length_field().len() > 0) {
+    core.warn("error: FAILED circuit_test test_a_hop_cannot_crash_us_with_a_bad_length_field");
+    bad = bad + 1;
+  }
+  if (circ__the_circuit_nonce_follows_the_last_hop().len() > 0) {
+    core.warn("error: FAILED circuit_test test_the_circuit_nonce_follows_the_last_hop");
+    bad = bad + 1;
+  }
+  if (cons__the_signed_portion_ends_at_the_token().len() > 0) {
+    core.warn("error: FAILED consensus_test test_the_signed_portion_ends_at_the_token");
+    bad = bad + 1;
+  }
+  if (cons__the_digest_covers_the_signed_portion_only().len() > 0) {
+    core.warn("error: FAILED consensus_test test_the_digest_covers_the_signed_portion_only");
+    bad = bad + 1;
+  }
+  if (cons__a_public_key_is_read_out_of_its_der(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_public_key_is_read_out_of_its_der");
+    bad = bad + 1;
+  }
+  if (cons__a_genuine_signature_verifies(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_genuine_signature_verifies");
+    bad = bad + 1;
+  }
+  if (cons__everything_that_must_be_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_everything_that_must_be_refused");
+    bad = bad + 1;
+  }
+  if (cons__a_signature_from_the_wrong_key_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_signature_from_the_wrong_key_is_refused");
+    bad = bad + 1;
+  }
+  if (cons__a_fingerprint_is_the_sha1_of_the_key(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_fingerprint_is_the_sha1_of_the_key");
+    bad = bad + 1;
+  }
+  if (cons__the_chain_accepts_a_genuine_consensus(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_the_chain_accepts_a_genuine_consensus");
+    bad = bad + 1;
+  }
+  if (cons__everything_the_chain_must_refuse(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_everything_the_chain_must_refuse");
+    bad = bad + 1;
+  }
+  if (cons__a_malformed_directory_signature_line_is_not_counted(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_malformed_directory_signature_line_is_not_counted");
+    bad = bad + 1;
+  }
+  if (cons__a_signing_key_its_identity_never_certified(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_signing_key_its_identity_never_certified");
+    bad = bad + 1;
+  }
+  if (cons__a_signature_names_which_signing_key_made_it(core, cli).len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_signature_names_which_signing_key_made_it");
+    bad = bad + 1;
+  }
+  if (cons__a_utc_timestamp_is_not_read_as_local().len() > 0) {
+    core.warn("error: FAILED consensus_test test_a_utc_timestamp_is_not_read_as_local");
+    bad = bad + 1;
+  }
+  if (cons2__the_consensus_tor_found_wellformed_is_reproduced(core, cli).len() > 0) {
+    core.warn("error: FAILED consensusgen_test test_the_consensus_tor_found_wellformed_is_reproduced");
+    bad = bad + 1;
+  }
+  if (cons2__the_signature_is_over_the_span_and_by_the_signing_key(core, cli).len() > 0) {
+    core.warn("error: FAILED consensusgen_test test_the_signature_is_over_the_span_and_by_the_signing_key");
+    bad = bad + 1;
+  }
+  if (cons2__the_microdesc_flavour_differs_from_the_plain_one_in_four_stated_ways(core, cli).len() > 0) {
+    core.warn("error: FAILED consensusgen_test test_the_microdesc_flavour_differs_from_the_plain_one_in_four_stated_ways");
+    bad = bad + 1;
+  }
+  if (ctor__a_c_tor_bootstraps_from_our_authority_and_through_our_relays(core, cli).len() > 0) {
+    core.warn("error: FAILED ctor_live_test test_a_c_tor_bootstraps_from_our_authority_and_through_our_relays");
+    bad = bad + 1;
+  }
+  if (ctor__a_c_tor_carries_a_stream_through_our_relays_both_directions(core, cli).len() > 0) {
+    core.warn("error: FAILED ctor_live_test test_a_c_tor_carries_a_stream_through_our_relays_both_directions");
+    bad = bad + 1;
+  }
+  if (dirc__request_paths().len() > 0) {
+    core.warn("error: FAILED dirclient_test test_request_paths");
+    bad = bad + 1;
+  }
+  if (dirc__valid_until_is_read_as_utc().len() > 0) {
+    core.warn("error: FAILED dirclient_test test_valid_until_is_read_as_utc");
+    bad = bad + 1;
+  }
+  if (dirc__the_refresh_window_opens_at_fresh_until_and_keeps_slack().len() > 0) {
+    core.warn("error: FAILED dirclient_test test_the_refresh_window_opens_at_fresh_until_and_keeps_slack");
+    bad = bad + 1;
+  }
+  if (dirc__the_refresh_time_is_spread_across_the_window().len() > 0) {
+    core.warn("error: FAILED dirclient_test test_the_refresh_time_is_spread_across_the_window");
+    bad = bad + 1;
+  }
+  if (dirc__a_consensus_with_no_schedule_gets_no_refresh_time().len() > 0) {
+    core.warn("error: FAILED dirclient_test test_a_consensus_with_no_schedule_gets_no_refresh_time");
+    bad = bad + 1;
+  }
+  if (dirc__a_short_lived_consensus_still_lands_inside_its_life().len() > 0) {
+    core.warn("error: FAILED dirclient_test test_a_short_lived_consensus_still_lands_inside_its_life");
+    bad = bad + 1;
+  }
+  if (dirc__an_http_response_splits_at_the_blank_line().len() > 0) {
+    core.warn("error: FAILED dirclient_test test_an_http_response_splits_at_the_blank_line");
+    bad = bad + 1;
+  }
+  if (dirc__a_body_we_did_not_ask_to_be_compressed_is_noticed().len() > 0) {
+    core.warn("error: FAILED dirclient_test test_a_body_we_did_not_ask_to_be_compressed_is_noticed");
+    bad = bad + 1;
+  }
+  if (dirc__microdescriptors_are_batched_so_a_url_stays_answerable().len() > 0) {
+    core.warn("error: FAILED dirclient_test test_microdescriptors_are_batched_so_a_url_stays_answerable");
+    bad = bad + 1;
+  }
+  if (dird__dird_publishes_and_serves_an_onion_service_descriptor(core, cli).len() > 0) {
+    core.warn("error: FAILED dird_test test_dird_publishes_and_serves_an_onion_service_descriptor");
+    bad = bad + 1;
+  }
+  if (dire__relays_match_the_typescript_parser().len() > 0) {
+    core.warn("error: FAILED directory_test test_relays_match_the_typescript_parser");
+    bad = bad + 1;
+  }
+  if (dire__onion_keys_and_policies_match().len() > 0) {
+    core.warn("error: FAILED directory_test test_onion_keys_and_policies_match");
+    bad = bad + 1;
+  }
+  if (dire__a_digest_that_does_not_match_attaches_nothing().len() > 0) {
+    core.warn("error: FAILED directory_test test_a_digest_that_does_not_match_attaches_nothing");
+    bad = bad + 1;
+  }
+  if (dire__policy_summaries().len() > 0) {
+    core.warn("error: FAILED directory_test test_policy_summaries");
+    bad = bad + 1;
+  }
+  if (dire__an_integer_field_is_not_lenient().len() > 0) {
+    core.warn("error: FAILED directory_test test_an_integer_field_is_not_lenient");
+    bad = bad + 1;
+  }
+  if (dirs__the_targets_a_bootstrapping_tor_builds(core, cli).len() > 0) {
+    core.warn("error: FAILED dirserve_test test_the_targets_a_bootstrapping_tor_builds");
+    bad = bad + 1;
+  }
+  if (dirs__microdescriptors_are_batched_with_a_hyphen(core, cli).len() > 0) {
+    core.warn("error: FAILED dirserve_test test_microdescriptors_are_batched_with_a_hyphen");
+    bad = bad + 1;
+  }
+  if (dirs__the_compression_suffix_is_a_request_not_a_name(core, cli).len() > 0) {
+    core.warn("error: FAILED dirserve_test test_the_compression_suffix_is_a_request_not_a_name");
+    bad = bad + 1;
+  }
+  if (dirs__a_dir_source_line_a_stranger_wrote().len() > 0) {
+    core.warn("error: FAILED dirserve_test test_a_dir_source_line_a_stranger_wrote");
+    bad = bad + 1;
+  }
+  if (dirs__the_response_is_framed_for_a_client(core, cli).len() > 0) {
+    core.warn("error: FAILED dirserve_test test_the_response_is_framed_for_a_client");
+    bad = bad + 1;
+  }
+  if (dirs2__the_sequences_can_show_the_rule(core, cli).len() > 0) {
+    core.warn("error: FAILED dirstep_test test_the_sequences_can_show_the_rule");
+    bad = bad + 1;
+  }
+  if (dirs2__nothing_is_answered_before_the_last_byte(core, cli).len() > 0) {
+    core.warn("error: FAILED dirstep_test test_nothing_is_answered_before_the_last_byte");
+    bad = bad + 1;
+  }
+  if (dirs2__a_refused_upload_files_nothing(core, cli).len() > 0) {
+    core.warn("error: FAILED dirstep_test test_a_refused_upload_files_nothing");
+    bad = bad + 1;
+  }
+  if (dirs2__the_other_routes_still_answer(core, cli).len() > 0) {
+    core.warn("error: FAILED dirstep_test test_the_other_routes_still_answer");
+    bad = bad + 1;
+  }
+  if (dirs2__republishing_replaces(core, cli).len() > 0) {
+    core.warn("error: FAILED dirstep_test test_republishing_replaces");
+    bad = bad + 1;
+  }
+  if (dirs2__a_second_upload_follows_tors_rule(core, cli).len() > 0) {
+    core.warn("error: FAILED dirstep_test test_a_second_upload_follows_tors_rule");
+    bad = bad + 1;
+  }
+  if (dirs2__another_services_revision_does_not_block_this_one(core, cli).len() > 0) {
+    core.warn("error: FAILED dirstep_test test_another_services_revision_does_not_block_this_one");
+    bad = bad + 1;
+  }
+  if (dirs2__the_revision_comes_from_the_document(core, cli).len() > 0) {
+    core.warn("error: FAILED dirstep_test test_the_revision_comes_from_the_document");
+    bad = bad + 1;
+  }
+  if (entr__every_entry_file_compiles(core, cli).len() > 0) {
+    core.warn("error: FAILED entries_test test_every_entry_file_compiles");
+    bad = bad + 1;
+  }
+  if (fuzz__cell_framing_survives_arbitrary_bytes().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_cell_framing_survives_arbitrary_bytes");
+    bad = bad + 1;
+  }
+  if (fuzz__cell_framing_survives_truncation_at_every_offset().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_cell_framing_survives_truncation_at_every_offset");
+    bad = bad + 1;
+  }
+  if (fuzz__a_relay_cell_body_with_a_hostile_length().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_a_relay_cell_body_with_a_hostile_length");
+    bad = bad + 1;
+  }
+  if (fuzz__the_variable_length_bodies().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_the_variable_length_bodies");
+    bad = bad + 1;
+  }
+  if (fuzz__directory_documents_survive_arbitrary_text().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_directory_documents_survive_arbitrary_text");
+    bad = bad + 1;
+  }
+  if (fuzz__a_consensus_shaped_document_with_wrong_fields().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_a_consensus_shaped_document_with_wrong_fields");
+    bad = bad + 1;
+  }
+  if (fuzz__http_responses_from_a_hostile_cache().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_http_responses_from_a_hostile_cache");
+    bad = bad + 1;
+  }
+  if (fuzz__the_small_decoders().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_the_small_decoders");
+    bad = bad + 1;
+  }
+  if (fuzz__fuzz_socks_requests().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_fuzz_socks_requests");
+    bad = bad + 1;
+  }
+  if (fuzz__fuzz_socks_requests_arriving_in_pieces().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_fuzz_socks_requests_arriving_in_pieces");
+    bad = bad + 1;
+  }
+  if (fuzz__fuzz_end_reason_mapping().len() > 0) {
+    core.warn("error: FAILED fuzz_test test_fuzz_end_reason_mapping");
+    bad = bad + 1;
+  }
+  if (hsbl__the_vector_file_holds_one_blinding_case(core, cli).len() > 0) {
+    core.warn("error: FAILED hsblind_test test_the_vector_file_holds_one_blinding_case");
+    bad = bad + 1;
+  }
+  if (hsbl__a_real_onion_address_decodes_to_the_services_identity_key(core, cli).len() > 0) {
+    core.warn("error: FAILED hsblind_test test_a_real_onion_address_decodes_to_the_services_identity_key");
+    bad = bad + 1;
+  }
+  if (hsbl__every_address_in_the_specification_decodes(core, cli).len() > 0) {
+    core.warn("error: FAILED hsblind_test test_every_address_in_the_specification_decodes");
+    bad = bad + 1;
+  }
+  if (hsbl__a_mistyped_address_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED hsblind_test test_a_mistyped_address_is_refused");
+    bad = bad + 1;
+  }
+  if (hsbl__the_blinded_key_matches_the_one_tor_used(core, cli).len() > 0) {
+    core.warn("error: FAILED hsblind_test test_the_blinded_key_matches_the_one_tor_used");
+    bad = bad + 1;
+  }
+  if (hsbl__the_blinded_key_depends_on_every_input(core, cli).len() > 0) {
+    core.warn("error: FAILED hsblind_test test_the_blinded_key_depends_on_every_input");
+    bad = bad + 1;
+  }
+  if (hsbl__time_periods_are_computed_as_tor_computes_them(core, cli).len() > 0) {
+    core.warn("error: FAILED hsblind_test test_time_periods_are_computed_as_tor_computes_them");
+    bad = bad + 1;
+  }
+  if (hsde__the_vector_is_the_shape_the_tests_assume(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdesc_test test_the_vector_is_the_shape_the_tests_assume");
+    bad = bad + 1;
+  }
+  if (hsde__the_outer_descriptor_parses(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdesc_test test_the_outer_descriptor_parses");
+    bad = bad + 1;
+  }
+  if (hsde__both_layers_decrypt_to_what_tor_encrypted(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdesc_test test_both_layers_decrypt_to_what_tor_encrypted");
+    bad = bad + 1;
+  }
+  if (hsde__a_tampered_layer_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdesc_test test_a_tampered_layer_is_refused");
+    bad = bad + 1;
+  }
+  if (hsde__the_document_reader_does_not_match_mid_line(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdesc_test test_the_document_reader_does_not_match_mid_line");
+    bad = bad + 1;
+  }
+  if (hsde__the_introduction_points_are_the_ones_tor_published(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdesc_test test_the_introduction_points_are_the_ones_tor_published");
+    bad = bad + 1;
+  }
+  if (hsde__link_specifiers_are_read_without_being_rebuilt(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdesc_test test_link_specifiers_are_read_without_being_rebuilt");
+    bad = bad + 1;
+  }
+  if (hsde__the_cells_have_the_layout_the_spec_fixes(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdesc_test test_the_cells_have_the_layout_the_spec_fixes");
+    bad = bad + 1;
+  }
+  if (hsde__an_introduce1_cell_macs_the_right_span(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdesc_test test_an_introduce1_cell_macs_the_right_span");
+    bad = bad + 1;
+  }
+  if (hsde2__the_two_vector_files_agree(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescbuild_test test_the_two_vector_files_agree");
+    bad = bad + 1;
+  }
+  if (hsde2__the_intro_count_shows_inside_and_not_outside(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescbuild_test test_the_intro_count_shows_inside_and_not_outside");
+    bad = bad + 1;
+  }
+  if (hsde2__the_name_follows_the_period(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescbuild_test test_the_name_follows_the_period");
+    bad = bad + 1;
+  }
+  if (hsde2__tor_found_what_was_built(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescbuild_test test_tor_found_what_was_built");
+    bad = bad + 1;
+  }
+  if (hsde2__a_directory_would_accept_what_was_built(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescbuild_test test_a_directory_would_accept_what_was_built");
+    bad = bad + 1;
+  }
+  if (hsde2__what_cannot_be_built(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescbuild_test test_what_cannot_be_built");
+    bad = bad + 1;
+  }
+  if (hsde3__the_fixture_is_a_v3_descriptor(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_the_fixture_is_a_v3_descriptor");
+    bad = bad + 1;
+  }
+  if (hsde3__the_document_tor_decoded_is_reproduced(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_the_document_tor_decoded_is_reproduced");
+    bad = bad + 1;
+  }
+  if (hsde3__the_signed_span_is_where_tor_stops(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_the_signed_span_is_where_tor_stops");
+    bad = bad + 1;
+  }
+  if (hsde3__a_layer_round_trips_and_is_shaped_right(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_a_layer_round_trips_and_is_shaped_right");
+    bad = bad + 1;
+  }
+  if (hsde3__bad_inputs_make_no_descriptor(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_bad_inputs_make_no_descriptor");
+    bad = bad + 1;
+  }
+  if (hsde3__the_middle_layer_tor_decrypted_is_reproduced(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_the_middle_layer_tor_decrypted_is_reproduced");
+    bad = bad + 1;
+  }
+  if (hsde3__the_decoy_clients_are_written(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_the_decoy_clients_are_written");
+    bad = bad + 1;
+  }
+  if (hsde3__the_inner_layer_tor_read_is_reproduced(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_the_inner_layer_tor_read_is_reproduced");
+    bad = bad + 1;
+  }
+  if (hsde3__a_bad_introduction_point_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_a_bad_introduction_point_is_refused");
+    bad = bad + 1;
+  }
+  if (hsde3__the_chain_from_identity_to_subcredential(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdescgen_test test_the_chain_from_identity_to_subcredential");
+    bad = bad + 1;
+  }
+  if (hsdi__the_capture_can_discriminate(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_the_capture_can_discriminate");
+    bad = bad + 1;
+  }
+  if (hsdi__every_relay_index_is_the_one_tor_computed(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_every_relay_index_is_the_one_tor_computed");
+    bad = bad + 1;
+  }
+  if (hsdi__we_choose_the_directories_tor_chose(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_we_choose_the_directories_tor_chose");
+    bad = bad + 1;
+  }
+  if (hsdi__the_trailing_field_order_differs_between_the_two_indices(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_the_trailing_field_order_differs_between_the_two_indices");
+    bad = bad + 1;
+  }
+  if (hsdi__the_ring_wraps(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_the_ring_wraps");
+    bad = bad + 1;
+  }
+  if (hsdi__index_comparison_is_unsigned(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_index_comparison_is_unsigned");
+    bad = bad + 1;
+  }
+  if (hsdi__the_disaster_srv_is_deterministic(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_the_disaster_srv_is_deterministic");
+    bad = bad + 1;
+  }
+  if (hsdi__the_directories_are_chosen_from_a_parsed_consensus(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_the_directories_are_chosen_from_a_parsed_consensus");
+    bad = bad + 1;
+  }
+  if (hsdi__the_descriptor_path_is_the_one_an_hsdir_answers(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_the_descriptor_path_is_the_one_an_hsdir_answers");
+    bad = bad + 1;
+  }
+  if (hsdi__only_flagged_relays_with_an_identity_are_candidates(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_only_flagged_relays_with_an_identity_are_candidates");
+    bad = bad + 1;
+  }
+  if (hsdi__a_service_publishes_for_the_two_periods_tor_did(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_a_service_publishes_for_the_two_periods_tor_did");
+    bad = bad + 1;
+  }
+  if (hsdi__the_stretch_between_a_period_and_an_srv(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_the_stretch_between_a_period_and_an_srv");
+    bad = bad + 1;
+  }
+  if (hsdi__the_plan_reaches_the_directories_tor_used(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_the_plan_reaches_the_directories_tor_used");
+    bad = bad + 1;
+  }
+  if (hsdi__a_consensus_with_no_srv_falls_back(core, cli).len() > 0) {
+    core.warn("error: FAILED hsdir_test test_a_consensus_with_no_srv_falls_back");
+    bad = bad + 1;
+  }
+  if (hsin__the_vectors_are_what_the_tests_assume(core, cli).len() > 0) {
+    core.warn("error: FAILED hsintroduce_test test_the_vectors_are_what_the_tests_assume");
+    bad = bad + 1;
+  }
+  if (hsin__one_introduction_end_to_end(core, cli).len() > 0) {
+    core.warn("error: FAILED hsintroduce_test test_one_introduction_end_to_end");
+    bad = bad + 1;
+  }
+  if (hsin__a_replay_is_refused_before_any_crypto(core, cli).len() > 0) {
+    core.warn("error: FAILED hsintroduce_test test_a_replay_is_refused_before_any_crypto");
+    bad = bad + 1;
+  }
+  if (hsin__the_same_cookie_again_is_dropped(core, cli).len() > 0) {
+    core.warn("error: FAILED hsintroduce_test test_the_same_cookie_again_is_dropped");
+    bad = bad + 1;
+  }
+  if (hsin__where_the_client_wants_to_meet(core, cli).len() > 0) {
+    core.warn("error: FAILED hsintroduce_test test_where_the_client_wants_to_meet");
+    bad = bad + 1;
+  }
+  if (hsin__what_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED hsintroduce_test test_what_is_refused");
+    bad = bad + 1;
+  }
+  if (hsin2__the_limits_are_tors().len() > 0) {
+    core.warn("error: FAILED hsintropoint_test test_the_limits_are_tors");
+    bad = bad + 1;
+  }
+  if (hsin2__either_limit_expires_it().len() > 0) {
+    core.warn("error: FAILED hsintropoint_test test_either_limit_expires_it");
+    bad = bad + 1;
+  }
+  if (hsin2__a_circuit_outranks_the_retry_count().len() > 0) {
+    core.warn("error: FAILED hsintropoint_test test_a_circuit_outranks_the_retry_count");
+    bad = bad + 1;
+  }
+  if (hsin2__how_many_to_establish().len() > 0) {
+    core.warn("error: FAILED hsintropoint_test test_how_many_to_establish");
+    bad = bad + 1;
+  }
+  if (hsnt__the_introduce1_keys_are_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_the_introduce1_keys_are_tors");
+    bad = bad + 1;
+  }
+  if (hsnt__the_service_derives_the_same_introduce_keys(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_the_service_derives_the_same_introduce_keys");
+    bad = bad + 1;
+  }
+  if (hsnt__the_service_refuses_what_it_should(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_the_service_refuses_what_it_should");
+    bad = bad + 1;
+  }
+  if (hsnt__the_rendezvous_keys_are_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_the_rendezvous_keys_are_tors");
+    bad = bad + 1;
+  }
+  if (hsnt__the_service_derives_the_same_rendezvous_keys(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_the_service_derives_the_same_rendezvous_keys");
+    bad = bad + 1;
+  }
+  if (hsnt__the_service_rendezvous_refuses_what_it_should(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_the_service_rendezvous_refuses_what_it_should");
+    bad = bad + 1;
+  }
+  if (hsnt__every_input_changes_the_keys(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_every_input_changes_the_keys");
+    bad = bad + 1;
+  }
+  if (hsnt__a_degenerate_key_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_a_degenerate_key_is_refused");
+    bad = bad + 1;
+  }
+  if (hsnt__the_mac_binds_its_key_length(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_the_mac_binds_its_key_length");
+    bad = bad + 1;
+  }
+  if (hsnt__the_rendezvous_hop_keys_are_a_full_hop(core, cli).len() > 0) {
+    core.warn("error: FAILED hsntor_test test_the_rendezvous_hop_keys_are_a_full_hop");
+    bad = bad + 1;
+  }
+  if (hspu__the_vector_is_about_this_descriptor(core, cli).len() > 0) {
+    core.warn("error: FAILED hspublish_test test_the_vector_is_about_this_descriptor");
+    bad = bad + 1;
+  }
+  if (hspu__the_fetch_name_is_the_one_the_directory_chose(core, cli).len() > 0) {
+    core.warn("error: FAILED hspublish_test test_the_fetch_name_is_the_one_the_directory_chose");
+    bad = bad + 1;
+  }
+  if (hspu__the_upload_is_shaped_like_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED hspublish_test test_the_upload_is_shaped_like_tors");
+    bad = bad + 1;
+  }
+  if (hspu__a_publish_target_is_recognised(core, cli).len() > 0) {
+    core.warn("error: FAILED hspublish_test test_a_publish_target_is_recognised");
+    bad = bad + 1;
+  }
+  if (hspu__what_was_stored_is_what_is_served(core, cli).len() > 0) {
+    core.warn("error: FAILED hspublish_test test_what_was_stored_is_what_is_served");
+    bad = bad + 1;
+  }
+  if (hspu__the_publish_answers_are_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED hspublish_test test_the_publish_answers_are_tors");
+    bad = bad + 1;
+  }
+  if (hsre__a_usable_rendezvous_point().len() > 0) {
+    core.warn("error: FAILED hsrendpoint_test test_a_usable_rendezvous_point");
+    bad = bad + 1;
+  }
+  if (hsre__a_stranger_cannot_choose_a_private_address().len() > 0) {
+    core.warn("error: FAILED hsrendpoint_test test_a_stranger_cannot_choose_a_private_address");
+    bad = bad + 1;
+  }
+  if (hsre__what_is_required().len() > 0) {
+    core.warn("error: FAILED hsrendpoint_test test_what_is_required");
+    bad = bad + 1;
+  }
+  if (hsre__which_addresses_are_allowed().len() > 0) {
+    core.warn("error: FAILED hsrendpoint_test test_which_addresses_are_allowed");
+    bad = bad + 1;
+  }
+  if (hsre2__the_second_time_is_a_replay().len() > 0) {
+    core.warn("error: FAILED hsreplay_test test_the_second_time_is_a_replay");
+    bad = bad + 1;
+  }
+  if (hsre2__the_two_caches_forget_differently().len() > 0) {
+    core.warn("error: FAILED hsreplay_test test_the_two_caches_forget_differently");
+    bad = bad + 1;
+  }
+  if (hsre2__a_replay_refreshes_what_it_hit().len() > 0) {
+    core.warn("error: FAILED hsreplay_test test_a_replay_refreshes_what_it_hit");
+    bad = bad + 1;
+  }
+  if (hsre2__the_cache_is_bounded().len() > 0) {
+    core.warn("error: FAILED hsreplay_test test_the_cache_is_bounded");
+    bad = bad + 1;
+  }
+  if (hsse__the_fixture_can_discriminate(core, cli).len() > 0) {
+    core.warn("error: FAILED hsservice_test test_the_fixture_can_discriminate");
+    bad = bad + 1;
+  }
+  if (hsse__the_cell_tor_accepted_is_reproduced(core, cli).len() > 0) {
+    core.warn("error: FAILED hsservice_test test_the_cell_tor_accepted_is_reproduced");
+    bad = bad + 1;
+  }
+  if (hsse__the_spans_are_where_tor_says(core, cli).len() > 0) {
+    core.warn("error: FAILED hsservice_test test_the_spans_are_where_tor_says");
+    bad = bad + 1;
+  }
+  if (hsse__the_mac_is_keyed_with_the_circuit(core, cli).len() > 0) {
+    core.warn("error: FAILED hsservice_test test_the_mac_is_keyed_with_the_circuit");
+    bad = bad + 1;
+  }
+  if (hsse__the_signature_is_over_the_prefixed_span(core, cli).len() > 0) {
+    core.warn("error: FAILED hsservice_test test_the_signature_is_over_the_prefixed_span");
+    bad = bad + 1;
+  }
+  if (hsse__bad_inputs_make_no_cell(core, cli).len() > 0) {
+    core.warn("error: FAILED hsservice_test test_bad_inputs_make_no_cell");
+    bad = bad + 1;
+  }
+  if (hsse__the_relay_accepts_what_tor_built(core, cli).len() > 0) {
+    core.warn("error: FAILED hsservice_test test_the_relay_accepts_what_tor_built");
+    bad = bad + 1;
+  }
+  if (hsst__the_controls_are_what_the_tests_assume(core, cli).len() > 0) {
+    core.warn("error: FAILED hsstore_test test_the_controls_are_what_the_tests_assume");
+    bad = bad + 1;
+  }
+  if (hsst__the_descriptor_tor_stored_is_stored(core, cli).len() > 0) {
+    core.warn("error: FAILED hsstore_test test_the_descriptor_tor_stored_is_stored");
+    bad = bad + 1;
+  }
+  if (hsst__every_descriptor_tor_refused_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED hsstore_test test_every_descriptor_tor_refused_is_refused");
+    bad = bad + 1;
+  }
+  if (hsst__the_reasons_are_the_right_ones(core, cli).len() > 0) {
+    core.warn("error: FAILED hsstore_test test_the_reasons_are_the_right_ones");
+    bad = bad + 1;
+  }
+  if (hsst__the_limits_are_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED hsstore_test test_the_limits_are_tors");
+    bad = bad + 1;
+  }
+  if (hsst__the_certificate_stands_on_its_own_key(core, cli).len() > 0) {
+    core.warn("error: FAILED hsstore_test test_the_certificate_stands_on_its_own_key");
+    bad = bad + 1;
+  }
+  if (hsup__the_two_ends_agree().len() > 0) {
+    core.warn("error: FAILED hsupload_test test_the_two_ends_agree");
+    bad = bad + 1;
+  }
+  if (hsup__a_rejection_is_not_a_surprise().len() > 0) {
+    core.warn("error: FAILED hsupload_test test_a_rejection_is_not_a_surprise");
+    bad = bad + 1;
+  }
+  if (hsup__one_rejection_indicts_the_descriptor().len() > 0) {
+    core.warn("error: FAILED hsupload_test test_one_rejection_indicts_the_descriptor");
+    bad = bad + 1;
+  }
+  if (intr__the_cells_are_tors_and_are_padded(core, cli).len() > 0) {
+    core.warn("error: FAILED introduce_test test_the_cells_are_tors_and_are_padded");
+    bad = bad + 1;
+  }
+  if (intr__a_cell_tor_built_is_understood(core, cli).len() > 0) {
+    core.warn("error: FAILED introduce_test test_a_cell_tor_built_is_understood");
+    bad = bad + 1;
+  }
+  if (intr__the_link_specifiers_stop_before_the_padding(core, cli).len() > 0) {
+    core.warn("error: FAILED introduce_test test_the_link_specifiers_stop_before_the_padding");
+    bad = bad + 1;
+  }
+  if (intr__a_tampered_cell_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED introduce_test test_a_tampered_cell_is_refused");
+    bad = bad + 1;
+  }
+  if (intr__a_malformed_cell_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED introduce_test test_a_malformed_cell_is_refused");
+    bad = bad + 1;
+  }
+  if (intr__the_rendezvous1_cell_is_cookie_then_handshake(core, cli).len() > 0) {
+    core.warn("error: FAILED introduce_test test_the_rendezvous1_cell_is_cookie_then_handshake");
+    bad = bad + 1;
+  }
+  if (intr2__the_fixtures_are_what_the_tests_assume(core, cli).len() > 0) {
+    core.warn("error: FAILED introrelay_test test_the_fixtures_are_what_the_tests_assume");
+    bad = bad + 1;
+  }
+  if (intr2__a_circuit_is_claimed_and_found(core, cli).len() > 0) {
+    core.warn("error: FAILED introrelay_test test_a_circuit_is_claimed_and_found");
+    bad = bad + 1;
+  }
+  if (intr2__what_a_relay_refuses(core, cli).len() > 0) {
+    core.warn("error: FAILED introrelay_test test_what_a_relay_refuses");
+    bad = bad + 1;
+  }
+  if (intr2__an_introduction_is_routed_or_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED introrelay_test test_an_introduction_is_routed_or_refused");
+    bad = bad + 1;
+  }
+  if (intr2__what_goes_away(core, cli).len() > 0) {
+    core.warn("error: FAILED introrelay_test test_what_goes_away");
+    bad = bad + 1;
+  }
+  if (intr2__the_ack_body(core, cli).len() > 0) {
+    core.warn("error: FAILED introrelay_test test_the_ack_body");
+    bad = bad + 1;
+  }
+  if (micr__the_vectors_can_discriminate(core, cli).len() > 0) {
+    core.warn("error: FAILED microdesc_test test_the_vectors_can_discriminate");
+    bad = bad + 1;
+  }
+  if (micr__the_bytes_tor_accepted(core, cli).len() > 0) {
+    core.warn("error: FAILED microdesc_test test_the_bytes_tor_accepted");
+    bad = bad + 1;
+  }
+  if (micr__the_digest_is_the_one_the_m_line_names(core, cli).len() > 0) {
+    core.warn("error: FAILED microdesc_test test_the_digest_is_the_one_the_m_line_names");
+    bad = bad + 1;
+  }
+  if (micr__a_corrupted_microdescriptor_gets_a_different_digest(core, cli).len() > 0) {
+    core.warn("error: FAILED microdesc_test test_a_corrupted_microdescriptor_gets_a_different_digest");
+    bad = bad + 1;
+  }
+  if (micr__the_default_policy_writes_no_p_line(core, cli).len() > 0) {
+    core.warn("error: FAILED microdesc_test test_the_default_policy_writes_no_p_line");
+    bad = bad + 1;
+  }
+  if (micr__an_unusable_descriptor_makes_no_microdescriptor(core, cli).len() > 0) {
+    core.warn("error: FAILED microdesc_test test_an_unusable_descriptor_makes_no_microdescriptor");
+    bad = bad + 1;
+  }
+  if (micr__a_run_of_microdescriptors_splits_back_apart(core, cli).len() > 0) {
+    core.warn("error: FAILED microdesc_test test_a_run_of_microdescriptors_splits_back_apart");
+    bad = bad + 1;
+  }
+  if (netw__a_network_comes_up_work_runs_and_everything_stops(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_network_comes_up_work_runs_and_everything_stops");
+    bad = bad + 1;
+  }
+  if (netw__a_node_that_never_announces_itself_fails_the_run(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_node_that_never_announces_itself_fails_the_run");
+    bad = bad + 1;
+  }
+  if (netw__the_exit_code_of_the_work_is_the_exit_code_of_the_run(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_the_exit_code_of_the_work_is_the_exit_code_of_the_run");
+    bad = bad + 1;
+  }
+  if (netw__a_description_with_nothing_to_run_is_a_failure(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_description_with_nothing_to_run_is_a_failure");
+    bad = bad + 1;
+  }
+  if (netw__a_bundle_that_is_not_there_is_reported_against_the_node(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_bundle_that_is_not_there_is_reported_against_the_node");
+    bad = bad + 1;
+  }
+  if (netw__a_nodes_ready_line_supplies_an_argument_to_the_work(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_nodes_ready_line_supplies_an_argument_to_the_work");
+    bad = bad + 1;
+  }
+  if (netw__a_reference_to_a_node_not_in_the_description_fails(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_reference_to_a_node_not_in_the_description_fails");
+    bad = bad + 1;
+  }
+  if (netw__braces_that_are_not_references_are_left_alone(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_braces_that_are_not_references_are_left_alone");
+    bad = bad + 1;
+  }
+  if (netw__wait_holds_the_next_step_until_a_node_reaches_a_later_state(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_wait_holds_the_next_step_until_a_node_reaches_a_later_state");
+    bad = bad + 1;
+  }
+  if (netw__a_wait_for_something_a_node_never_says_fails(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_wait_for_something_a_node_never_says_fails");
+    bad = bad + 1;
+  }
+  if (netw__a_wait_naming_a_node_that_does_not_exist_fails(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_wait_naming_a_node_that_does_not_exist_fails");
+    bad = bad + 1;
+  }
+  if (netw__a_wait_captures_even_when_the_node_had_already_said_it(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_wait_captures_even_when_the_node_had_already_said_it");
+    bad = bad + 1;
+  }
+  if (netw__a_node_after_a_run_starts_after_it(core, cli).len() > 0) {
+    core.warn("error: FAILED network_test test_a_node_after_a_run_starts_after_it");
+    bad = bad + 1;
+  }
+  if (netw2__a_tor_network_with_no_c_in_it_stood_up_and_fetched_from(core, cli).len() > 0) {
+    core.warn("error: FAILED network_tor_test test_a_tor_network_with_no_c_in_it_stood_up_and_fetched_from");
+    bad = bad + 1;
+  }
+  if (netw2__an_onion_service_published_on_that_network_and_a_page_fetched_from_it(core, cli).len() > 0) {
+    core.warn("error: FAILED network_tor_test test_an_onion_service_published_on_that_network_and_a_page_fetched_from_it");
+    bad = bad + 1;
+  }
+  if (ntor__both_sides_derive_the_same_keys().len() > 0) {
+    core.warn("error: FAILED ntor_test test_both_sides_derive_the_same_keys");
+    bad = bad + 1;
+  }
+  if (ntor__the_relay_must_prove_it_holds_the_onion_key().len() > 0) {
+    core.warn("error: FAILED ntor_test test_the_relay_must_prove_it_holds_the_onion_key");
+    bad = bad + 1;
+  }
+  if (ntor__the_identity_is_bound_into_the_keys().len() > 0) {
+    core.warn("error: FAILED ntor_test test_the_identity_is_bound_into_the_keys");
+    bad = bad + 1;
+  }
+  if (ntor__every_input_moves_the_key_material().len() > 0) {
+    core.warn("error: FAILED ntor_test test_every_input_moves_the_key_material");
+    bad = bad + 1;
+  }
+  if (ntor__a_small_order_reply_is_refused().len() > 0) {
+    core.warn("error: FAILED ntor_test test_a_small_order_reply_is_refused");
+    bad = bad + 1;
+  }
+  if (ntor__agrees_with_tors_own_implementation(core, cli).len() > 0) {
+    core.warn("error: FAILED ntor_test test_agrees_with_tors_own_implementation");
+    bad = bad + 1;
+  }
+  if (path__the_distribution_is_exactly_proportional().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_the_distribution_is_exactly_proportional");
+    bad = bad + 1;
+  }
+  if (path__a_zero_weight_relay_is_never_returned().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_a_zero_weight_relay_is_never_returned");
+    bad = bad + 1;
+  }
+  if (path__no_eligible_relay_is_reported_not_papered_over().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_no_eligible_relay_is_reported_not_papered_over");
+    bad = bad + 1;
+  }
+  if (path__the_flag_combination_picks_the_right_weight().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_the_flag_combination_picks_the_right_weight");
+    bad = bad + 1;
+  }
+  if (path__weighting_survives_a_bandwidth_that_overflows_32_bits().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_weighting_survives_a_bandwidth_that_overflows_32_bits");
+    bad = bad + 1;
+  }
+  if (path__weighting_scales_by_the_position().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_weighting_scales_by_the_position");
+    bad = bad + 1;
+  }
+  if (path__two_relays_in_one_slash_sixteen_cannot_share_a_path().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_two_relays_in_one_slash_sixteen_cannot_share_a_path");
+    bad = bad + 1;
+  }
+  if (path__a_relay_cannot_appear_twice_in_one_path().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_a_relay_cannot_appear_twice_in_one_path");
+    bad = bad + 1;
+  }
+  if (path__family_members_cannot_share_a_path().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_family_members_cannot_share_a_path");
+    bad = bad + 1;
+  }
+  if (path__a_one_sided_family_entry_still_excludes().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_a_one_sided_family_entry_still_excludes");
+    bad = bad + 1;
+  }
+  if (path__choose_excludes_what_the_path_forbids().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_choose_excludes_what_the_path_forbids");
+    bad = bad + 1;
+  }
+  if (path__a_fully_constrained_position_reports_no_candidate().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_a_fully_constrained_position_reports_no_candidate");
+    bad = bad + 1;
+  }
+  if (path__an_accept_policy_permits_only_what_it_lists().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_an_accept_policy_permits_only_what_it_lists");
+    bad = bad + 1;
+  }
+  if (path__a_reject_policy_permits_everything_it_does_not_list().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_a_reject_policy_permits_everything_it_does_not_list");
+    bad = bad + 1;
+  }
+  if (path__the_degenerate_policies_are_the_right_way_round().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_the_degenerate_policies_are_the_right_way_round");
+    bad = bad + 1;
+  }
+  if (path__bandwidth_weights_are_read_or_defaulted().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_bandwidth_weights_are_read_or_defaulted");
+    bad = bad + 1;
+  }
+  if (path__a_family_claim_counts_only_when_mutual().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_a_family_claim_counts_only_when_mutual");
+    bad = bad + 1;
+  }
+  if (path__a_family_named_by_fingerprint_resolves().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_a_family_named_by_fingerprint_resolves");
+    bad = bad + 1;
+  }
+  if (path__a_relay_must_be_usable_and_right_for_the_position().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_a_relay_must_be_usable_and_right_for_the_position");
+    bad = bad + 1;
+  }
+  if (path__pick_respects_flags_policy_and_the_path().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_pick_respects_flags_policy_and_the_path");
+    bad = bad + 1;
+  }
+  if (path__wge_is_zero_because_nobody_publishes_it().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_wge_is_zero_because_nobody_publishes_it");
+    bad = bad + 1;
+  }
+  if (path__exits_anything_is_not_eligible_with_port_zero().len() > 0) {
+    core.warn("error: FAILED pathsel_test test_exits_anything_is_not_eligible_with_port_zero");
+    bad = bad + 1;
+  }
+  if (pool__two_isolation_keys_never_share_a_circuit().len() > 0) {
+    core.warn("error: FAILED pool_test test_two_isolation_keys_never_share_a_circuit");
+    bad = bad + 1;
+  }
+  if (pool__a_circuit_stops_taking_streams_at_max_dirtiness().len() > 0) {
+    core.warn("error: FAILED pool_test test_a_circuit_stops_taking_streams_at_max_dirtiness");
+    bad = bad + 1;
+  }
+  if (pool__a_clean_circuit_never_expires().len() > 0) {
+    core.warn("error: FAILED pool_test test_a_clean_circuit_never_expires");
+    bad = bad + 1;
+  }
+  if (pool__a_broken_circuit_is_never_handed_out().len() > 0) {
+    core.warn("error: FAILED pool_test test_a_broken_circuit_is_never_handed_out");
+    bad = bad + 1;
+  }
+  if (pool__dirty_circuits_are_used_before_clean_ones_oldest_first().len() > 0) {
+    core.warn("error: FAILED pool_test test_dirty_circuits_are_used_before_clean_ones_oldest_first");
+    bad = bad + 1;
+  }
+  if (pool__a_busy_circuit_is_not_retired_under_its_stream().len() > 0) {
+    core.warn("error: FAILED pool_test test_a_busy_circuit_is_not_retired_under_its_stream");
+    bad = bad + 1;
+  }
+  if (pool__a_broken_circuit_is_retired_even_while_busy().len() > 0) {
+    core.warn("error: FAILED pool_test test_a_broken_circuit_is_retired_even_while_busy");
+    bad = bad + 1;
+  }
+  if (rela__a_cell_arrives_at_the_other_end().len() > 0) {
+    core.warn("error: FAILED relay_test test_a_cell_arrives_at_the_other_end");
+    bad = bad + 1;
+  }
+  if (rela__two_identical_cells_differ_on_the_wire().len() > 0) {
+    core.warn("error: FAILED relay_test test_two_identical_cells_differ_on_the_wire");
+    bad = bad + 1;
+  }
+  if (rela__a_long_run_of_cells_stays_in_step().len() > 0) {
+    core.warn("error: FAILED relay_test test_a_long_run_of_cells_stays_in_step");
+    bad = bad + 1;
+  }
+  if (rela__the_digest_changes_even_when_nothing_else_does().len() > 0) {
+    core.warn("error: FAILED relay_test test_the_digest_changes_even_when_nothing_else_does");
+    bad = bad + 1;
+  }
+  if (rela__a_tampered_cell_is_refused_and_costs_nothing().len() > 0) {
+    core.warn("error: FAILED relay_test test_a_tampered_cell_is_refused_and_costs_nothing");
+    bad = bad + 1;
+  }
+  if (rela__recognized_is_checked_before_the_digest().len() > 0) {
+    core.warn("error: FAILED relay_test test_recognized_is_checked_before_the_digest");
+    bad = bad + 1;
+  }
+  if (rela__a_full_payload_fits_and_one_more_byte_does_not().len() > 0) {
+    core.warn("error: FAILED relay_test test_a_full_payload_fits_and_one_more_byte_does_not");
+    bad = bad + 1;
+  }
+  if (rela__a_begin_body_is_a_string_and_four_zeros().len() > 0) {
+    core.warn("error: FAILED relay_test test_a_begin_body_is_a_string_and_four_zeros");
+    bad = bad + 1;
+  }
+  if (rela__an_extend2_body_has_the_layout_the_spec_states().len() > 0) {
+    core.warn("error: FAILED relay_test test_an_extend2_body_has_the_layout_the_spec_states");
+    bad = bad + 1;
+  }
+  if (rela__an_extended2_reply_is_cut_at_its_length().len() > 0) {
+    core.warn("error: FAILED relay_test test_an_extended2_reply_is_cut_at_its_length");
+    bad = bad + 1;
+  }
+  if (rela__a_request_longer_than_a_cell_is_split().len() > 0) {
+    core.warn("error: FAILED relay_test test_a_request_longer_than_a_cell_is_split");
+    bad = bad + 1;
+  }
+  if (rela__a_rendezvous_hop_carries_cells_both_ways().len() > 0) {
+    core.warn("error: FAILED relay_test test_a_rendezvous_hop_carries_cells_both_ways");
+    bad = bad + 1;
+  }
+  if (rela2__every_certificate_tor_made_verifies(core, cli).len() > 0) {
+    core.warn("error: FAILED relaycert_test test_every_certificate_tor_made_verifies");
+    bad = bad + 1;
+  }
+  if (rela2__a_certificate_we_build_is_byte_for_byte_reproducible().len() > 0) {
+    core.warn("error: FAILED relaycert_test test_a_certificate_we_build_is_byte_for_byte_reproducible");
+    bad = bad + 1;
+  }
+  if (rela2__a_link_certificate_names_the_tls_certificate().len() > 0) {
+    core.warn("error: FAILED relaycert_test test_a_link_certificate_names_the_tls_certificate");
+    bad = bad + 1;
+  }
+  if (rela2__the_rsa_crosscert_has_its_own_shape(core, cli).len() > 0) {
+    core.warn("error: FAILED relaycert_test test_the_rsa_crosscert_has_its_own_shape");
+    bad = bad + 1;
+  }
+  if (rela2__a_certs_cell_carries_one_of_each().len() > 0) {
+    core.warn("error: FAILED relaycert_test test_a_certs_cell_carries_one_of_each");
+    bad = bad + 1;
+  }
+  if (rela2__the_onion_key_crosscert_binds_both_identities(core, cli).len() > 0) {
+    core.warn("error: FAILED relaycert_test test_the_onion_key_crosscert_binds_both_identities");
+    bad = bad + 1;
+  }
+  if (rela3__a_client_and_this_relay_agree_on_a_circuit().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_a_client_and_this_relay_agree_on_a_circuit");
+    bad = bad + 1;
+  }
+  if (rela3__the_relays_key_material_is_the_other_way_round().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_the_relays_key_material_is_the_other_way_round");
+    bad = bad + 1;
+  }
+  if (rela3__a_middle_relay_forwards_what_is_not_for_it().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_a_middle_relay_forwards_what_is_not_for_it");
+    bad = bad + 1;
+  }
+  if (rela3__a_create2_that_is_not_ntor_is_refused().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_a_create2_that_is_not_ntor_is_refused");
+    bad = bad + 1;
+  }
+  if (rela3__a_destroy_cell_says_why().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_a_destroy_cell_says_why");
+    bad = bad + 1;
+  }
+  if (rela3__an_extend2_names_a_next_hop_and_carries_a_handshake_untouched().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_an_extend2_names_a_next_hop_and_carries_a_handshake_untouched");
+    bad = bad + 1;
+  }
+  if (rela3__an_extend2_that_is_malformed_is_refused().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_an_extend2_that_is_malformed_is_refused");
+    bad = bad + 1;
+  }
+  if (rela3__create_fast_agrees_with_kdf_tor().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_create_fast_agrees_with_kdf_tor");
+    bad = bad + 1;
+  }
+  if (rela3__a_begin_says_where_to_connect().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_a_begin_says_where_to_connect");
+    bad = bad + 1;
+  }
+  if (rela3__both_ends_agree_about_the_circuit_nonce().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_both_ends_agree_about_the_circuit_nonce");
+    bad = bad + 1;
+  }
+  if (rela3__a_relay_will_not_extend_to_itself().len() > 0) {
+    core.warn("error: FAILED relaycircuit_test test_a_relay_will_not_extend_to_itself");
+    bad = bad + 1;
+  }
+  if (rela4__the_reply_is_four_cells_in_the_order_the_spec_fixes().len() > 0) {
+    core.warn("error: FAILED relaylink_test test_the_reply_is_four_cells_in_the_order_the_spec_fixes");
+    bad = bad + 1;
+  }
+  if (rela4__a_constant_challenge_is_refused().len() > 0) {
+    core.warn("error: FAILED relaylink_test test_a_constant_challenge_is_refused");
+    bad = bad + 1;
+  }
+  if (rela4__a_relays_netinfo_states_what_a_clients_does_not().len() > 0) {
+    core.warn("error: FAILED relaylink_test test_a_relays_netinfo_states_what_a_clients_does_not");
+    bad = bad + 1;
+  }
+  if (rela4__the_version_we_pick_is_the_highest_in_common().len() > 0) {
+    core.warn("error: FAILED relaylink_test test_the_version_we_pick_is_the_highest_in_common");
+    bad = bad + 1;
+  }
+  if (rela4__the_initiators_netinfo_tells_us_our_own_address().len() > 0) {
+    core.warn("error: FAILED relaylink_test test_the_initiators_netinfo_tells_us_our_own_address");
+    bad = bad + 1;
+  }
+  if (rela5__connections_alone_never_reach_the_ring().len() > 0) {
+    core.warn("error: FAILED relayring_test test_connections_alone_never_reach_the_ring");
+    bad = bad + 1;
+  }
+  if (rela5__the_ring_is_never_exceeded().len() > 0) {
+    core.warn("error: FAILED relayring_test test_the_ring_is_never_exceeded");
+    bad = bad + 1;
+  }
+  if (rela5__it_answers_yes_then_no_and_stays_no().len() > 0) {
+    core.warn("error: FAILED relayring_test test_it_answers_yes_then_no_and_stays_no");
+    bad = bad + 1;
+  }
+  if (rela5__the_worst_case_the_caps_permit_is_still_far_past_the_ring().len() > 0) {
+    core.warn("error: FAILED relayring_test test_the_worst_case_the_caps_permit_is_still_far_past_the_ring");
+    bad = bad + 1;
+  }
+  if (rend__a_cookie_joins_two_circuits().len() > 0) {
+    core.warn("error: FAILED rendrelay_test test_a_cookie_joins_two_circuits");
+    bad = bad + 1;
+  }
+  if (rend__a_duplicate_cookie_is_refused().len() > 0) {
+    core.warn("error: FAILED rendrelay_test test_a_duplicate_cookie_is_refused");
+    bad = bad + 1;
+  }
+  if (rend__the_lengths_are_checked_differently().len() > 0) {
+    core.warn("error: FAILED rendrelay_test test_the_lengths_are_checked_differently");
+    bad = bad + 1;
+  }
+  if (rend__refusals_and_lifetimes().len() > 0) {
+    core.warn("error: FAILED rendrelay_test test_refusals_and_lifetimes");
+    bad = bad + 1;
+  }
+  if (rend__the_right_one_is_joined().len() > 0) {
+    core.warn("error: FAILED rendrelay_test test_the_right_one_is_joined");
+    bad = bad + 1;
+  }
+  if (rout__the_fixture_covers_both_sign_bits(core, cli).len() > 0) {
+    core.warn("error: FAILED routerdesc_test test_the_fixture_covers_both_sign_bits");
+    bad = bad + 1;
+  }
+  if (rout__the_conversion_matches_the_certificates_tor_signed(core, cli).len() > 0) {
+    core.warn("error: FAILED routerdesc_test test_the_conversion_matches_the_certificates_tor_signed");
+    bad = bad + 1;
+  }
+  if (rout__the_crosscert_body_is_reproduced_byte_for_byte(core, cli).len() > 0) {
+    core.warn("error: FAILED routerdesc_test test_the_crosscert_body_is_reproduced_byte_for_byte");
+    bad = bad + 1;
+  }
+  if (rout__the_secret_derivation_is_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED routerdesc_test test_the_secret_derivation_is_tors");
+    bad = bad + 1;
+  }
+  if (rout__the_document_digests_are_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED routerdesc_test test_the_document_digests_are_tors");
+    bad = bad + 1;
+  }
+  if (rout__a_digest_span_stops_where_tor_stops(core, cli).len() > 0) {
+    core.warn("error: FAILED routerdesc_test test_a_digest_span_stops_where_tor_stops");
+    bad = bad + 1;
+  }
+  if (rout__a_pem_block_is_wrapped_the_way_tor_wraps_one(core, cli).len() > 0) {
+    core.warn("error: FAILED routerdesc_test test_a_pem_block_is_wrapped_the_way_tor_wraps_one");
+    bad = bad + 1;
+  }
+  if (rout__the_field_formats_are_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED routerdesc_test test_the_field_formats_are_tors");
+    bad = bad + 1;
+  }
+  if (rout__the_descriptor_tor_accepted_is_reproduced(core, cli).len() > 0) {
+    core.warn("error: FAILED routerdesc_test test_the_descriptor_tor_accepted_is_reproduced");
+    bad = bad + 1;
+  }
+  if (sock__addresses_and_names_parse().len() > 0) {
+    core.warn("error: FAILED socks5_test test_addresses_and_names_parse");
+    bad = bad + 1;
+  }
+  if (sock__every_short_prefix_says_wait().len() > 0) {
+    core.warn("error: FAILED socks5_test test_every_short_prefix_says_wait");
+    bad = bad + 1;
+  }
+  if (sock__unusable_address_types_are_refused_not_awaited().len() > 0) {
+    core.warn("error: FAILED socks5_test test_unusable_address_types_are_refused_not_awaited");
+    bad = bad + 1;
+  }
+  if (sock__end_reasons_map_to_what_a_person_can_act_on().len() > 0) {
+    core.warn("error: FAILED socks5_test test_end_reasons_map_to_what_a_person_can_act_on");
+    bad = bad + 1;
+  }
+  if (sock__the_reply_is_ten_bytes_of_socks5().len() > 0) {
+    core.warn("error: FAILED socks5_test test_the_reply_is_ten_bytes_of_socks5");
+    bad = bad + 1;
+  }
+  if (vote__the_signed_span_is_tors(core, cli).len() > 0) {
+    core.warn("error: FAILED vote_test test_the_signed_span_is_tors");
+    bad = bad + 1;
+  }
+  if (vote__the_entries_are_ordered_by_identity_digest(core, cli).len() > 0) {
+    core.warn("error: FAILED vote_test test_the_entries_are_ordered_by_identity_digest");
+    bad = bad + 1;
+  }
+  if (vote__the_order_is_on_bytes_not_on_the_base64(core, cli).len() > 0) {
+    core.warn("error: FAILED vote_test test_the_order_is_on_bytes_not_on_the_base64");
+    bad = bad + 1;
+  }
+  if (vote__the_vote_tor_accepted_is_reproduced(core, cli).len() > 0) {
+    core.warn("error: FAILED vote_test test_the_vote_tor_accepted_is_reproduced");
+    bad = bad + 1;
+  }
+  if (vote2__the_r_line_is_the_one_tors_authority_wrote(core, cli).len() > 0) {
+    core.warn("error: FAILED votestatus_test test_the_r_line_is_the_one_tors_authority_wrote");
+    bad = bad + 1;
+  }
+  if (vote2__the_r_line_skips_the_descriptors_dead_field(core, cli).len() > 0) {
+    core.warn("error: FAILED votestatus_test test_the_r_line_skips_the_descriptors_dead_field");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("tor: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}

@@ -1,0 +1,120 @@
+// lightclient's coverage.
+//
+//   deno task coverage:lightclient
+//   deno task coverage:lightclient --verbose
+//
+// **169 of 219 — 77.2%** on the first run. `issues/system/0205`.
+//
+// Twenty of the fifty uncovered points are in one function, and it is the one that matters:
+// **`validateUpdate`**, which decides whether a sync-committee update is worth believing. Every arm of
+// it is a way of saying no — an empty participation bitfield, a Merkle branch that does not reach the
+// header, a signature over the wrong domain, a slot ordering that goes backwards — and the corpus is
+// updates a conforming beacon node produced, which are valid.
+//
+// That is the same finding as `packages/tor`'s `verifyConsensus`, `packages/bls`'s verifier and the
+// five decoders before them, and it lands hardest here: a light client's whole job is to refuse. See
+// `issues/system/0066`, which is about this package never having seen a real chain.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/lightclient/test/cov_exercise.wac";
+const string PREFIX = "packages/lightclient/";
+
+/** What the tests need: the vendored fixtures on disk, and a process for the live ones. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/lightclient/src/store.wac", "validateUpdate", "decl", false,
+         "**Twenty refusal arms, and the function is the package's entire reason to exist.** A " +
+         "light client believes a sync committee because a supermajority of the previous one signed " +
+         "for it, and `validateUpdate` is where each of those conditions is checked.\n" +
+         "         **What they need is a *store*, not a corrupted update — corrected on 2026-08-24 " +
+         "after trying the other thing.** This entry first said each arm was one field of a real " +
+         "update corrupted, and a test was written to do exactly that: locate each of the six " +
+         "fields by its own bytes and flip one. It passed, it moved coverage by **zero points**, " +
+         "and canarying showed why — `test_the_store_rejects_an_update_whose_branches_do_not_prove" +
+         "_what_it_claims` already fires on the same mutation, at named offsets, with better " +
+         "messages. The test was deleted rather than kept for looking thorough.\n" +
+         "         Reading the twenty that are left says what they actually want: a signature " +
+         "period that is neither the store's nor the next one, an update that advances nothing the " +
+         "store does not already have, a next sync committee that disagrees with the one the store " +
+         "holds, a committee of the wrong size, a finalized header that is not zero when the update " +
+         "carries no finality proof. **Every one is a property of the store the update is offered " +
+         "to**, so the input to build is a store in an unusual state — mid-period, already holding " +
+         "a next committee, or behind — and the vectors supply one shape of store.\n" +
+         "         That is a different and larger piece of work than corrupting bytes, and saying " +
+         "so is worth more than the estimate this entry carried before it."),
+    Rule("packages/lightclient/src/store.wac", "isBetterUpdate", "decl", false,
+         "The comparison that picks between two candidate updates — supermajority over active " +
+         "participation, finalised over not, older over newer. Reached when a client holds two " +
+         "updates for one period, which the tests do not construct."),
+    Rule("packages/lightclient/src/store.wac", "applyAsFinalized", "decl", false,
+         "Applying an update as finalised when the store's period and the update's disagree, " +
+         "or when the next sync committee is already known. Both are ordinary states of a " +
+         "running client and neither is in the fixtures."),
+    Rule("packages/lightclient/src/store.wac", "applyUpdate", "decl", false,
+         "The same period and ordering conditions on the ordinary apply path — see " +
+         "`applyAsFinalized`."),
+    Rule("packages/lightclient/src/store.wac", "forceUpdate", "decl", false,
+         "The spec's escape hatch for a client that has waited too long without finality: " +
+         "apply the best update it has anyway. Reached only after a timeout the tests do not " +
+         "simulate, and it is the path where a client accepts something it would otherwise " +
+         "have refused."),
+    Rule("packages/lightclient/src/store.wac", "initializeStore", "decl", false,
+         "Bootstrap refusals — an empty header, a root that is not 32 bytes, a bootstrap whose " +
+         "header does not hash to the trusted block root. **The trust anchor's own check**, " +
+         "and unexercised."),
+    Rule("packages/lightclient/src/domain.wac", "computeDomain", "decl", false,
+         "Domain computation refused for a domain type or genesis root of the wrong width. A " +
+         "wrong domain makes every signature verify against the wrong message, which is why it " +
+         "is checked rather than assumed."),
+    Rule("packages/lightclient/src/domain.wac", "computeForkDataRoot", "decl", false,
+         "The same widths one layer down — see `computeDomain`."),
+    Rule("packages/lightclient/src/domain.wac", "computeForkDigest", "decl", false,
+         "A fork digest whose fork-data root could not be computed — see " +
+         "`computeForkDataRoot`."),
+    Rule("packages/lightclient/src/domain.wac", "computeSigningRoot", "decl", false,
+         "A signing root refused for an object root or domain of the wrong width. Together " +
+         "with `computeDomain` these are the three places a wrong-width value would otherwise " +
+         "become a signature over the wrong message."),
+    Rule("packages/lightclient/src/domain.wac", ") {", "decl", false,
+         "A multi-line signature — the domain helper whose arguments do not fit one line. Same " +
+         "family as the rest of this file."),
+    Rule("packages/lightclient/src/store.wac", "rootOf", "decl", false,
+         "A hash-tree root that could not be computed, answered as empty. Its callers pass " +
+         "fixed-width fields, so the null arm needs a malformed update — which is " +
+         "`validateUpdate`'s subject."),
+    Rule("packages/lightclient/src/store.wac", "readSlot", "decl", false,
+         "A slot field that is not eight bytes, answered as -1 rather than trapping. Reachable " +
+         "from any malformed update and unbuilt for the same reason."),
+    Rule("packages/lightclient/src/store.wac", "safetyThreshold", "decl", false,
+         "The safety threshold taken from the *previous* period's participation rather than " +
+         "the current one, which is the branch a client takes just after a period boundary."),
+    Rule("packages/lightclient/src/store.wac", "processUpdate", "decl", false,
+         "Replacing the stored best update with a better one, which needs a client already " +
+         "holding a candidate for the same period — see `isBetterUpdate`.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[0](fill: Pin("", 0, "", true, ""));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

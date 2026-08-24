@@ -1,0 +1,77 @@
+// ssz's coverage, and the first of the eighteen packages that had no driver at all.
+//
+//   deno task coverage:ssz
+//   deno task coverage:ssz --verbose
+//
+// **273 of 274**, from 248 on the first run. `issues/system/0205`.
+//
+// ## Why this package, and what it cost
+//
+// `0205`'s open half is no longer "should these numbers be floors" — every driver that existed is one
+// now. It is whether the **eighteen packages with no driver** should have one: 82,762 source lines
+// against 36,918 measured. That question had sat for three days, and a decision with no input gets one
+// by doing a package and reporting the cost.
+//
+// The cost: the exercise is one file that calls the package's 26 tests, written by a script. First
+// measurement was **248 of 274** and took about a minute. Everything after that was reading gaps.
+//
+// ## What the driver found
+//
+// Twenty-three of the twenty-six gaps were `return null` on malformed input, and the reason they were
+// unreached is structural rather than careless. This package is judged against Ethereum's fixtures —
+// valid objects merkleize to Ethereum's roots, and the invalid ones Ethereum ships are refused. **That
+// corpus is a statement about the format; it cannot contain a statement about this implementation.** A
+// bounds check on a span, a field index past the end of a type table, a container kind where a list was
+// expected: the spec never asks those questions, so no vector set answers them.
+//
+// `test/wac/refusals_test.wac` is new and drives them directly. Among them the two classic SSZ
+// aliasing shapes — an offset table that runs backwards, and a first offset that is zero or not a
+// multiple of four — plus a list past its limit, a vector of the wrong length, and a boolean field,
+// which no vendored container in this corpus has.
+//
+// **Read that file's header before quoting this number.** The tests pin the *property* — a hostile
+// offset table never yields a root — and not the individual checks: deleting the backwards comparison,
+// and then `rootAt`'s span guard as well, leaves every case still refused. Executed is not the same as
+// load-bearing, and a branch count cannot tell them apart.
+
+import { Core, Cli } from "std/platform.wac";
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/ssz/test/cov_exercise.wac";
+const string PREFIX = "packages/ssz/";
+
+/** What the tests need: the vendored fixtures on disk, and a process to ask the oracle. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env");
+}
+
+Pin[] pins() {
+  return Pin[](
+    Pin("packages/ssz/src/container.wac", 212, "if (k != KIND_CONTAINER) { return null; }", true,
+        "**Every kind the table can hold is dispatched above this line.** `rootAt` handles " +
+        "`KIND_BASIC` at `:133`, `KIND_BOOLEAN` at `:137`, `KIND_BITVECTOR` at `:142`, `KIND_BITLIST` " +
+        "at `:160` and `KIND_VECTOR`/`KIND_LIST` at `:164` — six of the seven — so by the time control " +
+        "reaches here the only remaining kind is `KIND_CONTAINER` and the condition cannot hold.\n" +
+        "         Kept because `kindOf` reads a number out of a caller's type table, and the table is " +
+        "an argument rather than a value this package constructs. A seventh kind added to " +
+        "`test/wac/schema.wac` and not to `rootAt` would arrive here, and returning null is the answer " +
+        "that makes it visible; falling through into the container path would read a field count out " +
+        "of something that has none. This is the one point in the package that is not a refusal of " +
+        "hostile *data* but of an inconsistent *schema*.")
+  );
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(),
+                 Rule[0](fill: Rule("", "", "line", true, ""))) ? 1 : 0;
+}

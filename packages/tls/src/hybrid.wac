@@ -27,8 +27,8 @@
 // The 64-byte secret goes into the key schedule exactly where a 32-byte one would: it is
 // the IKM of the handshake-secret extract, and HKDF does not care how long it is.
 
-import { mlkemKeyGen, mlkemEncaps, mlkemDecaps } from "../../crypto/src/mlkem.wac";
-import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { mlkemKeyGen, mlkemEncaps, mlkemDecaps, mlkemEkValid } from "../../crypto/src/mlkem.wac";
+import { x25519, x25519Base, x25519Shared } from "../../crypto/src/x25519.wac";
 
 /** The TLS named group code point. */
 export i32 groupX25519MlKem768() { return 0x11EC; }
@@ -60,10 +60,28 @@ export u8[] hybridClientOffer(u8[] kemSeed, u8[] xPriv) {
 }
 
 /**
+ * Whether a client's hybrid key share is one this can accept — width, and the ML-KEM modulus check.
+ *
+ * **Ask this before `hybridServerAccept`, which traps.** The share is `ek ++ x25519`, and the ek half
+ * is 1,184 bytes a stranger chose; `mlkemEncaps` checks them against q as FIPS 203 §7.2 requires and
+ * enforces it by aborting. The x25519 half needs no check beyond its width — a Montgomery ladder
+ * accepts any thirty-two bytes by design, which is the property it was chosen for.
+ */
+export bool hybridClientShareValid(u8[] share) {
+  if (share.len() != hybridClientShareLen()) { return false; }
+  u8[] ek = u8[1184]();
+  for (i32 i = 0; i < 1184; i++) { ek[i] = share[i]; }
+  return mlkemEkValid(ek);
+}
+
+/**
  * The server's half: encapsulate to the client's key and do the X25519 exchange.
  *
  * Returns the 1120-byte share followed by the 64-byte shared secret. `m` is the ML-KEM
  * randomness, a parameter for the same reason ECDSA's k and ML-KEM's own m are.
+ *
+ * **Traps on a share `hybridClientShareValid` would refuse.** Ask that first if the share came from
+ * a peer.
  */
 export u8[] hybridServerAccept(u8[] clientShare, u8[] m, u8[] xPriv) {
   if (clientShare.len() != 1216) { trap; }
@@ -79,7 +97,18 @@ export u8[] hybridServerAccept(u8[] clientShare, u8[] m, u8[] xPriv) {
   // FIPS 203 requires of a peer's key and the only defence against one chosen to put
   // the arithmetic outside the ring.
   u8[] enc = mlkemEncaps(ek, m);            // shared ++ ciphertext
-  u8[] xShared = x25519(xPriv, xPeer);
+
+  // **A small-order X25519 half zeroes that contribution, and this construction's whole argument is
+  // that both halves have to be broken.** ML-KEM still holds, so a session built on one would not be
+  // readable — but the peer would have reduced the hybrid to ML-KEM alone, unilaterally, removing
+  // exactly the half that covers the lattice assumption turning out to be wrong. The header above
+  // says neither alone is what anyone is willing to deploy, so this is refused rather than accepted
+  // with less. 2026-08-24.
+  //
+  // Empty rather than a trap: the peer chose these bytes.
+  u8[]? xs = x25519Shared(xPriv, xPeer);
+  if (xs is null) { return u8[0](); }
+  u8[] xShared = xs!;
   u8[] xPub = x25519Base(xPriv);
 
   u8[] out = u8[1120 + 64]();
@@ -112,7 +141,11 @@ export u8[] hybridClientFinish(u8[] offerAndDk, u8[] serverShare, u8[] xPriv) {
   for (i32 i = 0; i < 32; i++) { xPeer[i] = serverShare[1088 + i]; }
 
   u8[] kemShared = mlkemDecaps(dk, ct);
-  u8[] xShared = x25519(xPriv, xPeer);
+  // The client's half of the same rule — see `hybridServerAccept`. A server that sent a small-order
+  // point would have reduced the hybrid to ML-KEM alone.
+  u8[]? xs = x25519Shared(xPriv, xPeer);
+  if (xs is null) { return u8[0](); }
+  u8[] xShared = xs!;
 
   u8[] out = u8[64]();
   for (i32 i = 0; i < 32; i++) { out[i] = kemShared[i]; }

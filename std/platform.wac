@@ -415,8 +415,14 @@ export struct Captured {
   /**
    * Whether `out` is **all** of what the child wrote, or as much as would fit.
    *
-   * A frame's output is held in this program's memory rather than draining anywhere, so it is capped
-   * — and at the cap `write` starts answering false. From inside the child that is indistinguishable
+   * A frame's output is held in this program's memory rather than draining anywhere, so on the
+   * JavaScript hosts it is capped at 8 MiB, and at the cap `write` starts answering false.
+   *
+   * **The native runtime does not cap it**, which is a difference rather than a simplification and is
+   * why this field exists rather than a constant: its frame is a `Vec` that grows, so the same applet
+   * answers in full there and this is always `false`. A caller that must not be handed a short answer
+   * reads this field; a caller that must not be handed an unbounded one cannot learn that here, and
+   * `issues/system/0252a` is which of the two behaviours should win. From inside the child that is indistinguishable
    * from the reader going away, which is exactly what `box yes` is written to stop on: `while
    * (cli.write(block)) {}`. So an applet that fills the buffer exits **cleanly**, believing its pipe
    * closed, and hands back a short answer that looks complete.
@@ -1029,6 +1035,26 @@ export string readReason(FileResult f) {
   return words == "" ? f.error : words;
 }
 
+/**
+ * The same, for a program that did not do what was asked — and the **killed** case is why it exists.
+ *
+ * Every caller writes the same phrase by hand: `e.error + string.fromBytes(e.stderr)`. It is right for
+ * the two ordinary outcomes and renders the third as nothing at all. `error` is empty whenever the
+ * program started, and a child killed by a signal writes no `stderr` before it dies — so an
+ * out-of-memory kill prints as a sentence that stops after the dash. A reason with no cause in it is
+ * what `issues/system/0142` is a page of.
+ *
+ * Takes no status, because `std` has no integer formatter and the caller has the number anyway.
+ */
+export string execReason(Exec r) {
+  if (!r.ran()) { return r.error; }
+  if (r.signalled()) {
+    return "killed by a signal, having written nothing — on a shared machine the usual cause is memory";
+  }
+  string said = string.fromBytes(r.stderr);
+  return said.len() > 0 ? said : "exited non-zero and said nothing";
+}
+
 /** What a filesystem change answered. */
 /**
  * What a host program did: `Cli.exec`'s answer.
@@ -1046,7 +1072,17 @@ export string readReason(FileResult f) {
  * `issues/system/0165`.
  */
 export struct Exec {
-  /** The exit code, when the program ran. Meaningless when `error` is non-empty. */
+  /**
+   * The exit code, when the program ran. Meaningless when `error` is non-empty.
+   *
+   * **`-1` means the child died by a signal rather than exiting**, and it is a real value rather than
+   * an absence: a signalled process has no exit code at all, so all four hosts write `code ?? -1`.
+   * It is safe as a sentinel because a POSIX status is eight bits — no child that *exited* can
+   * produce it — which is the one thing that saves it from being a sentinel drawn from the value's own
+   * range. Read it through `signalled()` rather than by comparing, so the convention has a name.
+   *
+   * `ran()` is still true for such a child: it started, and a signal is how it ended.
+   */
   i32 status;
   u8[] stdout;
   u8[] stderr;
@@ -1067,6 +1103,17 @@ export struct Exec {
 
   /** Whether it ran **and** exited zero, which is what most callers mean by "it worked". */
   bool ok(const this) { return this.ran() && this.status == 0; }
+
+  /**
+   * Whether it started and was **killed** rather than exiting — see `status`.
+   *
+   * Worth a name because the alternative is every caller writing `status == 0 - 1`, and because the
+   * two facts a caller usually wants to separate are "it failed" and "it was killed": an out-of-memory
+   * kill and a program that exited non-zero are the same `!ok()` and very different problems. The
+   * signal *number* is not carried — the hosts do not report it — so this says that it happened and
+   * not which one.
+   */
+  bool signalled(const this) { return this.ran() && this.status == 0 - 1; }
 }
 
 export struct Change {

@@ -1,0 +1,174 @@
+// Every committed fixture is named by a test, or it is not a fixture.
+//
+//   ./native/v8/target/release/wac test tools/wac/fixtureread_test.wac --allow-read --allow-run
+//
+// ## Why
+//
+// A file under `test/data` or `test/vendor` that no test names is one of two things, and both are
+// worth catching. Usually it is dead weight — a representation nobody converted to, an experiment.
+// Sometimes it is a piece of work somebody stopped one commit short of finishing, and that case is
+// invisible: the suite is green, the coverage number is unmoved, and the only evidence is a file
+// sitting in a directory.
+//
+// Three of those turned up on 2026-08-24, in one afternoon, from a one-line `ls | grep` :
+//
+//   - `packages/tls/test/data/p384_nc_samelen.pem`. Its recipe in `make-p384.sh` says it exists
+//     because *"a mutant that made the comparison always succeed survive[d] the whole suite"*.
+//     Somebody found the mutant, generated the certificate that would kill it, and stopped. The
+//     mutant still survived: with `baseCovers`'s byte test replaced by `if (false)` all eighteen tls
+//     files stayed green, which permits a CA constrained to `xyz.test` vouching for `wac.test`.
+//   - `packages/tls/test/data/rsa_ca.pem` and `rsa_leaf.pem`, committed with *"P-256 key exchange,
+//     and ECDSA and RSA certificates"*. No test had ever handed `verifyPath` an RSA chain, while the
+//     coverage ledger recorded that gap as *waiting on* an RSA chain to exist.
+//   - `packages/bls/test/vendor/eth_deserialization_G1.json` and `_G2.json` — twenty-eight of
+//     Ethereum's consensus-critical point-encoding cases, twenty-four of them refusals, vendored
+//     beside six sibling files that are all driven.
+//
+// None of those was findable by reading the tests, because the evidence is what the tests *do not*
+// say. This check is the mechanical form of that question.
+//
+// ## The rule, and what it deliberately does not cover
+//
+// A fixture's **basename without its extension** must appear somewhere in a `.wac` file under the
+// same package's `test/`. Basename rather than path because that is how the tests name them:
+// `fixtureName` returns `"p384_nc_ok"` and `load` builds the path. Same package because a fixture
+// read from another package's directory would be a different problem worth failing for separately.
+//
+// Extension-less matching also means `rsa_ca.der` counts as read when `rsa_ca.pem` is named. That is
+// intended: a second representation of one fixture is one fixture, and the alternative reports every
+// `.der` and `.key` and `.csr` that openssl left behind.
+//
+// **`.md` is skipped.** Both vendor directories carry a README explaining where the vectors came
+// from and how to refresh them, which is documentation and not an input. That is the only exemption
+// and it needs no list.
+//
+// **Directories consumed whole are out of scope**, which today means
+// `packages/json/test/jsontestsuite` — 319 files walked as a corpus, where naming each one is
+// exactly what the test must not do. It is not under `data/` or `vendor/`, so the scope below
+// excludes it by construction rather than by exception; a future corpus should be given its own
+// directory for the same reason.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "std/platform.wac";
+import { tracked } from "../../packages/wactest/src/repo.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** The fixture directories: a file under one of these is an input to a test. */
+bool isFixture(string p) {
+  return contains(p, "/test/data/") || contains(p, "/test/vendor/")
+      || contains(p, "/test/fixtures/") || contains(p, "/test/fuzz/");
+}
+
+bool contains(string s, string needle) {
+  if (needle.len() == 0 || needle.len() > s.len()) { return false; }
+  for (i32 i = 0; i + needle.len() <= s.len(); i++) {
+    if (s.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+/** `packages/tls/test/data/leaf.pem` -> `packages/tls`. */
+string packageOf(string p) {
+  i32 at = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i < p.len(); i++) {
+    if (p.slice(i, i + 1) != "/") { continue; }
+    seen = seen + 1;
+    if (seen == 2) { return p.slice(0, i); }
+  }
+  return "";
+}
+
+/** `packages/tls/test/data/leaf.pem` -> `leaf`. */
+string stem(string p) {
+  i32 slash = 0 - 1;
+  for (i32 i = 0; i < p.len(); i++) {
+    if (p.slice(i, i + 1) == "/") { slash = i; }
+  }
+  string name = p.slice(slash + 1, p.len());
+  i32 dot = 0 - 1;
+  for (i32 i = 0; i < name.len(); i++) {
+    if (name.slice(i, i + 1) == ".") { dot = i; }
+  }
+  return dot <= 0 ? name : name.slice(0, dot);
+}
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+export string test_every_committed_fixture_is_named_by_a_test(Core core, Cli cli) {
+  T t = T.create();
+  string[] all = tracked(core, cli);
+  t.isTrue(all.len() >= 500, "only " + itoa(all.len()) + " tracked file(s) — did the walk resolve?");
+  if (all.len() < 500) { return t.report(); }
+
+  // The test sources, read once. A fixture is looked for in the package that holds it, so the text
+  // is kept per file with its package alongside.
+  i32 nTests = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (endsWith(all[i], ".wac") && contains(all[i], "/test/")) { nTests = nTests + 1; }
+  }
+  string[] testPkg = string[nTests > 0 ? nTests : 1](fill: "");
+  string[] testText = string[nTests > 0 ? nTests : 1](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (!endsWith(all[i], ".wac") || !contains(all[i], "/test/")) { continue; }
+    FileResult r = cli.readFile(all[i]).wait();
+    testPkg[at] = packageOf(all[i]);
+    testText[at] = r.ok ? string.fromBytes(r.bytes) : "";
+    at = at + 1;
+  }
+  t.isTrue(nTests >= 100, "only " + itoa(nTests) + " test file(s) — did the walk resolve?");
+
+  string unread = "";
+  i32 nUnread = 0;
+  i32 nFixtures = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (!isFixture(all[i]) || endsWith(all[i], ".md")) { continue; }
+    nFixtures = nFixtures + 1;
+    string pkg = packageOf(all[i]);
+    string name = stem(all[i]);
+    bool found = false;
+    for (i32 k = 0; k < nTests && !found; k++) {
+      if (testPkg[k] == pkg && contains(testText[k], name)) { found = true; }
+    }
+    if (!found) {
+      nUnread = nUnread + 1;
+      if (nUnread <= 10) { unread = unread + "\n  " + all[i]; }
+    }
+  }
+  // **A floor on the fixtures too.** A rule that found no fixtures at all would report a clean
+  // result, which is the exact failure this file exists to catch one level up.
+  t.isTrue(nFixtures >= 20, "only " + itoa(nFixtures) + " fixture(s) found — did the scope resolve?");
+  t.eqI32(nUnread, 0,
+          itoa(nUnread) + " committed fixture(s) that no test in their package names." +
+          " Either wire them in — they are usually work somebody stopped one commit short of — or" +
+          " delete them, since git remembers:" + unread);
+  return t.report();
+}
+
+/**
+ * **The check would catch the shape it was written for.**
+ *
+ * Without this, a `contains` that always answered true would pass the sweep above and report a clean
+ * repository forever. The name below is one no fixture has and no test mentions.
+ */
+export string test_the_check_would_notice_a_fixture_nobody_reads() {
+  T t = T.create();
+  t.isFalse(contains("packages/tls/test/wac/x509_path_test.wac reads p384_nc_ok",
+                     "a_fixture_name_nothing_uses"),
+            "the matcher answers yes to a name that is not there");
+  t.isTrue(contains("… reads p384_nc_ok …", "p384_nc_ok"), "the matcher cannot find a name that is");
+  // And the two halves of the path split, which is where a wrong answer would be silent: a `stem`
+  // that returned the whole filename would never match, and every fixture would look unread; one
+  // that returned "" would match everything, and none would.
+  t.eqStr(stem("packages/tls/test/data/p384_nc_ok.pem"), "p384_nc_ok", "the stem of a fixture path");
+  t.eqStr(stem("packages/bls/test/vendor/eth_deserialization_G1.json"), "eth_deserialization_G1",
+          "a stem with underscores and a capital");
+  t.eqStr(packageOf("packages/tls/test/data/p384_nc_ok.pem"), "packages/tls", "the package of one");
+  t.isTrue(isFixture("packages/tls/test/data/x.pem"), "test/data is in scope");
+  t.isFalse(isFixture("packages/json/test/jsontestsuite/y.json"),
+            "a corpus walked as a directory is not");
+  return t.report();
+}

@@ -451,6 +451,17 @@ export i32[] helloGroups(u8[] body) {
     if (kind == 0x000A) {
       if (len < 2) { return i32[0](); }
       i32 listLen = (body[at + 4] << 8) | body[at + 5];
+      // **The list has to fit inside the extension that carries it, and this once did not check.**
+      // `len` bounds the extension body; the list occupies `listLen` of it after its own two-byte
+      // length. A hello whose extension was four bytes and whose list claimed four hundred read four
+      // hundred bytes past the end of the array and trapped — from a UDP datagram, with no handshake
+      // and no keys. `leafCertificate`, `serverKeyExchangeSignature` and `clientPublic` each check
+      // their inner length against the body; this is the fourth, which related the list to nothing.
+      //
+      // The odd case is separate and is not an overrun: a group is two bytes, so an odd list length
+      // is a message no conforming peer sends, and `listLen / 2` would silently drop the remainder
+      // and read one byte of whatever follows as half a group.
+      if (2 + listLen > len || listLen % 2 != 0) { return i32[0](); }
       i32 n = listLen / 2;
       i32[] out = i32[n]();
       for (i32 i = 0; i < n; i++) {

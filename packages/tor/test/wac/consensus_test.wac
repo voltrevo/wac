@@ -364,3 +364,404 @@ string[] lines(u8[] b) {
   }
   return out;
 }
+
+// ── Malformed rather than forged ─────────────────────────────────────────────
+//
+// Added on 2026-08-24 from this package's coverage driver — `issues/system/0205`. `verifyConsensus`
+// had nine uncovered branch points and the tests above explain why none of them was reached: every
+// case there is *a thing an attacker would actually try* — a flag changed, a digest swapped, a
+// signature from the wrong key — and all of those are **forgeries**, documents that are well-formed
+// and untrue.
+//
+// The nine that were left are the other half: documents that are **malformed**. A signature line
+// naming an algorithm nobody has heard of, one with the wrong number of fields, a signature block
+// with no PEM body after it, a document with no validity window at all.
+//
+// That matters because of who serves these. A consensus does not come from an authority — it comes
+// from whichever directory *cache* the client asked, and any relay can be one. A forgery needs a
+// signing key; a malformed document needs a text editor.
+//
+// None of these should trap and none of them does; they are all `continue` or an early return. What
+// was missing was any input that took them.
+
+/** Where `needle` first appears in `hay`, or -1. */
+i32 findBytes(u8[] hay, u8[] needle) {
+  if (needle.len() == 0 || needle.len() > hay.len()) { return -1; }
+  for (i32 i = 0; i + needle.len() <= hay.len(); i++) {
+    bool hit = true;
+    for (i32 k = 0; k < needle.len() && hit; k++) {
+      if (hay[i + k] != needle[k]) { hit = false; }
+    }
+    if (hit) { return i; }
+  }
+  return -1;
+}
+
+/** `doc` with the first occurrence of `from` replaced by `to`. */
+u8[] editOnce(u8[] doc, string from, string to) {
+  i32 at = findBytes(doc, from.toBytes());
+  if (at < 0) { return doc; }
+  u8[] f2 = from.toBytes();
+  u8[] t2 = to.toBytes();
+  u8[] out = u8[doc.len() - f2.len() + t2.len()]();
+  for (i32 i = 0; i < at; i++) { out[i] = doc[i]; }
+  for (i32 i = 0; i < t2.len(); i++) { out[at + i] = t2[i]; }
+  i32 rest = at + f2.len();
+  for (i32 i = 0; rest + i < doc.len(); i++) { out[at + t2.len() + i] = doc[rest + i]; }
+  return out;
+}
+
+/**
+ * Documents that are malformed rather than untrue, each refused without trapping.
+ *
+ * The control is first: the unedited document is accepted with three good signatures, so every
+ * refusal below is caused by the edit. Each case also asserts *how many signatures still counted*,
+ * because that is what separates "this line was skipped" from "the whole document was thrown away" —
+ * and a verifier that discarded everything on the first oddity would satisfy a bare `!ok`.
+ */
+export string test_a_malformed_consensus_is_refused_without_trapping(Core core, Cli cli) {
+  T t = T.create();
+  Fixtures f = documents(t, cli);
+  if (!f.ok) { return t.report(); }
+  string[] trusted = lines(f.names[0]);
+  AuthorityCert[] certs = parseCertificates(f.docs[1], trusted);
+  u8[] doc = f.docs[0];
+
+  Verdict control = verifyConsensus(doc, certs, trusted, 1785715200);
+  t.isTrue(control.ok, "the unedited consensus is not accepted, so nothing below means anything");
+  t.eqI32(control.goodSignatures, 3, "the control does not have three good signatures");
+
+  // An algorithm nobody has heard of. The line is skipped, so two signatures remain — still a
+  // majority of three, so this one is *accepted*, and that is the point: a document may be odd
+  // without being untrustworthy, and the verifier counts rather than panics.
+  Verdict alg = verifyConsensus(editOnce(doc, "directory-signature sha256 ",
+                                         "directory-signature sha999 "), certs, trusted, 1785715200);
+  t.eqI32(alg.goodSignatures, 2, "an unknown signature algorithm did not skip exactly one line");
+  t.isTrue(alg.ok, "two of three signatures is still a majority and should still be accepted");
+
+  // A signature line with one field where there should be two or three.
+  Verdict fields = verifyConsensus(editOnce(doc, "directory-signature sha256 ",
+                                            "directory-signature "), certs, trusted, 1785715200);
+  t.isTrue(fields.goodSignatures < 3, "a malformed signature line still counted");
+
+  // A signature line with no PEM block after it: the BEGIN marker removed, so the walk finds the
+  // *next* signature's block and attributes it to the wrong key.
+  Verdict noBegin = verifyConsensus(editOnce(doc, "-----BEGIN SIGNATURE-----", "-----BEGIN NOTHING-----"),
+                                    certs, trusted, 1785715200);
+  t.isTrue(noBegin.goodSignatures < 3, "a signature with no PEM block still verified");
+
+  // **The END marker removed changes nothing, and finding that out is why this case is here.**
+  // `sigEnd` then points at the *next* signature's closing marker, so the span handed to `pemBody`
+  // covers this signature's body, a stray line, and the following block's header — and it still
+  // verifies, because `pemBody` stops at the first line that is not base64. So a missing closing
+  // marker is survivable where a missing opening one is not.
+  //
+  // Asserted as it is rather than as I expected it: the first version of this line said
+  // `goodSignatures < 3` and was wrong.
+  Verdict noEnd = verifyConsensus(editOnce(doc, "-----END SIGNATURE-----", "-----END NOTHING-----"),
+                                  certs, trusted, 1785715200);
+  t.eqI32(noEnd.goodSignatures, 3,
+          "a missing closing marker changed the verdict, so pemBody no longer stops at the first "
+          + "line that is not base64");
+
+  // No validity window at all.
+  //
+  // **This edit necessarily breaks every signature, and that is the format rather than the test.**
+  // `valid-after` is inside the *signed* portion — the part that ends at the first
+  // `directory-signature` — so a document without it is a document nobody signed. The edits above
+  // are all in the signature region and leave the signed bytes alone, which is why they can skip one
+  // line and keep the rest.
+  //
+  // So the arm is still reached and still reported, and what it proves is narrower than I first
+  // wrote: staleness is computed and named even when there is nothing to be stale *about*, which is
+  // what lets a caller tell "this document is not current" from "this document is not signed".
+  Verdict noWindow = verifyConsensus(editOnce(doc, "valid-after ", "valid-later "),
+                                     certs, trusted, 1785715200);
+  t.isFalse(noWindow.ok, "a consensus with no valid-after was accepted");
+  t.eqStr(noWindow.stale, "no valid-after/valid-until",
+          "a missing validity window was not reported as such: " + noWindow.stale);
+  t.eqI32(noWindow.goodSignatures, 0,
+          "editing the signed portion left signatures intact, which cannot be right");
+
+  // No signatures at all: the token the signed portion ends at is gone, so there is nothing to
+  // verify and nothing to verify it against.
+  Verdict none = verifyConsensus(editOnce(doc, "directory-signature ", "directory-nothing "),
+                                 certs, trusted, 1785715200);
+  t.isFalse(none.ok, "a consensus with no signature token was accepted");
+  return t.report();
+}
+
+// ---------------------------------------------------------------------------------------------
+// A hostile `directory-signature` line.
+//
+// **The lead came from this package's coverage ledger**, which exempts `verifyConsensus` with the
+// note that *"every path by which it says no is unexercised. The corpus is real consensuses, which
+// are valid."* The second sentence is the interesting half and it is not quite the reason.
+//
+// `test_everything_the_chain_must_refuse` above does feed invalid documents — a consensus with a
+// relay's flags changed, one with a microdescriptor digest swapped. Those are invalid in the
+// *body*, so they travel the full length of the loop and are refused at the last step, by the
+// signature not verifying. The seven `continue` arms sit above that step and are reached only by a
+// `directory-signature` **line** that is itself malformed, and every line in the corpus is
+// well-formed because a real authority wrote it.
+//
+// So the arms that decide *which signature to even attempt* had never run. They are the ones that
+// answer questions an attacker asks directly: can I get a signature attributed to an authority by
+// naming it? Can I have one counted twice? Can I point at a signing key its identity never
+// certified? A verifier that answered any of those wrongly would accept a directory nobody signed.
+//
+// ## Three of the seven are load-bearing and four are defence in depth, and the test says which
+//
+// Every arm below was canaried by deleting it from `consensus.wac` and re-running. **Three turn the
+// file red on their own** — the trusted-set check, the duplicate-identity check, and the requirement
+// that a certificate match both the identity *and* the signing-key digest. Those are the ones where
+// nothing else would have caught the input.
+//
+// **Four do not, and cannot**, because the input that reaches them fails the signature check
+// immediately afterwards anyway: an algorithm that is neither sha1 nor sha256, a field count that is
+// neither two nor three, and a missing `BEGIN`/`END SIGNATURE` block. Delete any of those four and
+// this file stays green. That is a property of the code rather than a gap in the test — they are
+// there to fail fast and to make the *reason* explicit — and it is written down because a reader who
+// assumed all seven were individually necessary would draw the wrong conclusion from the assertions.
+//
+// The four are still driven, for two reasons: an unexercised arm is an arm nobody has watched run,
+// and the day one of them stops being redundant — a flavour whose fallback happens to match, a
+// signature block that parses from garbage — the arm becomes load-bearing with no test arriving to
+// notice. The distinction, not the coverage, is what this section exists to record.
+//
+// **The corpus is sha256-flavoured** (`test/oracle.mjs` writes `directory-signature sha256 …`),
+// which is why the algorithm case cannot be sharpened: an unrecognised name falls back to the sha1
+// flavour, and a sha1-flavoured check of a sha256 signature fails whether or not the arm is there.
+// On a sha1 corpus the same case *would* be load-bearing. Worth knowing before anyone tries to
+// strengthen it and concludes the assertion is wrong.
+//
+// ## What makes this cheap, and why it does not disturb the other signatures
+//
+// The signed portion of a consensus ends at the `directory-signature ` token — `signedLength`, and
+// `test_the_signed_portion_ends_at_the_token` pins the boundary to the byte. Everything after it,
+// including the arguments on that line, is outside the digest. So a test can rewrite the first
+// signature's arguments and the other two signatures still verify, which turns
+// `goodSignatures` into a counter of exactly one thing: whether this line was attempted and
+// accepted. Each case below asserts it dropped from three to two, which is stronger than asserting
+// the verdict flipped — with three trusted authorities a majority is two, so the verdict does *not*
+// flip, and a test written against `ok` would have passed without reaching anything.
+
+/** The offset just past the `\ndirectory-signature ` token of the `n`th signature, or -1. */
+i32 sigLineAt(u8[] doc, i32 n) {
+  i32 at = 0;
+  i32 seen = 0;
+  string token = "\ndirectory-signature ";
+  for (i32 i = 0; i + token.len() <= doc.len(); i++) {
+    bool hit = true;
+    for (i32 j = 0; j < token.len(); j++) {
+      if (doc[i + j] != token.toBytes()[j]) { hit = false; }
+    }
+    if (!hit) { continue; }
+    if (seen == n) { return i + token.len(); }
+    seen = seen + 1;
+    at = i;
+  }
+  return 0 - 1;
+}
+
+/** The end of the line beginning at `from`. */
+i32 lineEnd(u8[] doc, i32 from) {
+  i32 e = from;
+  while (e < doc.len() && doc[e] != '\n') { e = e + 1; }
+  return e;
+}
+
+/** `doc` with the arguments of signature `n` replaced by `text`. */
+u8[] rewriteSignatureLine(u8[] doc, i32 n, string text) {
+  i32 from = sigLineAt(doc, n);
+  if (from < 0) { return doc; }
+  i32 to = lineEnd(doc, from);
+  u8[] head = u8[from]();
+  for (i32 i = 0; i < from; i++) { head[i] = doc[i]; }
+  u8[] tail = u8[doc.len() - to]();
+  for (i32 i = 0; i < tail.len(); i++) { tail[i] = doc[to + i]; }
+  return cat(cat(head, text.toBytes()), tail);
+}
+
+/** The arguments of signature `n`, as written. */
+string signatureLine(u8[] doc, i32 n) {
+  i32 from = sigLineAt(doc, n);
+  if (from < 0) { return ""; }
+  i32 to = lineEnd(doc, from);
+  u8[] b = u8[to - from]();
+  for (i32 i = 0; i < b.len(); i++) { b[i] = doc[from + i]; }
+  return string.fromBytes(b);
+}
+
+/** The `i`th space-separated field of a signature line. */
+string field(string line, i32 i) {
+  i32 start = 0;
+  i32 seen = 0;
+  for (i32 k = 0; k <= line.len(); k++) {
+    bool sep = k == line.len() || line.slice(k, k + 1) == " ";
+    if (!sep) { continue; }
+    if (k > start) {
+      if (seen == i) { return line.slice(start, k); }
+      seen = seen + 1;
+    }
+    start = k + 1;
+  }
+  return "";
+}
+
+/**
+ * **Every way a `directory-signature` line can be malformed, and each one refused.**
+ *
+ * The measure throughout is `goodSignatures`: three when nothing is wrong, two when this line was
+ * not counted. `ok` stays true in every case here, deliberately — see the header above.
+ */
+export string test_a_malformed_directory_signature_line_is_not_counted(Core core, Cli cli) {
+  T t = T.create();
+  Fixtures f = documents(t, cli);
+  if (!f.ok) { return t.report(); }
+  string[] trusted = lines(f.names[0]);
+  AuthorityCert[] certs = parseCertificates(f.docs[1], trusted);
+  u8[] doc = f.docs[0];
+
+  // The control. Everything below is this number minus one.
+  Verdict base = verifyConsensus(doc, certs, trusted, 1785715200);
+  t.eqI32(base.goodSignatures, 3, "the genuine consensus no longer counts three signatures");
+  t.isTrue(base.ok, "the genuine consensus is no longer accepted");
+
+  string line0 = signatureLine(doc, 0);
+  string algo = field(line0, 0);
+  t.isTrue(algo == "sha1" || algo == "sha256",
+           "the first signature's algorithm is \"" + algo + "\", so the cases below are misaimed");
+  string identity = field(line0, 1);
+  string keyDigest = field(line0, 2);
+  t.isTrue(identity.len() > 0 && keyDigest.len() > 0, "the first signature line did not parse");
+
+  // 1. An algorithm neither sha1 nor sha256. Three fields, so the shape is right and the name is not.
+  //    Defence in depth — see the header. The count drops here whether or not the arm exists.
+  t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0, "sha512 " + identity + " " + keyDigest),
+                          certs, trusted, 1785715200).goodSignatures, 2,
+          "a signature under an algorithm we do not implement was counted");
+
+  // 2. A field count that is neither two nor three — one, and four. Defence in depth: with the arm
+  //    removed, a one-field line reads past the end of its own field list and a four-field line ends
+  //    up treating `sha256` as the identity, which no trusted set contains.
+  t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0, identity),
+                          certs, trusted, 1785715200).goodSignatures, 2,
+          "a signature line of one field was counted");
+  t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0, "sha256 " + identity + " " + keyDigest + " extra"),
+                          certs, trusted, 1785715200).goodSignatures, 2,
+          "a signature line of four fields was counted");
+
+  // 3. **An identity that is not in the trusted set** — and the document is untouched, because the
+  //    interesting version of this is not a forged line. Naming a fingerprint nobody trusts also
+  //    matches no certificate, so it is refused twice over and a test built that way cannot tell
+  //    which refusal did it. What isolates the trust check is holding the document still and taking
+  //    one authority out of the *trusted list*: its certificate is still parsed, its signature is
+  //    still genuine, and the only thing wrong is that we no longer trust it.
+  string[] fewer = string[trusted.len() - 1](fill: "");
+  for (i32 i = 1; i < trusted.len(); i++) { fewer[i - 1] = trusted[i]; }
+  t.eqI32(fewer.len(), trusted.len() - 1, "the reduced trust set is the wrong size");
+  Verdict dropped = verifyConsensus(doc, certs, fewer, 1785715200);
+  t.eqI32(dropped.goodSignatures, 2,
+          "a genuine signature from an authority we removed from the trusted set was still counted");
+  t.isTrue(dropped.ok, "two of three is still a majority of two, so this case should not flip ok");
+
+  // 4. **The same authority twice**, and this one took two attempts to write, which is the reason it
+  //    is worth the paragraph.
+  //
+  //    The obvious version rewrites the *second* line to name the first's identity and key. It
+  //    reads correctly and proves nothing: the signature bytes after that line are still the second
+  //    authority's, so without the duplicate check the line is attempted and refused by the
+  //    signature anyway. The count drops to two either way. Deleting `contains(signedBy, identity)`
+  //    from `consensus.wac` left the whole file green, which is how it was caught.
+  //
+  //    What reaches the arm is duplicating the entire *entry* — line and signature block together —
+  //    so that without the check the copy would verify and be counted a second time. Everything
+  //    after the `directory-signature ` token is outside the digest, so inserting one changes no
+  //    other signature. Four entries from three authorities: three is right, four is the bug.
+  u8[] twice = duplicateSignatureEntry(doc, 0);
+  t.isTrue(twice.len() > doc.len(), "the duplicate entry was not inserted, so this case is empty");
+  t.eqI32(verifyConsensus(twice, certs, trusted, 1785715200).goodSignatures, 3,
+          "one authority's signature was counted twice, so a single authority could reach a majority");
+
+  // 5. A signing key that identity never certified — the check `consensus.wac` calls out in a
+  //    comment as the reason both fields must match.
+  t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0,
+              algo + " " + identity + " FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
+                          certs, trusted, 1785715200).goodSignatures, 2,
+          "a signature naming a signing key its identity never certified was counted");
+
+  // 6 and 7. No signature block after the line. `findFrom` searches forward, so removing an earlier
+  //    marker finds the *next* signature's — only the last line can be missing one. Both markers are
+  //    damaged in turn. Defence in depth: without the arms, `pemBody` decodes from the wrong offset
+  //    and produces bytes that are not the signature, which fails at the same place.
+  i32 last = 2;
+  u8[] noBegin = replaceAll(doc, "-----BEGIN SIGNATURE-----", "-----XXXXX SIGNATURE-----", last);
+  t.eqI32(verifyConsensus(noBegin, certs, trusted, 1785715200).goodSignatures, 2,
+          "a signature line with no BEGIN block after it was counted");
+  u8[] noEnd = replaceAll(doc, "-----END SIGNATURE-----", "-----XXX SIGNATURE-----", last);
+  t.eqI32(verifyConsensus(noEnd, certs, trusted, 1785715200).goodSignatures, 2,
+          "a signature line with no END block after it was counted");
+
+  // And the pair that must still be accepted, so none of the above is passing because the rewriting
+  // itself broke the document: rewriting the first line to exactly what it already said.
+  t.eqI32(verifyConsensus(rewriteSignatureLine(doc, 0, line0), certs, trusted, 1785715200)
+              .goodSignatures, 3,
+          "rewriting a line to its own text changed the answer, so every case above is suspect");
+  return t.report();
+}
+
+/** `doc` with the `n`th occurrence of `find` replaced by `with`. */
+u8[] replaceAll(u8[] doc, string find, string with, i32 n) {
+  u8[] pat = find.toBytes();
+  i32 seen = 0;
+  for (i32 i = 0; i + pat.len() <= doc.len(); i++) {
+    bool hit = true;
+    for (i32 j = 0; j < pat.len(); j++) {
+      if (doc[i + j] != pat[j]) { hit = false; }
+    }
+    if (!hit) { continue; }
+    if (seen == n) {
+      u8[] out = copyOf(doc);
+      u8[] rep = with.toBytes();
+      for (i32 j = 0; j < rep.len() && j < pat.len(); j++) { out[i + j] = rep[j]; }
+      return out;
+    }
+    seen = seen + 1;
+  }
+  return doc;
+}
+
+/**
+ * `doc` with signature entry `n` — its line and its PEM block — inserted again straight after
+ * itself. Used to reach the arm that refuses an authority a second time.
+ */
+u8[] duplicateSignatureEntry(u8[] doc, i32 n) {
+  i32 from = sigLineAt(doc, n);
+  if (from < 0) { return doc; }
+  string token = "\ndirectory-signature ";
+  i32 start = from - token.len();
+  i32 end = findIn(doc, "-----END SIGNATURE-----", from);
+  if (end < 0) { return doc; }
+  end = end + "-----END SIGNATURE-----".len();
+  u8[] entry = u8[end - start]();
+  for (i32 i = 0; i < entry.len(); i++) { entry[i] = doc[start + i]; }
+  u8[] head = u8[end]();
+  for (i32 i = 0; i < end; i++) { head[i] = doc[i]; }
+  u8[] tail = u8[doc.len() - end]();
+  for (i32 i = 0; i < tail.len(); i++) { tail[i] = doc[end + i]; }
+  return cat(cat(head, entry), tail);
+}
+
+/** The offset of `find` in `doc` at or after `from`, or -1. */
+i32 findIn(u8[] doc, string find, i32 from) {
+  u8[] pat = find.toBytes();
+  for (i32 i = from; i + pat.len() <= doc.len(); i++) {
+    bool hit = true;
+    for (i32 j = 0; j < pat.len(); j++) {
+      if (doc[i + j] != pat[j]) { hit = false; }
+    }
+    if (hit) { return i; }
+  }
+  return 0 - 1;
+}
