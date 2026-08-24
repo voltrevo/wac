@@ -25,8 +25,7 @@ import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
 import { p256Ecdh, p256PublicKey, p256Decodes } from "../../crypto/src/p256.wac";
 import {
   hybridClientOffer, hybridClientFinish, groupX25519MlKem768, hybridClientShareLen,
-  hybridServerShareLen,
-} from "./hybrid.wac";
+  hybridServerShareLen } from "./hybrid.wac";
 import { ed25519Verify } from "../../crypto/src/ed25519.wac";
 import {
   deriveSecret, earlySecret, finishedVerify, handshakeSecret, hashLen, masterSecret,
@@ -494,6 +493,7 @@ export u8[] tlsClientFeed(u8[] state, u8[] input) {
       u8[] peerKey = u8[share.len() - 2]();
       for (i32 i = 0; i < peerKey.len(); i++) { peerKey[i] = share[2 + i]; }
       c.group = group;
+
 
       addTranscript(c, msg);
       u8[] shared = u8[0]();

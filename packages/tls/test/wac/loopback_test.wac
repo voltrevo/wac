@@ -502,6 +502,71 @@ export string test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal(
 }
 
 /**
+ * **A hybrid key share whose ML-KEM half is not a valid encapsulation key aborted the server.**
+ *
+ * The most reachable of the three, because X25519MLKEM768 is the group this server *prefers*: an
+ * ordinary ClientHello, the standard group, and 1,216 bytes of `0xFF`.
+ *
+ * `mlkemEncaps` performs the modulus check FIPS 203 §7.2 requires — an encapsulation key whose
+ * coefficients are not all below q is not a key, and its own note says accepting one *lets an
+ * attacker choose the arithmetic* — and it enforced that by trapping. Third instance in this
+ * repository of a correct check with the wrong consequence, after `recordOpen` and `curveDecode`,
+ * and `mlkemEkValid` is the third non-trapping question written to answer it.
+ *
+ * The control is two shares that are *not* rejected: all-`0x11` and all-zero both decode to
+ * coefficients below q, so they are structurally valid keys and the handshake proceeds. Without them
+ * this test would pass against a server that refused every hybrid hello.
+ */
+export string test_a_hybrid_share_that_is_not_an_encapsulation_key_is_refused() {
+  T t = T.create();
+  u8[] random = u8[32](fill: 0x5A);
+
+  // Structurally valid: every 12-bit coefficient is below q, so the server answers.
+  ClientStep ok1 = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupHybrid(), u8[1216](fill: 0x11), HOST.toBytes(),
+                  u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(ok1.state), 1, "a hybrid share of 0x11 bytes was refused, but it is a valid key");
+  ClientStep ok2 = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupHybrid(), u8[1216](), HOST.toBytes(),
+                  u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(ok2.state), 1, "a hybrid share of zero bytes was refused, but it is a valid key");
+
+  // 0xFF gives coefficients at or above q, which is not a key.
+  ClientStep no = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupHybrid(), u8[1216](fill: 0xFF), HOST.toBytes(),
+                  u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(no.state), phaseFailed(), "a hybrid share above q was accepted");
+  t.eqI32(no.toSend[0], 21, "the refusal was not sent as an alert record");
+
+  // And the widths, for every group. Each of these trapped on a length check inside a primitive.
+  i32[] widths = i32[](1, 31, 33, 1215, 1217);
+  for (i32 i = 0; i < widths.len(); i++) {
+    ClientStep h = clientStep(tlsServerFeed(freshServer(), inRecord(
+        clientHello(random, u8[0](), 0x1301, groupHybrid(), u8[widths[i]](fill: 0x11),
+                    HOST.toBytes(), u8[0](), u8[0]()))));
+    t.eqI32(tlsPhase(h.state), phaseFailed(),
+            "a hybrid share of " + itoa(widths[i]) + " bytes was accepted");
+    ClientStep x = clientStep(tlsServerFeed(freshServer(), inRecord(
+        clientHello(random, u8[0](), 0x1301, groupX25519(), u8[widths[i]](fill: 0x09),
+                    HOST.toBytes(), u8[0](), u8[0]()))));
+    t.eqI32(tlsPhase(x.state), phaseFailed(),
+            "an x25519 share of " + itoa(widths[i]) + " bytes was accepted");
+    ClientStep p = clientStep(tlsServerFeed(freshServer(), inRecord(
+        clientHello(random, u8[0](), 0x1301, groupP256(), u8[widths[i]](fill: 0x04),
+                    HOST.toBytes(), u8[0](), u8[0]()))));
+    t.eqI32(tlsPhase(p.state), phaseFailed(),
+            "a P-256 share of " + itoa(widths[i]) + " bytes was accepted");
+  }
+
+  // x25519 at its right width is still accepted, so the sweep above is about the widths and not
+  // about the group.
+  t.eqI32(tlsPhase(clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupX25519(), u8[32](fill: 0x09), HOST.toBytes(),
+                  u8[0](), u8[0]())))).state), 1, "a 32-byte x25519 share was refused");
+  return t.report();
+}
+
+/**
  * A ClientHello the server declines for reasons that are not the key share.
  *
  * **These refusals go out in the clear**, because a hello the server will not answer establishes no
