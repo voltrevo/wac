@@ -41,5 +41,25 @@ export i32 main(Core core, Cli cli) {
                         string[]("WAC_EXEC_PROBE=only this"), true, false).wait();
   cli.writeErr(("cleared: ran=" + yn(c.ran()) + " only-what-was-passed=" +
                 yn(string.fromBytes(c.stdout) == "WAC_EXEC_PROBE=only this\n") + "\n").toBytes());
+
+  // **A child that died by signal, which every host answers `-1` for and none of them was checked on.**
+  // A signalled process has no exit code at all, so each of the four writes `code ?? -1` — or
+  // `unwrap_or(-1)` — with the same comment beside it and nothing comparing the four. That is a
+  // convention held in four places by agreement rather than by a test, which is what this line makes
+  // into one. `-1` is safe as a sentinel because a POSIX status is eight bits: no child that *exited*
+  // can produce it, and `exit 255` below is the neighbour that proves the range is not being clipped.
+  //
+  // `ran=yes` is the other half of the claim and the easier one to get wrong: the program started, so
+  // this is not `error`'s business — a signal is how it *ended*. `issues/system/0184` wants exactly
+  // this distinction one level up, for a wasm trap.
+  Exec d = cli.execWith("/bin/sh", string[]("-c", "kill -9 $$"), u8[0](), string[](), false, true)
+              .wait();
+  cli.writeErr(("signalled: ran=" + yn(d.ran()) + " status=" + itoa(d.status) +
+                " signalled=" + yn(d.signalled()) + "\n").toBytes());
+
+  Exec e = cli.execWith("/bin/sh", string[]("-c", "exit 255"), u8[0](), string[](), false, true)
+              .wait();
+  cli.writeErr(("exited: ran=" + yn(e.ran()) + " status=" + itoa(e.status) +
+                " signalled=" + yn(e.signalled()) + "\n").toBytes());
   return 0;
 }

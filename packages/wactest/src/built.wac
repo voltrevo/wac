@@ -284,7 +284,24 @@ export string builtProgram(Cli cli, string entry, string name, string[] grants) 
   args[2] = "-o";
   args[3] = stem;
   for (i32 i = 0; i < grants.len(); i++) { args[4 + i] = grants[i]; }
-  cli.exec(wac, args, u8[0]()).wait();
+  // **A build that failed takes the old artefact with it.** The answer used to be dropped here, and a
+  // stale `.wasm` is worse than none: the caller runs it, it runs — it is a real module, the one from
+  // before the program broke — and the test passes against code that no longer compiles. That is
+  // silence in the direction of green, and it cost a diagnosis: an edit to
+  // `packages/platform/test/wac/exec_probe.wac` looked like it had no effect, when what had happened
+  // was that the probe stopped compiling and yesterday's build kept answering for it.
+  //
+  // Deleted rather than reported, because 29 call sites take this path and every one of them then runs
+  // what it was handed: a missing artefact fails all 29, where a status fails only the ones that
+  // remembered to look. The compiler's own message went to this process's stderr on the way past, so
+  // the reason is in the run's output even though the return value cannot carry it. `.flags` goes too,
+  // or a later build with the same grants would find a sidecar agreeing with it and no module.
+  Exec built = cli.exec(wac, args, u8[0]()).wait();
+  if (!built.ran() || built.status != 0) {
+    cli.remove(stem + ".wasm", false).wait();
+    cli.remove(stem + ".flags", false).wait();
+    return stem + ".wasm";
+  }
   cli.writeFile(stem + ".flags", want.toBytes()).wait();
   return stem + ".wasm";
 }

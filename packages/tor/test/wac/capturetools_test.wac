@@ -31,6 +31,7 @@ import { joined, splitLines } from "../../../wactest/src/strings.wac";
 import { Core, Cli, Exec, FileResult, Stat } from "std/platform.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { builtProgram } from "../../../wactest/src/built.wac";
+import { onlyEnv } from "../../../wactest/src/childenv.wac";
 
 /**
  * One capture recipe: the two tools that implement it and the file they must both write.
@@ -47,6 +48,12 @@ struct Recipe {
   string vectors;
   string needs;
   string[] grants;
+}
+
+/** `$PATH`, or "" — the recipes spawn `python3` and `deno` by name, so a child with none finds neither. */
+string pathVar(Cli cli) {
+  u8[]? v = cli.env("PATH").wait();
+  return v is null ? "" : string.fromBytes(v!);
 }
 
 /** `$HOME`, or `/root` where there is none — the same fallback the tools use. */
@@ -112,9 +119,22 @@ bool present(Cli cli, string path) {
   return s.exists;
 }
 
-/** Run a command from the repository root and hand back its standard output. */
+/**
+ * Run a command from the repository root and hand back its standard output.
+ *
+ * **It declares its environment rather than inheriting one.** `Cli.exec` hands a child everything the
+ * host has, which is an authority nobody asked for — `issues/system/0198`, which measured this
+ * directory as one of only three that need anything beyond `PATH`. So this passes `clearEnv` and names
+ * the two it uses: `PATH`, because the recipes spawn `python3` and `deno` by bare word and that is what
+ * naming them that way *means*, and `HOME`, because the capture tools resolve their inputs under it and
+ * fall back to `/root` when it is absent — see `home` above, which is the same fallback.
+ *
+ * Nothing here relies on the leak, so this is a hardening rather than a fix, and it is step 2 of the
+ * recommendation in `0198`: the callers that want something declare it, so the day `exec` stops
+ * inheriting is a day this file does not notice.
+ */
 u8[] output(T t, Cli cli, string what, string cmd, string[] args) {
-  Exec r = cli.exec(cmd, args, u8[0]()).wait();
+  Exec r = onlyEnv(cli, string[]("PATH", "HOME"), string[](pathVar(cli), home(cli)), cmd, args);
   if (!r.ran()) { t.fail(what + ": " + cmd + " did not run — " + r.error); return u8[0](); }
   if (r.status != 0) {
     t.fail(what + ": " + cmd + " exited " + itoa(r.status) + " — " + string.fromBytes(r.stderr));
