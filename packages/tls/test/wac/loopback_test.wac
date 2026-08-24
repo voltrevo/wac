@@ -47,7 +47,8 @@ import {
   tlsServerInit, tlsServerFeed, tlsServerSend, tlsServerClose, tlsPhase,
   phaseEstablished, phaseFailed,
 } from "../../src/server.wac";
-import { alertBadRecordMac, alertUnexpectedMessage, typeHandshake } from "../../src/record.wac";
+import { alertBadRecordMac, alertUnexpectedMessage, typeAlert, typeApplicationData,
+         typeHandshake } from "../../src/record.wac";
 import { clientHello, serverHello, encryptedExtensions, groupX25519, groupP256,
          groupHybrid } from "../../src/handshake.wac";
 import { p256PublicKey } from "../../../crypto/src/p256.wac";
@@ -645,6 +646,13 @@ export string test_a_clienthello_the_server_will_not_answer_is_refused_in_the_cl
 }
 
 /** A handshake message wrapped in the plaintext record a first flight arrives in. */
+/** `inRecord` with the outer content type chosen, for the arms that are about the type. */
+u8[] inRecordTyped(i32 outer, u8[] msg) {
+  u8[] out = inRecord(msg);
+  out[0] = outer;
+  return out;
+}
+
 u8[] inRecord(u8[] msg) {
   u8[] out = u8[5 + msg.len()]();
   out[0] = typeHandshake();
@@ -865,5 +873,95 @@ export string test_a_hybrid_share_with_a_dead_x25519_half_is_refused() {
       inRecord(serverHello(random, u8[0](), 0x1301, groupHybrid(), live))));
   t.isTrue(tlsClientFailure(alive.state) != 16,
            "an honest X25519 half was refused as dead, so the three cases above prove nothing");
+  return t.report();
+}
+
+/**
+ * **The two refusals a server can provoke before any key exchange has happened.**
+ *
+ * `client.wac` numbers its refusals and `test_a_hostile_serverhello_is_refused_at_each_check` drives
+ * four of them — 12, 13, 14, 15 — all of which are about the *contents* of a ServerHello. Two sit
+ * above that, on the framing, and neither had been driven: the client has sent its ClientHello and
+ * will read whatever comes back, and what comes back is chosen by whoever answered the socket.
+ *
+ * Neither needs keys, which is why they are here rather than waiting on a hostile server that can
+ * encrypt. That is also what makes them the first thing an attacker on the path can send.
+ *
+ * The codes are asserted rather than the phase, for the reason the neighbouring test gives: a client
+ * that refused everything with one code would satisfy a bare "it refused" twice over.
+ *
+ * ## This moved no coverage number, and the reason is the point
+ *
+ * With this test wired into the driver, `packages/tls` reads 1086/1298 — exactly what it read
+ * without it. Both arms were **already covered**: pinning `client.wac:483` as unreached makes the
+ * ratchet answer *"is listed as unreached but was covered"*, so something has been executing that
+ * refusal for some time.
+ *
+ * And nothing was checking it. Delete the outer-type guard and the only assertions that fail are the
+ * eight below; the whole rest of the suite stays green. `test_a_corrupted_server_flight_is_refused_at_every_position`
+ * flips a byte at a third and two thirds of the flight, which lands on a later record's header, so
+ * it reaches this arm — and it asserts `phase == 4` and nothing else. A client that refused for
+ * entirely the wrong reason satisfied it.
+ *
+ * **So a covered line is not an asserted one, and the coverage number could not have told anyone
+ * that.** It is the same distinction as the failure codes below, one level up: "it refused" is
+ * satisfied by a client that refuses everything, and "the line ran" is satisfied by a client that
+ * runs the line and gets the answer wrong. This test exists to close the second gap, which is
+ * invisible to the instrument that would otherwise be asked whether the work was needed.
+ */
+export string test_the_first_record_back_is_refused_on_its_framing() {
+  T t = T.create();
+  u8[] hello = clientStep(freshClient(noTrustStore())).toSend;
+  t.isTrue(hello.len() > 100, "the ClientHello is too short for the client to be waiting on a reply");
+
+  // 10: the record arrives, and it is not a handshake record. An alert and application data are the
+  // two a real server could plausibly send first, and neither is a ServerHello.
+  i32[] outers = i32[](typeAlert(), typeApplicationData(), 0, 255);
+  for (i32 i = 0; i < outers.len(); i++) {
+    ClientStep r = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+        inRecordTyped(outers[i], serverHello(u8[32](fill: 0x41), u8[0](), 0x1301, groupHybrid(),
+                                             u8[1120](fill: 0x22)))));
+    t.eqI32(tlsClientPhase(r.state), 4,
+            "a first record of outer type " + itoa(outers[i]) + " was accepted");
+    t.eqI32(tlsClientFailure(r.state), 10,
+            "the wrong code for a first record of outer type " + itoa(outers[i]));
+  }
+
+  // The control: the same body under the right outer type is *not* refused at that check. It fails
+  // later, on the share, which is a different code — so case 10 is about the type and not the body.
+  ClientStep right = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+      inRecordTyped(typeHandshake(), serverHello(u8[32](fill: 0x41), u8[0](), 0x1301, groupHybrid(),
+                                                 u8[1120](fill: 0x22)))));
+  t.isTrue(tlsClientFailure(right.state) != 10,
+           "a handshake record was refused for its outer type, so the cases above prove nothing");
+
+  // 11: a handshake message whose three-byte length field disagrees with the record carrying it.
+  // `messageLength` returns -1 when the body is shorter than the header claims, and the client
+  // refuses rather than reading past what arrived.
+  //
+  // **That guard is load-bearing and the canary says so in the strongest way available.** Delete it
+  // and this test goes red — and so does
+  // `test_a_corrupted_server_flight_is_refused_at_every_position`, by *trapping* rather than by
+  // failing an assertion. So the check is not tidiness about a malformed field: it is the thing
+  // standing between a length a stranger wrote and a read off the end of the buffer, which
+  // `spec/spec/arrays.md` `[§wac-arr-oob-7jby7f8]` ends the process for.
+  u8[] real = serverHello(u8[32](fill: 0x41), u8[0](), 0x1301, groupHybrid(), u8[1120](fill: 0x22));
+  i32[] claims = i32[](0, 1, real.len(), real.len() + 1, 0xFFFFFF);
+  for (i32 i = 0; i < claims.len(); i++) {
+    u8[] lying = u8[real.len()]();
+    for (i32 k = 0; k < real.len(); k++) { lying[k] = real[k]; }
+    lying[1] = (claims[i] >> 16) & 0xFF;
+    lying[2] = (claims[i] >> 8) & 0xFF;
+    lying[3] = claims[i] & 0xFF;
+    ClientStep r = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+                                            inRecord(lying)));
+    t.eqI32(tlsClientPhase(r.state), 4,
+            "a ServerHello claiming length " + itoa(claims[i]) + " was accepted");
+    t.eqI32(tlsClientFailure(r.state), 11,
+            "the wrong code for a ServerHello claiming length " + itoa(claims[i]));
+  }
+
+  // And the honest length is not refused there, so case 11 is about the disagreement.
+  t.isTrue(tlsClientFailure(right.state) != 11, "an honest length was refused as a lie");
   return t.report();
 }
