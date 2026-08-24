@@ -78,12 +78,19 @@ Cover[] coverage() {
     where("REMOVE", "native_hostfs: `rm made`"),
     where("RENAME", "native_hostfs: `mv f moved`"),
     gap("SET_EXECUTABLE",
-      "no two-host comparison. The one caller is a git checkout, and its oracle is `git status` over " +
-      "a real repository — `packages/git/test/wac/checkout_test.wac` requires an executable to come " +
-      "out executable and the porcelain to be empty, which is a sharper check than two hosts agreeing " +
-      "but runs on one of them. Worth pairing when native_hostfs next grows a case: the arithmetic is " +
-      "duplicated three times (Deno, Node, Rust) and only the Deno copy is exercised, so a wrong mask " +
-      "in the other two would not be caught here. issues/system/0132"),
+      "no two-host comparison, and **the gap this entry warned about was real**. It said the " +
+      "arithmetic is duplicated and only the Deno copy exercised, so a wrong mask elsewhere would not " +
+      "be caught. On 2026-08-24 there was one: the V8 native host set `mode | 0o100` and cleared " +
+      "`mode & !0o100` — owner-execute alone — where Deno, Node and the wasmtime host all do " +
+      "`mode | ((mode & 0o444) >> 2)` and clear `0o111`, which is `chmod +x`'s rule. The same program " +
+      "on the same file gave **744** natively and **755** under Deno, and clearing 755 gave 655 " +
+      "against 644. Fixed in `native/v8/src/main.rs`; three of four had always agreed. " +
+      "**`checkout_test.wac` passed throughout**, which is the point of writing gaps down: git reads " +
+      "any execute bit as 100755, so 744 satisfied the only oracle this capability had. " +
+      "What would close it is not a case in native_hostfs — that drives the hosts through shell " +
+      "scripts and there is no `chmod` applet, so `setExecutable` is unreachable from a script. It " +
+      "needs a purpose-built program run on both and the resulting mode compared, which is a small " +
+      "file rather than a case. issues/system/0132"),
     where("EXEC_WITH",
       "native: one module built once and run by both native binaries — `native_test.wac`'s " +
       "`test_running_a_host_program_agrees_between_the_two_native_hosts`, which compares the three " +
