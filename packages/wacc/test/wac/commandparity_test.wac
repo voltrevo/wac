@@ -31,7 +31,7 @@
 //
 // ## What is compared, and what is deliberately not
 //
-// Twenty-one invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
+// Twenty-three invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
 // side's stdout and stderr concatenated, and the exit code. Not compared: timing, and the module bytes
 // `build` writes — those have their own tests (`bindgenwac_test.wac` holds the two *generators* to the
 // same bytes, which is a different claim from two hosts running one generator). **Worth adding and not
@@ -56,7 +56,7 @@
 //
 // ## What it costs, measured 2026-08-22
 //
-// **22s warm** — up from 2–3s, for three hosts instead of two and twenty-one cases instead of six,
+// **26s warm** — up from 2–3s, for three hosts instead of two and twenty-three cases instead of six,
 // thirteen of which compile, run or test a program rather than only checking one, plus three module
 // builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
 // it, where `check` stops at the diagnostics. The build is the only expensive part
@@ -157,7 +157,13 @@ string[][] cases() {
     string[]("test", "--allow-read", "--filter", "passes", "src/one_test.wac"),
     string[]("test", "--allow-read", "--filter", "zzz", "src/one_test.wac"),   // matches nothing
     string[]("test", "--nonsense", "src/one_test.wac"),       // an unknown flag, named
-    string[]("test", "--allow-read", "src/missing_test.wac"));
+    string[]("test", "--allow-read", "src/missing_test.wac"),
+    // **The two grant rows.** The first is the canary for `issues/system/0242c`: a test that writes,
+    // on a run that granted only read, has to be *denied* — and "denied" rather than "failed", because
+    // `Change` reading the fault off its own refusal is half of what that issue fixed. The second is a
+    // run that granted nothing at all, where the test is skipped and named and the status is 4.
+    string[]("test", "--allow-read", "src/writes_test.wac"),
+    string[]("test", "src/reads_test.wac"));
 }
 
 /**
@@ -199,7 +205,28 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            "export string test_passes(Core core, Cli cli) { return \"\"; }\n" +
            "export string test_fails(Core core, Cli cli) { return \"1 of 1 assertions failed\"; }\n" +
            "export string test_traps_here(Core core, Cli cli) { return \"\"; }\n" +
-           "export string test_traps_on_purpose(Core core, Cli cli) { trap; }\n");
+           "export string test_traps_on_purpose(Core core, Cli cli) { trap; }\n")
+    // **The capability canary.** A test that writes, run on a read-only grant. `issues/system/0242c`
+    // is the day this passed on the JavaScript hosts and left `leaked.txt` on disk: a loaded module
+    // was handed the *command's* world, and a `wac` command holds every grant because it has to
+    // compile and write. The row that would notice is one where a test asks for more than the run did.
+    && put(t, cli, dir + "/src/writes_test.wac",
+           "import { Change, Cli, Core, FAULT_NOT_GRANTED } from \"std/platform.wac\";\n" +
+           "export string test_writes_a_file(Core core, Cli cli) {\n" +
+           "  Change c = cli.writeFile(\"leaked.txt\", \"leaked\\n\".toBytes()).wait();\n" +
+           "  if (c.ok()) { return \"\"; }\n" +
+           "  return c.fault == FAULT_NOT_GRANTED() ? \"the write was denied\" : \"the write failed\";\n" +
+           "}\n")
+    // ...and one that only reads, for the run that grants nothing: a test wanting a capability it was
+    // not given is *skipped and named*, not failed, because "you forgot a flag" and "your test is
+    // wrong" are different answers.
+    && put(t, cli, dir + "/src/reads_test.wac",
+           "import { Cli, Core, FAULT_NOT_GRANTED, FileResult } from \"std/platform.wac\";\n" +
+           "export string test_reads_a_file(Core core, Cli cli) {\n" +
+           "  FileResult f = cli.readFile(\"src/lib.wac\").wait();\n" +
+           "  if (f.ok) { return \"\"; }\n" +
+           "  return f.fault == FAULT_NOT_GRANTED() ? \"the read was denied\" : \"the read failed\";\n" +
+           "}\n");
   if (!wrote) { cli.remove(dir, true).wait(); return t.report(); }
 
   string native = wacBinary(cli);
@@ -261,8 +288,8 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
   // header. Eight of these sixteen exit 0: two `bindgen`s, one `check`, the two `run`s of a program
   // that returns 0, and the three modules run directly.
-  t.eqI32(zeroes, 9, "nine of these twenty-one succeed on the native host; a different count means " +
-                     "the argument vectors did not arrive as vectors");
+  t.eqI32(zeroes, 9, "nine of these twenty-three succeed on the native host; a different count " +
+                     "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success
   // instead of the program's would read as 0 and every other assertion would still pass.
