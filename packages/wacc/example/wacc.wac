@@ -1164,6 +1164,76 @@ string flagValue(Cli cli, i32 argc, string flag) {
  * is a failure — "returned instead of trapping" is the native command's own sentence, matched here
  * because `commandparity_test.wac` compares them.
  */
+/**
+ * The branch-coverage report a `--coverage` run prints, from the counters and the table beside them.
+ *
+ * `table` is `index\tline\tcol\tkind\tfile` per counter, in counter order — what `covTableFilesIn`
+ * answers and what `wac build --coverage` writes to `<stem>.cov`. `hit[i]` is how many times counter
+ * `i` ran, so the two are read together and neither means anything alone.
+ *
+ * **Points, not lines.** One line can hold two branches and the question is which of them ran, so a
+ * per-line count would report half a fact. The native command counts the same way.
+ */
+void sayCoverage(Core core, string table, i32[] hit) {
+  string[] lines = splitLines(table);
+  string[] names = string[lines.len()](fill: "");
+  i32[] total = i32[lines.len()]();
+  i32[] taken = i32[lines.len()]();
+  i32 files = 0;
+  i32 points = 0;
+  i32 reached = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (lines[i] == "") { continue; }
+    string file = fieldOf(lines[i], 4);
+    if (file == "") { continue; }
+    i32 at = -1;
+    for (i32 k = 0; k < files; k++) { if (names[k] == file) { at = k; } }
+    if (at < 0) { at = files; names[at] = file; files = files + 1; }
+    total[at] = total[at] + 1;
+    points = points + 1;
+    if (i < hit.len() && hit[i] > 0) { taken[at] = taken[at] + 1; reached = reached + 1; }
+  }
+  if (points == 0) { return; }
+  core.log("");
+  core.log("branch coverage: " + itoa(reached) + " of " + itoa(points) + " points ("
+           + itoa(points == 0 ? 0 : (reached * 100) / points) + "%)");
+  for (i32 k = 0; k < files; k++) {
+    string left = itoa(taken[k]) + " / " + itoa(total[k]);
+    string pad = "";
+    for (i32 j = left.len(); j < 10; j++) { pad = pad + " "; }
+    core.log("      " + left + pad + names[k]);
+  }
+}
+
+/** `text` split on newlines. */
+string[] splitLines(string text) {
+  i32 n = 1;
+  for (i32 i = 0; i < text.len(); i++) { if (text.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 k = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i == text.len() || text.slice(i, i + 1) == "\n") {
+      out[k] = text.slice(at, i);
+      k = k + 1;
+      at = i + 1;
+    }
+  }
+  return out;
+}
+
+/** Every counter's value, read through the module's own `__cov_len` and `__cov_get`. */
+i32[] countersOf(Cli cli, i32 handle) {
+  CallResult n = cli.call(handle, "__cov_len", 0);
+  if (n.status != 0 || n.value <= 0) { return i32[0](); }
+  i32[] out = i32[n.value]();
+  for (i32 i = 0; i < n.value; i++) {
+    CallResult one = cli.call(handle, "__cov_get", i);
+    out[i] = one.status == 0 ? one.value : 0;
+  }
+  return out;
+}
+
 /** What one file's tests came to. */
 struct Tally {
   i32 passed;
@@ -1226,7 +1296,7 @@ void sayTally(Core core, Tally t) {
 }
 
 i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 grants,
-             string filter, string[] files, i32 ignored, string target) {
+             string filter, string[] files, i32 ignored, string target, string covTable) {
   // **The tests get what the caller granted, and no more.** `wac test --allow-read` means the tests
   // may read; it does not mean they may write because *this command* can. `load` narrows the world it
   // hands over, and it took a test writing a file to disk to find that it had not been asked to —
@@ -1241,6 +1311,11 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
     return 1;
   }
   TestExport[] names = testExportsIn(manifest);
+  // **The counter array is allocated by this call, not by instantiation.** Without it every
+  // instrumented function traps on its first branch with "dereferencing a null pointer" — a message
+  // naming the program under test rather than the missing call, which is what both other hosts
+  // learnt the hard way.
+  if (covTable != "") { cli.call(m.handle, "__cov_init", 0); }
 
   // **One file: no headers, no file count.** That is what a person naming one file wants, and it is
   // what the native command prints — the summary below is the whole output.
@@ -1248,6 +1323,10 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
     i32[] all = i32[names.len()]();
     for (i32 i = 0; i < names.len(); i++) { all[i] = i; }
     Tally t = runNamed(core, cli, m.handle, names, all, names.len(), grants, filter);
+    // **Read before the handle goes.** The counters live in the module, so `unload` is the end of
+    // them — and an unloaded handle answers "no such export" rather than failing, so this would have
+    // reported a run of nothing as a coverage of zero.
+    i32[] hit = covTable != "" ? countersOf(cli, m.handle) : i32[0]();
     cli.unload(m.handle);
     if (t.ungrantedCount > 0) {
       core.log(itoa(t.ungrantedCount) + " test(s) want a capability this run was not granted: "
@@ -1263,6 +1342,7 @@ i32 runTests(Core core, Cli cli, string entry, u8[] whole, string manifest, i32 
       return 1;
     }
     sayTally(core, t);
+    if (covTable != "") { sayCoverage(core, covTable, hit); }
     return t.failed == 0 ? 0 : 3;
   }
 
@@ -1875,15 +1955,34 @@ export i32 main(Core core, Cli cli) {
                 + "--allow-env, --allow-run, --filter");
       return 2;
     }
-    if (hasFlag(cli, argc, "--coverage")) {
-      core.warn("wac: --coverage is not implemented here yet — issues/system/0230a");
+    // **`--coverage` for one file.** The shared compile above has already emitted an instrumented
+    // module when it was asked for, so the whole of it here is: initialise the counters before the
+    // tests, read them after, and pair them with the table. A *directory* under `--coverage` is still
+    // the native command's alone, and for its reason rather than mine: the counters are per module and
+    // the table is written beside it, so one aggregate would report the first file's positions for all
+    // of them. That path needs a build per file, which this command does not do yet.
+    // **`--coverage` cannot work here yet, and says so rather than answering 0%.**
+    //
+    // The counters are read through `__cov_init`, `__cov_len` and `__cov_get`, which are *injected* by
+    // the instrumentation — no source names them, so the manifest does not list them, and `Cli.call`
+    // dispatches on the manifest. The native host reads the module's exports directly and is fine.
+    //
+    // Written after watching this print `branch coverage: 0 of 270 points (0%)` beside the native's
+    // `6 of 270 (2%)`: the table and the totals were right and every counter read zero, which is a
+    // wrong number rather than a missing one. A wrong number is the worst of the three answers here.
+    // `issues/system/0243c`.
+    if (covered) {
+      core.warn("wac: --coverage is the native command's alone — its counters are reached through "
+                + "exports the instrumentation injects, which no manifest lists. "
+                + "`issues/system/0243c`");
       return 2;
     }
     i32 grants = grantsIn(cli, argc);
     string manifest = manifestWire(wasm, types, sigs, entry,
                                   baseName(stem(entry)) + ".wasm", grants);
     i32 code = runTests(core, cli, entry, withManifestSection(wasm, manifest), manifest, grants,
-                        flagValue(cli, argc, "--filter"), walked, ignoredCount, target);
+                        flagValue(cli, argc, "--filter"), walked, ignoredCount, target,
+                        covered ? covTableFilesIn(paths, texts, res, entry) : "");
     // **The aggregate is scratch and goes when the run does.** It is a generated file with a unique
     // name, so leaving it would grow `.cache/` by one per invocation — `issues/system/0136` is the day
     // this repository's disk filled from exactly that shape, one temporary directory per run that

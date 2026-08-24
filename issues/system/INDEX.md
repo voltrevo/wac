@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0243c](open/0243c-cli-call-dispatches-on-the-manifest-so-an-injected-export-is-unreachable.md) | `Cli.call` looks an export up in the manifest, and `__cov_init`/`__cov_len`/`__cov_get` are injected by the instrumentation so no manifest lists them — `wac test --coverage` on a JavaScript host printed `0 of 270 points (0%)` against the native's `6 of 270 (2%)`, with the table and the totals right and every counter zero | missing feature | wrong answer |
 | [0239c](open/0239c-the-compiler-spends-minutes-on-a-file-that-is-not-wac-source.md) | `wac run <a module.wasm>` burns 90s of CPU on 75 KB and writes nothing — the compiler is handed binary as source, and a 36 KB text file finishes at once, so it is superlinear in recovery rather than any one byte; the zero-length output is its own bug | performance | hangs |
 | [0238c](open/0238c-a-socket-carries-no-fault-so-refused-and-failed-can-only-be-told-apart-in-english.md) | `Socket` carries no `fault` where `FileResult` and `Change` do, so "the network was not granted" and "nothing is listening" differ only in the host's English — and the four hosts spell it two ways, which made `probe.wac` report a refused *read* as `failed` under both native hosts | missing feature | wrong answer |
 | [0234a](open/0234a-a-bare-specifier-means-two-things-and-the-two-hosts-pick-differently.md) | `dep/lib.wac` is a mapping name per the spec and not a relative path, but the Deno walk joins it to the importing file's directory — with `dep/` mapped and a real `src/dep/lib.wac` it compiles the local file and the program answers 99, exit 0, no diagnostic; and the binary resolves a bare specifier no mapping declares as though it were relative, which the spec does not define either | bug | wrong answer |
@@ -61,7 +62,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-251 issues, 202 closed.
+252 issues, 202 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
