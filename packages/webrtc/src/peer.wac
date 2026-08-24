@@ -350,7 +350,18 @@ export struct Peer {
     if (kind == 11 || kind == 15) { return out; }             // a retransmission; already folded
     if (kind == 16 && !this.keysReady) {                      // ClientKeyExchange
       this.remember(16, seq, body);
-      u8[] pms = x25519(this.scalar, clientPublic(body));
+      // **A peer's public key has to be thirty-two bytes, and asking was a trap until 2026-08-24.**
+      // `clientPublic` hands on whatever length the leading byte names — and returns *empty* when
+      // that length overruns the message — while `x25519` traps on anything else. This is the
+      // plaintext phase, before any key exists, so the cost to an attacker was a cookie exchange and
+      // one more datagram.
+      //
+      // Declined the way every other unusable message here is declined, with `return out`: a peer
+      // that sent this is not one we can finish a handshake with, and there is nothing to say back
+      // that it would understand.
+      u8[] peerKey = clientPublic(body);
+      if (peerKey.len() != 32) { return out; }
+      u8[] pms = x25519(this.scalar, peerKey);
       this.master = masterSecret(pms, this.clientRandom, this.random);
       u8[] block = keyBlock(this.master, this.random, this.clientRandom, 40);
       this.clientWriteKey = slice(block, 0, 16);
