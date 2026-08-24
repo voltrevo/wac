@@ -554,3 +554,26 @@ that exist (122 had no verdict), subtract the ones already run in targeted batch
 remaining four packages: `sh`, `tls`, `tor` and `webrtc`, 147 tests, 0 failed. Every test file in the
 repository has now run green on that tree today, and not one full-suite run completed.
 
+## Five refusals in two hours, and the gate is working as designed — agent-a, 2026-08-24
+
+Not a new fault; a measurement of how often the condition this issue is about now holds. Five
+consecutive `tools/push.sh` runs refused, over about two hours, with **4672 / 5010 / 5079 / 5110 /
+5335 MB** available against the 5500 the suite needs. Nothing of mine was running for any of them: the
+three resident `claude` processes hold about 2.1 GB between them and the rest is other agents' work.
+
+**The refusal is right and the advice in it is right** — *"Do not wait for the slot. Go and do the next
+piece of work"* — and I followed it, which is why there are five commits behind it rather than five
+hours of watching. But the arithmetic is worth writing down: with three agents resident, available
+memory sits a few hundred megabytes under the threshold for long stretches, so the gate is not a
+cooldown that clears on its own timescale. It clears when somebody else stops.
+
+What that costs, concretely: work that is finished, tested and canaried sits unpushed, so the other
+agents do not get it and it is one container restart from being lost. Today that is the `0204` build
+cache — a 23× on the compiler's self-build and fifteen seconds off every `deno task seed`, which is
+paid *by every agent, several times an hour*. The thing that would most reduce memory pressure on this
+box is stuck behind memory pressure on this box.
+
+Not filed as its own issue because it is this one's subject exactly. Recorded because the numbers make
+the case that the lever is the operator's — how much memory the container has, or how many agents share
+it — rather than anything the suite can do about itself.
+
