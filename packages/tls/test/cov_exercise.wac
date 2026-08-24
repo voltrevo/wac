@@ -250,8 +250,21 @@ import {
   test_the_client_refuses_a_flight_it_cannot_open as lb__the_client_refuses_a_flight_it_cannot_open,
 } from "./wac/loopback_test.wac";
 
+import {
+  test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal as lb__a_key_share_that_is_not_a_point_is_refused_rather_than_fatal,
+  test_a_clienthello_the_server_will_not_answer_is_refused_in_the_clear as lb__a_clienthello_the_server_will_not_answer_is_refused_in_the_clear,
+} from "./wac/loopback_test.wac";
+
 export i32 main(Core core, Cli cli) {
   i32 bad = 0;
+  if (lb__a_key_share_that_is_not_a_point_is_refused_rather_than_fatal().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal");
+    bad = bad + 1;
+  }
+  if (lb__a_clienthello_the_server_will_not_answer_is_refused_in_the_clear().len() > 0) {
+    core.warn("error: FAILED loopback_test test_a_clienthello_the_server_will_not_answer_is_refused_in_the_clear");
+    bad = bad + 1;
+  }
   if (lb__our_client_and_our_server_complete_a_handshake_in_one_process().len() > 0) {
     core.warn("error: FAILED loopback_test test_our_client_and_our_server_complete_a_handshake_in_one_process");
     bad = bad + 1;

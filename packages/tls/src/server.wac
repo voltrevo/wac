@@ -38,7 +38,7 @@
 
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
-import { p256Ecdh, p256PublicKey } from "../../crypto/src/p256.wac";
+import { p256Ecdh, p256PublicKey, p256Decodes } from "../../crypto/src/p256.wac";
 import {
   hybridServerAccept, groupX25519MlKem768, hybridServerShareLen, hybridSecretLen,
 } from "./hybrid.wac";
@@ -284,6 +284,18 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
   i32 group = (ch.keyShare[0] << 8) | ch.keyShare[1];
   u8[] peerKey = u8[ch.keyShare.len() - 2]();
   for (i32 i = 0; i < peerKey.len(); i++) { peerKey[i] = ch.keyShare[2 + i]; }
+
+  // **A P-256 share has to be a point on P-256, and asking was a trap until 2026-08-24.**
+  // `p256Ecdh` validates the peer's point — that is the defence against an invalid-curve attack —
+  // and it validated by aborting the process. This is a stranger's *first message*: no handshake, no
+  // keys, no timing, just sixty-five bytes that are not a point. `illegal_parameter` is what RFC 8446
+  // §4.2.8 names for a key share the receiver cannot use.
+  //
+  // x25519 and the hybrid need no equivalent: a Montgomery ladder accepts any thirty-two bytes by
+  // design, and `hybridServerAccept` checks its own widths.
+  if (group == groupP256() && !p256Decodes(peerKey)) {
+    return failPlain(c, alertIllegalParameter());
+  }
 
   // The hybrid does the exchange while building the share, because encapsulation
   // produces both at once; the other two derive the secret separately below.

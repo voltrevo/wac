@@ -47,7 +47,9 @@ import {
   tlsServerInit, tlsServerFeed, tlsServerSend, tlsServerClose, tlsPhase,
   phaseEstablished, phaseFailed,
 } from "../../src/server.wac";
-import { alertBadRecordMac, alertUnexpectedMessage } from "../../src/record.wac";
+import { alertBadRecordMac, alertUnexpectedMessage, typeHandshake } from "../../src/record.wac";
+import { clientHello, groupX25519, groupP256, groupHybrid } from "../../src/handshake.wac";
+import { p256PublicKey } from "../../../crypto/src/p256.wac";
 import {
   ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientPhase, tlsClientFailure,
   tlsClientSend, tlsClientClose,
@@ -445,4 +447,128 @@ export string test_the_client_refuses_a_flight_it_cannot_open() {
                                               ss.toSend));
   t.eqI32(tlsClientPhase(clean.state), 3, "the untampered flight was not accepted either");
   return t.report();
+}
+
+/**
+ * **A ClientHello carrying sixty-five bytes that are not a point on P-256 aborted the server.**
+ *
+ * `serverFlight` takes the client's key share straight out of the hello and hands it to `p256Ecdh`,
+ * whose contract is to *validate the peer's point — the whole defence against an invalid-curve
+ * attack* — and which validated by trapping. So the first message a stranger sends, before any keys
+ * exist, ended the process. No handshake, no timing, one connection.
+ *
+ * `packages/crypto` already had the non-trapping form and had said why: `curveDecodes` exists
+ * *"because a `bool` verifier must answer, and a trap is not an answer"*. It was reachable only
+ * through `weierstrass.wac`; `p256Decodes` is now beside `p256Ecdh`, where the caller who needs to
+ * ask is looking.
+ *
+ * **The client had the same hole**, at `client.wac`'s ServerHello key share, under a comment that
+ * described the trap as though it were the end of the sentence. `packages/tor` is a client and it
+ * dials relays out of a public directory.
+ *
+ * The control is a *valid* P-256 point immediately below: the same hello, a point that is on the
+ * curve, and the server answers a 601-byte flight. So the refusal is caused by the point and not by
+ * P-256 being unsupported — which it is not.
+ */
+export string test_a_key_share_that_is_not_a_point_is_refused_rather_than_fatal() {
+  T t = T.create();
+  u8[] random = u8[32](fill: 0x5A);
+
+  // A real P-256 point, from this package's own generator.
+  u8[] valid = p256PublicKey(u8[32](fill: 0x11));
+  t.eqI32(valid.len(), 65, "the control point is not 65 uncompressed bytes");
+  ClientStep ok = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupP256(), valid, HOST.toBytes(), u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(ok.state), 1, "a hello with a valid P-256 share was not answered");
+  t.isTrue(ok.toSend.len() > 100, "the server's answer to a valid P-256 hello is too short");
+
+  // Sixty-five bytes that are not a point: the uncompressed prefix and then nonsense.
+  u8[] notAPoint = u8[65](fill: 0x04);
+  ClientStep no = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupP256(), notAPoint, HOST.toBytes(), u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(no.state), phaseFailed(), "a key share that is not a point was accepted");
+  t.isTrue(no.toSend.len() > 0, "the server refused without saying so");
+  t.eqI32(no.toSend[0], 21, "the refusal was not sent as an alert record");
+
+  // A point whose prefix says uncompressed and whose coordinates are the curve's own b — on the
+  // curve only by coincidence, which it is not.
+  u8[] shifted = u8[65]();
+  for (i32 i = 0; i < 65; i++) { shifted[i] = valid[i]; }
+  shifted[64] = shifted[64] ^ 0x01;                    // one bit of y
+  ClientStep off = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupP256(), shifted, HOST.toBytes(), u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(off.state), phaseFailed(), "a point one bit off the curve was accepted");
+  return t.report();
+}
+
+/**
+ * A ClientHello the server declines for reasons that are not the key share.
+ *
+ * **These refusals go out in the clear**, because a hello the server will not answer establishes no
+ * keys — so `failPlain` is a different path from every other refusal in `server.wac`, and until this
+ * test it was an *uncovered entry*: not a branch nobody took but a function nobody called.
+ *
+ * Reachable now for the reason this file exists. Constructing a hello and handing it straight to
+ * `tlsServerFeed` was impossible while the server only ran in another process behind a socket; it is
+ * three lines here.
+ *
+ * `handshake.wac`'s `clientHello` is the builder, which is worth noting on its own: it is the shared
+ * spelling `packages/quic` uses, and `packages/tls`'s ledger had it pinned as *exercised in another
+ * package*. It is exercised here now.
+ */
+export string test_a_clienthello_the_server_will_not_answer_is_refused_in_the_clear() {
+  T t = T.create();
+  u8[] random = u8[32](fill: 0x5A);
+  u8[] hybridShare = u8[1216](fill: 0x11);
+
+  // The control: the suite and group this server chose.
+  ClientStep answered = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupHybrid(), hybridShare, HOST.toBytes(),
+                  u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(answered.state), 1, "the server did not answer a hello it should accept");
+
+  // A suite the server does not speak. ChaCha20-Poly1305 is implemented in `record.wac` and both
+  // state machines pin AES-128-GCM, so this is a real negotiation failure rather than an invented one.
+  ClientStep no1 = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1303, groupHybrid(), hybridShare, HOST.toBytes(),
+                  u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(no1.state), phaseFailed(), "a hello offering only ChaCha20 was accepted");
+  t.eqI32(no1.toSend[0], 21, "the suite refusal was not sent as an alert record");
+
+  // A group nobody has heard of: `parseClientHello` answers an empty key share, which is what
+  // `keyShare.len() < 3` is for. The source calls this the HelloRetryRequest case and says plainly
+  // that a retry is not implemented, so a refusal is the honest answer rather than a pretence.
+  ClientStep no2 = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, 0x1234, u8[32](fill: 9), HOST.toBytes(),
+                  u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(no2.state), phaseFailed(), "a hello offering an unknown group was accepted");
+  t.eqI32(no2.toSend[0], 21, "the group refusal was not sent as an alert record");
+
+  // And the two groups that are *not* refused, so the assertions above are about what was varied.
+  // Both are answered: x25519 is the classical fallback and P-256 is the third supported group.
+  t.eqI32(tlsPhase(clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupX25519(), u8[32](fill: 9), HOST.toBytes(),
+                  u8[0](), u8[0]())))).state), 1, "a hello offering x25519 was refused");
+  t.eqI32(tlsPhase(clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupP256(), p256PublicKey(u8[32](fill: 0x11)),
+                  HOST.toBytes(), u8[0](), u8[0]())))).state), 1, "a hello offering P-256 was refused");
+
+  // A refused connection stays refused rather than aborting on the next record — the property
+  // `tlsServerFeed`'s phase check at the top exists to give.
+  ClientStep after = clientStep(tlsServerFeed(no1.state, inRecord(
+      clientHello(random, u8[0](), 0x1301, groupHybrid(), hybridShare, HOST.toBytes(),
+                  u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(after.state), phaseFailed(), "a refused connection accepted a second hello");
+  return t.report();
+}
+
+/** A handshake message wrapped in the plaintext record a first flight arrives in. */
+u8[] inRecord(u8[] msg) {
+  u8[] out = u8[5 + msg.len()]();
+  out[0] = typeHandshake();
+  out[1] = 3; out[2] = 1;                       // the first record says 1.0, per RFC 8446 D.4
+  out[3] = (msg.len() >> 8) & 0xFF;
+  out[4] = msg.len() & 0xFF;
+  for (i32 i = 0; i < msg.len(); i++) { out[5 + i] = msg[i]; }
+  return out;
 }
