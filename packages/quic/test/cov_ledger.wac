@@ -75,12 +75,24 @@ Rule[] rules() {
          "server flight the way that file sweeps a frame would drive most of these forty-two in one " +
          "test, and the canaries there say what such a sweep can and cannot pin."),
     Rule("packages/quic/src/server.wac", "struct Server", "struct", false,
-         "The same, on the side that answers: a client Initial missing a field, a token that does " +
-         "not check, a datagram too short to carry what its header claims. Our server is driven by " +
-         "our client and by quinn, both of which send well-formed Initials.\n" +
-         "         Worth more than the client's half, for the reason `packages/tls` gives about its " +
-         "own server: this is the side that accepts connections from strangers, and the arms below " +
-         "are what a stranger's first packet reaches."),
+         "The side that answers, reading a client Initial: a field missing, a token that does not " +
+         "check, a datagram too short to carry what its header claims. Our server is driven by our " +
+         "client and by quinn, both of which send well-formed Initials.\n" +
+         "         **This was twenty-three points and is thirteen**, closed by " +
+         "`test/wac/initial_sweep_test.wac` on 2026-08-24 — the sweep this entry asked for, cutting " +
+         "a real client Initial at every byte through the header and every sixteenth through the " +
+         "padding, and damaging each field of the long header in turn. It needs no certificate: " +
+         "`Server.of` touches its RSA key only when `flight()` signs, so every reading arm is " +
+         "reachable with dummy material.\n" +
+         "         **It found a trap rather than an uncovered arm.** `clientShare` read " +
+         "`messageBody(this.clientHello)`, which traps on anything under four bytes, and " +
+         "`this.clientHello` is empty exactly when `of` could not read the datagram. `flight()` " +
+         "checked `ok()` first and was safe; `openApplication` and the three 1-RTT readers behind " +
+         "it call `shared()` *before* their own guard and were not. One guard in `clientShare` " +
+         "covers the chain. `packet.wac`'s `parseLong` rule went at the same time — the sweep " +
+         "closed it outright, and the ratchet said so rather than my noticing.\n" +
+         "         What is left is thirteen points that a *readable* Initial cannot produce: the " +
+         "token arms, and answers for a client that offered a group this server does not implement."),
     Rule("packages/quic/src/connection.wac", "struct Connection", "struct", false,
          "Stream bookkeeping for cases the tests do not produce — a stream ending on a byte boundary, " +
          "data arriving out of order, a limit reached. Reachable through the ordinary API and " +
@@ -106,10 +118,6 @@ Rule[] rules() {
          "Packet numbers of two, three and four bytes. Every test connection sends fewer than 256 " +
          "packets, so only the one-byte form is ever written or read — and the decoding is *not* the " +
          "same code path for the others, because the length comes out of the protected header bits."),
-    Rule("packages/quic/src/packet.wac", "parseLong", "decl", false,
-         "Long headers our peers do not send: a version we do not know, connection ids of unusual " +
-         "length, a token where none is expected. The corpus is quinn and ourselves, which agree on " +
-         "one shape."),
     Rule("packages/quic/src/packet.wac", "negotiationVersions", "decl", false,
          "**Version negotiation, which nothing here has ever received.** A server that does not speak " +
          "our version answers with a list of the ones it does, and the whole reader for that list is " +

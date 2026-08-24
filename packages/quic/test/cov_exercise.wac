@@ -119,6 +119,11 @@ import {
   test_every_client_reader_survives_a_datagram_no_server_sent as hd__every_client_reader_survives_a_datagram_no_server_sent,
 } from "./wac/hostile_datagram_test.wac";
 import {
+  test_a_whole_client_initial_is_read as is__a_whole_client_initial_is_read,
+  test_no_prefix_of_a_client_initial_is_readable as is__no_prefix_of_a_client_initial_is_readable,
+  test_a_client_initial_whose_header_lies_is_refused as is__a_client_initial_whose_header_lies_is_refused,
+} from "./wac/initial_sweep_test.wac";
+import {
   test_a_real_quic_server_reads_a_stream_this_client_opened as s4__a_real_quic_server_reads_a_stream_this_client_opened,
   test_and_answers_on_it_which_this_client_reads_back as s4__and_answers_on_it_which_this_client_reads_back,
   test_an_acknowledgement_the_server_accepts as s4__an_acknowledgement_the_server_accepts,
@@ -456,6 +461,18 @@ export i32 main(Core core, Cli cli) {
   }
   if (hd__every_client_reader_survives_a_datagram_no_server_sent().len() > 0) {
     core.warn("error: FAILED hostile_datagram_test test_every_client_reader_survives_a_datagram_no_server_sent");
+    bad = bad + 1;
+  }
+  if (is__a_whole_client_initial_is_read().len() > 0) {
+    core.warn("error: FAILED initial_sweep_test test_a_whole_client_initial_is_read");
+    bad = bad + 1;
+  }
+  if (is__no_prefix_of_a_client_initial_is_readable().len() > 0) {
+    core.warn("error: FAILED initial_sweep_test test_no_prefix_of_a_client_initial_is_readable");
+    bad = bad + 1;
+  }
+  if (is__a_client_initial_whose_header_lies_is_refused().len() > 0) {
+    core.warn("error: FAILED initial_sweep_test test_a_client_initial_whose_header_lies_is_refused");
     bad = bad + 1;
   }
   if (s4__a_real_quic_server_reads_a_stream_this_client_opened(core, cli).len() > 0) {

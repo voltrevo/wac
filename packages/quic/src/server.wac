@@ -128,6 +128,21 @@ export struct Server {
    * two bytes of group id and 30 bytes of somebody else's curve.
    */
   u8[] clientShare(const this) {
+    // **`ok()` is a contract this used to make the caller keep**, and `this.clientHello` is bytes a
+    // stranger's datagram supplied. When `of` could not read one it is empty, and `messageBody`
+    // traps on anything shorter than a four-byte header — so every reader below this one ended the
+    // process rather than answering, on a first packet anybody can send.
+    //
+    // `flight()` checks `ok()` and was safe; `openApplication` and the three 1-RTT readers behind it
+    // call `shared()` *before* their own guard, so they were not. Nothing outside this package's
+    // tests builds a `Server` today, which is why this is a hazard on the surface rather than a
+    // crash somebody has had — but the surface is the point of the file.
+    //
+    // One guard here covers the chain: `shared`, `applicationKeysFor`, `openApplication`,
+    // `streamBytes`, `streamFinished`, `streamPacket` and `handshakeDone` all reach the empty answer
+    // from this one. `packages/ssh` is the model the rest of this repository follows — trap on the
+    // caller's own values, return a value for every byte a peer sent.
+    if (!this.ok()) { return u8[0](); }
     u8[] tagged = parseClientHello(messageBody(this.clientHello), suiteAes128Gcm()).keyShare;
     if (tagged.len() != 34) { return u8[0](); }
     i32 group = (tagged[0] << 8) | tagged[1];
