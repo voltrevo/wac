@@ -18,6 +18,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { joined, splitLines, startsWith, trimmed, has } from "../../../wactest/src/strings.wac";
 import { Core, Cli, FileResult } from "std/platform.wac";
+import { diagnoseGraph } from "../../src/api.wac";
 import { Lines, Answers, ask, word } from "../../../wactest/src/oracle.wac";
 
 const string ORACLE = "packages/wacc/test/reference.ts";
@@ -74,5 +75,45 @@ export string test_lex_errors_the_code_table_itself_is_sound(Core core, Cli cli)
   t.eqI32(nMissing, 0, joined(said, "; "));
   t.eqI32(inSource, nDeclared,
           itoa(inSource) + " codes in lex.wac, " + itoa(nDeclared) + " in the table");
+  return t.report();
+}
+
+/**
+ * **A file of dense garbage reports a bounded number of diagnostics.**
+ *
+ * `issues/system/0239c`: `wac run` on a wasm module — the obvious mistake now that a module is a thing
+ * `spawn` takes — burned ninety seconds of CPU and wrote **zero bytes**, so a person watching had not
+ * even a first error to go on. The cause was not one pathological byte. The lexer sized its error
+ * array as `n / 4 + 8`, a *fraction of the input*, so a 75 KB module produced 3,894 "unexpected
+ * character" errors; each is rendered with its source line beneath it, and a file with no newlines is
+ * one line of 75 KB. The output was quadratic in the file's size and none of it was printed until all
+ * of it existed.
+ *
+ * The parser next door has always capped itself at 64, in an `i32[192]`, and the lexer now does the
+ * same. The reproduction went from 90 s and no output to **107 ms** and a diagnostic.
+ *
+ * What this pins is the bound rather than the timing, because a clock is not a test on a machine three
+ * agents share. The two assertions are both needed: bounded, and **not zero** — a lexer that silently
+ * gave up on the first bad byte would satisfy the first one perfectly.
+ */
+export string test_lex_errors_dense_garbage_is_bounded(Core core, Cli cli) {
+  T t = T.create();
+  // No newline anywhere, which is the half that made the rendering quadratic.
+  string junk = "";
+  for (i32 i = 0; i < 400; i++) { junk = junk + "@#$`\\?@#$`\\?"; }
+  t.isTrue(junk.len() > 4000, "the fixture is big enough to have been slow: " + itoa(junk.len()));
+
+  string wire = diagnoseGraph(string[]("/g.wac"), string[](junk), "/g.wac");
+  i32 n = 0;
+  string[] lines = splitLines(wire);
+  for (i32 i = 0; i < lines.len(); i++) { if (trimmed(lines[i]) != "") { n = n + 1; } }
+
+  t.isTrue(n > 0,
+      "no diagnostics at all for a file that is not wac source — a lexer that gives up on the first "
+      + "bad byte passes the bound below and tells nobody anything");
+  t.isTrue(n <= 200,
+      "a file of garbage reported " + itoa(n) + " diagnostics. The lexer's cap is a fraction of the "
+      + "input again, and each one is rendered with the whole file under it, which is the ninety "
+      + "seconds and zero bytes of `issues/system/0239c`");
   return t.report();
 }
