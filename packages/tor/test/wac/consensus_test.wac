@@ -364,3 +364,129 @@ string[] lines(u8[] b) {
   }
   return out;
 }
+
+// ── Malformed rather than forged ─────────────────────────────────────────────
+//
+// Added on 2026-08-24 from this package's coverage driver — `issues/system/0205`. `verifyConsensus`
+// had nine uncovered branch points and the tests above explain why none of them was reached: every
+// case there is *a thing an attacker would actually try* — a flag changed, a digest swapped, a
+// signature from the wrong key — and all of those are **forgeries**, documents that are well-formed
+// and untrue.
+//
+// The nine that were left are the other half: documents that are **malformed**. A signature line
+// naming an algorithm nobody has heard of, one with the wrong number of fields, a signature block
+// with no PEM body after it, a document with no validity window at all.
+//
+// That matters because of who serves these. A consensus does not come from an authority — it comes
+// from whichever directory *cache* the client asked, and any relay can be one. A forgery needs a
+// signing key; a malformed document needs a text editor.
+//
+// None of these should trap and none of them does; they are all `continue` or an early return. What
+// was missing was any input that took them.
+
+/** Where `needle` first appears in `hay`, or -1. */
+i32 findBytes(u8[] hay, u8[] needle) {
+  if (needle.len() == 0 || needle.len() > hay.len()) { return -1; }
+  for (i32 i = 0; i + needle.len() <= hay.len(); i++) {
+    bool hit = true;
+    for (i32 k = 0; k < needle.len() && hit; k++) {
+      if (hay[i + k] != needle[k]) { hit = false; }
+    }
+    if (hit) { return i; }
+  }
+  return -1;
+}
+
+/** `doc` with the first occurrence of `from` replaced by `to`. */
+u8[] editOnce(u8[] doc, string from, string to) {
+  i32 at = findBytes(doc, from.toBytes());
+  if (at < 0) { return doc; }
+  u8[] f2 = from.toBytes();
+  u8[] t2 = to.toBytes();
+  u8[] out = u8[doc.len() - f2.len() + t2.len()]();
+  for (i32 i = 0; i < at; i++) { out[i] = doc[i]; }
+  for (i32 i = 0; i < t2.len(); i++) { out[at + i] = t2[i]; }
+  i32 rest = at + f2.len();
+  for (i32 i = 0; rest + i < doc.len(); i++) { out[at + t2.len() + i] = doc[rest + i]; }
+  return out;
+}
+
+/**
+ * Documents that are malformed rather than untrue, each refused without trapping.
+ *
+ * The control is first: the unedited document is accepted with three good signatures, so every
+ * refusal below is caused by the edit. Each case also asserts *how many signatures still counted*,
+ * because that is what separates "this line was skipped" from "the whole document was thrown away" —
+ * and a verifier that discarded everything on the first oddity would satisfy a bare `!ok`.
+ */
+export string test_a_malformed_consensus_is_refused_without_trapping(Core core, Cli cli) {
+  T t = T.create();
+  Fixtures f = documents(t, cli);
+  if (!f.ok) { return t.report(); }
+  string[] trusted = lines(f.names[0]);
+  AuthorityCert[] certs = parseCertificates(f.docs[1], trusted);
+  u8[] doc = f.docs[0];
+
+  Verdict control = verifyConsensus(doc, certs, trusted, 1785715200);
+  t.isTrue(control.ok, "the unedited consensus is not accepted, so nothing below means anything");
+  t.eqI32(control.goodSignatures, 3, "the control does not have three good signatures");
+
+  // An algorithm nobody has heard of. The line is skipped, so two signatures remain — still a
+  // majority of three, so this one is *accepted*, and that is the point: a document may be odd
+  // without being untrustworthy, and the verifier counts rather than panics.
+  Verdict alg = verifyConsensus(editOnce(doc, "directory-signature sha256 ",
+                                         "directory-signature sha999 "), certs, trusted, 1785715200);
+  t.eqI32(alg.goodSignatures, 2, "an unknown signature algorithm did not skip exactly one line");
+  t.isTrue(alg.ok, "two of three signatures is still a majority and should still be accepted");
+
+  // A signature line with one field where there should be two or three.
+  Verdict fields = verifyConsensus(editOnce(doc, "directory-signature sha256 ",
+                                            "directory-signature "), certs, trusted, 1785715200);
+  t.isTrue(fields.goodSignatures < 3, "a malformed signature line still counted");
+
+  // A signature line with no PEM block after it: the BEGIN marker removed, so the walk finds the
+  // *next* signature's block and attributes it to the wrong key.
+  Verdict noBegin = verifyConsensus(editOnce(doc, "-----BEGIN SIGNATURE-----", "-----BEGIN NOTHING-----"),
+                                    certs, trusted, 1785715200);
+  t.isTrue(noBegin.goodSignatures < 3, "a signature with no PEM block still verified");
+
+  // **The END marker removed changes nothing, and finding that out is why this case is here.**
+  // `sigEnd` then points at the *next* signature's closing marker, so the span handed to `pemBody`
+  // covers this signature's body, a stray line, and the following block's header — and it still
+  // verifies, because `pemBody` stops at the first line that is not base64. So a missing closing
+  // marker is survivable where a missing opening one is not.
+  //
+  // Asserted as it is rather than as I expected it: the first version of this line said
+  // `goodSignatures < 3` and was wrong.
+  Verdict noEnd = verifyConsensus(editOnce(doc, "-----END SIGNATURE-----", "-----END NOTHING-----"),
+                                  certs, trusted, 1785715200);
+  t.eqI32(noEnd.goodSignatures, 3,
+          "a missing closing marker changed the verdict, so pemBody no longer stops at the first "
+          + "line that is not base64");
+
+  // No validity window at all.
+  //
+  // **This edit necessarily breaks every signature, and that is the format rather than the test.**
+  // `valid-after` is inside the *signed* portion — the part that ends at the first
+  // `directory-signature` — so a document without it is a document nobody signed. The edits above
+  // are all in the signature region and leave the signed bytes alone, which is why they can skip one
+  // line and keep the rest.
+  //
+  // So the arm is still reached and still reported, and what it proves is narrower than I first
+  // wrote: staleness is computed and named even when there is nothing to be stale *about*, which is
+  // what lets a caller tell "this document is not current" from "this document is not signed".
+  Verdict noWindow = verifyConsensus(editOnce(doc, "valid-after ", "valid-later "),
+                                     certs, trusted, 1785715200);
+  t.isFalse(noWindow.ok, "a consensus with no valid-after was accepted");
+  t.eqStr(noWindow.stale, "no valid-after/valid-until",
+          "a missing validity window was not reported as such: " + noWindow.stale);
+  t.eqI32(noWindow.goodSignatures, 0,
+          "editing the signed portion left signatures intact, which cannot be right");
+
+  // No signatures at all: the token the signed portion ends at is gone, so there is nothing to
+  // verify and nothing to verify it against.
+  Verdict none = verifyConsensus(editOnce(doc, "directory-signature ", "directory-nothing "),
+                                 certs, trusted, 1785715200);
+  t.isFalse(none.ok, "a consensus with no signature token was accepted");
+  return t.report();
+}
