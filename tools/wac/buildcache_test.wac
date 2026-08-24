@@ -43,6 +43,18 @@ i32 buildIn(Cli cli, string home, string keep, string entry, string stem) {
   return r.ran() ? r.status : 0 - 1;
 }
 
+/** The same, with one grant added to the built program. */
+i32 buildGranted(Cli cli, string home, string entry, string stem, string grant) {
+  string[] args = grant == ""
+      ? string[]("run", "--allow-read", "--allow-write", "--allow-env", "--allow-run", WACC,
+                 "--", "build", entry, "-o", stem, "--quiet")
+      : string[]("run", "--allow-read", "--allow-write", "--allow-env", "--allow-run", WACC,
+                 "--", "build", entry, "-o", stem, "--quiet", grant);
+  Exec r = cli.execWith(wacBinary(cli), args, u8[0](),
+                        string[]("WAC_HOME=" + home), false, false).wait();
+  return r.ran() ? r.status : 0 - 1;
+}
+
 i32 entriesIn(Cli cli, string dir) {
   string[]? names = cli.readDir(dir).wait();
   return names is null ? 0 : names!.len();
@@ -152,4 +164,59 @@ export string test_the_directory_is_bounded(Core core, Cli cli) {
 
   cli.remove(dir, true).wait();
   return t.report();
+}
+
+/**
+ * A build's **grants** are part of what it is, so they are part of the key.
+ *
+ * This is the case where a wrong hit would not merely be stale but *wrong about capabilities*: the
+ * grants are baked into the manifest by `wac build`, which is what makes them unforgeable by editing
+ * the file afterwards. A cache that keyed on the sources alone would hand a program built
+ * `--allow-read` to a build that asked for nothing — and the module would run with a capability
+ * nobody granted it.
+ *
+ * Four builds to **one destination**, because the output's name is in the manifest too: varying both at
+ * once is how the first version of this check managed to report a nondeterministic compiler.
+ */
+export string test_a_grant_is_part_of_the_key(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/buildcache-grants";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  string home = dir + "/home";
+  string entry = dir + "/g.wac";
+  t.isTrue(putFile(cli, entry,
+      "import { Core, Cli } from \"std/platform.wac\";\n"
+      + "export i32 main(Core core, Cli cli) { core.log(\"hi\"); return 0; }\n") == "",
+      "could not write the program");
+  string out = dir + "/gx";
+
+  t.eqI32(buildGranted(cli, home, entry, out, ""), 0, "the ungranted build failed");
+  u8[] plain = bytesOf(cli, out + ".wasm");
+  i32 afterPlain = entriesIn(cli, home + "/cache/build");
+
+  t.eqI32(buildGranted(cli, home, entry, out, "--allow-read"), 0, "the granted build failed");
+  u8[] granted = bytesOf(cli, out + ".wasm");
+  t.isTrue(granted.len() != plain.len() || !sameBytes(granted, plain),
+      "asking for `--allow-read` produced the same bytes as asking for nothing. Two readings, and the "
+      + "next assertion tells them apart: either the manifest is not carrying grants at all — in which "
+      + "case this test can say nothing about the key — or the cache served the ungranted entry to the "
+      + "granted build, which is the capability bug this case exists for");
+  t.isTrue(entriesIn(cli, home + "/cache/build") > afterPlain,
+      "the grant did not produce its own entry — the key does not see grants");
+
+  // And asking again for *no* grant gets the ungranted module back, not whichever was cached last.
+  t.eqI32(buildGranted(cli, home, entry, out, ""), 0, "the second ungranted build failed");
+  t.eqBytes(bytesOf(cli, out + ".wasm"), plain,
+      "the cache served the granted module to a build that asked for nothing — a program would run "
+      + "with a capability nobody gave it");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** Byte equality without an assertion, for a claim that is about two lengths first. */
+bool sameBytes(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
+  return true;
 }
