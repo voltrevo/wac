@@ -28,7 +28,7 @@
 // so a pair written with different shapes parts at event 1, which is the driver and not the routine.
 // Every driver here comes from one template with one array literal substituted.
 
-import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, execReason} from "std/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { TraceSite, traceSite, withoutPrefix } from "../../wactest/src/tracesite.wac";
 
@@ -255,7 +255,7 @@ string build(Core core, Cli cli, Case c, i32 which, i32 slots, string tag) {
     : string[]("build", entry, "--trace", "-o", dir + "/" + tag, "--quiet");
   Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
   if (!r.ran() || r.status != 0) {
-    core.warn("ct: " + c.name + " did not build — " + r.error + string.fromBytes(r.stderr));
+    core.warn("ct: " + c.name + " did not build — " + execReason(r));
     return "";
   }
   return dir + "/" + tag;
@@ -276,7 +276,7 @@ struct TraceStat { i32 events; i32 wanted; i32 slots; bool ok; }
 TraceStat statOf(Core core, Cli cli, string stem) {
   Exec r = cli.exec(binary(cli), string[]("tracestat", stem + ".wasm"), u8[0]()).wait();
   if (!r.ran() || r.status != 0) {
-    core.warn("ct: tracestat — " + r.error + string.fromBytes(r.stderr));
+    core.warn("ct: tracestat — " + execReason(r));
     return TraceStat(0, 0, 0, false);
   }
   string line = string.fromBytes(r.stdout);
@@ -350,7 +350,7 @@ export i32 main(Core core, Cli cli) {
                         string[]("ctcompare", "--all", base + ".wasm", other + ".wasm"),
                         u8[0]()).wait();
       if (!r.ran() || r.status != 0) {
-        core.warn("ct: ctcompare — " + r.error + string.fromBytes(r.stderr));
+        core.warn("ct: ctcompare — " + execReason(r));
         return 1;
       }
       string[] rows = linesOf(string.fromBytes(r.stdout));

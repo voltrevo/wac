@@ -25,7 +25,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Core, Cli, Exec, Change, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, execReason} from "std/platform.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
 /** `wac`, beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
@@ -41,7 +41,7 @@ bool build(T t, Cli cli, string entry, string stem, string[] grants) {
   for (i32 i = 0; i < grants.len(); i++) { argv[i + 4] = grants[i]; }
   Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
   t.isTrue(r.ran() && r.status == 0,
-           "built " + entry + " — " + r.error + string.fromBytes(r.stderr));
+           "built " + entry + " — " + execReason(r));
   return r.ran() && r.status == 0;
 }
 
