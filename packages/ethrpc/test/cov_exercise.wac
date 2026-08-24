@@ -1,0 +1,82 @@
+// Branch coverage for ethrpc: the package's own tests, and nothing else.
+//
+//   deno task coverage:ethrpc
+//   deno task coverage:ethrpc --verbose
+//
+// One of the packages `issues/system/0205` records as unmeasured.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+import {
+  test_ensowner_resolves_a_name_against_a_live_node_and_proves_it as ens__ensowner_resolves_a_name_against_a_live_node_and_proves_it,
+} from "./wac/ensowner_live_test.wac";
+import {
+  test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_told_us as eth__ethbalance_the_proved_balance_is_the_one_the_node_would_have_told_us,
+} from "./wac/ethbalance_live_test.wac";
+import {
+  test_data_refuses_an_odd_number_of_digits as jso__data_refuses_an_odd_number_of_digits,
+  test_data_decodes_an_even_number_of_digits as jso__data_decodes_an_even_number_of_digits,
+  test_a_quantity_may_be_odd_and_is_padded_at_the_front as jso__a_quantity_may_be_odd_and_is_padded_at_the_front,
+} from "./wac/jsonhex_test.wac";
+import {
+  test_ethrpc_asks_a_real_node_for_its_block_number_over_a_real_socket as rpc__ethrpc_asks_a_real_node_for_its_block_number_over_a_real_socket,
+} from "./wac/rpc_live_test.wac";
+
+import {
+  test_a_header_is_accepted_when_its_hash_matches_and_refused_when_it_does_not as hd__a_header_is_accepted_when_its_hash_matches_and_refused_when_it_does_not,
+  test_a_missing_fixed_field_is_refused_and_named as hd__a_missing_fixed_field_is_refused_and_named,
+  test_the_optional_fields_are_appended_in_order_and_stop_at_the_first_gap as hd__the_optional_fields_are_appended_in_order_and_stop_at_the_first_gap,
+  test_quantities_are_minimal_and_data_is_not as hd__quantities_are_minimal_and_data_is_not,
+  test_a_header_with_no_hash_to_check_against_is_refused as hd__a_header_with_no_hash_to_check_against_is_refused,
+} from "./wac/header_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (hd__a_header_is_accepted_when_its_hash_matches_and_refused_when_it_does_not().len() > 0) {
+    core.warn("error: FAILED header_test test_a_header_is_accepted_when_its_hash_matches_and_refused_when_it_does_not");
+    bad = bad + 1;
+  }
+  if (hd__a_missing_fixed_field_is_refused_and_named().len() > 0) {
+    core.warn("error: FAILED header_test test_a_missing_fixed_field_is_refused_and_named");
+    bad = bad + 1;
+  }
+  if (hd__the_optional_fields_are_appended_in_order_and_stop_at_the_first_gap().len() > 0) {
+    core.warn("error: FAILED header_test test_the_optional_fields_are_appended_in_order_and_stop_at_the_first_gap");
+    bad = bad + 1;
+  }
+  if (hd__quantities_are_minimal_and_data_is_not().len() > 0) {
+    core.warn("error: FAILED header_test test_quantities_are_minimal_and_data_is_not");
+    bad = bad + 1;
+  }
+  if (hd__a_header_with_no_hash_to_check_against_is_refused().len() > 0) {
+    core.warn("error: FAILED header_test test_a_header_with_no_hash_to_check_against_is_refused");
+    bad = bad + 1;
+  }
+  if (ens__ensowner_resolves_a_name_against_a_live_node_and_proves_it(core, cli).len() > 0) {
+    core.warn("error: FAILED ensowner_live_test test_ensowner_resolves_a_name_against_a_live_node_and_proves_it");
+    bad = bad + 1;
+  }
+  if (eth__ethbalance_the_proved_balance_is_the_one_the_node_would_have_told_us(core, cli).len() > 0) {
+    core.warn("error: FAILED ethbalance_live_test test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_told_us");
+    bad = bad + 1;
+  }
+  if (jso__data_refuses_an_odd_number_of_digits().len() > 0) {
+    core.warn("error: FAILED jsonhex_test test_data_refuses_an_odd_number_of_digits");
+    bad = bad + 1;
+  }
+  if (jso__data_decodes_an_even_number_of_digits().len() > 0) {
+    core.warn("error: FAILED jsonhex_test test_data_decodes_an_even_number_of_digits");
+    bad = bad + 1;
+  }
+  if (jso__a_quantity_may_be_odd_and_is_padded_at_the_front().len() > 0) {
+    core.warn("error: FAILED jsonhex_test test_a_quantity_may_be_odd_and_is_padded_at_the_front");
+    bad = bad + 1;
+  }
+  if (rpc__ethrpc_asks_a_real_node_for_its_block_number_over_a_real_socket(core, cli).len() > 0) {
+    core.warn("error: FAILED rpc_live_test test_ethrpc_asks_a_real_node_for_its_block_number_over_a_real_socket");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("ethrpc: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}

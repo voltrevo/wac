@@ -160,11 +160,14 @@ deno task coverage:codec
 deno task coverage:core
     deno task coverage:crypto
 deno task coverage:datetime
+deno task coverage:ens
+deno task coverage:ethrpc
 deno task coverage:fmt
 deno task coverage:fs
 deno task coverage:gzip
 deno task coverage:http
 deno task coverage:json
+deno task coverage:lightclient
 deno task coverage:mpt
 deno task coverage:quic
 deno task coverage:regex

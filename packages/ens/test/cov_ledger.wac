@@ -1,0 +1,69 @@
+// ens's coverage.
+//
+//   deno task coverage:ens
+//   deno task coverage:ens --verbose
+//
+// **72 of 89 — 80.9%** on the first run, and unusually for `issues/system/0205`'s sweep there is no
+// story about where the tests run: this package is a library, its tests import it, and the gap is an
+// ordinary one. What is left is `verified.wac`, at 53.8%, which is the half that proves an answer
+// against a state root rather than the half that computes a name hash.
+
+import { Core, Cli } from "std/platform.wac";
+
+import { Pin, Rule, Measured, measure, report, ratchet } from "../../../tools/wac/covledger.wac";
+
+const string EXERCISE = "packages/ens/test/cov_exercise.wac";
+const string PREFIX = "packages/ens/";
+
+/** What the tests need: the vendored fixtures on disk, and a process for the live ones. */
+string[] grants() {
+  return string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env", "--allow-net");
+}
+
+Rule[] rules() {
+  return Rule[](
+    Rule("packages/ens/src/verified.wac", "Record", "decl", false,
+         "**The verified path: an ENS record proved against a state root rather than asked of " +
+         "a node.** `recordOf` walks a Merkle proof to a registry slot and answers what it " +
+         "found; the arms here are for a proof that does not reach the slot, a slot that is " +
+         "empty, and a resolver address that is not twenty bytes. \n" +
+         "Reachable with a proof the fixtures do not contain, and this is the half of the " +
+         "package worth the input: the unverified half asks a node and believes it, and this " +
+         "one is the reason the package exists."),
+    Rule("packages/ens/src/verified.wac", "slotOf", "decl", false,
+         "The slot walk's absent-record arm — see `Record`."),
+    Rule("packages/ens/src/verified.wac", "addressOfSlot", "decl", false,
+         "A stored value longer than an address, which is a slot holding something that is not " +
+         "one."),
+    Rule("packages/ens/src/ens.wac", "dnsEncode", "decl", false,
+         "DNS wire encoding of the empty name — the root — and of a label longer than 255 " +
+         "bytes. The first is a real case (`recordOf(\"\")` is the root node) and the second " +
+         "is a caller's error."),
+    Rule("packages/ens/src/ens.wac", "isZeroAddress", "decl", false,
+         "The early exit when an address is not all zeros. Every address the tests check is " +
+         "either the zero address or differs in its first byte."),
+    Rule("packages/ens/src/ens.wac", "trap;", "line", true,
+         "A node hash that is not 32 bytes — a caller's error, checked before any encoding " +
+         "happens."),
+    Rule("packages/ens/src/registry.wac", "trap;", "line", true,
+         "The same precondition on the slot computation — see `ens.wac`.")
+  );
+}
+
+Pin[] pins() {
+  return Pin[0](fill: Pin("", 0, "", true, ""));
+}
+
+export i32 main(Core core, Cli cli) {
+  bool verbose = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--verbose") { verbose = true; }
+  }
+
+  Measured m = measure(core, cli, EXERCISE, grants(), string[0](fill: ""));
+  if (m.nPoints == 0) { return 1; }
+
+  report(core, m.points, m.nPoints, m.counts, PREFIX, verbose);
+  return ratchet(core, cli, m.points, m.nPoints, m.counts, PREFIX, pins(), rules()) ? 1 : 0;
+}

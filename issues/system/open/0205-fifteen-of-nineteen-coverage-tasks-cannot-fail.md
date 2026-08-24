@@ -941,6 +941,55 @@ would claim. A `coverage:tor` run is 80–90 seconds, so iterating against the r
 been half an hour of waiting; the simulation took one run's worth of data and got the ledger green on
 the first real attempt. The three predicates are twenty lines between them and the fidelity was exact.
 
+### `ens`, `ethrpc`, `lightclient` eleventh to thirteenth — and one package whose library was invisible
+
+**33 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 34 drivers; the unmeasured list is 5 — `box, git, platform, wacc, wactest`.
+
+| package | first run | now |
+|---|---:|---:|
+| `ens` | 80.9% | 80.9% |
+| `ethrpc` | **36.8%** | **88.0%** |
+| `lightclient` | 77.2% | 77.2% |
+
+#### `ethrpc`: three of four source files contributed nothing
+
+`rpc.wac`, `header.wac` and `getproof.wac` — 404 of 496 lines — produced **no branch points at all**,
+so they were absent from the table rather than reading zero. The report line added with `tor`'s driver
+is what said so; without it the package reads "36.8% over `jsonhex.wac`" and nothing else.
+
+The reason has two layers and neither is "nobody wrote tests":
+
+- the three tests that exercise them are `*_live_test.wac` and need **anvil**, a whole Ethereum
+  execution client, on a socket. It is absent in this container, so they skip;
+- and with anvil present they still would not be measured, because they drive the library by
+  **spawning `example/` programs as subprocesses** rather than importing it.
+
+`rpc_live_test.wac`'s header already names the first half — *"a skip that prints nothing reads as
+coverage"* — which is a good instinct that could not measure itself.
+
+**What closed it**: `headerOf` is pure, and it is the security boundary of the package — the thing that
+turns a block hash from a checkpoint into a *trusted state root*. `test/wac/header_test.wac` took it
+from absent to **37 of 37** and carried `jsonhex.wac` from 36.8% to 76.3%.
+
+Written with its limitation stated in the file: there is no real block here, so the assertions are
+about the contract rather than agreement with the chain — which inputs are refused, that every one of
+the fifteen fixed fields is named when missing, that the fork-appended fields **stop at the first
+absent one** (a `withdrawalsRoot` without a `baseFeePerGas` before it must be ignored, and encoding it
+anyway would produce a hash for a header nobody has), and that quantities are minimised while data is
+not. Where a self-consistent hash would prove nothing, the test varies an input and asserts the hash
+*changed*.
+
+#### `lightclient`: twenty refusal arms in one function
+
+`validateUpdate` decides whether a sync-committee update is worth believing, and twenty of the
+package's fifty uncovered points are inside it — enough participation, a finality branch that reaches
+the attested header, a signature over the right fork domain, slots in the right order. Every arm is a
+way of saying no, and the corpus is updates a conforming beacon node produced.
+
+That is now the seventh package to land in the same place, after `rlp`, `mpt`, `ssz`, `abi`, `bls`,
+`tls` and `tor`. A light client's whole job is to refuse, and its refusals are the untested part.
+
 ### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
 
 Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's

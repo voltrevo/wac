@@ -1,0 +1,142 @@
+// Branch coverage for ens: the package's own tests, and nothing else.
+//
+//   deno task coverage:ens
+//   deno task coverage:ens --verbose
+//
+// One of the packages `issues/system/0205` records as unmeasured.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+import {
+  test_namehash_and_dns_encoding_match_ethers as ens__namehash_and_dns_encoding_match_ethers,
+  test_selectors_match_ethers as ens__selectors_match_ethers,
+  test_the_root_and_the_walk_up as ens__the_root_and_the_walk_up,
+  test_calldata_is_a_selector_and_a_word as ens__calldata_is_a_selector_and_a_word,
+  test_an_address_is_the_low_twenty_bytes_and_only_those as ens__an_address_is_the_low_twenty_bytes_and_only_those,
+} from "./wac/ens_test.wac";
+import {
+  test_the_two_derivations_agree_with_cast as reg__the_two_derivations_agree_with_cast,
+  test_a_name_resolves_to_its_owner as reg__a_name_resolves_to_its_owner,
+  test_and_to_its_resolver_which_is_the_slot_above as reg__and_to_its_resolver_which_is_the_slot_above,
+  test_a_name_nobody_owns_proves_absent as reg__a_name_nobody_owns_proves_absent,
+  test_the_composition_refuses_what_a_liar_would_send as reg__the_composition_refuses_what_a_liar_would_send,
+} from "./wac/registry_test.wac";
+import {
+  test_traps_hashing_into_a_short_node as tra__traps_hashing_into_a_short_node,
+  test_traps_hashing_a_short_label as tra__traps_hashing_a_short_label,
+  test_traps_hashing_into_a_long_node as tra__traps_hashing_into_a_long_node,
+  test_traps_hashing_a_long_label as tra__traps_hashing_a_long_label,
+  test_traps_on_a_short_node_in_resolver_call as tra__traps_on_a_short_node_in_resolver_call,
+  test_traps_on_a_long_node_in_resolver_call as tra__traps_on_a_long_node_in_resolver_call,
+  test_traps_on_a_short_node_in_addr_call as tra__traps_on_a_short_node_in_addr_call,
+  test_traps_on_a_long_node_in_addr_call as tra__traps_on_a_long_node_in_addr_call,
+  test_traps_on_a_short_node_in_owner_slot as tra__traps_on_a_short_node_in_owner_slot,
+  test_traps_on_a_long_node_in_owner_slot as tra__traps_on_a_long_node_in_owner_slot,
+  test_traps_on_a_short_node_in_resolver_slot as tra__traps_on_a_short_node_in_resolver_slot,
+  test_traps_on_a_long_node_in_resolver_slot as tra__traps_on_a_long_node_in_resolver_slot,
+  test_traps_on_a_dns_label_of_256_bytes as tra__traps_on_a_dns_label_of_256_bytes,
+  test_the_limit_and_the_ordinary_calls_do_not_trap as tra__the_limit_and_the_ordinary_calls_do_not_trap,
+} from "./wac/traps_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (ens__namehash_and_dns_encoding_match_ethers(core, cli).len() > 0) {
+    core.warn("error: FAILED ens_test test_namehash_and_dns_encoding_match_ethers");
+    bad = bad + 1;
+  }
+  if (ens__selectors_match_ethers(core, cli).len() > 0) {
+    core.warn("error: FAILED ens_test test_selectors_match_ethers");
+    bad = bad + 1;
+  }
+  if (ens__the_root_and_the_walk_up().len() > 0) {
+    core.warn("error: FAILED ens_test test_the_root_and_the_walk_up");
+    bad = bad + 1;
+  }
+  if (ens__calldata_is_a_selector_and_a_word().len() > 0) {
+    core.warn("error: FAILED ens_test test_calldata_is_a_selector_and_a_word");
+    bad = bad + 1;
+  }
+  if (ens__an_address_is_the_low_twenty_bytes_and_only_those().len() > 0) {
+    core.warn("error: FAILED ens_test test_an_address_is_the_low_twenty_bytes_and_only_those");
+    bad = bad + 1;
+  }
+  if (reg__the_two_derivations_agree_with_cast(core, cli).len() > 0) {
+    core.warn("error: FAILED registry_test test_the_two_derivations_agree_with_cast");
+    bad = bad + 1;
+  }
+  if (reg__a_name_resolves_to_its_owner(core, cli).len() > 0) {
+    core.warn("error: FAILED registry_test test_a_name_resolves_to_its_owner");
+    bad = bad + 1;
+  }
+  if (reg__and_to_its_resolver_which_is_the_slot_above(core, cli).len() > 0) {
+    core.warn("error: FAILED registry_test test_and_to_its_resolver_which_is_the_slot_above");
+    bad = bad + 1;
+  }
+  if (reg__a_name_nobody_owns_proves_absent(core, cli).len() > 0) {
+    core.warn("error: FAILED registry_test test_a_name_nobody_owns_proves_absent");
+    bad = bad + 1;
+  }
+  if (reg__the_composition_refuses_what_a_liar_would_send(core, cli).len() > 0) {
+    core.warn("error: FAILED registry_test test_the_composition_refuses_what_a_liar_would_send");
+    bad = bad + 1;
+  }
+  if (tra__traps_hashing_into_a_short_node().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_hashing_into_a_short_node");
+    bad = bad + 1;
+  }
+  if (tra__traps_hashing_a_short_label().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_hashing_a_short_label");
+    bad = bad + 1;
+  }
+  if (tra__traps_hashing_into_a_long_node().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_hashing_into_a_long_node");
+    bad = bad + 1;
+  }
+  if (tra__traps_hashing_a_long_label().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_hashing_a_long_label");
+    bad = bad + 1;
+  }
+  if (tra__traps_on_a_short_node_in_resolver_call().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_on_a_short_node_in_resolver_call");
+    bad = bad + 1;
+  }
+  if (tra__traps_on_a_long_node_in_resolver_call().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_on_a_long_node_in_resolver_call");
+    bad = bad + 1;
+  }
+  if (tra__traps_on_a_short_node_in_addr_call().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_on_a_short_node_in_addr_call");
+    bad = bad + 1;
+  }
+  if (tra__traps_on_a_long_node_in_addr_call().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_on_a_long_node_in_addr_call");
+    bad = bad + 1;
+  }
+  if (tra__traps_on_a_short_node_in_owner_slot().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_on_a_short_node_in_owner_slot");
+    bad = bad + 1;
+  }
+  if (tra__traps_on_a_long_node_in_owner_slot().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_on_a_long_node_in_owner_slot");
+    bad = bad + 1;
+  }
+  if (tra__traps_on_a_short_node_in_resolver_slot().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_on_a_short_node_in_resolver_slot");
+    bad = bad + 1;
+  }
+  if (tra__traps_on_a_long_node_in_resolver_slot().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_on_a_long_node_in_resolver_slot");
+    bad = bad + 1;
+  }
+  if (tra__traps_on_a_dns_label_of_256_bytes().len() > 0) {
+    core.warn("error: FAILED traps_test test_traps_on_a_dns_label_of_256_bytes");
+    bad = bad + 1;
+  }
+  if (tra__the_limit_and_the_ordinary_calls_do_not_trap().len() > 0) {
+    core.warn("error: FAILED traps_test test_the_limit_and_the_ordinary_calls_do_not_trap");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("ens: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}
