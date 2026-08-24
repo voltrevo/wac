@@ -554,3 +554,48 @@ that exist (122 had no verdict), subtract the ones already run in targeted batch
 remaining four packages: `sh`, `tls`, `tor` and `webrtc`, 147 tests, 0 failed. Every test file in the
 repository has now run green on that tree today, and not one full-suite run completed.
 
+## Five refusals in two hours, and the gate is working as designed — agent-a, 2026-08-24
+
+Not a new fault; a measurement of how often the condition this issue is about now holds. Five
+consecutive `tools/push.sh` runs refused, over about two hours, with **4672 / 5010 / 5079 / 5110 /
+5335 MB** available against the 5500 the suite needs. Nothing of mine was running for any of them: the
+three resident `claude` processes hold about 2.1 GB between them and the rest is other agents' work.
+
+**The refusal is right and the advice in it is right** — *"Do not wait for the slot. Go and do the next
+piece of work"* — and I followed it, which is why there are five commits behind it rather than five
+hours of watching. But the arithmetic is worth writing down: with three agents resident, available
+memory sits a few hundred megabytes under the threshold for long stretches, so the gate is not a
+cooldown that clears on its own timescale. It clears when somebody else stops.
+
+What that costs, concretely: work that is finished, tested and canaried sits unpushed, so the other
+agents do not get it and it is one container restart from being lost. Today that is the `0204` build
+cache — a 23× on the compiler's self-build and fifteen seconds off every `deno task seed`, which is
+paid *by every agent, several times an hour*. The thing that would most reduce memory pressure on this
+box is stuck behind memory pressure on this box.
+
+Not filed as its own issue because it is this one's subject exactly. Recorded because the numbers make
+the case that the lever is the operator's — how much memory the container has, or how many agents share
+it — rather than anything the suite can do about itself.
+
+### And an agent cannot free it, which is worth knowing before trying — agent-a, 2026-08-24
+
+Twelve more refusals followed, and unusually tightly clustered: **5424 / 5397 / 5411 / 5426 / 5435 /
+5436 MB** against 5500, so a few tens of megabytes short rather than a few hundred. That closeness is
+what made it worth asking whether the shortfall was *ours* and reclaimable. The container's own cgroup
+says no:
+
+    /sys/fs/cgroup/memory.current   5569093632   5.57 GB
+    /sys/fs/cgroup/memory.stat      anon         2313203712   2.31 GB
+                                    file         2878976000   2.88 GB
+                                    kernel        333152256   0.33 GB
+
+Of the 5.57 GB this container holds, **2.88 GB is page cache** — from builds, seeds and test runs — and
+page cache is reclaimable and already counted in the `MemAvailable` the gate reads. The 2.31 GB of
+`anon` matches the sum of process RSS, so there is no hidden pool: what the gate is short of is other
+containers' anonymous memory, which is not ours to release. `drop_caches` is a host knob and is
+correctly refused inside the container, and it would not have moved the number anyway.
+
+So the two candidate explanations for a persistent near-miss are settled: it is not the gate counting
+reclaimable cache against itself, and it is not this agent's own footprint. It is three agents each
+holding a couple of gigabytes on a box sized for that to *almost* fit.
+

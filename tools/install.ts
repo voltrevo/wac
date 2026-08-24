@@ -13,6 +13,9 @@
 //     $WAC_HOME/
 //       bin/wac          the command
 //       cache/git/       where fetched dependencies live — `packages/wacpkg/src/cache.wac`
+//       cache/build/     what `wac build` last produced for a given compiler, sources, grants and
+//                        output name — `issues/system/0204`. Bounded at 64 entries, and
+//                        `uninstall` already takes it because it takes `cache/` whole.
 //       env              one line to source; adds bin/ to PATH
 //       install.json5    what was installed, from where, and which compiler is in it
 //

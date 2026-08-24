@@ -2027,8 +2027,43 @@ fn sweep_stale_runs() {
     }
 }
 
+/// Which compiler this binary *is*, as sixteen hex digits.
+///
+/// The same two inputs `test_module_key` hashes to decide whether a cached module was built by this
+/// compiler: the embedded seed, and the binary's own version because the manifest shape is its. A wac
+/// program cannot compute this — the seed is inside the executable and there is no file to read — so
+/// the host supplies it, which is the one thing `issues/system/0204` says has to come from here before
+/// a build cache can live on the wac side.
+///
+/// **Sixteen hex digits and not a path or a number**: it is compared, never parsed, and a fixed width
+/// makes a cache filename out of it without a separator.
+fn compiler_id() -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut eat = |bytes: &[u8]| {
+        for b in bytes {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    };
+    eat(b"wac-compiler 1");
+    eat(env!("CARGO_PKG_VERSION").as_bytes());
+    eat(SEED.unwrap_or(&[]));
+    format!("{h:016x}")
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // **Every payload can ask which compiler is running it.** Set here rather than per command so
+    // that `build`, `run` and `test` all see the same answer, and set unconditionally so that a
+    // program reading it never has to distinguish "no compiler" from "not told". Reading it needs the
+    // `env` grant the compiler already holds for `$WAC_HOME`. `issues/system/0204`.
+    //
+    // Not overwritten if the caller set one: a test that wants to force a cache miss says so, and a
+    // host that has already decided its identity is not second-guessed here.
+    if std::env::var_os("WAC_COMPILER_ID").is_none() {
+        // SAFETY: single-threaded, before V8 starts and before any payload runs.
+        unsafe { std::env::set_var("WAC_COMPILER_ID", compiler_id()) };
+    }
     // **Asked for help, or given nothing.** The commands are in two places because they are
     // implemented in two places — the compiler inside answers `check`, `compile` and `build`, and
     // `run` is this host's. So the seed prints its own usage and this adds the one line it cannot

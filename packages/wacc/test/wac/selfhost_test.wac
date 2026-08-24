@@ -53,10 +53,22 @@ string workDir(Cli cli) {
 /** The binary running this test — the same one that would run `deno task seed`. */
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
-/** Start a compile of wacc to `stem`, without waiting for it. */
+/**
+ * Start a compile of wacc to `stem`, without waiting for it.
+ *
+ * `[§wac-cli-build-nocache-2wq9nk4]`
+ *
+ * **`--no-cache`, and this test is the reason the flag exists.** `wac build` remembers what it built
+ * (`issues/system/0204`), keyed on the compiler, the sources, the grants and the output's base *name* —
+ * and both builds here share all four, because the name is deliberately the same and only the directory
+ * differs. So a warm cache answers the second from disk, and this test becomes one artefact compared
+ * with itself: measured at **194 ms** against the 3 s of two compiler builds documented above, still
+ * passing, and still passing when its cache entry was replaced with a different valid module. `0204`
+ * predicted exactly that before the cache was written.
+ */
 Pending<Exec> submitBuild(Cli cli, string stem) {
   return cli.exec(binary(cli),
-                  string[]("build", ENTRY, "-o", stem, "--allow-read", "--allow-write"),
+                  string[]("build", ENTRY, "-o", stem, "--allow-read", "--allow-write", "--no-cache"),
                   u8[0]());
 }
 
@@ -84,6 +96,13 @@ string built(Pending<Exec> p) {
   if (r.status != 0) {
     return "wac build exited " + itoa(r.status) + ": " + oneLine(string.fromBytes(r.stderr))
            + " -- and stdout: " + oneLine(string.fromBytes(r.stdout));
+  }
+  // **The flag is checked rather than trusted.** `--no-cache` coming off the command line above would
+  // not fail anything — it would make both builds fast and the comparison vacuous — so the one
+  // observable that distinguishes a compile from a lookup is asserted here, where both builds pass.
+  if (string.fromBytes(r.stdout).indexOf("from cache") >= 0) {
+    return "this build was answered from the build cache, so the comparison is one artefact against "
+           + "itself rather than two compiles: " + oneLine(string.fromBytes(r.stdout));
   }
   return "";
 }
