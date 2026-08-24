@@ -163,6 +163,7 @@ deno task coverage:fs
 deno task coverage:gzip
 deno task coverage:http
 deno task coverage:json
+deno task coverage:mpt
 deno task coverage:regex
 deno task coverage:raster
 deno task coverage:server

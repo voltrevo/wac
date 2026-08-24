@@ -609,6 +609,37 @@ count of tests is not the count of what they reach. Same mistake as `raster`'s g
 one) and it is now the standing rule for these headers: no number in a ledger that a canary has not
 produced.
 
+### `mpt` second — the same shape, and the contrast that makes it a class
+
+**22 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 23 drivers; the unmeasured list is 16.
+
+`mpt` was picked for contrast: same business as `ssz` — proofs that verify or do not — but it *already
+had* a `malformed_test.wac`, seven tests of its refusals written before any driver existed. If prior
+attention to refusals shrinks the first gap, this is where it would show.
+
+**It does not.** `ssz` opened at 90.5%, `mpt` at 91.2%, and **eleven of `mpt`'s eleven gaps were the
+same class**: refusals of malformed input in a package judged against Ethereum's published roots. Two
+packages, two corpora of real data, one shape — which is enough to call it a property of
+*differential-tested* packages rather than a fact about either one. A corpus of real proofs contains no
+proof that Ethereum would never build, and the checks that matter most guard exactly those.
+
+The one worth naming here is the **non-canonical hex-prefix header**: an even-length path pads with a
+zero nibble, and ignoring the pad would accept two encodings of one path — two hashes, and a root that
+depends on which the writer chose. **124 of 125** now, one pin.
+
+**A control earned its place**, and is the reason the number is trustworthy. The well-formed twin in
+the value test failed first, saying *a leaf's value is a byte string, and this one is a list*: a trie
+leaf holds the RLP **encoding** of an account as opaque bytes, not the account as a nested list. I had
+the data model wrong, and the two negatives beside it had been passing for a reason I had not
+established.
+
+### The cost, now that there are two
+
+Each package was about an hour, of which the mechanical part — an exercise calling the tests — is
+minutes. Both turned up an untested attack surface rather than tidy-up. That is the input the decision
+was missing; sixteen remain, `wacc` at 33,575 lines being its own project.
+
 ### `ssz` — the first of the eighteen with no driver at all, done to price the decision
 
 **21 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot

@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-38 packages, 133,154 lines of wac, 2704 tests,
+38 packages, 133,154 lines of wac, 2709 tests,
 82 command-line programs and 11 browser pages.
 
 ## Packages
@@ -39,7 +39,7 @@ In dependency order: nothing here imports anything below it.
 | [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,286 | 42 | `bytes` `fmt` `gzip` `platform` |
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,764 | 61 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `tls` |
 | [`lightclient`](packages/lightclient/) | A light client follows the beacon chain without downloading it. | 642 | 12 | `bls` `ssz` |
-| [`mpt`](packages/mpt/) | Merkle-Patricia proofs, verified — the piece that turns "a provider told me" into "the state root I already verified commits to this". | 489 | 28 | `codec` `crypto` `fmt` `rlp` |
+| [`mpt`](packages/mpt/) | Merkle-Patricia proofs, verified — the piece that turns "a provider told me" into "the state root I already verified commits to this". | 489 | 33 | `codec` `crypto` `fmt` `rlp` |
 | [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,411 | 243 | `bytes` `fmt` `json` `wacc` |
 | [`quic`](packages/quic/) | QUIC version 1 — RFC 9000 and RFC 9001 — in wac. | 3,259 | 86 | `crypto` `tls` |
 | [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,510 | 32 | `bytes` `codec` `fmt` `fs` `platform` |

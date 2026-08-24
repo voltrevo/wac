@@ -289,3 +289,195 @@ export string test_a_slot_of_an_account_with_no_storage_is_absent() {
   t.eqI32(got.value.len(), 0, "and has no value");
   return t.report();
 }
+
+/** A leaf whose hex-prefix header is written by the caller, so a hostile one can be built. */
+u8[] leafWithHeader(u8[] header) {
+  Item[] pair = Item[2](fill: Item.Bytes(empty()));
+  pair[0] = Item.Bytes(header);
+  pair[1] = Item.Bytes(u8[](1, 2, 3));
+  return encode(Item.List(pair));
+}
+
+/**
+ * The hex-prefix header's own rules, which decide what a path *is*.
+ *
+ * Every node on the way to a value carries a header whose top nibble says leaf-or-extension and
+ * odd-or-even, and whose remaining nibbles are the path. Three things about it are checked and none
+ * had been exercised: an empty header, a flag above 3, and — the interesting one — an even-length path
+ * whose padding nibble is not zero.
+ *
+ * **That last one is a malleability rule rather than a well-formedness one.** An even-length path is
+ * encoded as `0x00` followed by the nibbles, and the low nibble of the first byte is padding with no
+ * meaning. An implementation that ignored it would accept `0x07` for the same path — two encodings of
+ * one node, two hashes, and a trie whose root depends on which the writer chose. Ethereum's own tries
+ * would never contain one, which is exactly why a corpus of real proofs cannot reach this line.
+ */
+export string test_a_hex_prefix_header_must_be_canonical_not_merely_parseable() {
+  T t = T.create();
+
+  // The well-formed twin: an even-length path, correctly padded.
+  u8[] path = nibbles(key());
+  u8[] good = leafWithHeader(hp(path, true));
+  Proved fine = verify(keccak256(good), key(), one(good));
+  t.isTrue(fine.ok, "the well-formed twin should verify — " + fine.error);
+
+  // An empty header: there is no flag, so there is no leaf.
+  u8[] noHeader = leafWithHeader(empty());
+  Proved none = verify(keccak256(noHeader), key(), one(noHeader));
+  t.isFalse(none.ok, "an empty hex-prefix header was accepted");
+  t.isTrue(none.error.indexOf("empty") >= 0, "the message does not say why: " + none.error);
+
+  // A flag nibble above 3. The two bits are leaf and odd; 4 and above are not a hex prefix at all.
+  u8[] badFlag = hp(path, true);
+  badFlag[0] = (badFlag[0] & 0x0F) | 0x40;
+  u8[] flagged = leafWithHeader(badFlag);
+  Proved f = verify(keccak256(flagged), key(), one(flagged));
+  t.isFalse(f.ok, "a hex-prefix flag of 4 was accepted");
+  t.isTrue(f.error.indexOf("0..3") >= 0, "the message does not name the range: " + f.error);
+
+  // **A non-zero pad nibble on an even-length path.** Same path, same value, different bytes.
+  u8[] padded = hp(path, true);
+  t.eqI32(padded[0] & 0x0F, 0, "the fixture's own header is not even-length-padded as expected");
+  padded[0] = padded[0] | 0x07;
+  u8[] mal = leafWithHeader(padded);
+  Proved m = verify(keccak256(mal), key(), one(mal));
+  t.isFalse(m.ok, "a non-zero padding nibble was accepted — the same path has two encodings");
+  t.isTrue(m.error.indexOf("pad") >= 0, "the message does not say what is wrong: " + m.error);
+  return t.report();
+}
+
+/**
+ * A root, and a node reference, that are not 32 bytes.
+ *
+ * `verify` is handed a root by its caller and node references by the network. Both are hashes and both
+ * have exactly one length; anything else is a caller or a peer that has lost track of what it is
+ * holding, and the answer is a refusal rather than a comparison against a truncated value.
+ */
+export string test_a_root_and_a_node_reference_are_thirty_two_bytes() {
+  T t = T.create();
+  u8[] good = leafNode(Item.Bytes(u8[](1, 2, 3)));
+  u8[] root = keccak256(good);
+
+  t.isTrue(verify(root, key(), one(good)).ok, "the well-formed proof should verify");
+
+  Proved short = verify(u8[31](), key(), one(good));
+  t.isFalse(short.ok, "a 31-byte root was accepted");
+  t.isTrue(short.error.indexOf("32 bytes") >= 0, "the message does not say so: " + short.error);
+  t.isFalse(verify(empty(), key(), one(good)).ok, "an empty root was accepted");
+  t.isFalse(verify(u8[33](), key(), one(good)).ok, "a 33-byte root was accepted");
+
+  // A branch whose child reference is neither an inline node nor a 32-byte hash.
+  Item[] branch = Item[17](fill: Item.Bytes(empty()));
+  branch[10] = Item.Bytes(u8[31]());                 // the nibble `a` of `0xAB`
+  u8[] node = encode(Item.List(branch));
+  Proved r = verify(keccak256(node), key(), one(node));
+  t.isFalse(r.ok, "a 31-byte node reference was accepted as a hash");
+  return t.report();
+}
+
+/**
+ * A node that is not RLP, and one that is RLP but not a list.
+ *
+ * Every trie node is an RLP list — of 2 items for a leaf or extension, 17 for a branch. A node that
+ * fails to decode, or that decodes to a byte string, is refused before its shape is examined; these
+ * are the first two things `verify` can say no to and neither had an input.
+ */
+export string test_a_node_that_is_not_an_rlp_list_is_refused() {
+  T t = T.create();
+  u8[] good = leafNode(Item.Bytes(u8[](1, 2, 3)));
+  t.isTrue(verify(keccak256(good), key(), one(good)).ok, "the well-formed proof should verify");
+
+  // 0xC1 announces a one-byte list and no bytes follow it, so the decode cannot complete.
+  u8[] truncated = u8[](0xC1);
+  Proved d = verify(keccak256(truncated), key(), one(truncated));
+  t.isFalse(d.ok, "a node whose RLP does not decode was accepted");
+
+  // Valid RLP, and a byte string rather than a list.
+  u8[] notList = encode(Item.Bytes(u8[](1, 2, 3)));
+  Proved n = verify(keccak256(notList), key(), one(notList));
+  t.isFalse(n.ok, "a node that decodes to a byte string was accepted as a trie node");
+
+  // A list of the wrong width: neither 2 nor 17.
+  Item[] three = Item[3](fill: Item.Bytes(empty()));
+  u8[] wide = encode(Item.List(three));
+  Proved w = verify(keccak256(wide), key(), one(wide));
+  t.isFalse(w.ok, "a three-item list was accepted as a trie node");
+  return t.report();
+}
+
+/** A one-node trie whose leaf holds `value` under `k`, so a caller can choose both. */
+u8[] leafFor(u8[] k, Item value) {
+  Item[] pair = Item[2](fill: Item.Bytes(empty()));
+  pair[0] = Item.Bytes(hp(nibbles(k), true));
+  pair[1] = value;
+  return encode(Item.List(pair));
+}
+
+/**
+ * An account, and a storage slot, whose *value* is not RLP.
+ *
+ * The trie proves that some bytes sit at some key. What those bytes mean is a second question, and
+ * `accountAt` and `storageAt` ask it: an account is a list of four items and a slot is a byte string,
+ * both RLP-encoded. A proof can be perfectly valid — every hash reconciling to the root — and still
+ * carry a value that is not an account at all, which is what a peer serving a trie it built itself
+ * would produce.
+ *
+ * `0xC1` is the case: it announces a one-byte list and is followed by nothing, so it is well-formed
+ * enough to be a value and not well-formed enough to be decoded.
+ */
+export string test_a_proved_value_that_is_not_rlp_is_refused_after_the_proof_verifies() {
+  T t = T.create();
+  u8[] address = u8[20]();
+  address[19] = 7;
+  u8[] slot = u8[32]();
+  slot[31] = 3;
+
+  // An account leaf carrying undecodable bytes, under the right key, with a matching root: the proof
+  // itself is sound and only the payload is wrong.
+  u8[] acct = leafFor(keccak256(address), Item.Bytes(u8[](0xC1)));
+  AccountProof a = accountAt(keccak256(acct), address, one(acct));
+  t.isFalse(a.ok, "an account whose bytes are not RLP was accepted");
+  t.isTrue(a.error.indexOf("not RLP") >= 0, "the message does not say what failed: " + a.error);
+
+  // The same for a storage slot.
+  u8[] st = leafFor(keccak256(slot), Item.Bytes(u8[](0xC1)));
+  StorageProof sp = storageAt(keccak256(st), slot, one(st));
+  t.isFalse(sp.ok, "a slot whose bytes are not RLP was accepted");
+
+  // And the well-formed twins, so the refusals above are about the payload rather than the proof.
+  Item[] four = Item[4](fill: Item.Bytes(empty()));
+  four[0] = Item.Bytes(u8[](1));
+  four[1] = Item.Bytes(u8[](2));
+  four[2] = Item.Bytes(u8[32]());
+  four[3] = Item.Bytes(u8[32]());
+  // **The account is stored as bytes, not as a nested list.** A leaf's value is a byte string, and
+  // what it holds is the RLP *encoding* of the account — so the encode is explicit here. Writing
+  // `Item.List(four)` gets "a leaf's value is a byte string, and this one is a list", which is the
+  // control catching a misunderstanding of the data model rather than a bug in the code.
+  u8[] okAcct = leafFor(keccak256(address), Item.Bytes(encode(Item.List(four))));
+  AccountProof control = accountAt(keccak256(okAcct), address, one(okAcct));
+  t.isTrue(control.ok,
+           "the well-formed account was refused, so the negative above proves nothing — " + control.error);
+  return t.report();
+}
+
+/**
+ * A second node after the first has already failed.
+ *
+ * `step` walks one node at a time and records the first thing wrong in `w.error`; the loop that calls
+ * it does not stop, so every later node arrives with the walk already broken. The guard at the top is
+ * what makes those calls do nothing — without it a second node would overwrite the first node's
+ * message, and a refusal would name the last thing examined rather than the thing that was wrong.
+ */
+export string test_a_later_node_cannot_overwrite_the_first_refusal() {
+  T t = T.create();
+  u8[][] two = u8[][2](fill: empty());
+  two[0] = encode(Item.Bytes(u8[](1, 2, 3)));        // a byte string, not a list
+  two[1] = leafNode(Item.Bytes(u8[](4, 5, 6)));      // a perfectly good leaf, arriving too late
+
+  Proved p = verify(keccak256(two[0]), key(), two);
+  t.isFalse(p.ok, "a proof whose first node is not a list was accepted");
+  t.isTrue(p.error.indexOf("byte string") >= 0,
+           "the refusal names something other than the first fault: " + p.error);
+  return t.report();
+}
