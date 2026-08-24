@@ -48,7 +48,7 @@
 // export name is a call that never happens.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, Change, FileResult, Pending } from "std/platform.wac";
+import { Core, Cli, Exec, Change, FileResult, Pending, execReason} from "std/platform.wac";
 import { contains, startsWith, trimmed, splitLines } from "../../../wactest/src/strings.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { builtProgram, writeIfDifferent } from "../../../wactest/src/built.wac";
@@ -168,7 +168,7 @@ Pending<Exec> submitCompare(Cli cli, string a, string b, bool all) {
 /** Its whole answer, trimmed. */
 string collected(T t, Pending<Exec> p) {
   Exec r = p.wait();
-  t.isTrue(r.ran() && r.status == 0, "ctcompare ran — " + r.error + string.fromBytes(r.stderr));
+  t.isTrue(r.ran() && r.status == 0, "ctcompare ran — " + execReason(r));
   return (r.ran() && r.status == 0) ? trimmed(string.fromBytes(r.stdout)) : "<did not run>";
 }
 

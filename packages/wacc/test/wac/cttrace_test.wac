@@ -25,7 +25,7 @@
 // `coverage_test.wac` already uses, and it costs a compile per run rather than a call.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec, FileResult } from "std/platform.wac";
+import { Core, Cli, Exec, FileResult, execReason} from "std/platform.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
 import { splitLines, trimmed, joined, contains } from "../../../wactest/src/strings.wac";
 import { emitFilesTraced, emitFilesTracedSlots, traceTableFiles } from "../../src/api.wac";
@@ -128,7 +128,7 @@ Journal traced(Cli cli, string name, string src, i32 slots) {
                     string[]("covdump", path), u8[0]()).wait();
   if (!r.ran() || r.status != 0) {
     return Journal(i32[0](), i32[0](), 0, 0, false,
-                   name + ": covdump — " + r.error + string.fromBytes(r.stderr));
+                   name + ": covdump — " + execReason(r));
   }
 
   // `<index>\t<value>` per slot, then a line saying how many there were.
