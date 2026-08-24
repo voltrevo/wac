@@ -98,3 +98,34 @@ you get exit 127 and *"needs the wac command on PATH — deno task wac:install"*
 throws output away reads that as **1 ms**, which is faster than anything real and looks like a
 spectacular result. It cost me one wrong number before I checked the exit status; the figures above are
 all from runs whose output was compared.
+
+### The two targets behave the same, with one exception worth knowing before converting
+
+Anybody moving tests to the native target wants to know the artefacts agree, so I built five small
+programs both ways and compared stdout, stderr and exit status: writing to both streams, reading
+`$ENV`, a non-zero return, a file written then read back, and a program that traps.
+
+**Four of the five are identical in all three.** The fifth is a trap, and it differs twice:
+
+|  | `wac app` | `--target deno` |
+|---|---|---|
+| exit status | **1** | **70** |
+| stdout | *(was polluted — fixed, see below)* | clean |
+
+The **exit status** is `issues/system/0184`'s subject, and this is a fact that issue does not have: one
+of the two targets already reserves a code for a trap. 0184 argues at length that there is no code to
+give it, since `main` may return anything 0–255 — and the Deno host has picked 70 anyway. Recorded
+there rather than argued here.
+
+The **stdout** half was a defect and is fixed. V8's default handler reported an uncaught trap *itself*,
+on stdout, so a trapping program's own output came back as
+
+    before
+    wasm://wasm/000eca3a:51437: Uncaught RuntimeError: array element access out of bounds
+    wasm://wasm/000eca3a:65124: Uncaught RuntimeError: dereferencing a null pointer
+
+The host already reports the trap on stderr, so this was a duplicate report on the wrong stream — and
+it affected `wac run` as much as a built app, so any caller reading the output of a program that traps
+was getting engine text in the answer. Two `TryCatch`es fix it, the second because asking a trapped
+module for `$trap$message` traps in its own right. Both streams now match Deno's: `before` and nothing
+else.

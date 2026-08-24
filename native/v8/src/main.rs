@@ -3275,7 +3275,24 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             return 1;
         }
     };
-    let r = match main_fn.call(scope, exports.into(), &args) {
+    // **A `TryCatch` around the program's own call.** Without one, an uncaught trap is reported by
+    // V8's *default* handler as well as by this host — and V8's goes to **stdout**, so
+    // `wasm://wasm/000eca36:51437: Uncaught RuntimeError: array element access out of bounds` lands in
+    // the middle of the program's own output. A program's stdout belongs to the program: a caller
+    // reading it gets engine text mixed into the answer, and the same program built for the Deno host
+    // writes one clean line to stderr and nothing to stdout.
+    //
+    // The host still says what it has to say, on stderr, immediately below — so this removes a
+    // duplicate report rather than a report. `reset()` clears the caught exception before the branch
+    // below uses the scope again, which is the same care the `TryCatch` above `compile` takes.
+    let called = {
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let mut tc = tc.init();
+        let out = main_fn.call(&mut tc, exports.into(), &args);
+        tc.reset();
+        out
+    };
+    let r = match called {
         Some(v) => v,
         None => {
             // **What the program said, if it said anything.** `trap "the ring is full"` puts the message
@@ -3283,10 +3300,22 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             // `$trap$message` reads it once the trap has unwound. Empty for an engine trap — a bounds
             // check, a null dereference — which writes nothing, and reporting a previous message for one
             // of those would be worse than reporting none. `issues/lang/0147`.
-            let said = get_export(scope, exports, "$trap$message")
-                .and_then(|f| f.call(scope, exports.into(), &[]))
-                .map(|v| read_string(scope, v))
-                .unwrap_or_default();
+            // **And a `TryCatch` around *this* call too**, because asking a trapped module a question
+            // is itself liable to trap: after an engine trap the module's own state is gone, and
+            // `$trap$message` came back as `dereferencing a null pointer` — reported by V8's default
+            // handler, on stdout, in the middle of the program's output. The `unwrap_or_default()`
+            // already treats a failed call as "it said nothing", which is the right answer; what was
+            // missing was stopping the engine announcing the failure on the program's own stream.
+            let said = {
+                let tc = std::pin::pin!(v8::TryCatch::new(scope));
+                let mut tc = tc.init();
+                let got = get_export(&mut tc, exports, "$trap$message")
+                    .and_then(|f| f.call(&mut tc, exports.into(), &[]))
+                    .map(|v| read_string(&mut tc, v))
+                    .unwrap_or_default();
+                tc.reset();
+                got
+            };
             if said.is_empty() {
                 eprintln!("wac: {} trapped", m.entry);
             } else {
