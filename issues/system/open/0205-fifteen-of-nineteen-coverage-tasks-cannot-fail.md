@@ -609,6 +609,37 @@ count of tests is not the count of what they reach. Same mistake as `raster`'s g
 one) and it is now the standing rule for these headers: no number in a ledger that a canary has not
 produced.
 
+### `tty` third — and the pattern is narrower than two packages made it look
+
+**23 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 24 drivers; the unmeasured list is 15.
+
+`tty` was picked because its oracle is a different *kind*: `ssz` and `mpt` are judged against vendored
+corpora of real Ethereum data, and this one against **the kernel**, through a live pty, with inputs
+chosen by whoever wrote the test.
+
+**The first-run numbers are strikingly alike — 90.5%, 91.2%, 91.0%.** Three packages, three quite
+different jobs, and each about nine per cent unreached. That is the number to quote for the remaining
+fifteen.
+
+**The kinds are not alike, and that corrects the claim I made after two.** `ssz` and `mpt`'s gaps were
+overwhelmingly the implementation's own *refusals* — a real-data corpus contains nothing Ethereum would
+never build. `tty`'s were not one refusal:
+
+  - `Line.pending()` and `Line.feedAll()`, **two public methods with no caller in the repository**;
+  - `^C` and `^\` in cbreak — the mode's most consequential rule, the one its own doc comment argues
+    about at length, and nothing had ever pressed either key in that mode;
+  - a tab's width, which the erase rules count backwards over: measured as two columns it rubs out one
+    character too many, and no recorded vector contains a tab.
+
+So the rule is not "differential testing hides refusals". It is that **a driver finds what the corpus
+does not reach, and what that is depends on where the corpus comes from** — vendored real data hides
+your refusals, hand-chosen inputs hide your unused API and your unentered modes. Both are worth finding
+and neither is visible from inside the package's own tests.
+
+**107 of 111**, one pin and one rule: a cbreak-with-echo the three public constructors cannot produce,
+and an example's `main`, which a driver imports as a module and never starts as a program.
+
 ### `mpt` second — the same shape, and the contrast that makes it a class
 
 **22 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
