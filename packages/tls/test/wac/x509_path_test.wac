@@ -236,6 +236,21 @@ export string test_name_constraints(Core core, Cli cli) {
           "a CA constrained elsewhere cannot vouch for this name");
   t.eqI32(check(Bundle.of2(leaf, load(cli, NC_EXCL)), roots, "wac.test", NOW, 8), 10,
           "an excluded subtree is excluded");
+
+  // **A base exactly as long as the name and different in every letter that matters.**
+  //
+  // `make-p384.sh` generated this fixture and said why: *"every other fixture here differs in length
+  // or at a label boundary, so none of them ever reaches the byte comparison with two names that
+  // could be confused — which let a mutant that made the comparison always succeed survive the whole
+  // suite."* It then went unread. Checked on 2026-08-24 and the mutant still survived: replace
+  // `baseCovers`'s byte test with `if (false)` and all eighteen tls files stay green.
+  //
+  // What that mutant is, in terms of what it permits: a CA constrained to `xyz.test` vouching for
+  // `wac.test`. Every other case here is refused a step earlier — `nc_bad` on length, `nc_suffix` on
+  // the label boundary, `nc_excl` on being excluded at all — so `xyz.test` against `wac.test` is the
+  // only one that gets as far as comparing bytes and needs them to disagree.
+  t.eqI32(check(Bundle.of2(leaf, load(cli, NC_SAMELEN)), roots, "wac.test", NOW, 8), 10,
+          "a CA constrained to a name the same length as the leaf's vouched for it anyway");
   // A constraint on a name form this does not enforce must make the CA unusable rather
   // than be applied in part — so there is no issuer left, and the answer is 5 not 10.
   t.eqI32(check(Bundle.of2(leaf, load(cli, NC_IP)), roots, "wac.test", NOW, 8), 5,
@@ -253,6 +268,7 @@ export string test_name_constraints(Core core, Cli cli) {
 
 // ── Matching an IP address ───────────────────────────────────────────────────
 
+const i32 NC_SAMELEN = 17;   // permitted DNS:xyz.test — as long as the leaf's name
 const i32 EC_LEAF = 15;      // DNS:wac.test, DNS:localhost, IP:127.0.0.1
 const i32 IP_AS_DNS = 16;    // DNS:127.0.0.1, DNS:example.test — and no iPAddress at all
 
@@ -270,6 +286,7 @@ string fixtureName(i32 n) {
   if (n == NC_OK) { return "p384_nc_ok"; }
   if (n == NC_BAD) { return "p384_nc_bad"; }
   if (n == NC_EXCL) { return "p384_nc_excl"; }
+  if (n == NC_SAMELEN) { return "p384_nc_samelen"; }
   if (n == NC_IP) { return "p384_nc_ip"; }
   if (n == NC_SUFFIX) { return "p384_nc_suffix"; }
   if (n == NC_UPPER) { return "p384_nc_upper"; }
