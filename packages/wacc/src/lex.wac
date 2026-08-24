@@ -665,7 +665,18 @@ void jsxAfterOperator(Modes md, Lexer lx, i32 kind, i32 prevKind) {
  */
 export Lexed lex(u8[] src) {
   i32 n = src.len();
-  i32 maxErrors = n / 4 + 8;
+  // **A constant, not a fraction of the input** — `issues/system/0239c`. Sizing this from `n` means a
+  // file of dense garbage reports a diagnostic per few bytes, and each one is rendered with its source
+  // line under it. On input with no newlines that line is the whole file, so the output is quadratic in
+  // the file's size before anything is printed: a 75 KB wasm module handed to the compiler as source
+  // produced 3,894 lexer errors and burned ninety seconds without writing a byte. Measured on prefixes
+  // of it, 2 KB of input made 1.5 MB of diagnostics and 16 KB made 18.6 MB.
+  //
+  // 64 is the number the *parser* already caps itself at, one `i32[192]` next door, and the argument is
+  // the same: nobody reads the four thousandth message, and the first sixty-four say the same thing
+  // about the same file. A real source file does not come near it — the worst in this repository is a
+  // 36 KB HTML document at about 130 diagnostics *in total*, of which few are the lexer's.
+  i32 maxErrors = 64;
   Lexed out = Lexed(
     i32[(n + 1) * tokenStride()](), 0,
     i32[maxErrors * errorStride()](), 0
