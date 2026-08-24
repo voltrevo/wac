@@ -23,36 +23,14 @@ export i32 main(Core core, Cli cli) {
 
   // Port 1 is privileged and nothing is listening, so a *grant* failure and a connection
   // failure differ in their message rather than in whether they failed.
-  // **And here it is still the sentence, because `Socket` has no `fault`.** `FileResult` and `Change`
-  // both carry a category and this does not, so the one refusal that has to be told from a connection
-  // failure is the one with only English to go on. Matched with the first letter dropped, which is the
-  // least bad thing available and is not a fix: `issues/system/0238c`.
+  // **And the fault is what says which, since `issues/system/0238c`.** This read `s.error` and matched
+  // `"ot granted"` -- the leading letter dropped so that "not granted" and "Not granted" both hit,
+  // because the hosts spell one refusal two ways. `Socket` carries a category now, exactly as
+  // `FileResult` and `Change` always have, and the two branches below are the same line.
   Socket s = cli.connect("127.0.0.1", 1).wait();
-  string net = s.handle < 0 ? s.error : "ok";
+  string net = s.handle < 0 ? (s.fault == FAULT_NOT_GRANTED() ? "denied" : "failed") : "ok";
   if (s.handle >= 0) { cli.closeSocket(s.handle); }
 
-  // `read` is already one of the three words; only the network still needs the message read.
-  core.log("read=" + read + " net=" + summary(net));
+  core.log("read=" + read + " net=" + net);
   return 0;
-}
-
-/** "ok", or "denied" when the message says the capability was withheld, or "failed". */
-string summary(string outcome) {
-  if (outcome == "ok") { return "ok"; }
-  // "ot granted", so that both "not granted" and "Not granted" match. See the note at the call.
-  return contains(outcome, "ot granted") ? "denied" : "failed";
-}
-
-bool contains(string haystack, string needle) {
-  u8[] h = haystack.toBytes();
-  u8[] n = needle.toBytes();
-  if (n.len() == 0 || n.len() > h.len()) { return false; }
-  for (i32 i = 0; i + n.len() <= h.len(); i++) {
-    bool same = true;
-    for (i32 j = 0; j < n.len(); j++) {
-      if (h[i + j] != n[j]) { same = false; }
-    }
-    if (same) { return true; }
-  }
-  return false;
 }

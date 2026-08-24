@@ -1780,9 +1780,9 @@ fn dispatch(
                         // connected socket — `platform.wac` distinguishes it from the peer's.
                         let local = s.local_addr().map(|a| a.port() as i32).unwrap_or(0);
                         let slot = table_handles.lock().unwrap().push(Handle::Net(Sock::Open(Arc::new(s))));
-                        Outcome::Socket(slot, String::new(), String::new(), local)
+                        Outcome::Socket(slot, String::new(), String::new(), local, FAULT_NONE)
                     }
-                    Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0),
+                    Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 };
                 table.complete(id, outcome);
             });
@@ -1804,9 +1804,9 @@ fn dispatch(
                 Ok(sk) => {
                     let bound = sk.local_addr().map(|a| a.port() as i32).unwrap_or(0);
                     let handle = keep(caller, Handle::Net(Sock::Datagram(Arc::new(sk))));
-                    Outcome::Socket(handle, String::new(), String::new(), bound)
+                    Outcome::Socket(handle, String::new(), String::new(), bound, FAULT_NONE)
                 }
-                Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0),
+                Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
             };
             return settle_now(caller, Kind::Socket, outcome, results);
         }
@@ -1867,9 +1867,9 @@ fn dispatch(
                     // one: a server that asked for 0 could otherwise never learn where it is.
                     let bound = l.local_addr().map(|a| a.port() as i32).unwrap_or(0);
                     let handle = keep(caller, Handle::Net(Sock::Listening(Arc::new(l))));
-                    Outcome::Socket(handle, String::new(), String::new(), bound)
+                    Outcome::Socket(handle, String::new(), String::new(), bound, FAULT_NONE)
                 }
-                Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0),
+                Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
             };
             return settle_now(caller, Kind::Socket, outcome, results);
         }
@@ -1885,7 +1885,7 @@ fn dispatch(
                 return settle_now(
                     caller,
                     Kind::Socket,
-                    Outcome::Socket(-1, "not a listening socket".into(), String::new(), 0),
+                    Outcome::Socket(-1, "not a listening socket".into(), String::new(), 0, FAULT_OTHER),
                     results,
                 );
             };
@@ -1901,9 +1901,9 @@ fn dispatch(
                         let who = peer.ip().to_string();
                         let local = s.local_addr().map(|a| a.port() as i32).unwrap_or(0);
                         let slot = table_handles.lock().unwrap().push(Handle::Net(Sock::Open(Arc::new(s))));
-                        Outcome::Socket(slot, String::new(), who, local)
+                        Outcome::Socket(slot, String::new(), who, local, FAULT_NONE)
                     }
-                    Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0),
+                    Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 };
                 table.complete(id, outcome);
             });
@@ -2430,8 +2430,8 @@ fn dispatch(
                 }
                 (Kind::Names, Outcome::Names(None)) => Val::AnyRef(None),
                 (Kind::Names, Outcome::Names(Some(names))) => make_string_array(caller, &names)?,
-                (Kind::Socket, Outcome::Socket(h, e, peer, port)) => {
-                    make_socket(caller, h, &e, &peer, port)?
+                (Kind::Socket, Outcome::Socket(h, e, peer, port, fault)) => {
+                    make_socket(caller, h, &e, &peer, port, fault)?
                 }
                 (Kind::Datagram, Outcome::Datagram(bytes, peer, port, e)) => {
                     make_datagram(caller, &bytes, &peer, port, &e)?
@@ -2630,7 +2630,8 @@ fn denied_read() -> Outcome {
 
 /// The network, refused because the build did not ask for it.
 fn denied_net() -> Outcome {
-    Outcome::Socket(-1, "network access not granted to this application".into(), String::new(), 0)
+    Outcome::Socket(-1, "network access not granted to this application".into(), String::new(), 0,
+                    FAULT_NOT_GRANTED)
 }
 
 fn denied_write_change() -> Outcome {
@@ -3028,11 +3029,12 @@ fn make_socket(
     error: &str,
     peer: &str,
     port: i32,
+    fault: i32,
 ) -> Result<Val, wasmtime::Error> {
     let e = make_string(caller, error.as_bytes())?;
     let p = make_string(caller, peer.as_bytes())?;
     let f = export_func(caller, "$bind$sm_Socket_of")?;
-    let built = call_dyn(caller, &f, &[Val::I32(handle), e, p, Val::I32(port)])?;
+    let built = call_dyn(caller, &f, &[Val::I32(handle), e, p, Val::I32(port), Val::I32(fault)])?;
     built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Socket.of answered nothing"))
 }
 

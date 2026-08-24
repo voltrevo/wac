@@ -23,7 +23,7 @@
 // picks an id from the path; `resolveFile` turns the id back into a `FileResult`. It reads
 // oddly and it is the only way to build a resolved ticket without state.
 
-import { CallResult, Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FileResult, LoadedModule, Pending, Sched, Socket, Stat } from "std/platform.wac";
+import { CallResult, Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FAULT_NOT_GRANTED, FileResult, LoadedModule, Pending, Sched, Socket, Stat } from "std/platform.wac";
 import { Read } from "core";
 import { Shell, builtinNames, isBuiltin, runScript } from "../../src/exec.wac";
 
@@ -208,7 +208,7 @@ Pending<Change> fakeOpenOutput(string path) {
   return Pending.of(0, resolveChange, alwaysSettled, ignoreDrop);
 }
 
-Socket resolveSocket(i32 id) { return Socket(-1, "no network", "", 0); }
+Socket resolveSocket(i32 id) { return Socket(-1, "no network", "", 0, FAULT_NOT_GRANTED()); }
 Pending<Socket> fakeConnect(string host, i32 port) {
   return Pending.of(0, resolveSocket, alwaysSettled, ignoreDrop);
 }

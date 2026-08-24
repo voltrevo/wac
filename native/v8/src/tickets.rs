@@ -48,8 +48,12 @@ pub enum Answer {
     /// `string[]?` — `None` is a directory that is not there, which `readDir` answers with rather
     /// than an empty listing, because "no entries" and "no directory" are different facts.
     Names(Option<Vec<String>>),
-    /// `Socket(handle, error, peer, port)`.
-    Socket(i32, String, String, i32),
+    /// `Socket(handle, error, peer, port, fault)`.
+    ///
+    /// `fault` is one of the `FAULT_*` codes and `FAULT_NONE` on success: a refusal for want of a
+    /// grant has to be tellable from a connection that failed, and until 2026-08-24 only the message
+    /// said which -- in two different spellings across the hosts. `issues/system/0238c`.
+    Socket(i32, String, String, i32, i32),
     /// `Datagram(bytes, peer, port, error)` — the payload and the sender in **one** answer.
     ///
     /// Not `Read` plus a second call for the peer: two answers would let a program pair one

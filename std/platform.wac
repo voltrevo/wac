@@ -1298,11 +1298,27 @@ export struct Socket {
    * a generated identifier — so relying on it means the host reaches for a name no wac source
    * mentions. Two lines here and the capability world states its own construction API.
    */
-  Socket of(i32 handle, string error, string peer, i32 port) {
-    return Socket(handle, error, peer, port);
+  Socket of(i32 handle, string error, string peer, i32 port, i32 fault) {
+    return Socket(handle, error, peer, port, fault);
   }
 
   /** Whether the peer is this machine — the check a server on every interface needs. */
+  /**
+   * Why it failed, when `handle` is negative: one of the `FAULT_*` codes, and `FAULT_NONE` on success.
+   *
+   * **`FileResult` and `Change` have carried a category for a long time and this did not**, so the one
+   * refusal a program most needs to tell from an ordinary failure -- "you were not granted the
+   * network" against "nothing is listening there" -- was the one with only English to go on. The
+   * hosts do not even agree on the English: `wacland` says "network access not granted to this
+   * application" and the V8 host says "Not granted to this application", so
+   * `packages/platform/example/probe.wac` matched `"ot granted"` with the first letter dropped to
+   * catch both. That is what this field removes. `issues/system/0238c`.
+   *
+   * The same mistake made with `FileResult.error` reported `failed` under both native hosts while the
+   * confinement was working, which is the worst direction for a program that reports what it may do.
+   */
+  i32 fault;
+
   bool fromLoopback(const this) {
     return this.peer == "127.0.0.1" || this.peer == "::1" || this.peer == "localhost";
   }

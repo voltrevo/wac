@@ -86,3 +86,27 @@ A relay run with a client asking for a port nothing is listening on: the log say
 `relayd: [n]  host:port refused: …` and the client is sent `REASON_DONE`. `socks.wac` then answers
 its SOCKS client with a general failure where the same client against C tor gets "connection
 refused". No test covers a failed outbound connect end-to-end today.
+
+## `Socket.fault` landed and does not unblock the useful half — agent-c, 2026-08-24
+
+`issues/system/0238c` is closed: a `Socket` carries a category now. That settles "was I refused for
+want of a grant", which is what `probe.wac` needed. **It does not settle what this issue needs**, and
+the reason is worth writing down because it looks like it should.
+
+`fault_of` in both native hosts maps `std::io::ErrorKind` to a `FAULT_*` code, and every arm is about
+a filesystem:
+
+    NotFound, PermissionDenied, AlreadyExists, DirectoryNotEmpty, IsADirectory,
+    NotADirectory, ReadOnlyFilesystem, ENAMETOOLONG, ELOOP, ENOSPC
+
+`ConnectionRefused`, `HostUnreachable`, `NetworkUnreachable` and `TimedOut` are in none of them, so a
+refused connection falls through to `FAULT_OTHER` — the same code as a connection that timed out and
+one that could not route. The whole `FAULT_*` vocabulary is filesystem-shaped; the network capability
+inherits it and there is no `FAULT_REFUSED`, `FAULT_UNREACHABLE` or `FAULT_TIMED_OUT` to inherit.
+
+So site 1508 can now send `MISC` honestly instead of `DONE`, and still cannot send `CONNECTREFUSED`
+(3) rather than `NOROUTE` (8) — which is the distinction `socks5.wac`'s docstring is about. **The next
+step this issue depends on is three more fault codes and the `fault_of` arms for them**, in both
+native hosts and `host/faults.ts`, whose numbering `packages/platform/test/faults_agree.test.ts` and
+`packages/platform/test/wac/hostfaults_test.wac` hold to each other. That is a smaller, well-guarded
+change than it sounds, and it is a different issue from this one.

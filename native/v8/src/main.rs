@@ -5010,16 +5010,17 @@ fn dispatch(
             let port = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.net));
             let answer = if !granted {
-                Answer::Socket(-1, "Not granted to this application".into(), String::new(), 0)
+                Answer::Socket(-1, "Not granted to this application".into(), String::new(), 0,
+                               FAULT_NOT_GRANTED)
             } else {
                 let host = if address.is_empty() { "0.0.0.0" } else { address.as_str() };
                 match std::net::UdpSocket::bind((host, port as u16)) {
                     Ok(sk) => {
                         let bound = sk.local_addr().map(|a| a.port() as i32).unwrap_or(0);
                         let handle = keep_socket(Sock::Datagram(sk));
-                        Answer::Socket(handle, String::new(), String::new(), bound)
+                        Answer::Socket(handle, String::new(), String::new(), bound, FAULT_NONE)
                     }
-                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0),
+                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 }
             };
             match ticket_for(scope, "Socket", answer) {
@@ -5145,7 +5146,8 @@ fn dispatch(
             let port = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.net));
             let answer = if !granted {
-                Answer::Socket(-1, "Not granted to this application".into(), String::new(), 0)
+                Answer::Socket(-1, "Not granted to this application".into(), String::new(), 0,
+                               FAULT_NOT_GRANTED)
             } else if cap == Cap::Listen {
                 // An empty address means every interface, which is what `greet ""` asks for.
                 let host = if address.is_empty() { "0.0.0.0" } else { address.as_str() };
@@ -5156,18 +5158,18 @@ fn dispatch(
                         // learn which port it got.
                         let bound = l.local_addr().map(|a| a.port() as i32).unwrap_or(0);
                         let handle = keep_socket(Sock::Listener(l));
-                        Answer::Socket(handle, String::new(), String::new(), bound)
+                        Answer::Socket(handle, String::new(), String::new(), bound, FAULT_NONE)
                     }
-                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0),
+                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 }
             } else {
                 match std::net::TcpStream::connect((address.as_str(), port as u16)) {
                     Ok(sk) => {
                         let mine = sk.local_addr().map(|a| a.port() as i32).unwrap_or(0);
                         let handle = keep_socket(Sock::Stream(sk));
-                        Answer::Socket(handle, String::new(), String::new(), mine)
+                        Answer::Socket(handle, String::new(), String::new(), mine, FAULT_NONE)
                     }
-                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0),
+                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 }
             };
             match ticket_for(scope, "Socket", answer) {
@@ -5190,7 +5192,7 @@ fn dispatch(
                 }
             });
             let Some(listener) = listener else {
-                let a = Answer::Socket(-1, "no such listener".into(), String::new(), 0);
+                let a = Answer::Socket(-1, "no such listener".into(), String::new(), 0, FAULT_OTHER);
                 match ticket_for(scope, "Socket", a) {
                     Some(p) => rv.set(p),
                     None => throw(scope, "this program has no Pending<Socket> for accept"),
@@ -5221,9 +5223,9 @@ fn dispatch(
                             }
                             None => -1,
                         };
-                        Answer::Socket(handle, String::new(), peer, port)
+                        Answer::Socket(handle, String::new(), peer, port, FAULT_NONE)
                     }
-                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0),
+                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0, fault_of(&e)),
                 };
                 let _ = worker.complete(id, a);
             });
@@ -5972,8 +5974,8 @@ fn dispatch(
                         None => throw(scope, "could not build a Datagram for the answer"),
                     }
                 }
-                Some(Answer::Socket(handle, error, peer, port)) => {
-                    match build_socket(scope, handle, &error, &peer, port) {
+                Some(Answer::Socket(handle, error, peer, port, fault)) => {
+                    match build_socket(scope, handle, &error, &peer, port, fault) {
                         Some(v) => rv.set(v),
                         None => throw(scope, "could not build a Socket for the answer"),
                     }
@@ -6691,6 +6693,7 @@ fn build_socket<'s>(
     error: &str,
     peer: &str,
     port: i32,
+    fault: i32,
 ) -> Option<v8::Local<'s, v8::Value>> {
     let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.socket_of.clone()))?;
     let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
@@ -6700,7 +6703,8 @@ fn build_socket<'s>(
     let h = v8::Integer::new(scope, handle);
     let p = v8::Integer::new(scope, port);
     let ctor = get_export(scope, exports, &ctor_name)?;
-    ctor.call(scope, exports.into(), &[h.into(), err, who, p.into()])
+    let f = v8::Integer::new(scope, fault);
+    ctor.call(scope, exports.into(), &[h.into(), err, who, p.into(), f.into()])
 }
 
 /// `STDIN`, in `std/platform.wac`. A channel number, never a socket.

@@ -81,8 +81,12 @@ pub enum Outcome {
     /// `string[]?` — **null is "not a directory", empty is "an empty one"**, and a host that
     /// collapsed them would make `ls` of a file print nothing instead of complaining.
     Names(Option<Vec<Vec<u8>>>),
-    /// `Socket{handle, error, peer, port}`.
-    Socket(i32, String, String, i32),
+    /// `Socket{handle, error, peer, port, fault}`.
+    ///
+    /// `fault` is one of the `FAULT_*` codes, `FAULT_NONE` on success. A refusal for want of a grant
+    /// has to be tellable from a connection that failed, and until 2026-08-24 only the message said
+    /// which -- in a different spelling on each host. `issues/system/0238c`.
+    Socket(i32, String, String, i32, i32),
     /// `Datagram(bytes, peer, port, error)` — the payload and its sender in **one** answer, for
     /// the reason both other hosts have the same shape: two answers would let a program pair one
     /// datagram's bytes with another's sender, and neither half would look wrong. design/system 0007.

@@ -38,7 +38,7 @@ import { asAppModule, drive, manifestIn } from "./driver.ts";
 import type { Driven } from "./driver.ts";
 /** One export's wac signature, as the manifest records it — `Manifest.exports` in `native.ts`. */
 type ExportSig = { name: string; params: string[]; ret: string };
-import { FAULT_NOT_GRANTED, FAULT_OTHER, STAT_EXEC } from "./faults.ts";
+import { FAULT_NONE, FAULT_NOT_GRANTED, FAULT_OTHER, STAT_EXEC } from "./faults.ts";
 
 const EMPTY = new Uint8Array(0);
 const SLOT_BITS = Math.ceil(Math.log2(SLOTS));
@@ -443,9 +443,15 @@ export function cliOf(
       // caller's own choice or nobody. The port is what makes `listen(…, 0)` usable: the kernel picks
       // a free one and the program is told which.
       const out = collect(b, unpack(id));
-      return cls.Socket.of(readI32le(out), "", unstr(out.subarray(8)), readI32le(out.subarray(4)));
+      return cls.Socket.of(
+        readI32le(out), "", unstr(out.subarray(8)), readI32le(out.subarray(4)), FAULT_NONE);
     } catch (e) {
-      return cls.Socket.of(-1, e instanceof Error ? e.message : String(e), "", 0);
+      // **The same line `Change` uses nine lines above**, and the reason is the one written there: a
+      // refusal and a failure are different things to act on, and this answered both with a sentence.
+      // `issues/system/0238c`; `probe.wac` is the program that had to match `"ot granted"` with the
+      // first letter dropped because the hosts spell the refusal two ways.
+      const fault = e instanceof HostCallError ? e.fault : FAULT_OTHER;
+      return cls.Socket.of(-1, e instanceof Error ? e.message : String(e), "", 0, fault);
     }
   };
 
