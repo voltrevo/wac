@@ -1319,6 +1319,63 @@ export string test_rung3_every_type_into_every_other_types_slot(Core core, Cli c
 }
 
 /**
+ * **Every reference type through every cast operator**, with the reference deciding.
+ *
+ * The neighbouring cast grid is deliberately numeric — it re-derives `losslessCast` and `rawCast`,
+ * which are tables no formula fits. That leaves the *other* kind of cast, the one between reference
+ * types, covered by nothing: which of `as`, `as!` and `as~` is right for a pair depends on whether the
+ * conversion widens, and "widens" is the inheritance lattice plus `anyref` at the top.
+ *
+ * It found ten of ninety cells on the run that introduced it, five each way and all one fact:
+ * **`anyref` is the top type and the cast rule did not know it.** `assignable` did — that is the same
+ * lattice asked a different question — so `s as anyref` was reported as a downcast while `S r = s`
+ * beside it was fine. Both operators came out backwards, which is the useful shape: an upcast that is
+ * not recognised does not go quiet, it swaps the advice, so `as` is refused *and* `as!` is waved
+ * through, and a grid sees both halves where a hand-written case sees one.
+ *
+ * The four nullable rows needed the fact twice, because widening the type and widening the
+ * nullability are separate conditions here by design: `S? as anyref` takes nothing away either.
+ */
+export string test_rung3_every_reference_cast_against_every_operator(Core core, Cli cli) {
+  T t = T.create();
+  string prelude = "struct S { i32 v; } struct K : S { i32 w; } struct G<T> : S { T g; }\n";
+  string[] types = string[]("S", "K", "G<i32>", "S?", "K?", "anyref");
+  string[] ops = string[]("as", "as!", "as~");
+  i32 total = types.len() * types.len() * ops.len();
+  string[] sources = string[total](fill: "");
+  string[] labels = string[total](fill: "");
+  i32 n = 0;
+  for (i32 a = 0; a < types.len(); a++) {
+    for (i32 b = 0; b < types.len(); b++) {
+      if (types[a] == types[b]) { continue; }
+      for (i32 o = 0; o < ops.len(); o++) {
+        // The slot is the cast's own target, so the cast is the only thing that can be wrong — the
+        // discipline the unary grid states: a grid is only as good as the thing it isolates.
+        sources[n] = prelude + "export void f(" + types[a] + " a) { "
+                     + types[b] + " r = a " + ops[o] + " " + types[b] + "; }";
+        labels[n] = types[a] + " " + ops[o] + " " + types[b];
+        n = n + 1;
+      }
+    }
+  }
+  string[] cells = string[n](fill: "");
+  string[] names = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { cells[i] = sources[i]; names[i] = labels[i]; }
+  Grid g = gridOf(t, cli, cells, names);
+
+  t.isTrue(g.cells >= 80, "only " + itoa(g.cells) + " cells reached the comparison");
+  t.isTrue(g.accepted >= 5 && g.accepted <= g.cells - 20,
+           itoa(g.accepted) + " of " + itoa(g.cells) +
+           " accepted — the grid has stopped containing both kinds");
+  t.eqI32(g.alarmsN, 0, itoa(g.alarmsN) + " cells we refuse that the reference accepts:\n  " +
+                        g.alarms);
+  t.eqI32(g.silentN, 0, itoa(g.silentN) + " of " + itoa(g.cells) +
+                        " cells the reference rejects and we say nothing about:\n  " + g.silent);
+  core.log("    reference-cast grid: " + itoa(g.cells) + " cells, " + itoa(g.accepted) + " accepted");
+  return t.report();
+}
+
+/**
  * **The unary operators and `!`-unwrap, over every type.**
  *
  * The third grid, and it found the same shape a third time: a rule spelled as a list of type names,
