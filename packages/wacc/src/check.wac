@@ -6969,8 +6969,27 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
     string fromBase = fromCore == "" ? castFrom : fromCore;
     string toCore = withoutNull(to);
     string toBase = toCore == "" ? to : toCore;
-    bool widensType = fromBase == toBase || descendsFrom(c, fromBase, toBase);
-    bool widensNull = isNullableName(to) || !isNullableName(castFrom);
+    // **`anyref` is the top type, and this rule did not know it.** `assignable` does — its `anyref`
+    // line takes any reference and `i31ref` besides — and the two are the same fact about the same
+    // type lattice, written twice, with only one of them complete. So a cast *to* `anyref` fell
+    // through to "not a widening" and both operators came out backwards: `s as anyref` was reported
+    // as a downcast, and `s as! anyref` — an upcast, which the reference refuses with *"use 'as'"* —
+    // was waved through. Ten cells of a ninety-cell reference-cast grid, five each way.
+    //
+    // The same condition as `assignable`'s, deliberately: a primitive still does not widen to
+    // `anyref`, so `5 as anyref` stays a downcast and stays reported.
+    bool toAnyref = toBase == "anyref" && (fromBase == "i31ref" || isReferenceType(c, fromBase));
+    bool widensType = fromBase == toBase || descendsFrom(c, fromBase, toBase) || toAnyref;
+    // **And `anyref` is already nullable**, so nothing is taken away by casting a `S?` into it. This
+    // is the nullability half of the same fact as `toAnyref` above and it has to be said separately,
+    // because the two conditions are independent by design — the comment above this block says so.
+    // Without it `S? as anyref` was still a downcast and the pair came out backwards for the four
+    // nullable rows of the grid, after the six non-nullable ones were fixed.
+    //
+    // Third place this repository states that `anyref` holds anything and may be absent: `assignable`
+    // has it twice and `nullableIntoNonNull` once. They are not textually shareable — each is a
+    // different question about the same lattice — but a fourth should be a helper rather than a fourth.
+    bool widensNull = isNullableName(to) || !isNullableName(castFrom) || toBase == "anyref";
     bool up = widensType && widensNull;
     if (up && ck == kAsBang()) {
       c.reportTok(errWrongCastOp(), op, "from " + castFrom + " to " + to);
