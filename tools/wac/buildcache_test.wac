@@ -32,6 +32,18 @@ import { freshDir, putFile } from "../../packages/wactest/src/host.wac";
 
 const string WACC = "packages/wacc/example/wacc.wac";
 
+/** One `wac build` of `entry` to `stem` under `home`, with one extra flag — `""` for none. */
+i32 buildWith(Cli cli, string home, string entry, string stem, string flag) {
+  string[] args = flag == ""
+      ? string[]("run", "--allow-read", "--allow-write", "--allow-env", "--allow-run", WACC,
+                 "--", "build", entry, "-o", stem, "--quiet")
+      : string[]("run", "--allow-read", "--allow-write", "--allow-env", "--allow-run", WACC,
+                 "--", "build", entry, "-o", stem, "--quiet", flag);
+  Exec r = cli.execWith(wacBinary(cli), args, u8[0](), string[]("WAC_HOME=" + home), false, false)
+              .wait();
+  return r.ran() ? r.status : 0 - 1;
+}
+
 /** One `wac build` of `entry` to `stem`, with `home` as `$WAC_HOME` and an optional keep override. */
 i32 buildIn(Cli cli, string home, string keep, string entry, string stem) {
   string[] env = keep == "" ? string[]("WAC_HOME=" + home)
@@ -219,4 +231,70 @@ bool sameBytes(u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }
   for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
   return true;
+}
+
+// **A build that has to prove something about the compiler must not be answered from disk.**
+//
+// `issues/system/0204` argued `wac build` should never be cached, and the reason it gave was this:
+// `packages/wacc/test/wac/selfhost_test.wac` builds the compiler twice and requires the two artefacts
+// to be byte-identical, so a content-keyed cache turns it into *"these bytes equal themselves"* — a
+// test that cannot fail, still passing, with nobody told. The cache was built anyway, and the
+// prediction was exactly right: with a warm cache that test ran in **194 ms** against a documented 3 s
+// of two compiler builds, and it still passed after its cache entry was replaced with a *different
+// valid module* — certifying as a fixed point an artefact the compiler had not produced.
+//
+// So the cache keeps its default and the determinism tests say what they need. `--no-cache` is neither
+// read nor write: a caller asking for a real build gets one, and the poisoned entry it did not read is
+// still poisoned afterwards, which is how this says "did not write" without a second run to count.
+export string test_no_cache_neither_reads_nor_writes(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/buildcache-nocache";
+  t.isTrue(freshDir(cli, dir) == "", "the fixture directory could not be made");
+  string home = dir + "/home";
+  string entry = dir + "/p.wac";
+  t.isTrue(putFile(cli, entry, "export i32 f() { return 1; }\n") == "", "could not write the program");
+
+  t.eqI32(buildWith(cli, home, entry, dir + "/out", ""), 0, "the cold build failed");
+  u8[] cold = bytesOf(cli, dir + "/out.wasm");
+  t.isTrue(cold.len() > 8, "the cold build wrote nothing");
+
+  // This build's own entry, by the length of what it just wrote — `wac run` compiles `wacc.wac` to get
+  // here and leaves an entry of its own, so "the only file in the directory" is the wrong one as often
+  // as the right one.
+  string[]? names = cli.readDir(home + "/cache/build").wait();
+  string ent = "";
+  if (!(names is null)) {
+    for (i32 i = 0; i < names!.len(); i++) {
+      if (bytesOf(cli, home + "/cache/build/" + names![i]).len() == cold.len()) {
+        ent = home + "/cache/build/" + names![i];
+      }
+    }
+  }
+  t.isTrue(ent != "", "this build's own entry is not in the cache");
+  if (ent == "") { return t.report(); }
+
+  string marker = "not a module, but longer than a header";
+  t.isTrue(putFile(cli, ent, marker) == "", "could not overwrite the cache entry");
+
+  // **The control, and it is not optional.** If the poisoned entry were *not* served, the assertion
+  // below would pass on a cache that never hits, and say nothing about the flag.
+  t.eqI32(buildWith(cli, home, entry, dir + "/out", ""), 0, "the control build failed");
+  t.isTrue(sameBytes(bytesOf(cli, dir + "/out.wasm"), marker.toBytes()),
+      "the control build did not read the cache, so this test cannot say anything about --no-cache");
+
+  t.eqI32(buildWith(cli, home, entry, dir + "/out", "--no-cache"), 0,
+      "`wac build --no-cache` did not build — an unknown flag is refused, which is what this looks "
+      + "like before the flag exists");
+  u8[] fresh = bytesOf(cli, dir + "/out.wasm");
+  t.isTrue(fresh.len() > 8 && fresh[0] == 0 && fresh[1] == 'a' && fresh[2] == 's' && fresh[3] == 'm',
+      "`--no-cache` was served the poisoned entry rather than compiling — so a determinism test "
+      + "asking for a real build would be comparing the cache with itself");
+
+  FileResult still = cli.readFile(ent).wait();
+  t.isTrue(still.ok && sameBytes(still.bytes, marker.toBytes()),
+      "`--no-cache` wrote its result to the cache, so it is a half-measure: the next ordinary build "
+      + "would hit an entry this run created");
+
+  cli.remove(dir, true).wait();
+  return t.report();
 }

@@ -227,8 +227,25 @@ MAX_ROUNDS=4
 # `issues/lang/0173a` that emitted a module the engine rejects. Neither is an unusual thing to be
 # doing — the fixpoint loop is exactly where a compiler change is meant to fail — so the recovery
 # belongs here rather than in the next person's afternoon.
+# **The rounds are built with the cache off, and the loop is why.**
+#
+# `wac build` remembers what it built (`issues/system/0204`), keyed on the compiler, the sources, the
+# grants and the output's base name — and every round here shares all four, because each writes `wacc`
+# into a directory of its own. In the steady state that is a hit: the seed is already the fixed point,
+# so round 1 reproduces it, `install_seed` puts the same bytes back, `cargoBuild` produces a binary with
+# the same embedded seed, and round 2's key is round 1's. The `cmp` below then compares round 1's
+# artefact with a copy of itself and reports a fixed point it did not compute. Measured: `deno task
+# seed` fell from 27.2 s to 12.2 s when the cache landed, and that fifteen seconds was this check.
+#
+# A *changed* compiler is still caught either way — round 1's output differs from the seed, so round 2
+# runs a different compiler and misses — but "the compiler reproduces its own output" is exactly the
+# claim a cache can answer without checking, so it is turned off rather than reasoned about.
+#
+# **The environment variable rather than `--no-cache`.** Round 1 runs the binary that is already
+# installed, which may predate the flag; an unknown flag is refused and there would be no way to build
+# the compiler that understands it. An unknown variable is ignored, so this spelling has no flag day.
 buildRound() {   # $1 output dir
-  if "$BIN" build "$ENTRY" --allow-read --allow-write --allow-env -o "$1/wacc" >/dev/null; then
+  if WAC_BUILD_CACHE_KEEP=0 "$BIN" build "$ENTRY" --allow-read --allow-write --allow-env -o "$1/wacc" >/dev/null; then
     return 0
   fi
   echo "== wacc cannot build itself with the seed just installed ==" >&2

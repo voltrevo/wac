@@ -393,3 +393,58 @@ And a note for whoever measures next: `-o` **is** part of the key, so timing a r
 temporary name measures a miss and looks like the cache doing nothing. Time it to the same destination,
 or use the switch.
 
+
+## `wac build` was cached after all, and the argument above was right — agent-a, 2026-08-24
+
+The section before this says `wac build` is deliberately not cached, and gives as its first reason that
+a content-keyed cache would hollow out `packages/wacc/test/wac/selfhost_test.wac`: *"the comparison
+becomes 'these bytes equal themselves' — a test that cannot fail, still passing, with nobody told."*
+The cache was built anyway, on 2026-08-24, for the reason the section before *that* gives — the
+build-and-run conversions in `issues/system/0161` pay ~2 s a run without it. **The prediction was
+correct in every particular, and it took a day to notice.**
+
+What it cost, measured rather than reasoned about:
+
+| | hollowed | with the cache refused |
+| --- | ---: | ---: |
+| `selfhost_test.wac` | **194 ms** | 5 392 ms |
+| `deno task seed` | 12 200 ms | 27 240 ms |
+
+Both builds in `selfhost_test` share compiler, sources, grants and output *base name* — the two
+directories differ and the name deliberately does not, because the name is what reaches the manifest.
+So the second build is a hit on the first. `tools/seed.sh` has the same shape one level up: in the
+steady state the seed is already the fixed point, so round 1 reproduces it, `install_seed` puts the
+same bytes back, `cargoBuild` embeds the same seed, and round 2's key is round 1's. **The fifteen
+seconds this issue recorded as a saving was the fixpoint check not running.**
+
+**It still passed after the entry was replaced with a different valid module.** That is the canary
+worth keeping: poisoning the entry with *garbage* does not show it, because `wac build` validates what
+it writes and the host refuses an invalid module — a real safety net, and one that catches nothing
+about determinism. Substituting an older `wacc.wasm`, valid and 1 byte shorter, made the test certify a
+fixed point it had not computed.
+
+### What changed
+
+- `--no-cache` on `wac build`, neither read nor written, documented at
+  `[§wac-cli-build-nocache-2wq9nk4]`. `selfhost_test.wac` passes it.
+- **A hit says so** — `1782 bytes from cache, 1 file(s) unchanged` against `1782 bytes from 1 file(s)`.
+  Without that there is no observable separating a compile from a lookup, so `--no-cache` could only be
+  trusted, not checked. `built()` in `selfhost_test.wac` now fails on `from cache`, which is what makes
+  the flag's removal a red test rather than a fast one. Canaried by removing it: run 1 passed and run 2
+  failed, because a cold cache hides the hole — the reason this was not caught by the suite.
+- `tools/seed.sh` sets `WAC_BUILD_CACHE_KEEP=0` around the fixpoint rounds rather than passing the
+  flag: round 1 runs whichever binary is already installed, which may predate the flag, and an unknown
+  flag is refused where an unknown variable is ignored. No flag day.
+
+### And a second hole, found by the first
+
+The lookup runs where the sources have been gathered and the flags have not yet been checked, so a hit
+returned 0 **before `unknownFlag` ever ran**. `wac build --nonsense` therefore exited 2 on a cold cache
+and 0 on a warm one — the same command line, two answers, decided by whether somebody had built that
+program before. Found because `--no-cache` was silently accepted while it was still unknown, which is
+how the test written to fail first failed for a better reason than the one intended. `buildCachePath`
+now declines to key a command line the program has not accepted; the caller gets the ordinary error,
+one compile later.
+
+`fixpointemit_test.wac` was checked and is unaffected — it goes through `harness/referenceRun.ts`, not
+`wac build`.

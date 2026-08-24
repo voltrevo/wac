@@ -89,16 +89,22 @@ every seed for a binary this checkout may never run is the waste `issues/system/
 checkout without one is not quietly short of coverage: the six callers warn with the reason and name the
 task. `issues/system/0208`.
 
-**It builds all three payloads, and costs about 12s** — it was 34s until the builds were cached. The
-binary carries a compiler, a shell and a fetcher — `wac build`/`run`/`test`, `wac sh`, `wac update` —
-and until 2026-08-20 this script wrote only the first, so the supported route produced a `wac`
-answering `unknown command 'sh'` and a red suite for anyone who ran `wac update`
-(`issues/system/0216a`). Of the original 34s, the fixpoint was about 13s and the other two payloads
-12.4s and 3.9s plus a `cargo build`. `wac build` remembers what it built
-since 2026-08-24 (`issues/system/0204`), keyed on the compiler, the sources, the grants and the output
-name, so a reseed with nothing changed is **12.2s against 27.2s** — measured both ways with
-`WAC_BUILD_CACHE_KEEP=0`, which turns the cache off and is the switch to reach for if you ever suspect
-it of serving something stale.
+**It builds all three payloads, and costs about 27s.** The binary carries a compiler, a shell and a
+fetcher — `wac build`/`run`/`test`, `wac sh`, `wac update` — and until 2026-08-20 this script wrote
+only the first, so the supported route produced a `wac` answering `unknown command 'sh'` and a red
+suite for anyone who ran `wac update` (`issues/system/0216a`). Of the original 34s, the fixpoint was
+about 13s and the other two payloads 12.4s and 3.9s plus a `cargo build`. `wac build` remembers what
+it built since 2026-08-24 (`issues/system/0204`), keyed on the compiler, the sources, the grants and
+the output name; the payloads come out of that cache, which is where the 34s went.
+
+**The fixpoint rounds are built with the cache off, and 12.2s was the number for not checking.** This
+paragraph said "about 12s … **12.2s against 27.2s**" for a day, and that saving was the fixpoint check
+not running: every round writes `wacc` into a directory of its own, so in the steady state round 2's
+key is round 1's, and `cmp` compared an artefact with a copy of itself. `tools/seed.sh` now sets
+`WAC_BUILD_CACHE_KEEP=0` around the rounds and the honest figure is back to 27.2s.
+`packages/wacc/test/wac/selfhost_test.wac` had the same hole and uses the `--no-cache` flag, which it
+also *checks* — a hit prints `bytes from cache` and the test refuses one. Reach for either switch if
+you ever suspect the cache of serving something stale.
 
 **And it is the one to reach for when an unrelated file stops compiling.** A `wacc` change from
 another agent can be one the *current* seed cannot compile, and the symptom is not "your seed is

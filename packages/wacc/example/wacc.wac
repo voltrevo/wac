@@ -230,21 +230,6 @@ struct Fnv {
 }
 
 /**
- * Where this build's artefact would be cached, or `""` when it must not be.
- *
- * `issues/system/0204`. The key is everything that changes the bytes written: the compiler, the entry,
- * every source's content, the grants — they go *into* the manifest — and the output's base name, which
- * is in the manifest too, so two destinations are two artefacts.
- *
- * **`""` for anything that is not a plain build.** A coverage or traced build writes a table beside the
- * module that would have to be cached with it; `wac build` without `-o` writes elsewhere; and without
- * `$WAC_HOME` there is nowhere to put it. Each of those is a miss forever rather than a wrong hit.
- *
- * **The compiler's identity comes from the host** — a wac program cannot hash the seed it is running
- * inside. Absent it, this answers `""` rather than keying on nothing, because an entry that cannot say
- * which compiler made it is the stale hit this whole cache has to avoid.
- */
-/**
  * How many built artefacts to keep. See `sweepBuildCache` for why this is a number and not "plenty".
  *
  * `$WAC_BUILD_CACHE_KEEP` overrides it, which is the only way to test the bound: proving it evicts
@@ -305,10 +290,40 @@ string dirOf(string path) {
   return cut <= 0 ? "." : path.slice(0, cut);
 }
 
+/**
+ * Where this build's artefact would be cached, or `""` when it must not be.
+ *
+ * `issues/system/0204`. The key is everything that changes the bytes written: the compiler, the entry,
+ * every source's content, the grants — they go *into* the manifest — and the output's base name, which
+ * is in the manifest too, so two destinations are two artefacts.
+ *
+ * **`""` for anything that is not a plain build.** A coverage or traced build writes a table beside the
+ * module that would have to be cached with it; `wac build` without `-o` writes elsewhere; and without
+ * `$WAC_HOME` there is nowhere to put it. Each of those is a miss forever rather than a wrong hit.
+ *
+ * **The compiler's identity comes from the host** — a wac program cannot hash the seed it is running
+ * inside. Absent it, this answers `""` rather than keying on nothing, because an entry that cannot say
+ * which compiler made it is the stale hit this whole cache has to avoid.
+ *
+ * **`--no-cache` is neither read nor write**, and it exists because a build that has to prove something
+ * about the compiler cannot be answered from disk. `packages/wacc/test/wac/selfhost_test.wac` builds
+ * wacc twice and requires byte equality; served from cache that is one file compared with itself, which
+ * `issues/system/0204` predicted before this cache existed and which measured 194 ms against a
+ * documented 3 s once it did. `tools/seed.sh` has the same shape in its fixpoint loop, in the steady
+ * state where consecutive rounds run the same compiler over the same sources.
+ *
+ * **And an unvalidated command line gets no hit.** The lookup happens above the dispatch, where the
+ * sources are already gathered and the flags are not yet checked — so a hit used to return 0 before
+ * `unknownFlag` ever ran, and `wac build --nonsense` succeeded silently on a warm cache while failing
+ * correctly on a cold one. Refusing to key a command line the program has not accepted keeps the two
+ * answers the same; the caller still gets the ordinary error, one compile later.
+ */
 string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] paths, string[] texts,
                       string stem) {
   if (cmd != "build" || stem == "") { return ""; }
   if (hasFlag(cli, argc, "--coverage") || hasFlag(cli, argc, "--trace")) { return ""; }
+  if (hasFlag(cli, argc, "--no-cache")) { return ""; }
+  if (unknownFlag(cli, argc) != "") { return ""; }
   // **A bound of zero turns the cache off, lookup included.** Sweeping to nothing is not the same as
   // being off: entries written before still answer, so a caller who set this because they suspect a
   // stale hit would go on getting hits until the first build swept them away. Measured — a self-build
@@ -1040,7 +1055,7 @@ string unknownFlag(Cli cli, i32 argc) {
     if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
     if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
         && a != "--allow-run" && a != "--quiet" && a != "--js" && a != "--coverage"
-        && a != "--trace" && a != "--trace-slots") {
+        && a != "--trace" && a != "--trace-slots" && a != "--no-cache") {
       return a;
     }
   }
@@ -1199,9 +1214,13 @@ export i32 main(Core core, Cli cli) {
         core.warn("wacc: cannot write " + stemHit + ".wasm — " + wroteHit.message);
         return 1;
       }
+      // **A hit says so.** This printed the line a real build prints, so nothing downstream could tell
+      // a compile from a lookup — which is how a determinism test came to pass without compiling
+      // anything. `--no-cache` is the way to refuse one; naming it here is what lets a caller *check*
+      // that it worked, rather than trusting that it did.
       if (!hasFlag(cli, argc, "--quiet")) {
-        core.log(stemHit + ".wasm: " + itoa(hit.bytes.len()) + " bytes from " + itoa(src.n)
-                 + " file(s)");
+        core.log(stemHit + ".wasm: " + itoa(hit.bytes.len()) + " bytes from cache, "
+                 + itoa(src.n) + " file(s) unchanged");
       }
       return 0;
     }
