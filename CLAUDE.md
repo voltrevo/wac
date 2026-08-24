@@ -89,11 +89,16 @@ every seed for a binary this checkout may never run is the waste `issues/system/
 checkout without one is not quietly short of coverage: the six callers warn with the reason and name the
 task. `issues/system/0208`.
 
-**It builds all three payloads, and costs about 34s.** The binary carries a compiler, a shell and a
-fetcher — `wac build`/`run`/`test`, `wac sh`, `wac update` — and until 2026-08-20 this script wrote
-only the first, so the supported route produced a `wac` answering `unknown command 'sh'` and a red
-suite for anyone who ran `wac update` (`issues/system/0216a`). Of the 34s, the fixpoint is about 13s
-and the other two payloads are 12.4s and 3.9s plus a `cargo build`.
+**It builds all three payloads, and costs about 12s** — it was 34s until the builds were cached. The
+binary carries a compiler, a shell and a fetcher — `wac build`/`run`/`test`, `wac sh`, `wac update` —
+and until 2026-08-20 this script wrote only the first, so the supported route produced a `wac`
+answering `unknown command 'sh'` and a red suite for anyone who ran `wac update`
+(`issues/system/0216a`). Of the original 34s, the fixpoint was about 13s and the other two payloads
+12.4s and 3.9s plus a `cargo build`. `wac build` remembers what it built
+since 2026-08-24 (`issues/system/0204`), keyed on the compiler, the sources, the grants and the output
+name, so a reseed with nothing changed is **12.2s against 27.2s** — measured both ways with
+`WAC_BUILD_CACHE_KEEP=0`, which turns the cache off and is the switch to reach for if you ever suspect
+it of serving something stale.
 
 **And it is the one to reach for when an unrelated file stops compiling.** A `wacc` change from
 another agent can be one the *current* seed cannot compile, and the symptom is not "your seed is
