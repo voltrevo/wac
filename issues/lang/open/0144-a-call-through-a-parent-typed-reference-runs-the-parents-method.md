@@ -103,9 +103,13 @@ they do not both belong here:
   Cont<string>"*, because a generic is spelled with its arguments at the use site and `parentOf`
   matches a *declared* name — so it looked for a struct called `Cont<string>`, found none, and the
   inheritance walk never started. Everything the checker knows about a generic is filed under the
-  template; this was one more lookup that had not come back through `genericBase`. Fixed in
-  `assignable`, pinned as a clean case in `packages/wacc/test/wac/typecheck_test.wac`'s rung-3
-  differential — which is where a false alarm belongs, because the case only means anything while the
+  template; this was one more lookup that had not come back through it. Fixed in **`descendsFrom`**,
+  which is where it belonged: the first attempt patched `assignable`, and then the *cast* rule turned
+  out to have the same blind spot with the opposite symptom — `c as! Task` is an upcast, the reference
+  says *"upcast to 'Task' is always safe — use 'as'"*, and wacc said nothing while catching the
+  identical `k as! Base` for a plain `Kid`. One helper, a false alarm on one side of it and a missed
+  diagnostic on the other, which is what said to fix the helper rather than either caller. Pinned as a
+  clean case *and* a wrong one in `packages/wacc/test/wac/typecheck_test.wac`'s rung-3 differential — which is where a false alarm belongs, because the case only means anything while the
   reference still accepts it. wacc now answers 7 and 0, matching the reference exactly.
 
 - **`Cont.make(…)` binding `T` from the slot** — this one really is shared. Both compilers refuse the

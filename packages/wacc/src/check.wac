@@ -714,27 +714,10 @@ export bool assignable(C c, string want, string got) {
   // `as!`. Upcasting *by assignment* is the same fact as upcasting by cast, one syntax along, and was
   // missed because nothing in the spec corpus assigns a child to a parent.
   if (c.isStruct(want) && c.isStruct(got) && descendsFrom(c, got, want)) { return true; }
-  // **And a generic child into a non-generic parent**, which the line above cannot see. A generic is
-  // spelled with its arguments at the use site, so `parentOf("Cont<string>")` looks for a declaration
-  // by that name, finds none and answers `""` — the inheritance walk never starts and a correct
-  // program is refused with *"expected Task, found Cont<string>"*. Everything the checker knows about
-  // a generic is filed under the template, which is what `genericBase` is for; this is one more
-  // lookup that had not come back through it.
-  //
-  // The reference accepts this, emits it and runs it. `issues/lang/0144` found it while probing its
-  // own question — whether a call through a parent-typed reference dispatches dynamically — and
-  // recorded it as a consequence of that undecided rule. It is not: assignability to a declared
-  // parent is a different fact from which method a call runs, and the reference settles it. Reading
-  // it as part of the decision is what left a false alarm parked for a week.
-  //
-  // **Only a non-generic parent.** `Cont<T> : Box<T>` would need `T` substituted along the chain
-  // before `Box<string>` and `Box<i32>` could be told apart, and guessing there would trade this
-  // false alarm for a wrong acceptance. Left to fall through, which reports — the case is beyond
-  // this slice, and `descendsFrom` walking a chain of templates is the change that would settle it.
-  if (c.isStruct(want) && genericBase(want) == "" && genericBase(got) != ""
-      && c.isStruct(genericBase(got)) && descendsFrom(c, genericBase(got), want)) {
-    return true;
-  }
+  // A generic child into a parent — `Task t = c` for a `Cont<string> c` — is the line above too, now
+  // that `descendsFrom` starts from the template. It was a separate clause here for one commit, which
+  // was one caller patching a shared helper's blind spot; the cast rule had the same spot and the
+  // opposite symptom, which is what said the fix belonged in the helper.
   // **A variant is a value of its enum.** `Option<i32> a = Option.Some(5);` — the source has the
   // variant's own type, which is what the reference answers too (*"expected i32, got A"*), and the
   // slot has the enum's. Compared against the *template*, so an instance takes its own variants:
@@ -5832,7 +5815,24 @@ string variantOwnerOf(C c, string name) {
 
 /** Whether `sub` inherits from `super`, which is what makes a cast between them a downcast. */
 bool descendsFrom(C c, string sub, string sup) {
-  string at = c.parentOf(sub);
+  // **From the template, because a use site spells a generic with its arguments.** `parentOf` matches
+  // a declared name, so `Cont<string>` found no declaration and this answered false for a type that
+  // plainly has a parent. `isStruct` next door already went through `templateOf` for exactly this
+  // reason, with the note that "every rule that asks this question means the reference-type one" —
+  // this was the neighbouring rule that had not.
+  //
+  // It was wrong in **both directions**, which is why it belongs here rather than at either caller.
+  // In `assignable` it invented a diagnostic: `Task t = c` for a `Cont<string> c` was refused, and the
+  // reference accepts, emits and runs it. In the cast rule it lost one: `c as! Task` is an upcast, the
+  // reference says *"upcast to 'Task' is always safe — use 'as'"*, and wacc said nothing — while
+  // catching the identical `k as! Base` for a plain `Kid`. One blind spot, a false alarm on one side of
+  // it and a miss on the other.
+  //
+  // Only the *sub* side is unwrapped. A generic **ancestor** — `Cont<T> : Box<T>` — needs `T`
+  // substituted along the chain before `Box<string>` and `Box<i32>` can be told apart, and the parent
+  // is recorded as it was written, so the comparison below simply fails and both callers stay as they
+  // were. Guessing there would trade a false alarm for a wrong answer.
+  string at = c.parentOf(templateOf(sub));
   for (i32 guard = 0; guard < 16; guard++) {
     if (at == "") { return false; }
     if (at == sup) { return true; }

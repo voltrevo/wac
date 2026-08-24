@@ -69,7 +69,15 @@ string[] WRONG() {
     "export f64 f() { return true; }",
     "export i32 w(bool c) { while (c) { return \"loop\"; } return 0; }",
     "export string t(i32 n) { switch (n) { case 1: { return 5; } } return \"d\"; }",
-    "export i32 nested(bool c) { if (c) { if (c) { return \"deep\"; } } return 0; }");
+    "export i32 nested(bool c) { if (c) { if (c) { return \"deep\"; } } return 0; }",
+    // **An upcast written with `as!`, through a generic.** The reference says *"upcast to 'Task' is
+    // always safe — use 'as'"*, and wacc says the same thing about the plain `k as! Base` — it has the
+    // rule. It could not see this spelling, because `descendsFrom` matched a declared name and a use
+    // site writes `Cont<string>`. So the same blind spot showed as a *missing* diagnostic here and as
+    // an invented one in `CLEAN` below, which is what said to fix the helper rather than either
+    // caller. Soundness is what this list asserts, so the position is compared too.
+    "struct Task { i32 id; }\nstruct Cont<T> : Task { T v; }\n"
+      + "export i32 f() { Cont<string> c = Cont<string>(7, \"x\"); Task t = c as! Task; return t.id; }");
 }
 
 /**
