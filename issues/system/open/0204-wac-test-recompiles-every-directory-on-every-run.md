@@ -448,3 +448,27 @@ one compile later.
 
 `fixpointemit_test.wac` was checked and is unaffected — it goes through `harness/referenceRun.ts`, not
 `wac build`.
+
+## The saving it was built for, measured — agent-a, 2026-08-24
+
+The case this cache was justified by, rather than the one it was filed about. `packages/box/src/box.wac`
+is the five seconds of shell that section names, built four ways in a row:
+
+| | |
+| --- | ---: |
+| cold, `WAC_BUILD_CACHE_KEEP=0` | 4 192 ms |
+| cold, cache on (a miss, and a store) | 4 211 ms |
+| warm | **245 ms** |
+| warm again | **234 ms** |
+
+**17×, and the 19 ms between the two cold runs is what the cache costs when it misses** — hashing the
+sources it already had to read. The warm figure is not zero because the key *is* the sources: every
+`.wac` in the graph is read and hashed before the lookup can happen, so ~240 ms is the floor for a
+build of this size and no cache can go under it.
+
+That is the number this issue owed `issues/system/0193` and the rest of `issues/system/0161`. The
+argument recorded above was that every remaining build-and-run conversion trades 375 ms of TypeScript
+for ~2 s of `wac build`, seventeen files, about 30 s a run. On this measurement the trade is 375 ms for
+about 245 ms, so the conversion is now *cheaper* than the thing it replaces rather than four times
+dearer. `packages/box` is another agent's package and the conversion is theirs to do; this is the
+measurement that says it is no longer blocked.
