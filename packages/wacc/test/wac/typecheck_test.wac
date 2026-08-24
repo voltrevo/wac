@@ -77,7 +77,20 @@ string[] CLEAN() {
     "export string s() { return \"x\"; }",
     "export bool t() { return true; }",
     "export void v() { return; }",
-    "export i32 add(i32 a, i32 b) { return a + b; }");
+    "export i32 add(i32 a, i32 b) { return a + b; }",
+    // **A generic struct assigned to its non-generic parent.** The reference accepts this, emits it
+    // and runs it — it answers 7 — and wacc refused it: *"expected Task, found Cont<string>"*. The
+    // type is spelled with its arguments, so `parentOf`, which matches a declared name, found no
+    // declaration called `Cont<string>` and the inheritance walk never started.
+    //
+    // Here rather than in a file of its own because it is a false alarm, and this is the test whose
+    // job is that: the case is only meaningful while the reference still accepts it, and the loop
+    // below checks that first. `issues/lang/0144` recorded this as a consequence of its own
+    // undecided question about dispatch — it is not one, because the reference has no such limit,
+    // and reading it that way is what left it sitting behind a decision for a week.
+    "struct Task { i32 id; i32 fire(const this) { return 0; } }\n"
+      + "struct Cont<T> : Task { T v; override i32 fire(const this) { return this.id; } }\n"
+      + "export i32 f() { Cont<string> c = Cont<string>(7, \"hi\"); Task t = c; return t.id; }");
 }
 
 export string test_rung3_every_diagnostic_we_report_the_reference_reports_in_the_same_place(
