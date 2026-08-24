@@ -1,0 +1,360 @@
+// Branch coverage for git: the package's own tests, and nothing else.
+//
+//   deno task coverage:git
+//   deno task coverage:git --verbose
+//
+// One of the last packages `issues/system/0205` records as unmeasured, and notable for having **no
+// programs in `src/`** — every file is a library and every test imports it. Nine packages into this
+// sweep that is worth saying out loud, because the three lowest first runs so far were all caused by
+// the opposite.
+
+import { Core, Cli } from "std/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+import {
+  test_a_working_tree_we_rebuilt_is_one_git_calls_clean as chec__a_working_tree_we_rebuilt_is_one_git_calls_clean,
+  test_an_executable_checks_out_executable as chec__an_executable_checks_out_executable,
+  test_a_symlink_checks_out_as_a_file_holding_its_target_and_says_so as chec__a_symlink_checks_out_as_a_file_holding_its_target_and_says_so,
+  test_a_gitlink_checks_out_as_the_empty_directory_git_leaves as chec__a_gitlink_checks_out_as_the_empty_directory_git_leaves,
+} from "./wac/checkout_test.wac";
+import {
+  test_a_clone_from_a_real_server_is_a_repository_git_calls_correct as clon__a_clone_from_a_real_server_is_a_repository_git_calls_correct,
+} from "./wac/clone_test.wac";
+import {
+  test_a_commit_we_made_passes_fsck_and_log_shows_it_with_its_parent as comm__a_commit_we_made_passes_fsck_and_log_shows_it_with_its_parent,
+  test_a_first_commit_has_no_parent_header_and_git_accepts_it_as_a_root as comm__a_first_commit_has_no_parent_header_and_git_accepts_it_as_a_root,
+  test_writing_an_object_that_is_already_there_leaves_it_alone as comm__writing_an_object_that_is_already_there_leaves_it_alone,
+  test_an_unset_identity_is_refused_and_no_commit_is_made as comm__an_unset_identity_is_refused_and_no_commit_is_made,
+  test_a_tree_built_from_a_working_tree_records_100755_for_an_executable as comm__a_tree_built_from_a_working_tree_records_100755_for_an_executable,
+} from "./wac/commit_test.wac";
+import {
+  test_every_setting_is_the_one_git_config_list_reports_in_order as conf__every_setting_is_the_one_git_config_list_reports_in_order,
+  test_a_file_with_no_sections_yields_nothing_rather_than_a_crash as conf__a_file_with_no_sections_yields_nothing_rather_than_a_crash,
+} from "./wac/config_test.wac";
+import {
+  test_an_identity_in_the_dotfile_is_enough_to_commit_and_the_local_file_still_wins as conf2__an_identity_in_the_dotfile_is_enough_to_commit_and_the_local_file_still_wins,
+} from "./wac/configchain_test.wac";
+import {
+  test_an_advertisement_parses_to_the_refs_show_ref_lists as fetc__an_advertisement_parses_to_the_refs_show_ref_lists,
+  test_a_want_we_built_is_answered_with_a_packfile as fetc__a_want_we_built_is_answered_with_a_packfile,
+  test_a_deepened_want_gets_a_shallow_pack as fetc__a_deepened_want_gets_a_shallow_pack,
+  test_pkt_line_framing_counts_its_own_header as fetc__pkt_line_framing_counts_its_own_header,
+  test_a_reply_that_is_not_a_pack_says_why as fetc__a_reply_that_is_not_a_pack_says_why,
+  test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_gits as fetc__a_fetched_pack_has_no_index_and_we_build_one_that_matches_gits,
+} from "./wac/fetch_test.wac";
+import {
+  test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for_is_in_it as fetc2__a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for_is_in_it,
+} from "./wac/fetchlive_test.wac";
+import {
+  test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_names as hist__head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_names,
+  test_walking_parents_from_head_gives_what_rev_list_first_parent_gives as hist__walking_parents_from_head_gives_what_rev_list_first_parent_gives,
+  test_a_commits_fields_are_the_ones_git_prints as hist__a_commits_fields_are_the_ones_git_prints,
+  test_a_ref_file_or_commit_that_is_not_one_is_refused_rather_than_guessed_at as hist__a_ref_file_or_commit_that_is_not_one_is_refused_rather_than_guessed_at,
+  test_a_header_continued_onto_the_next_line_does_not_eat_the_message as hist__a_header_continued_onto_the_next_line_does_not_eat_the_message,
+} from "./wac/history_test.wac";
+import {
+  test_every_ignore_decision_is_the_one_git_check_ignore_makes as igno__every_ignore_decision_is_the_one_git_check_ignore_makes,
+  test_a_comment_a_blank_line_and_a_trailing_space_are_not_patterns as igno__a_comment_a_blank_line_and_a_trailing_space_are_not_patterns,
+  test_the_last_matching_rule_wins_and_reversing_them_reverses_the_answer as igno__the_last_matching_rule_wins_and_reversing_them_reverses_the_answer,
+  test_a_nested_gitignore_overrides_the_one_above_it as igno__a_nested_gitignore_overrides_the_one_above_it,
+} from "./wac/ignore_test.wac";
+import {
+  test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did as inde__an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did,
+  test_a_zeroed_stat_cache_still_leaves_git_clean as inde__a_zeroed_stat_cache_still_leaves_git_clean,
+  test_an_index_that_is_not_one_is_refused_rather_than_half_read as inde__an_index_that_is_not_one_is_refused_rather_than_half_read,
+} from "./wac/index_test.wac";
+import {
+  test_an_objects_name_is_the_one_git_gives_it as inte__an_objects_name_is_the_one_git_gives_it,
+  test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_wrote as inte__git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_wrote,
+  test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes as inte__a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes,
+  test_adler32_matches_its_published_vector_and_a_zlib_stream_round_trips as inte__adler32_matches_its_published_vector_and_a_zlib_stream_round_trips,
+  test_a_corrupt_zlib_stream_is_refused_rather_than_half_inflated as inte__a_corrupt_zlib_stream_is_refused_rather_than_half_inflated,
+  test_a_loose_object_whose_header_disagrees_with_its_bytes_is_refused as inte__a_loose_object_whose_header_disagrees_with_its_bytes_is_refused,
+} from "./wac/interop_test.wac";
+import {
+  test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_git_lists as lsre__the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_git_lists,
+} from "./wac/lsremote_test.wac";
+import {
+  test_every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its_own_name as pack__every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its_own_name,
+  test_the_header_at_each_offset_says_what_verify_pack_says as pack__the_header_at_each_offset_says_what_verify_pack_says,
+  test_a_named_lookup_finds_an_object_through_the_index as pack__a_named_lookup_finds_an_object_through_the_index,
+  test_a_pack_or_index_that_does_not_belong_is_refused as pack__a_pack_or_index_that_does_not_belong_is_refused,
+  test_a_delta_that_does_not_describe_its_base_is_refused as pack__a_delta_that_does_not_describe_its_base_is_refused,
+  test_an_index_we_built_from_a_pack_alone_is_the_index_git_wrote as pack__an_index_we_built_from_a_pack_alone_is_the_index_git_wrote,
+  test_the_index_we_write_is_the_file_git_wrote_byte_for_byte as pack__the_index_we_write_is_the_file_git_wrote_byte_for_byte,
+  test_an_index_with_offsets_past_two_gigabytes_round_trips as pack__an_index_with_offsets_past_two_gigabytes_round_trips,
+} from "./wac/pack_test.wac";
+import {
+  test_a_pack_we_wrote_is_one_git_indexes_verifies_and_unpacks as pack2__a_pack_we_wrote_is_one_git_indexes_verifies_and_unpacks,
+  test_a_thin_pack_says_what_it_needs_and_the_completed_one_is_what_git_accepts as pack2__a_thin_pack_says_what_it_needs_and_the_completed_one_is_what_git_accepts,
+  test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts as pack2__a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts,
+} from "./wac/packwrite_test.wac";
+import {
+  test_a_thin_pack_completed_from_the_local_store_and_written as pull__a_thin_pack_completed_from_the_local_store_and_written,
+  test_a_fetch_of_what_we_already_have_is_refused as pull__a_fetch_of_what_we_already_have_is_refused,
+} from "./wac/pull_test.wac";
+import {
+  test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref as push__a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref,
+  test_a_report_of_a_refused_ref_keeps_the_servers_own_words as push__a_report_of_a_refused_ref_keeps_the_servers_own_words,
+  test_a_pack_the_server_cannot_read_is_reported_as_such as push__a_pack_the_server_cannot_read_is_reported_as_such,
+} from "./wac/push_test.wac";
+import {
+  test_all_three_of_gits_answers_in_gits_order as stat__all_three_of_gits_answers_in_gits_order,
+  test_a_mode_change_with_no_content_change_is_reported_both_directions as stat__a_mode_change_with_no_content_change_is_reported_both_directions,
+  test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_info_exclude as stat__core_excludesfile_is_read_and_loses_to_both_gitignore_and_info_exclude,
+} from "./wac/status_test.wac";
+import {
+  test_an_annotated_tags_fields_are_the_ones_git_prints as tag__an_annotated_tags_fields_are_the_ones_git_prints,
+  test_a_tag_with_no_tagger_line_is_read_because_git_reads_those_too as tag__a_tag_with_no_tagger_line_is_read_because_git_reads_those_too,
+  test_a_tag_object_that_is_not_one_says_which_part_is_missing as tag__a_tag_object_that_is_not_one_says_which_part_is_missing,
+} from "./wac/tag_test.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 bad = 0;
+  if (chec__a_working_tree_we_rebuilt_is_one_git_calls_clean(core, cli).len() > 0) {
+    core.warn("error: FAILED checkout_test test_a_working_tree_we_rebuilt_is_one_git_calls_clean");
+    bad = bad + 1;
+  }
+  if (chec__an_executable_checks_out_executable(core, cli).len() > 0) {
+    core.warn("error: FAILED checkout_test test_an_executable_checks_out_executable");
+    bad = bad + 1;
+  }
+  if (chec__a_symlink_checks_out_as_a_file_holding_its_target_and_says_so(core, cli).len() > 0) {
+    core.warn("error: FAILED checkout_test test_a_symlink_checks_out_as_a_file_holding_its_target_and_says_so");
+    bad = bad + 1;
+  }
+  if (chec__a_gitlink_checks_out_as_the_empty_directory_git_leaves(core, cli).len() > 0) {
+    core.warn("error: FAILED checkout_test test_a_gitlink_checks_out_as_the_empty_directory_git_leaves");
+    bad = bad + 1;
+  }
+  if (clon__a_clone_from_a_real_server_is_a_repository_git_calls_correct(core, cli).len() > 0) {
+    core.warn("error: FAILED clone_test test_a_clone_from_a_real_server_is_a_repository_git_calls_correct");
+    bad = bad + 1;
+  }
+  if (comm__a_commit_we_made_passes_fsck_and_log_shows_it_with_its_parent(core, cli).len() > 0) {
+    core.warn("error: FAILED commit_test test_a_commit_we_made_passes_fsck_and_log_shows_it_with_its_parent");
+    bad = bad + 1;
+  }
+  if (comm__a_first_commit_has_no_parent_header_and_git_accepts_it_as_a_root(core, cli).len() > 0) {
+    core.warn("error: FAILED commit_test test_a_first_commit_has_no_parent_header_and_git_accepts_it_as_a_root");
+    bad = bad + 1;
+  }
+  if (comm__writing_an_object_that_is_already_there_leaves_it_alone(core, cli).len() > 0) {
+    core.warn("error: FAILED commit_test test_writing_an_object_that_is_already_there_leaves_it_alone");
+    bad = bad + 1;
+  }
+  if (comm__an_unset_identity_is_refused_and_no_commit_is_made(core, cli).len() > 0) {
+    core.warn("error: FAILED commit_test test_an_unset_identity_is_refused_and_no_commit_is_made");
+    bad = bad + 1;
+  }
+  if (comm__a_tree_built_from_a_working_tree_records_100755_for_an_executable(core, cli).len() > 0) {
+    core.warn("error: FAILED commit_test test_a_tree_built_from_a_working_tree_records_100755_for_an_executable");
+    bad = bad + 1;
+  }
+  if (conf__every_setting_is_the_one_git_config_list_reports_in_order(core, cli).len() > 0) {
+    core.warn("error: FAILED config_test test_every_setting_is_the_one_git_config_list_reports_in_order");
+    bad = bad + 1;
+  }
+  if (conf__a_file_with_no_sections_yields_nothing_rather_than_a_crash().len() > 0) {
+    core.warn("error: FAILED config_test test_a_file_with_no_sections_yields_nothing_rather_than_a_crash");
+    bad = bad + 1;
+  }
+  if (conf2__an_identity_in_the_dotfile_is_enough_to_commit_and_the_local_file_still_wins(core, cli).len() > 0) {
+    core.warn("error: FAILED configchain_test test_an_identity_in_the_dotfile_is_enough_to_commit_and_the_local_file_still_wins");
+    bad = bad + 1;
+  }
+  if (fetc__an_advertisement_parses_to_the_refs_show_ref_lists(core, cli).len() > 0) {
+    core.warn("error: FAILED fetch_test test_an_advertisement_parses_to_the_refs_show_ref_lists");
+    bad = bad + 1;
+  }
+  if (fetc__a_want_we_built_is_answered_with_a_packfile(core, cli).len() > 0) {
+    core.warn("error: FAILED fetch_test test_a_want_we_built_is_answered_with_a_packfile");
+    bad = bad + 1;
+  }
+  if (fetc__a_deepened_want_gets_a_shallow_pack(core, cli).len() > 0) {
+    core.warn("error: FAILED fetch_test test_a_deepened_want_gets_a_shallow_pack");
+    bad = bad + 1;
+  }
+  if (fetc__pkt_line_framing_counts_its_own_header(core, cli).len() > 0) {
+    core.warn("error: FAILED fetch_test test_pkt_line_framing_counts_its_own_header");
+    bad = bad + 1;
+  }
+  if (fetc__a_reply_that_is_not_a_pack_says_why(core, cli).len() > 0) {
+    core.warn("error: FAILED fetch_test test_a_reply_that_is_not_a_pack_says_why");
+    bad = bad + 1;
+  }
+  if (fetc__a_fetched_pack_has_no_index_and_we_build_one_that_matches_gits(core, cli).len() > 0) {
+    core.warn("error: FAILED fetch_test test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_gits");
+    bad = bad + 1;
+  }
+  if (fetc2__a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for_is_in_it(core, cli).len() > 0) {
+    core.warn("error: FAILED fetchlive_test test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for_is_in_it");
+    bad = bad + 1;
+  }
+  if (hist__head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_names(core, cli).len() > 0) {
+    core.warn("error: FAILED history_test test_head_resolves_through_a_symbolic_ref_to_the_commit_rev_parse_names");
+    bad = bad + 1;
+  }
+  if (hist__walking_parents_from_head_gives_what_rev_list_first_parent_gives(core, cli).len() > 0) {
+    core.warn("error: FAILED history_test test_walking_parents_from_head_gives_what_rev_list_first_parent_gives");
+    bad = bad + 1;
+  }
+  if (hist__a_commits_fields_are_the_ones_git_prints(core, cli).len() > 0) {
+    core.warn("error: FAILED history_test test_a_commits_fields_are_the_ones_git_prints");
+    bad = bad + 1;
+  }
+  if (hist__a_ref_file_or_commit_that_is_not_one_is_refused_rather_than_guessed_at().len() > 0) {
+    core.warn("error: FAILED history_test test_a_ref_file_or_commit_that_is_not_one_is_refused_rather_than_guessed_at");
+    bad = bad + 1;
+  }
+  if (hist__a_header_continued_onto_the_next_line_does_not_eat_the_message().len() > 0) {
+    core.warn("error: FAILED history_test test_a_header_continued_onto_the_next_line_does_not_eat_the_message");
+    bad = bad + 1;
+  }
+  if (igno__every_ignore_decision_is_the_one_git_check_ignore_makes(core, cli).len() > 0) {
+    core.warn("error: FAILED ignore_test test_every_ignore_decision_is_the_one_git_check_ignore_makes");
+    bad = bad + 1;
+  }
+  if (igno__a_comment_a_blank_line_and_a_trailing_space_are_not_patterns().len() > 0) {
+    core.warn("error: FAILED ignore_test test_a_comment_a_blank_line_and_a_trailing_space_are_not_patterns");
+    bad = bad + 1;
+  }
+  if (igno__the_last_matching_rule_wins_and_reversing_them_reverses_the_answer().len() > 0) {
+    core.warn("error: FAILED ignore_test test_the_last_matching_rule_wins_and_reversing_them_reverses_the_answer");
+    bad = bad + 1;
+  }
+  if (igno__a_nested_gitignore_overrides_the_one_above_it(core, cli).len() > 0) {
+    core.warn("error: FAILED ignore_test test_a_nested_gitignore_overrides_the_one_above_it");
+    bad = bad + 1;
+  }
+  if (inde__an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(core, cli).len() > 0) {
+    core.warn("error: FAILED index_test test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did");
+    bad = bad + 1;
+  }
+  if (inde__a_zeroed_stat_cache_still_leaves_git_clean(core, cli).len() > 0) {
+    core.warn("error: FAILED index_test test_a_zeroed_stat_cache_still_leaves_git_clean");
+    bad = bad + 1;
+  }
+  if (inde__an_index_that_is_not_one_is_refused_rather_than_half_read().len() > 0) {
+    core.warn("error: FAILED index_test test_an_index_that_is_not_one_is_refused_rather_than_half_read");
+    bad = bad + 1;
+  }
+  if (inte__an_objects_name_is_the_one_git_gives_it(core, cli).len() > 0) {
+    core.warn("error: FAILED interop_test test_an_objects_name_is_the_one_git_gives_it");
+    bad = bad + 1;
+  }
+  if (inte__git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_wrote(core, cli).len() > 0) {
+    core.warn("error: FAILED interop_test test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_wrote");
+    bad = bad + 1;
+  }
+  if (inte__a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes(core, cli).len() > 0) {
+    core.warn("error: FAILED interop_test test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes");
+    bad = bad + 1;
+  }
+  if (inte__adler32_matches_its_published_vector_and_a_zlib_stream_round_trips().len() > 0) {
+    core.warn("error: FAILED interop_test test_adler32_matches_its_published_vector_and_a_zlib_stream_round_trips");
+    bad = bad + 1;
+  }
+  if (inte__a_corrupt_zlib_stream_is_refused_rather_than_half_inflated().len() > 0) {
+    core.warn("error: FAILED interop_test test_a_corrupt_zlib_stream_is_refused_rather_than_half_inflated");
+    bad = bad + 1;
+  }
+  if (inte__a_loose_object_whose_header_disagrees_with_its_bytes_is_refused().len() > 0) {
+    core.warn("error: FAILED interop_test test_a_loose_object_whose_header_disagrees_with_its_bytes_is_refused");
+    bad = bad + 1;
+  }
+  if (lsre__the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_git_lists(core, cli).len() > 0) {
+    core.warn("error: FAILED lsremote_test test_the_refs_a_remote_advertises_over_our_own_tls_are_the_ones_git_lists");
+    bad = bad + 1;
+  }
+  if (pack__every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its_own_name(core, cli).len() > 0) {
+    core.warn("error: FAILED pack_test test_every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its_own_name");
+    bad = bad + 1;
+  }
+  if (pack__the_header_at_each_offset_says_what_verify_pack_says(core, cli).len() > 0) {
+    core.warn("error: FAILED pack_test test_the_header_at_each_offset_says_what_verify_pack_says");
+    bad = bad + 1;
+  }
+  if (pack__a_named_lookup_finds_an_object_through_the_index(core, cli).len() > 0) {
+    core.warn("error: FAILED pack_test test_a_named_lookup_finds_an_object_through_the_index");
+    bad = bad + 1;
+  }
+  if (pack__a_pack_or_index_that_does_not_belong_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED pack_test test_a_pack_or_index_that_does_not_belong_is_refused");
+    bad = bad + 1;
+  }
+  if (pack__a_delta_that_does_not_describe_its_base_is_refused().len() > 0) {
+    core.warn("error: FAILED pack_test test_a_delta_that_does_not_describe_its_base_is_refused");
+    bad = bad + 1;
+  }
+  if (pack__an_index_we_built_from_a_pack_alone_is_the_index_git_wrote(core, cli).len() > 0) {
+    core.warn("error: FAILED pack_test test_an_index_we_built_from_a_pack_alone_is_the_index_git_wrote");
+    bad = bad + 1;
+  }
+  if (pack__the_index_we_write_is_the_file_git_wrote_byte_for_byte(core, cli).len() > 0) {
+    core.warn("error: FAILED pack_test test_the_index_we_write_is_the_file_git_wrote_byte_for_byte");
+    bad = bad + 1;
+  }
+  if (pack__an_index_with_offsets_past_two_gigabytes_round_trips().len() > 0) {
+    core.warn("error: FAILED pack_test test_an_index_with_offsets_past_two_gigabytes_round_trips");
+    bad = bad + 1;
+  }
+  if (pack2__a_pack_we_wrote_is_one_git_indexes_verifies_and_unpacks(core, cli).len() > 0) {
+    core.warn("error: FAILED packwrite_test test_a_pack_we_wrote_is_one_git_indexes_verifies_and_unpacks");
+    bad = bad + 1;
+  }
+  if (pack2__a_thin_pack_says_what_it_needs_and_the_completed_one_is_what_git_accepts(core, cli).len() > 0) {
+    core.warn("error: FAILED packwrite_test test_a_thin_pack_says_what_it_needs_and_the_completed_one_is_what_git_accepts");
+    bad = bad + 1;
+  }
+  if (pack2__a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts(core, cli).len() > 0) {
+    core.warn("error: FAILED packwrite_test test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts");
+    bad = bad + 1;
+  }
+  if (pull__a_thin_pack_completed_from_the_local_store_and_written(core, cli).len() > 0) {
+    core.warn("error: FAILED pull_test test_a_thin_pack_completed_from_the_local_store_and_written");
+    bad = bad + 1;
+  }
+  if (pull__a_fetch_of_what_we_already_have_is_refused(core, cli).len() > 0) {
+    core.warn("error: FAILED pull_test test_a_fetch_of_what_we_already_have_is_refused");
+    bad = bad + 1;
+  }
+  if (push__a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(core, cli).len() > 0) {
+    core.warn("error: FAILED push_test test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref");
+    bad = bad + 1;
+  }
+  if (push__a_report_of_a_refused_ref_keeps_the_servers_own_words().len() > 0) {
+    core.warn("error: FAILED push_test test_a_report_of_a_refused_ref_keeps_the_servers_own_words");
+    bad = bad + 1;
+  }
+  if (push__a_pack_the_server_cannot_read_is_reported_as_such().len() > 0) {
+    core.warn("error: FAILED push_test test_a_pack_the_server_cannot_read_is_reported_as_such");
+    bad = bad + 1;
+  }
+  if (stat__all_three_of_gits_answers_in_gits_order(core, cli).len() > 0) {
+    core.warn("error: FAILED status_test test_all_three_of_gits_answers_in_gits_order");
+    bad = bad + 1;
+  }
+  if (stat__a_mode_change_with_no_content_change_is_reported_both_directions(core, cli).len() > 0) {
+    core.warn("error: FAILED status_test test_a_mode_change_with_no_content_change_is_reported_both_directions");
+    bad = bad + 1;
+  }
+  if (stat__core_excludesfile_is_read_and_loses_to_both_gitignore_and_info_exclude(core, cli).len() > 0) {
+    core.warn("error: FAILED status_test test_core_excludesfile_is_read_and_loses_to_both_gitignore_and_info_exclude");
+    bad = bad + 1;
+  }
+  if (tag__an_annotated_tags_fields_are_the_ones_git_prints(core, cli).len() > 0) {
+    core.warn("error: FAILED tag_test test_an_annotated_tags_fields_are_the_ones_git_prints");
+    bad = bad + 1;
+  }
+  if (tag__a_tag_with_no_tagger_line_is_read_because_git_reads_those_too(core, cli).len() > 0) {
+    core.warn("error: FAILED tag_test test_a_tag_with_no_tagger_line_is_read_because_git_reads_those_too");
+    bad = bad + 1;
+  }
+  if (tag__a_tag_object_that_is_not_one_says_which_part_is_missing().len() > 0) {
+    core.warn("error: FAILED tag_test test_a_tag_object_that_is_not_one_says_which_part_is_missing");
+    bad = bad + 1;
+  }
+  if (bad > 0) { core.warn("git: " + itoa(bad) + " test(s) failed under the coverage driver"); }
+  return bad;
+}

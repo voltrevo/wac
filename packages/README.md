@@ -165,6 +165,7 @@ deno task coverage:ethrpc
 deno task coverage:fmt
 deno task coverage:fs
 deno task coverage:gzip
+deno task coverage:git
 deno task coverage:http
 deno task coverage:json
 deno task coverage:lightclient

@@ -990,6 +990,38 @@ way of saying no, and the corpus is updates a conforming beacon node produced.
 That is now the seventh package to land in the same place, after `rlp`, `mpt`, `ssz`, `abi`, `bls`,
 `tls` and `tor`. A light client's whole job is to refuse, and its refusals are the untested part.
 
+### `git` fourteenth — where testing the command instead of the library is the suite's design
+
+**34 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 35 drivers; the unmeasured list is 4 — `box, platform, wacc, wactest`.
+
+**844 of 1419 — 59.5%, the lowest of any package measured**, and one file is most of it:
+
+    packages/git/src/repo.wac   362   19   5.2
+
+**Seven of this package's eighteen test files build an `example/` program and spawn it.**
+`checkout_test`, `commit_test`, `clone_test`, `push_test`, `pull_test`, `fetchlive_test` and
+`configchain_test` each call `builtProgram(...)` on `gitco`, `gitci`, `gitclone`, `gitpush`, `gitpull`
+or `gitfetch`, run it, and check what it did to a repository on disk. Only `packwrite_test.wac`
+imports `repo.wac`, which is where its nineteen points come from.
+
+That is a *good* way to test a git client — it exercises the thing a user runs, end to end, against
+real object files — and it is invisible to the instrument.
+
+**This is the ninth instance of one finding, and the clearest.** After a daemon in a subprocess, a
+sibling package, a browser, a live node and eight example programs, `git` is the case where it is not
+an accident: it is what the suite was designed to do. Which is why the ledger's answer is a whole-file
+rule that gives up `repo.wac`'s floor and says so, rather than 343 pins claiming the file is untested.
+
+Nine instances is enough to state the rule plainly: **before writing a single pin, ask where the code
+runs when something exercises it.** A coverage prefix is a directory and cannot ask. The report line
+added with `tor` answers half of it — naming files that contributed nothing — and `git` names three
+more (`transport.wac`, `configfiles.wac` and the eight examples).
+
+The remaining 575 points are the usual: refusals in `fetch.wac`'s advertisement and packfile readers,
+`pack.wac`'s format checks, `ignore.wac`'s pattern corner cases. The corpus is GitHub, git itself and
+this package's own writers, all of which produce well-formed input.
+
 ### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
 
 Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's
