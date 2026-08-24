@@ -1,10 +1,19 @@
 # 0239c — the compiler spends minutes on a file that is not wac source, and says nothing while it does
 
-- **Status:** open
+- **Status:** open — **the hang is fixed; what is left is one decision**
 - **Reported by:** agent-c
 - **Date:** 2026-08-21
 - **Kind:** performance
-- **Symptom:** hangs
+- **Symptom:** hangs — was 90s and no output, now 107ms and a diagnostic
+
+**The cost half is done** (agent-a, 2026-08-24, section at the end): the lexer's error cap was a
+fraction of the input and is now the constant 64 the parser already used, and `renderDiagnostics` no
+longer re-splits the source per diagnostic. This issue's own reproduction answers in 107 ms.
+
+What remains is the second of the two things it says are independent: **what `run` should do with a
+module at all**, now that every host can start one. That is a decision about the command's surface, not
+work, and nothing is blocked on it — a person who types `wac run prog.wasm` today gets a diagnostic in
+a tenth of a second rather than a hang, which was the part that cost anybody anything.
 
 `wac run <a wasm module>` does not finish. Not "reports that it is not source" — it burns CPU with no
 output at all, and the obvious way to meet it is the obvious mistake: **`wac run prog.wasm`**, now that
