@@ -7251,8 +7251,20 @@ i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
           // next thing such code does is `p!.v` — which it then refuses, because there is nothing
           // left to unwrap. The knowledge changes; the type does not. A target that is a genuinely
           // different type still narrows, which is the case this exists for.
+          // **And an *ancestor* is the same non-answer**, which the exact name match above missed.
+          // `k is S` for a `K? k` where `K : S` tells you the value is there; it does not tell you
+          // anything about its type that was not already written down, because a `K` is an `S`
+          // already. Retyping to `S` dropped the `?` along with it, so wacc accepted `k.v` where the
+          // reference says *"cannot access field on nullable type 'K?' — unwrap with '!'"* — while
+          // refusing the identical `k is K` right beside it, which is the tell that this was a
+          // spelling the rule could not see rather than a decision.
+          //
+          // A genuinely different type still narrows, which is what this rule is for: `s is K` on an
+          // `S s` retypes, and so does `s is K` on an `S? s`, because neither is an ancestor of the
+          // target.
           string cur = c.typeOfName(tokenText(c, tok));
-          if (withoutNull(cur) == t) { return n; }
+          string curCore = withoutNull(cur) == "" ? cur : withoutNull(cur);
+          if (curCore == t || descendsFrom(c, curCore, t)) { return n; }
           outNames[n] = tokenText(c, tok);
           outTypes[n] = t;
           return n + 1;
