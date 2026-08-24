@@ -309,6 +309,11 @@ string buildCachePath(Cli cli, i32 argc, string cmd, string entry, string[] path
                       string stem) {
   if (cmd != "build" || stem == "") { return ""; }
   if (hasFlag(cli, argc, "--coverage") || hasFlag(cli, argc, "--trace")) { return ""; }
+  // **A bound of zero turns the cache off, lookup included.** Sweeping to nothing is not the same as
+  // being off: entries written before still answer, so a caller who set this because they suspect a
+  // stale hit would go on getting hits until the first build swept them away. Measured — a self-build
+  // that should have recompiled came back in 160 ms with the bound at zero.
+  if (keepBuilds(cli) <= 0) { return ""; }
   string home = wacHomeOf(cli);
   if (home == "") { return ""; }
   u8[]? id = cli.env("WAC_COMPILER_ID").wait();

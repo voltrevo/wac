@@ -371,3 +371,25 @@ about a megabyte — so that is roughly 60 MB, against a filesystem that was at 
 saying so is cheaper than discovering it. `$WAC_BUILD_CACHE_KEEP` overrides the bound, and `0` turns
 the cache off — which is the switch to reach for when a cache is the thing under suspicion.
 
+### The off-switch was not off, and the seed is the bigger win
+
+`$WAC_BUILD_CACHE_KEEP=0` was documented as turning the cache off and only stopped *retention*: entries
+written before still answered, so a caller who set it *because they suspected a stale hit* went on
+getting hits until the first build swept them away. Found by measurement rather than review — a
+self-build that should have recompiled came back in 160 ms with the bound at zero. A bound of zero
+skips the lookup now.
+
+Which invalidated the first seed measurement, where both arms were hitting. Honestly:
+
+    wac build packages/wacc/example/wacc.wac       161 ms cached, 3731 ms not — 23×
+    deno task seed                               12 188 ms cached, 27 221 ms not — 15 s
+
+**The seed is the wider win of the two.** Every agent reseeds after any pull that touches
+`packages/wacc/src` and before every gate, so fifteen seconds is paid several times an hour across the
+box — where box's shell at 5 s is paid by whoever is converting that package. `CLAUDE.md`'s "about
+34 s" for a seed is now about 12.
+
+And a note for whoever measures next: `-o` **is** part of the key, so timing a repeat build to a fresh
+temporary name measures a miss and looks like the cache doing nothing. Time it to the same destination,
+or use the switch.
+
