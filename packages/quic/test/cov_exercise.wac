@@ -112,6 +112,7 @@ import {
   test_an_ack_we_write_is_one_we_read as s3__an_ack_we_write_is_one_we_read,
   test_an_ack_refuses_a_range_it_cannot_have_received as s3__an_ack_refuses_a_range_it_cannot_have_received,
   test_a_packet_number_survives_being_written_and_read_back as s3__a_packet_number_survives_being_written_and_read_back,
+  test_a_short_header_read_outside_the_packet_is_refused as s3__a_short_header_read_outside_the_packet_is_refused,
 } from "./wac/short_test.wac";
 import {
   test_a_real_quic_server_reads_a_stream_this_client_opened as s4__a_real_quic_server_reads_a_stream_this_client_opened,
@@ -439,6 +440,10 @@ export i32 main(Core core, Cli cli) {
   }
   if (s3__a_packet_number_survives_being_written_and_read_back().len() > 0) {
     core.warn("error: FAILED short_test test_a_packet_number_survives_being_written_and_read_back");
+    bad = bad + 1;
+  }
+  if (s3__a_short_header_read_outside_the_packet_is_refused().len() > 0) {
+    core.warn("error: FAILED short_test test_a_short_header_read_outside_the_packet_is_refused");
     bad = bad + 1;
   }
   if (s4__a_real_quic_server_reads_a_stream_this_client_opened(core, cli).len() > 0) {

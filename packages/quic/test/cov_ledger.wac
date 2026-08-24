@@ -201,7 +201,7 @@ Pin[] pins() {
         "A long header that will not parse, refused before decryption is attempted — the first of the " +
         "three failures `initial.wac`'s comment names and the one furthest from a test. " +
         "`tamper_test.wac` covers the third."),
-    Pin("packages/quic/src/initial.wac", 425, "if (mask.len() == 0) { return -1; }", false,
+    Pin("packages/quic/src/initial.wac", 432, "if (mask.len() == 0) { return -1; }", false,
         "Header protection failing to produce a mask while reading a short header's key phase — the " +
         "packet is too short to sample from. Same family as `:119`, in the 1-RTT reader."),
     Pin("packages/quic/src/initial.wac", 119, "if (ciphertext.len() < 16) { return u8[0](); }", false,
@@ -210,14 +210,14 @@ Pin[] pins() {
         "which `initial.wac`'s own comment names beside it: *\"a header that will not parse, a sample " +
         "that runs off the end, a tag that does not verify\"*. The third is tested and the first two " +
         "are not."),
-    Pin("packages/quic/src/initial.wac", 552, "if (originalDcid.len() > MAX_CID()) { return false; }", false,
+    Pin("packages/quic/src/initial.wac", 559, "if (originalDcid.len() > MAX_CID()) { return false; }", false,
         "A Retry checked against an oversized original connection id — a caller's argument rather " +
         "than a peer's packet."),
-    Pin("packages/quic/src/initial.wac", 566, "if (packet.len() < 16) { return u8[0](); }", false,
+    Pin("packages/quic/src/initial.wac", 573, "if (packet.len() < 16) { return u8[0](); }", false,
         "A Retry packet too short to carry its own integrity tag. `retry_test.wac` drives eight cases " +
         "and every one is well-formed; this is the truncated one, which is the family " +
         "`test/wac/truncated_test.wac` closed for frames and nobody has done for packets."),
-    Pin("packages/quic/src/initial.wac", 580, "if (!h.ok || h.packetType != TYPE_RETRY()) { return u8[0](); }", false,
+    Pin("packages/quic/src/initial.wac", 587, "if (!h.ok || h.packetType != TYPE_RETRY()) { return u8[0](); }", false,
         "Asking for a Retry's token when the packet is not a Retry — see `:566`.")
   );
 }
