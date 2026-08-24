@@ -1459,6 +1459,7 @@ fn test_command(rest: &[String]) -> i32 {
                     entry: Entry::Tests,
                     only: only.clone(),
                     file_suffix: Some(format!("__f{i}")),
+                    shown_entry: Some(files[i].clone()),
                     loud,
                     ..Default::default()
                 },
@@ -1517,8 +1518,15 @@ fn test_command(rest: &[String]) -> i32 {
     if bad > 0 {
         line += &format!(", {bad} with failures");
     }
-    if skipped > 0 {
-        line += &format!(", {skipped} needing a host oracle");
+    // **Split, because the remedies differ.** Both kinds of "nothing ran here" answer 4, so this used
+    // to call a file that wanted `--allow-read` one that wanted a host — see `UNGRANTED_FILES`.
+    let ungranted_files = UNGRANTED_FILES.load(std::sync::atomic::Ordering::Relaxed);
+    let needing_oracle = (skipped as usize).saturating_sub(ungranted_files);
+    if needing_oracle > 0 {
+        line += &format!(", {needing_oracle} needing a host oracle");
+    }
+    if ungranted_files > 0 {
+        line += &format!(", {ungranted_files} needing a grant");
     }
     // **Tests, not files**, and counted across the whole walk: a file whose *other* tests passed is
     // `ok` above, so without this a run that skipped seventeen of them reported nothing but `13 ok`.
@@ -1595,6 +1603,15 @@ fn trap_said(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String
 /// (`issues/system/0183`). A process-wide counter rather than a return value because the verdict codes
 /// are a contract `tools/mutate/native.ts` maps, and this is not a verdict.
 static UNGRANTED_TESTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Files where *nothing* ran because the run granted no capability — as against needing an oracle.
+///
+/// **Both answer 4, and the summary was labelling both "needing a host oracle".** `run_tests`'s own
+/// note two screens up says why that is wrong: "an oracle needs a host; a capability needs a flag on
+/// this command line, and a reader told 'needs an oracle' would go looking for the wrong thing." The
+/// per-file message had the distinction and the summary threw it away, because the caller sees only
+/// the exit code. `issues/system/0230a`'s differential is where it surfaced.
+static UNGRANTED_FILES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// The grant flags this binary knows, by name. Written once because two commands ask the question
 /// for opposite reasons: the parser asks "is this mine to take?" and `run` asks "did the caller mean
@@ -2278,6 +2295,14 @@ struct AsChild {
     /// Run only the tests whose export name *ends* with this — one file's share of an aggregate
     /// build. `issues/system/0192`; nothing else reads it.
     file_suffix: Option<String>,
+    /// **The path to name in a message about this file**, when the module being run is an aggregate.
+    ///
+    /// Without it the two "every test in {}" lines below named `m.entry`, which for an aggregate is
+    /// `.cache/wac-aggregate-<pid>-<n>_test.wac` — a generated file the caller never typed and cannot
+    /// look at, in a sentence telling them what to do about their own. `issues/system/0230a`'s
+    /// differential is where that showed: the wac program cannot name that file, because its own
+    /// aggregate has a different name.
+    shown_entry: Option<String>,
     /// Name every test as it passes, with what it took. `test --verbose`.
     loud: bool,
     /// **Print each counter after the run — `wac covdump`, with a world.**
@@ -2937,6 +2962,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let cov = as_child.cov.clone();
     let only = as_child.only.clone();
     let file_suffix = as_child.file_suffix.clone();
+    let shown_entry = as_child.shown_entry.clone();
     // Kept because a module with no `main` names the export to call in its first argument, and
     // that decision is made below where the manifest is known — see `call_named`.
     let argv = as_child.argv.clone();
@@ -3191,7 +3217,8 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
 
     if entry == Entry::Tests {
         return run_tests(scope, exports, m, cov.as_deref(), only.as_deref(),
-                         file_suffix.as_deref(), loud, core, cli);
+                         file_suffix.as_deref(), shown_entry.as_deref().unwrap_or(&m.entry),
+                         loud, core, cli);
     }
     // **The counters are allocated by a call, not by instantiation.** Skip this and every
     // instrumented function traps on its first branch, with a message about the program rather than
@@ -3346,6 +3373,9 @@ fn run_tests(
     // One file's share of an aggregate build: only the exports whose name ends with this, and the
     // suffix comes off before anything is printed. `issues/system/0192`.
     file_suffix: Option<&str>,
+    // What to call the file in a message: the aggregate's member, or the entry when there is no
+    // aggregate. See `AsChild::shown_entry`.
+    shown_entry: &str,
     loud: bool,
     core: v8::Local<v8::Value>,
     cli: Option<v8::Local<v8::Value>>,
@@ -3598,14 +3628,15 @@ fn run_tests(
         // needs a flag on this command line, and a reader told "needs an oracle" would go looking
         // for the wrong thing. Both are 4: nothing ran here, and neither is a failure.
         if skipped.is_empty() {
+            UNGRANTED_FILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             eprintln!(
                 "wac: every test in {} wants a capability this run was not granted — try `--allow-read`",
-                m.entry
+                shown_entry
             );
         } else {
             eprintln!(
                 "wac: every test in {} needs an oracle from the host, which this cannot supply",
-                m.entry
+                shown_entry
             );
         }
         // **A profile even so, with nothing in `tests`.** A reader that sees no file at all has to
@@ -4534,6 +4565,7 @@ fn dispatch(
                 cov: None,
                 only: None,
                 file_suffix: None,
+                shown_entry: None,
                 loud: false,
                 // A spawned child is never a coverage run: `covdump` is the parent's command, and a
                 // child printing its parent's counters would interleave two tables.
@@ -4680,6 +4712,7 @@ fn dispatch(
                 cov: None,
                 only: None,
                 file_suffix: None,
+                shown_entry: None,
                 loud: false,
                 // A spawned child is never a coverage run: `covdump` is the parent's command, and a
                 // child printing its parent's counters would interleave two tables.

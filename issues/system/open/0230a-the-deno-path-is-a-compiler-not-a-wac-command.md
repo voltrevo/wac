@@ -463,3 +463,42 @@ answers 5 and its caller turns that into 1 for a file somebody named.
   `__cov_get` are `void f()`, `i32 f()` and `i32 f(i32)` — three of the four shapes `call` accepts, so
   this is work rather than a gap in the boundary.
 - Then `update` and `sh`, which still wait on the **payload** question.
+
+## 2026-08-24: `wac test <directory>` too, so only `--coverage` is left of `test`
+
+Twenty-six invocations agree across the native binary, Deno and Node. The walk, the aggregate, and the
+per-file report are in the wac program now: `testFilesIn` walks for `*_test.wac` sorted and skipping
+dot-directories, `node_modules` and `target`; `aggregateSource` writes one module for the whole walk
+(`issues/system/0192` — sixteen `packages/box` files were 40.9s as sixteen builds and 11.1s as one);
+and the wrappers carry an `__f<n>` suffix on the *end*, so `test_traps_` still reads at the start.
+
+### Five rules I would have got wrong by reasoning, and two the native had wrong
+
+Mine, each found by comparing rather than thinking:
+
+- a filter matching nothing is reported **per file**, and then **once for the walk** with a non-zero
+  exit — `N files: 0 ok` under a filter reads like a suite that passed;
+- `--ignore` emptying the walk says *"--ignore excluded all 4 test file(s)"*, not *"no tests under"* —
+  the second sends a reader looking for a naming mistake that is not there;
+- a file the filter emptied is not `ok`, and is counted as its own kind;
+- a file that ran nothing prints **no tally** — `0 passed, 0 failed` under a line saying why is the
+  same fact twice;
+- the failing-file list is **column-aligned**, so no line can be printed until every name is known.
+
+And two in `native/v8`, both of which only a second implementation could see:
+
+- **a message naming a temp file**: *"every test in `.cache/wac-aggregate-74784-0_test.wac` wants a
+  capability"* — a generated path the caller never typed and cannot open, in a sentence telling them
+  what to do about their own file. `AsChild::shown_entry` names the file now.
+- **the summary contradicting its own comment**: `run_tests` says "an oracle needs a host; a capability
+  needs a flag on this command line, and a reader told 'needs an oracle' would go looking for the wrong
+  thing" — and the summary then bucketed both under `needing a host oracle`, because both answer 4 and
+  the caller sees only the code. `UNGRANTED_FILES` splits them.
+
+### What is left
+
+- **`--coverage`**, which refuses explicitly rather than being ignored. `__cov_init`, `__cov_len` and
+  `__cov_get` are three of the four shapes `Cli.call` accepts, so it is work rather than a gap.
+- **`update` and `sh`**, still waiting on the **payload** question: the native binary embeds three
+  modules and a JavaScript-hosted `wac` is built from `wacc.wac` alone, so `wac sh` has no shell to
+  start. `Cli.load` did not settle it — a loaded module still has to come from somewhere.

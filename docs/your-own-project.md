@@ -63,10 +63,9 @@ deno run -A <wac>/packages/platform/build.ts <wac>/packages/wacc/example/wacc.wa
 ```
 
 `--target node` gives the same thing for Node, run as `node wac`. It answers `check`, `compile`,
-`build`, `bindgen`, `run`, `test <one_test.wac>`, and `wac <prog.wasm>` — running a built module, with
-the grants that module's own manifest declares. `test <directory>` (which walks for `*_test.wac` and
-builds one aggregate module), `--coverage`, `sh` and `update` are still the native binary's alone, and
-`issues/system/0230a` tracks giving them to all three. Every command they share is held to the same
+`build`, `bindgen`, `run`, `test` — one file or a whole directory — and `wac <prog.wasm>`, running a
+built module with the grants that module's own manifest declares. `test --coverage`, `sh` and `update`
+are still the native binary's alone, and `issues/system/0230a` tracks giving them to all three. Every command they share is held to the same
 output on all three — `packages/wacc/test/wac/commandparity_test.wac`.
 
 **It did not work from outside this repository until 2026-08-20**, which is worth saying because

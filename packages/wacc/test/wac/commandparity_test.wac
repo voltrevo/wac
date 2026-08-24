@@ -31,7 +31,7 @@
 //
 // ## What is compared, and what is deliberately not
 //
-// Twenty-three invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
+// Twenty-six invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
 // side's stdout and stderr concatenated, and the exit code. Not compared: timing, and the module bytes
 // `build` writes — those have their own tests (`bindgenwac_test.wac` holds the two *generators* to the
 // same bytes, which is a different claim from two hosts running one generator). **Worth adding and not
@@ -56,7 +56,7 @@
 //
 // ## What it costs, measured 2026-08-22
 //
-// **26s warm** — up from 2–3s, for three hosts instead of two and twenty-three cases instead of six,
+// **39s warm** — up from 2–3s, for three hosts instead of two and twenty-six cases instead of six,
 // thirteen of which compile, run or test a program rather than only checking one, plus three module
 // builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
 // it, where `check` stops at the diagnostics. The build is the only expensive part
@@ -163,7 +163,15 @@ string[][] cases() {
     // `Change` reading the fault off its own refusal is half of what that issue fixed. The second is a
     // run that granted nothing at all, where the test is skipped and named and the status is 4.
     string[]("test", "--allow-read", "src/writes_test.wac"),
-    string[]("test", "src/reads_test.wac"));
+    string[]("test", "src/reads_test.wac"),
+    // **A directory, which is a different command underneath.** One aggregate module for the whole
+    // walk (`issues/system/0192`), a block per file, and a summary whose buckets are the interesting
+    // part: `ok`, `not run (--ignore)`, `with failures`, `needing a grant`, `with nothing matching
+    // --filter`. Five of those distinctions were wrong in my first attempt and one — telling a file
+    // that wants a *flag* from one that wants a *host* — was wrong in the native command too.
+    string[]("test", "--allow-read", "--allow-write", "src"),
+    string[]("test", "--allow-read", "--ignore", "src/one_test.wac", "src"),
+    string[]("test", "--allow-read", "--filter", "zzz", "src"));
 }
 
 /**
@@ -288,7 +296,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
   // header. Eight of these sixteen exit 0: two `bindgen`s, one `check`, the two `run`s of a program
   // that returns 0, and the three modules run directly.
-  t.eqI32(zeroes, 9, "nine of these twenty-three succeed on the native host; a different count " +
+  t.eqI32(zeroes, 9, "nine of these twenty-six succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success
