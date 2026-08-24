@@ -7,7 +7,7 @@
 //
 // One line per call, in a fixed order, so a diff says which shape moved.
 
-import { CallResult, Cli, Core, FileResult, LoadedModule } from "std/platform.wac";
+import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 /** Every shape in the closed set, plus the two refusals — in the order the report prints them. */
@@ -28,7 +28,7 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
 
-  LoadedModule m = cli.load(f.bytes);
+  LoadedModule m = cli.load(f.bytes, GRANT_ALL());
   if (m.unavailable()) {
     // Printed rather than failed: this is the answer on the native hosts, and a caller reading it is
     // the whole reason -2 is distinct from -1.

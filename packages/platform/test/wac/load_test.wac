@@ -43,7 +43,7 @@
 // anything unbounded — and `spawn_test.wac` holds the other half.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { CallResult, Cli, Core, Exec, LoadedModule } from "std/platform.wac";
+import { CallResult, Cli, Core, Exec, GRANT_ALL, LoadedModule } from "std/platform.wac";
 import { builtByDeno, builtProgram, copyBuilt, nativeHost, nativeHostWhyNot }
   from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -92,7 +92,7 @@ export string test_this_host_loads_a_module_and_calls_every_shape(Core core, Cli
   t.isTrue(cli.stat(path).wait().isFile, "the module built: " + path);
   if (!cli.stat(path).wait().isFile) { return t.report(); }
 
-  LoadedModule m = cli.load(cli.readFile(path).wait().bytes);
+  LoadedModule m = cli.load(cli.readFile(path).wait().bytes, GRANT_ALL());
   t.isTrue(!m.unavailable(), "this host can load a module — " + m.error);
   t.isTrue(m.handle >= 0, "it loaded: " + m.error);
   if (m.handle < 0) { return t.report(); }

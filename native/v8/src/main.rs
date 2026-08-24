@@ -387,6 +387,14 @@ struct ModuleCtx {
     caps: Vec<Vec<Cap>>,
     /// The same table, spelled, for a message that names the capability it could not answer.
     cap_names: Vec<Vec<String>>,
+    /// **What this module may do**, swapped with the rest — `issues/system/0242c`.
+    ///
+    /// Every filesystem, network, environment and `exec` handler already asks `HOST.grants` before it
+    /// does anything, so swapping this in for the duration of a call is the whole of narrowing a
+    /// loaded module: nothing else had to learn about it. Without it a loaded module ran with the
+    /// loader's grants — `wac test --allow-read` handed a test the command's write capability, and a
+    /// test wrote a file the run had not granted.
+    grants: Grants,
 }
 
 /// A module `Cli.load` instantiated, and what is needed to call into it.
@@ -5279,7 +5287,8 @@ fn dispatch(
         // `issues/system/0240c`.
         Cap::Load => {
             let bytes = read_bytes(scope, args.get(1));
-            let (handle, why) = match load_module(scope, &bytes) {
+            let asked = args.get(2).int32_value(scope).unwrap_or(0);
+            let (handle, why) = match load_module(scope, &bytes, asked) {
                 Ok(h) => (h, String::new()),
                 Err(e) => (-1, e),
             };
@@ -6182,7 +6191,7 @@ fn build_child<'s>(
 /// is this program's own — `dispatch` reaches the same `HOST`, so a loaded module's `readFile` is
 /// served exactly as its loader's is and the grants are the loader's by construction, which is why
 /// `Cli.load` takes no grant argument. `issues/system/0240c`.
-fn load_module(scope: &mut v8::PinScope, wasm: &[u8]) -> Result<i32, String> {
+fn load_module(scope: &mut v8::PinScope, wasm: &[u8], asked: i32) -> Result<i32, String> {
     let Some(text) = manifest_in(wasm) else {
         return Err("this module carries no wac.manifest section".into());
     };
@@ -6244,11 +6253,25 @@ fn load_module(scope: &mut v8::PinScope, wasm: &[u8]) -> Result<i32, String> {
             .and_then(|st| st.methods.iter().find(|mm| mm.name == "of"))
             .map(|mm| mm.export_name.clone())
     };
+    // A ceiling of the caller's own: asking for more than this program holds is not an error, and the
+    // module finds the capability denied — `spawn`'s rule, one layer in.
+    let mine = HOST.with(|h| h.borrow().as_ref().map(|st| st.grants.clone())).unwrap_or_default();
     let entry = HeldModule {
         ctx: ModuleCtx {
             exports: v8::Global::new(scope, exports),
             caps,
             cap_names: names,
+            grants: Grants {
+                read: mine.read && (asked & GRANT_READ) != 0,
+                write: mine.write && (asked & GRANT_WRITE) != 0,
+                env: mine.env && (asked & GRANT_ENV) != 0,
+                net: mine.net && (asked & GRANT_NET) != 0,
+                // **Not inheritable, exactly as for a spawned child.** `GRANT_*` has no bit for
+                // running a host program, and a loaded module that could `exec` would hold the one
+                // authority this narrowing is for. `spawn_instance` in `native/src/main.rs` refuses
+                // it in the same words, and both will gain it the same way.
+                run: false,
+            },
         },
         exports: m.exports.clone(),
         world,
@@ -6313,16 +6336,19 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
             exports: lm.ctx.exports.clone(),
             caps: lm.ctx.caps.clone(),
             cap_names: lm.ctx.cap_names.clone(),
+            grants: lm.ctx.grants.clone(),
         };
         let world: Vec<v8::Global<v8::Value>> = lm.world.clone();
         let was = ModuleCtx {
             exports: st.exports.clone(),
             caps: std::mem::take(&mut st.caps),
             cap_names: std::mem::take(&mut st.cap_names),
+            grants: st.grants.clone(),
         };
         st.exports = mine.exports;
         st.caps = mine.caps;
         st.cap_names = mine.cap_names;
+        st.grants = mine.grants;
         (was, world)
     });
     let (was, world) = saved;
@@ -6400,6 +6426,7 @@ fn call_loaded(scope: &mut v8::PinScope, handle: i32, name: &str, arg: i32) -> (
             st.exports = was.exports;
             st.caps = was.caps;
             st.cap_names = was.cap_names;
+            st.grants = was.grants;
         }
     });
     outcome

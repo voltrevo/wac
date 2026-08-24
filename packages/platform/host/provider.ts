@@ -18,6 +18,9 @@ import { type Bridge, SLOTS } from "./layout.ts";
 import {
   cancel,
   collect,
+  // The same function under a second name, so `cliOf` can shadow `collect` for a narrowed world
+  // and still reach the real one. `issues/system/0242c`.
+  collect as realCollect,
   hostCall,
   HostCallError,
   i32le,
@@ -30,12 +33,12 @@ import {
   type Ticket,
   unstr,
 } from "./call.ts";
-import { OP } from "./ops.ts";
+import { GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_RUN, GRANT_WRITE, OP } from "./ops.ts";
 import { asAppModule, drive, manifestIn } from "./driver.ts";
 import type { Driven } from "./driver.ts";
 /** One export's wac signature, as the manifest records it — `Manifest.exports` in `native.ts`. */
 type ExportSig = { name: string; params: string[]; ret: string };
-import { FAULT_OTHER, STAT_EXEC } from "./faults.ts";
+import { FAULT_NOT_GRANTED, FAULT_OTHER, STAT_EXEC } from "./faults.ts";
 
 const EMPTY = new Uint8Array(0);
 const SLOT_BITS = Math.ceil(Math.log2(SLOTS));
@@ -179,9 +182,85 @@ export function cliOf(
       Failed(why: string): unknown;
     };
   } & PendingClasses,
+  /**
+   * Which grants this `Cli` carries, or `undefined` for "whatever the launcher serves".
+   *
+   * **Only a *loaded* module passes one** — `issues/system/0242c`. A program's own grants are the
+   * launcher's business: it serves the bridge and refuses what the build did not ask for. A module
+   * this program loaded shares that bridge, so the launcher cannot tell its calls from its loader's
+   * and cannot narrow them — which made `wac test --allow-read` hand a test the *command's* write
+   * capability, and a test wrote a file it had no business writing.
+   *
+   * So the narrowing is in the world the loaded module is handed, and that is enough for the reason
+   * `spawn`'s own note gives: **the isolation is the language's, not the runtime's.** A wac module
+   * cannot reach past the capabilities it was given, because wac has no ambient anything. It would
+   * not be enough for arbitrary JavaScript, and a loaded module is a wac module.
+   *
+   * Intersection needs no arithmetic here: asking for more than the loader holds still ends at the
+   * launcher, which refuses on the loader's grants. This narrows, and the bridge cannot widen.
+   */
+  grants?: number,
 ): unknown {
   const settled = (id: number) => isDone(b, unpack(id));
   const drop = (id: number) => { cancel(b, unpack(id)); };
+
+  /** Which grant each guarded opcode needs. An opcode absent from here needs none. */
+  const NEEDS: Record<number, number> = {
+    [OP.READ_FILE]: GRANT_READ,
+    [OP.STAT]: GRANT_READ,
+    [OP.LINK_STAT]: GRANT_READ,
+    [OP.READ_DIR]: GRANT_READ,
+    [OP.OPEN_INPUT]: GRANT_READ,
+    [OP.WRITE_FILE]: GRANT_WRITE,
+    [OP.MKDIR]: GRANT_WRITE,
+    [OP.REMOVE]: GRANT_WRITE,
+    [OP.RENAME]: GRANT_WRITE,
+    [OP.SET_EXECUTABLE]: GRANT_WRITE,
+    [OP.OPEN_OUTPUT]: GRANT_WRITE,
+    [OP.CONNECT]: GRANT_NET,
+    [OP.LISTEN]: GRANT_NET,
+    [OP.BIND_DATAGRAM]: GRANT_NET,
+    [OP.ENV]: GRANT_ENV,
+    [OP.EXEC_WITH]: GRANT_RUN,
+  };
+
+  /**
+   * Every guarded call goes through here, so the check is in one place rather than twenty.
+   *
+   * A denied call is given a ticket that is never submitted and whose id is remembered; `collect`
+   * below throws for it, and each shape's resolver already turns a thrown error into *its own*
+   * refusal — a failed `FileResult`, a `Change` with a fault, a `Socket` with a negative handle.
+   * That is why this needed no change per capability: the refusal shapes were already written.
+   */
+  const refused = new Set<number>();
+  let nextRefusal = -1;
+  const send = (op: number, payload: Uint8Array): Ticket => {
+    const need = NEEDS[op];
+    if (need !== undefined && grants !== undefined && (grants & need) === 0) {
+      // A slot number no bridge hands out, so it cannot collide with a real ticket.
+      const t: Ticket = { slot: nextRefusal--, gen: 0 };
+      refused.add(pack(t));
+      return t;
+    }
+    return submit(b, op, payload);
+  };
+
+  /**
+   * `collect`, shadowed for this world only.
+   *
+   * The resolvers below all read their answer through this name, so refusing here refuses in every
+   * shape at once and in the wording `platform.wac`'s own `faultWords` uses for the category.
+   */
+  const collect = (bridge: Bridge, t: Ticket): Uint8Array => {
+    // **A `HostCallError` with the category, not a bare `Error`.** `FileResult` and `Change` both read
+    // `.fault` off what they catch, so this is what makes a refused write answer *denied* rather than
+    // *failed* — the distinction `faultWords` exists for, and the one the native host already made.
+    // The wording is `platform.wac`'s own `reasonOf` phrase for the category.
+    if (refused.has(pack(t))) {
+      throw new HostCallError("Not granted to this application", FAULT_NOT_GRANTED);
+    }
+    return realCollect(bridge, t);
+  };
 
   // One resolver per return shape, hoisted for the reason in the file header.
   const bytes = (id: number) => collect(b, unpack(id));
@@ -349,8 +428,12 @@ export function cliOf(
       if (out.length === 0) return cls.Change.of(0, "");
       return cls.Change.of(out[0], unstr(out.subarray(1)));
     } catch (e) {
-      // The bridge itself failed, which is not a category this world names.
-      return cls.Change.of(5, e instanceof Error ? e.message : String(e));
+      // **The category when the error carries one**, which `FileResult` above has always done and this
+      // did not: a refused write read as `failed` where a refused *read* read as `denied`, so one
+      // capability's refusal was a different kind of thing from another's. `FAULT_OTHER` when nothing
+      // said better — the bridge itself failing is not a category this world names.
+      const fault = e instanceof HostCallError ? e.fault : FAULT_OTHER;
+      return cls.Change.of(fault, e instanceof Error ? e.message : String(e));
     }
   };
   const socket = (id: number) => {
@@ -462,21 +545,21 @@ export function cliOf(
 
   return cls.Cli.of(
     /*= argCount */
-    () => T.i32(submit(b, OP.ARG_COUNT, EMPTY)),
+    () => T.i32(send(OP.ARG_COUNT, EMPTY)),
     /*= arg */
-    (i: number) => T.bytes(submit(b, OP.ARG, i32le(i))),
+    (i: number) => T.bytes(send(OP.ARG, i32le(i))),
     /*= env */
-    (name: string) => T.maybeBytes(submit(b, OP.ENV, str(name))),
+    (name: string) => T.maybeBytes(send(OP.ENV, str(name))),
 
     /*= readStdin */
     // stdin and stdout, which need no grant — see the note in platform.wac.
-    () => T.bytes(submit(b, OP.READ_STDIN, EMPTY)),
+    () => T.bytes(send(OP.READ_STDIN, EMPTY)),
     /*= write */
     // Blocking, matching `platform.wac`: these two act on the current stream, which is
     // ordered anyway, and are handed to the streaming transforms as bare funcrefs.
     (bytes: Uint8Array) => {
       try {
-        collect(b, submit(b, OP.WRITE_STDOUT, bytes));
+        collect(b, send(OP.WRITE_STDOUT, bytes));
         return true;
       } catch {
         return false;   // a closed pipe is an answer, not a crash
@@ -488,7 +571,7 @@ export function cliOf(
     // the right thing for a diagnostic line; this is for a program relaying someone else's output.
     (bytes: Uint8Array) => {
       try {
-        collect(b, submit(b, OP.WRITE_STDERR, bytes));
+        collect(b, send(OP.WRITE_STDERR, bytes));
         return true;
       } catch {
         return false;
@@ -496,55 +579,55 @@ export function cliOf(
     },
 
     /*= readFile */
-    (path: string) => T.file(submit(b, OP.READ_FILE, str(path))),
+    (path: string) => T.file(send(OP.READ_FILE, str(path))),
     /*= writeFile */
     // `change`, not `ok`: the answer is a fault category and the host's message.
     (path: string, body: Uint8Array) =>
-      T.change(submit(b, OP.WRITE_FILE, prefixed(str(path), body))),
+      T.change(send(OP.WRITE_FILE, prefixed(str(path), body))),
     /*= stat */
-    (path: string) => T.stat(submit(b, OP.STAT, str(path))),
+    (path: string) => T.stat(send(OP.STAT, str(path))),
     /*= linkStat */
-    (path: string) => T.stat(submit(b, OP.LINK_STAT, str(path))),
+    (path: string) => T.stat(send(OP.LINK_STAT, str(path))),
     /*= readDir */
-    (path: string) => T.dir(submit(b, OP.READ_DIR, str(path))),
+    (path: string) => T.dir(send(OP.READ_DIR, str(path))),
 
     /*= mkdir */
-    (path: string, parents: boolean) => T.change(submit(b, OP.MKDIR, flagged(parents, path))),
+    (path: string, parents: boolean) => T.change(send(OP.MKDIR, flagged(parents, path))),
     /*= remove */
-    (path: string, recursive: boolean) => T.change(submit(b, OP.REMOVE, flagged(recursive, path))),
+    (path: string, recursive: boolean) => T.change(send(OP.REMOVE, flagged(recursive, path))),
     /*= rename */
-    (from: string, to: string) => T.change(submit(b, OP.RENAME, twoPaths(from, to))),
+    (from: string, to: string) => T.change(send(OP.RENAME, twoPaths(from, to))),
     /*= setExecutable */
     // Same `flagged` encoding as `mkdir` and `remove`: one bool, one path. The bool is "should it be
     // executable", not "toggle" — a toggle would make the result depend on what was there.
-    (path: string, on: boolean) => T.change(submit(b, OP.SET_EXECUTABLE, flagged(on, path))),
+    (path: string, on: boolean) => T.change(send(OP.SET_EXECUTABLE, flagged(on, path))),
 
     /*= openInput */
     // `change`, not `outcome`, for the same reason `openOutput` uses it: a category the caller can put
     // into its own words, rather than an errno in somebody's shell diagnostic.
-    (path: string) => T.change(submit(b, OP.OPEN_INPUT, str(path))),
+    (path: string) => T.change(send(OP.OPEN_INPUT, str(path))),
     /*= readChunk */
     // Blocking, and it answers the three states directly — no ticket, and no way to mistake a broken
     // read for the end of the input.
-    () => readNow(submit(b, OP.READ_CHUNK, EMPTY)),
+    () => readNow(send(OP.READ_CHUNK, EMPTY)),
     /*= outputError */
-    () => T.text(submit(b, OP.OUTPUT_ERROR, EMPTY)),
+    () => T.text(send(OP.OUTPUT_ERROR, EMPTY)),
     /*= openOutput */
     // `change`, not `outcome`: the answer is a fault category and the host's message, so a shell can
     // say what GNU says rather than passing an errno through.
-    (path: string) => T.change(submit(b, OP.OPEN_OUTPUT, str(path))),
+    (path: string) => T.change(send(OP.OPEN_OUTPUT, str(path))),
 
     /*= connect */
-    (host: string, port: number) => T.socket(submit(b, OP.CONNECT, headed(i32le(port), str(host)))),
+    (host: string, port: number) => T.socket(send(OP.CONNECT, headed(i32le(port), str(host)))),
     /*= listen */
     // The port, then the address — `headed` puts the fixed-width part first, as `spawn` does.
-    (address: string, port: number) => T.socket(submit(b, OP.LISTEN, headed(i32le(port), str(address)))),
+    (address: string, port: number) => T.socket(send(OP.LISTEN, headed(i32le(port), str(address)))),
     /*= accept */
-    (handle: number) => T.socket(submit(b, OP.ACCEPT, i32le(handle))),
+    (handle: number) => T.socket(send(OP.ACCEPT, i32le(handle))),
     /*= recv */
-    (handle: number) => T.read(submit(b, OP.RECV, i32le(handle))),
+    (handle: number) => T.read(send(OP.RECV, i32le(handle))),
     /*= send */
-    (handle: number, body: Uint8Array) => T.ok(submit(b, OP.SEND, headed(i32le(handle), body))),
+    (handle: number, body: Uint8Array) => T.ok(send(OP.SEND, headed(i32le(handle), body))),
     /*= closeSocket */
     (handle: number) => { hostCall(b, OP.CLOSE_SOCKET, i32le(handle)); },
     /*= closeSend */
@@ -553,9 +636,9 @@ export function cliOf(
     /*= bindDatagram */
     // The port, then the address, exactly as `listen` — the same shape because it is the same question.
     (address: string, port: number) =>
-      T.socket(submit(b, OP.BIND_DATAGRAM, headed(i32le(port), str(address)))),
+      T.socket(send(OP.BIND_DATAGRAM, headed(i32le(port), str(address)))),
     /*= receiveFrom */
-    (handle: number) => T.datagram(submit(b, OP.RECEIVE_FROM, i32le(handle))),
+    (handle: number) => T.datagram(send(OP.RECEIVE_FROM, i32le(handle))),
     /*= sendTo */
     // Handle, port, then the address length-prefixed so the payload after it can be anything.
     (handle: number, address: string, port: number, body: Uint8Array) => {
@@ -566,7 +649,7 @@ export function cliOf(
       head.set(i32le(who.length), 8);
       head.set(who, 12);
       head.set(body, 12 + who.length);
-      return T.ok(submit(b, OP.SEND_TO, head));
+      return T.ok(send(OP.SEND_TO, head));
     },
 
     /*= spawn */
@@ -586,9 +669,7 @@ export function cliOf(
       // NUL-separated — the same shape `readDir` answers with, for the same reason: a filename or an
       // argument may contain anything but a NUL — and then the child's directory.
       T.child(
-        submit(
-          b,
-          OP.SPAWN,
+        send(OP.SPAWN,
           headed(
             i32le(grants),
             prefixed(
@@ -612,9 +693,7 @@ export function cliOf(
       serveFs: boolean,
     ) =>
       T.child(
-        submit(
-          b,
-          OP.SPAWN_SELF,
+        send(OP.SPAWN_SELF,
           headed(
             i32le(grants),
             headed(argvBytes(args), prefixed(str(cwd), headed(flag(inheritIn), flag(serveFs)))),
@@ -624,23 +703,21 @@ export function cliOf(
     /*= closeFeed */
     (handle: number) => { hostCall(b, OP.CLOSE_FEED, i32le(handle)); },
     /*= exitCode */
-    (handle: number) => T.i32(submit(b, OP.EXIT_CODE, i32le(handle))),
+    (handle: number) => T.i32(send(OP.EXIT_CODE, i32le(handle))),
     /*= cwd */
-    () => T.text(submit(b, OP.CWD, EMPTY)),
+    () => T.text(send(OP.CWD, EMPTY)),
 
     /*= pushChild */
     // Everything the child's world is, in one payload, so a push is one round trip.
     (argv: string[], stdin: Uint8Array, cwd: string, inheritInput: boolean) =>
-      T.ok(submit(
-        b,
-        OP.PUSH_CHILD,
+      T.ok(send(OP.PUSH_CHILD,
         headed(
           i32le(argv.length),
           headed(i32le(inheritInput ? 1 : 0), prefixed(str(argv.join("\u0000")), prefixed(str(cwd), stdin))),
         ),
       )),
     /*= popChild */
-    () => T.captured(submit(b, OP.POP_CHILD, EMPTY)),
+    () => T.captured(send(OP.POP_CHILD, EMPTY)),
     /*= execWith */
     // Path, then the argument *vector* joined by NULs — which is why it is a vector and not a shell
     // line: a NUL cannot appear in an argument, so nothing here can be re-split by accident. The
@@ -654,9 +731,7 @@ export function cliOf(
       clearEnv: boolean,
       inherit: boolean,
     ) =>
-      T.exec(submit(
-        b,
-        OP.EXEC_WITH,
+      T.exec(send(OP.EXEC_WITH,
         headed(
           flag(clearEnv),
           headed(
@@ -674,7 +749,7 @@ export function cliOf(
     // the program that loaded it and cannot tell them apart. That is what makes this small — the
     // alternative, loading in the launcher, would need a second implementation of the whole world with
     // no bridge under it. `issues/system/0240c`.
-    (module: Uint8Array) => {
+    (module: Uint8Array, asked: number) => {
       try {
         const manifest = manifestIn(module);
         if (manifest === null) {
@@ -690,7 +765,12 @@ export function cliOf(
           // per host function in the *module's* funcref table, and only sixteen per signature can be
           // live — so a world rebuilt per call fails on the seventeenth, a long way from the cause.
           // `entry.ts` learnt this about `main` being called more than once.
-          world: worldFor(b, app),
+          // **Narrowed to what was asked for** — `issues/system/0242c`. Without this a loaded module
+          // got the loader's whole world: `wac test --allow-read` handed a test the *command's* write
+          // capability and a test wrote a file, where the native host failed it. The launcher cannot
+          // do the narrowing because it cannot tell this module's calls from its loader's, so the
+          // world it is handed is where it lives.
+          world: worldFor(b, app, asked),
           exports: new Map(manifest.exports.map((e) => [e.name, e])),
         });
         return cls.LoadedModule.of(handle, "");
@@ -799,14 +879,21 @@ const loadedModules = new Map<number, LoadedModule>();
 /** From 1, so that 0 is never a valid handle and a zeroed field cannot name a module. */
 let nextLoaded = 1;
 
-export function worldFor(b: Bridge, app: Record<string, unknown>): unknown[] {
+export function worldFor(
+  b: Bridge,
+  app: Record<string, unknown>,
+  /** A grant mask for a *loaded* module; absent for a program, whose grants the launcher enforces. */
+  grants?: number,
+): unknown[] {
   // **A `main` that declared nothing gets nothing**, which is the same rule one step further: the classes
   // are in the module because the program named the *types*, so a program that named none has no `Core`
   // to build from and `Core.of` is `undefined.of`. The two Rust hosts read `main`'s parameter list for
   // this; here the absent class is the same signal, and it is the one this side has.
   if (app.Core === undefined) return [];
   const out: unknown[] = [coreOf(b, app as unknown as Parameters<typeof coreOf>[1])];
-  if (app.Cli !== undefined) out.push(cliOf(b, app as unknown as Parameters<typeof cliOf>[1]));
+  if (app.Cli !== undefined) {
+    out.push(cliOf(b, app as unknown as Parameters<typeof cliOf>[1], grants));
+  }
   return out;
 }
 

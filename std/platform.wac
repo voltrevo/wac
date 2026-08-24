@@ -1308,6 +1308,16 @@ export const i32 GRANT_WRITE = 2;
 export const i32 GRANT_NET = 4;
 /** `env`, which reports every variable unset without it. */
 export const i32 GRANT_ENV = 8;
+/**
+ * Every grant there is — "narrow nothing", which is not the same as "everything".
+ *
+ * A `spawn` or a `load` asking for this gets the intersection with what the caller holds, so a program
+ * built with no grants hands over none of them whatever it asks. It is the honest spelling for a
+ * caller that means "as much as I have": `GRANT_NONE` is the other honest one, and a hand-written
+ * `GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV` is a fourth thing to keep in step every time a
+ * bit is added. There is no bit for running a host program — see `Cli.spawn`.
+ */
+export i32 GRANT_ALL() { return GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV; }
 
 /**
  * How many host calls one worker may have outstanding at once.
@@ -2060,11 +2070,20 @@ export struct Cli {
   /**
    * Instantiate `module` and answer a handle to call its exports through — `issues/system/0240c`.
    *
-   * **No grants argument, and that is deliberate.** A loaded module lives in the caller's own realm and
-   * its `Core` and `Cli` are built against the caller's own capabilities — so it gets *exactly* what
-   * the caller has, and there is nowhere for a narrowing to be enforced. A caller that wants to confine
-   * something wants `spawn`, which is a different thread, a different world, and killable. This is
-   * "call these functions", not "run this program", and the two are not on a spectrum.
+   * **`grants` narrows, and cannot widen.** Asking for more than this program holds ends where every
+   * other over-ask ends: at the host, which serves what the build granted. So the module gets the
+   * intersection, exactly as a spawned child does.
+   *
+   * **This argument was left out once, and that was wrong.** The reasoning was that a loaded module
+   * shares the caller's world and there is nowhere to enforce a narrowing — true of the *launcher*,
+   * which cannot tell this module's calls from its loader's, and false of the world the module is
+   * *handed*, which is built here. `wac test --allow-read` handed a test the command's write
+   * capability and a test wrote a file to disk; the native host failed the same test. `issues/system/0242c`.
+   *
+   * What makes handing over a narrowed world sufficient is the argument `spawn` makes for itself:
+   * **the isolation is the language's, not the runtime's.** A wac module reaches only what it was
+   * given, because wac has no ambient anything. That would not hold for arbitrary JavaScript, and a
+   * loaded module is a wac module.
    *
    * **Not `Pending`, because nothing crosses to a host.** Driving a module and calling one of its
    * exports both finish before the call returns. Every other field here answers a ticket because it
@@ -2073,7 +2092,7 @@ export struct Cli {
    * **On this thread.** See `LoadedModule`: nothing can stop a running export, so an export that loops
    * forever hangs the caller.
    */
-  fn[LoadedModule(u8[])] load;
+  fn[LoadedModule(u8[], i32)] load;
 
   /**
    * Call `name` on a loaded module, and answer what it did — including trapping.
@@ -2137,7 +2156,7 @@ export struct Cli {
     fn[Pending<bool>(string[], u8[], string, bool)] pushChild,
     fn[Pending<Captured>()] popChild,
     fn[Pending<Exec>(string, string[], u8[], string[], bool, bool)] execWith,
-    fn[LoadedModule(u8[])] load,
+    fn[LoadedModule(u8[], i32)] load,
     fn[CallResult(i32, string, i32)] call,
     fn[void(i32)] unload
   ) {

@@ -5,7 +5,7 @@
 // The module is built with `wac build`; the names come out of its own manifest; a test that traps
 // passes when it is called `test_traps_*`, which is the convention the host used to own.
 
-import { CallResult, Cli, Core, FileResult, LoadedModule } from "std/platform.wac";
+import { CallResult, Cli, Core, FileResult, GRANT_ALL, LoadedModule } from "std/platform.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { manifestIn } from "../../wacc/src/manifest.wac";
@@ -15,7 +15,7 @@ export i32 main(Core core, Cli cli) {
   FileResult f = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
   if (!f.ok) { core.warn("cannot read: " + f.error); return 1; }
 
-  LoadedModule m = cli.load(f.bytes);
+  LoadedModule m = cli.load(f.bytes, GRANT_ALL());
   if (m.handle < 0) { core.warn("load: " + m.error); return 1; }
 
   i32 passed = 0;

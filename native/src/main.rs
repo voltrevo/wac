@@ -898,11 +898,26 @@ thread_local! {
 }
 
 /// Instantiate `wasm` in a store of its own, sharing this caller's world.
-fn load_module(caller: &mut Caller<'_, Host>, wasm: &[u8]) -> Result<i32, String> {
+fn load_module(caller: &mut Caller<'_, Host>, wasm: &[u8], asked: i32) -> Result<i32, String> {
     let world = world_from(&caller.engine().clone(), wasm)?;
     let m = world.manifest.clone();
-    // The caller's own authority, by reference — see `HeldModule`.
-    let mut host = Host::new(m.callbacks.len(), caller.data().args.clone(), caller.data().grants.clone());
+    // **A ceiling of the caller's own, intersected here rather than trusted** — the same rule
+    // `spawn_instance` keeps, and for the same reason: asking for more than this program holds is not
+    // an error, and the module simply finds the capability denied. `issues/system/0242c` is the day
+    // `load` had no `asked` at all, so a loaded module got the loader's whole world and a test wrote a
+    // file the run had never granted.
+    let mine = &caller.data().grants;
+    let grants = manifest::Grants {
+        read: mine.read && (asked & GRANT_READ) != 0,
+        write: mine.write && (asked & GRANT_WRITE) != 0,
+        env: mine.env && (asked & GRANT_ENV) != 0,
+        net: mine.net && (asked & GRANT_NET) != 0,
+        // No `GRANT_*` bit names running a host program — `spawn_instance` refuses it for the same
+        // reason and will gain it the same way.
+        run: false,
+    };
+    // The rest of the caller's authority is shared by reference — see `HeldModule`.
+    let mut host = Host::new(m.callbacks.len(), caller.data().args.clone(), grants);
     host.tickets = caller.data().tickets.clone();
     host.handles = caller.data().handles.clone();
     host.cwd = caller.data().cwd.clone();
@@ -1687,7 +1702,11 @@ fn dispatch(
         // returns, so `load` and `call` answer a struct directly. `issues/system/0240c`.
         Cap::Load => {
             let prog = read_u8_array(caller, &params[1])?;
-            let (handle, why) = match load_module(caller, &prog) {
+            let asked = match arg(2) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let (handle, why) = match load_module(caller, &prog, asked) {
                 Ok(h) => (h, String::new()),
                 Err(e) => (-1, e),
             };
