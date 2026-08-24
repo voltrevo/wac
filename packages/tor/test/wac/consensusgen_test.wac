@@ -10,8 +10,10 @@
 // Host-side until 2026-08-17, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 import { AuthorityKeys } from "../../src/authcert.wac";
-import { ConsensusInfo, ConsensusVoter, consensusDocument } from "../../src/consensusgen.wac";
+import { ConsensusInfo, ConsensusVoter, consensusDocument, microdescConsensusDocument }
+         from "../../src/consensusgen.wac";
 import { RelayOpinion, signedLength, voteSignatureDigest } from "../../src/vote.wac";
 import { decode as b64decode } from "../../../codec/src/base64.wac";
 import { jsonFile, strOf, numOf, num64Of } from "../../../wactest/src/jsonfile.wac";
@@ -23,7 +25,10 @@ import { decoded } from "../../../codec/src/hex.wac";
 const string ORACLE = "packages/tor/test/oracle.mjs";
 const string VECTOR = "packages/tor/test/data/consensus_generated.json";
 
-u8[] build(JsonObject c) {
+u8[] build(JsonObject c) { return buildFlavoured(c, false); }
+
+/** The same inputs written in either flavour, so the two can be compared line by line. */
+u8[] buildFlavoured(JsonObject c, bool microdesc) {
   AuthorityKeys k = AuthorityKeys(
     decoded(strOf(c, "identityN")), decoded(strOf(c, "identityE")), decoded(strOf(c, "identityD")),
     decoded(strOf(c, "signingN")), decoded(strOf(c, "signingE")), decoded(strOf(c, "signingD")));
@@ -43,7 +48,8 @@ u8[] build(JsonObject c) {
   relays[0] = RelayOpinion(strOf(c, "descriptor").toBytes(), strOf(c, "flags"),
                            num64Of(c, "bandwidth"), strOf(c, "exitPolicy"));
 
-  return consensusDocument(info, voters, relays, k);
+  return microdesc ? microdescConsensusDocument(info, voters, relays, k)
+                   : consensusDocument(info, voters, relays, k);
 }
 
 export string test_the_consensus_tor_found_wellformed_is_reproduced(Core core, Cli cli) {
@@ -107,4 +113,128 @@ u8[] signatureOf(u8[] doc) {
   for (i32 i = 0; i < n; i++) { text[i] = packed[i]; }
   u8[]? decoded = b64decode(text);
   return decoded is null ? u8[0]() : decoded!;
+}
+
+/** The lines of a document, without their newlines. */
+string[] linesOf(u8[] doc) {
+  string all = string.fromBytes(doc);
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) { if (all.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n > 0 ? n : 1](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all.slice(i, i + 1) != "\n") { continue; }
+    if (at < out.len()) { out[at] = all.slice(from, i); at = at + 1; }
+    from = i + 1;
+  }
+  return out;
+}
+
+/** Whether any line of `ls` starts with `p`. */
+bool anyStartsWith(string[] ls, string p) {
+  for (i32 i = 0; i < ls.len(); i++) {
+    if (ls[i].len() >= p.len() && ls[i].slice(0, p.len()) == p) { return true; }
+  }
+  return false;
+}
+
+/** How many lines of `ls` start with `p`. */
+i32 countStartsWith(string[] ls, string p) {
+  i32 n = 0;
+  for (i32 i = 0; i < ls.len(); i++) {
+    if (ls[i].len() >= p.len() && ls[i].slice(0, p.len()) == p) { n = n + 1; }
+  }
+  return n;
+}
+
+/**
+ * **The microdescriptor flavour, which nothing in this process had ever produced.**
+ *
+ * `consensusFlavoured` is the body both writers share and its `microdesc` arms were dark. They are
+ * not unreached code: `gendesc.wac:261` calls `microdescConsensusDocument`, and `gendesc.wac` is a
+ * program with a `main`, so it runs in a spawned process the coverage instrument cannot see. Every
+ * in-process test called the plain writer. The five points were invisible for longer than that,
+ * because the ledger carried a `") {"` rule claiming every point in the file — see
+ * `tools/wac/covledger.wac`'s `declOf`.
+ *
+ * **The oracle is the difference, not the document.** There is a committed consensus that C tor
+ * parsed and node verified, and no microdesc counterpart; generating one is a separate piece of work.
+ * But dir-spec says exactly four things change between the flavours, and the same inputs through both
+ * writers make that a comparison with nothing invented: the header names the flavour, the router
+ * status line drops the descriptor digest, an `m` line carries the microdescriptor digest, and the
+ * `p` policy summary moves into the microdescriptor rather than being stated twice.
+ *
+ * Asserting *everything else is identical* is the half that makes it worth having. A writer that
+ * quietly dropped a `w` bandwidth line or reordered relays in one flavour would pass four
+ * difference-checks and fail this.
+ */
+export string test_the_microdesc_flavour_differs_from_the_plain_one_in_four_stated_ways(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonObject c = jsonFile(cli, VECTOR);
+  string[] plain = linesOf(buildFlavoured(c, false));
+  string[] micro = linesOf(buildFlavoured(c, true));
+  t.isTrue(plain.len() > 10, "the plain consensus is too short to compare");
+  t.isTrue(micro.len() > 10, "the microdesc consensus is too short to compare — the relay may have "
+                             + "been dropped for having no microdescriptor digest");
+
+  // 1. The header names the flavour.
+  t.eqStr(plain[0], "network-status-version 3", "the plain header");
+  t.eqStr(micro[0], "network-status-version 3 microdesc", "the microdesc header");
+
+  // 2 and 3. One `m` line per relay in the microdesc flavour and none in the plain one, and the
+  //          router status line loses a field — dir-spec drops the descriptor digest because the
+  //          client fetches a microdescriptor instead.
+  i32 relays = countStartsWith(plain, "r ");
+  t.isTrue(relays > 0, "the plain consensus lists no relays, so there is nothing to compare");
+  t.eqI32(countStartsWith(micro, "r "), relays, "the flavours list a different number of relays");
+  t.eqI32(countStartsWith(micro, "m "), relays, "one m line per relay");
+  t.eqI32(countStartsWith(plain, "m "), 0, "the plain flavour carries no m line");
+
+  // 4. The policy summary is in the microdescriptor for that flavour, not stated again here.
+  t.eqI32(countStartsWith(plain, "p "), relays, "the plain flavour states a policy per relay");
+  t.eqI32(countStartsWith(micro, "p "), 0, "the microdesc flavour states the policy twice");
+
+  // **And nothing else moves.** Every line of one that is not accounted for above must appear in the
+  // other, in the same order — checked by walking both and skipping only the four known differences.
+  i32 pi = 0;
+  i32 mi = 0;
+  i32 same = 0;
+  // **A fifth difference that is not a difference in the writer**: the signature is over the
+  // document, the documents differ, so the base64 body differs. The `directory-signature` line
+  // itself must not — same algorithm, same authority, same signing key — and that it is compared as
+  // an ordinary line above is the assertion.
+  bool inSignature = false;
+  while (pi < plain.len() && mi < micro.len()) {
+    string p = plain[pi];
+    string m = micro[mi];
+    if (p == m) {
+      if (p == "-----BEGIN SIGNATURE-----") { inSignature = true; }
+      if (p == "-----END SIGNATURE-----") { inSignature = false; }
+      pi = pi + 1; mi = mi + 1; same = same + 1; continue;
+    }
+    bool known = false;
+    if (inSignature) { known = true; pi = pi + 1; mi = mi + 1; }
+    else if (pi == 0 && mi == 0) { known = true; pi = pi + 1; mi = mi + 1; }
+    else if (m.len() >= 2 && m.slice(0, 2) == "m ") { known = true; mi = mi + 1; }
+    else if (p.len() >= 2 && p.slice(0, 2) == "p ") { known = true; pi = pi + 1; }
+    else if (p.len() >= 2 && p.slice(0, 2) == "r " && m.len() >= 2 && m.slice(0, 2) == "r ") {
+      known = true; pi = pi + 1; mi = mi + 1;
+    }
+    if (!known) {
+      t.isTrue(false, "a line differs for no stated reason:\n  plain: " + p + "\n  micro: " + m);
+      pi = pi + 1;
+      mi = mi + 1;
+    }
+  }
+  t.isTrue(same > 8, "only " + itoa(same) + " lines were identical, so the walk above lost its place");
+  t.eqI32(plain.len() - pi, 0, "the plain document has lines past the end of the microdesc one");
+  t.eqI32(micro.len() - mi, 0, "the microdesc document has lines past the end of the plain one");
+
+  // The router status line differing is asserted above as "known"; here is *how* it differs, so the
+  // skip is not hiding a line that changed in some other way.
+  t.isTrue(anyStartsWith(plain, "r "), "no plain router status line");
+  t.isTrue(anyStartsWith(micro, "r "), "no microdesc router status line");
+  return t.report();
 }
