@@ -51,6 +51,7 @@ import { alertBadRecordMac, alertUnexpectedMessage, typeHandshake } from "../../
 import { clientHello, serverHello, encryptedExtensions, groupX25519, groupP256,
          groupHybrid } from "../../src/handshake.wac";
 import { p256PublicKey } from "../../../crypto/src/p256.wac";
+import { x25519Base } from "../../../crypto/src/x25519.wac";
 import {
   ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientPhase, tlsClientFailure,
   tlsClientSend, tlsClientClose,
@@ -708,5 +709,62 @@ export string test_a_hostile_serverhello_is_refused_at_each_check() {
   ClientStep badWidth = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
       inRecord(serverHello(random, u8[0](), 0x1301, groupHybrid(), u8[64](fill: 0x22)))));
   t.eqI32(tlsClientPhase(badWidth.state), 4, "a hybrid share of the wrong width was accepted");
+  return t.report();
+}
+
+/**
+ * **A key share that forces the shared secret to zero.**
+ *
+ * Curve25519 has small-order points. If a peer sends one, `x25519(ours, theirs)` is the all-zero
+ * value for *every* scalar — so both ends derive their traffic keys from a secret an observer
+ * already knows, without holding any private key. The handshake completes. Nothing looks wrong.
+ *
+ * RFC 8446 §7.4.2 is explicit that a TLS 1.3 implementation **MUST** check for the all-zero shared
+ * secret and abort, pointing at RFC 7748 §6.
+ *
+ * **This repository already knew.** `packages/tor`'s `ntor.wac` carries the rule in its header — *if
+ * the relay sends one as Y, EXP(Y,x) is the all-zero value for every x, so the client derives keys
+ * the attacker knows without any private key at all* — and `packages/ssh` checks it at both of its
+ * exchange sites, citing RFC 8731 §3. `packages/tls` did not.
+ *
+ * Unlike the aborts this file's other tests are about, this one is not a crash. It is a session with
+ * no confidentiality that behaves exactly like a working one, which is why nothing noticed.
+ */
+export string test_a_key_share_that_forces_a_zero_secret_is_refused() {
+  T t = T.create();
+  u8[] random = u8[32](fill: 0x5A);
+
+  // Three points of small order. Any scalar times any of them is the identity.
+  u8[][] lowOrder = u8[][3](fill: u8[32]());
+  u8[] one = u8[32](); one[0] = 1;
+  u8[] top = u8[32](); top[31] = 0x80;
+  lowOrder[0] = u8[32]();          // zero
+  lowOrder[1] = one;
+  lowOrder[2] = top;
+  string[] names = string[]("the all-zero point", "the point 1", "the order-four point");
+
+  // The server, given one as a ClientHello key share.
+  for (i32 i = 0; i < lowOrder.len(); i++) {
+    ClientStep no = clientStep(tlsServerFeed(freshServer(), inRecord(
+        clientHello(random, u8[0](), 0x1301, groupX25519(), lowOrder[i], HOST.toBytes(),
+                    u8[0](), u8[0]()))));
+    t.eqI32(tlsPhase(no.state), phaseFailed(),
+            "the server accepted " + names[i] + " as a key share, so the session's secret is zero");
+  }
+
+  // And an honest x25519 share is still accepted, so the three above are about the points rather
+  // than about the group.
+  ClientStep ok = clientStep(tlsServerFeed(freshServer(), inRecord(
+      clientHello(random, u8[0](), 0x1301, groupX25519(), x25519Base(u8[32](fill: 0x57)),
+                  HOST.toBytes(), u8[0](), u8[0]()))));
+  t.eqI32(tlsPhase(ok.state), 1, "an honest x25519 key share was refused");
+
+  // The client, given one as a ServerHello key share.
+  for (i32 i = 0; i < lowOrder.len(); i++) {
+    ClientStep no = clientStep(tlsClientFeed(clientStep(freshClient(noTrustStore())).state,
+        inRecord(serverHello(random, u8[0](), 0x1301, groupX25519(), lowOrder[i]))));
+    t.eqI32(tlsClientPhase(no.state), 4,
+            "the client accepted " + names[i] + " from a server, so the session's secret is zero");
+  }
   return t.report();
 }

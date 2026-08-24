@@ -32,7 +32,7 @@ import { Record, certificateMessage, certificateRequest, clientPublic, curveX255
          typeHandshake, versionDtls10, versionDtls12 } from "./dtls.wac";
 import { keyBlock, masterSecret, open, seal, verifyData } from "./dtlskeys.wac";
 import { p256Sign } from "../../crypto/src/p256.wac";
-import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { x25519, x25519Base, x25519Shared } from "../../crypto/src/x25519.wac";
 import { derInteger, derSequence } from "../../tls/src/derwrite.wac";
 import { Cert, certVerifySignature, parseCert } from "../../tls/src/x509.wac";
 
@@ -361,7 +361,12 @@ export struct Peer {
       // that it would understand.
       u8[] peerKey = clientPublic(body);
       if (peerKey.len() != 32) { return out; }
-      u8[] pms = x25519(this.scalar, peerKey);
+      // **And a small-order point makes the premaster secret all zeros for every scalar**, so a peer
+      // sending one would hold the session's keys without any private key. RFC 7748 §6; the same rule
+      // `packages/tor` and `packages/ssh` carry.
+      u8[]? dh = x25519Shared(this.scalar, peerKey);
+      if (dh is null) { return out; }
+      u8[] pms = dh!;
       this.master = masterSecret(pms, this.clientRandom, this.random);
       u8[] block = keyBlock(this.master, this.random, this.clientRandom, 40);
       this.clientWriteKey = slice(block, 0, 16);

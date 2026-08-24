@@ -24,7 +24,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { x25519, x25519Base } from "../../src/x25519.wac";
+import { x25519, x25519Base, x25519Shared } from "../../src/x25519.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify, ed25519ExpandedSecret,
          ed25519PublicKeyExpanded, ed25519SignExpanded, ed25519SignBit,
          curve25519ToEd25519Secret, ed25519FromCurve25519Public } from "../../src/ed25519.wac";
@@ -458,5 +458,65 @@ export string test_a_malformed_key_or_signature_is_refused() {
   u8[] notAPoint = u8[32]();
   notAPoint[0] = 2;
   t.isTrue(ptDecode(notAPoint) is null, "a y-coordinate that is not on the curve does not decode");
+  return t.report();
+}
+
+/**
+ * `x25519Shared` — the exchange with the check RFC 7748 §6 describes, done for the caller.
+ *
+ * `test_low_order_points_give_an_all_zero_secret` above establishes that this implementation
+ * *produces* the documented value, and says why that matters: **"a peer can send one to force a
+ * known shared secret, so producing the documented value is what lets a caller notice."**
+ *
+ * Three callers noticed and three did not. `packages/ssh` checks at both its exchange sites citing
+ * RFC 8731 §3, and `packages/tor`'s `ntor.wac` inline with the clearest note of the three — *the
+ * client derives keys the attacker knows without any private key at all*. `packages/tls`, which RFC
+ * 8446 §7.4.2 obliges with a MUST, did not; nor did `packages/quic` or `packages/webrtc`.
+ *
+ * So this is the noticing, written once where the value is produced rather than a fourth time at a
+ * call site. Same seven u-coordinates as the test above, because the corpus is the point.
+ *
+ * Both directions are asserted: a function answering `null` to everything would satisfy every
+ * refusal here and break every handshake, so the accepting case is what gives the refusals meaning.
+ */
+export string test_a_small_order_point_has_no_shared_secret() {
+  T t = T.create();
+
+  // An honest peer's point, and both ends agreeing on what it produces.
+  u8[] mineScalar = u8[32]();
+  u8[] theirScalar = u8[32]();
+  for (i32 i = 0; i < 32; i++) {
+    mineScalar[i] = (i * 29 + 3) & 0xFF;
+    theirScalar[i] = (i * 13 + 7) & 0xFF;
+  }
+  u8[]? a = x25519Shared(mineScalar, x25519Base(theirScalar));
+  u8[]? b = x25519Shared(theirScalar, x25519Base(mineScalar));
+  t.isTrue(!(a is null) && !(b is null), "an honest exchange produced no shared secret");
+  if (!(a is null) && !(b is null)) {
+    t.isTrue(equal(a!, b!), "the two ends did not agree");
+    t.eqI32(a!.len(), 32, "the shared secret is not 32 bytes");
+  }
+
+  // The same seven the test above uses, refused rather than returned.
+  string[] lowOrder = string[](
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+    "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+  for (i32 i = 0; i < lowOrder.len(); i++) {
+    t.isTrue(x25519Shared(mineScalar, decoded(lowOrder[i])) is null,
+             "low-order point " + itoa64(i as i64) + " produced a shared secret");
+    // With a second scalar too, because the property is that the private key does not matter.
+    t.isTrue(x25519Shared(theirScalar, decoded(lowOrder[i])) is null,
+             "low-order point " + itoa64(i as i64) + " produced a secret for another scalar");
+  }
+
+  // Widths, so a caller cannot get a secret out of the wrong shape.
+  t.isTrue(x25519Shared(u8[31](fill: 1), x25519Base(theirScalar)) is null, "a 31-byte scalar was used");
+  t.isTrue(x25519Shared(mineScalar, u8[31](fill: 1)) is null, "a 31-byte peer point was used");
+  t.isTrue(x25519Shared(mineScalar, u8[0]()) is null, "an empty peer point was used");
   return t.report();
 }

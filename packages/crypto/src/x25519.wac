@@ -105,3 +105,36 @@ u8[] basePoint() {
 
 /** The public key for a secret scalar: the scalar times the base point. */
 export u8[] x25519Base(u8[] scalar) { return x25519(scalar, basePoint()); }
+
+/**
+ * The shared secret, or `null` when the peer sent a point of small order.
+ *
+ * **Curve25519 has small-order points, and any scalar times one of them is the identity.** So a peer
+ * that sends one forces `x25519` to answer thirty-two zero bytes for *every* private key — both ends
+ * then derive their traffic keys from a secret an observer already knows, without holding anything.
+ * The handshake completes and nothing looks wrong, which is what makes it worth a function rather
+ * than a comment.
+ *
+ * RFC 7748 §6 describes the check; RFC 8446 §7.4.2 makes it a **MUST** for TLS 1.3, and RFC 8731 §3
+ * for SSH.
+ *
+ * Written here on 2026-08-24 because it existed three times already and not where it was needed:
+ * `packages/ssh` has it at both of its exchange sites, `packages/tor`'s `ntor.wac` inline with the
+ * clearest explanation of the three, and `packages/tls` — which RFC 8446 obliges — did not have it at
+ * all. A rule implemented three times and missing from the fourth place is the shape this repository
+ * treats as one copy too many.
+ *
+ * `null` rather than an empty array so a caller cannot use the result by accident: `u8[0]()` is a
+ * value that concatenates and hashes quite happily.
+ */
+export u8[]? x25519Shared(u8[] scalar, u8[] peer) {
+  if (scalar.len() != 32 || peer.len() != 32) { return null; }
+  u8[] k = x25519(scalar, peer);
+  // Constant-time in the sense that matters: the loop does not stop early, so the answer does not
+  // depend on *where* a non-zero byte is. Which byte differs is not a secret here anyway — the
+  // interesting fact is only whether the peer was honest.
+  i32 acc = 0;
+  for (i32 i = 0; i < 32; i++) { acc = acc | k[i]; }
+  if (acc == 0) { return null; }
+  return k;
+}

@@ -65,7 +65,7 @@ import { test_sha256_streaming_matches_oneshot as crypto__sha256_streaming_match
   from "./wac/crypto_test.wac";
 import { test_it_compares_what_it_is_given as ct__it_compares_what_it_is_given, test_every_byte_is_compared as ct__every_byte_is_compared, test_the_counted_form as ct__the_counted_form }
   from "./wac/ct_test.wac";
-import { test_rfc_7748_x25519_vectors as curve25519__rfc_7748_x25519_vectors, test_x25519_agrees_with_the_host as curve25519__x25519_agrees_with_the_host, test_x25519_clamps_its_scalar as curve25519__x25519_clamps_its_scalar, test_ed25519_is_byte_identical_to_the_host as curve25519__ed25519_is_byte_identical_to_the_host, test_ed25519_rejects_what_it_should as curve25519__ed25519_rejects_what_it_should, test_low_order_points_give_an_all_zero_secret as curve25519__low_order_points_give_an_all_zero_secret, test_the_top_bit_of_a_u_coordinate_is_ignored as curve25519__the_top_bit_of_a_u_coordinate_is_ignored, test_rfc_8032_ed25519_vectors as curve25519__rfc_8032_ed25519_vectors, test_a_non_canonical_s_is_rejected as curve25519__a_non_canonical_s_is_rejected, test_x_equals_zero_with_the_sign_bit_is_not_a_point as curve25519__x_equals_zero_with_the_sign_bit_is_not_a_point, test_the_expanded_key_path_agrees_with_the_seed_one as curve25519__the_expanded_key_path_agrees_with_the_seed_one, test_the_curve25519_conversion_agrees_in_both_directions as curve25519__the_curve25519_conversion_agrees_in_both_directions, test_the_rfc_7748_iterated_vectors as curve25519__the_rfc_7748_iterated_vectors, test_a_malformed_key_or_signature_is_refused as curve25519__a_malformed_key_or_signature_is_refused }
+import { test_rfc_7748_x25519_vectors as curve25519__rfc_7748_x25519_vectors, test_x25519_agrees_with_the_host as curve25519__x25519_agrees_with_the_host, test_x25519_clamps_its_scalar as curve25519__x25519_clamps_its_scalar, test_ed25519_is_byte_identical_to_the_host as curve25519__ed25519_is_byte_identical_to_the_host, test_ed25519_rejects_what_it_should as curve25519__ed25519_rejects_what_it_should, test_low_order_points_give_an_all_zero_secret as curve25519__low_order_points_give_an_all_zero_secret, test_the_top_bit_of_a_u_coordinate_is_ignored as curve25519__the_top_bit_of_a_u_coordinate_is_ignored, test_rfc_8032_ed25519_vectors as curve25519__rfc_8032_ed25519_vectors, test_a_non_canonical_s_is_rejected as curve25519__a_non_canonical_s_is_rejected, test_x_equals_zero_with_the_sign_bit_is_not_a_point as curve25519__x_equals_zero_with_the_sign_bit_is_not_a_point, test_the_expanded_key_path_agrees_with_the_seed_one as curve25519__the_expanded_key_path_agrees_with_the_seed_one, test_the_curve25519_conversion_agrees_in_both_directions as curve25519__the_curve25519_conversion_agrees_in_both_directions, test_the_rfc_7748_iterated_vectors as curve25519__the_rfc_7748_iterated_vectors, test_a_malformed_key_or_signature_is_refused as curve25519__a_malformed_key_or_signature_is_refused, test_a_small_order_point_has_no_shared_secret as curve25519__a_small_order_point_has_no_shared_secret }
   from "./wac/curve25519_test.wac";
 import { test_the_written_out_d_is_the_derived_d as ed25519const__the_written_out_d_is_the_derived_d, test_every_limb_matches as ed25519const__every_limb_matches, test_sqrt_minus_one_and_the_base_point_match_their_derivations as ed25519const__sqrt_minus_one_and_the_base_point_match_their_derivations }
   from "./wac/ed25519const_test.wac";
@@ -124,6 +124,10 @@ i32[] sha512Lens() { return i32[](0, 1, 111, 112, 127, 128, 129, 239, 240, 400);
 
 export i32 main(Core core, Cli cli) {
   i32 bad = 0;
+  if (curve25519__a_small_order_point_has_no_shared_secret().len() > 0) {
+    core.warn("error: FAILED curve25519_test test_a_small_order_point_has_no_shared_secret");
+    bad = bad + 1;
+  }
 
   // ── Every returning test, which is 152 of the 283 ──────────────────────────
   if (aead__rfc_8439_poly1305().len() > 0) { core.warn("error: FAILED aead_test test_rfc_8439_poly1305"); bad = bad + 1; }
