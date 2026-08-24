@@ -23,23 +23,23 @@ export const TOTALS = {
   packages: 38,
   lines: 133154,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2698,
+  tests: 2704,
   programs: 82,
   pages: 11,
   /**
-   * The whole repository: the packages (2698), and the compiler, harness and tooling
+   * The whole repository: the packages (2704), and the compiler, harness and tooling
    * around them (1377).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 4075,
+  testsAll: 4081,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 946,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 524,
+  wacTests: 527,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -75,7 +75,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "quic", what: "QUIC version 1 — RFC 9000 and RFC 9001 — in wac.", lines: 3259, tests: 86 },
   { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7510, tests: 32 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4132, tests: 58 },
-  { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
+  { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 32 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4207, tests: 185 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17363, tests: 313 },
   { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 36287, tests: 338 },

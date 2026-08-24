@@ -168,6 +168,7 @@ deno task coverage:raster
 deno task coverage:server
 deno task coverage:sh
 deno task coverage:ssh
+deno task coverage:ssz
 deno task coverage:stream
 deno task coverage:unicode
 deno task coverage:url
