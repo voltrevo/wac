@@ -292,3 +292,36 @@ Nothing here relied on the leak, so this is a hardening: the file behaves the sa
 notice the day `Cli.exec` stops inheriting. **The open decision is untouched** — whether `PATH` comes
 from the API or from 122 call sites through a shared helper — and this conversion is neutral to it,
 since a helper would simply be where these two names come from instead of here.
+
+## Step 2 is done: all three directories declare what they need — agent-a, 2026-08-24
+
+`packages/wacc/test/wac/uninstall_test.wac` was the third and it is converted. Its five call sites split
+two ways, which is the useful part rather than the count:
+
+- **four spawn `binaryPath(cli)`, an absolute path, and need nothing but the two names they were
+  already passing.** `withEnv` → `onlyEnv` and they are done — `WAC_HOME` and `HOME`, no `PATH`,
+  because a program named absolutely does not need one.
+- **one spawns `/bin/sh -c '… exec deno task --quiet wac:uninstall'`** and needs `PATH` and the proxy.
+  `HOME` is a fixture directory, so Deno's cache is cold every run and the dependency fetch is real.
+
+Canaried by removal, as with `tor`: with `PATH` alone the task fails at
+
+    1: client error (Connect)
+    2: dns error
+    3: failed to lookup address information: Temporary failure in name resolution
+
+which is the proxy being genuinely load-bearing and the clear genuinely taking effect. Both proxy
+spellings are offered and **a name that is not set is not passed**: an empty `HTTP_PROXY` is a
+different instruction from an absent one, and a machine without a proxy should get neither.
+
+### What step 2 turned out to be worth
+
+Three directories, and in each one the conversion **found the split the sweep will have to make
+everywhere**: within a single file, some call sites need nothing beyond what they already say and one
+needs the network. Four of `uninstall_test`'s five sites cost a one-word edit. That is evidence for the
+122-site estimate being an over-count of the *hard* part: the population that needs thought is the
+subset that spawns by bare word or through a shell, and the rest is mechanical.
+
+**Step 3 remains the only open decision** — `PATH` from the API, or from the call sites through a shared
+helper — and nothing above pre-empts it. Both conversions pass `PATH` explicitly, so they are already on
+the explicit side and would simply drop the name if the API supplied it.
