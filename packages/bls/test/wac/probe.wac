@@ -123,7 +123,7 @@ export bool blsFp2OneIsIdempotent() { return fp2Equals(fp2Mul(fp2One(), fp2One()
 // c1; above that, ascending degree. Six coefficients for Fp6, twelve for Fp12.
 
 import { Fp6, Fp12, fp6Mul, fp6Square, fp6MulByV, fp6Invert, fp6Frobenius, fp6Zero,
-         fp12Mul, fp12Square, fp12Conjugate, fp12Invert, fp12Frobenius, fp12One, fp12Zero,
+         fp12Mul, fp12Square, fp12Conjugate, fp12Invert, fp12Frobenius, fp12One,
          fp12Equals, fp12IsOne, fp12CyclotomicSquare } from "../../src/fp12.wac";
 
 Fp2? at2(u8[] s, i32 i) {

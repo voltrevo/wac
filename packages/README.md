@@ -153,6 +153,7 @@ deno task app:build <entry.wac> --worker -o child.worker.js  # ...or something `
 deno task map             # regenerate MAP.md; the suite fails if it is stale
 deno task coverage        # branch coverage of every package, from its wac-native tests
 deno task coverage:abi
+deno task coverage:bls
 deno task coverage:bignum # ...and the host-driven exercises, per package
 deno task coverage:bytes
 deno task coverage:codec

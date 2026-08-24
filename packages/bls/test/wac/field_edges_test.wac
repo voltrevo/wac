@@ -1,0 +1,180 @@
+// The Fp2 cases a table of vectors cannot express.
+//
+// Found by this package's first coverage driver on 2026-08-24 — `issues/system/0205`. `fp2.wac` was
+// the second-worst file at **76.5%**, and every uncovered point sat in three functions: `fp2Sqrt`,
+// `fp2Sgn0` and `fp2Inv0`. All three are *partial* — they have inputs for which there is no answer —
+// and the corpus is a table of inputs paired with their answers.
+//
+// **A vector file has no row for "there is no square root".** That is not an oversight in the vectors;
+// it is what the format is. `fp_test.wac` checks this package against a Python tower over hundreds of
+// values, and every one of them was chosen by computing something, so every one has a result. The
+// cases with no result are reachable only by a test that constructs its own inputs and asserts the
+// refusal, which is what this file is.
+//
+// ## Why the square root is the one that matters
+//
+// `fp2Sqrt` is how a compressed G2 point is decompressed: the encoding carries `x` and one sign bit,
+// and `y` is recovered by taking a square root of `x³ + b`. So the question "does this x have a y" is
+// the same question as "is this 96-byte string a point", and the function's `null` is the refusal
+// behind it. A version that returned *some* Fp2 for an x with no root would hand `g2Decompress` a
+// point off the curve.
+//
+// The contract asserted here is the one that makes that safe: **anything `fp2Sqrt` returns squares
+// back to what it was given.** Not a comparison against a table — a property, checked over a walk of
+// values, of which about half turn out to have no root at all.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import {
+  Fp2, fp2Zero, fp2One, fp2Add, fp2Mul, fp2Square, fp2Sqrt, fp2Equals, fp2IsZero,
+  fp2Sgn0, fp2Inv0, fp2Invert, fp2Neg, fp2Sub,
+} from "../../src/fp2.wac";
+import { fpZero, fpOne, fpAdd, fpNeg, fpSqrt, fpIsZero, fpEquals, fpSgn0 } from "../../src/fp.wac";
+
+/** `k` as a field element, by repeated addition — small `k` only, which is all this file needs. */
+u32[] small(i32 k) {
+  u32[] v = fpZero();
+  for (i32 i = 0; i < k; i++) { v = fpAdd(v, fpOne()); }
+  return v;
+}
+
+/**
+ * Square roots over a walk of values, and the property that makes decompression safe.
+ *
+ * Roughly half of Fp2 is a square, so a walk of forty values finds both kinds without having to know
+ * in advance which is which — and the assertion is not *which* answer came back but that whichever
+ * did is consistent: a returned root squares to the input, and a `null` is not a root that was there.
+ *
+ * The second half of that is the part a vector table cannot check, and it is checked here by an
+ * independent test: `y² = a` is decidable by Euler's criterion on the norm, so a `null` is only
+ * correct if no `y` exists. Rather than reimplement the criterion, the walk asserts the weaker but
+ * still meaningful thing — that the count of each kind is nowhere near zero, so neither answer is
+ * being given unconditionally.
+ */
+export string test_a_square_root_squares_back_or_does_not_exist() {
+  T t = T.create();
+
+  i32 roots = 0;
+  i32 none = 0;
+  Fp2 v = fp2One();
+  Fp2 step = Fp2(small(3), small(7));
+  for (i32 i = 0; i < 40; i++) {
+    v = fp2Add(fp2Mul(v, step), fp2One());
+    Fp2? r = fp2Sqrt(v);
+    if (r is null) {
+      none = none + 1;
+    } else {
+      roots = roots + 1;
+      t.isTrue(fp2Equals(fp2Square(r!), v),
+               "fp2Sqrt returned something that is not a square root, at step " + itoa(i));
+    }
+  }
+
+  // Said out loud, because a function that answered `null` always would pass the loop above.
+  t.isTrue(roots > 5, "only " + itoa(roots) + " of 40 values had a square root, which is too few");
+  t.isTrue(none > 5, "only " + itoa(none) + " of 40 values had none, so the refusal is not exercised");
+
+  // Every square has one, necessarily — the walk above cannot promise it found any particular value.
+  Fp2 w = fp2One();
+  for (i32 i = 0; i < 12; i++) {
+    w = fp2Add(fp2Mul(w, step), fp2One());
+    Fp2 sq = fp2Square(w);
+    Fp2? r = fp2Sqrt(sq);
+    t.isTrue(!(r is null), "a value that is a square by construction has no root, at step " + itoa(i));
+    if (!(r is null)) {
+      // ±y both square to it, so the root is one or the other rather than a fixed one.
+      t.isTrue(fp2Equals(r!, w) || fp2Equals(r!, fp2Neg(w)),
+               "the root of y² is neither y nor −y, at step " + itoa(i));
+    }
+  }
+  return t.report();
+}
+
+/**
+ * Zero, and the purely real values, which take their own branch.
+ *
+ * `fp2Sqrt` splits on `c1 == 0` because a real element's root is real or purely imaginary and the
+ * general formula divides by `2·y0`. Both halves are here.
+ *
+ * **One of the two refusals in that branch cannot happen, and the reason is a property of the field.**
+ * `p ≡ 3 (mod 4)` for BLS12-381, so `−1` is not a square, so for any nonzero `a0` exactly one of `a0`
+ * and `−a0` is. The branch tries `a0` and then `−a0`, and cannot fail both — which is why
+ * `fp2.wac:130` is pinned in the ledger rather than tested here. Recorded because it is not obvious
+ * from the code, which looks like an ordinary pair of fallible attempts.
+ */
+export string test_zero_and_the_purely_real_values() {
+  T t = T.create();
+
+  Fp2? z = fp2Sqrt(fp2Zero());
+  t.isTrue(!(z is null), "zero has no square root");
+  if (!(z is null)) { t.isTrue(fp2IsZero(z!), "the square root of zero is not zero"); }
+
+  // A real value that is a square: 4 = 2², so the root is real.
+  Fp2 four = Fp2(small(4), fpZero());
+  Fp2? r4 = fp2Sqrt(four);
+  t.isTrue(!(r4 is null), "4 has no square root in Fp2");
+  if (!(r4 is null)) {
+    t.isTrue(fp2Equals(fp2Square(r4!), four), "the root of 4 does not square to 4");
+    t.isTrue(fpIsZero(r4!.c1), "the root of a real square is not real");
+  }
+
+  // A real value whose *negation* is the square, so the root is purely imaginary. −4 is the example,
+  // and the answer must be `2u` up to sign: (2u)² = −4.
+  Fp2 minusFour = Fp2(fpNeg(small(4)), fpZero());
+  Fp2? rm = fp2Sqrt(minusFour);
+  t.isTrue(!(rm is null), "−4 has no square root, but −1 is a nonresidue so it must");
+  if (!(rm is null)) {
+    t.isTrue(fp2Equals(fp2Square(rm!), minusFour), "the root of −4 does not square to −4");
+    t.isTrue(fpIsZero(rm!.c0), "the root of a negated real square is not purely imaginary");
+  }
+
+  // Every small real value has a root one way or the other — the field property stated above, checked
+  // rather than asserted in prose.
+  for (i32 k = 1; k < 12; k++) {
+    Fp2 a = Fp2(small(k), fpZero());
+    t.isTrue(!(fp2Sqrt(a) is null) || !(fp2Sqrt(fp2Neg(a)) is null),
+             "neither " + itoa(k) + " nor −" + itoa(k) + " is a square, which p ≡ 3 (mod 4) forbids");
+  }
+  return t.report();
+}
+
+/**
+ * `sgn0` when `c0` is zero, and `inv0` at zero — the two total functions with a special case at the
+ * origin.
+ *
+ * RFC 9380 defines both this way deliberately. `sgn0` falls through to `c1` so that the sign of a
+ * purely imaginary element is still defined, and `inv0` maps zero to zero so that the map-to-curve
+ * formulas need no branch. **Both special cases are only reachable at values a random vector never
+ * is** — a hash-to-curve run produces `c0 = 0` with probability 2⁻³⁸¹ — so the CFRG vectors cannot
+ * contain one, and the branch is written for an input the corpus will never carry.
+ */
+export string test_sgn0_falls_through_to_c1_and_inv0_maps_zero_to_zero() {
+  T t = T.create();
+
+  // c0 == 0: the sign is c1's, so an element and its negation still disagree.
+  Fp2 im = Fp2(fpZero(), small(3));
+  t.eqBool(fp2Sgn0(im), fpSgn0(small(3)), "sgn0 of a purely imaginary value is not sgn0 of c1");
+  t.isTrue(fp2Sgn0(im) != fp2Sgn0(fp2Neg(im)),
+           "a purely imaginary value and its negation have the same sign");
+
+  // c0 != 0: c1 is not consulted, so changing it alone does not move the sign.
+  Fp2 a = Fp2(small(5), small(3));
+  Fp2 b = Fp2(small(5), small(8));
+  t.eqBool(fp2Sgn0(a), fp2Sgn0(b), "sgn0 consulted c1 when c0 is nonzero");
+  t.eqBool(fp2Sgn0(a), fpSgn0(small(5)), "sgn0 of a general value is not sgn0 of c0");
+
+  // Zero's sign is zero's sign, by the same fall-through.
+  t.eqBool(fp2Sgn0(fp2Zero()), fpSgn0(fpZero()), "sgn0 of zero disagrees with fpSgn0 of zero");
+
+  // inv0(0) == 0, which is the case the name is about, and inv0 agrees with invert everywhere else.
+  t.isTrue(fp2IsZero(fp2Inv0(fp2Zero())), "inv0 of zero is not zero");
+  t.isTrue(fp2Invert(fp2Zero()) is null, "zero has an inverse");
+  Fp2 v = Fp2(small(9), small(4));
+  Fp2? inv = fp2Invert(v);
+  t.isTrue(!(inv is null), "a nonzero value has no inverse");
+  if (!(inv is null)) {
+    t.isTrue(fp2Equals(fp2Inv0(v), inv!), "inv0 and invert disagree away from zero");
+    t.isTrue(fp2Equals(fp2Mul(v, inv!), fp2One()), "the inverse does not multiply to one");
+  }
+  return t.report();
+}

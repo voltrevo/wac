@@ -27,6 +27,7 @@
     "coverage": "deno run -A tools/coverage.ts",
     "coverage:all": "deno run -A tools/coverageAll.ts",
     "size": "deno run -A tools/size.ts",
+    "coverage:bls": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/bls/test/cov_ledger.wac",
     "coverage:abi": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run --allow-env packages/abi/test/cov_ledger.wac",
     "coverage:bignum": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/bignum/test/cov_ledger.wac",
     "coverage:bytes": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run packages/bytes/test/cov_ledger.wac",

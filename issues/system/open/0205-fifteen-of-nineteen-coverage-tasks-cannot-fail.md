@@ -673,6 +673,56 @@ had called drift.
 About an hour each. Every one turned up something with consequences rather than tidy-up, and none of it
 was visible from inside the package's own tests.
 
+### `bls` sixth — where the fixture existed and the entry point was never handed it
+
+**26 hold a coverage floor, 0 only check their own exemptions have not drifted, 1 reports and cannot
+fail.** 27 drivers; the unmeasured list is 12.
+
+**633 of 718 → 661 of 718.** `verify.wac` opened at **77.1%**, the worst file in the package, and
+every one of its twenty-four uncovered points was a refusal — nine `g2IsInfinity` guards, ten
+deserialization refusals, four count checks, one correction, and not one line of arithmetic. The
+tower, the Miller loop and the final exponentiation were already at 91–96%. Fifth package in a row to
+land in the same place, and the same cause: the corpus is the CFRG vectors and the Ethereum consensus
+fixtures, and a published test vector is written by an implementation that works.
+
+**The package already suspected it.** Two of its migration commits are titled *"a refusal the fixtures
+do not reach"* and *"which infinity guard is load-bearing"*, both written by deleting a line and
+watching the fixtures still pass. That is the right instinct applied one line at a time. What it could
+not say is how many lines were in that position, which is the question a driver answers: twenty-four.
+
+#### The new shape: the input existed and the entry point never saw it
+
+The best of the three new test files needed no new input at all. Ethereum's corpus **has**
+`deserialization_fails_not_in_G1` — a well-formed encoding of a curve point outside the order-r
+subgroup, the small-subgroup input the check exists for. It is read, it is refused, the test passes.
+
+It is refused by `test/wac/probe.wac`'s `blsG1Status`, which calls `g1Decompress`, `g1IsOnCurve` and
+`g1InSubgroup` in sequence so it can report *which* one said no — a genuinely useful thing for a test
+to do. But that means the corpus drives the probe's copy of the composition and never `g1FromBytes`,
+the function every verifier in the package calls. Its own subgroup line had never executed.
+
+The source comment on `g1FromBytes` states the intent it was not held to: *"The three are separate
+functions above so a test can reach each one, and one function here so a caller cannot use two of the
+three by accident."* The test reached each one.
+
+Canaried rather than argued: with the subgroup line deleted from `g1FromBytes`, `verify_test`,
+`curve_test` and `aggregate_test` all pass, and the new test fails.
+
+**This is a fourth failure mode, and the first that a bigger corpus would not have fixed.** The three
+before it were about what a corpus contains — vendored real data hides refusals, hand-chosen inputs
+hide unused API. This one is about what the *harness* calls. A test that reimplements the composition
+it is checking cannot see the composition go wrong, and from a coverage report it looks identical to a
+line that is simply unreachable. `g1.wac:325` and `:326` sit one line apart and were uncovered for
+completely different reasons: the first cannot be reached by any input, the second had an input
+sitting in the corpus.
+
+#### Also
+
+`fp2Sqrt`'s three later refusals are pinned with a proof rather than a shrug — `a` is a square in Fp2
+exactly when its norm is a square in Fp, and the norm is tested above them, so they cannot fire. A
+walk of forty values through `fp2Sqrt` (about half have no root) confirmed every refusal happens at
+that one line. And `fp12Zero` was exported, imported once and never called, so it went.
+
 ### Are the new tests load-bearing? Four canaries, three fired — 2026-08-24
 
 Coverage says a line **ran**. It does not say that removing the line would fail anything, and a driver's
