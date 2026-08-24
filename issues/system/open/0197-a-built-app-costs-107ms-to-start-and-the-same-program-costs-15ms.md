@@ -60,3 +60,41 @@ It is not box's alone. Every `*.test.ts` in this repository that builds a progra
 
 Found while measuring what was left of `issues/system/0193` after the conversions. The numbers above were
 taken back to back on one machine with the box otherwise quiet; `deno task test` was not running.
+
+## The first shape already exists, and it is 6-7× — agent-a, 2026-08-24
+
+This issue's first suggestion is *"what is missing is a way to run a built module — `wac exec
+prog.wasm [args…]`"*. It is not missing. **`wac app` writes exactly that**, and `wac app-run` is what
+the executable it writes then execs — both are in `spec/cli/wac.md`'s command list. Measured on this
+issue's own two cases, back to back, same machine, both producing identical output:
+
+| program | `wac app` | `build.ts --target deno` | artefact sizes |
+|---|---:|---:|---|
+| `hello.wac` | **11 ms** | 68 ms | 76 KB vs 255 KB |
+| `box echo hi` | **20 ms** | 139 ms | 756 KB vs 1.11 MB |
+
+So 6.2× and 7×, and the gap widens with the artefact exactly as this issue predicts for the Deno side —
+the native one is much flatter, because its wasm is a file the binary reads rather than a megabyte of
+JavaScript re-parsed per spawn.
+
+### So the work is not a new command
+
+`packages/platform/build.ts` — the builder every test calls — takes `Target = "deno" | "node" |
+"browser"`. There is no native target, so a test that wants the cheap start cannot ask its usual
+builder for one; it has to shell out to `wac app`. That is the gap, and it is a smaller and much better
+defined thing than "add `wac exec`":
+
+- give `build.ts` a `native` target that shells out to `wac app`, so `buildApp`'s callers change one
+  string rather than their shape; or
+- leave `build.ts` alone and convert the tests that do not need a JavaScript host to `wac app`
+  directly, which is `issues/system/0161`'s work anyway.
+
+Either way the 1 701 spawns in `packages/box` are the prize and the arithmetic in this issue stands.
+
+### One trap for whoever measures this next
+
+**A `wac app` executable needs `wac` on `PATH`** — it is a wrapper that execs `wac app-run`. Without it
+you get exit 127 and *"needs the wac command on PATH — deno task wac:install"*. A timing loop that
+throws output away reads that as **1 ms**, which is faster than anything real and looks like a
+spectacular result. It cost me one wrong number before I checked the exit status; the figures above are
+all from runs whose output was compared.
