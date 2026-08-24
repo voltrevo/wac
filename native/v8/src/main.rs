@@ -5485,9 +5485,23 @@ fn dispatch(
                         std::fs::metadata(&a).and_then(|md| {
                             let mut perm = md.permissions();
                             let mode = perm.mode();
-                            // **The owner-execute bit and nothing else**, which is what
-                            // `setExecutable` is: git's 100644 against its 100755.
-                            perm.set_mode(if on { mode | 0o100 } else { mode & !0o100 });
+                            // **Execute follows read, and clearing clears all three** — the rule the
+                            // other three hosts implement and this one did not. It said "the
+                            // owner-execute bit and nothing else, which is what `setExecutable` is:
+                            // git's 100644 against its 100755", and git's 100755 is `0755` on checkout,
+                            // not `0744`. Measured before the change: the same program setting the same
+                            // file gave **744** here and **755** under Deno.
+                            //
+                            // `chmod +x`'s rule is what `packages/platform/host/deno.ts` and `node.ts`
+                            // both carry with the reason — a file readable only by its owner becomes
+                            // executable only by its owner — and `native/src/main.rs`, the wasmtime
+                            // host, already had it. Clearing matters as much: `& !0o100` left group and
+                            // other executable, so a file could go non-executable to its owner alone.
+                            //
+                            // `issues/system/0132`, and `conformance_test.wac` named this as a gap:
+                            // "the arithmetic is duplicated three times and only the Deno copy is
+                            // exercised, so a wrong mask in the other two would not be caught here".
+                            perm.set_mode(if on { mode | ((mode & 0o444) >> 2) } else { mode & !0o111 });
                             std::fs::set_permissions(&a, perm)
                         })
                     }

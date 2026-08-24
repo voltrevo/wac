@@ -77,13 +77,18 @@ Cover[] coverage() {
     where("MKDIR", "native_hostfs: `mkdir d2; ls; rmdir d2`"),
     where("REMOVE", "native_hostfs: `rm made`"),
     where("RENAME", "native_hostfs: `mv f moved`"),
-    gap("SET_EXECUTABLE",
-      "no two-host comparison. The one caller is a git checkout, and its oracle is `git status` over " +
-      "a real repository — `packages/git/test/wac/checkout_test.wac` requires an executable to come " +
-      "out executable and the porcelain to be empty, which is a sharper check than two hosts agreeing " +
-      "but runs on one of them. Worth pairing when native_hostfs next grows a case: the arithmetic is " +
-      "duplicated three times (Deno, Node, Rust) and only the Deno copy is exercised, so a wrong mask " +
-      "in the other two would not be caught here. issues/system/0132"),
+    where("SET_EXECUTABLE",
+      "setexecutable: a program built for both hosts, run on a file whose starting mode the test pins " +
+      "with `chmod`, and the resulting mode compared — `setexecutable_test.wac`. **This entry was a " +
+      "gap and the gap was real.** It said the arithmetic is duplicated and only the Deno copy " +
+      "exercised, so a wrong mask elsewhere would not be caught; on 2026-08-24 the V8 native host was " +
+      "setting `mode | 0o100` and clearing `mode & !0o100` where the other three do " +
+      "`mode | ((mode & 0o444) >> 2)` and clear `0o111`. Measured 744 against 755, and 655 against " +
+      "644 on the way back. The capability's only other oracle, `checkout_test.wac`, passed " +
+      "throughout — git reads any execute bit as 100755 — which is why a sharper check on a " +
+      "neighbouring question is not coverage of this one. A shell case could not reach it: " +
+      "native_hostfs drives the hosts through scripts and there is no `chmod` applet. " +
+      "issues/system/0132"),
     where("EXEC_WITH",
       "native: one module built once and run by both native binaries — `native_test.wac`'s " +
       "`test_running_a_host_program_agrees_between_the_two_native_hosts`, which compares the three " +
