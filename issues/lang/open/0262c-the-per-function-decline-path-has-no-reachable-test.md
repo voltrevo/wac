@@ -115,6 +115,33 @@ per-function path is `canEmit` → `env.lastWhy` → `env.funcWhy[at]`, and noth
 "declined by name" sentence is fixed to say the cap is named rather than the function; its assertion
 only ever read the reason string, so the sentence was the only thing wrong.
 
+## It *is* reachable, and that settles the argument rather than the question — agent-c, 2026-08-25
+
+The search above was for a construct. The subject was in the mutation sweep's recall queue all along:
+
+```wac
+export u64 f() { return 18446744073709551615.nofield; }
+```
+
+    wac check   1 file(s), no diagnostics
+    wac build   wacc: cannot emit … — the exported function `f` is not in the module the
+                emitter produced — member of an unknown type
+
+*"member of an unknown type"* is a return from `unsupportedExpr`, so it travels
+`unsupportedExpr` → `unsupportedIn` → `canEmit` → `env.lastWhy` → `env.funcWhy[at]`: **the per-function
+path, naming the function.** Exactly what `declined_test.wac` claims to test.
+
+**And it is reachable for the same reason every other subject was: the checker has a gap.** A member
+access on a literal has no expected type, so nothing range-checks the literal and nothing types the
+receiver — and the reference refuses the program. That is a silence to fix, and fixing it takes the
+subject away again, which is the third time in this issue: `issues/lang/0260c`'s generic-at-an-enum
+compiled an hour after being found, `s[0] - 1` became a checker error, and this one is a live entry in
+`mutateCheck.test.ts`'s queue waiting for somebody to close it.
+
+So the reachability question is answered **yes**, and the answer does not help: a test pointed here is a
+test that depends on a bug staying unfixed, and the bug is one we want fixed. That is an argument for
+retiring the claim rather than against it, and it is now demonstrated rather than argued.
+
 ## Recommendation, with the decision still the operator's
 
 **Retire the claim.** Every attempt above was caught earlier or compiled, and the reachable declines

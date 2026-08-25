@@ -19,6 +19,30 @@
 // Recall is printed, per diagnostic, most-missed first. It is a queue rather than a threshold: a
 // number that must never fall makes every refactor a negotiation, and this package has traded recall
 // for the no-false-alarm invariant on purpose before.
+//
+// **"Missed" means the reference reported and we did not, which is two different things.** One is a gap
+// of ours. The other is the reference being wrong, and the `undefined type '…'` row is the second kind:
+// it is `issues/lang/0151`, whose whole subject is that the reference refuses an identity test the spec
+// allows — `g() is A` where `A` is a `const u64[]` in scope, covered by
+// `§wac-is-undefined-type-6qbn3wr`. That issue is filed as *not worth fixing* and says in its own title
+// that a sweep row cannot be closed because of it. This is the row.
+//
+// Worth knowing before working the queue, because nothing in the output distinguishes the two and the
+// obvious reading of a miss is that we owe a diagnostic. The check is to run the program: if wacc
+// compiles it and the answer is what the spec says, the row is theirs — for this one it does, the same
+// array *is* `A` and a different one with equal contents is not.
+//
+// The rest of the table is ours. `'…' of type '…' is not callable` is `issues/lang/0241a`. `integer
+// literal out of range` is
+//
+//     export u64 f() { return 18446744073709551615.nofield; }
+//
+// and it is a **member access on a literal**, so there is no expected type and `reportLiteral` — the
+// rule that would range-check it — is never asked. Still missed, and the emitter is what refuses the
+// program, naming the function: *member of an unknown type*. Reading this row is what found a
+// different silence in the same rule, where there *is* an expected type: `i32 b =
+// 18446744073709551615;` drew nothing, built, and returned -1, fixed 2026-08-25. So a row can be
+// worth working even when the row itself does not move.
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
