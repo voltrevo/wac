@@ -234,7 +234,19 @@ string[] WRONG() {
     "struct P { i32 v; } export i32 f() { return P.v; }",
     // Legal as a *value* and wrong in this *slot*, which is the reference's complaint too — it had no
     // type at all here until `staticMethodType` learned the unbound signature.
-    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f() { return P.m; }");
+    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f() { return P.m; }",
+    // **Two arguments that disagree about one type parameter.** The binder kept the first and dropped
+    // the rest, so `max<T>(T a, T b)` bound `T` to `i32` and the call had a type — leaving the only
+    // complaint to be about what the caller did with it. The spec's own program says `as! i32`, and
+    // wacc answered *"this cast is between one type and itself"*: a true sentence about a call that
+    // should not exist. Both sides report at the call now.
+    //
+    // **They report different rules there, and this list only compares positions.** The reference's
+    // `checkpos` route answers *"undefined function or struct 'max'"* — it does not resolve the
+    // template on that path, where `referenceCheck.ts` does and gives the clash. Same column either
+    // way, which is all this list asks; the *rule* is pinned in `illtyped_test.wac` instead.
+    "T max<T>(T a, T b) { return a > b ? a : b; }\n"
+      + "export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }");
 }
 
 /**

@@ -173,6 +173,16 @@ export i32 errMissingImportFile() { return 77; }
  * the help ("check the declaration for how many it takes") sent the reader to count them.
  */
 export i32 errInferType() { return 78; }
+
+/**
+ * Two arguments that imply different types for one type parameter — `max(anI32, anF64)`.
+ *
+ * **The binder kept the first and dropped the rest**, so `max<T>(T a, T b)` bound `T` to `i32` from
+ * the first argument and the second was not compared against it. The call then had a type, and the
+ * only complaint left was about whatever the caller did with it: `max(x, y) as! i32` was reported as
+ * a cast between one type and itself, which is a true sentence about a call that should not exist.
+ */
+export i32 errTypeParamClash() { return 79; }
 /** A generic that instantiates itself with a larger argument, so it never terminates. */
 export i32 errInfiniteGeneric() { return 53; }
 /** An enum method whose name is one of the enum's own variants: `E.A` would mean both. */
@@ -5229,6 +5239,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   if (n == 0) { return; }
   string[] names = string[n]();
   string[] bound = string[n]();
+  bool[] clashed = bool[n]();
   for (i32 i = 0; i < n; i++) {
     names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
     bound[i] = "";
@@ -5246,7 +5257,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     // `spec/cases/0085`.
     if (funcrefCall(c, args[i])) { continue; }
     string got = foundType(c, args[i]);
-    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound);
+    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound, clashed);
   }
   // **A funcref parameter is not judged.** `mapOption<T, U>(Option<T> o, fn[U(T)] f)` binds `U`
   // through the *shape* of a function type, and `bindTypeParams` decomposes arrays, nullables and
@@ -5290,6 +5301,15 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     if (litKindOf(args[i]) == litNull()) { continue; }
     if (funcrefCall(c, args[i])) { continue; }
     if (foundType(c, args[i]) == typeNone()) { return; }
+  }
+  // **Disagreement first**, because an unbound parameter and a contested one are different faults and
+  // the contested one is the more specific: `max(anI32, anF64)` binds `T` from the first argument, so
+  // it is bound, and the rule below would have nothing to say.
+  for (i32 t = 0; t < n; t++) {
+    if (!clashed[t]) { continue; }
+    c.reportWith(errTypeParamClash(), call.line, call.col,
+                 "the arguments do not agree on what " + names[t] + " is");
+    return;
   }
   for (i32 t = 0; t < n; t++) {
     if (bound[t] != "") { continue; }
@@ -6324,20 +6344,26 @@ string receiverType(C c, Expr obj) {
  * String against string, because in this checker a type *is* its canonical name and the written form
  * and the actual form are both one.
  */
-void bindTypeParams(C c, string written, string actual, string[] names, string[] bound) {
+void bindTypeParams(C c, string written, string actual, string[] names, string[] bound,
+                    bool[] clashed) {
   if (written == "" || actual == "" || written == typeNone() || actual == typeNone()) { return; }
   for (i32 i = 0; i < names.len(); i++) {
     if (names[i] == written) {
+      // **A second argument disagreeing is recorded, not dropped.** The first binding still wins so
+      // every rule downstream sees the type it saw before; what changes is that the disagreement is
+      // no longer invisible. Only `checkGenericInference` reads the flags — `genericCallReturn` asks
+      // what the call *returns* and must keep answering that for a call it is not judging.
       if (bound[i] == "") { bound[i] = actual; }
+      else if (bound[i] != actual && i < clashed.len()) { clashed[i] = true; }
       return;
     }
   }
   if (endsWith(written, "[]") && endsWith(actual, "[]")) {
-    bindTypeParams(c, dropLast(written, 2), dropLast(actual, 2), names, bound);
+    bindTypeParams(c, dropLast(written, 2), dropLast(actual, 2), names, bound, clashed);
     return;
   }
   if (endsWith(written, "?") && endsWith(actual, "?")) {
-    bindTypeParams(c, dropLast(written, 1), dropLast(actual, 1), names, bound);
+    bindTypeParams(c, dropLast(written, 1), dropLast(actual, 1), names, bound, clashed);
     return;
   }
   string wb = genericBase(written);
@@ -6345,7 +6371,9 @@ void bindTypeParams(C c, string written, string actual, string[] names, string[]
   string[] wargs = genericArgs(written);
   string[] aargs = genericArgs(actual);
   if (wargs.len() != aargs.len()) { return; }
-  for (i32 i = 0; i < wargs.len(); i++) { bindTypeParams(c, wargs[i], aargs[i], names, bound); }
+  for (i32 i = 0; i < wargs.len(); i++) {
+    bindTypeParams(c, wargs[i], aargs[i], names, bound, clashed);
+  }
 }
 
 /** A written type with the bound parameters put in, or unknown when any of them is still open. */
@@ -6395,9 +6423,19 @@ string genericCallReturn(C c, i32 at, Expr[] args) {
   }
   i32 count = c.funcParamCount[at];
   if (args.len() != count) { return typeNone(); }
+  bool[] clashed = bool[n]();
   for (i32 i = 0; i < count; i++) {
     string got = litKindOf(args[i]) != litNone() ? typeNone() : typeOfExpr(c, args[i]);
-    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound);
+    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound, clashed);
+  }
+  // **A contested parameter makes the call's type unknown**, which is what stops one fault becoming
+  // two diagnostics. `max(anI32, anF64)` bound `T` from the first argument, so the call still had a
+  // type and `max(x, y) as! i32` drew *"this cast is between one type and itself"* beside the real
+  // complaint — a true sentence about a call that should not exist. `checkGenericInference` reports
+  // the clash; this walk has to stop answering, or every rule downstream of the call speaks about a
+  // type nobody chose.
+  for (i32 i = 0; i < n; i++) {
+    if (clashed[i]) { return typeNone(); }
   }
   return applyBindings(c.funcReturns[at], names, bound);
 }

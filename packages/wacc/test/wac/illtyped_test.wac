@@ -614,6 +614,17 @@ export string test_an_uninferrable_type_parameter_is_not_an_arity_error() {
     t.eqI32(forever[0], 53, "the code — `errInfiniteGeneric`, not `errCallArity` (32)");
   }
 
+  // **A fourth, and the one that produced two diagnostics rather than a wrong one.** `max<T>(T a, T b)`
+  // called with an `i32` and an `f64`: the binder kept the first and dropped the rest, so `T` was
+  // `i32`, the call had a type, and `max(x, y) as! i32` drew *"this cast is between one type and
+  // itself"* — true of the type the call was given, about a call that should not exist. The clash is
+  // reported now *and* the call's type is unknown, which is what keeps it to one complaint.
+  i32[] clash = dumpTypeErrors(
+      ("T max<T>(T a, T b) { return a > b ? a : b; }\n"
+       + "export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }\n").toBytes());
+  t.eqI32(clash.len() / 3, 1, "one fault, and this many diagnostics");
+  if (clash.len() >= 3) { t.eqI32(clash[0], 79, "the code — `errTypeParamClash`"); }
+
   // And an inferrable call is silent, so none of these is met by refusing generics.
   i32[] fine = dumpTypeErrors("T id<T>(T a) { return a; }\nexport i32 f() { return id(1); }\n".toBytes());
   t.eqI32(fine.len() / 3, 0, "refused a call whose type argument is evident");
