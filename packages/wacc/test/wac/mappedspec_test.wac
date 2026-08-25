@@ -100,6 +100,70 @@ export string test_a_mapped_specifier_resolves_from_the_lock_and_the_cache(Core 
   return t.report();
 }
 
+/**
+ * **A mistake in a mapped dependency is reported, from a file that is not the entry.**
+ *
+ * The third import kind, and the matrix's last empty cell. Every test in this file asks whether a
+ * mapped specifier *resolves*; none asked whether the checker can then see anything wrong behind it,
+ * and that is the question `issues/lang/0175a` and `issues/lang/0267c` were both about for the other
+ * two kinds — a `@/` import whose names arrived as *unknown*, which this checker is silent about by
+ * design, so every rule about them went quiet and the emitter declined much later with no position.
+ *
+ * A mapping is keyed by the importing path as a **string** — `Res.mappedTo` compares
+ * `mapFrom[i] == from` — where `@/` goes through `rootAt`, which pairs `roots[i]` with `paths[i]`
+ * positionally and was reading the wrong slot. So this cell is expected to be green, and it is: the
+ * point of writing it is that nothing said so, and the next person to subset those arrays by index
+ * has no reason to think `mapFrom` is different from `roots` unless a test fails.
+ *
+ * `b.wac` rather than the entry, because that is the half that was broken next door.
+ */
+export string test_a_mistake_in_a_mapped_dependency_is_reported(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli, "mapped-badfield");
+  string home = dir + "-home";
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  string whyDir = madeDir(cli, dir);
+  t.isTrue(whyDir == "", whyDir);
+
+  t.isTrue(put(cli, dir + "/wac.json5",
+               "{\n  imports: {\n    \"dep/\": { git: \"" + REPO +
+               "\", ref: \"main\", subdir: \"src\" },\n  },\n}\n"), "the manifest");
+  // The entry reaches the mapping only through `b.wac`.
+  t.isTrue(put(cli, dir + "/src/main.wac",
+               "import { take } from \"./b.wac\";\nexport i32 main() { return take(); }\n"), "the entry");
+  t.isTrue(put(cli, dir + "/src/b.wac",
+               "import { Thing } from \"dep/lib.wac\";\n" +
+               "export i32 take() { Thing x = Thing.create(); return x.nofield; }\n"), "b");
+  t.isTrue(lockAt(cli, dir, COMMIT), "the lockfile");
+  t.isTrue(checkout(cli, home, COMMIT,
+                    "export struct Thing {\n  i32 v;\n" +
+                    "  Thing create() { return Thing(1); }\n}\n"), "the checkout");
+
+  Exec bad = wacc(cli, home, dir, "check", "src/main.wac");
+  t.isTrue(bad.ran(), "wac did not run — " + bad.error);
+  if (bad.ran()) {
+    string said = string.fromBytes(bad.stdout) + string.fromBytes(bad.stderr);
+    t.isTrue(contains(said, "no such field"),
+             "a field the mapped struct does not have was not reported — " + said);
+    t.isTrue(contains(said, "b.wac"), "the diagnostic does not name the file — " + said);
+  }
+
+  // The same program with the field it does have, so the above is not met by refusing the mapping.
+  t.isTrue(put(cli, dir + "/src/b.wac",
+               "import { Thing } from \"dep/lib.wac\";\n" +
+               "export i32 take() { Thing x = Thing.create(); return x.v; }\n"), "b, corrected");
+  Exec ok = wacc(cli, home, dir, "check", "src/main.wac");
+  t.isTrue(ok.ran(), "wac did not run — " + ok.error);
+  if (ok.ran()) {
+    t.eqI32(ok.status, 0, "refused a correct program: " +
+            string.fromBytes(ok.stdout) + string.fromBytes(ok.stderr));
+  }
+  cli.remove(dir, true).wait();
+  cli.remove(home, true).wait();
+  return t.report();
+}
+
 export string test_a_mapping_with_no_lock_entry_says_to_update(Core core, Cli cli) {
   // D10: an ordinary command does not fetch and does not invent a pin. The refusal has to name the
   // command that would fix it, or the reader is left with "cannot read dep/lib.wac" and no idea
