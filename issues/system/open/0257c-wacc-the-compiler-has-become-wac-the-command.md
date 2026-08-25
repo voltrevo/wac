@@ -238,6 +238,21 @@ invocations is where it lands.
 `issues/system/0258c` closed as a consequence rather than by being fixed — `boxsh.wac` is not compiled
 into anything shipped any more, so an `example/` directory is where it belongs.
 
-**What is left is the least-privilege half**, written up above: one program means one manifest, so
-`--allow-net` is now held by every `wac build`. `packages/wac/src/grants.wac` is the mechanism that
-buys it back and only `sh` uses it. Filing that separately rather than leaving it in here.
+**The least-privilege half is done too**, the same day. `forCommand` in
+`packages/wac/src/grants.wac` is the policy and `main` rebinds `cli` to the narrowed one as soon as
+the command is known, so every path below that line — the graph walk, the emitter's I/O, the cache,
+the test runner — sees only what the command needs rather than each having to remember:
+
+    check                    read, env                    no write, no net, no spawn
+    compile bindgen build    read, write, env             no net, no spawn
+    update                   read, write, env, net        the one command that reaches the network
+    sh                       whatever `--allow-*` asked   sealed by default
+    run test                 everything the program has
+
+`run` and `test` keep everything **on purpose**, and it is the one subtle entry: their flags grant
+the program they *start*, and a child cannot be handed what its parent does not hold — so narrowing
+them here would silently make `wac test --allow-net` unable to grant net.
+
+So an ordinary build is offline by construction again, which is what `design/lang/0009` D10 asks for,
+and it survived the two commands moving into one program rather than being a property of them being
+separate payloads.

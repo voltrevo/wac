@@ -64,7 +64,7 @@ import { fetchAll } from "../../wacpkg/src/fetch.wac";
 import { Shell } from "../../sh/src/exec.wac";
 import { shellMain } from "../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../box/src/shrun.wac";
-import { Asked, Parsed, askedFrom, narrowed } from "./grants.wac";
+import { Asked, Parsed, askedFrom, forCommand, narrowed } from "./grants.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
@@ -1032,7 +1032,7 @@ export i32 main(Core core, Cli cli) {
       core.warn("wac: neither WAC_HOME nor HOME is set, so there is nowhere to cache a fetch");
       return 2;
     }
-    return fetchAll(core, cli, dir, home);
+    return fetchAll(core, narrowed(cli, forCommand("update")), dir, home);
   }
 
 
@@ -1068,6 +1068,17 @@ export i32 main(Core core, Cli cli) {
     core.warn("wacc: unknown command '" + cmd + "' — check, compile, build, bindgen, run or test");
     return 2;
   }
+
+  // **The command narrows itself to what it needs.** `packages/wac/src/grants.wac` says why at
+  // length: unifying the commands unified their grants, so the seed is built with `--allow-net`
+  // because `wac update` clones, and every `wac check` was running inside a program that could open
+  // a socket. Rebinding `cli` here means every path below this line — the graph walk, the emitter's
+  // I/O, the cache, the test runner — sees only the narrowed one, rather than each having to
+  // remember.
+  //
+  // `run` and `test` are unchanged by this: their flags grant the program they *start*, and a child
+  // cannot be handed what its parent does not hold.
+  cli = narrowed(cli, forCommand(cmd));
 
   Fs fs = Fs.onHost(cli, 0);
 
