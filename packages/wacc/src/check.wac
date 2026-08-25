@@ -4113,11 +4113,6 @@ void checkExpr(C c, Expr e) {
     // asked about. Both land on the `is`, which is this node's own position.
     case Is(left, target, other, negated): {
       checkExpr(c, left);
-      // **A type test needs no payload** — `[§enum-is-qualified-8jkq4wp]`: `s is Shape.Circle(1.0)`
-      // is an error rather than silently false. The right of `is` parses as an expression when it is
-      // qualified, so a variant *construction* arrives here looking like an ordinary identity test
-      // against a freshly built value, which can never be identical to anything. Asked of the shape
-      // rather than of the type, because the construction is what is wrong. `spec/cases/0076`.
       if (!(other is null) && isVariantConstruction(c, other!)) {
         c.report(errOperandKind(), e.line, e.col);
       }
