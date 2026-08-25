@@ -102,7 +102,7 @@ would be about 30 s a run — which is the same order as the whole saving estima
 the other direction.
 
 **And the cache belongs on the wac side, not in the Rust.** `wac build` is
-`packages/wac/example/wac.wac` — it resolves the import graph itself and prints "N bytes from M
+`packages/wac/src/wac.wac` — it resolves the import graph itself and prints "N bytes from M
 file(s)" — so the artefact, the file set and the flags are all in hand there. What is *not* in hand is
 the identity of the compiler doing the compiling: the seed is embedded in the binary and a wac program
 cannot hash it. That is one small thing the host must supply — the seed's hash, as an environment
@@ -306,7 +306,7 @@ payload was not told which compiler is running it — got `(unset)`"*.
 
 ### And the shape of the cache itself, now that the ingredients are in hand
 
-Read out of `packages/wac/example/wac.wac` rather than guessed, because the first design was wrong in
+Read out of `packages/wac/src/wac.wac` rather than guessed, because the first design was wrong in
 a way worth recording.
 
 **Cache the bytes that get written, not the compiler's intermediates.** The obvious reading is to cache

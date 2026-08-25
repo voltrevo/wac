@@ -66,7 +66,7 @@ against **its own import closure** instead is the same answer for much less:
 | entry | files | entry only | naive loop | own closure |
 | --- | --- | --- | --- | --- |
 | `packages/wacc/src/api.wac` | 14 | 107ms | 0.9s | **0.31s** |
-| `packages/wac/example/wac.wac` | 26 | 56ms | 1.1s | **0.38s** |
+| `packages/wac/src/wac.wac` | 26 | 56ms | 1.1s | **0.38s** |
 | `packages/box/example/boxsh.wac` | 179 | 61ms | 9.9s | **1.6s** |
 
 Nothing is lost by narrowing: a file cannot be affected by a file it does not reach.

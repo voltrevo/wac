@@ -1,6 +1,6 @@
 // The compiler compiles itself, and doing it again changes nothing.
 //
-// `deno task seed` is `wac build packages/wac/example/wac.wac` followed by `cargo build`: the
+// `deno task seed` is `wac build packages/wac/src/wac.wac` followed by `cargo build`: the
 // binary compiling its own compiler, with no JavaScript host in the loop. That is only true while
 // wacc can build wacc, and only *useful* while the result is stable — a compiler that produced a
 // different compiler each time would still work and would make every artefact unreproducible.
@@ -28,7 +28,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { madeDir } from "../../../wactest/src/host.wac";
 
-const string ENTRY = "packages/wac/example/wac.wac";
+const string ENTRY = "packages/wac/src/wac.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {
@@ -86,7 +86,7 @@ string oneLine(string s) {
  * Its error, or "".
  *
  * **Flattened, because the interesting part was below the fold.** A gate on 2026-08-19 failed here with
- * `wac build exited 1: wac: packages/wac/example/wac.wac trapped` and nothing after it: the build's
+ * `wac build exited 1: wac: packages/wac/src/wac.wac trapped` and nothing after it: the build's
  * stderr was in the message all along, and the report shows a failure's first line. A trap the compiler
  * wrote a reason for is exactly what `issues/system/0203` needs the next time this happens.
  */

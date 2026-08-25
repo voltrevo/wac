@@ -32,7 +32,7 @@ import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { wacBinary } from "../../packages/wactest/src/built.wac";
 import { freshDir, putFile } from "../../packages/wactest/src/host.wac";
 
-const string WACC = "packages/wac/example/wac.wac";
+const string WACC = "packages/wac/src/wac.wac";
 
 /** One `wac build` of `entry` to `stem` under `home`, with one extra flag — `""` for none. */
 i32 buildWith(Cli cli, string home, string entry, string stem, string flag) {

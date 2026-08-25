@@ -504,7 +504,7 @@ rather than gaining a capability. That keeps the browser property and keeps the 
 rule (D7) with the code that knows where the boundary is.
 
 **The walk exists four times, and three of them read files.** `harness/wacFiles.ts`, the
-reference CLI's and `packages/wac/example/wac.wac` each queue a path, read it, ask for its
+reference CLI's and `packages/wac/src/wac.wac` each queue a path, read it, ask for its
 import specifiers and resolve them.
 
 *(2026-08-18: three times now, two of them reading files. The reference CLI went, the `wac`
@@ -524,7 +524,7 @@ before the mappings land rather than after.
 
 ## What `@/` actually costs, measured by trying it — 2026-08-17
 
-`@/` was wired into `packages/wac/example/wac.wac`'s `gather` and then **reverted**, because the
+`@/` was wired into `packages/wac/src/wac.wac`'s `gather` and then **reverted**, because the
 attempt found the real cost and it is larger than the split described above.
 
 The wiring itself is small and worked: `gather` finds the nearest `wac.json5` by walking up from
@@ -627,7 +627,7 @@ so `roots` is a field in it and no call site changes at all.
 
 Three places resolve a specifier inside wacc:
 
-- `packages/wac/example/wac.wac`'s `gather` — the reader, and the only one with a filesystem, so
+- `packages/wac/src/wac.wac`'s `gather` — the reader, and the only one with a filesystem, so
   it is where the upward search for `wac.json5` happens and where the roots are *computed*.
 - `packages/wacc/src/api.wac`'s `closureOf` — the checker's per-file closure, which resolves each
   file's imports to decide what to check it against.

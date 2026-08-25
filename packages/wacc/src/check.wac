@@ -201,7 +201,7 @@ export i32 errElseUnreachable() { return 60; }
  * A code of its own rather than `errDuplicateCase`, whose message names a *variant* — an `else` is not
  * one, and the reference keeps them apart too (`duplicate else arm`). Before this the checker said
  * nothing and the build **trapped**: `array element access out of bounds`, then a null dereference,
- * naming `packages/wac/example/wac.wac` rather than the program. `issues/lang/0239a`.
+ * naming `packages/wac/src/wac.wac` rather than the program. `issues/lang/0239a`.
  */
 export i32 errDuplicateElse() { return 204; }
 /** A `case` that binds one name twice, where the later binding silently won. `issues/lang/0239a`. */

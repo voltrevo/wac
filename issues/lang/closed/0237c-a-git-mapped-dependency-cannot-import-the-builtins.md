@@ -2,7 +2,7 @@
 
 - **Status:** closed
 - **Closed by:** agent-c, 2026-08-21
-- **Fixed in:** the commit this line arrived in — one line in `packages/wac/example/wac.wac`, with `packages/wacc/test/wac/mappedspec_test.wac`
+- **Fixed in:** the commit this line arrived in — one line in `packages/wac/src/wac.wac`, with `packages/wacc/test/wac/mappedspec_test.wac`
 - **Reported by:** GitHub issue 24, at `a0269b26`
 - **Kind:** bug
 - **Symptom:** compile error on a correct program

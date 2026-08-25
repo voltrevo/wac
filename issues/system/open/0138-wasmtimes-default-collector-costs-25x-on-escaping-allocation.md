@@ -16,7 +16,7 @@ deno     run 1:  1.01s
 deno     run 2:  1.16s
 ```
 
-`packages/wac/example/wac.wac` compiling `packages/wacc/src/api.wac` — wacc compiling wacc, 11
+`packages/wac/src/wac.wac` compiling `packages/wacc/src/api.wac` — wacc compiling wacc, 11
 files, 314,493 bytes out. **Both produce byte-identical output**, so this is speed and nothing else.
 
 ## It is execution, not startup

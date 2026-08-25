@@ -94,5 +94,5 @@ starting rather than after.
 
 1. Correct the two wrong sentences first — they are pushed and they mislead. (Cheap, no build.)
 2. Move the command's code out of the example into modules something can import.
-3. Add `packages/wac/example/wac.wac` and repoint the build at it, one consumer at a time.
+3. Add `packages/wac/src/wac.wac` and repoint the build at it, one consumer at a time.
 4. `sh` and `update` join it, which is the thing the operator asked for and the reason the rest matters.

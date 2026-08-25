@@ -8,7 +8,7 @@
 // flag accepted and ignored is the first of those, handed to a caller who asked for it by name.
 //
 // What let it last was not the flag. `test` is one of the two subcommands implemented **twice** — in
-// `native/v8/src/main.rs` and again in `packages/wac/example/wac.wac` — and
+// `native/v8/src/main.rs` and again in `packages/wac/src/wac.wac` — and
 // `packages/wacc/test/wac/commandparity_test.wac` is the instrument that holds the two together. No
 // row passed `--verbose`, so the instrument never looked at it. This checks that every flag the wac
 // side accepts is one some row supplies.
@@ -36,7 +36,7 @@ import { Vec } from "core/vec.wac";
  * flags `test` accepts — got 0" rather than passing. That assertion is why this file names two paths
  * instead of chasing one.
  */
-const string CLI = "packages/wac/example/wac.wac";
+const string CLI = "packages/wac/src/wac.wac";
 const string CMD_DIR = "packages/wac/src";
 const string PARITY = "packages/wacc/test/wac/commandparity_test.wac";
 

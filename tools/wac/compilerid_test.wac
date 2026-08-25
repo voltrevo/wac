@@ -15,7 +15,7 @@
 // **Why an environment variable and not a new host function.** Reading it needs the `env` grant, which
 // the compiler already holds — it reads `$WAC_HOME` through the same door. A host function would have
 // to be implemented in every host (native, Deno, browser) for a value that is information rather than
-// authority, and `packages/wac/example/wac.wac` is the only caller in sight.
+// authority, and `packages/wac/src/wac.wac` is the only caller in sight.
 //
 // **The caller can override it**, which is not a hole but the point: a test that wants to force a
 // cache miss says so, and the override is how the future cache gets tested at all.

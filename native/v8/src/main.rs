@@ -1919,12 +1919,12 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     // **An unknown flag is named, rather than becoming the entry.** The loop above stops at the first
     // argument it does not recognise, so `wac run --nonsense p.wac` made `--nonsense` the entry and
     // fell through to the top-level usage block — four commands' worth of flags, in answer to one
-    // misspelling. The wac program in `packages/wac/example/wac.wac` says this sentence, and the two
+    // misspelling. The wac program in `packages/wac/src/wac.wac` says this sentence, and the two
     // have to agree while both exist: `commandparity_test.wac` is what checks that. `issues/system/0230a`.
     if rest[i].starts_with("--") {
         // `--filter` is `test`'s and not `run`'s — the loop above says so in its own words — so the
         // list a reader is given is the one for the command they typed. The wac program in
-        // `packages/wac/example/wac.wac` prints the same sentence and
+        // `packages/wac/src/wac.wac` prints the same sentence and
         // `commandparity_test.wac` compares them.
         let tail = if entry_point == Entry::Tests { ", --filter" } else { "" };
         eprintln!(

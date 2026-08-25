@@ -14,7 +14,7 @@
 // **`manifestWhy` was twenty-three of them** — an uncovered *entry*, and its eleven rows with it. It
 // turns a refusal code into a sentence, and it exists because `wacc` used to print `m.detail` alone:
 // *`wac.json5` is not usable: std/\** names the mapping and not the complaint. Its only caller is
-// `packages/wac/example/wac.wac`, so nothing in this package had ever called it.
+// `packages/wac/src/wac.wac`, so nothing in this package had ever called it.
 //
 // That is the **fourth** export `issues/system/0205` has found tested only through a consumer in
 // another package, after `packages/regex`'s two ignore-case compilers, `packages/http`'s `Outgoing`

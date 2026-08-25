@@ -75,7 +75,7 @@ export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) 
   i32 nRejected = 0;
 
   // **One front end per entry, which is what `buildFiles` exists for** — `issues/lang/0129`, and the
-  // same call `packages/wac/example/wac.wac` makes for a real build. This loop used to ask four
+  // same call `packages/wac/src/wac.wac` makes for a real build. This loop used to ask four
   // times over: `emitFilesSelfDescribing` is an emit plus `manifestFiles`, which builds
   // `bindTypesLinked` and `exportSigsLinked` as two more, and `blockedFiles` below was a fourth. The
   // blocked answer is the first field of the description this already has.

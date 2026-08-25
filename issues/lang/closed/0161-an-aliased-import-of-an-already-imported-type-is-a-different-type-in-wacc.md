@@ -160,7 +160,7 @@ this and the guard costs nothing.
 
 *(The scan behind that guard first reported **138** double imports, from matching the six letters of
 `import` anywhere — inside `important`, inside strings holding programs, and inside
-`packages/wac/example/wac.wac` where the quote pairing then read `""` as a module path. Requiring
+`packages/wac/src/wac.wac` where the quote pairing then read `""` as a module path. Requiring
 the word at the start of a line with `{` after it is the whole fix. Third time this class of mistake
 has cost a wrong count today — see `issues/system/0220`.)*
 

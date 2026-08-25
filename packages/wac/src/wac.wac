@@ -46,9 +46,9 @@ import { Built } from "../../wacc/src/emit.wac";
 import { cellAt, cells, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
 import { grantAfterEntry, grantsBefore, programArgs, relay, runModule, unknownFlagBefore }
-         from "../src/runprog.wac";
+         from "./runprog.wac";
 import { aggregatePath, aggregateSource, flagValue, importable, runTests, sigsWithCounters,
-         testFilesIn, unknownTestFlag, withoutIgnored } from "../src/testrun.wac";
+         testFilesIn, unknownTestFlag, withoutIgnored } from "./testrun.wac";
 import { renderDiagnostics } from "../../wacc/src/render.wac";
 import { importSpecs, normalisePath, resolveFrom, resolveFromAt, resolveFromIn } from "../../wacc/src/files.wac";
 import { Res } from "../../wacc/src/path.wac";
