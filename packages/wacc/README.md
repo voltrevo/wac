@@ -248,15 +248,25 @@ a variant construction at all.
 reference's bindgen metadata, so what is under test is the emitter and nothing else.
 `packages/wacc/tools/runOnWacc.ts` runs every package that way and counts:
 
-    34 of 34 packages pass their own suite on wacc-emitted code (1,663 tests)
+    6 of 38 packages pass their own suite on wacc-emitted code (233 tests)
+
+**That figure read `34 of 34 … (1,663 tests)` until 2026-08-25, and the packages did not regress.**
+`runOnWacc.ts` runs `deno test`, which finds `*.test.ts`; `issues/system/0161` has been moving the
+suite to `*_test.wac`, and **32 of 39 packages now have no `.test.ts` at all**, so the sweep cannot
+see them. None of the 32 is reported wrong — each is `0 passed` with no cause but an empty search.
+The number above is what this tool can still measure, and it shrinks as the migration finishes.
+`issues/system/0267c` holds the decision about what should replace it, because a `*_test.wac` is
+compiled by wacc by construction: for those packages "passes on wacc-emitted code" is not a claim
+that can fail.
 
 **And `WAC_BIND_FROM=wacc` swaps the rest** — wacc's `exportSigsFiles` and `bindTypesFiles` for the
 description of the interface, `packages/wacc/tools/waccBindgen.ts` for the generator. The same sweep
 under it reads the same:
 
-    34 of 34 packages pass their own suite on wacc-emitted code (1,663 tests)
+    6 of 38 packages pass their own suite on wacc-emitted code (233 tests)
 
-**That is priority 3 met without the reference in the room.** Every package in the repository stands
+**That is priority 3 met without the reference in the room** — over the six packages this sweep can
+still reach, which is the caveat the paragraph above is about rather than a change in what passes. Every package in the repository stands
 up on wacc's code, called through glue wacc described and wacc generated. The reference compiles
 wacc, and nothing else here.
 

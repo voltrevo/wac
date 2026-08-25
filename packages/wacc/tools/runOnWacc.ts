@@ -32,7 +32,13 @@ const rows: Row[] = [];
 for (const pkg of packages) {
   if (only.size > 0 && !only.has(pkg)) continue;
   const run = await new Deno.Command(Deno.execPath(), {
-    args: ["test", "-A", "--no-check", `packages/${pkg}/test`],
+    // **`--unstable-net` or three of `platform`'s tests fail with `Deno.listenDatagram is not a
+    // function`** — a missing API rather than a missing flag, which is what makes it cost a day. This
+    // sweep reported `platform` as *a wrong answer or a trap* on 105 tests that pass; with the flag
+    // it is 105 of 105. `deno task test` passes it for exactly this reason, and
+    // `issues/system/0005` is the same omission in `tools/mutate.ts`, where it quietly stopped
+    // measuring whole packages. It costs nothing on a package that does not need it.
+    args: ["test", "-A", "--no-check", "--unstable-net", `packages/${pkg}/test`],
     // **Extending the environment, not replacing it.** `Deno.Command`'s `env` is the whole
     // environment, so passing one variable ran every package with nothing else set — and tests that
     // gate on an environment variable then chose differently. `http` reported 29 passing here and
