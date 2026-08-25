@@ -110,7 +110,15 @@ string[] WRONG() {
     // reason and cannot say whether the range rule spoke.
     "export i32 f() { i32 b = 18446744073709551615; return b; }",
     "export u32 f() { u32 b = 18446744073709551615; return b; }",
-    "export i32 f() { i32 b = -18446744073709551615; return b; }");
+    "export i32 f() { i32 b = -18446744073709551615; return b; }",
+    // **Ten digits is not the same as "does not fit".** With no expected type an integer literal falls
+    // back to its own notation, and `naturalTypeOf` called one an `i32` only when it had fewer than ten
+    // digits — certain, and conservative by a wide margin: `1000000000` is an `i32` and
+    // `999999999.nofield` was reported while `1000000000.nofield` drew nothing at all. The reference
+    // walks a ladder — `i32` if it fits, else `i64`, else out of range — and these are the two rungs
+    // below the top.
+    "export u64 f() { return 1000000000.nofield; }",
+    "export u64 f() { return 2147483648.nofield; }");
 }
 
 /**

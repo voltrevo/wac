@@ -3490,6 +3490,27 @@ bool breaksOutOf(Stmt s) {
  * Used only to answer "is this certainly an `i32`", so it counts rather than parses: this checker
  * has no integer parser and does not need one to know that twenty digits is not an `i32`.
  */
+/**
+ * The digits of a **positive plain-decimal** integer literal, or `""`.
+ *
+ * `decimalExceeds` compares digit strings and answers *false* for anything holding a non-digit, so a
+ * based literal reaching it would read as "does not exceed" — which is why this returns nothing for
+ * one rather than letting the caller find out. Empty for a negated literal too: the sign is a separate
+ * node and the bounds differ by one on the signed rungs, so a caller that cannot account for it should
+ * not be handed the digits. `literalDigits` already refuses a based literal by returning 0, and this
+ * is deliberately a second refusal rather than a shared one — the two answer different questions and
+ * sharing a helper is how the underscore rule would come to differ between them.
+ */
+string decimalLiteralText(C c, Expr e) {
+  match (e.kind) {
+    case IntLit(tok): {
+      string t = tokenText(c, tok);
+      return isHexText(t) ? "" : t;
+    }
+    else: { return ""; }
+  }
+}
+
 i32 literalDigits(C c, Expr e) {
   match (e.kind) {
     case IntLit(tok): {
@@ -3543,7 +3564,25 @@ string naturalTypeOf(C c, Expr e) {
     // about a type the program never had, where the reference reports the literal being out of range
     // and stops. Ten digits is the boundary and nine is the one that is certain; a based literal
     // counts as unknown, which is the safe direction.
-    return literalDigits(c, e) > 0 && literalDigits(c, e) < 10 ? "i32" : typeNone();
+    i32 digits = literalDigits(c, e);
+    if (digits <= 0) { return typeNone(); }
+    if (digits < 10) { return "i32"; }
+    // **Ten digits is not the same as "does not fit", and the digit count was standing in for the
+    // question.** `1000000000` has ten and is an `i32`; asking the count answered unknown, and unknown
+    // is silent, so `1000000000.nofield` drew nothing while `999999999.nofield` was reported. The
+    // reference walks a ladder here — `i32` if the value fits, else `i64`, else *integer literal out of
+    // range* — and `decimalExceeds` is the same digit comparison `integerLiteralFits` uses for the
+    // 64-bit bounds, so asking it is exact rather than a wider guess.
+    //
+    // **A negated literal keeps the old answer.** Its bound is one larger on the `i32` rung — `i64`
+    // for `-2147483648` would be wrong where unknown is merely unhelpful — and the sign is a separate
+    // node, so the text here cannot see it. Left alone rather than approximated: this widening is meant
+    // to add answers where they are certain and not to move any that already existed.
+    string txt = decimalLiteralText(c, e);
+    if (txt == "") { return typeNone(); }
+    if (!decimalExceeds(txt, "2147483647")) { return "i32"; }
+    if (!decimalExceeds(txt, "9223372036854775807")) { return "i64"; }
+    return typeNone();
   }
   if (lk == litFloat()) { return "f64"; }
   if (lk == litBool()) { return "bool"; }
