@@ -143,7 +143,12 @@ string[] WRONG() {
     // `§wac-nonnull-isnull-k8fn3wp` makes such a test *legal and always false*, which is why wacc says
     // it with a **warning** — extended to funcrefs now, since it was silent on them where it warned on
     // a struct. A warning is not an error, so the row does not move, and it should not.
-    "export void f(bool a, bool b) { a += b; }");
+    "export void f(bool a, bool b) { a += b; }",
+    // **An enum variant's payload**, the eleventh slot and the one the first enumeration missed:
+    // that list came from `nullableIntoNonNull`'s existing callers plus the sweep's queue, and a
+    // payload is in neither. Grepping every `!assignable(c,` in `check.wac` and asking which had
+    // the nullability branch within six lines is what found it — nine had it and eight did not.
+    "struct P { i32 x; } enum E { None, Some(P v) } export void f(P? a) { E e = E.Some(a); }");
 }
 
 /**
