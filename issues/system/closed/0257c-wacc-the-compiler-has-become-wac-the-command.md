@@ -373,12 +373,26 @@ path-split detection rather than printing one, and `counters.wac` gives it both 
 
 ## Closed: the table is empty — 2026-08-25
 
-`ctcompare` was the last row, and it moved with the other two. What the host kept and what it gave up:
+`ctcompare` was the last of the three counter commands, and it moved with the other two.
+
+**Correction, written the same day: the table was not empty, and `test` is the row I got wrong.**
 
     wac prog.wasm, the instantiate half of run   stays — running a module is the engine's job
     validate                                     stays — it answers whether *this engine* accepts a
                                                  module, so three answers is it working
-    test covdump tracestat ctcompare sh update   moved
+    covdump tracestat ctcompare sh update        moved
+    test                                         **still implemented twice** — see below
+    uninstall app app-run                        still the host's, and never examined here
+
+`native/v8/src/main.rs` has a complete `test_command`: 441 lines of discovery, flag walking and
+aggregation, plus `collect_tests`, `write_aggregate`, `test_module_key`, `build_and_call` and
+`closure_of` behind it. It intercepts `test` before the fall-through, so on the native binary the
+program's `wac test` never runs — the three hosts agree because the Rust one was *made* to agree, which
+is the arrangement rather than evidence about it.
+
+That is the largest remaining violation of the rule this issue exists to state, and `issues/system/0264c`
+carries it with the one capability that blocks the deletion: `--coverage` over a *directory*, which the
+program's `test` does not do yet.
 
 **And 206 lines of the host went with it.** `counters_of` was a second engine driver — compile,
 instantiate with no imports, `__cov_init`, `main` in a `TryCatch`, read `__cov_len`/`__cov_get` — the

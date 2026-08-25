@@ -57,7 +57,7 @@
 // ## What it costs, measured 2026-08-25
 //
 // **56s wall and 57.6s of CPU, warm**, taken from a suite run rather than by hand — up from 2–3s, for
-// three hosts instead of two and forty-one cases instead of six. (The wall figure is older than the
+// three hosts instead of two and forty-two cases instead of six. (The wall figure is older than the
 // count: since the command became one program containing the shell and the fetcher it is 83.7s wall
 // and 97.4s of CPU, because each host now builds a 219-file program rather than a 44-file one.) Twenty-eight of them run
 // something — fifteen `test`, eight `run` and five naming a module directly — where five `check` and
@@ -285,6 +285,10 @@ string[][] cases() {
     // implementations' worth of question, and `issues/system/0242c` is what happens when nobody asks
     // it. One program, run both ways, reporting what it was allowed to do.
     string[]("run", "--allow-read", "--allow-write", "src/caps.wac"),
+    // **The environment granted to a `run`**, which was excused in `testflagrows_test.wac` until
+    // `issues/system/0256c` closed. The row above reports it as `unset` because it was not granted;
+    // this one reports `ok`, and the two together are what makes the first one mean something.
+    string[]("run", "--allow-read", "--allow-env", "src/caps.wac"),
     string[]("run", "src/caps.wac"),
     // **A directory, which is a different command underneath.** One aggregate module for the whole
     // walk (`issues/system/0192`), a block per file, and a summary whose buckets are the interesting
@@ -413,7 +417,19 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            + "  string read = f.ok ? \"ok\" : (f.fault == FAULT_NOT_GRANTED() ? \"denied\" : \"failed\");\n"
            + "  Change w = cli.writeFile(\"caps.txt\", \"x\\n\".toBytes()).wait();\n"
            + "  string write = w.ok() ? \"ok\" : (w.fault == FAULT_NOT_GRANTED() ? \"denied\" : \"failed\");\n"
-           + "  core.log(\"read=\" + read + \" write=\" + write);\n"
+           // **And the environment, beside the two this already reported.** The row that wanted this
+           // was excused in `tools/wac/testflagrows_test.wac` while `issues/system/0256c` was open —
+           // a *denied* `env` answered null on the native hosts and trapped on the JavaScript ones, so
+           // a row without the grant disagreed by host. That is fixed, and the excuse said in as many
+           // words what to add when it closed: "a `caps` fixture reporting the environment beside the
+           // two capabilities it already reports".
+           //
+           // `PATH` rather than something of ours: it is set in every environment this runs in, so
+           // `unset` here means the capability was withheld rather than that the variable was absent —
+           // which is the distinction `issues/system/0261c` is about the type being unable to make.
+           + "  u8[]? e = cli.env(\"PATH\").wait();\n"
+           + "  string env = e is null ? \"unset\" : \"ok\";\n"
+           + "  core.log(\"read=\" + read + \" write=\" + write + \" env=\" + env);\n"
            + "  return 0;\n}\n")
     && put(t, cli, dir + "/capsrc/env_test.wac",
            "import { Cli, Core } from \"std/platform.wac\";\n"
@@ -527,7 +543,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // returns 0, and the three modules run directly.
   // **Fifteen since 2026-08-25**: `tracestat traced.wasm` reads a journal and exits 0, and the second
   // `tracestat` row is a diagnosis about a file that is not a module, so it does not.
-  t.eqI32(zeroes, 18, "eighteen of these forty-one succeed on the native host; a different count " +
+  t.eqI32(zeroes, 19, "nineteen of these forty-two succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success
