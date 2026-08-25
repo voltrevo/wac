@@ -5313,7 +5313,20 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   }
   for (i32 t = 0; t < n; t++) {
     if (bound[t] != "") { continue; }
-    c.reportWith(errInferType(), call.line, call.col,
+    // **At the argument that should have said it**, which is what the reference names and is the one
+    // the reader has to change — `unbox(p)` for a `Box<T>` parameter is wrong at `p`, not at `unbox`.
+    // The first parameter mentioning this type parameter is the one: a later one would be a second
+    // chance to bind it, and there is no first chance to point at if none mentions it, so the call
+    // stands in.
+    i32 line = call.line;
+    i32 col = call.col;
+    for (i32 i = 0; i < args.len() && i < c.funcParamCount[at]; i++) {
+      if (!mentionsTypeParam(c.funcParamTypes[c.funcParamAt[at] + i], names[t])) { continue; }
+      line = args[i].line;
+      col = args[i].col;
+      break;
+    }
+    c.reportWith(errInferType(), line, col,
                  "nothing in the call says what " + names[t] + " is");
     return;
   }
@@ -6344,6 +6357,26 @@ string receiverType(C c, Expr obj) {
  * String against string, because in this checker a type *is* its canonical name and the written form
  * and the actual form are both one.
  */
+/**
+ * Whether a written parameter type is one that could have said what `name` is.
+ *
+ * Decomposed the same way `bindTypeParams` decomposes — arrays, nullables and generic arguments —
+ * because the question is exactly its mirror: which parameter *would* have bound this. A substring
+ * test would answer yes for a type called `Tx`.
+ */
+bool mentionsTypeParam(string written, string name) {
+  if (written == "" || name == "") { return false; }
+  if (written == name) { return true; }
+  if (endsWith(written, "[]")) { return mentionsTypeParam(dropLast(written, 2), name); }
+  if (endsWith(written, "?")) { return mentionsTypeParam(dropLast(written, 1), name); }
+  if (genericBase(written) == "") { return false; }
+  string[] wargs = genericArgs(written);
+  for (i32 i = 0; i < wargs.len(); i++) {
+    if (mentionsTypeParam(wargs[i], name)) { return true; }
+  }
+  return false;
+}
+
 void bindTypeParams(C c, string written, string actual, string[] names, string[] bound,
                     bool[] clashed) {
   if (written == "" || actual == "" || written == typeNone() || actual == typeNone()) { return; }
