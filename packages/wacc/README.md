@@ -206,11 +206,15 @@ hand-written cases a working corpus cannot contain: unterminated everything, eve
 precedence level, `else if` chains, trailing commas, a nested `>>>` close, and the comparisons that
 must *not* be read as type arguments.
 
-**Rung 3 now meets the spec.** 303 of the 304 single-file programs the suite calls illegal are
-refused and all 367 it calls legal are silent; across files it is 15 of 15 and 41 of 41; `spec/cases`
-is 111 of 111 with no named misses on either side. The one program left is a *multi-file* case the
-recorder kept one file of — `main.wac` importing from a `b.wac` nobody supplied — so refusing it
-would mean refusing every import.
+**Rung 3 now meets the spec**, and the figures are in the table above rather than repeated here.
+`test/wac/specsingle_test.wac` and `specmulti_test.wac` print the single- and multi-file counts;
+`test/wac/cases_test.wac` prints `spec/cases`, which is **225 of 225 met by wacc**.
+
+This paragraph carried its own copy of those numbers until 2026-08-25 — `303 of 304`, `367`, `41 of
+41`, and `spec/cases is 111 of 111` — every one of them stale, and the last by a factor of two. The
+table row had already been corrected and even says what it used to read; this sentence, four screens
+down, said the old thing. **Two places quoting one measurement is one place too many**, so what is
+left here names the printers and stops.
 
 Fifteen rules closed in one pass, each written as a case first: `const` initialisers that are not
 constant, packed nullables below the outermost `[]`, writing a narrowed name inside its own branch,
