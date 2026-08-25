@@ -195,7 +195,26 @@ string[] WRONG() {
     "struct P { i32 v; } export i32 f() { return P.nope(); }",
     "export void f(string s) { s[0] = \"a\"; }",
     "struct N { i32 v; N next; } export i32 f(N n) { return n.v; }",
-    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f(P p) { i32 x = p.m; return x; }");
+    "struct P { i32 v; i32 m(this) { return 1; } } export i32 f(P p) { i32 x = p.m; return x; }",
+    // **Three rules that no generated program reaches**, added by walking the diagnostic codes rather
+    // than the generator: of 84 codes the sweeps exercise 60, and a code this list never carries is a
+    // code whose *position* nothing compares.
+    //
+    // Two of these agreed on the first run and are here to stay that way. The third did not, and
+    // finding it is why the walk was worth doing — see the `else` case below.
+    //
+    // Two more that the walk turned up are *not* here, and the reason is about this list rather than
+    // about them: the reference refuses a duplicate method and a second `default:` while **parsing**,
+    // so its checker — which is all this list compares against — says nothing, and adding them here
+    // asserts that we invent a diagnostic. They are asserted directly in `illtyped_test.wac`, which is
+    // also where the same split put a character literal.
+    "export i32 f() { u8 b = 1; return b as i32; }",
+    "export void f() { return 1; }",
+    // The one that disagreed: this reported at the match's *subject*, and the reference reports at
+    // the second `else` — a position we had no reason to prefer and one the reader cannot act on.
+    "enum E { A, B }\n"
+      + "export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } else: { return 3; } }"
+      + " return 0; }");
 }
 
 /**

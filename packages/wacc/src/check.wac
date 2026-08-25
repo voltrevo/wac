@@ -8998,10 +8998,25 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
   // invisible here and reached the emitter, which indexed past the end of an array and trapped the
   // compiler. One `else` is the ordinary case and builds; two is a program nobody writes on purpose and
   // is refused now. `issues/lang/0239a`.
+  // **At the second `else`, not at the subject.** This reported the match's subject, which is a
+  // position the reference does not have — it names the offending keyword, and so should we: a second
+  // `else` is wrong *where it is written*, and pointing at `(e)` sends the reader to the one part of
+  // the statement that is fine. `Arm.elseTok` exists precisely because the keyword's token was once
+  // not kept (`issues/lang/0148`), so it is there to be used.
   i32 elseCount = 0;
-  for (i32 i = 0; i < arms.len(); i++) { if (arms[i].variantTok < 0) { elseCount = elseCount + 1; } }
+  i32 secondElse = -1;
+  for (i32 i = 0; i < arms.len(); i++) {
+    if (arms[i].variantTok >= 0) { continue; }
+    elseCount = elseCount + 1;
+    if (elseCount == 2) { secondElse = arms[i].elseTok; }
+  }
   bool hasElse = elseCount > 0;
-  if (elseCount > 1) { c.report(errDuplicateElse(), subject.line, subject.col); }
+  if (elseCount > 1) {
+    // The subject is the fallback for an else arm that somehow kept no token, rather than a report
+    // this rule can silently lose.
+    if (secondElse >= 0) { c.reportTok(errDuplicateElse(), secondElse, ""); }
+    else { c.report(errDuplicateElse(), subject.line, subject.col); }
+  }
 
   if (!hasElse && covered < total) {
     c.report(errMatchInexhaustive(), subject.line, subject.col);

@@ -386,6 +386,103 @@ export string test_a_bitwise_operator_on_mismatched_operands_reports_once() {
   return t.report();
 }
 
+/**
+ * **Two duplicate-declaration rules, reported where the duplicate is written.**
+ *
+ * Both came out of walking the diagnostic codes for ones no generated program reaches, and comparing
+ * their positions against the reference. `errDuplicateElse` reported at the match's *subject* — the
+ * one part of the statement that is fine — and now reports at the second `else`, agreeing with the
+ * reference; `packages/wacc/test/wac/typecheck_test.wac`'s `WRONG()` carries that case and is what
+ * keeps it agreeing.
+ *
+ * **`errDuplicateBinding` is deliberately not in that list, and this test is why.** We point at the
+ * second `v`; the reference points at `case`, ten columns earlier. That is a real divergence and the
+ * reference is the oracle, but it is the oracle for *whether* a program is wrong rather than for
+ * where the reader should look, and "the duplicate binding" is a better answer than "the arm". So
+ * the position is asserted here instead — the same arrangement, and for the same reason, as the
+ * nullable-array case in `typecheck_test.wac`.
+ *
+ * The columns are derived from the source rather than written down, because a magic column number is
+ * a test that stops meaning anything the first time the program is reworded.
+ */
+export string test_a_duplicate_binding_and_a_duplicate_else_report_at_the_duplicate() {
+  T t = T.create();
+
+  string bindHead = "enum E { A(i32 x, i32 y), B } export i32 f(E e) { match (e) { case A(v, ";
+  string bindSrc = bindHead + "v): { return v; } else: { return 0; } } return 0; }\n";
+  i32[] bind = dumpTypeErrors(bindSrc.toBytes());
+  t.eqI32(bind.len() / 3, 1, "one duplicate binding, and this many diagnostics");
+  if (bind.len() >= 3) {
+    t.eqI32(bind[2], bindHead.len() + 1,
+            "the duplicate binding is reported away from the second `v`");
+  }
+
+  string elseHead =
+      "enum E { A, B } export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } ";
+  string elseSrc = elseHead + "else: { return 3; } } return 0; }\n";
+  i32[] dup = dumpTypeErrors(elseSrc.toBytes());
+  t.isTrue(dup.len() >= 3, "a second `else` drew nothing at all");
+  if (dup.len() >= 3) {
+    t.eqI32(dup[2], elseHead.len() + 1, "the second `else` is reported away from the `else`");
+  }
+
+  // And one `else` is not a duplicate, so that neither of the above is satisfied by refusing `else`.
+  i32 fine = dumpTypeErrors(
+      ("enum E { A, B } export i32 f(E e) { match (e) { case A: { return 1; } else: { return 2; } }"
+       + " return 0; }\n").toBytes()).len() / 3;
+  t.eqI32(fine, 0, "refused a match with a single else arm");
+  return t.report();
+}
+
+/**
+ * **Two duplicates the reference refuses while parsing, so no differential can carry them.**
+ *
+ * A duplicate method and a second `default:` are both refused by the reference — *"switch may have at
+ * most one 'default' clause"* at the second `default`, and the same shape for the method — and both at
+ * the column we report. But it refuses them in its **parser**, and `typecheck_test.wac`'s `WRONG()`
+ * compares against its **checker**, which stays silent. Put them in that list and the assertion
+ * becomes "we invent a diagnostic here", which is the opposite of what is true.
+ *
+ * That is the same split that took a character literal out of the list, and it is worth stating once
+ * more because the failure is silent in the useful direction: a rule the reference implements
+ * somewhere else reads exactly like a rule it does not implement at all.
+ *
+ * `spec/spec/naming.md` line 50 makes the duplicate method an error in as many words, and the switch
+ * grammar in `spec/spec/control.md` carries a single `default`.
+ */
+export string test_a_duplicate_method_and_a_second_default_are_refused() {
+  T t = T.create();
+
+  string methodHead = "struct P { i32 v; i32 m(this) { return 1; } ";
+  string methodSrc = methodHead + "i32 m(this) { return 2; } }\nexport i32 f(P p) { return p.m(); }\n";
+  i32[] dupMethod = dumpTypeErrors(methodSrc.toBytes());
+  t.isTrue(dupMethod.len() >= 3, "a struct with the same method twice drew nothing at all");
+  if (dupMethod.len() >= 3) {
+    t.eqI32(dupMethod[2], methodHead.len() + 1,
+            "the duplicate method is reported away from the second declaration");
+  }
+
+  string switchHead = "export i32 f(i32 n) { switch (n) { default: { return 1; } ";
+  string switchSrc = switchHead + "default: { return 2; } } return 0; }\n";
+  i32[] twoDefaults = dumpTypeErrors(switchSrc.toBytes());
+  t.isTrue(twoDefaults.len() >= 3, "a switch with two defaults drew nothing at all");
+  if (twoDefaults.len() >= 3) {
+    t.eqI32(twoDefaults[2], switchHead.len() + 1,
+            "the second `default` is reported away from the second `default`");
+  }
+
+  // One of each, so that neither assertion above is satisfied by refusing the construct outright.
+  i32 okMethod = dumpTypeErrors(
+      ("struct P { i32 v; i32 m(this) { return 1; } }\nexport i32 f(P p) { return p.m(); }\n")
+          .toBytes()).len() / 3;
+  t.eqI32(okMethod, 0, "refused a struct with one method");
+  i32 okSwitch = dumpTypeErrors(
+      ("export i32 f(i32 n) { switch (n) { case 1: { return 1; } default: { return 2; } } return 0; }\n")
+          .toBytes()).len() / 3;
+  t.eqI32(okSwitch, 0, "refused a switch with one default");
+  return t.report();
+}
+
 // ---------------------------------------------------------------------------------------------
 // The two-file half.
 //
