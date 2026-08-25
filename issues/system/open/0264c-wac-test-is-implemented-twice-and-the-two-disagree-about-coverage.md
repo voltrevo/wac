@@ -124,3 +124,39 @@ no way to obtain.
 deletion is right; what it needs first is a way for a command-line grant to reach a baked program. Filed
 against this issue rather than a new one, because it is the same subject: the host implements the
 command *because* it implements the granting.
+
+## `covdump` is the second command waiting on this, and it already broke — agent-c, 2026-08-25
+
+The grants question above is not hypothetical. `issues/system/0257c` moved `covdump` into the program
+alongside `test`, and that broke **thirteen** coverage ratchets, found by the push gate's coverage phase
+— which had never run all day because the memory floor kept refusing.
+
+A ledger calls `wac covdump <module> <exports>`, and the program's version reaches the module through
+`cli.load`. `load_module` grants a loaded module **`run: false`**, deliberately and in its own words:
+
+> Not inheritable, exactly as for a spawned child. `GRANT_*` has no bit for running a host program, and
+> a loaded module that could `exec` would hold the one authority this narrowing is for.
+
+That line predates all of this. So an exercise that asks an oracle — `python3` for `bignum`'s operands,
+`deno` for most of the rest — could not ask it, and each ledger said *the operand oracle did not answer*
+and measured a fraction of its package. `packages/bignum` read 54.8% where it is 100%.
+
+Minimal reproduction, which is what made it certain rather than suspected:
+
+    wac build x.wac --coverage --allow-run -o x
+    wac covdump x.wasm main       ->  DID NOT RUN: Not granted to this application
+
+with `"run": true` in the artefact's own manifest. Nor is it the invoker's grants: the same failure with
+a `wac` program built `--allow-run` doing the loading.
+
+**So `covdump` is back in the host**, and the two-implementations problem this page is about now covers
+two commands rather than one. The argument for it being the host's is stronger than for `test`, though:
+running a module and reading the counters it leaves behind is not a command surface — the counters are
+inside the instance and nothing outside it can see them.
+
+**What this adds to the decision.** Three routes now need a grant the baked seed does not have:
+`test --coverage` (via `test_command`), `covdump`, and anything else that loads a module and expects it
+to spawn. A grants field on `AsChild`, parsed from the command line, would serve all three — and the
+`run: false` policy would need its own answer, because a *loaded* module is a different question from a
+program the host runs directly. Both are the same decision: **what may reach a program that did not
+declare it, and who is allowed to say so.**
