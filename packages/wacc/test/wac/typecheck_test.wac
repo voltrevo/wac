@@ -289,6 +289,55 @@ export string test_a_local_used_as_a_type_name_is_reported_in_every_position() {
  * from by recording the word) and an ordinary `return ;` both answer one diagnostic — so this is the
  * shape where recovery leaves a hole rather than anything about parse errors in general.
  */
+/**
+ * The same complaint is not reported twice at one position.
+ *
+ * `C.report` compared a new diagnostic against the **immediately previous** one only, so a repeat
+ * separated by anything went through: `i32 r = a & b;` for an `i32` and a `bool` printed *operands
+ * have mismatched types* at 1:42, then another rule's complaint at the same character, then the first
+ * one **again** — three errors for one mistake, where the reference reports one.
+ *
+ * **630 of the 10,013 generated sweep programs** were in that shape, and neither rung-3 check could
+ * see it: both ask whether each position we report is one the reference reports, and a second copy of
+ * a position still is. `sweep.test.ts` asserts the absence at that scale now; this is the same
+ * property through the *binary*, which is a different artefact — the sweep binds wacc compiled by the
+ * reference, and this runs the seed.
+ *
+ * Asserted as "no *code* at a position twice" rather than "exactly two diagnostics", because how many
+ * distinct rules fire on one mistake is a separate question this does not want to pin.
+ *
+ * **The first version of this test keyed on the position alone and failed on the fixed compiler**,
+ * which is worth keeping: two rules do fire at 1:42 on these programs — *operands have mismatched
+ * types* and *this operator does not take an operand of that kind* — so a repeated position is the
+ * normal case here and only a repeated `code@line:col` is a duplicate. `ours` drops the code, which
+ * is exactly why `sweep.test.ts` grew a keyed helper rather than reusing its own.
+ */
+export string test_the_same_diagnostic_is_not_reported_twice_at_one_position() {
+  T t = T.create();
+  string[] cases = string[](
+    "export void f(i32 a, bool b) { i32 r = a & b; }",
+    "export void f(i32 a, bool b) { i32 r = a | b; }",
+    "export void f(i32 a, i32[] b) { i32 r = a ^ b; }");
+  for (i32 i = 0; i < cases.len(); i++) {
+    // The raw triples, because the identity of a diagnostic is its code *and* its position.
+    i32[] raw = dumpTypeErrors(cases[i].toBytes());
+    t.isTrue(raw.len() > 0, "no diagnostic at all for " + cases[i]);
+    i32 dups = 0;
+    string said = "";
+    for (i32 j = 0; j + 2 < raw.len(); j = j + 3) {
+      said = said + (said == "" ? "" : ", ") + itoa(raw[j]) + "@" + itoa(raw[j + 1]) + ":" +
+             itoa(raw[j + 2]);
+      for (i32 k = j + 3; k + 2 < raw.len(); k = k + 3) {
+        if (raw[j] == raw[k] && raw[j + 1] == raw[k + 1] && raw[j + 2] == raw[k + 2]) {
+          dups = dups + 1;
+        }
+      }
+    }
+    t.eqI32(dups, 0, "the same diagnostic twice in " + cases[i] + " — " + said);
+  }
+  return t.report();
+}
+
 export string test_a_malformed_import_does_not_trap_the_checker() {
   T t = T.create();
   // Each of these is refused by the parser. What is asserted is only that asking the checker about

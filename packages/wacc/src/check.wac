@@ -2058,11 +2058,22 @@ export struct C {
     // one that types it and the one that only asks whether it fits — and an assignment takes both.
     // The reference reports it once, and a diagnostic list that says it twice is a list that
     // disagrees about how many things are wrong.
-    if (this.errorCount > 0 &&
-        this.errors[(this.errorCount - 1) * 3] == code &&
-        this.errors[(this.errorCount - 1) * 3 + 1] == line &&
-        this.errors[(this.errorCount - 1) * 3 + 2] == col) {
-      return;
+    //
+    // **Every entry, not just the last one.** This compared against `errorCount - 1` alone, so a
+    // repeat separated by any other diagnostic went straight through: `i32 r = a & b;` for an `i32`
+    // and a `bool` printed *operands have mismatched types* at 1:42, then a second rule's complaint
+    // at the same character, then *operands have mismatched types at 1:42 again* — three errors for
+    // one mistake where the reference reports one. **630 of the 10,013 generated sweep programs**
+    // were in that shape, and neither rung-3 check could see it: both ask whether each position we
+    // report is one the reference reports, and a second copy of a position still is.
+    //
+    // The scan is linear in a list that `errors.len()` caps, and it runs only when a rule has already
+    // decided to report, so it costs nothing measurable against the walk that got here.
+    for (i32 i = 0; i < this.errorCount; i++) {
+      if (this.errors[i * 3] == code && this.errors[i * 3 + 1] == line &&
+          this.errors[i * 3 + 2] == col) {
+        return;
+      }
     }
     this.errors[this.errorCount * 3] = code;
     this.errors[this.errorCount * 3 + 1] = line;
