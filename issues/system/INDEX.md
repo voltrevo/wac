@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0256c](open/0256c-a-denied-env-is-null-on-the-native-hosts-and-a-trap-on-the-javascript-ones.md) | `cli.env` answers null on the two native hosts and **traps** on the two JavaScript ones when the environment was not granted; the type has a null and its docstring only claims it for "unset", so no host is following a written rule. Found the same minute a new guard noticed that `--allow-env` was a flag `wac test` accepts and no differential row passed | decision | wrong answer |
 | [0255c](open/0255c-relayd-tells-a-client-its-stream-closed-normally-when-the-stream-failed.md) | `relayd` ends a stream with `REASON_DONE` in seven places and five of them are failures — a connect that failed, a send that failed, two malformed BEGINs, a BEGIN_DIR it does not serve. `socks5.wac` maps RELAY_END reasons to SOCKS replies with a docstring about why the distinction matters, and the only reason it is ever handed falls through to "general failure"; its own test feeds the mapping hand-made bytes, so nothing compares producer with consumer | bug | wrong answer |
 | [0252a](open/0252a-a-frames-output-is-capped-on-two-hosts-and-unbounded-on-the-others.md) | a frame's output is capped at 8 MiB on the JavaScript hosts and grows without limit on the native one, so `Captured.truncated` is always false there — bounded-and-honest against unbounded-and-complete, and `std/platform.wac` documented the cap as the language's | decision | wrong answer |
 | [0251b](open/0251b-an-sctp-association-ignores-the-peers-advertised-receive-window.md) | `initWindow` — the receive window a peer announces in its INIT — is parsed and never read, so nothing does receiver-side flow control and `send` is bounded only by our own `cwnd`; its twin `initTsn` was unread in the same branch and was a *bug* rather than a gap, fixed the same day | missing feature | not implemented |
@@ -65,7 +66,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-258 issues, 205 closed.
+259 issues, 205 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

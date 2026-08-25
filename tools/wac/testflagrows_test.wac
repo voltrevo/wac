@@ -1,0 +1,130 @@
+// Every flag `wac test` accepts is passed by some row of the differential.
+//
+// **`--verbose` was accepted and implemented by nobody on three of the four hosts.** It was in
+// `unknownTestFlag`'s list, so it was not refused as a typo; it was spelled correctly, changed
+// nothing, and no document said what it should do. `packages/sh/test/gaps.test.ts` ranks the three
+// outcomes and `tools/ignoredFlags.ts` asks this question of every box applet against the real tool:
+// doing something plausible is worst, refusing is better, saying which side is incomplete is best. A
+// flag accepted and ignored is the first of those, handed to a caller who asked for it by name.
+//
+// What let it last was not the flag. `test` is one of the two subcommands implemented **twice** — in
+// `native/v8/src/main.rs` and again in `packages/wacc/example/wacc.wac` — and
+// `packages/wacc/test/wac/commandparity_test.wac` is the instrument that holds the two together. No
+// row passed `--verbose`, so the instrument never looked at it. This checks that every flag the wac
+// side accepts is one some row supplies.
+//
+// **Only `test` and `run` need this.** `build`, `check` and `bindgen` have a single implementation —
+// the native binary hands them to the wac program rather than answering them itself — so a flag of
+// theirs cannot be ignored by one host and honoured by another.
+//
+// **`run` is the other doubly-implemented one and this does not check it yet, deliberately.** Its
+// allowlist is `unknownFlagBefore` and holds the five grants; no row grants `run` anything — the one
+// row that mentions `--allow-read` beside `run` passes it *past* `--`, as an argument to the program.
+// Checking it needs matching a flag to the rows of *its own* subcommand, and this file matches
+// against the whole table, so `--allow-read` appearing in a `test` row would read as covering `run`
+// too. That is a weaker question than it looks and saying so is cheaper than a guard that answers it
+// wrongly. The per-command version is the next step, and `run --allow-read src/reader.wac` is the row
+// it would ask for.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Cli, Core, FileResult } from "std/platform.wac";
+import { Vec } from "core/vec.wac";
+
+const string CLI = "packages/wacc/example/wacc.wac";
+const string PARITY = "packages/wacc/test/wac/commandparity_test.wac";
+
+/**
+ * Flags `wac test` accepts but no row supplies, with the reason each is out of scope.
+ *
+ * **A list with reasons rather than a shorter question.** An exception nobody can read is how a guard
+ * stops meaning anything, so anything here has to say why a row would not earn its cost.
+ */
+bool excused(string flag) {
+  // `--allow-run` lets a *test* start a program. `packages/platform/test/wac/spawn_test.wac` already
+  // holds `exec` and `spawn` across all four hosts, and a row here would pay a process per host to
+  // ask the same question in a place whose subject is the test runner rather than the capability.
+  return flag == "--allow-run";
+}
+
+/** The text of `path`, or "" — a file this cannot read is reported by the caller, not guessed at. */
+string textOf(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+/** The body of the first declaration beginning `head`, up to the line that closes it at column 0. */
+string bodyAfter(string src, string head) {
+  i32 at = src.indexOf(head);
+  if (at < 0) { return ""; }
+  // `indexOf` has no from-offset, so the tail is sliced first and the offset added back.
+  string tail = src.slice(at, src.len());
+  i32 rel = tail.indexOf("\n}");
+  if (rel < 0) { return ""; }
+  return tail.slice(0, rel);
+}
+
+/** Every `"--flag"` literal in `region`, in the order it appears, without repeats. */
+string[] flagsIn(string region) {
+  Vec<string> out = Vec.create();
+  i32 i = 0;
+  while (i + 3 < region.len()) {
+    if (region.slice(i, i + 3) != "\"--") { i = i + 1; continue; }
+    i32 j = i + 3;
+    while (j < region.len() && region.slice(j, j + 1) != "\"") { j = j + 1; }
+    if (j >= region.len()) { return out.toArray(); }
+    string flag = region.slice(i + 1, j);
+    // `"--"` on its own is the end-of-flags marker a `run` row passes, not a flag.
+    bool seen = false;
+    string[] have = out.toArray();
+    for (i32 k = 0; k < have.len(); k++) { if (have[k] == flag) { seen = true; } }
+    if (flag != "--" && !seen) { out.push(flag); }
+    i = j + 1;
+  }
+  return out.toArray();
+}
+
+bool holds(string[] xs, string x) {
+  for (i32 i = 0; i < xs.len(); i++) { if (xs[i] == x) { return true; } }
+  return false;
+}
+
+export string test_every_flag_wac_test_accepts_is_passed_by_some_row(Core core, Cli cli) {
+  T t = T.create();
+  string cliSrc = textOf(cli, CLI);
+  string paritySrc = textOf(cli, PARITY);
+  t.isTrue(cliSrc.len() > 0, "read " + CLI);
+  t.isTrue(paritySrc.len() > 0, "read " + PARITY);
+  if (cliSrc.len() == 0 || paritySrc.len() == 0) { return t.report(); }
+
+  string[] accepted = flagsIn(bodyAfter(cliSrc, "string unknownTestFlag("));
+  string[] rowed = flagsIn(bodyAfter(paritySrc, "string[][] cases() {"));
+
+  // **Both halves are read, and both are asserted to be non-empty.** A parser that found nothing
+  // would report perfect coverage — the shape this file exists to refuse, arriving in the file that
+  // refuses it. `issues/lang/0158`.
+  t.isTrue(accepted.len() >= 5, "found the flags `test` accepts — got " + itoa(accepted.len()));
+  t.isTrue(rowed.len() >= 5, "found the flags the rows pass — got " + itoa(rowed.len()));
+
+  string missing = "";
+  for (i32 i = 0; i < accepted.len(); i++) {
+    if (excused(accepted[i]) || holds(rowed, accepted[i])) { continue; }
+    missing = missing + (missing == "" ? "" : ", ") + accepted[i];
+  }
+  t.eqStr(missing, "",
+          "`wac test` accepts these and no row in commandparity_test.wac passes them, so the two "
+          + "implementations of `test` are not compared for them — add a row, or excuse it with a "
+          + "reason in `excused`");
+  return t.report();
+}
+
+/** `itoa` for the counts above, kept local so this file imports one thing fewer. */
+string itoa(i32 n) {
+  if (n == 0) { return "0"; }
+  string out = "";
+  i32 v = n;
+  while (v > 0) {
+    out = "0123456789".slice(v % 10, v % 10 + 1) + out;
+    v = v / 10;
+  }
+  return out;
+}
