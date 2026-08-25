@@ -602,7 +602,19 @@ export string test_an_uninferrable_type_parameter_is_not_an_arity_error() {
   t.eqI32(arity.len() / 3, 1, "one arity fault, and this many diagnostics");
   if (arity.len() >= 3) { t.eqI32(arity[0], 32, "the code — `errCallArity`"); }
 
-  // And an inferrable call is silent, so neither is met by refusing generics.
+  // **The third fault `errCallArity` was carrying**, and the same shape: `grow(b)` takes one
+  // argument and passes one. Code 53 already said this rule for a struct *field* that instantiates
+  // for ever; the call form reported an arity it had counted correctly.
+  i32[] forever = dumpTypeErrors(
+      ("struct Box<T> { T v; }\n"
+       + "i32 grow<T>(T a) { Box<T> b = Box<T>(a); return grow(b); }\n"
+       + "export i32 f() { return grow(1); }\n").toBytes());
+  t.isTrue(forever.len() >= 3, "a generic instantiating itself for ever drew nothing");
+  if (forever.len() >= 3) {
+    t.eqI32(forever[0], 53, "the code — `errInfiniteGeneric`, not `errCallArity` (32)");
+  }
+
+  // And an inferrable call is silent, so none of these is met by refusing generics.
   i32[] fine = dumpTypeErrors("T id<T>(T a) { return a; }\nexport i32 f() { return id(1); }\n".toBytes());
   t.eqI32(fine.len() / 3, 0, "refused a call whose type argument is evident");
   return t.report();

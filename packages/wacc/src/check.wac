@@ -5265,7 +5265,12 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     for (i32 t = 0; t < n; t++) {
       if (bound[t] == "" || isActiveParam(c, bound[t])) { continue; }
       if (!mentionsActiveParam(c, bound[t])) { continue; }
-      c.reportWith(errCallArity(), call.line, call.col,
+      // **`errInfiniteGeneric`, not `errCallArity`.** `grow(b)` has one argument and `grow` takes
+      // one, so "wrong number of arguments" named the one thing that is right, and its help sent the
+      // reader to count them. Code 53 is this rule and already said so for the struct-field case —
+      // `a generic that instantiates itself for ever` — which is the same fault through a field
+      // rather than a call.
+      c.reportWith(errInfiniteGeneric(), call.line, call.col,
                    "instantiating " + name + " again with " + bound[t]);
       return;
     }
