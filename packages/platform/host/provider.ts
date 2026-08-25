@@ -335,9 +335,34 @@ export function cliOf(
     // different and a bare empty payload cannot say which this is.
     return out[0] === 1 ? unstr(out.subarray(1)) : null;
   };
-  /** The same, as bytes: an environment value is not text, any more than an argument is. */
+  /**
+   * The same, as bytes: an environment value is not text, any more than an argument is.
+   *
+   * **The one shape that had to catch, and the reason `env` diverged.** `send` refuses a guarded call
+   * centrally and `collect` throws for it, on the argument — written a few lines up — that "each
+   * shape's resolver already turns a thrown error into *its own* refusal … the refusal shapes were
+   * already written". They were, except this one: `u8[]?` has no fault field, so nothing absorbed the
+   * throw and a program that was not granted the environment **trapped** here while both native hosts
+   * answered null. `issues/system/0256c`, found by a differential row that existed for a day before
+   * anything ran it.
+   *
+   * Null is what `Cli.env`'s own type documents — "null when the variable is unset" — and it is what
+   * the native hosts already did, so this is the four of them agreeing rather than a new rule. It
+   * does conflate "you may not ask" with "it is not set", which `issues/system/0238c` removed from
+   * `Socket` for the reason that a caller acts differently on the two; the fix for that is a shape
+   * that can say which, and it is `0256c`'s remaining half.
+   *
+   * Only `FAULT_NOT_GRANTED` is swallowed. Any other failure is still a failure, because a host that
+   * broke while answering is not a variable that is unset.
+   */
   const maybeBytes = (id: number) => {
-    const out = collect(b, unpack(id));
+    let out: Uint8Array;
+    try {
+      out = collect(b, unpack(id));
+    } catch (e) {
+      if (e instanceof HostCallError && e.fault === FAULT_NOT_GRANTED) return null;
+      throw e;
+    }
     return out[0] === 1 ? out.slice(1) : null;
   };
   const child = (id: number) => {

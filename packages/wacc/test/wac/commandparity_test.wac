@@ -349,6 +349,23 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
            "  if (c.ok()) { return \"\"; }\n" +
            "  return c.fault == FAULT_NOT_GRANTED() ? \"the write was denied\" : \"the write failed\";\n" +
            "}\n")
+    // **And the same capability *withheld*, which is where the hosts actually disagreed.** The three
+    // rows that walk `src` grant read and write and never env, so a file here is asked the denied
+    // question on every host — and until 2026-08-25 the native two answered the null this capability
+    // documents while the JavaScript two **trapped**, because `provider.ts` refuses a guarded call
+    // centrally and `u8[]?` was the one return shape with no fault field to absorb it.
+    // `issues/system/0256c`.
+    //
+    // The issue proposed moving `capsrc/env_test.wac` into `src/` as its regression test. This is the
+    // same test one step better: it asserts the *refusal* rather than the grant, so the rows stay
+    // green instead of failing identically on three hosts — and a host that traps still breaks the
+    // comparison, which is the whole job.
+    && put(t, cli, dir + "/src/deniedenv_test.wac",
+           "import { Cli, Core } from \"std/platform.wac\";\n" +
+           "export string test_a_denied_environment_is_null(Core core, Cli cli) {\n" +
+           "  u8[]? v = cli.env(\"PATH\").wait();\n" +
+           "  return v is null ? \"\" : \"PATH was readable without --allow-env\";\n" +
+           "}\n")
     // **The environment grant reaching a loaded module.** `--allow-env` was in the list `test` accepts
     // and in no row, which is the state `--verbose` was in — `tools/wac/testflagrows_test.wac` is the
     // check that now names such a flag. The question it asks is `issues/system/0242c`'s: a test runs
