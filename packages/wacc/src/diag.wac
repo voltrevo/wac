@@ -176,6 +176,9 @@ export string hintFor(i32 code) {
   if (code == 10) { return "drop the `const`, or bind a separate local for the value that changes"; }
   if (code == 12) { return "take the parameter without `const` if it is meant to be written through"; }
   if (code == 16) { return "`as` converts without loss, `as!` checks at runtime, `as~` takes the nearest value"; }
+  // The distinction the rule turns on, because "instantiates itself for ever" is a symptom and
+  // this is the cause: recursion on the *same* type parameter is the commonest shape there is.
+  if (code == 53) { return "a recursive generic must pass `T` along, not something that contains it"; }
   if (code == 30) { return "use `as!` — a cast down the hierarchy has to be checked"; }
   if (code == 33) { return "store the packed value in a wider type, or drop the `?`"; }
   if (code == 40) { return "unwrap it with `!`, or test it with `is null` first"; }
