@@ -6766,8 +6766,14 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
         // `dst.fill(value, start, end)` and `dst.copyFrom(src, srcStart, dstStart, count)`; with the
         // right shapes, `fill`'s value was a gap and is fixed beside `errBuiltinArg`, and `copyFrom`
         // already reported. So one leaked and one did not, which no invalid probe could have told
-        // apart. The JSX pair and the `is`-test pair are still unexamined — worth correct programs
-        // rather than an assumption that the list is closed here.
+        // apart.
+        //
+        // **The list is closed now: eight sites, five real gaps.** This payload, `fill`'s value, a
+        // component's field, a JSX attribute and a JSX child. `copyFrom` and a builtin's argument
+        // against its receiver already reported, and the `is`-test pair is a warning about unrelated
+        // types rather than a slot a value passes through. Recall on the generated sweep never moved
+        // through any of it, because `generate.ts` builds none of these shapes — which is the whole
+        // argument for enumerating the *sites* and not the programs.
         if (nullableIntoNonNull(c, vwant, vgot)) {
           c.report(errNullableToNonNull(), args[i].line, args[i].col);
         } else if (vgot != typeNone() && vgot != "" && !assignable(c, vwant, vgot)) {
