@@ -2703,6 +2703,20 @@ bool integerLiteralFits(C c, string want, Expr e, bool negated) {
       // Past the 64-bit answers, because a literal wider than an `i64` wraps in `parseInt` and the
       // comparisons below would read the wrapped value. Those two ask the digits instead, which is
       // why they come first — putting this guard in front of them let 2^63 through.
+      //
+      // **A wrapped value does not fit anything narrower than an `i64`, and this used to say it did.**
+      // The guard below stops the comparisons reading wrapped bits, and answering *true* to do it
+      // reads as "no complaint": `i32 b = 18446744073709551615;` drew **no diagnostic**, built, and
+      // returned **-1** — `wac run` exited 255, which is the silent wrong answer
+      // `spec/spec/types.md`'s `§wac-litctx-nofit-k3mq8wl` exists to prevent. The digits are what has
+      // to be asked, and the answer is the same for all six: a magnitude too wide for an `i64` is too
+      // wide for every type narrower than one, whatever the sign. The 64-bit wants have already
+      // answered from the digits above, and everything else keeps falling through to `true`, so this
+      // refuses only where it is certainly right.
+      if (v < 0 && (want == "i32" || want == "u32" || want == "i16" || want == "u16" ||
+                    want == "i8" || want == "u8")) {
+        return false;
+      }
       if (v < 0) { return true; }
       if (want == "i32") { return negated ? v <= 2147483648 : v <= 2147483647; }
       if (want == "u32") { return !negated && v <= 4294967295; }

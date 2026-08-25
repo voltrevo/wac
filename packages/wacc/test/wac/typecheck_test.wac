@@ -95,7 +95,22 @@ string[] WRONG() {
     // function. It is in this list for the recall assertion above, which is the one that catches a
     // silence — and it is a silence with a floor under it, since the emitter then declines the module
     // for "a value of a type this emitter cannot write: zz". `wac check` still said the file was fine.
-    "export void g() { i32 zz = 1; zz[1](); }");
+    "export void g() { i32 zz = 1; zz[1](); }",
+    // **A literal too wide for an `i64` was answered "it fits" for every narrower type.** `parseInt`
+    // returns an `i64`, so `18446744073709551615` arrives as -1, and `integerLiteralFits` had a guard
+    // returning *true* for a negative `v` — put there so the numeric comparisons below could not read
+    // wrapped bits, and reading as "no complaint". So this drew no diagnostic, built, and returned
+    // **-1**: `wac run` exited 255. `spec/spec/types.md` states the rule as a clause,
+    // `§wac-litctx-nofit-k3mq8wl` — *"a literal that does not fit is an error"* — with
+    // `i32 b = 5000000000` as its own example, which was caught; the boundary was i64::MAX, and
+    // everything above it was silent. Found through the mutation sweep's recall queue, which named the
+    // family, and `packages/wacc/test/missed.ts`, which named the program.
+    // Three types and both signs, because the guard was blind to all of them equally. Not `u8` or
+    // `i16`: a packed type is refused in a local at all, so such a program is wrong for a second
+    // reason and cannot say whether the range rule spoke.
+    "export i32 f() { i32 b = 18446744073709551615; return b; }",
+    "export u32 f() { u32 b = 18446744073709551615; return b; }",
+    "export i32 f() { i32 b = -18446744073709551615; return b; }");
 }
 
 /**
@@ -118,6 +133,15 @@ string[] CLEAN() {
   return string[](
     "export i32 main() { return 1; }",
     "export i64 w() { return 1; }",
+    // **The other side of the range rule, at each boundary.** The fix for a literal wider than an
+    // `i64` refuses when `parseInt` wrapped, and a refusal keyed on the wrong thing would take these
+    // with it: the largest value each type really holds, and the hex spelling of all-ones, which names
+    // bits rather than a magnitude and is how an `i32` of -1 is written.
+    "export u32 x() { u32 b = 4294967295; return b; }",
+    "export i32 y() { i32 b = 2147483647; return b; }",
+    "export i64 z() { i64 b = 9223372036854775807; return b; }",
+    "export u64 u() { u64 b = 18446744073709551615; return b; }",
+    "export i32 h() { i32 b = 0xFFFFFFFF; return b; }",
     "export f64 g() { return 1.5; }",
     "export string s() { return \"x\"; }",
     "export bool t() { return true; }",

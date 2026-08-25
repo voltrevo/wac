@@ -115,7 +115,11 @@ export string checkMessage(i32 code) {
   if (code == 47) { return "this is not something that can be called"; }
   if (code == 48) { return "a method is not a value; call it or take it as a funcref"; }
   if (code == 49) { return "a type name is not a value"; }
-  if (code == 50) { return "float literal out of range for its type"; }
+  // **Both kinds of literal, so the headline names the rule and not one caller.** `reportLiteral`
+  // raises this for an integer too wide for its slot as well as a float too large for an `f32`, and
+  // saying *float* meant `i32 b = 5000000000;` was reported as a float literal — which is the one
+  // thing the reader can see is not true. The annotation carries which type it did not fit.
+  if (code == 50) { return "literal out of range for its type"; }
   if (code == 51) { return "no variant of that name"; }
   if (code == 52) { return "unknown module"; }
   if (code == 53) { return "a generic that instantiates itself for ever"; }
@@ -173,7 +177,9 @@ export string hintFor(i32 code) {
   if (code == 40) { return "unwrap it with `!`, or test it with `is null` first"; }
   if (code == 29) { return "quote it — `core` included, since D5 removed the one bare spelling"; }
   if (code == 46) { return "the cast can be removed"; }
-  if (code == 50) { return "use `f64` if the value does not fit an `f32`"; }
+  // Kept useful for the float case without asserting the literal is one — `i32 b = 5000000000;` was
+  // told to use an `f64`, which is advice about a different program.
+  if (code == 50) { return "a literal has to fit the type it is written for; `f64` holds what an `f32` cannot"; }
   if (code == 55) { return "rename one of them with `as`"; }
   if (code == 77) { return "supply the file, or check the path — `core` and `std` are the only trees that need none"; }
   if (code == 56) { return "import it from the file that declares it — importing does not re-export"; }
