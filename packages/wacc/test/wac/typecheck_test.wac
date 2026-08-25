@@ -154,7 +154,13 @@ string[] WRONG() {
     // compilers, which reads exactly like "no gap here". `spec/spec/arrays.md` has it as
     // `dst.fill(value, start, end)` — value first — and with the right shape the slot is silent on
     // a nullable. `copyFrom`, checked beside it, already reports.
-    "struct P { i32 x; } export void f(P? a, P[] xs) { xs.fill(a, 0, xs.len()); }");
+    "struct P { i32 x; } export void f(P? a, P[] xs) { xs.fill(a, 0, xs.len()); }",
+    // **A literal beside a struct in a ternary.** The rule for a literal against a non-literal
+    // branch is gated on `concreteShape`, which is the numbers, `bool` and `string` — so a struct
+    // fell through every branch of it and `c ? p : 1` was silent. The emitter then wrote a module
+    // the engine refuses, which `wac build`'s own check calls a compiler bug. The reference says
+    // *ternary branches have incompatible types: P and i32*.
+    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : 1; return r.x; }");
 }
 
 /**

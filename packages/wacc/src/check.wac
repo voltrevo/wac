@@ -4295,12 +4295,14 @@ void checkExpr(C c, Expr e) {
       // for the same pair, so the two now agree. `issues/lang/0170a`.
       if (isPlainLiteral(c, els) && !isPlainLiteral(c, then)) {
         string lt = typeOfExpr(c, then);
-        if (lt != typeNone() && lt != "" && concreteShape(lt) && !literalFits(c, lt, els)) {
+        if (lt != typeNone() && lt != "" && (concreteShape(lt) || literalNeverFits(c, lt)) &&
+            !literalFits(c, lt, els)) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
       } else if (isPlainLiteral(c, then) && !isPlainLiteral(c, els)) {
         string rt2 = typeOfExpr(c, els);
-        if (rt2 != typeNone() && rt2 != "" && concreteShape(rt2) && !literalFits(c, rt2, then)) {
+        if (rt2 != typeNone() && rt2 != "" && (concreteShape(rt2) || literalNeverFits(c, rt2)) &&
+            !literalFits(c, rt2, then)) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
       }
@@ -8151,6 +8153,27 @@ bool numericShape(string t) {
 }
 
 /** A primitive this checker is sure of. Anything else — a struct, a generic payload — stays silent. */
+/**
+ * A type a **plain** literal can never be — a struct, an enum, an array or a funcref.
+ *
+ * `concreteShape` answers the other half: the numbers, `bool` and `string`, which a literal *can* be
+ * and which `literalFits` then judges. Between them they cover every type this checker is sure about;
+ * a type parameter or an unresolved name is in neither and stays silent, which is the subset rule.
+ *
+ * **Why it exists.** The ternary's literal-against-a-branch rule asked `concreteShape` alone, so
+ * `c ? p : 1` for a struct `p` matched no branch of it and was accepted — and the emitter then wrote a
+ * module the engine refuses, which `wac build`'s own check calls a compiler bug. The reference says
+ * *ternary branches have incompatible types: P and i32*.
+ *
+ * The base is taken through a `?` because a plain literal is no more a `P?` than a `P`, and
+ * `isPlainLiteral` has already excluded `null` — which is the one literal a nullable does take, and
+ * why `c ? p : null` never reaches here.
+ */
+bool literalNeverFits(C c, string t) {
+  string base = endsWith(t, "?") ? withoutNull(t) : t;
+  return c.isStruct(base) || c.isEnum(base) || isArrayName(base) || startsWithFn(base);
+}
+
 bool concreteShape(string t) {
   return numericShape(t) || t == "bool" || t == "string";
 }
