@@ -60,6 +60,11 @@ import { Lock, LockEntry, readLock } from "../../wacpkg/src/lock.wac";
 import { JsonObject, JsonValue } from "../../json/src/value.wac";
 import { parse } from "../../json/src/json.wac";
 import { cachePath } from "../../wacpkg/src/cache.wac";
+import { fetchAll } from "../../wacpkg/src/fetch.wac";
+import { Shell } from "../../sh/src/exec.wac";
+import { shellMain } from "../../sh/src/entry.wac";
+import { boxNames, boxRun } from "../../box/src/shrun.wac";
+import { Asked, Parsed, askedFrom, narrowed } from "./grants.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
@@ -791,6 +796,19 @@ string usageFor(string cmd) {
  * `-o` is the one flag carrying a value, and skipping the flag without its value would leave the stem
  * looking like the entry — which is the same class of mistake one level along.
  */
+/**
+ * Every argument, in order, flags included.
+ *
+ * `positionals` drops flags, which is what the compiler's subcommands want and exactly wrong for
+ * `sh`: the shell reads its own command line, and the `--allow-*` words in front of it have to be
+ * counted rather than removed so the shell is told where its arguments begin.
+ */
+string[] allArgs(Cli cli, i32 argc) {
+  string[] out = string[argc](fill: "");
+  for (i32 i = 0; i < argc; i++) { out[i] = string.fromBytes(cli.arg(i).wait()); }
+  return out;
+}
+
 string[] positionals(Cli cli, i32 argc) {
   string[] out = string[argc](fill: "");
   i32 n = 0;
@@ -952,7 +970,61 @@ export i32 main(Core core, Cli cli) {
     return runModule(core, cli, argc, cmd);
   }
 
-
+  // **The shell and the fetcher, in this program rather than beside it.** `issues/system/0257c`:
+  // these were separate payloads the native binary embedded, so `wac sh` and `wac update` were
+  // things only that host had — not because a host is required to implement them, but because the
+  // command was three modules and the other hosts carried one. Dispatched here they are neither.
+  //
+  // `shellMain`'s last argument is where in argv to start, which is why this costs three lines: the
+  // shell was already written to be someone else's subcommand. `boxRun`/`boxNames` are what the
+  // native ships — the shell with box's applets — and are the reason this pulls in a large graph.
+  // **Sealed unless the command line asks, which is `run_shell`'s rule moved into the program.**
+  // `packages/wac/src/grants.wac` says why at length; the short version is that a callee shares its
+  // caller's capabilities, so a shell dispatched in here would inherit whatever the *compiler* was
+  // granted. `narrowed` refuses everything not asked for, and cannot widen: what it passes on is
+  // what this program was handed.
+  if (cmd == "sh") {
+    string[] argv = allArgs(cli, argc);
+    Parsed p = askedFrom(argv, 1);
+    if (p.bad != "") {
+      core.warn("wac: " + p.bad + " is not a grant — read, write, net, env, run");
+      return 2;
+    }
+    Cli inner = narrowed(cli, p.asked);
+    // **`Fs.onHost` either way, and the sealing is entirely `inner`'s** — which is what the native
+    // binary has always done: its payload is `boxsh.wac` over a world `run_shell` built with no
+    // grants, so `wac sh -c 'ls /bin'` answers *Not granted* rather than listing an image.
+    //
+    // The first version here handed a sealed session `Fs.inMemory` with a `/bin` and a `/tmp`, which
+    // is `packages/box/src/bin/sealedsh.wac`'s arrangement and a nicer place to stand. It also broke
+    // every pipeline: an applet reading standard input asks for the path `""`, `Fs.onHost` knows
+    // that convention and `Fs.inMemory` does not, so `seq 1 5 | wc -l` answered `wc: : Not granted
+    // to this application` — a message about a filesystem, about standard input. Worth fixing in
+    // `packages/fs`; not worth `wac sh` differing from the shipped one to get it.
+    Shell sh = Shell.onFs(core, inner, Fs.onHost(inner, 0));
+    sh.external = boxRun;
+    sh.externalNames = boxNames;
+    // **Not `externalSpawnable`**, which is `packages/box/example/boxsh.wac`'s arrangement and the
+    // one the native binary ships. Spawning a stage re-enters this program's `main` with the
+    // applet's name first, and `main` is *this* dispatcher — so `ls` arrived here as a command, was
+    // not one, and every pipeline in a sealed session printed nothing at all while `echo`, a
+    // builtin, worked. `packages/box/src/bin/sealedsh.wac` sets it and can, because its `main`
+    // answers as an applet before it answers as a shell. Ours would have to become multi-call
+    // first, and running them in process is what the shipped shell already does.
+    return shellMain(core, inner, sh, p.at);
+  }
+  // `$WAC_HOME` rather than `fetch.wac`'s own `.wac` default: the compiler reads the cache from
+  // there, so defaulting to a relative directory puts a fetched tree where nothing looks for it —
+  // `wac update` says *1 fetched* and `wac run` says *not in the cache*, both truthfully.
+  if (cmd == "update") {
+    string dir = argc > 1 ? string.fromBytes(cli.arg(1).wait()) : ".";
+    string home = argc > 2 ? string.fromBytes(cli.arg(2).wait()) : wacHomeOf(cli);
+    if (home == "") {
+      core.warn("wac: neither WAC_HOME nor HOME is set, so there is nowhere to cache a fetch");
+      return 2;
+    }
+    return fetchAll(core, cli, dir, home);
+  }
 
 
   // **After the module check, because a module is a complete invocation on its own.** This guard was

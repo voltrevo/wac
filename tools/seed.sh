@@ -184,7 +184,7 @@ if [ "$bootstrap" -eq 1 ]; then
   mkdir -p "$tmp/0"
   stage "bootstrapping: compiling wacc with the reference compiler (Deno, the slow one, once)"
   deno run --allow-read --allow-write --allow-env --allow-run \
-    packages/platform/native.ts "$ENTRY" --allow-read --allow-write --allow-env -o "$tmp/0/wacc" >/dev/null
+    packages/platform/native.ts "$ENTRY" --allow-read --allow-write --allow-env --allow-net -o "$tmp/0/wacc" >/dev/null
   install_seed "$tmp/0"
 fi
 
@@ -244,8 +244,15 @@ MAX_ROUNDS=4
 # **The environment variable rather than `--no-cache`.** Round 1 runs the binary that is already
 # installed, which may predate the flag; an unknown flag is refused and there would be no way to build
 # the compiler that understands it. An unknown variable is ignored, so this spelling has no flag day.
+#
+# **`--allow-net`, because the command now contains the fetcher.** `issues/system/0257c` dispatches
+# `wac update` inside this program rather than from a payload beside it, and cloning needs the
+# network — so the one program's manifest is the *union* of what its subcommands need, which is an
+# inherent consequence of unifying them. What restores least privilege is narrowing per subcommand
+# inside the program: `packages/wac/src/grants.wac` does it for `wac sh`, and the compiler's own
+# subcommands still hold more than they use. Recorded in `0257c`.
 buildRound() {   # $1 output dir
-  if WAC_BUILD_CACHE_KEEP=0 "$BIN" build "$ENTRY" --allow-read --allow-write --allow-env -o "$1/wacc" >/dev/null; then
+  if WAC_BUILD_CACHE_KEEP=0 "$BIN" build "$ENTRY" --allow-read --allow-write --allow-env --allow-net -o "$1/wacc" >/dev/null; then
     return 0
   fi
   echo "== wacc cannot build itself with the seed just installed ==" >&2

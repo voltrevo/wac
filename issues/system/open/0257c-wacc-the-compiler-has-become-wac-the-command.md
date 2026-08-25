@@ -175,6 +175,37 @@ lengths agree, which fails in a millisecond and names the array.
 
 **Step 4 builds.** 218 files, 1,656,793 bytes, and `wac sh -c 'echo …'` answers from the one program.
 
+## Unifying the command unifies its grants, and that is the part to watch
+
+`wac update` clones over the network, so the one program's manifest is the **union** of what its
+subcommands need — `tools/seed.sh` now builds the seed with `--allow-net` and every `wac build`,
+`wac check` and `wac test` carries it. Three payloads meant three manifests and each command reached
+only what it needed; one program cannot have that for free.
+
+**What buys it back is narrowing inside the program**, and `packages/wac/src/grants.wac` is the
+mechanism: forty fields, pass on what was asked for and refuse the rest with `FAULT_NOT_GRANTED`,
+which is the code the hosts themselves use. `wac sh` uses it and is byte-identical to the payload it
+replaces — sealed by default, `--allow-read` reaching the same file, the same refusal text. **The
+compiler's own subcommands do not use it yet and hold more than they use.** That is the remaining
+least-privilege work and it is not hard, just wide: `cli` is threaded through the whole file, so it
+is a rename rather than a decision.
+
+The narrowing has one property `run_shell` had to check for: it cannot widen. What it passes on is
+the capability *this program* was handed, so `wac sh --allow-net` from a `wac` that was never granted
+net gets nothing. The ceiling enforces itself instead of being compared against a manifest.
+
+**Two things this cost, both worth keeping:**
+
+- `openInput("")` and `openOutput("")` are standard input and output, not paths, and no grant covers
+  them — `std/platform.wac` says the read grant is "`readFile`, `stat`, `readDir` and `openInput` *on
+  a path*". Refusing them broke every pipeline in a sealed session: `seq 1 5 | wc -l` answered
+  `wc: : Not granted to this application`, a message about a filesystem, about standard input.
+- A sealed session was first given `Fs.inMemory` with a `/bin` and `/tmp`, which is
+  `packages/box/src/bin/sealedsh.wac`'s much nicer world. It broke pipelines a second way: an applet
+  reading standard input asks for the path `""`, and `Fs.onHost` knows that convention while
+  `Fs.inMemory` does not. Worth fixing in `packages/fs`; not worth `wac sh` differing from the
+  shipped one to get it.
+
 **Two ordering facts worth keeping**, because each cost a five-minute build:
 
 - Raising a cap and adding the dispatch in one go changes nothing. Round 1 compiles with the seed

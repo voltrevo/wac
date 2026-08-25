@@ -240,7 +240,7 @@ export struct Frame {
  * the capture walk keyed lambdas by a position, which names one expression per template.
  * `issues/lang/0142` closed that, so the generic this always wanted to be is the generic it is.
  */
-Pending<T> ready<T>(T value) {
+export Pending<T> ready<T>(T value) {
   return Pending.of(0, (i32 id) => value, (i32 id) => true, (i32 id) => { });
 }
 
