@@ -308,7 +308,35 @@ string[] sources() {
     "struct Bx<T> { T v; T get(const this) { return this.v; } } export i32 f() { Bx<i32> b = Bx<i32>(7); return b.get(); } export i32 g() { Bx<string> b = Bx<string>(\"abc\"); return b.get().len(); }",
     "struct S { i32 v; i32 mine(const this) { return this.v; } } struct K : S { i32 w; } export i32 f() { S[] a = S[2](fill: S(0)); a[1] = K(3, 4); return a[1].v; }",
     "struct S { i32 v; i32 mine(const this) { return this.v; } } struct K : S { i32 w; } export i32 f() { S s = K(3, 4); return s is K ? 9 : 1; } export i32 g() { S s = K(3, 4); K k = s as! K; return k.w; }",
-    "struct S { i32 v; i32 mine(const this) { return this.v; } } struct K : S { i32 w; } export i32 f() { anyref r = K(3, 4); K k = r as! K; return k.w; } export i32 g() { K k = K(3, 4); S s = k as S; return s.v; }");
+    "struct S { i32 v; i32 mine(const this) { return this.v; } } struct K : S { i32 w; } export i32 f() { anyref r = K(3, 4); K k = r as! K; return k.w; } export i32 g() { K k = K(3, 4); S s = k as S; return s.v; }",
+    // ── Block scope: two locals of one name ────────────────────────────────────
+    //
+    // **These are here because the emitter had a guard against them and no test.** wasm has one flat
+    // frame per function while the language has block scopes, so `k` in two blocks is two locals with
+    // one name, and a name-to-index lookup that searched from the end would hand the *later* slot to
+    // the earlier block — an `i32.const` into an `i64` slot, which does not validate. `duplicateLocal`
+    // in `emit.wac` was written to decline exactly that; it had no caller, and the comment above
+    // `canEmit` still described the decline as live. All three shapes answer correctly, which is why
+    // the guard could go — and why they are pinned here rather than left to the next reader to
+    // rediscover by probing.
+    //
+    // Disjoint blocks at different types, a nested shadow at a different type, and a nested shadow at
+    // the *same* type — the last being the one that guard's comment said "survives the module check",
+    // since a wrong answer there is semantic rather than a validation failure.
+    "export i32 f() { { i32 k = 1; if (k > 0) { return 1; } } { i64 k = 2; if (k > 0) { return 2; } } return 0; }",
+    "export i32 f() { i32 k = 1; { i64 k = 2; if (k < 0) { return 9; } } return k; }",
+    "export i32 f() { i32 k = 1; { i32 k = 2; if (k < 0) { return 9; } } return k; }",
+    // **`issues/lang/0265c`'s workaround**, which is the half of it that compiles. `a[0]()` — calling a
+    // zero-argument funcref in an array — is read by both compilers as constructing an array of the
+    // type `a`, so the call needs a local first. That local is what this pins: if the collision is
+    // ever resolved, this case keeps working and the issue's reproduction is what changes.
+    "i32 five() { return 5; } export i32 f() { fn[i32()][] a = fn[i32()][1](fill: five); fn[i32()] g = a[0]; return g(); }",
+    // **And the form the spec argues from.** `arrays.md` justifies spelling the fill value `fill:` by
+    // saying `arr[i](5)` *already means* index an array of funcrefs and call the result. That sentence
+    // is load-bearing for the syntax and was not pinned anywhere: it is one argument that separates
+    // this from the construction reading, so it is the case that decides whether the justification is
+    // still true. `issues/lang/0265c`.
+    "i32 twice(i32 n) { return n * 2; } export i32 f() { fn[i32(i32)][] arr = fn[i32(i32)][1](fill: twice); return arr[0](5); }");
 }
 
 /** The calls, aligned with `sources()`. */
@@ -575,7 +603,13 @@ string[] calls() {
     "f;g",
     "f",
     "f;g",
-    "f;g");
+    "f;g",
+    // ── Block scope, then `issues/lang/0265c`'s workaround and the form the spec argues from ──
+    "f",
+    "f",
+    "f",
+    "f",
+    "f");
 }
 
 /** The declared return type of `name` in `src`, or `""`. */

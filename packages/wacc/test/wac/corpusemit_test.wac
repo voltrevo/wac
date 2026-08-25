@@ -223,8 +223,14 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   // was written and *compiles* an hour later, because `issues/lang/0260c` got fixed in between.
   //
   // So the subject is a **cap** rather than a construct: `capsPerLambda()` is 32, the checker has no
-  // opinion about it, and a lambda capturing 33 locals is declined by name. If that number is ever
-  // raised this fails loudly and says so, which is the right way for a canary to break.
+  // opinion about it, and a lambda capturing 33 locals is declined with the cap named. If that number
+  // is ever raised this fails loudly and says so, which is the right way for a canary to break.
+  //
+  // **"Named" means the cap, not the function.** This said "declined by name", which reads as the
+  // per-function decline and is not what happens: the message is `wacc: cannot emit <file> — the
+  // emitter ran out of room for captures in one lambda`, because a cap goes through `declineFor` and
+  // sets `fullWhy`, which is whole-module. The assertion below only ever checked the reason, so it was
+  // the sentence that was wrong. `issues/lang/0262c` is about what that leaves untested.
   string caps = "export i32 f() {\n";
   for (i32 i = 0; i < 33; i++) { caps = caps + "  i32 v" + itoa(i) + " = " + itoa(i) + ";\n"; }
   caps = caps + "  fn[i32()] g = () => v0";

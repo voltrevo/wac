@@ -2,7 +2,7 @@
 
 - **Status:** open
 - **Reported by:** agent-c, 2026-08-25
-- **Kind:** bug
+- **Kind:** decision — the needle is fixed; what is left is retire-or-hook
 - **Symptom:** a test whose subject moved out from under it, and still passes
 
 `packages/wacc/test/wac/declined_test.wac` opens:
@@ -72,3 +72,60 @@ That part is not a decision.
 **Not made red on purpose.** The file passes today, and making the shared suite red is the thing
 `CLAUDE.md` says to file rather than do. But it passes for the wrong reason, so it is not protecting
 what its header says it protects.
+
+## The non-decision half is done — agent-c, 2026-08-25
+
+The needle is a **location** now, `m.wac:2`, and the header says what the file actually pins: a program
+no phase can compile exits non-zero and points at the line. Three cases, green. The needle was checked
+against a wrong line (`m.wac:99`) and goes red, so unlike its predecessor it can disagree.
+
+Case 2 keeps its two-methods-before-the-function shape and says in a comment that the *reason* is
+historical: the index bug it reproduces is not reachable through this fixture any more, while what it
+asserts — two methods ahead of the function do not turn a refusal into a silent success — holds
+whichever phase refuses.
+
+## What the search for a reachable subject found instead
+
+Every construct below was tried against **both** compilers. None of them reaches a per-function
+decline, and three of them are declines this emitter's own comments *claimed* it still makes:
+
+| tried | what actually happens |
+|---|---|
+| two locals of one name, disjoint blocks, different types | **compiles, answers correctly** |
+| a nested shadow at a different type | **compiles, answers correctly** |
+| a nested shadow at the same type | **compiles, answers correctly** |
+| a lambda capturing a *parameter* | **compiles, answers correctly** |
+| a lambda in a ternary, returned, in a struct field, as a call argument | all four compile |
+| named arguments in a call | parser |
+| a lambda in an array `fill:` | checker, and `a[0]()` beside it is `issues/lang/0265c` |
+
+So `duplicateLocal` — written to decline two locals of one name — **had no caller at all**, and the
+comment above `canEmit` described that decline as live for as long as the function sat there
+unreferenced. It is deleted, and the three shadow shapes are cases in `emit_test.wac`'s rung-4
+differential now, so the behaviour it worried about is pinned by a test instead of a paragraph. The
+lambda comment claiming a captured parameter is refused is corrected the same way.
+
+**And the cap decline is confirmed whole-module**, which this issue asserted and `corpusemit_test.wac`
+contradicted. Measured:
+
+    wacc: cannot emit <file> — the emitter ran out of room for captures in one lambda
+
+It names the *file*. A cap goes through `ranOut` → `declineFor`, which sets `env.fullWhy`; the
+per-function path is `canEmit` → `env.lastWhy` → `env.funcWhy[at]`, and nothing joins them. That test's
+"declined by name" sentence is fixed to say the cap is named rather than the function; its assertion
+only ever read the reason string, so the sentence was the only thing wrong.
+
+## Recommendation, with the decision still the operator's
+
+**Retire the claim.** Every attempt above was caught earlier or compiled, and the reachable declines
+are caps, which do not name a function. A test hook is code no program needs, which `CLAUDE.md` is
+explicit about, and it would pin an interior that no input can produce.
+
+What argues against deleting the *mechanism* along with the claim: `unsupportedIn` is not dead the way
+`duplicateLocal` was. It exists because every walk in the emitter ends in `else: { }`, which for an
+expression emits nothing where a value was expected — 199 of 308 broken modules before it, each
+reporting a wasm stack depth rather than a missing feature. Its declines are unreachable *because the
+checker got there first*, and that is a property of today's checker rather than of the emitter. The
+next construct added to the parser ahead of the emitter makes them reachable again, which is exactly
+what the guard is for. So: retire the test's claim, keep the guard, and say in `emit.wac` that its
+declines are defence for a lag that is currently zero.
