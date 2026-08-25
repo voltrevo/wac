@@ -1,0 +1,5 @@
+// expect: traps f
+// why: the unsigned twin of `spec/cases/0230` — and the one a round trip cannot see, because `u64`'s
+//      maximum rounds *up* to 2^64 and a saturating truncation clamps it back onto the original
+// from: issues/lang/0268c
+export f64 f() { u64 x = 18446744073709551615; return x as! f64; }

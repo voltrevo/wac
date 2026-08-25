@@ -208,7 +208,7 @@ must *not* be read as type arguments.
 
 **Rung 3 now meets the spec**, and the figures are in the table above rather than repeated here.
 `test/wac/specsingle_test.wac` and `specmulti_test.wac` print the single- and multi-file counts;
-`test/wac/cases_test.wac` prints `spec/cases`, which is **231 of 231 met by wacc** — six more than earlier on 2026-08-25, because `issues/lang/0268c` added the checked-cast rows that had no case and two of them were red until the emitter learned to trap.
+`test/wac/cases_test.wac` prints `spec/cases`, which is **236 of 236 met by wacc** — eleven more than earlier on 2026-08-25, because `issues/lang/0268c` added the checked-cast rows that had no case, and five of them were red until the emitter learned to trap.
 
 This paragraph carried its own copy of those numbers until 2026-08-25 — `303 of 304`, `367`, `41 of
 41`, and `spec/cases is 111 of 111` — every one of them stale, and the last by a factor of two. The

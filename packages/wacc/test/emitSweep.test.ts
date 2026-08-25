@@ -96,7 +96,17 @@ Deno.test("rung 4: the generated sweep — every answer agrees", () => {
   console.log(`    rung 4 sweep: ${cells.length} programs — ${compared} compared, ` +
     `${mismatches.length} mismatched, ${declined} declined, ${refused} not valid wac, ${trapped} trap` +
     `, ${softTraps.length} answered where the reference traps`);
-  for (const t of softTraps) console.log(`      ${t}`);
+
+  // **Asserted, now that it is zero.** It was 8 when the half-comparison went in and 4 after the
+  // integer rows were fixed; `issues/lang/0268c` closed the rest. A program where the reference
+  // refuses at runtime and wacc answers is the same defect as a wrong answer, and it read as
+  // agreement in a passing run for as long as this was a count nobody could fail.
+  if (softTraps.length > 0) {
+    throw new Error(
+      `${softTraps.length} program(s) answer where the reference traps — a refusal at runtime is an ` +
+        `answer to compare, not a cell to skip:\n  ` + softTraps.join("\n  "),
+    );
+  }
 
   // The canary: a sweep that compared nothing would report that everything agrees.
   if (compared < 1000) throw new Error(`only ${compared} programs were actually run and compared`);

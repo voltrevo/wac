@@ -9358,10 +9358,20 @@ void emitBinary(B fb, Env env, i32 k, string t) {
  * `5000000000 as! i32` was `i32` max — the one spelling whose job is to stop failing silently, and
  * inventing a plausible number while it did. `issues/lang/0127`.
  *
- * The check is one rule for every row: **convert, convert back, compare, trap if they differ.** The
- * fractional case needs no separate test — `1.5` truncates to `1` and `1.0 != 1.5` — and NaN handles
- * itself, since `trunc_sat` gives 0 and NaN is not equal to `0.0`. Not being equal to anything,
- * including itself, is what makes a comparison the right instrument here.
+ * The check is **convert, convert back, compare, trap if they differ** for most rows. The fractional
+ * case needs no separate test — `1.5` truncates to `1` and `1.0 != 1.5` — and NaN handles itself on
+ * the float-to-integer rows, since `trunc_sat` gives 0 and NaN is not equal to `0.0`. Not being equal
+ * to anything, including itself, is what makes a comparison the right instrument there.
+ *
+ * **It is not one rule for every row, and saying so was how two families went unchecked.** Two need
+ * something else, both because a round trip can return the original without the value having
+ * survived — `issues/lang/0268c`:
+ *
+ *   - two integer types of one wasm width, where there is nothing to convert: `emitSignRangeTrap`;
+ *   - back from a float, where the *saturating* truncation clamps an out-of-range value onto the
+ *     original: the trapping truncation instead, `truncTrapOpcode`.
+ *
+ * The comparison is still the instrument; what changed is that two rows had nothing to compare.
  *
  * Only for numeric conversions. A reference downcast is already checked by `ref.cast`, which traps
  * on a wrong type, and has no round trip to make.
@@ -9437,7 +9447,16 @@ void emitCast(B fb, Env env, string from, string to, i32 op) {
   fb.byte(34); fb.u32leb(srcL);              // local.tee  — keep the original
   emitConversion(fb, env, from, to, op);
   fb.byte(34); fb.u32leb(dstL);              // local.tee  — keep the converted
-  emitConversion(fb, env, to, from, 0);      // and convert it back
+  // **Coming back from a float, the *trapping* truncation.** `emitConversion` uses the saturating one
+  // — right for `as~`, and blind here: `u64`'s maximum rounds *up* to 2^64 in an `f64` and saturation
+  // clamps it back onto the original, so the comparison below sees no loss exactly where the loss is.
+  // The trapping form refuses the out-of-range value itself, and a value that merely rounds still
+  // comes back different and is caught by the comparison. `issues/lang/0268c`.
+  if (isFloat(to) && !isFloat(from)) {
+    fb.byte(truncTrapOpcode(to, from));
+  } else {
+    emitConversion(fb, env, to, from, 0);    // and convert it back
+  }
   fb.byte(32); fb.u32leb(srcL);              // local.get  — the original
   fb.byte(eqOpcode(from));
   fb.byte(69);                               // i32.eqz — true when they differ
@@ -9457,6 +9476,19 @@ void emitCast(B fb, Env env, string from, string to, i32 op) {
  */
 bool isNumericTy(string t) {
   return t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "f32" || t == "f64";
+}
+
+/**
+ * The **trapping** float-to-integer truncation — `i64.trunc_f64_u` and its seven siblings.
+ *
+ * Separate from the saturating family `emitConversion` emits, which is `as~`'s answer: those clamp,
+ * and a clamp is what hid an inexact `as!` through a float. `from` is the float, `to` the integer.
+ */
+i32 truncTrapOpcode(string from, string to) {
+  bool wide = valType(to) == 126;             // i64 or u64
+  bool f32src = from == "f32";
+  i32 base = wide ? (f32src ? 174 : 176) : (f32src ? 168 : 170);
+  return base + (isUnsigned(to) ? 1 : 0);
 }
 
 /** The `eq` opcode for a numeric type's wasm value type. */

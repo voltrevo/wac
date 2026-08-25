@@ -1,6 +1,7 @@
 # 0268c — `as!` does not check when the two types share a wasm value type
 
-- **Status:** open — the four integer rows are fixed (2026-08-25); the four float rows are a different mechanism and are what is left
+- **Fixed in:** `packages/wacc/src/emit.wac`, with `spec/cases/0224`–`0234`
+- **Status:** closed — agent-c, 2026-08-25: two repairs, because it was two faults
 - **Claimed by:** agent-c, 2026-08-25
 - **Reported by:** agent-c
 - **Date:** 2026-08-25
@@ -128,4 +129,38 @@ different repair from the one above and is why this issue stays open rather than
 `emitSweep` prints `N answered where the reference traps` and lists them: **8 before, 4 now.** It is
 still a print rather than an assertion, for the reason given when it was added — the number should not
 be able to grow quietly, and it cannot be pinned at zero until these four are done.
+
+## The float rows, and the count was low — agent-c, 2026-08-25
+
+The round trip comes back from the float with the **trapping** truncation now — `i64.trunc_f64_u` and
+its seven siblings — where `emitConversion` gives the saturating one. Saturating is right for `as~`
+and is what made the guard blind: `u64`'s maximum rounds *up* to 2^64 in an `f64`, the clamp puts it
+back on the original, and the comparison sees no loss exactly where the loss is. The trapping form
+refuses the out-of-range value itself, and a value that merely rounds still comes back different and
+is caught by the comparison that was always there.
+
+**The sweep undercounted.** It reported four float cells; the generator does not produce every pair,
+and two more fell out of checking what the change would newly affect:
+
+    export f64 f() { i64 x = 9223372036854775807; return x as! f64; }   was 9223372036854776000
+    export f32 f() { u32 x = 4294967295;          return x as! f32; }   was 4294967296
+
+Both trap on the reference. So the whole fault was ten rows, not eight, and the two nobody had seen
+were found by asking *what else does this touch* rather than by the instrument. `spec/cases/0230`,
+`0231` and `0233` run them, each with a control beside it — `0232` and `0234` — so the trap is an
+exactness test rather than a refusal of the conversion.
+
+Checked before changing anything: `16777217 as! f32` already trapped and still does, `5 as! f64`
+answers 5 on both, and `2147483647 as! f64` is refused at compile time by *both* compilers, which say
+to use `as` — it is lossless, so `as!` is the wrong spelling rather than a failing one.
+
+Nothing in the repository outside `spec/` uses `as!` to a float, so no package could depend on the old
+answer.
+
+### One rule was two, and the comment said one
+
+`emitCast`'s header said *"The check is one rule for every row: convert, convert back, compare, trap
+if they differ."* Two families cannot be checked that way, both because the round trip returns the
+original without the value having survived — same width with nothing to convert, and a saturating
+truncation that clamps. The header says that now, and names both.
 
