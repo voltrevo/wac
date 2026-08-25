@@ -160,11 +160,11 @@ have never appeared in a status line: they are invisible to every rung.
 | what the reference does | wacc |
 |---|---|
 | lex, parse | done — token- and node-identical on every file |
-| type check | 303 of 304 spec rejections, 367 of 367 acceptances — the one left is a multi-file case recorded with one file |
-| emit wasm | **every file it is given** — 356 of 359 whole, 0 invalid; the three left import a file the fixture deliberately does not supply |
+| type check | **317 of 317** spec rejections and **371 of 371** acceptances one file at a time, 15 of 15 and 42 of 42 across files, and the ledger of known misses is empty. The row here said "303 of 304 … the one left is a multi-file case recorded with one file" until 2026-08-25; that case is gone and the number had moved. `test/wac/specsingle_test.wac` and `specmulti_test.wac` print these |
+| emit wasm | **every file in the repository** — 1075 of 1075 whole, 0 partial, 0 invalid, printed by `test/wac/corpusemit_test.wac`. It was 702 of 729 on 2026-08-20 and 411 of 414 six days before that. The figure here was "356 of 359", which no test produced any more — a measurement nothing prints goes stale in the document that cites it |
 | self-host | done, and the reference cannot |
 | diagnostics: message | done, and the wording agrees where both speak |
-| diagnostics: annotation, hint, span | operands on 81%, help on 43%, a real span on **73%** — ratcheted, so they cannot fall back. The spec states particular widths as clauses — `span: 1` for `if (x)`, `4` for `3.14`, `3` for `p.x`, `7` for `sum > 0` — and `test/wac/specclauses_test.wac` names them, along with the two wordings it quotes; the reference attaches no hint or span at all on that corpus |
+| diagnostics: annotation, hint, span | operands on **82%** (570 of 697), help on 43% (297), a real span on **74%** (513) — the counts as well as the rates, because `test/wac/diagnosticgap_test.wac` prints both and a bare percentage cannot be checked against it — ratcheted, so they cannot fall back. The spec states particular widths as clauses — `span: 1` for `if (x)`, `4` for `3.14`, `3` for `p.x`, `7` for `sum > 0` — and `test/wac/specclauses_test.wac` names them, along with the two wordings it quotes; the reference attaches no hint or span at all on that corpus |
 | CLI: `check`, `compile`, `run` | done — this *is* the `wac` command's compiler |
 | CLI: `bindgen` | done — `wac bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
