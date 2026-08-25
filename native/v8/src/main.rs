@@ -2145,21 +2145,9 @@ fn main() {
     if SEED.is_some() && stem == "validate" {
         std::process::exit(validate_command(&args[2..]));
     }
-    // **No `covdump` here.** `packages/wac/src/wac.wac`, as of 2026-08-25, for the same reason as
-    // `tracestat`: `issues/system/0257c`'s rule that a host implements running a module and not the
-    // command surface. It reaches the seed through the fall-through below.
-    //
-    // Two sentences stood here and both were wrong. "Nothing in wac can call `__cov_get`" stopped
-    // being true with `issues/system/0243c`; "`counters_of` is handed modules that carry no manifest
-    // and `Cli.load` refuses those" was never the blocker — nothing feeds these commands such a
-    // module, and what actually stopped it was `issues/system/0263c`, a loaded module unable to use
-    // any capability that answers a `Pending`.
-    // **The comparison, not the two journals.** A traced run of a real routine is millions of events,
-    // and shipping both out as text to be compared by the caller costs tens of megabytes to learn one
-    // number. `issues/system/0161`.
-    if SEED.is_some() && stem == "ctcompare" {
-        std::process::exit(ctcompare_command(&args[2..]));
-    }
+    // **No `ctcompare` here.** `packages/wac/src/wac.wac`, as of 2026-08-25 — the last of the three
+    // counter commands to move, for `issues/system/0257c`'s rule that a host implements running a
+    // module and not the command surface. It reaches the seed through the fall-through below.
     // **No `tracestat` here.** It is `packages/wac/src/wac.wac`'s, as of 2026-08-25 —
     // `issues/system/0257c`'s rule is that a host may implement *running a module* and must not
     // implement the command surface, and reading a journal's size is a command. It reaches the seed
@@ -2255,32 +2243,6 @@ struct AsChild {
     shown_entry: Option<String>,
     /// Name every test as it passes, with what it took. `test --verbose`.
     loud: bool,
-    /// **Print each counter after the run — `wac covdump`, with a world.**
-    ///
-    /// `covdump` used to instantiate with an empty imports object and call `main` with no arguments,
-    /// which meant a coverage exercise could declare no capabilities at all: a `main(Core, Cli)` was
-    /// not refused, it *failed to instantiate*, because the imports were absent rather than denied.
-    /// So no exercise could read a corpus off disk, and `packages/json` alone needs a directory
-    /// listing. `issues/system/0221`.
-    ///
-    /// Here instead, so the run is the ordinary program path — the world built from the manifest,
-    /// grants as the manifest declares them — and the counters are read where they still exist.
-    dump_counters: bool,
-    /// The exports to call, in order, **each with its trap caught**. Empty means `main`.
-    ///
-    /// A trap ends the function it is in, so an exercise holding several trapping cases in one `main`
-    /// loses every one after the first — measured: the branch before the trap reads 1 and the one
-    /// after reads 0. `packages/bytes`'s driver has seven such cases and `packages/bignum`'s four,
-    /// and the TypeScript called each from the host in its own `try`. This is that, in the host,
-    /// where the counters are.
-    ///
-    /// **The `i32` is a sweep**: `Some(n)` calls `name(i)` for `i` in `0..n` and `None` calls `name()`
-    /// once with no argument. A named export holds one trapping case, so a sweep of a thousand would
-    /// otherwise need a thousand names — and the cases are not always separable: zstd's coverage driver
-    /// damages a real frame at every byte in turn, over several frames and masks, which is more than a
-    /// hundred thousand calls. Sampling was measured and reaches about half, because "the checks are
-    /// close enough together that stepping over bytes steps over whole branches".
-    cov_exports: Vec<(String, Option<i32>)>,
     /// Where this program's output goes, instead of the terminal.
     out: Option<Arc<Stream>>,
     err: Option<Arc<Stream>>,
@@ -2468,313 +2430,6 @@ fn uninstall_command(args: &[String]) -> i32 {
     0
 }
 
-/// Instantiate an instrumented module, run `main`, and hand back the counter array.
-///
-/// Extracted from the `covdump` command when `ctcompare` wanted the same six steps; that command
-/// is `packages/wac/src/wac.wac`'s since 2026-08-25 and this is `ctcompare`'s alone. The array means
-/// different things in the two modes and this does not care which: under `--coverage` slot `i` is how
-/// many times point `i` ran, and under the trace mode slot 0 is how many entries are live, then
-/// `(site, value)` pairs, and the last slot is how many events happened. Both are the same read.
-///
-/// The module is instantiated with no imports, which is what an instrumented single file needs.
-fn counters_of(path: &str) -> Result<Vec<i32>, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {path} — {e}"))?;
-    start_v8();
-    let isolate = &mut v8::Isolate::new(Default::default());
-    v8::scope!(let handle_scope, isolate);
-    let context = v8::Context::new(handle_scope, Default::default());
-    let scope = &mut v8::ContextScope::new(handle_scope, context);
-
-    let Some(module) = v8::WasmModuleObject::compile(scope, &bytes) else {
-        return Err(format!("{path} was rejected by the engine"));
-    };
-    let imports = v8::Object::new(scope);
-    let global = context.global(scope);
-    let mod_key = v8::String::new(scope, "__mod").unwrap();
-    global.set(scope, mod_key.into(), module.into()).unwrap();
-    let imp_key = v8::String::new(scope, "__imports").unwrap();
-    global.set(scope, imp_key.into(), imports.into()).unwrap();
-    let src = v8::String::new(scope, "new WebAssembly.Instance(__mod, __imports).exports").unwrap();
-    let Some(exports) = v8::Script::compile(scope, src, None)
-        .and_then(|sc| sc.run(scope))
-        .and_then(|v| v.to_object(scope))
-    else {
-        return Err(format!("{path} did not instantiate — an import it wants is missing"));
-    };
-
-    // The counters are allocated by a call, not by instantiation: skip this and every instrumented
-    // function traps on its first branch with a message about the program rather than the omission.
-    let Some(init) = get_export(scope, exports, "__cov_init") else {
-        return Err(format!("{path} carries no counters — was it built with coverage or tracing?"));
-    };
-    init.call(scope, exports.into(), &[]);
-    if let Some(main) = get_export(scope, exports, "main") {
-        // **A `TryCatch`, because a trap here is expected and tolerated.** The next lines say so: the
-        // counters stand after a trap and they are what was asked for. Without one, V8's default
-        // handler announces the trap on **stdout** — which is the stream `tracestat` prints its one
-        // line of numbers to and `ctcompare` prints its verdict to, and `ct.wac` and
-        // `packages/crypto/test/wac/constanttime_test.wac` both parse. Measured before the fix: a
-        // trapping module gave `tracestat` one stray line and `ctcompare` two, since it reads two
-        // modules through here.
-        let tc = std::pin::pin!(v8::TryCatch::new(scope));
-        let mut tc = tc.init();
-        main.call(&mut tc, exports.into(), &[]);
-        tc.reset();
-    }
-
-    let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
-        return Err(format!("{path} has __cov_init and no __cov_len"));
-    };
-    let len = len_fn
-        .call(scope, exports.into(), &[])
-        .and_then(|v| v.to_int32(scope))
-        .map(|v| v.value())
-        .unwrap_or(0);
-    let Some(get_fn) = get_export(scope, exports, "__cov_get") else {
-        return Err(format!("{path} has __cov_len and no __cov_get"));
-    };
-    let mut out = Vec::with_capacity(len.max(0) as usize);
-    for i in 0..len {
-        let idx = v8::Integer::new(scope, i);
-        out.push(
-            get_fn
-                .call(scope, exports.into(), &[idx.into()])
-                .and_then(|v| v.to_int32(scope))
-                .map(|v| v.value())
-                .unwrap_or(-1),
-        );
-    }
-    Ok(out)
-}
-
-/// `<index>\t<count>` per counter, then how many — `wac covdump`'s output, unchanged.
-///
-/// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
-/// `i`th row describes counter `i`, and a test asserting "the loop ran three times" needs the pair.
-/// The aggregated report `--coverage` prints answers a different question — how much was reached —
-/// and cannot say how often.
-///
-/// Written from inside a live run, because the counters are in the instance and the instance is gone
-/// once `run_as_with` has returned. `issues/system/0221`.
-fn print_counters(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) {
-    let Some(len_fn) = get_export(scope, exports, "__cov_len") else {
-        eprintln!("wac: the module has __cov_init and no __cov_len");
-        return;
-    };
-    let len = len_fn
-        .call(scope, exports.into(), &[])
-        .and_then(|v| v.to_int32(scope))
-        .map(|v| v.value())
-        .unwrap_or(0);
-    let Some(get_fn) = get_export(scope, exports, "__cov_get") else {
-        eprintln!("wac: the module has __cov_len and no __cov_get");
-        return;
-    };
-    for i in 0..len {
-        let idx = v8::Integer::new(scope, i);
-        let n = get_fn
-            .call(scope, exports.into(), &[idx.into()])
-            .and_then(|v| v.to_int32(scope))
-            .map(|v| v.value())
-            .unwrap_or(0);
-        println!("{i}\t{n}");
-    }
-    println!("{len} counter(s)");
-}
-
-/// Call each named export in turn, **each trap caught** — after `main`, not instead of it.
-///
-/// A trap ends the function it is in and nothing else: the instance stays usable, which is what lets
-/// a trapping branch be counted as covered at all. So seven bounds cases are seven calls rather than
-/// seven runs, which is what the TypeScript did from the host and what a single `main` cannot express.
-///
-/// `call` answering `None` *is* the trap and is not an error here. A name that is not an export is,
-/// and is reported after the counters so a mistyped name cannot look like a package with no coverage.
-fn call_for_counters(
-    scope: &mut v8::PinScope,
-    exports: v8::Local<v8::Object>,
-    m: &Manifest,
-    names: &[(String, Option<i32>)],
-) {
-    let mut missing: Vec<&str> = Vec::new();
-    for (name, cases) in names {
-        match get_export(scope, exports, name) {
-            Some(f) => {
-                // **A `TryCatch` per call, and it is not optional** — the same reason
-                // `validate_command` has one per module, one paragraph over: a throw leaves an
-                // exception on the isolate, and the next operation meets V8's own check that a null
-                // result and a pending exception agree. That comment says "nothing else in this file
-                // needs one because nothing else compiles twice"; this calls twelve functions that
-                // are *meant* to trap, which is the same thing for calls.
-                //
-                // Without it `packages/bytes` measured 69 covered on one run and 73 on the next from
-                // an unchanged tree, which is what a swallowed call looks like from the outside.
-                //
-                // **A sweep is the same thing per case, and the `TryCatch` is per *call*.** One for
-                // the whole loop would leave the first trap pending through every case after it,
-                // which is the arrangement the paragraph above says aborts the process.
-                //
-                // The argument is passed only for a sweep. A wac export taking no parameter is a wasm
-                // function of arity zero, and handing it an extra value is harmless; handing a
-                // one-parameter function *no* value is not, so "call it once" and "call it with 0"
-                // stay distinct rather than being the same case spelled two ways.
-                match cases {
-                    None => {
-                        let tc = std::pin::pin!(v8::TryCatch::new(scope));
-                        let mut tc = tc.init();
-                        f.call(&tc, exports.into(), &[]);
-                        tc.reset();
-                    }
-                    Some(n) => {
-                        for i in 0..*n {
-                            let tc = std::pin::pin!(v8::TryCatch::new(scope));
-                            let mut tc = tc.init();
-                            let arg = v8::Integer::new(&tc, i);
-                            f.call(&tc, exports.into(), &[arg.into()]);
-                            tc.reset();
-                        }
-                    }
-                }
-            }
-            None => missing.push(name),
-        }
-    }
-    if !missing.is_empty() {
-        // Named and not silent: a mistyped export would otherwise read as a package whose trapping
-        // branches are simply uncovered, which is the same number a real gap gives.
-        eprintln!("wac: {} exports no {}", m.entry, missing.join(", "));
-    }
-}
-
-/// `wac ctcompare <a.wasm> <b.wasm>` — two traced runs, and where their journals first differ.
-///
-/// **The comparison happens where the modules are.** A journal is `(site, value)` pairs and a real
-/// one is large — `x25519Base` produces about 1.6 million events — so `covdump`'s line-per-slot
-/// output is the wrong wire for it: a caller would parse tens of megabytes twice to learn one number.
-/// This prints one line.
-///
-///     same <n>                  the two journals are identical, over `n` events
-///     differs <i> <sa> <va> <sb> <vb>   at event `i`, where each side stood
-///     truncated <a> <b>         a side recorded fewer events than happened, so the answer is not
-///                               a comparison — the journal was sized too small for the run
-///
-/// `--all` answers with every divergent site instead of the first, which is what a caller checking a
-/// published list of leaking lines needs. Its walk stops at a **path split** — where the two runs are
-/// at different points rather than at one point with different values — because past that the two
-/// journals are not comparable event by event and every later "difference" is an artefact of the
-/// misalignment. The split is reported as its own line naming both sides:
-///
-///     split <i> <sa> <sb>       the runs parted; nothing after this is a comparison
-///     site <i> <site> <va> <vb> one point, reached by both, with different values — once per site
-///     longer <n> <site>         one run kept going; this is where the longer one stood at `n`
-///
-/// `truncated` is its own answer rather than a difference, because two journals that both overflowed
-/// can agree on every event they kept while differing in the ones they dropped. A caller that read
-/// that as "no divergence" would be told the routine is uniform on the strength of the part that fit.
-fn ctcompare_command(rest: &[String]) -> i32 {
-    let all = rest.iter().any(|a| a == "--all");
-    let paths: Vec<&String> = rest.iter().filter(|a| !a.starts_with("--")).collect();
-    let (Some(a_path), Some(b_path)) = (paths.first().copied(), paths.get(1).copied()) else {
-        eprintln!("usage: wac ctcompare [--all] <a.wasm> <b.wasm>");
-        return 2;
-    };
-    let (a, b) = match (counters_of(a_path), counters_of(b_path)) {
-        (Ok(a), Ok(b)) => (a, b),
-        (Err(e), _) | (_, Err(e)) => {
-            eprintln!("wac: {e}");
-            return 1;
-        }
-    };
-    // Slot 0 is how many entries are live; the last is how many events happened whether or not there
-    // was room. Anything shorter than both cannot be a journal.
-    if a.len() < 2 || b.len() < 2 {
-        eprintln!("wac: a journal is at least two slots; got {} and {}", a.len(), b.len());
-        return 1;
-    }
-    let (used_a, used_b) = (a[0].max(0) as usize, b[0].max(0) as usize);
-    let (want_a, want_b) = (a[a.len() - 1], b[b.len() - 1]);
-    // **Truncation is only checked when nothing diverged**, and getting this the other way round was
-    // the first version's bug. A difference found inside the prefix both journals kept is a real
-    // difference: the events are aligned up to there, and what was dropped after it cannot un-differ
-    // them. Refusing to answer would have made the expensive routines unmeasurable for a reason that
-    // does not apply to them — a ladder parts at the first differing bit, long before either journal
-    // fills. What truncation *does* invalidate is `same`, because two runs that overflowed can agree
-    // on every event they kept and differ in the ones they dropped.
-    let overflowed = want_a as usize * 2 > used_a || want_b as usize * 2 > used_b;
-    let (n_a, n_b) = (used_a / 2, used_b / 2);
-    if all {
-        // **`same` is printed when nothing diverged**, because no output at all is what a command that
-        // did not run also produces, and a caller reading silence as "no leak" would be told a routine
-        // is uniform by a broken pipe.
-        let mut said = false;
-        let mut seen: std::collections::HashSet<i32> = std::collections::HashSet::new();
-        let n = n_a.min(n_b);
-        for i in 0..n {
-            let (sa, va) = (a[1 + 2 * i], a[2 + 2 * i]);
-            let (sb, vb) = (b[1 + 2 * i], b[2 + 2 * i]);
-            if sa == sb && va == vb {
-                continue;
-            }
-            if sa != sb {
-                // Not a leaking site: it is where *this* run happened to be when the two stopped
-                // agreeing, and the other was somewhere else. Naming both is the only honest report,
-                // and nothing after it is a comparison.
-                println!("split {i} {sa} {sb}");
-                return 0;
-            }
-            if seen.insert(sa) {
-                said = true;
-                println!("site {i} {sa} {va} {vb}");
-            }
-        }
-        if n_a != n_b {
-            let longer = if n_a > n_b { &a } else { &b };
-            said = true;
-            println!("longer {n} {}", longer[1 + 2 * n]);
-        }
-        if !said {
-            if overflowed {
-                println!("truncated {want_a} {want_b}");
-            } else {
-                println!("same {}", n_a.min(n_b));
-            }
-        }
-        return 0;
-    }
-    for i in 0..n_a.max(n_b) {
-        let ev = |v: &[i32], n: usize| -> Option<(i32, i32)> {
-            if i < n { Some((v[1 + 2 * i], v[2 + 2 * i])) } else { None }
-        };
-        match (ev(&a, n_a), ev(&b, n_b)) {
-            (Some(x), Some(y)) if x == y => continue,
-            (Some(x), Some(y)) => {
-                println!("differs {i} {} {} {} {}", x.0, x.1, y.0, y.1);
-                return 0;
-            }
-            // One side ended. The site is whichever side still has one, which is what names the
-            // point a caller should look at.
-            (Some(x), None) => {
-                println!("differs {i} {} {} -1 -1", x.0, x.1);
-                return 0;
-            }
-            (None, Some(y)) => {
-                println!("differs {i} -1 -1 {} {}", y.0, y.1);
-                return 0;
-            }
-            (None, None) => break,
-        }
-    }
-    if overflowed {
-        println!("truncated {want_a} {want_b}");
-    } else {
-        // **The count, because `same` over nothing is not agreement.** A mistyped export name calls
-        // nothing and records nothing, and two empty journals match perfectly — which would report
-        // every routine in the repository as constant-time. A caller checks the number.
-        println!("same {}", n_a.min(n_b));
-    }
-    0
-}
-
 fn run(m: &Manifest, wasm: &[u8], manifest_text: &str) -> i32 {
     run_as_with(m, wasm, manifest_text, AsChild { argv: std::env::args().skip(2).map(|a| a.into_bytes()).collect(), ..Default::default() })
 }
@@ -2799,8 +2454,6 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // that decision is made below where the manifest is known — see `call_named`.
     let argv = as_child.argv.clone();
     let loud = as_child.loud;
-    let dump_counters = as_child.dump_counters;
-    let cov_exports = as_child.cov_exports.clone();
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -3052,19 +2705,6 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                          file_suffix.as_deref(), shown_entry.as_deref().unwrap_or(&m.entry),
                          loud, core, cli);
     }
-    // **The counters are allocated by a call, not by instantiation.** Skip this and every
-    // instrumented function traps on its first branch, with a message about the program rather than
-    // about the omission.
-    if dump_counters {
-        match get_export(scope, exports, "__cov_init") {
-            Some(f) => { f.call(scope, exports.into(), &[]); }
-            None => {
-                eprintln!("wac: {} carries no counters — was it built with coverage or tracing?",
-                          m.entry);
-                return 1;
-            }
-        }
-    }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
         // **No `main`: the first argument names an export.** `wac run math.wac gcd 48 18`, which
@@ -3158,20 +2798,10 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             } else {
                 eprintln!("wac: {} trapped: {said}", m.entry);
             }
-            // **The counters still stand after a trap**, and they are the answer `covdump` was asked
-            // for: an exercise whose last case is meant to trap has done its work by the time it does.
-            if dump_counters {
-                call_for_counters(scope, exports, m, &cov_exports);
-                print_counters(scope, exports);
-            }
             return 1;
         }
     };
     let code = r.to_int32(scope).map(|i| i.value()).unwrap_or(0);
-    if dump_counters {
-        call_for_counters(scope, exports, m, &cov_exports);
-        print_counters(scope, exports);
-    }
 
     // **Work scheduled and never run is an error.** `main` returning is the program saying it is
     // done, and a continuation still waiting says it was not — the answer would simply never arrive,
@@ -4438,8 +4068,6 @@ fn dispatch(
                 loud: false,
                 // A spawned child is never a coverage run: `covdump` is the parent's command, and a
                 // child printing its parent's counters would interleave two tables.
-                dump_counters: false,
-                cov_exports: Vec::new(),
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -4585,8 +4213,6 @@ fn dispatch(
                 loud: false,
                 // A spawned child is never a coverage run: `covdump` is the parent's command, and a
                 // child printing its parent's counters would interleave two tables.
-                dump_counters: false,
-                cov_exports: Vec::new(),
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },

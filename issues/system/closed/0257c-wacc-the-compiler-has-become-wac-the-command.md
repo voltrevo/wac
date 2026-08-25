@@ -1,6 +1,6 @@
 # 0257c — `wacc` the compiler has become `wac` the command
 
-- **Status:** open
+- **Status:** closed — 2026-08-25
 - **Reported by:** the operator, 2026-08-25 — recorded by agent-c
 - **Kind:** decision, already ruled
 - **Symptom:** the compiler package owns the shell-less command surface, and the hosted build "cannot"
@@ -370,3 +370,38 @@ JavaScript hosts answered *expected magic word 00 61 73 6d, found 69 6d 70 6f* �
 the rule; `test`, `covdump`, `tracestat`, `ctcompare`, `sh` and `update` were the ones to move, and
 `ctcompare` is the last — it is a different shape from the other two, comparing two journals with
 path-split detection rather than printing one, and `counters.wac` gives it both halves.
+
+## Closed: the table is empty — 2026-08-25
+
+`ctcompare` was the last row, and it moved with the other two. What the host kept and what it gave up:
+
+    wac prog.wasm, the instantiate half of run   stays — running a module is the engine's job
+    validate                                     stays — it answers whether *this engine* accepts a
+                                                 module, so three answers is it working
+    test covdump tracestat ctcompare sh update   moved
+
+**And 206 lines of the host went with it.** `counters_of` was a second engine driver — compile,
+instantiate with no imports, `__cov_init`, `main` in a `TryCatch`, read `__cov_len`/`__cov_get` — the
+sequence `run_as_with` already performs, written again for these commands. With them gone it was
+unused, and so were `print_counters`, `call_for_counters`, `AsChild.dump_counters`,
+`AsChild.cov_exports` and `COUNTERS_PRINTED`. The compiler found each one as the previous went.
+
+The differential grew from 26 invocations on two hosts to **41 on three**, eighteen of them exiting 0.
+
+## What this cost, gathered in one place
+
+Six things had to be fixed or found before the last three commands could move, and none of them was
+visible when this issue was written:
+
+- the emitter's function table, and the two of its eight parallel arrays that stayed at 4096
+  (`issues/system/0257c` above, and the `addFunc` guard that now checks all eight)
+- a generic's type argument being the variant rather than the enum — `issues/lang/0260c`
+- `wac build --coverage` not declaring the exports it injected, which is what actually blocked
+  `covdump` where this issue said `Cli.load` did
+- a loaded module unable to use any capability that answers a `Pending` — `issues/system/0263c`, whose
+  fix is four lines and whose diagnosis took a table of five answer shapes
+- `openInput("")` being standard input rather than a path, and `Fs.inMemory` not knowing that
+- one program meaning one manifest, so the grants are the union — bought back by `forCommand`
+
+The one that would have saved the most time if known first: **the recorded blocker was wrong**, and
+reading the tests that fed the commands would have shown it in ten minutes.

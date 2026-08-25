@@ -57,7 +57,7 @@
 // ## What it costs, measured 2026-08-25
 //
 // **56s wall and 57.6s of CPU, warm**, taken from a suite run rather than by hand — up from 2–3s, for
-// three hosts instead of two and thirty-eight cases instead of six. (The wall figure is older than the
+// three hosts instead of two and forty-one cases instead of six. (The wall figure is older than the
 // count: since the command became one program containing the shell and the fetcher it is 83.7s wall
 // and 97.4s of CPU, because each host now builds a 219-file program rather than a 44-file one.) Twenty-eight of them run
 // something — fifteen `test`, eight `run` and five naming a module directly — where five `check` and
@@ -262,6 +262,13 @@ string[][] cases() {
     // is not one: the second never loads anything, so it compares the command's own sentence.
     string[]("covdump", "covered.wasm"),
     string[]("covdump", "covered.wasm", "hello:many"),
+    // **`ctcompare`, the last of the three.** A journal against itself, which must be `same`; the same
+    // through `--all`, which is a different walk with its own `split`/`site`/`longer` vocabulary; and
+    // one path where two are needed, which is the usage error. Comparing a module with itself is the
+    // one comparison whose answer is known without running anything.
+    string[]("ctcompare", "traced.wasm", "traced.wasm"),
+    string[]("ctcompare", "--all", "traced.wasm", "traced.wasm"),
+    string[]("ctcompare", "traced.wasm"),
     string[]("test", "--allow-read", "--coverage", "src/one_test.wac"),
     // **A socket failure, as a category rather than a sentence.** `Socket` carried no fault until
     // `issues/system/0238c` and the `FAULT_*` vocabulary had nothing for a network failure until
@@ -520,7 +527,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // returns 0, and the three modules run directly.
   // **Fifteen since 2026-08-25**: `tracestat traced.wasm` reads a journal and exits 0, and the second
   // `tracestat` row is a diagnosis about a file that is not a module, so it does not.
-  t.eqI32(zeroes, 16, "sixteen of these thirty-eight succeed on the native host; a different count " +
+  t.eqI32(zeroes, 18, "eighteen of these forty-one succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success

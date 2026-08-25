@@ -65,7 +65,7 @@ import { Shell } from "../../sh/src/exec.wac";
 import { shellMain } from "../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../box/src/shrun.wac";
 import { Asked, Parsed, askedFrom, forCommand, narrowed } from "./grants.wac";
-import { Counters, Exercise, read } from "./counters.wac";
+import { Counters, Exercise, compareJournals, read } from "./counters.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
@@ -1026,6 +1026,45 @@ export i32 main(Core core, Cli cli) {
   // `$WAC_HOME` rather than `fetch.wac`'s own `.wac` default: the compiler reads the cache from
   // there, so defaulting to a relative directory puts a fetched tree where nothing looks for it —
   // `wac update` says *1 fetched* and `wac run` says *not in the cache*, both truthfully.
+  // **`ctcompare`, the last row of `issues/system/0257c`'s table.** Two traced runs and where they
+  // first differ — the comparison happens where the modules are, because a real journal is about 1.6
+  // million events for `x25519Base` and shipping both out as text to learn one number costs tens of
+  // megabytes. `packages/wac/src/counters.wac` has the reading and the comparing.
+  if (cmd == "ctcompare") {
+    bool all = false;
+    string[] both = string[2](fill: "");
+    i32 seen = 0;
+    for (i32 i = 1; i < argc; i++) {
+      string a = string.fromBytes(cli.arg(i).wait());
+      if (a == "--all") { all = true; continue; }
+      // Any other `--` word is a flag this command does not have, and saying so beats reading it as a
+      // path and reporting that a file called `--vebose` cannot be read.
+      if (a.len() > 2 && a.slice(0, 2) == "--") {
+        core.warn("wac: unknown flag '" + a + "' — ctcompare takes --all");
+        return 2;
+      }
+      if (seen < 2) { both[seen] = a; }
+      seen = seen + 1;
+    }
+    if (seen < 2) {
+      core.warn("usage: wac ctcompare [--all] <a.wasm> <b.wasm>");
+      return 2;
+    }
+    Exercise[] none = Exercise[0](fill: Exercise("", 0 - 1));
+    Counters ca = read(core, cli, both[0], none);
+    if (ca.error != "") { core.warn("wac: " + ca.error); return 1; }
+    Counters cb = read(core, cli, both[1], none);
+    if (cb.error != "") { core.warn("wac: " + cb.error); return 1; }
+    if (ca.values.len() < 2 || cb.values.len() < 2) {
+      core.warn("wac: a journal is at least two slots; got " + itoa(ca.values.len()) +
+                " and " + itoa(cb.values.len()));
+      return 1;
+    }
+    string[] lines = compareJournals(ca.values, cb.values, all);
+    for (i32 i = 0; i < lines.len(); i++) { core.log(lines[i]); }
+    return 0;
+  }
+
   // **`covdump`, moved out of the host** for `issues/system/0257c`'s reason: reading a counter table
   // is a command, not the engine running a module. `<index>\t<count>` per counter and then how many —
   // per counter in index order, because that is what the table is keyed by: `covTableFiles`' `i`th row

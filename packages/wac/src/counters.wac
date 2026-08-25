@@ -20,6 +20,7 @@
 
 import { CallResult, Cli, Core, FileResult, LoadedModule } from "std/platform.wac";
 import { Vec } from "core/vec.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
 import { manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 import { manifestWire } from "../../wacc/src/api.wac";
 import { sigsWithCounters } from "./testrun.wac";
@@ -181,4 +182,104 @@ export Counters read(Core core, Cli cli, string path, Exercise[] also) {
   }
   cli.unload(m.handle);
   return Counters("", out, trapped, trapText, missing);
+}
+
+// ── Comparing two journals ────────────────────────────────────────────────────
+
+/**
+ * Two traced runs, and where they first differ — `wac ctcompare`'s answer, as lines.
+ *
+ * **The comparison happens where the modules are**, which is why this is a command rather than two
+ * `covdump`s and a diff: a real journal is large — `x25519Base` produces about 1.6 million events — so
+ * shipping both out as text to learn one number costs tens of megabytes. This prints one line.
+ *
+ *     same <n>                          identical, over `n` events
+ *     differs <i> <sa> <va> <sb> <vb>   at event `i`, where each side stood; `-1 -1` for a side
+ *                                       that had already ended
+ *     truncated <a> <b>                 a side recorded fewer events than happened, so the answer is
+ *                                       not a comparison — the journal was sized too small
+ *
+ * `all` answers with every divergent site instead of the first, which is what a caller checking a
+ * published list of leaking lines needs:
+ *
+ *     split <i> <sa> <sb>               the runs parted; nothing after this is a comparison
+ *     site <i> <site> <va> <vb>         one point, reached by both, with different values
+ *     longer <n> <site>                 one side kept going, and where
+ *
+ * Returned as lines rather than printed, so a test can compare them without a subprocess.
+ */
+export string[] compareJournals(Vec<i32> a, Vec<i32> b, bool all) {
+  // Slot 0 is how many entries are live; the last is how many events happened whether or not there
+  // was room.
+  i32 usedA = a.get(0) > 0 ? a.get(0) : 0;
+  i32 usedB = b.get(0) > 0 ? b.get(0) : 0;
+  i32 wantA = a.get(a.len() - 1);
+  i32 wantB = b.get(b.len() - 1);
+  // **Truncation is only reported when nothing diverged**, and the native command's comment says why
+  // getting that the other way round was its first version's bug: a difference inside the prefix both
+  // journals kept is a real difference, because the events are aligned up to there and what was
+  // dropped after cannot un-differ them. What truncation invalidates is `same` — two runs that
+  // overflowed can agree on everything they kept and differ in what they dropped.
+  bool overflowed = wantA * 2 > usedA || wantB * 2 > usedB;
+  i32 nA = usedA / 2;
+  i32 nB = usedB / 2;
+  Vec<string> out = Vec.create();
+
+  if (all) {
+    Vec<i32> seen = Vec.create();
+    bool said = false;
+    i32 n = nA < nB ? nA : nB;
+    for (i32 i = 0; i < n; i++) {
+      i32 sa = a.get(1 + 2 * i);
+      i32 va = a.get(2 + 2 * i);
+      i32 sb = b.get(1 + 2 * i);
+      i32 vb = b.get(2 + 2 * i);
+      if (sa == sb && va == vb) { continue; }
+      if (sa != sb) {
+        // Not a leaking site: it is where *this* run happened to be when the two stopped agreeing,
+        // and the other was somewhere else. Naming both is the only honest report, and nothing after
+        // it is a comparison.
+        out.push("split " + itoa(i) + " " + itoa(sa) + " " + itoa(sb));
+        return out.toArray();
+      }
+      bool known = false;
+      for (i32 k = 0; k < seen.len(); k++) { if (seen.get(k) == sa) { known = true; } }
+      if (!known) {
+        seen.push(sa);
+        said = true;
+        out.push("site " + itoa(i) + " " + itoa(sa) + " " + itoa(va) + " " + itoa(vb));
+      }
+    }
+    if (nA != nB) {
+      said = true;
+      out.push("longer " + itoa(n) + " " + itoa(nA > nB ? a.get(1 + 2 * n) : b.get(1 + 2 * n)));
+    }
+    if (!said) {
+      out.push(overflowed ? "truncated " + itoa(wantA) + " " + itoa(wantB)
+                          : "same " + itoa(nA < nB ? nA : nB));
+    }
+    return out.toArray();
+  }
+
+  i32 most = nA > nB ? nA : nB;
+  for (i32 i = 0; i < most; i++) {
+    bool hasA = i < nA;
+    bool hasB = i < nB;
+    if (!hasA && !hasB) { i = most; continue; }
+    i32 sa = hasA ? a.get(1 + 2 * i) : 0 - 1;
+    i32 va = hasA ? a.get(2 + 2 * i) : 0 - 1;
+    i32 sb = hasB ? b.get(1 + 2 * i) : 0 - 1;
+    i32 vb = hasB ? b.get(2 + 2 * i) : 0 - 1;
+    if (hasA && hasB && sa == sb && va == vb) { continue; }
+    out.push("differs " + itoa(i) + " " + itoa(sa) + " " + itoa(va) + " " +
+             itoa(sb) + " " + itoa(vb));
+    return out.toArray();
+  }
+  out.push(overflowed ? "truncated " + itoa(wantA) + " " + itoa(wantB)
+                      // **The count, because `same` over nothing is not agreement.** A mistyped
+                      // export name calls nothing and records nothing, and two empty journals match
+                      // perfectly — which would report every routine in the repository as
+                      // constant-time. A caller checks the number.
+                      : "same " + itoa(nA < nB ? nA : nB));
+  return out.toArray();
 }
