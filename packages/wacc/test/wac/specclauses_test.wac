@@ -25,19 +25,16 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli } from "std/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { diagnoseFiles } from "../../src/api.wac";
-import { wireField, wireLines, MESSAGE } from "./wire_probe.wac";
+import { wireField, wireLines, MESSAGE, ANNOTATION, HINT, SPAN } from "./wire_probe.wac";
 
-const i32 ANNOTATION = 5;
-const i32 HINT = 6;
-const i32 SPAN = 7;
 
 /** The first diagnostic for `src`, as its nine wire fields — empty strings when there is none. */
 string[] firstDiagnostic(string src) {
   string wire = diagnoseFiles(string[]("err.wac"), string[](src), "err.wac");
   string[] lines = wireLines(wire);
   if (lines.len() == 0) { return string[0](fill: ""); }
-  return string[](wireField(lines[0], MESSAGE()), wireField(lines[0], ANNOTATION),
-                  wireField(lines[0], HINT), wireField(lines[0], SPAN));
+  return string[](wireField(lines[0], MESSAGE()), wireField(lines[0], ANNOTATION()),
+                  wireField(lines[0], HINT()), wireField(lines[0], SPAN()));
 }
 
 /**

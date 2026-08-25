@@ -24,7 +24,8 @@
 // checked clean and the emitter caught them later as `unresolved name i32`, without a position.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles } from "../../src/api.wac";
+import { dumpTypeErrors, dumpTypeErrorsFiles, blockedFiles, diagnoseFiles } from "../../src/api.wac";
+import { wireField, wireLines, ANNOTATION } from "./wire_probe.wac";
 
 string[] names() {
   return string[](
@@ -480,6 +481,44 @@ export string test_a_duplicate_method_and_a_second_default_are_refused() {
       ("export i32 f(i32 n) { switch (n) { case 1: { return 1; } default: { return 2; } } return 0; }\n")
           .toBytes()).len() / 3;
   t.eqI32(okSwitch, 0, "refused a switch with one default");
+  return t.report();
+}
+
+/**
+ * **A name reached through a struct, and which of the two things went wrong.**
+ *
+ * `checkMember` had this rule for enums and not for structs, so `P.nope` and `P.v` were accepted here
+ * and declined by the *emitter* — a refusal with no position and no message. The positions are pinned
+ * by `typecheck_test.wac`'s `WRONG()`; what is pinned here is the annotation, because the two cases
+ * are not the same mistake and the shared code says "static method" for both.
+ *
+ * `P.v` is a field: present, and reached the wrong way. `P.nope` is nothing at all. The reference
+ * answers *"cannot use static method 'P.v' as a value"* for the field, which names the one thing `v`
+ * is not — a criticism worth acting on rather than copying.
+ *
+ * `P.m` is deliberately absent from this test: an instance method reached through its type is a legal
+ * **unbound** reference, an `fn[i32(P)]` taking the receiver first, and rung 4 has seven programs
+ * passing those around. It is refused in an `i32` slot by the ordinary mismatch rule, not by this one.
+ */
+export string test_a_name_through_a_struct_says_which_of_the_two_it_is() {
+  T t = T.create();
+  string[] annot = string[](
+    "no P.nope",
+    "P.v is a field, which is reached through a value");
+  string[] src = string[](
+    "struct P { i32 v; } export i32 f() { return P.nope; }\n",
+    "struct P { i32 v; } export i32 f() { return P.v; }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    string[] lines = wireLines(diagnoseFiles(string[]("m.wac"), string[](src[i]), "m.wac"));
+    t.isTrue(lines.len() > 0, annot[i] + ": nothing was reported at all");
+    if (lines.len() == 0) { continue; }
+    t.eqStr(wireField(lines[0], ANNOTATION()), annot[i], "the annotation");
+  }
+  // A static method through the type is a value, so neither row above is met by refusing `P.<name>`.
+  i32 fine = dumpTypeErrors(
+      "struct P { i32 v; i32 s() { return 1; } } export i32 f() { fn[i32()] g = P.s; return g(); }\n"
+          .toBytes()).len() / 3;
+  t.eqI32(fine, 0, "refused a static method taken as a value");
   return t.report();
 }
 

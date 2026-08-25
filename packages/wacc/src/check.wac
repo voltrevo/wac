@@ -6477,6 +6477,15 @@ void checkMember(C c, Expr at, Expr obj, string name) {
       // programs in rung 4's own corpus said so within the minute.
       if (c.isStruct(en) && c.typeOfName(en) == typeNone()) {
         if (c.methodAt(en, name) >= 0) { return; }
+        // A field is *present* and reached the wrong way, which is a different sentence from a name
+        // the type does not have — and worth the branch because the shared code says "static method"
+        // and a field is not one. The reference answers `cannot use static method 'P.v' as a value`
+        // here, which names the thing `v` is not.
+        if (c.hasField(en, name)) {
+          c.reportWith(errNoStaticMethod(), at.line, at.col,
+                       en + "." + name + " is a field, which is reached through a value");
+          return;
+        }
         c.reportWith(errNoStaticMethod(), at.line, at.col, "no " + en + "." + name);
         return;
       }
