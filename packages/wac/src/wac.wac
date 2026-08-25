@@ -1363,7 +1363,7 @@ export i32 main(Core core, Cli cli) {
     // the table is written beside it, so one aggregate would report the first file's positions for all
     // of them. That path needs a build per file, which this command does not do yet.
     i32 grants = grantsIn(cli, argc);
-    string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered), entry,
+    string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
                                   baseName(stem(entry)) + ".wasm", grants);
     i32 code = runTests(core, cli, entry, withManifestSection(wasm, manifest), manifest, grants,
                         flagValue(cli, argc, "--filter"), walked, ignoredCount, target,
@@ -1412,7 +1412,8 @@ export i32 main(Core core, Cli cli) {
     // The name inside it is the entry's own stem: nothing is written to disk, so there is no file for
     // it to be wrong about, and a program that reports its own name should not report a temporary one.
     u8[] whole = withManifestSection(
-      wasm, manifestWire(wasm, types, sigs, entry, baseName(stem(entry)) + ".wasm", grants));
+      wasm, manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
+                         baseName(stem(entry)) + ".wasm", grants));
 
     // `true` for the input, so the program reads the terminal or the pipe this command was given —
     // which is what the native `run` does by instantiating in its own process. `false` for the
@@ -1444,7 +1445,24 @@ export i32 main(Core core, Cli cli) {
     string wasmName = baseName(stem) + ".wasm";
     // Two more front ends, if this were `manifestFiles`: it derives `bindTypes` and `exportSigs`
     // from the sources, and both are already here.
-    string manifest = manifestWire(wasm, types, sigs, entry, wasmName, grantsIn(cli, argc));
+    //
+    // **`sigsWithCounters`, because an instrumented build has three exports no source names.**
+    // `issues/system/0243c` added that call for `wac test --coverage` and stopped there, so
+    // `wac build --coverage` wrote a module exporting `__cov_init`, `__cov_len` and `__cov_get` and a
+    // manifest listing neither — and a manifest that "claims to describe the module's callable
+    // surface" is that issue's own phrase. Measured: a `--coverage` build's manifest held `twice` and
+    // `main` while the module held those two plus the three, so `cli.call(h, "__cov_get", i)` answered
+    // *no export named __cov_get* against a module that exports it.
+    //
+    // That is what keeps `covdump`, `tracestat` and `ctcompare` in Rust — the last row of
+    // `issues/system/0257c`'s table, and `issues/system/0230a`. It was recorded there as `Cli.load`
+    // refusing manifest-less modules, which is a different thing and not what these commands are
+    // handed: every test that feeds them uses `wac build`.
+    //
+    // `traced` as well as `covered`: the two are one counter array meaning different things, and both
+    // inject the same three exports.
+    string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
+                                  wasmName, grantsIn(cli, argc));
     u8[] whole = withManifestSection(wasm, manifest);
     Change wroteWasm = fs.writeFile(stem + ".wasm", whole);
     if (!wroteWasm.ok()) {

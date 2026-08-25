@@ -78,7 +78,7 @@ Under that rule:
 | `wac prog.wasm`, the instantiate half of `run` | **stays** a host's — running a module is its job |
 | `validate` | **stays** — it answers whether *this engine* accepts a module, so three answers is it working |
 | `test` | **moves.** A whole second implementation in Rust: the walk, the per-directory aggregate, the runner, the coverage table. The wac program has all of it. This is most of what the differential exists to police |
-| `covdump`, `tracestat`, `ctcompare` | **move.** They only read counters, which `issues/system/0243c` made reachable. What still blocks them is that they are handed modules carrying no manifest and `Cli.load` refuses those |
+| `covdump`, `tracestat`, `ctcompare` | **move**, and as of 2026-08-25 nothing blocks them — see the note at the end. This row used to say they are handed modules carrying no manifest and `Cli.load` refuses those; both halves were wrong |
 | `sh`, `update` | **move**, and they are not host implementations at all — just separate payloads. In the one program, every host has them |
 
 ## What it touches, which is why this is written down before it is done
@@ -256,3 +256,37 @@ them here would silently make `wac test --allow-net` unable to grant net.
 So an ordinary build is offline by construction again, which is what `design/lang/0009` D10 asks for,
 and it survived the two commands moving into one program rather than being a property of them being
 separate payloads.
+
+## The last row's blocker was not what this issue said — 2026-08-25
+
+`covdump`, `tracestat` and `ctcompare` were recorded as blocked because "they are handed modules
+carrying no manifest and `Cli.load` refuses those". **Both halves were wrong**, and it took measuring
+rather than reading to find out.
+
+- **They are not handed manifest-less modules.** Every test that feeds them — `covdump_test.wac`,
+  `ctcompare_test.wac`, `coverage_test.wac` — builds with `wac build`, which writes a manifest. The
+  sentence traces to a comment in `covdump_command` about `wac compile` output, which those tests
+  stopped using.
+- **`Cli.load` refusing manifest-less modules is real and irrelevant.** I implemented accepting them —
+  an empty manifest is the correct world for a module with no capabilities, which is that comment's own
+  argument — and then reverted it: `Cli.call` reads an export's *signature* from the manifest, so a
+  manifest-less module would load and then have no callable names. The change turned a clear refusal at
+  load time into `no export named __cov_get` at call time. Worse diagnostics, no new ability.
+
+**What actually blocked it** was one line. `issues/system/0243c` taught `wac test --coverage` to declare
+the three injected exports via `sigsWithCounters` and stopped there, so:
+
+    wac test  --coverage    manifest: … __cov_init, __cov_len, __cov_get      Cli.call works
+    wac build --coverage    manifest: twice, main                             Cli.call: no such export
+
+...about a module whose export section holds all five. `wac build` and `wac run` use
+`sigsWithCounters(sigs, covered || traced)` now — `traced` too, because a trace build injects the same
+three exports meaning a journal rather than counts.
+
+Verified by doing what `covdump` does, from a wac program: `cli.load` then
+`cli.call(h, "__cov_len", 0)` answers 4, matching `covdump`'s own "4 counter(s)", and
+`cli.call(h, "__cov_get", 2)` answers ok. On any host, which is the point.
+
+So the three commands are ordinary work now rather than blocked work. `tools/wac/covdump_test.wac`
+carries the regression test, with a canary that a plain build does *not* declare counter exports — so
+the fix cannot be "list these three always".
