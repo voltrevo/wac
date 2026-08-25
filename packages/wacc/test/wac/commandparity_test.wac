@@ -31,7 +31,7 @@
 //
 // ## What is compared, and what is deliberately not
 //
-// Thirty-one invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
+// Thirty-four invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
 // side's stdout and stderr concatenated, and the exit code. Not compared: timing, and the module bytes
 // `build` writes — those have their own tests (`bindgenwac_test.wac` holds the two *generators* to the
 // same bytes, which is a different claim from two hosts running one generator). The three hosts'
@@ -56,8 +56,8 @@
 //
 // ## What it costs, measured 2026-08-22
 //
-// **39s warm, measured at twenty-six cases; thirty-one now** — up from 2–3s, for three hosts instead
-// of two and thirty-one cases instead of six, fifteen of which compile, run or test a program rather
+// **39s warm, measured at twenty-six cases; thirty-four now** — up from 2–3s, for three hosts instead
+// of two and thirty-four cases instead of six, fifteen of which compile, run or test a program rather
 // than only checking one, plus three module builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
 // it, where `check` stops at the diagnostics. The build is the only expensive part
 // and is paid by `builtByDeno`, which keys on the closure of `wacc.wac`, `compiler/`, `build.ts` and
@@ -78,7 +78,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Change, Cli, Core, Exec, FileResult, Stat } from "std/platform.wac";
 import { builtByDeno, wacBinary } from "../../../wactest/src/built.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { joined } from "../../../wactest/src/strings.wac";
+import { contains, joined } from "../../../wactest/src/strings.wac";
 
 const string ENTRY = "packages/wacc/example/wacc.wac";
 
@@ -86,9 +86,9 @@ string scratch(Cli cli, string name) {
   string dir = cli.cwd().wait() + "/.cache/parity-" + name;
   cli.remove(dir, true).wait();
   cli.mkdir(dir + "/src", true).wait();
-  // A second source directory, so the one row that grants `--allow-env` does not also change what
-  // the three rows that walk `src` discover. See the note beside that row.
-  cli.mkdir(dir + "/envsrc", true).wait();
+  // A second source directory for the fixtures a *named* row uses and the directory rows must not
+  // discover. See the note beside the `--allow-env` row.
+  cli.mkdir(dir + "/capsrc", true).wait();
   return dir;
 }
 
@@ -220,7 +220,11 @@ string[][] cases() {
     // run that granted nothing at all, where the test is skipped and named and the status is 4.
     string[]("test", "--allow-read", "src/writes_test.wac"),
     string[]("test", "src/reads_test.wac"),
-    string[]("test", "--allow-env", "envsrc/env_test.wac"),
+    string[]("test", "--allow-env", "capsrc/env_test.wac"),
+    // **`test` granting the network**, which no row did: `--allow-net` was in six `test` rows' worth
+    // of company in the table and in none of them. A dial to a closed loopback port, asserted to come
+    // back as a refusal rather than merely a failure — the category `issues/system/0255c` added.
+    string[]("test", "--allow-net", "capsrc/net_test.wac"),
     // **A trap on the failing path, which is the only path that prints what the trap said.** The rows
     // above cover a trap that *passes* — `test_traps_on_purpose` — and a pass prints nothing, so what
     // `trap "…"` wrote had never been compared between hosts at all. It did not match: the native
@@ -246,6 +250,13 @@ string[][] cases() {
     // empty, including the wording, which comes from `faultWords` and so is the program's rather than
     // any host's.
     string[]("run", "--allow-net", "src/dial.wac"),
+    // **`run` granting, and `run` granting nothing.** Until these, no `run` row granted anything at
+    // all — the one that mentions `--allow-read` passes it *past* `--`, as an argument. `run` is the
+    // other command written twice, so how each implementation narrows a child's world is two
+    // implementations' worth of question, and `issues/system/0242c` is what happens when nobody asks
+    // it. One program, run both ways, reporting what it was allowed to do.
+    string[]("run", "--allow-read", "--allow-write", "src/caps.wac"),
+    string[]("run", "src/caps.wac"),
     // **A directory, which is a different command underneath.** One aggregate module for the whole
     // walk (`issues/system/0192`), a block per file, and a summary whose buckets are the interesting
     // part: `ok`, `not run (--ignore)`, `with failures`, `needing a grant`, `with nothing matching
@@ -340,7 +351,25 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     // the native answers the null this capability documents, and the JavaScript hosts **trap**.
     // `issues/system/0256c`. Moving this file back into `src/` is the regression test for that issue,
     // and is what turns those rows red today.
-    && put(t, cli, dir + "/envsrc/env_test.wac",
+    && put(t, cli, dir + "/capsrc/net_test.wac",
+           "import { Cli, Core, FAULT_REFUSED, Socket } from \"std/platform.wac\";\n"
+           + "export string test_dials_a_closed_port(Core core, Cli cli) {\n"
+           + "  Socket s = cli.connect(\"127.0.0.1\", 1).wait();\n"
+           + "  if (s.handle >= 0) { cli.closeSocket(s.handle);\n"
+           + "    return \"something is listening on 127.0.0.1:1\"; }\n"
+           + "  return s.fault == FAULT_REFUSED() ? \"\" : \"the dial did not report a refusal\";\n}\n")
+    // What a program is allowed to do, reported rather than assumed — `probe.wac`'s shape, inline,
+    // for the two `run` rows that differ only in what they grant.
+    && put(t, cli, dir + "/src/caps.wac",
+           "import { Change, Cli, Core, FAULT_NOT_GRANTED, FileResult } from \"std/platform.wac\";\n"
+           + "export i32 main(Core core, Cli cli) {\n"
+           + "  FileResult f = cli.readFile(\"src/hello.wac\").wait();\n"
+           + "  string read = f.ok ? \"ok\" : (f.fault == FAULT_NOT_GRANTED() ? \"denied\" : \"failed\");\n"
+           + "  Change w = cli.writeFile(\"caps.txt\", \"x\\n\".toBytes()).wait();\n"
+           + "  string write = w.ok() ? \"ok\" : (w.fault == FAULT_NOT_GRANTED() ? \"denied\" : \"failed\");\n"
+           + "  core.log(\"read=\" + read + \" write=\" + write);\n"
+           + "  return 0;\n}\n")
+    && put(t, cli, dir + "/capsrc/env_test.wac",
            "import { Cli, Core } from \"std/platform.wac\";\n"
            + "export string test_reads_the_environment(Core core, Cli cli) {\n"
            + "  u8[]? v = cli.env(\"PATH\").wait();\n"
@@ -396,6 +425,11 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   i32 agreed = 0;
   i32 zeroes = 0;
   i32 sevens = 0;
+  // The two `caps` rows, counted by what they *say*. Three hosts agreeing proves they agree; it does
+  // not prove a grant changed anything, and a `run` that ignored grants on every host would answer
+  // `read=denied` twice and pass every assertion in the loop below. See where these are checked.
+  i32 granted = 0;
+  i32 refused = 0;
   for (i32 i = 0; i < table.len(); i++) {
     Said n = say(cli, dir, native, table[i]);
     Said d = say(cli, dir, deno, table[i]);
@@ -417,17 +451,25 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
     }
     if (n.status == 0) { zeroes = zeroes + 1; }
     if (n.status == 7) { sevens = sevens + 1; }
+    if (contains(n.out, "read=ok write=ok")) { granted = granted + 1; }
+    if (contains(n.out, "read=denied write=denied")) { refused = refused + 1; }
   }
 
   // **The canary.** A clean check has to succeed, or the cases have collapsed into one — see the
   // header. Nine of these exit 0: two `bindgen`s, one `check`, the two `run`s of a program that
   // returns 0, and the three modules run directly.
-  t.eqI32(zeroes, 11, "eleven of these thirty-one succeed on the native host; a different count " +
+  t.eqI32(zeroes, 14, "fourteen of these thirty-four succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success
   // instead of the program's would read as 0 and every other assertion would still pass.
   t.eqI32(sevens, 1, "`run src/seven.wac` forwards the program's exit code, not its own");
+  // **The grant rows are asserted to differ from each other**, which the loop above cannot see. It
+  // compares hosts, so a `run` that ignored `--allow-read --allow-write` everywhere would answer
+  // `read=denied write=denied` for both rows and agree perfectly. One of each is the claim that the
+  // flags reached the program.
+  t.eqI32(granted, 1, "`run --allow-read --allow-write src/caps.wac` gets both");
+  t.eqI32(refused, 1, "and `run src/caps.wac` gets neither — the grants are what differ");
   t.eqI32(agreed, table.len(),
           "all three hosts agreed on " + itoa(agreed) + " of " + itoa(table.len()));
 

@@ -13,18 +13,15 @@
 // row passed `--verbose`, so the instrument never looked at it. This checks that every flag the wac
 // side accepts is one some row supplies.
 //
-// **Only `test` and `run` need this.** `build`, `check` and `bindgen` have a single implementation —
-// the native binary hands them to the wac program rather than answering them itself — so a flag of
-// theirs cannot be ignored by one host and honoured by another.
+// **Both doubled commands, each against its own rows.** `build`, `check` and `bindgen` have a single
+// implementation — the native binary hands them to the wac program rather than answering them itself
+// — so a flag of theirs cannot be ignored by one host and honoured by another. `test` and `run` are
+// the two that are written twice, and they get one question each.
 //
-// **`run` is the other doubly-implemented one and this does not check it yet, deliberately.** Its
-// allowlist is `unknownFlagBefore` and holds the five grants; no row grants `run` anything — the one
-// row that mentions `--allow-read` beside `run` passes it *past* `--`, as an argument to the program.
-// Checking it needs matching a flag to the rows of *its own* subcommand, and this file matches
-// against the whole table, so `--allow-read` appearing in a `test` row would read as covering `run`
-// too. That is a weaker question than it looks and saying so is cheaper than a guard that answers it
-// wrongly. The per-command version is the next step, and `run --allow-read src/reader.wac` is the row
-// it would ask for.
+// **Per row, not per table**, which is the difference between this and a check that looks the same.
+// Matching a flag against the whole table would let `--allow-read` in a `test` row read as covering
+// `run` too — and `run` granted nothing in any row until this file said so, while `--allow-read` sat
+// in six `test` rows. A flag is only covered by a row of *its own* subcommand.
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { Cli, Core, FileResult } from "std/platform.wac";
@@ -39,11 +36,18 @@ const string PARITY = "packages/wacc/test/wac/commandparity_test.wac";
  * **A list with reasons rather than a shorter question.** An exception nobody can read is how a guard
  * stops meaning anything, so anything here has to say why a row would not earn its cost.
  */
-bool excused(string flag) {
-  // `--allow-run` lets a *test* start a program. `packages/platform/test/wac/spawn_test.wac` already
-  // holds `exec` and `spawn` across all four hosts, and a row here would pay a process per host to
-  // ask the same question in a place whose subject is the test runner rather than the capability.
-  return flag == "--allow-run";
+bool excused(string cmd, string flag) {
+  // `--allow-run` lets the program start another program. `packages/platform/test/wac/spawn_test.wac`
+  // holds `exec` and `spawn` across all four hosts already, and a row here would pay a process per
+  // host to ask the same question somewhere whose subject is the command rather than the capability.
+  if (flag == "--allow-run") { return true; }
+  // **`run --allow-env` waits on `issues/system/0256c`**, which is that a *denied* `env` answers null
+  // on the native hosts and traps on the JavaScript ones. A row that does not grant it therefore
+  // disagrees by host, and a row that does grant it asks what the `test --allow-env` row already
+  // asks one layer in. Delete this arm when that issue closes; the row it wants is a `caps` fixture
+  // reporting the environment beside the two capabilities it already reports.
+  if (cmd == "run" && flag == "--allow-env") { return true; }
+  return false;
 }
 
 /** The text of `path`, or "" — a file this cannot read is reported by the caller, not guessed at. */
@@ -88,6 +92,55 @@ bool holds(string[] xs, string x) {
   return false;
 }
 
+/**
+ * The flags every `string[](...)` row whose first element is `cmd` supplies.
+ *
+ * A row is flat — `string[]("test", "--allow-read", "src/one_test.wac")` — so its end is the next
+ * `)`, and its subcommand is the first quoted element. Anything after a bare `"--"` is an argument to
+ * the program rather than a flag to the command, which is what one `run` row exists to check, so the
+ * scan of a row stops there.
+ */
+string[] flagsFor(string table, string cmd) {
+  Vec<string> out = Vec.create();
+  string open = "string[](";
+  i32 i = 0;
+  while (i < table.len()) {
+    string rest = table.slice(i, table.len());
+    i32 at = rest.indexOf(open);
+    if (at < 0) { return out.toArray(); }
+    i32 from = i + at + open.len();
+    string tail = table.slice(from, table.len());
+    i32 close = tail.indexOf(")");
+    if (close < 0) { return out.toArray(); }
+    string row = tail.slice(0, close);
+    i = from + close;
+    // The subcommand is the first quoted element; a row for another one is skipped whole.
+    i32 q = row.indexOf("\"");
+    if (q < 0) { continue; }
+    string afterQ = row.slice(q + 1, row.len());
+    i32 q2 = afterQ.indexOf("\"");
+    if (q2 < 0) { continue; }
+    if (afterQ.slice(0, q2) != cmd) { continue; }
+    i32 stop = row.indexOf("\"--\"");
+    string scanned = stop < 0 ? row : row.slice(0, stop);
+    string[] found = flagsIn(scanned);
+    for (i32 k = 0; k < found.len(); k++) {
+      if (!holds(out.toArray(), found[k])) { out.push(found[k]); }
+    }
+  }
+  return out.toArray();
+}
+
+/** Every accepted flag `cmd` has no row for, as one line, or "". */
+string uncovered(string cmd, string[] accepted, string[] rowed) {
+  string missing = "";
+  for (i32 i = 0; i < accepted.len(); i++) {
+    if (excused(cmd, accepted[i]) || holds(rowed, accepted[i])) { continue; }
+    missing = missing + (missing == "" ? "" : ", ") + accepted[i];
+  }
+  return missing;
+}
+
 export string test_every_flag_wac_test_accepts_is_passed_by_some_row(Core core, Cli cli) {
   T t = T.create();
   string cliSrc = textOf(cli, CLI);
@@ -96,8 +149,11 @@ export string test_every_flag_wac_test_accepts_is_passed_by_some_row(Core core, 
   t.isTrue(paritySrc.len() > 0, "read " + PARITY);
   if (cliSrc.len() == 0 || paritySrc.len() == 0) { return t.report(); }
 
+  string table = bodyAfter(paritySrc, "string[][] cases() {");
   string[] accepted = flagsIn(bodyAfter(cliSrc, "string unknownTestFlag("));
-  string[] rowed = flagsIn(bodyAfter(paritySrc, "string[][] cases() {"));
+  string[] rowed = flagsFor(table, "test");
+  string[] acceptedRun = flagsIn(bodyAfter(cliSrc, "string unknownFlagBefore("));
+  string[] rowedRun = flagsFor(table, "run");
 
   // **Both halves are read, and both are asserted to be non-empty.** A parser that found nothing
   // would report perfect coverage — the shape this file exists to refuse, arriving in the file that
@@ -105,15 +161,16 @@ export string test_every_flag_wac_test_accepts_is_passed_by_some_row(Core core, 
   t.isTrue(accepted.len() >= 5, "found the flags `test` accepts — got " + itoa(accepted.len()));
   t.isTrue(rowed.len() >= 5, "found the flags the rows pass — got " + itoa(rowed.len()));
 
-  string missing = "";
-  for (i32 i = 0; i < accepted.len(); i++) {
-    if (excused(accepted[i]) || holds(rowed, accepted[i])) { continue; }
-    missing = missing + (missing == "" ? "" : ", ") + accepted[i];
-  }
-  t.eqStr(missing, "",
-          "`wac test` accepts these and no row in commandparity_test.wac passes them, so the two "
-          + "implementations of `test` are not compared for them — add a row, or excuse it with a "
-          + "reason in `excused`");
+  t.isTrue(acceptedRun.len() >= 5, "found the flags `run` accepts — got " + itoa(acceptedRun.len()));
+  t.isTrue(rowedRun.len() >= 1, "found the flags the `run` rows pass — got " + itoa(rowedRun.len()));
+
+  t.eqStr(uncovered("test", accepted, rowed), "",
+          "`wac test` accepts these and no `test` row in commandparity_test.wac passes them, so the "
+          + "two implementations of `test` are not compared for them — add a row, or excuse it with "
+          + "a reason in `excused`");
+  t.eqStr(uncovered("run", acceptedRun, rowedRun), "",
+          "`wac run` accepts these and no `run` row passes them — same question, the other command "
+          + "that is implemented twice");
   return t.report();
 }
 
