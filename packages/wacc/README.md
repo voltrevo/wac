@@ -252,7 +252,7 @@ reference's bindgen metadata, so what is under test is the emitter and nothing e
 
 **That figure read `34 of 34 … (1,663 tests)` until 2026-08-25, and the packages did not regress.**
 `runOnWacc.ts` runs `deno test`, which finds `*.test.ts`; `issues/system/0161` has been moving the
-suite to `*_test.wac`, and **32 of 39 packages now have no `.test.ts` at all**, so the sweep cannot
+suite to `*_test.wac`, and **32 of 38 packages now have no `.test.ts` at all**, so the sweep cannot
 see them. None of the 32 is reported wrong — each is `0 passed` with no cause but an empty search.
 The number above is what this tool can still measure, and it shrinks as the migration finishes.
 `issues/system/0267c` holds the decision about what should replace it, because a `*_test.wac` is

@@ -1,4 +1,4 @@
-# 0267c — the instrument that measures priority 3 cannot see 32 of the 39 packages
+# 0267c — the instrument that measures priority 3 cannot see 32 of the 38 packages
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -20,14 +20,14 @@ package after package. Not a regression in the packages — **it finds no tests 
     error: No test modules found
 
 `runOnWacc.ts` shells out to `deno test packages/<pkg>/test`, which sees `*.test.ts` and nothing else.
-Counted across the repository today:
+Counted across the 38 packages it walks — it skips `wacc` itself:
 
     wac-only (`*_test.wac`, no `.test.ts`)   32
-    both                                      6
+    both                                      5
     ts-only                                   1
     no test directory                         0
 
-So the tool can measure **7 of 39** packages, and the other 32 come back as failures with a tally of
+So the tool can measure **6 of 38** packages, and the other 32 come back as failures with a tally of
 zero. The figure in the README was recorded on **2026-08-12** — `git log -S` says so — and
 `issues/system/0161` has been moving packages off Deno ever since. Nothing lied; the ground moved
 under a number that is still printed as though it had not.
@@ -48,7 +48,7 @@ finishing that migration removes the last package it could say anything about. T
 they are not equivalent:
 
 1. **Let it narrow honestly.** Keep the sweep on whatever `.test.ts` remains, and print the
-   denominator as what it is — `7 of 39 packages have a suite this can swap the emitter under` —
+   denominator as what it is — `6 of 38 packages have a suite this can swap the emitter under` —
    rather than a bare `34 of 34`. Cheapest, and it makes the decay visible instead of invisible.
 2. **Move the comparison down a level.** What the old number really asserted is *the same source,
    compiled two ways, answers the same*. `test/wac/corpusemit_test.wac` and the rung-4 emit corpus
@@ -73,7 +73,7 @@ mentioned there. Worth linking from it once this is decided.
 Nothing about the packages has been shown to be wrong. The suite is green and every package's tests
 run — they simply run through `wac test`, where this tool cannot see them. **The claim that is
 unsupported is the specific one the README makes**, that 34 packages pass *on wacc-emitted code as
-distinct from the reference's*, because six days of migration have left seven packages where that
+distinct from the reference's*, because the migration has left six packages where that
 distinction still exists.
 
 ## Run to completion, twice — the numbers
