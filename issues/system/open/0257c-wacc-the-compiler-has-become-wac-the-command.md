@@ -348,3 +348,25 @@ caller's would hand a module more than it asked for whenever the command had bee
 which `runprog.wac` names as the one outcome that would be a hole rather than a difference.
 
 So the reader is in place and the command is thirty lines away, behind one host defect.
+
+## `covdump` is the program's too — 2026-08-25
+
+`issues/system/0263c` fixed, so the command that was written and reverted an hour earlier went back in
+unchanged. `native/v8/src/main.rs` loses `covdump_command`, its intercept, and `COUNTERS_PRINTED` — a
+flag that existed only to answer "did a table get printed", which the program answers by having printed
+it.
+
+Two parity rows: the table, and a case count that is not one. The second never loads anything, so it
+compares the command's own sentence across the three hosts — thirty-eight rows now, sixteen exiting 0.
+
+**And the differential immediately earned it.** The `tracestat src/hello.wac` row I had added an hour
+before went red: handed a `.wac` source, the native answered *carries no wac.manifest section* and the
+JavaScript hosts answered *expected magic word 00 61 73 6d, found 69 6d 70 6f* — the first four bytes of
+`import`. My own manifest synthesis had introduced that by handing non-wasm bytes to `manifestWire`.
+`counters.wac` checks for `\0asm` first now and says *"is not a wasm module — did you mean the artefact
+`wac build` wrote?"*, which is better than either host's answer and the same on all three.
+
+**What is left of the table is nothing.** `run`, `wac prog.wasm` and `validate` stay with the hosts by
+the rule; `test`, `covdump`, `tracestat`, `ctcompare`, `sh` and `update` were the ones to move, and
+`ctcompare` is the last — it is a different shape from the other two, comparing two journals with
+path-split detection rather than printing one, and `counters.wac` gives it both halves.

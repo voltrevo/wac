@@ -57,7 +57,7 @@
 // ## What it costs, measured 2026-08-25
 //
 // **56s wall and 57.6s of CPU, warm**, taken from a suite run rather than by hand — up from 2–3s, for
-// three hosts instead of two and thirty-six cases instead of six. (The wall figure is older than the
+// three hosts instead of two and thirty-eight cases instead of six. (The wall figure is older than the
 // count: since the command became one program containing the shell and the fetcher it is 83.7s wall
 // and 97.4s of CPU, because each host now builds a 219-file program rather than a 44-file one.) Twenty-eight of them run
 // something — fifteen `test`, eight `run` and five naming a module directly — where five `check` and
@@ -256,6 +256,12 @@ string[][] cases() {
     // answer its own wording, and a host that never had it would answer `unknown command`.
     string[]("tracestat", "traced.wasm"),
     string[]("tracestat", "src/hello.wac"),
+    // **`covdump`, which moved the same day and for the same reason** — and which needed
+    // `issues/system/0263c` fixing first, because it runs the module with the world its manifest
+    // declares and a loaded module could not use a capability at all. The table, and a case count that
+    // is not one: the second never loads anything, so it compares the command's own sentence.
+    string[]("covdump", "covered.wasm"),
+    string[]("covdump", "covered.wasm", "hello:many"),
     string[]("test", "--allow-read", "--coverage", "src/one_test.wac"),
     // **A socket failure, as a category rather than a sentence.** `Socket` carried no fault until
     // `issues/system/0238c` and the `FAULT_*` vocabulary had nothing for a network failure until
@@ -436,6 +442,12 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
                                   "-o", dir + "/traced", "--quiet"), u8[0]()).wait();
   t.isTrue(traced.ran() && traced.status == 0,
            "the traced fixture built: " + traced.error + string.fromBytes(traced.stderr));
+  // And the coverage half, for `covdump` — the same source, counted rather than journalled.
+  Exec covered = cli.exec(native,
+                          string[]("build", dir + "/src/hello.wac", "--coverage",
+                                   "-o", dir + "/covered", "--quiet"), u8[0]()).wait();
+  t.isTrue(covered.ran() && covered.status == 0,
+           "the coverage fixture built: " + covered.error + string.fromBytes(covered.stderr));
   string[] grants = string[]("--allow-read", "--allow-write", "--allow-run", "--allow-env",
                              "--allow-net");
   string deno = builtByDeno(cli, ENTRY, "wac-deno-cli", grants, "deno", false);
@@ -508,7 +520,7 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   // returns 0, and the three modules run directly.
   // **Fifteen since 2026-08-25**: `tracestat traced.wasm` reads a journal and exits 0, and the second
   // `tracestat` row is a diagnosis about a file that is not a module, so it does not.
-  t.eqI32(zeroes, 15, "fifteen of these thirty-six succeed on the native host; a different count " +
+  t.eqI32(zeroes, 16, "sixteen of these thirty-eight succeed on the native host; a different count " +
                      "means the argument vectors did not arrive as vectors");
   // **And one exits 7**, which no failure path here produces: it is `src/seven.wac`'s own return
   // value carried back through a spawn and out of the process. A `run` that reported its own success

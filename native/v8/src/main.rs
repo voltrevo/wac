@@ -2145,17 +2145,15 @@ fn main() {
     if SEED.is_some() && stem == "validate" {
         std::process::exit(validate_command(&args[2..]));
     }
-    // **The counters themselves, not a percentage.** `--coverage` prints how many points were
-    // reached; a test about what a counter *means* needs how many times each one ran.
+    // **No `covdump` here.** `packages/wac/src/wac.wac`, as of 2026-08-25, for the same reason as
+    // `tracestat`: `issues/system/0257c`'s rule that a host implements running a module and not the
+    // command surface. It reaches the seed through the fall-through below.
     //
-    // This used to add "and nothing in wac can call `__cov_get` — the instrumentation injects it, so
-    // no source names it", which was the reason this command lives here. It is no longer true:
-    // `issues/system/0243c` puts the three injected exports in the manifest, so `Cli.call` finds
-    // them. What keeps this in Rust now is narrower — `counters_of` is handed modules that carry *no
-    // manifest*, and `Cli.load` refuses those. `issues/system/0230a` has the two ways out.
-    if SEED.is_some() && stem == "covdump" {
-        std::process::exit(covdump_command(&args[2..]));
-    }
+    // Two sentences stood here and both were wrong. "Nothing in wac can call `__cov_get`" stopped
+    // being true with `issues/system/0243c`; "`counters_of` is handed modules that carry no manifest
+    // and `Cli.load` refuses those" was never the blocker — nothing feeds these commands such a
+    // module, and what actually stopped it was `issues/system/0263c`, a loaded module unable to use
+    // any capability that answers a `Pending`.
     // **The comparison, not the two journals.** A traced run of a real routine is millions of events,
     // and shipping both out as text to be compared by the caller costs tens of megabytes to learn one
     // number. `issues/system/0161`.
@@ -2472,7 +2470,8 @@ fn uninstall_command(args: &[String]) -> i32 {
 
 /// Instantiate an instrumented module, run `main`, and hand back the counter array.
 ///
-/// Extracted from `covdump_command` when `ctcompare` wanted the same six steps. The array means
+/// Extracted from the `covdump` command when `ctcompare` wanted the same six steps; that command
+/// is `packages/wac/src/wac.wac`'s since 2026-08-25 and this is `ctcompare`'s alone. The array means
 /// different things in the two modes and this does not care which: under `--coverage` slot `i` is how
 /// many times point `i` ran, and under the trace mode slot 0 is how many entries are live, then
 /// `(site, value)` pairs, and the last slot is how many events happened. Both are the same read.
@@ -2548,17 +2547,6 @@ fn counters_of(path: &str) -> Result<Vec<i32>, String> {
     Ok(out)
 }
 
-thread_local! {
-    /// Whether a counter table has been printed this process — read by `covdump_command`.
-    ///
-    /// **`covdump`'s exit status is about the dump, not about the program.** Running through the
-    /// ordinary program path means `run_as_with` hands back what `main` returned, and a coverage
-    /// exercise returns an accumulator: `packages/codec`'s came back as 205, which `covreport` read as
-    /// a failed `covdump` and reported with an empty message. The old bare-instantiate `covdump`
-    /// always exited 0 and every caller was written against that.
-    static COUNTERS_PRINTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 /// `<index>\t<count>` per counter, then how many — `wac covdump`'s output, unchanged.
 ///
 /// **Per counter, in index order**, because that is what the table is keyed by: `covTableFiles`'
@@ -2592,7 +2580,6 @@ fn print_counters(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) {
         println!("{i}\t{n}");
     }
     println!("{len} counter(s)");
-    COUNTERS_PRINTED.with(|p| p.set(true));
 }
 
 /// Call each named export in turn, **each trap caught** — after `main`, not instead of it.
@@ -2657,92 +2644,6 @@ fn call_for_counters(
         // branches are simply uncovered, which is the same number a real gap gives.
         eprintln!("wac: {} exports no {}", m.entry, missing.join(", "));
     }
-}
-
-/// `wac covdump <module.wasm> [export…]` — run an instrumented module and print each counter.
-///
-/// **Through the ordinary program path**, which is the whole of `issues/system/0221`. This used to
-/// instantiate with an empty imports object and call `main` with no arguments, so a coverage exercise
-/// could declare no capabilities: `main(Core, Cli)` was not refused, it *failed to instantiate*,
-/// because the imports were absent rather than denied. No exercise could read a corpus off disk, and
-/// `packages/json`'s needs a directory listing. Now the world is built from the manifest and the
-/// grants are the ones baked into it, exactly as for `wac prog.wasm`.
-///
-/// With export names, each is called with its trap caught — see `call_for_counters`. Without, `main`
-/// runs, and a trap in it still prints what was reached.
-fn covdump_command(rest: &[String]) -> i32 {
-    let Some(path) = rest.first() else {
-        eprintln!("usage: wac covdump <module.wasm> [export|export:<cases>…]");
-        eprintln!("       no export names runs `main`; several are called in order, traps caught");
-        eprintln!("       `name:<n>` calls name(0)…name(n-1), each trap caught, for a sweep");
-        return 2;
-    };
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("wac: cannot read {path} — {e}");
-            return 1;
-        }
-    };
-    // **No manifest is not an error here.** `wac compile` and the trace instrumentation write a plain
-    // module, and `tools/wac/ctcompare_test.wac` and `coverage_test.wac` hand those straight to this
-    // command. A module with no manifest declares no capabilities, so instantiating it with no imports
-    // is not a limitation for it — it is the correct world. That is the path this command used to take
-    // for *everything*, which is what `issues/system/0221` was about.
-    let Some(text) = manifest_in(&bytes) else {
-        if rest.len() > 1 {
-            eprintln!("wac: {path} carries no wac.manifest section, so it has no world to call \
-                       {} in — build it with `wac build`", rest[1..].join(", "));
-            return 2;
-        }
-        match counters_of(path) {
-            Ok(counters) => {
-                for (i, n) in counters.iter().enumerate() {
-                    println!("{i}\t{n}");
-                }
-                println!("{} counter(s)", counters.len());
-                return 0;
-            }
-            Err(e) => {
-                eprintln!("wac: {e}");
-                return 1;
-            }
-        }
-    };
-    let manifest: Manifest = match serde_json::from_str(&text) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("wac: the manifest inside {path} is not one — {e}");
-            return 1;
-        }
-    };
-    // **Parsed here, so a bad count is a usage error rather than a missing export.** Left to
-    // `call_for_counters`, `sweep:many` would come back as "exports no sweep:many" — a message about
-    // the module, naming a fault in the command line.
-    let mut cov_exports: Vec<(String, Option<i32>)> = Vec::new();
-    for a in &rest[1..] {
-        match a.split_once(':') {
-            None => cov_exports.push((a.clone(), None)),
-            Some((name, count)) => match count.parse::<i32>() {
-                Ok(n) if n > 0 => cov_exports.push((name.to_string(), Some(n))),
-                _ => {
-                    eprintln!("wac: {a} — `{count}` is not a case count; a sweep is \
-                               `name:<n>` for some n above zero");
-                    return 2;
-                }
-            },
-        }
-    }
-    start_v8();
-    let code = run_as_with(&manifest, &bytes, &text, AsChild {
-        dump_counters: true,
-        cov_exports,
-        ..Default::default()
-    });
-    // The program's own status is not this command's answer — see `COUNTERS_PRINTED`. A run that
-    // printed a table succeeded at the thing it was asked to do, whatever the exercise returned;
-    // one that printed none failed, and `run_as_with` has already said why.
-    if COUNTERS_PRINTED.with(|p| p.get()) { 0 } else if code == 0 { 1 } else { code }
 }
 
 /// `wac ctcompare <a.wasm> <b.wasm>` — two traced runs, and where their journals first differ.

@@ -96,6 +96,18 @@ export Counters read(Core core, Cli cli, string path, Exercise[] also) {
   // the marshalling half needs nothing from us; no grants, because a module with no manifest declares
   // none and that is the correct world for it.
   u8[] bytes = f.bytes;
+  // **Is it a module at all?** Asked before anything else, because everything after this reads the
+  // bytes as wasm and the hosts disagree about rubbish: handed a `.wac` source, the native answered
+  // *carries no wac.manifest section* and the JavaScript hosts answered *expected magic word 00 61 73
+  // 6d, found 69 6d 70 6f* — the first four bytes of the word `import`. Found by the parity row added
+  // for this command on the day it moved, which is what that differential is for.
+  //
+  // `\0asm`, the four bytes every wasm module starts with. Naming the file is the useful half: the
+  // mistake this catches is handing a command the source instead of the artefact.
+  if (bytes.len() < 4 || bytes[0] != 0 || bytes[1] != 0x61 || bytes[2] != 0x73 || bytes[3] != 0x6d) {
+    return Counters(path + " is not a wasm module — did you mean the artefact `wac build` wrote?",
+                    none, false, "", Vec.create());
+  }
   if (manifestIn(bytes) == "") {
     string made = manifestWire(bytes, "", sigsWithCounters("main\ti32\t\n", true), path,
                                "counters.wasm", 0);

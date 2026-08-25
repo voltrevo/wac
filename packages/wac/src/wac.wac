@@ -1026,6 +1026,59 @@ export i32 main(Core core, Cli cli) {
   // `$WAC_HOME` rather than `fetch.wac`'s own `.wac` default: the compiler reads the cache from
   // there, so defaulting to a relative directory puts a fetched tree where nothing looks for it —
   // `wac update` says *1 fetched* and `wac run` says *not in the cache*, both truthfully.
+  // **`covdump`, moved out of the host** for `issues/system/0257c`'s reason: reading a counter table
+  // is a command, not the engine running a module. `<index>\t<count>` per counter and then how many —
+  // per counter in index order, because that is what the table is keyed by: `covTableFiles`' `i`th row
+  // describes counter `i`, and a test asserting "the loop ran three times" needs the pair. The
+  // aggregated report `--coverage` prints answers a different question and cannot say how often.
+  //
+  // Written once before `issues/system/0263c` was found and reverted, because a loaded module could not
+  // use `Cli` at all: this command runs a module *with its declared world*, so it was the first thing to
+  // notice. That is fixed, and this is the same thirty lines.
+  if (cmd == "covdump") {
+    if (argc < 2) {
+      core.warn("usage: wac covdump <module.wasm> [export|export:<cases>]…");
+      return 2;
+    }
+    // **Parsed before anything runs, so a bad count is a usage error rather than a missing export.**
+    // Left to the call, `sweep:many` comes back as "no export named sweep:many" — a message about the
+    // module, naming a fault in the command line.
+    Exercise[] also = Exercise[argc](fill: Exercise("", 0 - 1));
+    i32 n = 0;
+    for (i32 i = 2; i < argc; i++) {
+      string a = string.fromBytes(cli.arg(i).wait());
+      i32 colon = a.indexOf(":");
+      if (colon < 0) { also[n] = Exercise(a, 0 - 1); n = n + 1; continue; }
+      string count = a.slice(colon + 1, a.len());
+      i32 cases = atoi(count);
+      // `atoi` answers 0 for anything it cannot read, and 0 is also a count nobody can mean — a sweep
+      // of no cases calls nothing — so one test covers both.
+      if (cases <= 0) {
+        core.warn("wac: " + a + " — `" + count + "` is not a case count; a sweep is " +
+                  "`name:<n>` for some n above zero");
+        return 2;
+      }
+      also[n] = Exercise(a.slice(0, colon), cases);
+      n = n + 1;
+    }
+    Exercise[] asked = Exercise[n](fill: Exercise("", 0 - 1));
+    for (i32 i = 0; i < n; i++) { asked[i] = also[i]; }
+
+    Counters c = read(core, cli, string.fromBytes(cli.arg(1).wait()), asked);
+    if (c.error != "") { core.warn("wac: " + c.error); return 1; }
+    for (i32 i = 0; i < c.values.len(); i++) {
+      core.log(itoa(i) + "\t" + itoa(c.values.get(i)));
+    }
+    core.log(itoa(c.values.len()) + " counter(s)");
+    // **After the table, and it does not change the status.** A mistyped export is worth saying and
+    // the counters that were collected are still the answer; the run printed a table, which is what
+    // this command was asked for.
+    for (i32 i = 0; i < c.missing.len(); i++) {
+      core.warn("wac: the module exports no " + c.missing.get(i));
+    }
+    return 0;
+  }
+
   // **`tracestat`, moved out of the host.** `issues/system/0257c`'s rule: a host may implement
   // running a module and must not implement the command surface. Reading a journal's size is a
   // command — `native/v8/src/main.rs` did it by instantiating the module by hand through V8, a second
