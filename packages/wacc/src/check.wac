@@ -6843,7 +6843,13 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       reportLiteral(c, el, args[0], errBuiltinArg(), args[0].line, args[0].col);
     } else {
       string vt = typeOfExpr(c, args[0]);
-      if (vt != typeNone() && vt != "" && !assignable(c, el, vt)) {
+      // A nullable into a non-null element is its own complaint here as everywhere: `assignable`
+      // answers *true* for `P?` into `P` by design, so a slot that asks only `assignable` takes one in
+      // silence. `xs.fill(a, 0, xs.len())` for a `P? a` checked clean while `copyFrom` beside it
+      // reported. The reference says *'fill()' value must be P, got P?*.
+      if (nullableIntoNonNull(c, el, vt)) {
+        c.report(errNullableToNonNull(), args[0].line, args[0].col);
+      } else if (vt != typeNone() && vt != "" && !assignable(c, el, vt)) {
         c.reportWith(errBuiltinArg(), args[0].line, args[0].col, expectedFound(el, vt));
       }
     }

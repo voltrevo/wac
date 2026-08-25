@@ -148,7 +148,13 @@ string[] WRONG() {
     // that list came from `nullableIntoNonNull`'s existing callers plus the sweep's queue, and a
     // payload is in neither. Grepping every `!assignable(c,` in `check.wac` and asking which had
     // the nullability branch within six lines is what found it — nine had it and eight did not.
-    "struct P { i32 x; } enum E { None, Some(P v) } export void f(P? a) { E e = E.Some(a); }");
+    "struct P { i32 x; } enum E { None, Some(P v) } export void f(P? a) { E e = E.Some(a); }",
+    // **`fill`'s value**, the twelfth slot and the one the site enumeration pointed at but my first
+    // probes could not reach: they guessed the signature and were refused for arity by *both*
+    // compilers, which reads exactly like "no gap here". `spec/spec/arrays.md` has it as
+    // `dst.fill(value, start, end)` — value first — and with the right shape the slot is silent on
+    // a nullable. `copyFrom`, checked beside it, already reports.
+    "struct P { i32 x; } export void f(P? a, P[] xs) { xs.fill(a, 0, xs.len()); }");
 }
 
 /**
