@@ -1,9 +1,20 @@
-// The compiler, as a program.
+// `wac` — the command, as a program.
 //
-//     wacc check   main.wac          # type-check it and its imports; say what is wrong
-//     wacc compile main.wac [out]    # write the module, `main.wasm` beside it by default
-//     wacc build   main.wac -o stem  # ...and the manifest a native host reads, in the module
-//     wacc bindgen main.wac [--js]   # main.gen.ts — the glue a host calls the module through
+//     wac check   main.wac          # type-check it and its imports; say what is wrong
+//     wac compile main.wac [out]    # write the module, `main.wasm` beside it by default
+//     wac build   main.wac -o stem  # ...and the manifest a native host reads, in the module
+//     wac bindgen main.wac [--js]   # main.gen.ts — the glue a host calls the module through
+//     wac run     main.wac [args…]  # compile and run it, with no file in between
+//     wac test    path [path…]      # a file or a directory of `*_test.wac`
+//     wac prog.wasm [args…]         # run a built module, under the grants its manifest declares
+//
+// **This is the whole command, and that is the point of where it lives.** It opened "the compiler, as
+// a program" and sat in `packages/wacc/example/`, which made the compiler's example *be* the unified
+// command — so `sh` and `update` looked like things a host could not have, when the truth was that
+// the command was built out of the compiler and carried what the compiler carried.
+// `issues/system/0257c` is the operator's ruling: `wac` contains the compiler plus more, and every
+// host's binary runs this same program. What a host may implement is *running a module*, because that
+// is the engine doing engine work; everything else comes through here.
 //
 // `build` also takes `--coverage`: a counter per branch point, and `<stem>.cov` saying what each is.
 // `--trace` is the other instrumented build — an ordered journal rather than counts, with
