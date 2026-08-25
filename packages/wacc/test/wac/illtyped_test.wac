@@ -522,6 +522,60 @@ export string test_a_name_through_a_struct_says_which_of_the_two_it_is() {
   return t.report();
 }
 
+/**
+ * `issues/lang/0157` — an import of a file nobody supplied, through the **files** entry point.
+ *
+ * The single-file half has reported since 2026-08-20, reading the parse: one file means every
+ * non-builtin specifier is unsatisfiable. The files half stayed silent for another five days, and the
+ * silence is the bad kind — an unresolved import declares its names as *unknown*, and unknown is what
+ * this checker stays quiet about, so a caller who asked was told the program was fine. `blockedFiles`
+ * knew, but it answers from a linker sentinel with no position.
+ *
+ * **Only a plain relative specifier is judged**, and that is a real limit rather than laziness. A
+ * `@/src/x.wac` or a mapped `dep/lib.wac` resolves through a `Res`, and every caller with no
+ * filesystem passes an empty one — so those land on a key nobody supplied and are indistinguishable
+ * from the fault. Reporting them made three *correct* programs red in `projectspec_test.wac` and
+ * `mappedspec_test.wac`, which is the false-alarm direction and the one a checker may not be wrong
+ * in. `0157` names this shape: a caller that cannot resolve must say so rather than answer wrongly.
+ */
+export string test_a_relative_import_of_a_file_nobody_supplied_is_refused() {
+  T t = T.create();
+
+  string[] paths = string[]("/t/main.wac");
+  string[] sources = string[](
+      "import { foo } from \"./b.wac\";\nexport i32 f() { return foo(); }\n");
+  i32[] one = dumpTypeErrorsFiles(paths, sources, "/t/main.wac");
+  t.eqI32(one.len() / 3, 1, "one missing import, and this many diagnostics");
+  if (one.len() >= 3) {
+    t.eqI32(one[0], 77, "the code — `errMissingImportFile`");
+    t.eqI32(one[1], 1, "the line: the import's own, not the entry's first");
+  }
+
+  // **And with a real closure around it**, so the rule is not satisfied by "one file means every
+  // import is missing" — which is what the single-file half legitimately assumes.
+  string[] paths2 = string[]("/t/main.wac", "/t/a.wac");
+  string[] sources2 = string[](
+      "import { bar } from \"./a.wac\";\nimport { foo } from \"./b.wac\";\n" +
+      "export i32 f() { return foo() + bar(); }\n",
+      "export i32 bar() { return 1; }\n");
+  i32[] two = dumpTypeErrorsFiles(paths2, sources2, "/t/main.wac");
+  t.eqI32(two.len() / 3, 1, "one of two imports is missing, and this many diagnostics");
+  if (two.len() >= 3) {
+    t.eqI32(two[1], 2, "the line: the *second* import, which is the missing one");
+  }
+
+  // The same program with both files supplied, so none of the above is met by refusing imports.
+  string[] paths3 = string[]("/t/main.wac", "/t/a.wac", "/t/b.wac");
+  string[] sources3 = string[](
+      "import { bar } from \"./a.wac\";\nimport { foo } from \"./b.wac\";\n" +
+      "export i32 f() { return foo() + bar(); }\n",
+      "export i32 bar() { return 1; }\n",
+      "export i32 foo() { return 2; }\n");
+  i32[] all = dumpTypeErrorsFiles(paths3, sources3, "/t/main.wac");
+  t.eqI32(all.len() / 3, 0, "refused a program whose imports are all supplied");
+  return t.report();
+}
+
 // ---------------------------------------------------------------------------------------------
 // The two-file half.
 //
