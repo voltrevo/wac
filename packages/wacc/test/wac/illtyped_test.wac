@@ -226,6 +226,53 @@ export string test_a_string_in_an_arithmetic_operator_reports_once() {
   return t.report();
 }
 
+/**
+ * A bitwise operator on operands that **differ** reports once, and the mismatch is the complaint.
+ *
+ * `& | ^` are in *both* rule sets: the bitwise block demands integers, and the same-type block demands
+ * the two agree. `%` is only in the second, which is why `issues/lang/0238a` fixed `s % 2` and left
+ * `a & b` at two — one fault, reported as a mismatch and as an operand of the wrong kind, both at the
+ * operator. The reference reports one, and which one depends on the pair:
+ *
+ *     i32 & bool     type mismatch in '&': i32 and bool          the operands differ
+ *     i32 & f64      type mismatch in '&': i32 and f64           the operands differ
+ *     f64 & f64      '&' requires i32 or i64, got f64            they agree and are not integers
+ *
+ * So the mismatch wins where the two differ, and the kind rule is the whole complaint where they
+ * agree. That is `issues/lang/0238a`'s own rule read the other way round — its question is whether the
+ * second diagnostic rests on something invented, and here the operand rule adds nothing a reader of
+ * *"i32 and bool"* does not already have.
+ *
+ * **The `f64 & f64` row is the control and is not a formality.** Suppressing the kind rule whenever the
+ * bitwise block fires would pass every row above and lose the only diagnostic that program gets, which
+ * is the failure this file has recorded twice — see `n * "a"` above, where a suppression keyed on the
+ * operator alone made an ill-typed program compile.
+ */
+export string test_a_bitwise_operator_on_mismatched_operands_reports_once() {
+  T t = T.create();
+  string[] name = string[](
+    "i32 & bool", "i32 | f64", "i32 ^ bool", "i32 & f64", "bool | i32");
+  string[] src = string[](
+    "export i32 f(i32 a, bool b) { return a & b; }\n",
+    "export i32 f(i32 a, f64 b) { return a | b; }\n",
+    "export i32 f(i32 a, bool b) { return a ^ b; }\n",
+    "export i32 f(i32 a, f64 b) { return a & b; }\n",
+    "export i32 f(bool a, i32 b) { return a | b; }\n");
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 diags = dumpTypeErrors(src[i].toBytes()).len() / 3;
+    t.eqI32(diags, 1, name[i] + ": one fault, and this many diagnostics");
+  }
+  // **Both operands wrong and agreeing**: the kind rule is the only thing that can speak, so it must.
+  i32 agree = dumpTypeErrors("export f64 f(f64 a, f64 b) { return a & b; }\n".toBytes()).len() / 3;
+  t.eqI32(agree, 1, "two f64s in `&` — the operand rule is the whole complaint and went quiet");
+  i32 bools = dumpTypeErrors("export bool f(bool a, bool b) { return a & b; }\n".toBytes()).len() / 3;
+  t.isTrue(bools > 0, "two bools in `&` drew nothing at all");
+  // And an ordinary program, so none of the above is satisfied by refusing bitwise outright.
+  i32 fine = dumpTypeErrors("export i32 f(i32 a, i32 b) { return (a & b) | (a ^ b); }\n".toBytes()).len() / 3;
+  t.eqI32(fine, 0, "refused a valid bitwise expression");
+  return t.report();
+}
+
 // ---------------------------------------------------------------------------------------------
 // The two-file half.
 //

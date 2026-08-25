@@ -382,3 +382,41 @@ is now `issues/lang/0241a`: a generic method's body is only ever checked with it
 so `v()` where `v` is the `i32` payload of an `Opt<i32>` is invisible to the checker and refused by the
 emitter. Found with `packages/wacc/test/missed.ts`, after guessing the shape against twelve types failed
 — wacc refuses all twelve.
+
+## The second shape was fixed for `%` and not for `& | ^` — agent-c, 2026-08-25
+
+This page's *"two operand rules for one operand"* is `s % 2`, and it is one diagnostic now. `a & b` on
+an `i32` and a `bool` was still **two**, at the operator, and by this issue's own rule it should not
+have been: the bitwise operators sit in *both* rule sets — the block that demands integers and the
+block that demands the two operands agree — while `%` is only in the second. So the fix landed on the
+operator that had the reproduction and not on its three siblings.
+
+Measured across every binary operator, `i32 op bool` into an `i32` slot:
+
+    + - * / %  << >>     wacc 1, reference 1
+    & | ^                wacc 2, reference 1        <- this
+    == != < <= > >=  && ||   wacc 2, reference 1    <- the residue below, adjudicated
+
+The reference's choice depends on the pair, which is the same rule this page states read the other way
+round: where the operands **differ** it reports the mismatch (`type mismatch in '&': i32 and bool`),
+and where they **agree** and are not integers it reports the kind (`'&' requires i32 or i64, got f64`).
+So the integer rule now stands aside exactly when the same-type rule will speak, mirroring that rule's
+own condition — no literal on either side, both types known and different, neither a `string`.
+
+Each of those three exclusions is load-bearing, and the narrowness is the point rather than caution:
+`x & 1.5` takes the literal branch, which answers nothing for that pair, so standing aside there would
+leave **no** diagnostic; `f64 & f64` has types that agree, so the integer rule is its only complaint;
+and a `string` in a bitwise operator returns before the mismatch report, so that too is the integer
+rule's alone. Suppressing whenever the integer rule fires would pass every mismatched row and lose
+those three — the shape this issue already recorded once, when a suppression keyed on the operator
+alone made `n * "a"` compile.
+
+**On the generated sweep the count-disagreement went 3008 of 9127 to 2324**, still never fewer than the
+reference. What is left is the adjudicated family: a comparison or a logical is a `bool` whatever its
+operands are, so the slot diagnostic rests on a determined type rather than an invented one and is an
+independent fault. `packages/wacc/test/wac/illtyped_test.wac` holds the five mismatched rows and the
+three controls.
+
+**Still closed.** Nothing here reopens the question this page answered; it is the answer applied to the
+operators the reproduction did not name. `issues/lang/0170a`'s lesson about siblings is the general
+form: the fix went where the example was.

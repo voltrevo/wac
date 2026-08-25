@@ -3814,7 +3814,31 @@ void checkExpr(C c, Expr e) {
         // `issues/lang/0236a`.
         bool badL = nl != "" && !isIntegerName(nl);
         bool badR = nr != "" && !isIntegerName(nr);
-        if (badL || badR) { c.reportTok(errOperandKind(), op, ""); }
+        // **One fault, one complaint: where the operands *differ*, the mismatch is the whole of it.**
+        // `& | ^` are in both rule sets — this block wants integers, and the same-type block below
+        // wants the two to agree — while `%` is only in the second. That is why `issues/lang/0238a`
+        // fixed `s % 2` and left `a & b` on an `i32` and a `bool` at two diagnostics, both at the
+        // operator. The reference reports one, and which one depends on the pair:
+        //
+        //     i32 & bool    type mismatch in '&': i32 and bool        they differ
+        //     i32 & f64     type mismatch in '&': i32 and f64         they differ
+        //     f64 & f64     '&' requires i32 or i64, got f64          they agree, and are not integers
+        //
+        // So this rule stands aside exactly when the one below will speak, and the condition is that
+        // one's own, mirrored: no literal on either side (the literal branch there answers nothing for
+        // a pair like `x & 1.5`, so standing aside would leave **no** diagnostic), both types known and
+        // different, and neither a `string` — a string in a bitwise operator returns there and this is
+        // its only report. `f64 & f64` is the row that makes the narrowness necessary rather than
+        // tidy: suppressing whenever this block fires would take that program's only diagnostic away,
+        // which is the shape `n * "a"` recorded in `illtyped_test.wac` after a suppression keyed on
+        // the operator alone made an ill-typed program compile.
+        bool eitherLit = litKindOf(left) != litNone() || litKindOf(right) != litNone();
+        string tl = typeOfExpr(c, left);
+        string tr = typeOfExpr(c, right);
+        bool mismatchWillSpeak = bitwise && !eitherLit &&
+                                 tl != typeNone() && tr != typeNone() && tl != tr &&
+                                 tl != "string" && tr != "string";
+        if ((badL || badR) && !mismatchWillSpeak) { c.reportTok(errOperandKind(), op, ""); }
       }
       bool sameType = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
                       k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
