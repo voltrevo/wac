@@ -39,28 +39,44 @@ with the gate in place, whose 2,838-line log contains one summary line — a kil
 reads like a pass. Lowering the number to get a push through trades a queue for that, and the queue is
 the safe failure.
 
-**And the number says of itself that it has not been checked.** `tools/wac/suitegate.wac`, beside
-`minAvailableMb`:
+**The number is measured, and what it is measured over is the point.** `tools/runTests.wac`'s header
+carries the sweep's table, from `tools/jobsSweep.sh`:
 
-> The suite was 3230 tests in the parallel pass when the table above was taken and is larger now, so
+    jobs   wall      peak      rise      anon   result
+    4      259s    7893MB    5158MB    5905MB   3377 passed      <- the default
+
+5,158 MB of *rise* at the default width, and a floor of 5,500 is that plus a margin — a derivation, not
+a guess. But the same header says what the table does not cover:
+
+> **The `3377 passed` column is the *Deno lane alone*, and that is now less than half the suite.**
+> `tools/jobsSweep.sh` runs `deno test` at each width and does not run the `wac test` lane at all
+
+It reasons that the memory argument survives this, "since the peak is the machine's rather than a
+lane's" — true of the reading, and it does not settle the question, because both columns were taken
+while only one lane ran. The suite the gate protects runs 411 `*_test.wac` files *and* 117 `.test.ts`
+files, and `issues/system/0161` keeps moving tests from the second to the first: 3,377 in the Deno lane
+when the table was taken, 1,690 by 2026-08-21, against 2,387 in the other. So the rise of the suite that
+actually runs has never been measured, and `minAvailableMb`'s own comment agrees about the direction:
+
 > **5500 is a floor nobody has re-measured**, and if it is wrong today it is wrong by being too low.
-> Re-run the sweep before trusting it against a machine that is close to the line.
 
-So the two candidate answers point opposite ways and neither is available from here: the floor may be
-too low, in which case forcing is worse than waiting; or it may be far too high for a suite that is
-mostly `wac`-hosted now, in which case a day of refusals bought nothing. **Deciding needs the
-measurement, and the measurement needs the suite to run** — which is the part the floor forbids. A run
-under `WAC_SUITE_ANYWAY=1` with a sampler attached would produce the peak, and on this machine it is
-also the run most likely to be killed at 70%, which produces no number at all.
+Which is what makes forcing the wrong move and the queue the safe failure: the plausible error is that
+5,500 is too *small*, so a push that goes through under `WAC_SUITE_ANYWAY=1` is the one that meets
+`0142`'s silent kill.
 
 ## What would settle it, in the order that costs least
 
-1. **Take the peak on a quiet machine.** One `WAC_SUITE_ANYWAY=1` run with RSS sampled per second,
-   when one agent is resident rather than three. That is the sweep the comment asks for, and it is a
-   number rather than an argument.
-2. **Then decide the floor from it**, with the margin stated — and if the answer is that 5500 is right,
-   the decision is about how many agents share a machine, not about the gate.
-3. **Failing both, a reservation** would at least make the wait fair: the refusal is stateless, so
+1. **Extend the sweep to both lanes** — `tools/jobsSweep.sh` is the instrument and already exists; what
+   it needs is to run the suite the way `runTests.wac` does rather than `deno test` directly. Its own
+   header records this failure twice already, in the same words: *"a measuring instrument that runs the
+   suite differently from the suite measures a different suite."* The wall-clock column wants this
+   anyway — the header above says so and asks nobody to move the width on its strength until then.
+2. **Then set the floor from the rise it reports**, with the margin stated. If 5,500 turns out to be
+   right, the decision is about how many agents share a machine rather than about the gate.
+3. **Either way it needs a quiet machine**, because a sweep is several suite runs and this one would be
+   killed. That is the part no workspace can arrange for itself, and the reason this is filed rather
+   than done.
+4. **Failing all of it, a reservation** would at least make the wait fair: the refusal is stateless, so
    thirty-five attempts are thirty-five independent coin flips against a threshold nobody is queueing
    for. `issues/system/0213a` is the neighbouring shape — a suite that *passes* and loses the race —
    and its recommendation was a counter, which is in; the policy is still not.
