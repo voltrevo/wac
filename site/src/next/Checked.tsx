@@ -2,9 +2,10 @@
 //
 // The oracle table was a section on the front page, which undersold it: "we never grade our own
 // homework" is not a supporting detail, it is the reason any number elsewhere on this site is worth
-// reading. And it is only one of six kinds of evidence here, the others being interleaving
-// enumeration, secret-dependence tracing, mutation, a spec where every claim carries a test, and
-// tests written in the language itself.
+// reading. And it is only one of eight kinds of evidence here, the others being interleaving
+// enumeration, secret-dependence tracing, mutation, a coverage ledger where every unreached line
+// carries a written reason, a spec where every claim carries a test, and tests written in the
+// language itself.
 //
 // Ordered by how much a skeptical reader should weigh them: a foreign implementation disagreeing
 // with you is worth more than any suite you wrote, and the further down this page you go the more
@@ -217,7 +218,47 @@ export default function Checked() {
         </P>
       </Section>
 
-      <Section id="spec" kicker="evidence, sixth kind" title="A specification that cannot drift">
+      <Section id="coverage" kicker="evidence, sixth kind" title="Every unreached line has a written reason">
+        <P>
+          Mutation testing asks whether a test would notice a change. This asks the question before
+          that one: whether the line was <em>run at all</em> — and, where it was not, makes somebody
+          write down why.
+        </P>
+        <P>
+          <Lead>36 of the 39 packages carry a coverage ledger</Lead> — and so does{" "}
+          {m({ children: "core" })}, which is not a package — a file listing every branch point the
+          suite does not reach, each with a sentence saying what would reach it. The three without
+          one are {m({ children: "wacc" })}, which is 36,000 lines and its own project;{" "}
+          {m({ children: "box" })}; and {m({ children: "wac" })}, added days ago.
+        </P>
+        <P>
+          <Lead>The ratchet runs both ways, and the second direction is the unusual one.</Lead> An
+          uncovered point nobody listed fails the run, which is the ordinary half. A point that{" "}
+          <em>is</em> listed and turns out to be covered fails too — {m({ children: "covledger.wac" })}{" "}
+          answers it with <em>&ldquo;the gap has been closed — drop the entry, and say so&rdquo;</em>.
+          A ledger that quietly dropped those would stop being a record of what is still missing, and
+          would decay into a list of excuses nobody rereads.
+        </P>
+        <P>
+          The same rule applies to the reasons. A rule that no longer matches anything fails —{" "}
+          <em>&ldquo;the rule explains something that is gone&rdquo;</em> — and since 2026-08-24 a
+          rule whose every point another rule already claims is reported as having nothing of its
+          own. That one was written after a rule in{" "}
+          {m({ children: "packages/tls" })} spent months asserting that a P-384 certificate chain
+          &ldquo;exists to generate and nothing reads what it makes&rdquo;, while a test read it. It
+          survived because a broader rule covered the same line, so it never matched nothing and
+          never tripped the first check.
+        </P>
+        <Caveat title="what a covered line is not">
+          It is not a checked one. A guard can be reached by a test that asserts only that something
+          was refused, never that it was refused for the right reason — and the coverage number
+          cannot tell those apart. Two of this repository&rsquo;s client refusals were in exactly
+          that state: executed on every run, and nothing in the suite would have failed if they had
+          returned the wrong answer.
+        </Caveat>
+      </Section>
+
+      <Section id="spec" kicker="evidence, seventh kind" title="A specification that cannot drift">
         <P>
           The language has a written specification, and <Lead>392 of its claims carry a tag</Lead>{" "}
           like {m({ children: "[§wac-core-one-type-8fjm2wq]" })}. Every tag names a test. A claim
@@ -246,7 +287,7 @@ export default function Checked() {
         </P>
       </Section>
 
-      <Section id="in-wac" kicker="evidence, seventh kind" title="Tests written in the language itself">
+      <Section id="in-wac" kicker="evidence, eighth kind" title="Tests written in the language itself">
         <P>
           <Lead>{TOTALS.wacTests} test files are written in wac</Lead>, not in the host language, and run through
           the same compiler as everything else. That is partly principle — a package whose tests are
