@@ -3,7 +3,7 @@
 // This page merges what used to be two — an inventory of packages and a set of case studies — because
 // they were arguing the same thing from two ends and a reader had to visit both to get the point.
 // The order is deliberate: the capability world first, since it is what makes an *application*
-// possible at all, then the four things that would be hard to fake, then the whole inventory.
+// possible at all, then the five things that would be hard to fake, then the whole inventory.
 //
 // Prose carried over from the pages this replaces, which had been corrected against the sources
 // several times; the numbers come from `../data/built`, generated from the repository's own generated map.
@@ -299,7 +299,40 @@ export default function Stack() {
         </Caveat>
       </Section>
 
-      <Section id="tor" kicker="hard to fake, #2" title="Tor, both ends">
+      <Section id="transport" kicker="hard to fake, #2" title="The transport underneath, both directions">
+        <P>
+          Tor and the browser demos are not the bottom of the stack. Under them is TLS 1.3, and
+          under that a QUIC and a WebRTC implementation written here — <em>RFC 8446, RFC 9000 and
+          RFC 9001</em>, on this repository&rsquo;s own crypto, with nothing borrowed but the
+          specifications.
+        </P>
+        <P>
+          <Lead>The oracle is somebody else&rsquo;s implementation, on both ends.</Lead> A wac
+          program opens a datagram socket, sends an Initial carrying a ClientHello it wrote, and{" "}
+          {m({ children: "quinn" })} accepts the connection. Then the roles swap: Deno&rsquo;s QUIC
+          client dials a server written here, and rustls has to accept our ServerHello, our key
+          share, our transport parameters, our certificate, an RSA-PSS signature over the transcript
+          and a Finished it recomputes. Any one of those wrong is a connection that does not happen,
+          which is what makes it a hard test to pass by accident.
+        </P>
+        <P>
+          The same shape one protocol over: Chromium&rsquo;s{" "}
+          {m({ children: "RTCPeerConnection" })} opens a data channel to our WebRTC peer and gets
+          our echo back — SDP, ICE, DTLS 1.2, SCTP and DCEP, against libwebrtc rather than a second
+          implementation of our own reading. And all of it runs on both hosts, the JavaScript one
+          and the Rust one, which is a separate claim about the platform rather than the protocol.
+        </P>
+        <Caveat title="what a handshake does not establish">
+          One connection, on loopback, with no Retry and no address validation — and a server that
+          answers every packet immediately is the shape that amplifies an attack at a spoofed
+          address. {m({ children: "quic/src/server.wac" })} says so where somebody might otherwise
+          take the test as a licence. Interoperating is evidence that the bytes are right; it is not
+          evidence that the thing is safe to point at the internet, and none of these has been
+          reviewed by anyone.
+        </Caveat>
+      </Section>
+
+      <Section id="tor" kicker="hard to fake, #3" title="Tor, both ends">
         <Caveat title="Not for production, and the packages say so first">
           None of this has been reviewed by anyone. On side channels the honest statement is a
           measurement rather than a shrug — see <A href="#/stack/crypto">below</A> — and anonymity
@@ -457,7 +490,7 @@ export default function Stack() {
         </Sub>
       </Section>
 
-      <Section id="ethereum" kicker="hard to fake, #3" title="Ethereum, against the published vectors">
+      <Section id="ethereum" kicker="hard to fake, #4" title="Ethereum, against the published vectors">
         <P>
           A pairing-based signature scheme is the least forgiving thing to write in a new language:
           the answer is one bit, every intermediate is a 381-bit field element, and nothing short of
@@ -508,7 +541,7 @@ export default function Stack() {
         </Sub>
       </Section>
 
-      <Section id="wacc" kicker="hard to fake, #4" title="The compiler, being rewritten in the language it compiles">
+      <Section id="wacc" kicker="hard to fake, #5" title="The compiler, being rewritten in the language it compiles">
         <P>
           {m({ children: "packages/wacc" })} is the wac compiler ported to wac, so that it can
           eventually compile itself. The point is not the compiler.{" "}
