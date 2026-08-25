@@ -164,7 +164,12 @@ string[] WRONG() {
     // The same pair in a `match`, which `checkArmValueTypes` gates on the same `concreteShape`
     // and skipped for the same reason. The reference: *match arms have incompatible types: P and
     // i32*.
-    "struct P { i32 x; } enum E { A, B } export i32 f(E e, P p) { P r = match (e) { case A: p, else: 1 }; return r.x; }");
+    "struct P { i32 x; } enum E { A, B } export i32 f(E e, P p) { P r = match (e) { case A: p, else: 1 }; return r.x; }",
+    // The other kinds `literalNeverFits` names, so the widening is pinned as a family rather than
+    // as the two cases that happened to be found: an array against an integer literal, and a
+    // struct against a string one.
+    "export i32 f(bool c, i32[] a) { i32[] r = c ? a : 1; return r[0]; }",
+    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : \"s\"; return r.x; }");
 }
 
 /**
@@ -196,6 +201,12 @@ string[] CLEAN() {
     "export i64 z() { i64 b = 9223372036854775807; return b; }",
     "export u64 u() { u64 b = 18446744073709551615; return b; }",
     "export i32 h() { i32 b = 0xFFFFFFFF; return b; }",
+    // **`null` beside a reference arm stays legal**, in both spellings — it is the one literal a
+    // nullable takes, and the reason `literalNeverFits` is asked only about *plain* literals.
+    // Without these two rows the widening above could refuse them and every other row would
+    // still pass.
+    "struct P { i32 x; } export i32 j(bool c, P p) { P? r = c ? p : null; return r is null ? 0 : r!.x; }",
+    "struct P { i32 x; } enum E { A, B } export i32 k(E e, P p) { P? r = match (e) { case A: p, else: null }; return r is null ? 0 : r!.x; }",
     // **The controls for the three rows above**, and the first is the one that matters: `is null` on a
     // *nullable* funcref is the ordinary way to ask whether one was supplied, which is why the rule was
     // written to skip funcrefs in the first place. A legal compound assignment and a widening cast are
