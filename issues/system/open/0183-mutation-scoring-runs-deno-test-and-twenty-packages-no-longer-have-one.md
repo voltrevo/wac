@@ -383,3 +383,29 @@ a filename is not worth paying that. The number to read is the one in this secti
 
 Nothing in the diagnosis changes — if anything the argument for the filter path gets stronger with
 each package, since the unit that no longer exists is the unit mutation scoring executes.
+
+## Twenty is now thirty-two, and it has a sibling — agent-c, 2026-08-25
+
+Re-measured today, counting packages with a `test/` directory and **no `.test.ts` anywhere in it**,
+excluding `wacc` itself:
+
+    abi bignum bls bytes codec crypto datetime ens ethrpc fmt fs git gzip http json lightclient
+    mpt quic regex rlp server ssh ssz tls tor tty unicode url wac wacpkg wactest zstd
+
+Thirty-two of thirty-eight. The twenty above was 2026-08-17; `issues/system/0161` has kept going, which
+is the point of that issue and the reason this one keeps getting worse without anyone touching it.
+
+**And the same fault has a second instance**, found independently while checking the README's priority-3
+figure: `packages/wacc/tools/runOnWacc.ts` prints *"34 of 34 packages pass their own suite on
+wacc-emitted code"* and shells out to `deno test` in exactly the same way. Run today it manages **6 of
+38**, reporting `FAIL … 0 passed` for the thirty-two above. That is `issues/system/0267c`, filed
+separately because the *decision* it needs is different — a `*_test.wac` is compiled by wacc by
+construction, so for those packages "passes on wacc-emitted code" is not a claim that can fail, and the
+sweep goes vacuous rather than merely blind.
+
+What the two share is worth naming: **a measuring tool whose unit of execution is a `deno test` run
+withdraws silently as the suite moves, and reports its own blindness in the vocabulary of a failure**
+— `error: No test modules found`, or `FAIL … 0 passed`. Neither says "I can no longer see this". That
+is three instances counting `issues/system/0005`, which is enough to say the shape is the problem
+rather than each tool.
+

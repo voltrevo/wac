@@ -62,6 +62,17 @@ they are not equivalent:
    affordable, but it should be *taken* rather than allowed to happen by the number quietly ceasing
    to mean anything.
 
+## The sibling: 0183
+
+`issues/system/0183` is this exact fault in `tools/mutate.ts` — mutation scoring runs `deno test`, and
+a package with no `.test.ts` reports `error: No test modules found`, which a reader takes for a broken
+suite rather than a blind tool. It was filed 2026-08-17 against **twenty** packages; it is thirty-two
+today, and that page now says so.
+
+Filed separately because the decisions differ. `0183` needs the mutation runner to learn the `wac test`
+lane, which is work with an obvious shape. This one needs somebody to decide what the number should
+*mean*, because teaching this sweep the same lane does not restore what it used to measure.
+
 ## Not the same as 0161
 
 `0161` is the migration itself and its ordering. This is a consequence of it that nothing in that
