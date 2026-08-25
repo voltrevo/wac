@@ -174,6 +174,26 @@ string fetchOne(Core core, Cli cli, const Store store, string wacHome, Mapping m
   core.log("  " + map.ref + " -> " + hit.commit.slice(0, 12)
            + (hit.via == "" ? " (an object name)" : " via " + hit.via));
 
+  // **Already here?** The pack below is 8.75 MB for this repository and the checkout it writes is a
+  // pure function of the repository and the commit — so a second project mapping the same commit was
+  // downloading, indexing and writing out a tree that was already on disk, 18 to 20 seconds each
+  // time. Reported against a set of external projects on 2026-08-25 as "cross-project cache reuse
+  // appears incomplete"; it was not incomplete, there was no check at all. The cache was consulted
+  // when a *build* opened a mapped file and never when a fetch decided whether to do any work.
+  //
+  // **`pack.pack` is the marker and it was already there.** The order below is: make the directory,
+  // index, write the tree out, and write the pack *last*. So a directory holding `pack.pack` is one
+  // whose checkout finished, and one interrupted half way through leaves a tree without it and is
+  // fetched again — which is the safe direction to be wrong in.
+  //
+  // The ref is still resolved first, because a lockfile that does not yet name a commit cannot say
+  // which directory to look in. This saves the pack, not the round trip.
+  string have = cachePath(wacHome, map.git, hit.commit);
+  if (have != "" && cli.stat(have + "/pack.pack").wait().isFile) {
+    core.log("  " + hit.commit.slice(0, 12) + " is already in the cache -> " + have);
+    return hit.commit;
+  }
+
   // `resolveRef` guarantees forty lowercase hex, so this cannot fail — but `decode` says so with
   // a null rather than by trapping, and answering it is cheaper than explaining why it is safe.
   u8[]? raw = decode(hit.commit.toBytes());
