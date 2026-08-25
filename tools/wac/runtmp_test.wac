@@ -1,0 +1,69 @@
+// A concurrent run's working directory is not swept out from under it.
+//
+// `wac run` and `wac test` build into `$TMPDIR/wac-run-…` and remove it on the way out; a run killed
+// before that leaves one behind, and a hundred of them once filled a disk (`issues/system/0136`). So
+// there is a sweep — and until 2026-08-25 it swept **by liveness**, removing any `wac-run-<pid>` whose
+// `/proc/<pid>` was missing.
+//
+// **That is sound in one PID namespace and wrong wherever several share a `/tmp`.** A container runner
+// gives each its own pids, so a foreign namespace's live pid 4 is absent from ours and its directory —
+// in use, being written into — was removed. GitHub issue 22 reported it against this repository's own
+// agent environment: "concurrent commands each saw PID 4 and removed/corrupted one another's working
+// directory". The name carries a timestamp now so two namespaces cannot pick one directory, and the
+// sweep asks *age*, which is the same fact everywhere.
+//
+// This drives the half that a normal environment can still see: a directory named for a pid that is
+// not running, freshly made, is left alone. Under the old rule it was exactly the thing to delete.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath } from "../../packages/wactest/src/host.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { Change, Cli, Core, Exec, Stat } from "std/platform.wac";
+
+/**
+ * A `wac-run-<digits>` name that no process owns and no other checkout will pick.
+ *
+ * **All digits after the prefix, and that is the whole point.** The rule this guards against skipped
+ * any name whose tail was not a pid, so a planted `wac-run-…-notapid-agent-c` would have survived it
+ * too and the test would have passed against the bug. It has to look exactly like what that rule
+ * would delete.
+ *
+ * Above `pid_max` — Linux caps it at 4194304 — so no process can own it however the namespaces are
+ * arranged, and offset by the checkout's own name so two agents running this at once do not share a
+ * directory.
+ */
+string plantedDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  // A character's position in a fixed alphabet, not `cwd.indexOf(ch)` — that answers where the
+  // character first appears in the path, which is a number about the path's shape rather than about
+  // the character, and two checkouts differing in one letter can share it.
+  string alphabet = "abcdefghijklmnopqrstuvwxyz0123456789-_/.";
+  i32 h = 0;
+  for (i32 i = 0; i < cwd.len(); i++) {
+    h = (h * 31 + alphabet.indexOf(cwd.slice(i, i + 1)) + 2) % 900000;
+  }
+  return "/tmp/wac-run-" + itoa(90000000 + h);
+}
+
+export string test_a_fresh_run_directory_of_anothers_is_left_alone(Core core, Cli cli) {
+  T t = T.create();
+  string planted = plantedDir(cli);
+  cli.remove(planted, true).wait();
+  Change made = cli.mkdir(planted, true).wait();
+  t.isTrue(made.ok(), "planted " + planted + " — " + made.message);
+  if (!made.ok()) { return t.report(); }
+  Change wrote = cli.writeFile(planted + "/in-use.txt", "another run is writing here\n".toBytes()).wait();
+  t.isTrue(wrote.ok(), "and put a file in it — " + wrote.message);
+
+  // Any command that builds sweeps first; `--help` does not, so this runs something.
+  Exec r = cli.exec(binaryPath(cli), string[]("run"), u8[0]()).wait();
+  t.isTrue(r.ran(), "the binary ran — " + r.error);
+
+  Stat after = cli.stat(planted).wait();
+  t.isTrue(after.isDir,
+           "a freshly made `wac-run-` directory whose pid is not running was swept — that is the "
+           + "liveness rule, and it deletes live directories wherever /tmp is shared across PID "
+           + "namespaces. See the header.");
+  cli.remove(planted, true).wait();
+  return t.report();
+}

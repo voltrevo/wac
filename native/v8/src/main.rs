@@ -1968,13 +1968,26 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     // process from inside, leaves its directory behind for good. A hundred of them had accumulated
     // over two days — `issues/system/0136` is the day the disk filled from exactly this shape.
     //
-    // Swept by liveness, the way `tools/suiteGate.ts` sweeps its notes: the name carries the pid, so
-    // a directory whose process is gone is finished with, and one whose process is alive belongs to a
-    // concurrent run and is left alone. On a system with no `/proc` nothing is swept, which is the
-    // safe direction — a stale directory costs disk and a live one costs a running program.
+    // **Swept by age, not by liveness, and that is a correction.** This used to ask `/proc/<pid>`
+    // whether the owning process was still running — sound in one PID namespace and meaningless
+    // across several that share `/tmp`, which is what a container runner gives you. A foreign
+    // namespace's pid 4 is absent from ours while its process runs perfectly well, so the sweep
+    // deleted working directories out from under live commands. Reported against this environment on
+    // GitHub issue 22, where concurrent runs "each saw PID 4 and removed/corrupted one another's".
+    //
+    // Age is the same fact in every namespace. It also covers what liveness covered — our own dead
+    // runs are old runs — so nothing is lost by dropping the `/proc` question entirely.
     sweep_stale_runs();
 
-    let dir = std::env::temp_dir().join(format!("wac-run-{}", std::process::id()));
+    // **The pid is not unique either**, for the same reason, so the name carries the moment it was
+    // made. Two commands in two namespaces with the same pid used to name one directory and write
+    // over each other.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir()
+        .join(format!("wac-run-{}-{unique:x}", std::process::id()));
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("wac: cannot make a working directory — {e}");
         return 1;
@@ -2069,24 +2082,44 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     code
 }
 
-/// Remove `wac-run-<pid>` directories whose process is no longer running.
+/// How long a `wac-run-*` directory must have gone untouched before it is somebody's litter.
+///
+/// **Longer than any command, shorter than the two days it took to fill a disk** (`issues/system/0136`).
+/// The suite is minutes; six hours is far past anything this binary does and still bounds the growth
+/// that issue was about.
+const RUN_DIR_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// Remove `wac-run-*` directories that nothing has touched for `RUN_DIR_STALE_AFTER`.
+///
+/// **By age, because liveness is not answerable here.** This asked `/proc/<pid>` and skipped the
+/// directory when the process was alive. That is right in one PID namespace and wrong wherever
+/// several share a `/tmp`: a container runner gives each its own pids, so a foreign live pid 4 reads
+/// as dead and its directory — in use, being written — was removed. GitHub issue 22 reported exactly
+/// that against this repository's own agent environment.
+///
+/// Age is namespace-independent, and it is not weaker: the runs `/proc` identified as sweepable were
+/// dead ones, and a dead run's directory stops being touched. A command that outlives the threshold
+/// would have its own directory swept by a *later* command, which is the one case this trades away
+/// and is why the threshold is six hours rather than one.
 ///
 /// Best effort throughout: a directory that cannot be read or removed is skipped, because failing to
-/// tidy is not a reason to fail to run. Only names this program makes are considered, and only when
-/// the pid parses — anything else in the temp directory is somebody else's.
+/// tidy is not a reason to fail to run. Only names this program makes are considered.
 fn sweep_stale_runs() {
-    if !std::path::Path::new("/proc").is_dir() {
-        return;
-    }
     let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    let now = std::time::SystemTime::now();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Some(pid) = name.strip_prefix("wac-run-") else { continue };
-        if pid.is_empty() || !pid.bytes().all(|c| c.is_ascii_digit()) {
+        // `wac-run-<pid>` from a binary before 2026-08-25, or `wac-run-<pid>-<nanos>` from this one.
+        // Both are ours and both are dated by the filesystem rather than by their names, so that a
+        // directory someone is still writing into is not old however it is named.
+        if !name.starts_with("wac-run-") {
             continue;
         }
-        if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        let Ok(meta) = entry.metadata() else { continue };
+        let Ok(touched) = meta.modified() else { continue };
+        let Ok(idle) = now.duration_since(touched) else { continue };
+        if idle < RUN_DIR_STALE_AFTER {
             continue;
         }
         let _ = std::fs::remove_dir_all(entry.path());
