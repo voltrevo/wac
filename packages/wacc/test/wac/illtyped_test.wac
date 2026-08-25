@@ -248,6 +248,44 @@ export string test_a_string_in_an_arithmetic_operator_reports_once() {
  * is the failure this file has recorded twice — see `n * "a"` above, where a suppression keyed on the
  * operator alone made an ill-typed program compile.
  */
+/**
+ * A component tag and the named construction it desugars to say the **same** thing.
+ *
+ * `checkJsxComponent` states the rule it is built on: *"The field rules are named construction's …
+ * because the desugaring **is** a named construction, and two sets of rules for one construct would
+ * differ the first time either moved."* Either moved. `Card { p: a }` for a nullable `a` into a
+ * non-null field is reported, and `<Card p={a} />` was not, because the JSX path has its own
+ * `assignable` call rather than the construction check's.
+ *
+ * **wacc is its own oracle here, and it has to be**: the reference has no JSX at all — it answers
+ * *expected expression, found '<'* — so the rung-3 differentials cannot see this family, which is why
+ * a divergence could sit in it. What can be checked is that one construct written two ways gets one
+ * answer, which is the property the comment above claims and the only one that does not need a second
+ * compiler.
+ */
+export string test_a_component_tag_and_its_construction_agree() {
+  T t = T.create();
+  const string DECL =
+    "import { Attr, Node } from \"core\";\n" +
+    "struct P { i32 x; }\n" +
+    "struct Card {\n" +
+    "  P p;\n" +
+    "  Node render(const this, Node[] kids) { return <section class=\"card\"></section>; }\n" +
+    "}\n";
+  // A nullable into the non-null field, both ways round.
+  i32 viaJsx = dumpTypeErrors((DECL + "export Node f(P? a) { return <Card p={a} />; }\n").toBytes()).len() / 3;
+  i32 viaNamed = dumpTypeErrors((DECL + "export Node f(P? a) { return Card { p: a }.render(Node[]()); }\n").toBytes()).len() / 3;
+  t.isTrue(viaNamed > 0, "the named construction stopped reporting a nullable field");
+  t.eqI32(viaJsx, viaNamed, "the tag and the construction disagree about the same program");
+  // The control, both ways: a `P` in that field is an ordinary program and neither spelling may
+  // complain. Without it, a rule that refused every component attribute would satisfy the row above.
+  i32 okJsx = dumpTypeErrors((DECL + "export Node f(P a) { return <Card p={a} />; }\n").toBytes()).len() / 3;
+  i32 okNamed = dumpTypeErrors((DECL + "export Node f(P a) { return Card { p: a }.render(Node[]()); }\n").toBytes()).len() / 3;
+  t.eqI32(okJsx, 0, "a well-typed component tag was refused");
+  t.eqI32(okNamed, 0, "a well-typed named construction was refused");
+  return t.report();
+}
+
 export string test_a_bitwise_operator_on_mismatched_operands_reports_once() {
   T t = T.create();
   string[] name = string[](
