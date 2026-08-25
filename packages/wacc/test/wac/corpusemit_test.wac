@@ -27,7 +27,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
+import { contains, has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
 import { Core, Cli } from "std/platform.wac";
 import { emitFiles, blockedFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
@@ -204,8 +204,32 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
             + itoa(reasons) + " declined by name");
 
   t.isTrue(whole > 0, "no corpus file was emitted in full — the harness is not reaching the emitter");
-  t.isTrue(partial > 0, "every file emitted whole, which cannot be true yet");
-  t.isTrue(reasons > 0, "nothing was declined by name — the emittability walk is not running");
+
+  // **`partial > 0` and `reasons > 0` used to be here, and the emitter outgrew them.**
+  //
+  // They were canaries about the *harness*: a run that measured nothing would report a comfortable
+  // zero, and "some file is still declined" was the cheap proof that the emittability walk was
+  // running at all. That worked while the corpus had files the emitter could not manage — 27 of 729
+  // partial on 2026-08-20, three of 414 six days before that.
+  //
+  // It is 1075 of 1075 whole and 0 partial now, so those two assertions had inverted: they failed
+  // *because* the thing they were watching for had been achieved. A canary that fires on success is
+  // worse than no canary, because the natural fix is to stop believing it.
+  //
+  // So the walk is checked against a file that **must** be declined rather than against the corpus
+  // happening to contain one. Four lines, no imports, and the reason it is declined is a language
+  // construct — which was the property this rung was always asserting.
+  string[] canaryPaths = string[]("/canary/m.wac");
+  string[] canarySources = string[](
+      "struct Hold<T> { T v; }\n" +
+      "enum Colour { Red, Green }\n" +
+      "Hold<T> hold<T>(T v) { return Hold(v); }\n" +
+      "export Hold<Colour> mk() { return hold(Colour.Red); }\n");
+  string canaryWhy = blockedFiles(canaryPaths, canarySources, "/canary/m.wac");
+  t.isTrue(canaryWhy != "", "a file this emitter cannot emit was not declined — the emittability " +
+                            "walk is not running, so the counts above mean nothing");
+  t.isTrue(contains(canaryWhy, "reference types"),
+           "the decline did not name a language construct: " + canaryWhy);
 
   // **The scan found something.** `short_` is a count of names that are declared and missing, so a
   // scanner that declared nothing would report zero of them and this whole check would be a comment.

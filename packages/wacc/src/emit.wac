@@ -9991,7 +9991,26 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
     case IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
     case Return(value): {
       if (value is null) { return ""; }
-      return unsupportedValueAt(src, lexed, env, value!, env.returnType);
+      string rv = unsupportedValueAt(src, lexed, env, value!, env.returnType);
+      if (rv != "") { return rv; }
+      // **The same two-known-types test the `Var` case above makes**, and its absence here was
+      // `issues/lang/0260c`: `Pending<Read> p = ready(Read.End);` is declined and
+      // `Pending<Read> f() { return ready(Read.End); }` emitted a function returning a reference type
+      // its own signature did not name — `expected (ref null 336), got (ref null 387)` from the
+      // engine, with nothing from the compiler. One construct, caught in one position and mis-emitted
+      // in the other, which is `issues/lang/0106`'s class and the operator's rule that a case which
+      // is not implemented must fail.
+      //
+      // `returnType` is `""` for a void function, and `isStructName("")` is false, so this costs
+      // nothing there.
+      string gr = isLiteral(value!) ? "" : typeOfE(src, lexed, env, value!);
+      if (gr != "" && env.canonType(gr) != env.canonType(env.returnType) &&
+          valType(gr) == valType(env.returnType) &&
+          (isArrayType(env.returnType) || env.isStructName(env.returnType)) &&
+          !env.isSubtypeOf(env.canonType(gr), env.canonType(env.returnType))) {
+        return "a return between related reference types";
+      }
+      return "";
     }
     case ExprStmt(e): {
       string r = unsupportedExpr(src, lexed, env, e);
