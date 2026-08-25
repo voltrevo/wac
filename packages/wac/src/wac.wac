@@ -43,7 +43,7 @@ import { bindTypesFilesIn, bindgenDeclinedFilesIn, bindgenWire, blockedFilesIn, 
          emitFilesCoveredIn, emitFilesTraced, emitFilesTracedSlots, traceTableFiles,
          manifestWire } from "../../wacc/src/api.wac";
 import { Built } from "../../wacc/src/emit.wac";
-import { cellAt, cells, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
+import { cellAt, cells, hollowWhy, manifestIn, withManifestSection } from "../../wacc/src/manifest.wac";
 // The test runner, which used to be 800 lines of this file — `issues/system/0257c`.
 import { grantAfterEntry, grantsBefore, programArgs, relay, runModule, unknownFlagBefore }
          from "./runprog.wac";
@@ -1585,6 +1585,25 @@ export i32 main(Core core, Cli cli) {
     string manifest = manifestWire(wasm, types, sigsWithCounters(sigs, covered || traced), entry,
                                   wasmName, grantsIn(cli, argc));
     u8[] whole = withManifestSection(wasm, manifest);
+    // **A build that emitted no code used to report success** — `issues/lang/0155`. The artefact had
+    // one section, `wac.manifest`, listing fifty exports the module did not contain, and it *validates*
+    // because a module made of a custom section is legal wasm. So the engine check the native host runs
+    // after a build had nothing to say, and what a reader got was a file with the magic number, the
+    // version and a manifest they would believe.
+    //
+    // Checked here rather than in a host, so every host refuses it — and before the write, so there is
+    // no artefact to believe.
+    // `sigs` is one export per line, so its line count is what the manifest promises. Counted here
+    // rather than passed as a string: `hollowWhy` walks bytes and has no business parsing a table.
+    i32 promised = 0;
+    for (i32 i = 0; i < sigs.len(); i++) { if (sigs.slice(i, i + 1) == "\n") { promised = promised + 1; } }
+    string hollow = hollowWhy(whole, promised);
+    if (hollow != "") {
+      core.warn("wacc: cannot build " + entry + " — " + hollow +
+                ". This is a compiler fault rather than a fault in the program: please report it with " +
+                "the entry that produced it.");
+      return 1;
+    }
     Change wroteWasm = fs.writeFile(stem + ".wasm", whole);
     if (!wroteWasm.ok()) {
       core.warn("wacc: cannot write " + stem + ".wasm — " + wroteWasm.message);

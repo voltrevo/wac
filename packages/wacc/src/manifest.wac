@@ -67,6 +67,49 @@ export string manifestIn(u8[] wasm) {
   return "";
 }
 
+/**
+ * Why this module is hollow, or `""` when it is not — `issues/lang/0155`.
+ *
+ * **A build that emitted no code reported success.** The artefact had one section, `wac.manifest`,
+ * 73,821 bytes of valid JSON listing fifty exports, and no type, function, code or export section at
+ * all. Every byte was the manifest and the eight-byte header — and it *validates*, because a module
+ * consisting of a custom section is legal wasm, so `wac build`'s engine check had nothing to say. What
+ * a reader gets is a file with the magic number, the version and a manifest they will believe.
+ *
+ * So the check is about the artefact rather than about the engine's opinion of it: a module the
+ * compiler claims to have built has a code section, and one whose manifest promises exports has an
+ * export section to hold them. Both come from walking the sections, which this file already does for
+ * `bindExportsOf`.
+ *
+ * `promised` is how many exports the manifest lists — the caller has that as `sigs` and counts its
+ * lines, rather than this parsing the JSON back out of bytes it just wrote. The count stays out of the
+ * message so this file needs no number formatter: `numText` is `emit.wac`'s and importing it here
+ * would point the manifest writer at the emitter.
+ */
+export string hollowWhy(u8[] wasm, i32 promised) {
+  if (wasm.len() < 8) { return "it is shorter than a wasm header"; }
+  bool hasCode = false;
+  i32 exports = 0;
+  i32 at = 8;
+  while (at < wasm.len()) {
+    i32 id = wasm[at];
+    at = at + 1;
+    i32 size = ulebAt(wasm, at);
+    at = at + ulebWidth(wasm, at);
+    i32 end = at + size;
+    if (end > wasm.len()) { return "a section runs past the end of the file"; }
+    // 10 is the code section and 7 the export section.
+    if (id == 10) { hasCode = true; }
+    if (id == 7) { exports = ulebAt(wasm, at); }
+    at = end;
+  }
+  if (!hasCode) { return "it has no code section — nothing was emitted"; }
+  if (promised > 0 && exports == 0) {
+    return "its export section is empty and its manifest promises exports";
+  }
+  return "";
+}
+
 export string[] bindExportsOf(u8[] wasm) {
   string[] out = string[4096](fill: "");
   i32 n = 0;

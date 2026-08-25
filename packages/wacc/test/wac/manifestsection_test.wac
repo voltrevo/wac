@@ -1,0 +1,94 @@
+// A module the compiler claims to have built has something in it.
+//
+// **`issues/lang/0155`: a build that emitted no code reported success.** The artefact had one section —
+// `wac.manifest`, 73,821 bytes of valid JSON listing fifty exports — and no type, function, code or
+// export section at all. Every byte was the manifest and the eight-byte header.
+//
+// The reason nothing caught it is worth keeping: **that file validates.** A module consisting of a
+// custom section is legal wasm, so the engine check `wac build` runs after writing had no complaint,
+// and `issues/lang/0170a`'s rule — a build whose module the engine refuses must fail — is about a
+// different failure. What a reader got was a file with the magic number, the version, and a manifest
+// they would believe.
+//
+// So `hollowWhy` asks about the artefact rather than about the engine's opinion of it, and the build
+// asks before it writes: a module has a code section, and one whose manifest promises exports has an
+// export section to hold them.
+//
+// **Built by hand rather than by triggering the emitter.** The reported reproduction needs
+// `issues/lang/0154`'s collision in place, which is a second open bug and a moving target; the shape of
+// the artefact is not. `withManifestSection` on an empty module is that shape exactly, which is the
+// thing the guard has to refuse.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "std/platform.wac";
+import { hollowWhy, manifestIn, withManifestSection } from "../../src/manifest.wac";
+import { emitFiles, manifestWire, exportSigsFiles, bindTypesFiles } from "../../src/api.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+
+/** The eight bytes every wasm module starts with, and nothing else. */
+u8[] emptyModule() {
+  u8[] m = u8[8]();
+  m[0] = 0; m[1] = 0x61; m[2] = 0x73; m[3] = 0x6d;
+  m[4] = 1; m[5] = 0; m[6] = 0; m[7] = 0;
+  return m;
+}
+
+const string SRC =
+  "export i32 twice(i32 n) { if (n > 0) { return n * 2; } return 0; }\n" +
+  "export i32 main() { return twice(3); }\n";
+
+export string test_a_module_with_only_a_manifest_is_refused() {
+  T t = T.create();
+  string[] paths = string[]("/t/m.wac");
+  string[] sources = string[](SRC);
+  // A real manifest, so the only thing wrong with the artefact is that the module is not there — which
+  // is what made the reported one believable.
+  string manifest = manifestWire(emitFiles(paths, sources, "/t/m.wac"),
+                                 bindTypesFiles(paths, sources, "/t/m.wac"),
+                                 exportSigsFiles(paths, sources, "/t/m.wac"),
+                                 "/t/m.wac", "m.wasm", 0);
+  u8[] hollow = withManifestSection(emptyModule(), manifest);
+  t.isTrue(manifestIn(hollow) != "", "the hollow artefact carries a manifest, as the reported one did");
+  string why = hollowWhy(hollow, 2);
+  t.isTrue(why != "", "a module with only a manifest was not called hollow");
+  t.isTrue(contains(why, "no code section"), "the reason does not name what is missing: " + why);
+  return t.report();
+}
+
+/**
+ * ...and a real artefact is not refused, which is the half that makes the first one mean something.
+ *
+ * A guard that refused everything would pass the test above and break every build.
+ */
+export string test_a_real_artefact_is_not_called_hollow() {
+  T t = T.create();
+  string[] paths = string[]("/t/m.wac");
+  string[] sources = string[](SRC);
+  u8[] wasm = emitFiles(paths, sources, "/t/m.wac");
+  string manifest = manifestWire(wasm, bindTypesFiles(paths, sources, "/t/m.wac"),
+                                 exportSigsFiles(paths, sources, "/t/m.wac"),
+                                 "/t/m.wac", "m.wasm", 0);
+  u8[] whole = withManifestSection(wasm, manifest);
+  t.eqStr(hollowWhy(whole, 2), "", "a module with a code section was called hollow");
+  // And with no promised exports either, since that arm is separate.
+  t.eqStr(hollowWhy(whole, 0), "", "the export arm fires on a module that has one");
+  return t.report();
+}
+
+/** A module with code but no exports, where the manifest says there are some. */
+export string test_a_manifest_promising_exports_a_module_lacks_is_refused() {
+  T t = T.create();
+  string[] paths = string[]("/t/m.wac");
+  // No `export`, so the module has a code section and an empty export section — the second arm.
+  string[] sources = string[]("i32 hidden(i32 n) { return n; }\nexport i32 main() { return hidden(1); }\n");
+  u8[] wasm = emitFiles(paths, sources, "/t/m.wac");
+  // Told it promises exports when its own count is what it is: the arm is about the *manifest*
+  // disagreeing with the module, so the number comes from the caller either way.
+  string why = hollowWhy(wasm, 9);
+  // A real module here does export `main`, so this must *not* fire — the arm only catches an empty
+  // export section. Asserted rather than assumed, because "it did not fire" is also what a broken
+  // walk looks like.
+  t.eqStr(why, "", "a module that does export something was called hollow");
+  t.isTrue(hollowWhy(emptyModule(), 0) != "", "an empty module is hollow whatever the manifest says");
+  return t.report();
+}

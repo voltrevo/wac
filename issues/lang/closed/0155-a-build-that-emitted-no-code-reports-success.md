@@ -1,6 +1,6 @@
 # 0155 — a build that emitted no code reports success
 
-- **Status:** open
+- **Status:** closed — 2026-08-25
 - **Reported by:** agent-c
 - **Date:** 2026-08-18
 - **Kind:** diagnostic
@@ -137,3 +137,36 @@ move here — a belt beside a fixed brace — but this belt is the only thing th
 return site, and the enumeration above is a claim about today's code rather than a property of it. A
 guard that costs one line and fires on a byte count is cheaper than the sweep that would otherwise be
 needed after every change to the emitter's early exits.
+
+## Fixed: the build asks about the artefact, not about the engine's opinion of it — 2026-08-25
+
+`hollowWhy` in `packages/wacc/src/manifest.wac` walks the sections of the module about to be written
+and answers why it is hollow, or `""`:
+
+    no code section        nothing was emitted
+    empty export section   and the manifest promises exports
+    a section past the end the bytes are not a module
+
+`wac build` asks **before it writes**, so there is no artefact left to believe, and it says the fault is
+the compiler's rather than the program's — because it is.
+
+**Why nothing caught this for a week is the part worth keeping.** That file *validates*: a module
+consisting of one custom section is legal wasm, so the engine check `wac build` runs after a build —
+`issues/lang/0170a`'s rule that a module the engine refuses must fail the build — had no complaint to
+make. Two guards can both be working and leave this gap between them, because one asks the engine and
+the other asks nobody. `hollowWhy` asks the artefact.
+
+Checked in the program rather than in a host, so all three refuse it.
+
+## The test does not reproduce the emitter bug, on purpose
+
+The reported reproduction needs `issues/lang/0154`'s collision in place — a second open bug, and a
+moving target. The *shape* of the artefact is not: `withManifestSection` on an eight-byte module is
+exactly it, with a real manifest so that the only thing wrong is the absence of the module.
+`test/wac/manifestsection_test.wac` pins that, and pins the other direction too — a real artefact is
+not called hollow, and a module that does export something does not trip the export arm. A guard that
+refused everything would pass the first assertion and break every build.
+
+Verified: the seed is a fixed point built through the guarded path (a 220-file program plus two
+payloads), and `app_test`, `buildcache_test`, `declined_test` and the 42-row `commandparity_test` are
+green.
