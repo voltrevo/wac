@@ -166,7 +166,7 @@ export string[] splitTop(string text, string sep) {
 }
 
 /** The cells of one tab-separated line. Plain: a tab cannot be inside a type. */
-string[] cells(string line) {
+export string[] cells(string line) {
   return splitOn(line, "\t");
 }
 
@@ -203,7 +203,7 @@ string[] splitOn(string text, string sep) {
   return exactlyN(out, n);
 }
 
-string cellAt(string[] cs, i32 i) { return i < cs.len() ? cs[i] : ""; }
+export string cellAt(string[] cs, i32 i) { return i < cs.len() ? cs[i] : ""; }
 
 /** A JSON string literal. The names here are identifiers and types, and this assumes nothing. */
 string quoted(string s) {
