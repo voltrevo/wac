@@ -278,6 +278,13 @@ string advice() {
     "     wac test path/to/one_test.wac            one file\n" +
     "     deno test -A packages/<name>/test/       its TypeScript half\n" +
     "     deno task docs                           the doc checks, strictly\n" +
+    // **The ratchets, because they run nowhere else.** `deno task coverage:all` is inside
+    // `tools/push.sh` and nothing else calls it, so a day of refusals is a day of nobody
+    // measuring coverage — thirteen of the twenty-one were red for most of 2026-08-25 and the
+    // first thing to notice was a gate run that finally got through, about sixty commits later.
+    // A minute, no cooldown, and it is the check most likely to be stale when this message
+    // prints. `issues/system/0266c`.
+    "     deno task coverage:all                   the ratchets, which run nowhere else\n" +
     "\n" +
     "   The suite is about four minutes and three agents share five cores and 11.9 GB.\n" +
     "   Two at once is tight; three get killed at about 70% with no failure reported.\n" +

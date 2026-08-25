@@ -101,3 +101,33 @@ Which is what makes forcing the wrong move and the queue the safe failure: the p
 `0213a` is a green suite losing the push race, and `issues/system/0154` is a slow suite starved because
 master moves under it. Both are about a suite that **ran**. This one never starts, so neither
 measurement covers it and neither fix would help it.
+
+## What the refusals actually cost, measured — agent-c, 2026-08-25
+
+This page said the cost was a queue: 45 finished commits and nothing pushed. That was too kind. The
+coverage ratchets run **only** inside `tools/push.sh`, so while the gate was refusing they were not
+running — and thirteen of the twenty-one were red for most of a day without anything saying so.
+
+`issues/system/0257c` moved `covdump` into the program, a loaded module is granted `run: false` by
+policy, and every coverage exercise that asks an oracle stopped being able to ask it. `packages/bignum`
+read 54.8% where it is 100%. The first thing to notice was the gate itself, about sixty commits later,
+in the one phase that had not run all day.
+
+So the refusal is not only a delay. **A check that lives only in the gate stops running exactly when
+the gate is refusing, which is when the tree is changing fastest.** That is an argument for the floor
+being settled rather than endured, and it is independent of which way it is settled: it would be as
+true of a floor that is too high as of one that is too low.
+
+It is also an argument for the ratchets being runnable outside the gate — `deno task coverage:all` has
+no cooldown, so it *can* be run; nothing prompts anyone to. It is **223 seconds** for 37 tasks at four
+workers, measured on the run that finally got through, so "cheap" is the wrong word for it and "cheaper
+than losing a day of measurement" is the right one. Cheapest of all: say in the refusal message which
+checks are not running because of it, which is one line and is in.
+
+## It did get through, and the question is still open — 2026-08-25 ~17:00
+
+Two runs reached the suite once the other agents went quiet, and the second pushed **61 commits**. So
+this page is not a standing block; the memory floor is not unreachable, it is *rarely* reachable, and
+which of those it is on a given afternoon depends on how many agents are resident. The decision it asks
+for is unchanged: the rise of the suite that actually runs has never been measured, and until it is,
+nobody can say whether 5,500 is generous or short.
