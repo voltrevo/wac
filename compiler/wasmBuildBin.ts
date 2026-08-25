@@ -1588,16 +1588,39 @@ function buildBindHelpers(
   }
 
   // ── Trap messages ─────────────────────────────────────────────────────────
-  // `$trap$message()` reads the global a `trap "…"` left behind. Null when the
-  // module has not trapped with a message — an engine trap (a bounds check, a null
-  // dereference) sets nothing, and reporting the previous message for one of those
-  // would be worse than reporting nothing.
+  // `$trap$message()` reads the global a `trap "…"` left behind, **and clears it**.
+  // Null when the module has not trapped with a message — an engine trap (a bounds
+  // check, a null dereference) sets nothing, and reporting the previous message for
+  // one of those would be worse than reporting nothing.
+  //
+  // The clearing is `issues/lang/0254c`, and the sentence above was the requirement
+  // rather than the behaviour until 2026-08-25: nothing emptied the global, so a
+  // trap that said nothing was answered with whatever the last one that spoke had
+  // left. Two `trap;` of identical source reported differently depending on what ran
+  // between them. Reading is the right place to clear because the message describes
+  // *the trap that just unwound*, and every reader in the repository reads it once,
+  // in a catch, and rethrows when it is null.
+  //
+  // **A local, and not the stack, and `wasm-opt` is why.** The obvious form leaves the
+  // message on the stack, pushes the null under `global.set` and returns what is left —
+  // three instructions and no local, which V8 and wasmtime both run. Binaryen refuses to
+  // *validate* it: its IR is structured rather than stacked, so a body ending in a void
+  // `global.set` with a value stranded beneath it is `block with value and last element
+  // with value must match types`.
   if (ctx.trapGlobalIdx >= 0) {
     const si = ctx.stringTypeIdx;
     helpers.push({
       name: "$trap$message",
       funcTypeEntry: [0x60, 0x00, 0x01, 0x63, ...sleb(si)],
-      body: [0x00, 0x23, ...uleb(ctx.trapGlobalIdx), 0x0B],
+      body: [
+        0x01, 0x01, 0x63, ...sleb(si), //   one local: (ref null $string)
+        0x23, ...uleb(ctx.trapGlobalIdx), // global.get
+        0x21, 0x00, //                      local.set 0
+        0xD0, ...sleb(si), //               ref.null $string
+        0x24, ...uleb(ctx.trapGlobalIdx), // global.set
+        0x20, 0x00, //                      local.get 0
+        0x0B,
+      ],
     });
   }
 

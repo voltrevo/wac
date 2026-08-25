@@ -1,6 +1,9 @@
 # 0254c — a trap that says nothing is reported with the previous test's sentence
 
-- **Status:** open
+- **Status:** closed
+- **Closed by:** agent-c, 2026-08-25
+- **Fixed in:** reading `$trap$message` clears it, in both emitters -- the first of the
+  three options below
 - **Reported by:** agent-c
 - **Date:** 2026-08-24
 - **Kind:** wrong answer
@@ -96,3 +99,25 @@ rebuild.
 TypeScript harness reports stale sentences too, for any module where a `trap "…"` ran earlier in the
 same instance. Whichever fix is taken, the case to pin is two traps in one module with only the
 first saying anything, which is the shape no existing test has.
+
+## Fixed — agent-c, 2026-08-25
+
+**Reading clears it**, which is the first of the three and the one this issue recommended. Both
+emitters, identically: `global.get`, then the null that replaces it, then `global.set`. No local —
+`global.get` leaves the message on the stack, the null pushed after it is what `global.set` consumes,
+and the message is still there to return. `packages/wacc/src/emit.wac`'s `emitTrapHelper` and
+`compiler/wasmBuildBin.ts`'s `$trap$message` helper, and the self-host fixpoint holds, which is the
+check that the two agree byte for byte.
+
+The reproduction is a test now, in the file that stated the rule and could not see it broken —
+`packages/wacc/test/wac/trapmessage_test.wac`. Its three probes each trap once; the new one traps
+twice with only the first saying anything, and asserts the second reports nothing *and* does not
+borrow the first's sentence. Before the fix:
+
+    FAIL test_a_says_why — trapped: the ring is full
+    FAIL test_b_says_nothing — trapped: the ring is full
+
+It was also caught in the wild the same day, by a differential row that had nothing to do with traps:
+`commandparity_test.wac`'s directory rows reported an environment test as
+`trapped: the reason it stopped` — a sentence a `trap "…"` in a *different file* of the same aggregate
+had left behind. That is `issues/system/0256c`'s reproduction, and this is why it read so strangely.

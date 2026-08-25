@@ -8061,18 +8061,38 @@ void covPoint(B fb, Env env, string kind, i32 line, i32 col) {
 /**
  * `$trap$message()` — the string a `trap "…"` left behind, or null.
  *
- * Three bytes of body: no locals, `global.get`, end. The message is put there *before* the trap, since
- * after one there is no code left to run, and a host reads this once the trap has unwound.
+ * No locals: `global.get`, the null that replaces it, `global.set`, end. The message is put there
+ * *before* the trap, since after one there is no code left to run, and a host reads this once the trap
+ * has unwound.
  *
  * Null when the module has not trapped with a message. An engine trap — a bounds check, a null
  * dereference — writes nothing, and answering with the previous message would be worse than answering
  * with none. `issues/lang/0147`.
+ *
+ * **Reading clears it, which is `issues/lang/0254c`.** The paragraph above was the requirement and not
+ * the behaviour until 2026-08-25: nothing emptied the global, so a trap that said nothing was answered
+ * with whatever the last one that spoke had left behind — two `trap;` of identical source reporting
+ * differently depending on what ran between them. Reading is the right place because the message
+ * describes *the trap that just unwound*, and all four readers read it once, in a catch, and rethrow
+ * when it is null.
+ *
+ * **A local, and not the stack, and `wasm-opt` is why.** The obvious form leaves the message on the
+ * stack, pushes the null under `global.set`, and returns what is left — three instructions and no
+ * local. V8 and wasmtime both run it. Binaryen refuses to *validate* it: its IR is structured rather
+ * than stacked, so a body whose last instruction is a void `global.set` with a value stranded beneath
+ * it is `block with value and last element with value must match types`. `wac build --optimize` runs
+ * every module through `wasm-opt`, and `packages/box/test/wac/optimize_test.wac` is what said so.
  */
 void emitTrapHelper(B funcs, B code, Env env) {
   funcs.u32leb(env.sigType("fn[string()]"));
   B tb = B.create();
-  tb.u32leb(0);
-  tb.byte(35); tb.u32leb(env.trapGlobal);   // global.get
+  tb.u32leb(1);                                      // one local group...
+  tb.u32leb(1); writeValType(tb, env, "string");     // ...of one string
+  tb.byte(35); tb.u32leb(env.trapGlobal);            // global.get
+  tb.byte(33); tb.u32leb(0);                         // local.set 0
+  tb.byte(208); tb.i32leb(env.arrayType("i8[]"));    // ref.null $i8[] — a string is one
+  tb.byte(36); tb.u32leb(env.trapGlobal);            // global.set
+  tb.byte(32); tb.u32leb(0);                         // local.get 0
   tb.byte(11);
   code.u32leb(tb.len);
   code.bytes(tb);

@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0254c](open/0254c-a-trap-that-says-nothing-is-reported-with-the-previous-tests-sentence.md) | nothing clears the global a `trap "…"` writes, so a trap that says nothing — an engine trap, a bounds check, a bare `trap;` — is reported with whatever the last trap in that module said, which is usually another test's sentence. Two bare traps of identical source report differently depending on what ran between them | bug | wrong answer |
 | [0253a](open/0253a-a-non-ascii-character-in-a-comment-breaks-the-self-host-fixpoint.md) | adding one non-ASCII character to a comment in any wacc source makes rung 5 fail — the reference and wacc stop agreeing about wacc; 600 ASCII characters in the same place do not, and `deno task seed`'s own fixpoint check does not catch it | bug | wrong answer |
 | [0243a](open/0243a-a-match-of-literals-was-accepted-in-any-slot-and-the-spec-answers-the-rest-twice.md) | the silent half is fixed — an all-literal `match` expression went in any slot at all, so `string s = match (e) { case A: 1, else: 2 };` built a module with the export missing while the identical `?:` was refused. What is left is which spec sentence governs a mixed integer/float arm pair: `enums.md` has literal arms taking the expected type, `control.md` has a float literal typing as `f64` regardless of context, and `enums.md` says the two constructs are one rule | decision | invalid wasm, now a question |
 | [0241a](open/0241a-a-generic-methods-body-is-never-checked-under-substitution.md) | a generic method's body is only ever checked with its type parameters opaque, so a fault that exists only for a particular `T` — `v()` where `v` is the `i32` payload of `Opt<i32>` — is invisible: `wac check` answers "no diagnostics" and `wac build` refuses it, naming the method. The spec defers such a mistake *to instantiation*, and there is no instantiation-time pass | diagnostic | no error |
@@ -37,7 +36,7 @@ has been fixed and why.
 
 ## Closed
 
-200 issues, 171 closed.
+200 issues, 172 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

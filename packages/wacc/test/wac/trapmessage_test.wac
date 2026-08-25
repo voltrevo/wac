@@ -81,3 +81,29 @@ export string test_a_trap_case_that_passes_still_says_what_it_said(Core core, Cl
   t.isTrue(holds(out, "the size was implausible"), "a passing trap case hid its message: " + out);
   return t.report();
 }
+
+/**
+ * A trap that says nothing, after one that said something, reports nothing.
+ *
+ * **This is the sentence at the top of this file, asserted rather than stated.** Every probe above
+ * traps once, so the file could hold the rule and never see it broken — and it was broken:
+ * `issues/lang/0254c`. Nothing cleared the global a `trap "..."` writes, so the second failure below
+ * was reported with the first one's sentence, and the two exports are the same two words of source.
+ *
+ * Alphabetical names, because the runner calls exports in the order the module lists them and the
+ * point is that one runs after the other.
+ */
+export string test_a_silent_trap_after_a_talking_one_says_nothing(Core core, Cli cli) {
+  T t = T.create();
+  string out = runProbe(cli,
+    "export string test_a_says_why() {\n  trap \"the ring is full\";\n  return \"\";\n}\n"
+    + "export string test_b_says_nothing() {\n  trap;\n  return \"\";\n}\n",
+    string[]());
+  t.isTrue(holds(out, "test_a_says_why — trapped: the ring is full"),
+           "the first still reports its own sentence: " + out);
+  t.isTrue(holds(out, "test_b_says_nothing — trapped\n"),
+           "the second trapped and said nothing, so nothing is what it reports: " + out);
+  t.isFalse(holds(out, "test_b_says_nothing — trapped: "),
+            "and it does not borrow the sentence the test before it left behind: " + out);
+  return t.report();
+}
