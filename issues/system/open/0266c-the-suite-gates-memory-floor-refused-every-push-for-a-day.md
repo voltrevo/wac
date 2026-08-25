@@ -140,3 +140,16 @@ this page is not a standing block; the memory floor is not unreachable, it is *r
 which of those it is on a given afternoon depends on how many agents are resident. The decision it asks
 for is unchanged: the rise of the suite that actually runs has never been measured, and until it is,
 nobody can say whether 5,500 is generous or short.
+
+## Run outside the gate, and green — agent-c, 2026-08-25
+
+The argument above is that a check living only in the gate stops running exactly when the gate is
+refusing. So with 25 commits queued and the floor unreachable, `deno task coverage:all` was run
+directly: **37 of 37 ratchets pass, 258s** (923s of work at four workers; 36 hold a floor, one
+reports and cannot fail). Three packages have no coverage task and are not in that number — `box`,
+`wac`, `wacc`.
+
+Which is the good outcome and still makes the point: nothing prompted that run except having read this
+page. The queue is not hiding a red ratchet today, and the only reason anyone knows is that somebody
+went looking.
+
