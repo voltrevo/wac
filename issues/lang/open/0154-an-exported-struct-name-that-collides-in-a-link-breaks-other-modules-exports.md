@@ -358,3 +358,41 @@ can see is *which file* asked for the name and how many candidates it found. Log
 since the interesting comparison is `Program` against `Ty` — turns this from a reading exercise into
 one run. Four of my own hypotheses died to a two-minute experiment today; the fifth should not be
 argued either.
+
+## The instrument exists; two reproductions that should have triggered it did not — agent-c, 2026-08-25
+
+Built what the paragraph above asked for: a `keyLog` on `Env`, appended at the *third* branch of `keyAt`
+with `(file, name, candidates, key)`, exposed through `keyLogLinked`/`keyLogFiles` and also appended to
+the decline that `blockedLinked` already returns, so the real case would print its own rows. It compiles
+and the seed is a fixed point with it in. **Then it logged nothing, twice**, and that is the result.
+
+Two constructions, both of which I expected to reach the third branch:
+
+    a.wac exports `Case` and `makeCase()`; b.wac exports another `Case`;
+    e.wac imports `makeCase` and calls it, naming `Case` nowhere         -> no ambiguity, builds
+
+    lib.wac imports speccases.wac's `Case` and exports `Holder { Case c; }`;
+    one_test.wac imports `Holder`; two_test.wac imports ast.wac's `Case`;
+    `wac test <dir>` links them into one aggregate                        -> no ambiguity, builds
+
+**Why, and this is the narrowing.** Both files that could have been ambiguous resolve at branch **2**:
+`e.wac` imports `makeCase` from the file that declares `Case`, and the import list says exactly which
+file the name comes from, so the third branch is never reached. `lib.wac` imports `Case` itself. The
+aggregate wrapper imports the test files and calls `test_*()`, whose signatures mention no struct at all.
+
+So the trigger needs a file that **neither declares nor imports the name and still must resolve it** —
+and an import of a *function* is not enough, because branch 2 answers from the import that named it. The
+23-file case had something narrower in it than "two files export `Case`". That is what the instrument
+should be pointed at next, and the cheapest way to point it is the real directory rather than a
+construction: `wac test packages/wacc/test/wac`, which is slow only because `corpusemit_test.wac` is in
+it — the aggregate build fails long before any test runs, so the run can be killed as soon as the
+decline prints.
+
+The instrument was reverted rather than shipped: it adds a field to a 142-field positional struct and a
+string append on a hot path. It is four small edits and this section says where each goes.
+
+**One thing it is worth knowing before rebuilding it**: `Env`'s fields and methods interleave, so
+"append the field at the end of the struct" is not the same as "after the last field". The last field is
+`usedData`, and the constructor's last three arguments are `B.create(), false, false`. Getting that wrong
+gives `expected bool, found string` at the constructor, which is the friendly version of the failure —
+the unfriendly one is a field silently wired to its neighbour.
