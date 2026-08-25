@@ -35,6 +35,7 @@ Deno.test("rung 4: the generated sweep — every answer agrees", () => {
   const declines: string[] = [];
   let refused = 0;
   let trapped = 0;
+  const softTraps: string[] = [];
   const mismatches: string[] = [];
   for (const cell of cells) {
     const r = wacCompile(new Map([["/main.wac", cell.src]]), "/main.wac");
@@ -61,8 +62,21 @@ Deno.test("rung 4: the generated sweep — every answer agrees", () => {
         {},
       ).exports.f as () => unknown)();
     } catch {
-      // The reference's own module traps — a legitimate answer, but not one to compare.
+      // The reference's own module traps — a legitimate answer, and one half of it *is* comparable:
+      // wacc must trap too. Skipping the whole cell left the asymmetry that a trap on our side is
+      // caught (it becomes `threw:` and mismatches) while a trap on theirs is not, so a program where
+      // the reference refuses at runtime and wacc quietly answers was invisible.
       trapped++;
+      try {
+        const bytes = Uint8Array.from(emit(enc.encode(cell.src)) as unknown as number[]);
+        const answered = (new WebAssembly.Instance(new WebAssembly.Module(bytes), {})
+          .exports.f as () => unknown)();
+        if (softTraps.length < 10) {
+          softTraps.push(`${cell.context}: ours=${answered} where the reference traps, in ${cell.src}`);
+        }
+      } catch {
+        // Both trap, which is agreement.
+      }
       continue;
     }
     let got: unknown;
@@ -80,7 +94,9 @@ Deno.test("rung 4: the generated sweep — every answer agrees", () => {
     }
   }
   console.log(`    rung 4 sweep: ${cells.length} programs — ${compared} compared, ` +
-    `${mismatches.length} mismatched, ${declined} declined, ${refused} not valid wac, ${trapped} trap`);
+    `${mismatches.length} mismatched, ${declined} declined, ${refused} not valid wac, ${trapped} trap` +
+    `, ${softTraps.length} answered where the reference traps`);
+  for (const t of softTraps) console.log(`      ${t}`);
 
   // The canary: a sweep that compared nothing would report that everything agrees.
   if (compared < 1000) throw new Error(`only ${compared} programs were actually run and compared`);
