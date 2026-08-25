@@ -2347,8 +2347,23 @@ export struct Env {
                string[512](), i32[512](), string[512](), Expr?[512](), 0,
                string[1024](), 0,
                string[16384](), string[16384](), string[16384](), bool[16384](), 0,
-               string[4096](), string[4096](), string[16384](), i32[4096](), i32[4096](), 0,
-               bool[4096](), i32[4096](), 0,
+// **The function table, raised from 4096 on 2026-08-25.** `issues/system/0257c` makes `wac` one
+               // program containing the compiler, the shell and the fetcher, and `wac sh` wires box's
+               // sixty-five applets: the command's graph goes from 44 files to 218 and this declined
+               // it — "ran out of room for functions", which is `issues/lang/0158`'s rule working.
+               //
+               // **Raise it while the command is still small.** Round 1 compiles with the seed
+               // *already installed*, so raising this and adding the dispatch in one go changes
+               // nothing: the compiler doing the work still has the old number. The number goes up,
+               // that seed is installed, and only then can it compile the larger program.
+               //
+               // These are `funcs`, `funcReturns`, `funcParamTypes`, `funcParamAt`, `funcParamCount`,
+               // `funcOk` and `funcIndex` — seven parallel arrays and two cursors, which is the wrong
+               // shape and wants to be `Vec`. Identified by matching the *type signature* of the
+               // struct's fields against this argument list, after raising a different group of
+               // `string[4096]`s by eye and watching the build fail unchanged.
+               string[16384](), string[16384](), string[65536](), i32[16384](), i32[16384](), 0,
+               bool[16384](), i32[16384](), 0,
                i32[1024](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), bool[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",

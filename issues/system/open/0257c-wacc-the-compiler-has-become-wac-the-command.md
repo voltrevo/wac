@@ -126,3 +126,29 @@ this conversion. Filed separately.
 `packages/wacpkg/src/fetch.wac`, and its `main` is a wrapper around `fetchAll(core, cli, dir, wacHome)`
 — the shape step 4 needs, and the move `issues/system/0258c` recommended waiting for a better reason
 to make. This was the better reason.
+
+## The first limit is lifted; there is a second one behind it, and it does not report
+
+The function table is `string[4096]` and friends — **seven parallel arrays and two cursors**, found by
+matching the *type signature* of `Env`'s fields against the constructor's argument list, after raising
+a different group of `string[4096]`s by eye and watching the build fail unchanged. Raised to 16384
+(and `funcParamTypes` to 65536), the seed rebuilds and is a fixed point, and the dispatch gets past it.
+
+**Then it traps.**
+
+    wac: packages/wac/src/wac.wac trapped
+
+No message, which by `issues/lang/0254c`'s reading means an *engine* trap — a bounds check or a null
+dereference — rather than a `trap "…"`. So there is a second fixed-size table on this path with no
+`ranOut` guard on it: the emitter has caps that decline politely and caps that fall over, and a
+218-file program finds both.
+
+That is the next thing to do and it is a compiler debugging job, not a dispatch one. The order stands:
+make these tables grow, get that into a seed, then dispatch.
+
+**Two ordering facts worth keeping**, because each cost a five-minute build:
+
+- Raising a cap and adding the dispatch in one go changes nothing. Round 1 compiles with the seed
+  *already installed*, which still has the old number.
+- Removing the dispatch is not enough to shrink the graph — the **imports** pull it in. 218 files
+  stayed 218 until the five import lines went too.
