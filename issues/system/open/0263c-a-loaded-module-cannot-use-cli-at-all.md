@@ -83,7 +83,41 @@ the host could only build in part is handed that partial world silently, and the
 field is an engine trap with no message — which is the shape of this bug even if `capability_for` is a
 static mapping and not the cause of *this* instance.
 
-## The question that remains, and it is the whole of it
+## The mechanism: it is `Pending`, not `Cli`
+
+One module, two exports, loaded and called by the same program on the native host:
+
+    export i32 writeOnly(Core core, Cli cli) { return cli.write("W\n".toBytes()) ? 1 : 2; }
+    export i32 pendingOne(Core core, Cli cli) { return cli.argCount().wait(); }
+
+    writeOnly  (fn[bool(u8[])])      -> ok, and "W" is printed
+    pendingOne (fn[Pending<i32>()])  -> TRAP
+
+So a loaded module's **plain** capabilities work and every **`Pending`**-returning one traps. That is
+why `Core.log` was fine — it answers nothing — and why every `Cli` method was not: they all answer a
+`Pending`. The title's "cannot use `Cli`" is the symptom; the fault is in the `Pending` a loaded
+module's capability builds or resolves.
+
+Ruled out along the way, each measured rather than reasoned:
+
+    grants           0, 1 and 31 — identical traps, and all-granted on both sides too
+    provenance       a module built *in this process* traps exactly as one read from disk does
+                     (the two manifests differ only in the `entry` path string)
+    the export name  `main` and `test_uses_cli` in one module both trap
+    the spawn        `wac run` (a child) and a directly-run built program both trap
+    the loader       a plain program, and a *test* run by `wac test`, both trap
+
+## The question that remains
+
+**`wac test` loads and calls world-using exports on the native host and works** — `grants_test.wac`
+does `cli.readFile(path).wait()`, a `Pending`, inside a module the seed loaded. But a test that *itself*
+loads a module and calls a `Pending`-using export gets the trap. So the first load level works and the
+next does not, and a plain program's first load behaves like the second.
+
+That shape — one specific loader's modules get working `Pending`s and everyone else's do not — is where
+to start in `load_module`/`call_loaded`. The context swap in `call_loaded` looks right on the face of it;
+what is built at *load* time, while the loader's context is still installed, is the `world` vector and
+the `caps` table behind it.
 
 **`wac test` loads and calls world-using exports on the native host and works.** `grants_test.wac` reads
 and writes files that way. Both loads happen inside the same seed program, both modules carry a manifest
