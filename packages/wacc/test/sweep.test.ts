@@ -89,6 +89,7 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
   const alarms: string[] = [];
   const contradictions: string[] = [];
   const repeats: string[] = [];
+  const missed = new Map<string, { n: number; example: string }>();
   let accepted = 0;
   let rejected = 0;
   let caught = 0;
@@ -113,7 +114,17 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
       continue;
     }
     rejected++;
-    if (mine.length === 0) continue;
+    if (mine.length === 0) {
+      // **The misses, grouped by the context that produced them.** The recall message below has always
+      // said *"the kinds it missed most are printed above"* and nothing printed them, so a run that
+      // dropped under the floor sent the reader to output that did not exist — and the seven standing
+      // misses were invisible meanwhile. Keyed on `cell.context` rather than on the reference's message
+      // because that is what the generator varies, so a row names the axis to look at.
+      const seen = missed.get(cell.context) ?? { n: 0, example: cell.src };
+      seen.n++;
+      missed.set(cell.context, seen);
+      continue;
+    }
     caught++;
     // **The same complaint twice is one complaint, and this is where that is checked.** `C.report`
     // dedupes against the *immediately previous* diagnostic only, so anything recorded in between
@@ -134,6 +145,16 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
         break;
       }
     }
+  }
+  // Most-missed first, one line each with a program to run. Six rows, because the point is a queue to
+  // work rather than a census — and the tail is counted so a cap cannot read as "that is all of them".
+  const byMost = [...missed.entries()].sort((a, b) => b[1].n - a[1].n);
+  for (const [ctx, v] of byMost.slice(0, 6)) {
+    console.log(`        ${String(v.n).padStart(3)} missed  ${ctx}  e.g. ${JSON.stringify(v.example)}`);
+  }
+  const tail = byMost.slice(6).reduce((n, [, v]) => n + v.n, 0);
+  if (tail > 0) {
+    console.log(`        … and ${byMost.length - 6} more context(s) holding ${tail} miss(es)`);
   }
   console.log(`    rung 3 generated sweep: ${cells.length} programs, ${accepted} accepted ` +
     `(${alarms.length} false alarms), ${rejected} rejected, ${caught} caught ` +
