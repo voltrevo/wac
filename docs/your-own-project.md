@@ -250,8 +250,14 @@ import { f } from "dep/spec/cases/0001-bare-generic-constructor-from-the-slot.wa
 ```
 
 **Commit the lockfile.** Once a mapping is locked it stays locked even when its branch moves; a
-second `wac update` says *nothing to fetch; 1 mapping(s) already locked*. `wac update` is the only
-command that does anything different, and running it is how you take a newer commit.
+second `wac update` says *nothing to fetch; 1 mapping(s) already locked* and changes nothing.
+
+**To take a newer commit, remove the lock and fetch again** — delete the mapping's entry from
+`wac.lock`, or the file, and run `wac update`. There is no flag that advances a pinned ref: the
+fetcher takes no options at all, so "locked" means locked until you say otherwise, and moving a pin is
+something you do deliberately and can see in a diff. This paragraph said that rerunning `wac update`
+was how to take a newer commit, which is not true and contradicted the sentence before it — GitHub
+issue 22.
 
 **`wac update` is also the only command that reaches the network, and structurally so** — the fetcher
 is a separate payload inside the binary, so there is no code path from `wac build` to a socket. A
@@ -291,6 +297,19 @@ wac hello.wasm                        # run a built artefact — the manifest sa
 wac test    src/math_test.wac         # or a directory
 wac bindgen src/main.wac [--js]       # src/main.gen.ts — the glue a JS host calls it through
 ```
+
+**`--` means something in one of these and not the other**, which is easy to miss because the two
+lines look alike. `run` takes flags of its own, so `--` is where they stop and the program's arguments
+begin. A built artefact is the first argument, so there are no command flags to end and `--` is just
+another argument:
+
+```sh
+$ wac run args.wac -- one two      # the program is passed:  [one][two]
+$ wac argsprog.wasm one two        # the program is passed:  [one][two]
+$ wac argsprog.wasm -- one two     # the program is passed:  [--][one][two]
+```
+
+Reported as friction on GitHub issue 22, where a habit formed on `run` was carried to an artefact.
 
 **The manifest is inside the module**, in a `wac.manifest` custom section — not a file beside it.
 That is what makes a built artefact one file you can hand to somebody: `wac hello.wasm` reads the
