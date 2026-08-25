@@ -572,9 +572,9 @@ they find real rules cheaply. What they no longer are is a definition of correct
 |---|---|---|
 | `test/wac/specsingle_test.wac` | the 671 one-file programs the suite **runs** | **the contract** — **317 of 317** illegal refused, 371 of 371 legal silent, and the ledger of known misses is empty |
 | `test/wac/specmulti_test.wac` | the spec's programs that take more than one file | **the contract** — all 15 illegal refused, all 42 legal silent |
-| `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; **100%** recall (9,120 of 9,127), held by a 97% floor |
-| `checkSweep.test.ts` | the emitter's **4,148** valid programs of 4,501 | no false alarm, and guarded against an empty run and a narrowed corpus |
-| `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; **99%** recall (989 of 993), held by a 92% floor |
+| `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction, and **no repeat** — a diagnostic twice at one position is a third property since 2026-08-25, keyed on code as well as position because the other two cannot see a duplicate; **100%** recall (9,125 of 9,127), held by a 97% floor, and the misses are printed by context now |
+| `checkSweep.test.ts` | the emitter's **4,594** valid programs, nothing skipped | no false alarm, and guarded against an empty run and a narrowed corpus |
+| `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; **100%** recall (1,185 of 1,189), held by a 92% floor. Its queue's `undefined type` row is `issues/lang/0151` — the reference refusing an identity test the spec allows — so "missed" there means the reference is wrong, which the header now says |
 | `test/wac/corpuscheck_test.wac` | the repository's own **975** files, imports in scope | no false alarm |
 
 That figure was **541** and the walk behind it read three fixed directories per package one level
@@ -592,7 +592,7 @@ then reverted, because resolving a specifier in the files-based checker needs a 
 does not carry, so this row no longer *depends* on the rule. The walk fix outlives it: an extractor
 bounds the invariant it feeds, and the bound is invisible from inside until something refuses to be
 silent.
-| `corpusMutate.test.ts` | those files, broken 23 ways | no contradiction where the reference says one thing; **100%** recall (223 of 223), held by a 97% floor |
+| `corpusMutate.test.ts` | those files, broken 23 ways | no contradiction where the reference says one thing; **99.5%** recall (195 of 196), held by a 97% floor — the miss is `issues/lang/0241a` |
 
 **The rules that need two files now have an oracle, and it is the honest one.** Export visibility,
 re-export, cross-file type identity and type-name scope cannot be stated in a single file, so the 56
