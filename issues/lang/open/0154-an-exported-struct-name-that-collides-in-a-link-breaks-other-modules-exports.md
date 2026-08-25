@@ -396,3 +396,35 @@ string append on a hot path. It is four small edits and this section says where 
 `usedData`, and the constructor's last three arguments are `B.create(), false, false`. Getting that wrong
 gives `expected bool, found string` at the constructor, which is the friendly version of the failure —
 the unfriendly one is a field silently wired to its neighbour.
+
+## The reproduction no longer reproduces — agent-c, 2026-08-25
+
+Before pointing the instrument at the real directory, I ran it:
+
+    $ wac test packages/wacc/test/wac        # killed after 180s, 16 files in
+
+**No decline, and no fallback.** `native/v8/src/main.rs` prints *"the shared build for … did not build,
+so its N files are being built one at a time"* whenever an aggregate fails, once, before the group's
+first file — and it is not in the output. The aggregate for this directory builds today.
+
+That fits the history. This issue was filed on 2026-08-18; **`9b4f2c4b`, the next day**, made a file's
+private declarations stop being candidates for other files — `spec/spec/imports.md` line 16, "only
+export-marked functions and types can be imported". The trigger described above is
+*"`ast.wac` exports `Case`, `diagnosticgap_test.wac` declares a private one, a third file exports
+one"*, and one of those three stopped counting. Nobody re-measured the reproduction afterwards, so the
+text above still reads as live.
+
+Two exported `Case` declarations remain — `packages/wacc/src/ast.wac` and
+`packages/wacc/test/wac/speccases.wac` — so the *count* is still two. What has changed is that nothing
+in that link reaches the name by the third branch any more, which is the same thing my two
+constructions showed from the other direction.
+
+**So what is left of this issue is the rule, not the defect**, which is what the 2026-08-18 note already
+said: two files declaring one name is fine and a name *two of a file's imports* declare is refused,
+because the import list says which files and not which names came from which. That is a language
+question and does not need a reproduction. The sub-question *"why is `Arm` guessed at where five of its
+neighbours are refused"* is probably moot with it — it was a symptom of the same link.
+
+Worth doing before anything else here: a case that *pins* the current behaviour, so the next change to
+`keyAt` cannot quietly restore the old one. `privatename_test.wac` covers the private half; the
+ambiguity half has no case of its own, which is why this could stop reproducing without anybody noticing.
