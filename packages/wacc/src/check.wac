@@ -163,6 +163,16 @@ export i32 errUnknownModule() { return 52; }
  * phase field.
  */
 export i32 errMissingImportFile() { return 77; }
+
+/**
+ * A call whose type parameter nothing determines — `id(null)` for a `T id<T>(T a)`.
+ *
+ * **Its own code because `errCallArity` was carrying it**, and that headline names the one thing that
+ * is not wrong: the call has exactly as many arguments as the declaration takes. The annotation was
+ * already right — *"nothing in the call says what T is"* — so the diagnostic contradicted itself, and
+ * the help ("check the declaration for how many it takes") sent the reader to count them.
+ */
+export i32 errInferType() { return 78; }
 /** A generic that instantiates itself with a larger argument, so it never terminates. */
 export i32 errInfiniteGeneric() { return 53; }
 /** An enum method whose name is one of the enum's own variants: `E.A` would mean both. */
@@ -5278,7 +5288,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   }
   for (i32 t = 0; t < n; t++) {
     if (bound[t] != "") { continue; }
-    c.reportWith(errCallArity(), call.line, call.col,
+    c.reportWith(errInferType(), call.line, call.col,
                  "nothing in the call says what " + names[t] + " is");
     return;
   }

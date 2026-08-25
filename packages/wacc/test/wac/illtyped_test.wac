@@ -576,6 +576,38 @@ export string test_a_relative_import_of_a_file_nobody_supplied_is_refused() {
   return t.report();
 }
 
+/**
+ * **A call whose type parameter nothing determines is not an arity mistake.**
+ *
+ * `id(null)` for a `T id<T>(T a)` was reported through `errCallArity`, so the diagnostic contradicted
+ * itself: the headline said *"wrong number of arguments"*, the annotation said *"nothing in the call
+ * says what T is"*, and the help said *"check the declaration for how many it takes"* — sending the
+ * reader to count arguments that are already correct. One argument, one parameter.
+ *
+ * Found by sweeping the spec's 317 single-file rejection programs and comparing positions against the
+ * reference: `specsingle_test.wac` asserts that each is *refused* and nothing compares where or why,
+ * so a diagnostic naming the wrong rule is invisible to it. The reference says *"cannot infer 'T' for
+ * 'id'"*, which is the same complaint under a different name.
+ */
+export string test_an_uninferrable_type_parameter_is_not_an_arity_error() {
+  T t = T.create();
+  i32[] d = dumpTypeErrors("T id<T>(T a) { return a; }\nexport i32 f() { i32 x = id(null); return x; }\n"
+                               .toBytes());
+  t.eqI32(d.len() / 3, 1, "one fault, and this many diagnostics");
+  if (d.len() >= 3) { t.eqI32(d[0], 78, "the code — `errInferType`, not `errCallArity` (32)"); }
+
+  // A real arity mistake still reports as one, so the split did not simply rename the old code.
+  i32[] arity = dumpTypeErrors(("i32 two(i32 a, i32 b) { return a + b; }\n"
+                                + "export i32 f() { return two(1); }\n").toBytes());
+  t.eqI32(arity.len() / 3, 1, "one arity fault, and this many diagnostics");
+  if (arity.len() >= 3) { t.eqI32(arity[0], 32, "the code — `errCallArity`"); }
+
+  // And an inferrable call is silent, so neither is met by refusing generics.
+  i32[] fine = dumpTypeErrors("T id<T>(T a) { return a; }\nexport i32 f() { return id(1); }\n".toBytes());
+  t.eqI32(fine.len() / 3, 0, "refused a call whose type argument is evident");
+  return t.report();
+}
+
 // ---------------------------------------------------------------------------------------------
 // The two-file half.
 //
