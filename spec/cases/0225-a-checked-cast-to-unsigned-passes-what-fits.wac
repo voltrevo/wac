@@ -1,0 +1,6 @@
+// expect: answers f = 5
+// why: the other half of `[§wac-usign-chk-p8jn3wl]` — `check(5)` returns `5`, so the trap is a range
+//      test and not a refusal of the conversion
+// from: issues/lang/0268c
+export u32 check(i32 x) { return x as! u32; }
+export u32 f() { i32 x = 5; return check(x); }

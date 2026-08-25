@@ -1,0 +1,5 @@
+// expect: traps f
+// why: `[§wac-cast-matrix-6hkq4wz]` — the 64-bit twin of `[§wac-usign-chk-p8jn3wl]`, so the range test
+//      is exercised at both widths in both directions rather than at one corner
+// from: issues/lang/0268c
+export u64 f() { i64 x = -1; return x as! u64; }

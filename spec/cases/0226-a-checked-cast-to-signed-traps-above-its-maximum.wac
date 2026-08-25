@@ -1,0 +1,5 @@
+// expect: traps f
+// why: the 64-bit row of `[§wac-cast-matrix-6hkq4wz]` — a `u64` above `i64`'s maximum has no reading
+//      as a signed value, so the checked cast traps rather than wrapping
+// from: issues/lang/0268c
+export i64 f() { u64 x = 18446744073709551615; return x as! i64; }

@@ -9366,7 +9366,48 @@ void emitBinary(B fb, Env env, i32 k, string t) {
  * Only for numeric conversions. A reference downcast is already checked by `ref.cast`, which traps
  * on a wrong type, and has no round trip to make.
  */
+/**
+ * `as!` between two integer types of one wasm width — `i32`/`u32`, `i64`/`u64`.
+ *
+ * **A range test, because the round trip has nothing to see.** Converting and converting back is how
+ * every other checked cast is guarded, and it cannot work here: the two types are one wasm value type,
+ * so the conversion emits nothing and the round trip would compare a value with itself.
+ *
+ * `spec/spec/casts.md` states this case with a clause of its own —
+ * `[§wac-usign-chk-p8jn3wl]` *"`check(5)` returns `5`; `check(-1)` traps"* — beside the program
+ * `export u32 check(i32 x) { return x as! u32; }`. `spec/cases/0224` and `0226` run it.
+ * `issues/lang/0268c`.
+ */
+void emitSignRangeTrap(B fb, Env env, string from, string to) {
+  i32 tmp = env.scratchNamed("castsign", from);
+  fb.byte(34); fb.u32leb(tmp);                      // local.tee — keep the original
+  if (valType(from) == wasmI32()) {
+    if (isUnsigned(to)) {
+      fb.byte(65); fb.i32leb(0); fb.byte(72);            // i32.const 0, i32.lt_s
+    } else {
+      fb.byte(65); fb.i32leb(2147483647); fb.byte(75);   // i32.const i32max, i32.gt_u
+    }
+  } else {
+    if (isUnsigned(to)) {
+      fb.byte(66); fb.i64leb(0); fb.byte(83);     // i64.const 0, i64.lt_s
+    } else {
+      fb.byte(66); fb.i64leb(9223372036854775807); fb.byte(86);  // i64.const i64max, i64.gt_u
+    }
+  }
+  fb.byte(4); fb.byte(64);                          // if (void)
+  fb.byte(0);                                       // unreachable
+  fb.byte(11);                                      // end
+  fb.byte(32); fb.u32leb(tmp);                      // local.get — the value, unchanged
+}
+
 void emitCast(B fb, Env env, string from, string to, i32 op) {
+  // **One width, two ranges** — see `emitSignRangeTrap`. This has to come before the bail below,
+  // which declines on `valType(from) == valType(to)` and so declined on exactly this.
+  if (op == kAsBang() && from != to && isNumericTy(from) && isNumericTy(to) &&
+      valType(from) == valType(to) && !isFloat(from) && isUnsigned(from) != isUnsigned(to)) {
+    emitSignRangeTrap(fb, env, from, to);
+    return;
+  }
   // **Same width is a reinterpretation, and carries no check.** `i32 as! u32` is the same
   // thirty-two bits read differently: `emitConversion` emits nothing for it, so the round trip
   // below would tee a value, convert it nowhere and back, compare it with itself and branch — six
@@ -9378,8 +9419,14 @@ void emitCast(B fb, Env env, string from, string to, i32 op) {
   // reaches here, which is what the measurement above had to be rewritten to use once the first
   // version of it showed no difference at all.
   //
-  // It is also the right answer rather than only the cheap one: `casts.md:86–94` lists nine
-  // trapping rows and not one of them has the same wasm value type on both sides.
+  // **And the claim this comment used to end on was wrong.** It said the bail "is also the right
+  // answer rather than only the cheap one: `casts.md:86–94` lists nine trapping rows and not one of
+  // them has the same wasm value type on both sides." True of that table, which is the cross-width and
+  // float one — and the same-width signedness change is specified separately at `casts.md:215–230`,
+  // with a clause naming the program: `[§wac-usign-chk-p8jn3wl]`, *"`check(-1)` traps"*. Generalising
+  // from one table over a section it does not cover is what left `-1 as! u32` answering 0 for as long
+  // as it did. The branch above handles that case now, so what is left here is the saving, which is
+  // real: six instructions and about eighteen bytes per cast that can never fire.
   if (op != kAsBang() || from == to || !isNumericTy(from) || !isNumericTy(to) ||
       valType(from) == valType(to)) {
     emitConversion(fb, env, from, to, op);

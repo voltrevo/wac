@@ -1,6 +1,6 @@
 # 0268c — `as!` does not check when the two types share a wasm value type
 
-- **Status:** open
+- **Status:** open — the four integer rows are fixed (2026-08-25); the four float rows are a different mechanism and are what is left
 - **Claimed by:** agent-c, 2026-08-25
 - **Reported by:** agent-c
 - **Date:** 2026-08-25
@@ -50,9 +50,9 @@ each — so the guard is skipped for the pairs whose whole difference is the ran
 `emitConversion` for a same-valType pair emits nothing at all. **The bail is the bug**: it reads as
 "nothing to convert", and what it means is "nothing to check".
 
-The float rows are the other half of the same mechanism. There the value types *do* differ, so the
-round trip is emitted — but converting back from `f32`/`f64` to `u64` uses the signed conversion, so
-the comparison is against the wrong value for anything above `i64`'s range.
+The float rows looked like the other half of the same mechanism and are not — see *"The float rows
+are saturation hiding inexactness"* below, written after measuring rather than reading. This paragraph
+guessed that the conversion back used the signed instruction; it does not.
 
 ## Why nothing caught it
 
@@ -73,8 +73,7 @@ For a same-valType pair the check is a range test rather than a round trip:
     i64 -> u64   trap when the value is negative        i64.const 0,  i64.lt_s
     u64 -> i64   trap when it exceeds i64's maximum     i64.const 0x7fffffffffffffff, i64.gt_u
 
-and for the float rows, the conversion back has to be the *unsigned* one when the integer side is
-unsigned. `emitConversion(fb, env, to, from, 0)` is where that choice is made.
+That half is done. The float rows need something else, and the section below says what.
 
 Both halves are in one function, which is the good news; the emitter is also where a wrong guard costs
 an invalid module rather than a bad diagnostic, so the sweeps are the thing to run — `emitSweep`,
@@ -86,3 +85,47 @@ default build is byte-identical and would notice a guard emitted where none belo
 `--checked` is about add, subtract and multiply trapping on overflow, and is a whole-module flag. This
 is `as!`, which traps in every build by definition — the spec's word for it is "checked" too, which is
 worth keeping apart when reading either.
+
+## Four fixed, four left, and they are not the same fault — agent-c, 2026-08-25
+
+`emitCast` gets a branch before its bail: for `as!` between two integer types of one wasm width, a
+**range test** rather than a round trip — negative into unsigned, or above the signed maximum into
+signed. The round trip cannot work there because there is nothing to convert.
+
+    export u32 f() { i32 x = -1; return x as! u32; }        traps
+    export u64 f() { i64 x = -1; return x as! u64; }        traps
+    export i64 f() { u64 x = 0xffffffffffffffff; … as! i64 } traps
+
+`spec/cases/0224` and `0226` run those, with `0225` — `check(5)` returns `5` — beside them so the trap
+is a range test and not a refusal of the conversion. Both trap cases failed before the change and pass
+after: the corpus went **226 of 228** to **228 of 228**.
+
+### What the old comment claimed
+
+The bail carried a justification: *"It is also the right answer rather than only the cheap one:
+`casts.md:86–94` lists nine trapping rows and not one of them has the same wasm value type on both
+sides."* True of that table — it is the cross-width and float one — and the same-width signedness
+change is specified separately at `casts.md:215–230`, with a clause naming the program:
+`[§wac-usign-chk-p8jn3wl]`, *"`check(-1)` traps"*. Generalising from one table over a section it does
+not cover is what left this answering 0 for as long as it did. The saving the comment measured is
+real and is kept for the cases that genuinely carry no check.
+
+### The float rows are saturation hiding inexactness
+
+    export f64 f() { u64 x = 18446744073709551615; return x as! f64; }   ours 1.8446744073709552e19
+
+Here the value types *do* differ, so the round trip is emitted, and both halves of it are already
+signedness-correct — `emitConversion` picks `f64.convert_i64_u` going out and `i64.trunc_sat_f64_u`
+coming back. The round trip still returns the original: `u64`'s maximum rounds **up** to 2^64 in an
+`f64`, and the saturating truncation clamps that back to `u64`'s maximum. So the guard compares the
+value with itself and sees no loss, exactly where the loss is.
+
+`casts.md:64` says `as!` "traps unless x has an exact f32 value", so these should trap. The check
+cannot be a round trip through a saturating instruction — it needs to ask whether the float is exactly
+representable, which a comparison against 2^64 or a non-saturating truncation would answer. That is a
+different repair from the one above and is why this issue stays open rather than closing at half.
+
+`emitSweep` prints `N answered where the reference traps` and lists them: **8 before, 4 now.** It is
+still a print rather than an assertion, for the reason given when it was added — the number should not
+be able to grow quietly, and it cannot be pinned at zero until these four are done.
+

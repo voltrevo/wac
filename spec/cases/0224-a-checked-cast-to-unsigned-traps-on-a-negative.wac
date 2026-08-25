@@ -1,0 +1,5 @@
+// expect: traps f
+// why: `[§wac-usign-chk-p8jn3wl]` — `check(-1)` traps, where `as@` reinterprets and `as~` clamps
+// from: issues/lang/0268c
+export u32 check(i32 x) { return x as! u32; }
+export u32 f() { i32 x = -1; return check(x); }
