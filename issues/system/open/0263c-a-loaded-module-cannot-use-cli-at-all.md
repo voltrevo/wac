@@ -107,6 +107,37 @@ Ruled out along the way, each measured rather than reasoned:
     the spawn        `wac run` (a child) and a directly-run built program both trap
     the loader       a plain program, and a *test* run by `wac test`, both trap
 
+## The smallest reproduction: a module that loads *itself*
+
+    // selfload.wac — built with --allow-read, run as `wac selfload.wasm`
+    export i32 pendingOne(Core core, Cli cli) { return cli.argCount().wait(); }
+    export i32 main(Core core, Cli cli) {
+      FileResult f = cli.readFile("selfload.wasm").wait();     // works
+      LoadedModule m = cli.load(f.bytes, 31);                  // ok
+      CallResult r = cli.call(m.handle, "pendingOne", 0);      // TRAP
+      …
+    }
+
+The loader and the loaded module are **the same bytes**, so there is no difference of shape, of
+manifest, of provenance or of compiler version to appeal to — and the loader's own
+`cli.readFile(…).wait()` on the line above succeeds, so `Pending` works for it and not for its own
+copy. Anyone fixing this should start here.
+
+## Two candidate mechanisms, both in the native host
+
+**`call_loaded`'s context swap is incomplete.** `HostState` carries the module's own constructors for
+every result type — `pending: HashMap<String, PendingGlobals>`, `file_result_of`, `change_of`,
+`stat_of`, `read_variants`, `socket_of`, `datagram_of`, `captured_of`, `exec_of`, `child_of` — and
+`ModuleCtx`, the part that is swapped, holds only `exports`, `caps`, `cap_names` and `grants`. So when a
+loaded module asks for `argCount`, the host builds the `Pending` with the **loader's** constructor and
+hands it to the loaded module. `HeldModule` stores `loaded_of` and `called_of` for exactly this reason —
+"a monomorphisation binds under a mangled name and only the module is the authority on it" — and stops
+one field short of the rest.
+
+**Or the loader's own path.** `wac test` loads a test module and its `Pending`-using tests work, and the
+seed is run by `run_seed` where a plain program goes through `run_as_with`. That is the one difference
+the self-load reproduction does not eliminate.
+
 ## The question that remains
 
 **`wac test` loads and calls world-using exports on the native host and works** — `grants_test.wac`
