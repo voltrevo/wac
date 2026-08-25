@@ -6738,11 +6738,17 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
         // **Found by enumerating the sites rather than the programs.** Grepping every `!assignable(c,`
         // in this file and asking which had `nullableIntoNonNull` within six lines found nine that did
         // and eight that did not; this was the one of those eight with a program to prove it. The
-        // others are a JSX attribute and a component field, an `is`-test pair, a builtin's argument
-        // against its receiver, and `copyFrom`/`fill`'s element — none of them shown to leak, and none
-        // shown not to: probes for the last two were refused for arity by *both* compilers, which
-        // means the signature was guessed and the slot untested. Worth working through with correct
-        // programs rather than assuming the list is closed here.
+        // others were a JSX attribute and a component field, an `is`-test pair, a builtin's argument
+        // against its receiver, and `copyFrom`/`fill`'s element.
+        //
+        // **Two of those are settled now, and the way they were settled is the lesson.** The first
+        // probes for `copyFrom` and `fill` were refused for *arity* by both compilers, which reads
+        // exactly like "no gap here" — they had guessed the signature. `spec/spec/arrays.md` has
+        // `dst.fill(value, start, end)` and `dst.copyFrom(src, srcStart, dstStart, count)`; with the
+        // right shapes, `fill`'s value was a gap and is fixed beside `errBuiltinArg`, and `copyFrom`
+        // already reported. So one leaked and one did not, which no invalid probe could have told
+        // apart. The JSX pair and the `is`-test pair are still unexamined — worth correct programs
+        // rather than an assumption that the list is closed here.
         if (nullableIntoNonNull(c, vwant, vgot)) {
           c.report(errNullableToNonNull(), args[i].line, args[i].col);
         } else if (vgot != typeNone() && vgot != "" && !assignable(c, vwant, vgot)) {
