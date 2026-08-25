@@ -1,6 +1,6 @@
 # 0253a — one non-ASCII character in a comment breaks the self-host fixpoint
 
-- **Status:** open
+- **Status:** open — **but it does not reproduce as of 2026-08-25**; see the section at the end before spending time on it
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-24
@@ -168,3 +168,36 @@ then keep the driver — the test deletes it, and the one-line change to leave i
 between guessing and diffing. With the failing driver on disk, compile it with each compiler and diff the
 two modules; the first differing section says which part of a 1.4 MB literal-carrying file the two
 disagree about. Everything above is an attempt to avoid that reseed, and the attempt failed.
+
+## It does not reproduce — agent-c, 2026-08-25
+
+I ran the reproduction at the top of this issue, verbatim: the same anchor comment in the same file, one
+`é` appended, `deno task seed`, then rung 5.
+
+    1 passed, 0 failed
+
+Checked, because "it passed" is also what a test that skipped looks like:
+
+- the `é` is in `packages/wacc/src/check.wac` after the edit, and the seed was rebuilt *after* it;
+- the driver on disk contains the bytes `c3 a9` at offset 439,122, so the character reached the literals;
+- the stage-A cache key moved — `1083036192:1787633564` before, `1590072732:1787661163` after — so stage A
+  was **recomputed** rather than read, which is the thing this issue warned about.
+
+So the divergence is gone, and I do not know what closed it. This is the second parked issue in a row
+whose reproduction had gone stale (`issues/lang/0154` was the other), and in both cases the hypotheses I
+built first were about a subject that no longer existed. **Run this first.**
+
+### Two facts from the run that are worth keeping whatever happens next
+
+- **The generated driver is invalid UTF-8, and rung 5 is green anyway.** 1,811,175 bytes, 14,099
+  non-ASCII, and the first invalid sequence is at offset 74,096 — `chunkedLiteral` splits a multi-byte
+  character across two literals and both compilers cope. That kills the whole family of
+  "one of them decodes the file as text" hypotheses, including the one I wrote up above.
+- **The test deletes the driver**, which is why nobody had looked at it. Two `cli.remove(DRIVER, …)`
+  calls; removing them is a one-line change and it is what made the two facts above measurable. Worth
+  doing behind a flag rather than temporarily, if this is picked up again.
+
+If it returns, the diff to take is between the two *stages* rather than between the compilers: both stages
+run the same driver, so a disagreement is one build of wacc emitting different bytes from another build of
+the same source — a miscompilation, not a lexing difference. That is a narrower question than this issue
+has been asking.
