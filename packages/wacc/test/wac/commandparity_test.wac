@@ -34,9 +34,9 @@
 // Thirty invocations covering the six subcommands the program has plus `wac <module.wasm>`, each
 // side's stdout and stderr concatenated, and the exit code. Not compared: timing, and the module bytes
 // `build` writes — those have their own tests (`bindgenwac_test.wac` holds the two *generators* to the
-// same bytes, which is a different claim from two hosts running one generator). **Worth adding and not
-// here yet:** the three hosts' `build` output is byte-identical for one entry, measured by hand
-// 2026-08-22, and nothing pins it.
+// same bytes, which is a different claim from two hosts running one generator). The three hosts'
+// `build` *output* is compared at the end of the test — one entry, the same basename in three
+// directories — which was "worth adding and not here yet" from 2026-08-22 until it was added.
 //
 // One case is deliberately absent. A module whose manifest section is *present and not JSON* is
 // reported with the parser's own text — `serde`'s on the native side, `packages/json`'s on the other
@@ -119,6 +119,25 @@ string steadied(string s) {
     i = i + 1;
   }
   return out;
+}
+
+/**
+ * `""` when the two are byte-identical, or where and how they first differ.
+ *
+ * A description rather than a bool, because "the artefacts differ" is not something anyone can act on
+ * and "byte 41 differs: 3 and 7" points at a section.
+ */
+string sameBytes(u8[] a, u8[] b) {
+  if (a.len() != b.len()) {
+    return "lengths differ: " + itoa(a.len()) + " and " + itoa(b.len());
+  }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) {
+      return "byte " + itoa(i) + " of " + itoa(a.len()) + " differs: "
+             + itoa(a[i]) + " and " + itoa(b[i]);
+    }
+  }
+  return "";
 }
 
 /** What one host said. */
@@ -392,6 +411,47 @@ export string test_the_three_hosts_answer_the_same_command_the_same_way(Core cor
   t.eqI32(sevens, 1, "`run src/seven.wac` forwards the program's exit code, not its own");
   t.eqI32(agreed, table.len(),
           "all three hosts agreed on " + itoa(agreed) + " of " + itoa(table.len()));
+
+  // **What `build` writes, which no row above can see.** Every row compares what a host *said*, and
+  // the artefact is what the command is for: three hosts running one generator could drift in the
+  // bytes while agreeing on every word they print. This file's header has said "worth adding and not
+  // here yet" about exactly this since 2026-08-22, with the measurement done by hand.
+  //
+  // **The same basename in three directories**, not three names in one. `wasmName` is
+  // `baseName(stem) + ".wasm"` taken from the `-o`, so the name travels *inside* the module and a
+  // comparison across two of them fails for a reason that has nothing to do with the pipeline —
+  // which is the mistake `tools/seed.sh` records at the top of itself.
+  cli.mkdir(dir + "/h1", true).wait();
+  cli.mkdir(dir + "/h2", true).wait();
+  cli.mkdir(dir + "/h3", true).wait();
+  Said b1 = say(cli, dir, native, string[]("build", "src/hello.wac", "-o", "h1/same"));
+  Said b2 = say(cli, dir, deno, string[]("build", "src/hello.wac", "-o", "h2/same"));
+  Said b3 = say(cli, dir, "node " + node, string[]("build", "src/hello.wac", "-o", "h3/same"));
+  t.eqI32(b1.status, 0, "the native host built it: " + b1.out);
+  t.eqI32(b2.status, 0, "the Deno host built it: " + b2.out);
+  t.eqI32(b3.status, 0, "the Node host built it: " + b3.out);
+  FileResult a1 = cli.readFile(dir + "/h1/same.wasm").wait();
+  FileResult a2 = cli.readFile(dir + "/h2/same.wasm").wait();
+  FileResult a3 = cli.readFile(dir + "/h3/same.wasm").wait();
+  t.isTrue(a1.ok && a2.ok && a3.ok,
+           "three artefacts: " + a1.error + " " + a2.error + " " + a3.error);
+  if (a1.ok && a2.ok && a3.ok) {
+    // Not `a1.bytes.len() > 0` as well: a build that wrote nothing would fail the status assertions
+    // above, and an empty file compared with an empty file is the shape this is here to refuse.
+    t.isTrue(a1.bytes.len() > 0, "and the native one is not empty");
+    t.eqStr(sameBytes(a1.bytes, a2.bytes), "", "Deno's `build` writes the native host's bytes");
+    t.eqStr(sameBytes(a1.bytes, a3.bytes), "", "Node's `build` writes the native host's bytes");
+    // **And the comparison can fail**, which three assertions that pass do not show. `reader.wasm` is
+    // a different program built earlier in this test, so a `sameBytes` that answered `""` for
+    // everything — a loop that never ran, a length check reading the wrong array — would satisfy the
+    // two above and be caught here. The oracle has to be able to disagree.
+    FileResult other = cli.readFile(dir + "/reader.wasm").wait();
+    t.isTrue(other.ok, "the reader fixture is there to compare against — " + other.error);
+    if (other.ok) {
+      t.isFalse(sameBytes(a1.bytes, other.bytes) == "",
+                "two different programs do not have the same bytes");
+    }
+  }
   cli.remove(dir, true).wait();
   return t.report();
 }
