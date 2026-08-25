@@ -54,11 +54,19 @@
 // prints `read ok` under a JS-hosted command built with `--allow-read` and `read denied` on the native
 // binary. That is a capability hole rather than a difference, and these two rows are what see it.
 //
-// ## What it costs, measured 2026-08-22
+// ## What it costs, measured 2026-08-25
 //
-// **39s warm, measured at twenty-six cases; thirty-four now** — up from 2–3s, for three hosts instead
-// of two and thirty-four cases instead of six, fifteen of which compile, run or test a program rather
-// than only checking one, plus three module builds in the fixture. `test` is the dearest row per case: it compiles the file *and* instantiates
+// **56s wall and 57.6s of CPU, warm**, taken from a suite run rather than by hand — up from 2–3s, for
+// three hosts instead of two and thirty-four cases instead of six. Twenty-eight of them run
+// something — fifteen `test`, eight `run` and five naming a module directly — where five `check` and
+// `bindgen` rows stop at the diagnostics and one names a subcommand that does not exist. Six `build`
+// invocations besides: three writing the module fixtures, and three more comparing what `build`
+// writes. (15 + 8 + 5 + 5 + 1 = 34, and the parts are written out because the first attempt at this
+// sentence summed to 33: a `[a-z]+\.wasm` count missed `reader-read.wasm`.)
+//
+// It was 39s at twenty-six cases on 2026-08-22, so the eight rows added since cost about 2.1s each,
+// which is the figure to price the next one with. Nearly all of it is the three hosts each compiling
+// the entry a row names. `test` is the dearest row per case: it compiles the file *and* instantiates
 // it, where `check` stops at the diagnostics. The build is the only expensive part
 // and is paid by `builtByDeno`, which keys on the closure of `wacc.wac`, `compiler/`, `build.ts` and
 // `packages/platform/host/`; under it, `build.ts` keys its own work on the content of every file it
