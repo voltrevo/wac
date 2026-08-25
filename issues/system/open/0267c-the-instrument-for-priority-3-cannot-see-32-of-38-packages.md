@@ -87,8 +87,22 @@ called `deno test` without `--unstable-net`, so three of `packages/platform`'s d
 with *"Deno.listenDatagram is not a function"* and the sweep reported `platform` as **a wrong answer or
 a trap** on a suite that is 105 of 105. `packages/webrtc` was the other. `deno task test` passes that
 flag for exactly this reason, and `issues/system/0005` is the same omission in `tools/mutate.ts`, where
-it quietly stopped measuring whole packages — the second time this flag has cost a measurement, which
-is an argument for a shared way of spawning `deno test` rather than a third site to forget it in.
+it quietly stopped measuring whole packages — the second time this flag has cost a measurement.
+
+**There is no third site, and that was checked rather than assumed.** Every place in the repository
+that spawns a test runner:
+
+    tools/testChanged.ts             deno, has the flag
+    tools/mutate/profile.ts:483      deno, has the flag, with a comment saying why
+    harness/profileCompiler.test.ts  deno, has the flag
+    tools/mutate/profile.ts:360,407  the `wac` binary — `WAC_LANE_GRANTS` are wac's grants, not Deno's
+    harness/wacTestProfile.test.ts   deno, but runs a fixture it writes itself
+    harness/nativeTestProfile.test.ts   the `wac` binary, likewise
+    packages/wacc/tools/specCases.ts    deno, but runs one copied spec case
+
+So the two that can run a *package's* suite both have it now, and the rest cannot reach a datagram
+test. A shared spawn helper would still be the thing that makes this structural rather than a habit,
+but nothing is broken today and this list is the evidence for that.
 
 With the flag, **no package is reported wrong**: all 32 remaining rows are `0 passed` with no cause
 beyond having no `.test.ts` for this tool to find. The six that still work are `box`, `platform`,
