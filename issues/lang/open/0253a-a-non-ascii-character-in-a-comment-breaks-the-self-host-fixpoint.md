@@ -108,3 +108,63 @@ chunker is the one place to change.
 should only be split if a boundary happens to land on it, which is about one chance in three thousand,
 and the report above says any `é` fails. So either the boundary is not the mechanism or the chunking is
 not where I think it is. That is a question for the driver on disk, not for more reading.
+
+### ...and that hypothesis is refuted too — same day, fifteen lines
+
+`chunkedLiteral` does slice at multiples of 3,000 **bytes** with no character-boundary check, so a split
+is possible. It also already happens. On the tree as it stands:
+
+    bindgen.wac   1 boundary split   [24000]
+    check.wac     1                  [63000]
+    emit.wac      2                  [450000, 519000]
+    lex.wac       1                  [3000]
+
+Five boundaries land on a UTF-8 continuation byte, over 18 files carrying 14,761 non-ASCII bytes — and
+**rung 5 passes on this tree**, measured immediately before. So a character split across two literals is
+not what breaks it, and whatever compiles the driver for stage A copes with the driver already being
+invalid UTF-8.
+
+Which also disposes of the objection I raised against my own guess: it was the right objection, and the
+answer is that the mechanism is not boundary-shifting at all. "Two characters of ASCII passes, one `é`
+fails" still wants explaining, and it is not the boundary.
+
+**What is now ruled out, each by measurement rather than reading:**
+
+- byte-versus-UTF-16 length in a string literal — both compilers agree on `len`, `toBytes().len`,
+  `indexOf`, `slice` and the raw bytes of `"aébc"`;
+- a multi-byte character split across two of the driver's literals — already present, five times, green.
+
+**What is not yet looked at**, and is where I would go next: the `é` in the reproduction is in a
+*comment*, and a comment is the one place a byte can change without changing the program. Both
+compilers' **lexers** must skip it. If one advances by a byte and the other by a character, every
+subsequent token's recorded position differs — and positions do not reach a module's bytes, but they do
+reach `fileOf(line)`, which is how the emitter decides which *file* a declaration belongs to when many
+are linked. The driver is one file, so that specific path is out; what is worth checking is whether any
+`line` or `col` recorded by the lexer reaches the emitted output, and the cheapest way is to compile a
+two-line source with and without a comment `é` and diff the modules byte for byte.
+
+### And neither compiler is comment-sensitive on its own — so it needs the driver
+
+The cheapest version of the last paragraph's experiment, run rather than proposed. Two sources differing
+only by an `é` inside a `//` comment:
+
+    wacc        both 1075 bytes, sha256 71b62f7732efabb9…   identical
+    reference   both 1979 bytes, sha256 9ad4ed299627615e…   identical
+
+So a comment `é` changes neither compiler's output for a small file, and any lexer position that differs
+does not reach the module. Whatever rung 5 sees needs the driver: 1.4 MB, every wacc source as literals,
+and a checksum computed over them at run time.
+
+**Four things ruled out, each measured:**
+
+1. byte-versus-UTF-16 length in a string literal — both agree on `len`, `toBytes().len`, `indexOf`,
+   `slice` and the raw bytes of `"aébc"`;
+2. a character split across two of the driver's literals — five such boundaries exist on the green tree;
+3. wacc being sensitive to a comment `é` — byte-identical;
+4. the reference being sensitive to a comment `é` — byte-identical.
+
+**I did not find it.** What I would do next, in this order: reproduce (add the `é`, reseed, run rung 5),
+then keep the driver — the test deletes it, and the one-line change to leave it behind is the difference
+between guessing and diffing. With the failing driver on disk, compile it with each compiler and diff the
+two modules; the first differing section says which part of a 1.4 MB literal-carrying file the two
+disagree about. Everything above is an attempt to avoid that reseed, and the attempt failed.
