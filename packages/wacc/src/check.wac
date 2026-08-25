@@ -4061,8 +4061,16 @@ void checkExpr(C c, Expr e) {
       // above rather than warned about, an unknown type is the answer this checker gives whenever it
       // cannot compute one, and a type parameter is unknown by construction — warning on any of
       // those is a false alarm on correct code, which is the direction that costs trust.
+      // **A funcref is one of these and `isReferenceType` does not say so, correctly.** That predicate
+      // decides what may be stored in an `anyref` — its other five callers are all that question — and
+      // a funcref may not be, in WasmGC or here, so widening it to reach this rule would answer a
+      // different question wrongly. What is true is narrower: a funcref written without a `?` can no
+      // more be null than a struct can, so `cb is null` on one is the same tautology, and it is the
+      // shape the warning was written for. `packages/platform` changed a field's type and five
+      // `is not null` tests became always-true; a callback field is exactly where that happens again.
+      bool neverNullKind = isReferenceType(c, lt3) || startsWithFn(lt3);
       if ((target is null) && (other is null) && lt3 != typeNone() && lt3 != "" &&
-          withoutNull(lt3) == "" && isReferenceType(c, lt3) && !c.isGeneric(lt3)) {
+          withoutNull(lt3) == "" && neverNullKind && !c.isGeneric(lt3)) {
         c.warn(warnNeverNull(), e.line, e.col);
       }
       // **A funcref is a reference and still not testable**, which is why it is named rather than
@@ -7253,6 +7261,15 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // Only conversions between two **value** types from here on. A `string` reaches this point through
   // `isPrimitiveName` and must not: casting one to itself is ordinary, where casting an `i32` to an
   // `i32` is redundant.
+  //
+  // **A funcref cast to itself is a standing disagreement, parked here on purpose.** The reference
+  // refuses `a as fn[i32(i32)]` for an `a` of that type — *"cast from 'fn(i32) -> i32' to
+  // 'fn(i32) -> i32' is redundant"* — and allows a `string`, a struct and an array cast to
+  // themselves, which this allows too. `spec/spec/casts.md` says nothing about a cast to the same
+  // type at all, so there is no authority to settle it: matching the reference for funcrefs alone
+  // would copy an inconsistency, and matching it for all four would refuse three programs both
+  // compilers accept today. It is the `cast as` row in `sweep.test.ts`'s miss queue, and it stays
+  // there rather than being closed by picking a side.
   if (to == typeNone() || !isValueType(to) || isPackedName(to)) { return; }
   string from = castOperandType(c, operand);
   // Out of an `i31ref` and into an integer, which is the lossless direction — so `as` is the only
@@ -7651,6 +7668,20 @@ void checkStmt(C c, Stmt s, Ty want) {
         i32 tcol = lvalueStartCol(target);
         if (!isValueType(ct) && ct != "string") {
           c.report(errOperandMismatch(), tline, tcol);
+          return;
+        }
+        // **A `bool` is a value type and arithmetic still cannot be done to it.** The gate above asks
+        // whether the target is a value, which a `bool` is, so `a += b` on two of them fell through to
+        // the same-type comparison below — where they agree, so nothing was said. Two stated clauses
+        // compose to make it an error: `§wac-bool-arith-f2nx8k3`, *"`a + 1` where a is bool is a
+        // compile error"*, and a compound operator having *"same type rules as the underlying
+        // operator"*. The reference reports *'+' requires numeric type, got bool*.
+        //
+        // `errOperandKind` rather than the mismatch above, because the two operands *do* match — what
+        // is wrong is the kind, which is what that code's headline says. There is no `&&=` or `||=` in
+        // the language, so no compound operator is legitimate on a `bool`.
+        if (ct == "bool") {
+          c.report(errOperandKind(), tline, tcol);
           return;
         }
         i32 clit = litKindOf(rhs);

@@ -130,7 +130,20 @@ string[] WRONG() {
     "struct P { i32 x; } struct Q { P v; } export void f(P? a) { Q q = Q(a); }",
     "struct P { i32 x; } export void f(P? a) { P[] v = P[](a); }",
     "struct P { i32 x; } export void f(P? a) { P[] v = P[1](fill: a); }",
-    "struct P { i32 x; } export void f(bool c, P a, P? b) { P r = c ? a : b; }");
+    "struct P { i32 x; } export void f(bool c, P a, P? b) { P r = c ? a : b; }",
+    // One of the last three rows of `sweep.test.ts`'s miss queue: `bool r = a + b;` is refused and
+    // `a += b` was not, because the gate asks whether the target is a *value* type and a `bool` is one.
+    // Two stated clauses compose to make it an error — `§wac-bool-arith-f2nx8k3` and a compound
+    // operator having the underlying operator's type rules.
+    //
+    // **The other two rows stay in the queue, and neither is a gap.** A funcref cast to itself: the
+    // reference refuses it and allows a `string`, a struct and an array cast to themselves, which wacc
+    // allows too, and `spec/spec/casts.md` covers none of the four — `checkCast` carries the note where
+    // the decision is. And `is null` on a non-nullable funcref: the reference calls it an error, while
+    // `§wac-nonnull-isnull-k8fn3wp` makes such a test *legal and always false*, which is why wacc says
+    // it with a **warning** — extended to funcrefs now, since it was silent on them where it warned on
+    // a struct. A warning is not an error, so the row does not move, and it should not.
+    "export void f(bool a, bool b) { a += b; }");
 }
 
 /**
@@ -162,6 +175,13 @@ string[] CLEAN() {
     "export i64 z() { i64 b = 9223372036854775807; return b; }",
     "export u64 u() { u64 b = 18446744073709551615; return b; }",
     "export i32 h() { i32 b = 0xFFFFFFFF; return b; }",
+    // **The controls for the three rows above**, and the first is the one that matters: `is null` on a
+    // *nullable* funcref is the ordinary way to ask whether one was supplied, which is why the rule was
+    // written to skip funcrefs in the first place. A legal compound assignment and a widening cast are
+    // the other two, so none of those fixes can be satisfied by refusing the construct outright.
+    "export void n(fn[i32(i32)]? a) { bool r = a is null; }",
+    "export void p(i32 a, i32 b) { a += b; }",
+    "export void q(i32 a) { i64 v = a as i64; }",
     "export f64 g() { return 1.5; }",
     "export string s() { return \"x\"; }",
     "export bool t() { return true; }",
