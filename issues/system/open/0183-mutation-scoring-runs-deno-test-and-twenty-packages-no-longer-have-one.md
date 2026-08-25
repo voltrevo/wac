@@ -409,3 +409,29 @@ withdraws silently as the suite moves, and reports its own blindness in the voca
 is three instances counting `issues/system/0005`, which is enough to say the shape is the problem
 rather than each tool.
 
+## The lane landed, and it was one grant short — agent-c, 2026-08-25
+
+The native path this page asked for exists: `isBlindScope` in `tools/mutate/types.ts`, `testDirs`
+narrowing a blind scope to its own package, and `testCommand` dispatching to the `wac` binary. The
+report even names it — *"N mutant(s) measured through `wac test`"*. This page never said so, which is
+its own small lesson about a claimed issue.
+
+**What it was short of is `--allow-net`.** The branch's comment says the grants are *"the ones
+`tools/runTests.wac` gives its own lane, because a test skipped for want of one is a test that did not
+run"*. That lane gives five:
+
+    tools/runTests.wac  wacGrants()  --allow-read --allow-write --allow-run --allow-env --allow-net
+    tools/mutate.ts     wac branch   --allow-read --allow-write --allow-run --allow-env
+
+Measured on `packages/platform/test/wac/patience_test.wac`: **0 of 2 without it, 2 of 2 with**, failing
+with *"could not listen — Not granted to this application"*. So the scope is red at baseline and every
+mutant in it is excluded as unmeasurable — the same silent withdrawal the `--unstable-net` note beside
+it describes, where `--package fmt` reported `17/17 mutants killed` having measured almost nothing.
+
+Not a false survival, which is the direction that would have cost more. It is a false *score*.
+
+The grant is added, and the claim is now **checked rather than written down**: a test reads the grant
+list out of both sources and fails naming what is missing. Verified non-vacuous by removing the grant
+and watching it go red. That is the part worth keeping — the comment asserting parity had been wrong
+for as long as the branch existed, and nothing could tell.
+

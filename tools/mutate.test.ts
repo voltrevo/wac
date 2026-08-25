@@ -385,3 +385,35 @@ Deno.test("a mutant whose every package lost its host tests is a blind scope", (
   if (isBlindScope([], hostless)) throw new Error("no packages is not a blind scope");
 });
 
+
+// The `wac test` lane's grants, held against the suite's own — because the claim was in a comment.
+//
+// `testCommand`'s wac branch said *"the grants are the ones `tools/runTests.wac` gives its own lane,
+// because a test skipped for want of one is a test that did not run"*, and gave four where that lane
+// gives five: `--allow-net` was missing. A `*_test.wac` that listens then fails with "could not
+// listen — Not granted to this application", the scope is red at baseline, and every mutant in it is
+// excluded as unmeasurable. Silently: the headline still reads as a score.
+//
+// Read out of both sources rather than listed here, so this cannot agree with a stale copy of either.
+Deno.test("the mutation runner grants what the suite's wac lane grants", async () => {
+  const grants = (text: string, after: string): string[] => {
+    const at = text.indexOf(after);
+    if (at < 0) throw new Error(`could not find ${after} — the source moved`);
+    const window = text.slice(at, at + 600);
+    return [...window.matchAll(/--allow-[a-z]+/g)].map((m) => m[0]).filter((g, i, a) =>
+      a.indexOf(g) === i
+    );
+  };
+  const suite = grants(await Deno.readTextFile("tools/runTests.wac"), "string[] wacGrants()");
+  // Anchored on the array itself, not on the branch: the explanation above it names grants too, and a
+  // window wide enough to clear a comment is a window that reads the *next* command's list.
+  const mutate = grants(await Deno.readTextFile("tools/mutate.ts"), 'const args = ["test"');
+  const missing = suite.filter((g) => !mutate.includes(g));
+  if (missing.length > 0) {
+    throw new Error(
+      `the mutation runner's wac lane is missing ${missing.join(", ")} — the suite grants ` +
+        `${suite.join(" ")} and it grants ${mutate.join(" ")}. A test skipped or refused for want ` +
+        `of a grant is a test that did not run, and this tool reads a green run as a survivor.`,
+    );
+  }
+});
