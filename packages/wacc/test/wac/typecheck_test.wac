@@ -160,7 +160,11 @@ string[] WRONG() {
     // fell through every branch of it and `c ? p : 1` was silent. The emitter then wrote a module
     // the engine refuses, which `wac build`'s own check calls a compiler bug. The reference says
     // *ternary branches have incompatible types: P and i32*.
-    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : 1; return r.x; }");
+    "struct P { i32 x; } export i32 f(bool c, P p) { P r = c ? p : 1; return r.x; }",
+    // The same pair in a `match`, which `checkArmValueTypes` gates on the same `concreteShape`
+    // and skipped for the same reason. The reference: *match arms have incompatible types: P and
+    // i32*.
+    "struct P { i32 x; } enum E { A, B } export i32 f(E e, P p) { P r = match (e) { case A: p, else: 1 }; return r.x; }");
 }
 
 /**

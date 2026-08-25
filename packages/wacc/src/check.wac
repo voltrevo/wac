@@ -4214,7 +4214,7 @@ void checkExpr(C c, Expr e) {
         if (subj != "") { c.setConstFlags(subj, wasConst, wasAlias); }
         restoreNarrowing(c, subject, saved);
       }
-      checkArmValueTypes(c, arms);
+      checkArmValueTypes(c, arms, e.line, e.col);
     }
     // `i32[](1, 2)`, `i8[](1.5)`, `E[2](fill: 5)` — every element and the fill must fit the element
     // type, which is the same question as an initialiser with the type coming from the `[]`.
@@ -8106,7 +8106,7 @@ void checkStmt(C c, Stmt s, Ty want) {
  * disagreement between arms. Two concrete types that cannot stand in for one another in either
  * direction are the case worth reporting, and the second one is where the mistake reads.
  */
-void checkArmValueTypes(C c, Arm[] arms) {
+void checkArmValueTypes(C c, Arm[] arms, i32 line, i32 col) {
   string first = "";
   for (i32 i = 0; i < arms.len(); i++) {
     if (arms[i].value is null) { continue; }
@@ -8123,8 +8123,21 @@ void checkArmValueTypes(C c, Arm[] arms) {
     // `packages/std` has a payload whose type comes from the enum's instantiation, and what came back
     // was a name rather than a type — against `-1` that read as a disagreement and refused a working
     // file. Silence on anything else is the same rule the rest of this checker keeps.
-    if (!concreteShape(vt) || !concreteShape(first)) { continue; }
-    c.report(errArmTypes(), v.line, v.col);
+    // **Or a type a literal can never be**, which is the same widening the ternary's rule needed:
+    // `concreteShape` is what a literal *can* be, so a struct arm beside an integer arm satisfied
+    // neither side and this skipped it — and the emitter then wrote a module the engine refuses.
+    // `literalNeverFits` names only what this checker is sure of, a struct, an enum, an array or a
+    // funcref, so the caution the paragraph above is about is kept: a payload whose type comes back as
+    // a name is in neither half and still says nothing.
+    if (!(concreteShape(vt) || literalNeverFits(c, vt))) { continue; }
+    if (!(concreteShape(first) || literalNeverFits(c, first))) { continue; }
+    // **At the `match`, not at the arm.** The reference reports the whole expression — *match arms
+    // have incompatible types: P and i32* — and this reported the offending arm's value, so every
+    // report was a position the reference does not have. Nothing caught it because the case this rule
+    // already handled is in no differential; the widened case above is, and named it at once. A
+    // position the reference does not report is a *contradiction*, which is the one thing rung 3
+    // asserts outright.
+    c.report(errArmTypes(), line, col);
   }
 }
 
