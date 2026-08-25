@@ -1668,7 +1668,22 @@ export struct Env {
 
   /** Record a function, with its parameters, in the order the calls will index them. */
   void addFunc(this, string name, string ret, string[] ptypes) {
-    if (this.funcCount >= this.funcs.len()) {
+    // **Every table `funcCount` indexes, not just this one.** Eight arrays are keyed by this cursor
+    // and only `funcs` was checked, so the guard bounded the cursor by *one* of the things it
+    // indexes. Six of the eight were raised to 16384 together and two — `funcRecv` and
+    // `funcMethodGeneric`, declared ninety fields away in the struct — stayed at 4096. The cursor
+    // then walked past their ends, and `collectInstances` writes `funcRecv[funcCount - 1]` with no
+    // check of its own: `array element access out of bounds`, an engine trap with no message, three
+    // frames below anything that mentions a table. `issues/system/0257c`.
+    //
+    // Checking all eight means a future drift *declines* instead — `issues/lang/0158`'s rule — and
+    // it costs seven comparisons on a path that already does a string write. The sizes should simply
+    // be equal, and the language cannot say "as long as that one", so this is where that is enforced.
+    if (this.funcCount >= this.funcs.len() || this.funcCount >= this.funcReturns.len()
+        || this.funcCount >= this.funcParamAt.len() || this.funcCount >= this.funcParamCount.len()
+        || this.funcCount >= this.funcOk.len() || this.funcCount >= this.funcIndex.len()
+        || this.funcCount >= this.funcRecv.len()
+        || this.funcCount >= this.funcMethodGeneric.len()) {
       this.ranOut("functions");
       return;
     }
@@ -2367,7 +2382,13 @@ export struct Env {
                i32[1024](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), bool[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
-               string[1024](), i32[1024](), null, false, string[4096](), bool[4096](),
+               // **`funcRecv` and `funcMethodGeneric`, raised with the rest of the function table
+               // on 2026-08-25** — they are indexed by `funcCount` too, and they are *here* rather
+               // than beside it because the struct declares them ninety fields later. That is the
+               // whole reason the first raise looked complete and was not: matching the contiguous
+               // block of `string[4096]`s found six of the eight, and the two stragglers then took
+               // `funcCount` past 4096 and off the end. See `addFunc`, which now checks all eight.
+               string[1024](), i32[1024](), null, false, string[16384](), bool[16384](),
                string[256](), 0, Ty?[16384](), string[1024](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
                string[256](), string[256](), 0, "", false, 0, -1,

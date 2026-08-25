@@ -146,6 +146,35 @@ dereference — rather than a `trap "…"`. So there is a second fixed-size tabl
 That is the next thing to do and it is a compiler debugging job, not a dispatch one. The order stands:
 make these tables grow, get that into a seed, then dispatch.
 
+## The second limit was two of the eight arrays, and the guard bounded the cursor by one of them
+
+**`funcCount` indexes eight arrays and `addFunc` checked one.** Six were raised together because they
+sit in one block in `Env.create()` and were found by matching that block's type signature; `funcRecv`
+and `funcMethodGeneric` are declared *ninety fields later* in the struct, so they were not in the
+block, stayed at 4096, and the cursor walked off their ends at 4097. `collectInstances` writes
+`funcRecv[funcCount - 1]` with no check of its own, so the trap landed three frames below anything
+that mentions a table.
+
+    RuntimeError: array element access out of bounds
+        at emit$collectInstances
+        at emit$collectDeclarations
+        at emit$frontOfRaw → frontOf → buildLinked → api$buildFilesIn
+
+**Getting that stack is the transferable part.** A trap with no message is not a dead end just because
+`0254c` says the message is gone: the *host* decides how much of it survives. The native binary
+catches it and prints `wac: … trapped`; `wacland` cannot compile at all in this checkout; but
+`harness/waccBuild.ts` runs wacc **in-process under Deno**, where the trap is an ordinary JS exception
+and V8 keeps the wasm frames with their names. Twenty lines of Deno turned "somewhere in a hundred and
+fifty fields" into one function. Do that first next time, rather than reading the struct.
+
+Static analysis had already said the opposite, confidently: every cursor in `emit.wac` is guarded, all
+twenty-four of them. That was true and useless — the bug is not a missing guard, it is a guard whose
+bound is one of the eight things the cursor indexes. `addFunc` now checks all eight, so a future drift
+declines with a sentence instead, and `packages/wacc/test/wac/envtables_test.wac` asserts the eight
+lengths agree, which fails in a millisecond and names the array.
+
+**Step 4 builds.** 218 files, 1,656,793 bytes, and `wac sh -c 'echo …'` answers from the one program.
+
 **Two ordering facts worth keeping**, because each cost a five-minute build:
 
 - Raising a cap and adding the dispatch in one go changes nothing. Round 1 compiles with the seed
