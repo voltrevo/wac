@@ -118,7 +118,19 @@ string[] WRONG() {
     // walks a ladder — `i32` if it fits, else `i64`, else out of range — and these are the two rungs
     // below the top.
     "export u64 f() { return 1000000000.nofield; }",
-    "export u64 f() { return 2147483648.nofield; }");
+    "export u64 f() { return 2147483648.nofield; }",
+    // **A nullable into a non-null slot, in the four positions that did not ask.** `assignable`
+    // answers *true* for `P?` into `P` on purpose — `nullableIntoNonNull` has its own diagnostic and
+    // its own wording, so the two do not both fire at one position — which means every slot has to
+    // ask it, and six did: a call argument, a return, an assignment, a field assignment, an element
+    // assignment and a declaration's initialiser. A construction's argument, an array literal's
+    // element, a `fill:` value and a ternary's arms did not, so each of these was silent while
+    // `P r = a;` beside them was reported. Found in `sweep.test.ts`'s miss queue, where three of them
+    // were the largest group.
+    "struct P { i32 x; } struct Q { P v; } export void f(P? a) { Q q = Q(a); }",
+    "struct P { i32 x; } export void f(P? a) { P[] v = P[](a); }",
+    "struct P { i32 x; } export void f(P? a) { P[] v = P[1](fill: a); }",
+    "struct P { i32 x; } export void f(bool c, P a, P? b) { P r = c ? a : b; }");
 }
 
 /**

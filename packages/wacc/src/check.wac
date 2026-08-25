@@ -3224,6 +3224,30 @@ export string typeOfExpr(C c, Expr e) {
       if (other != typeNone() && other != "" && isPlainLiteral(c, then) && literalFits(c, other, then)) {
         return other;
       }
+      // **Branches that differ only in nullability unify to the nullable one**, which is their common
+      // type: `c ? a : b` for a `P` and a `P?` is a `P?`. Answering unknown instead made
+      // `P r = c ? a : b;` silent — unknown is silent everywhere in this checker — while `P r = b;`
+      // beside it was reported, and that was the largest group in `sweep.test.ts`'s miss queue. The
+      // reference types it the same way, which is why its complaint is *cannot assign nullable to
+      // non-null* at the declaration and says nothing about the arms.
+      //
+      // `withoutNull` answers `""` for a type that is not nullable, so the bases are taken explicitly
+      // rather than by comparing its output — which would call `P` and `Q` the same thing.
+      if (t != typeNone() && other != typeNone() && t != "" && other != "") {
+        string tb = endsWith(t, "?") ? withoutNull(t) : t;
+        string ob = endsWith(other, "?") ? withoutNull(other) : other;
+        if (tb == ob) { return endsWith(t, "?") ? t : other; }
+        // **And branches related by the hierarchy unify to the parent** — `c ? sub : base` is a `Base`,
+        // so `Sub r = c ? sub : base;` is a mistake, and it was the other half of the same queue row.
+        // Whichever type accepts the other is the common one.
+        //
+        // **Asked after the nullability case and not instead of it**, because `assignable` is
+        // deliberately blind to a `?` — that is what `nullableIntoNonNull` exists for — so both
+        // directions answer true for `P` against `P?` and whichever was asked first would win. The
+        // pair above decides that one; this decides the rest.
+        if (assignable(c, other, t)) { return other; }
+        if (assignable(c, t, other)) { return t; }
+      }
       return typeNone();
     }
     // **A `match` used as an expression**, by exactly the rule one arm up: every arm agrees and that
@@ -5289,7 +5313,12 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
         continue;
       }
       string ngot = typeOfExpr(c, named[i].value);
-      if (ngot != typeNone() && ngot != "" && !assignable(c, nwant, ngot)) {
+      // A nullable into a non-null field is its own complaint — `assignable` says yes to it by design,
+      // so a slot that asks only `assignable` takes it silently. Both spellings, for the reason the
+      // paragraph above gives: they are one construction written twice.
+      if (nullableIntoNonNull(c, nwant, ngot)) {
+        c.report(errNullableToNonNull(), named[i].value.line, named[i].value.col);
+      } else if (ngot != typeNone() && ngot != "" && !assignable(c, nwant, ngot)) {
         c.reportWith(errFieldMismatch(), named[i].value.line, named[i].value.col,
                      expectedFound(nwant, ngot));
       }
@@ -5307,7 +5336,10 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
       reportLiteral(c, want, args[i], errFieldMismatch(), args[i].line, args[i].col);
       continue;
     }
-    if (!assignable(c, want, typeOfExpr(c, args[i]))) {
+    string agot = typeOfExpr(c, args[i]);
+    if (nullableIntoNonNull(c, want, agot)) {
+      c.report(errNullableToNonNull(), args[i].line, args[i].col);
+    } else if (!assignable(c, want, agot)) {
       c.report(errFieldMismatch(), args[i].line, args[i].col);
     }
   }
@@ -5529,7 +5561,17 @@ void checkElement(C c, string want, Expr e) {
     return;
   }
   string got = typeOfExpr(c, e);
-  if (!assignable(c, want, got)) { c.report(errArrayElement(), e.line, e.col); }
+  // **A nullable element is its own complaint, and this slot was not asking.** `assignable` answers
+  // *true* for `P?` into `P` deliberately — see `nullableIntoNonNull`, which carries the reference's
+  // own wording so that the two rules do not both fire at one position — so a slot that only asks
+  // `assignable` accepts a nullable silently. `P[] v = P[](a);` and `P[1](fill: a)` for a `P? a` both
+  // checked clean while `P r = a;` beside them was reported. Both spellings come through here, which
+  // is why one branch fixes two positions.
+  if (nullableIntoNonNull(c, want, got)) {
+    c.report(errNullableToNonNull(), e.line, e.col);
+  } else if (!assignable(c, want, got)) {
+    c.report(errArrayElement(), e.line, e.col);
+  }
 }
 
 /**
