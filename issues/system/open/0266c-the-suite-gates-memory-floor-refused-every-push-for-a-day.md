@@ -32,6 +32,21 @@ and this workspace has been validating against them all day — 10,013 generated
 programs, 871 real sources, 1077 corpus files emitted whole, seven package suites. What does not happen
 is a push.
 
+## One cheap idea, measured and wrong
+
+The gate reads memory **after** discovery — `discover()` then `take()` in `tools/runTests.wac` — and a
+shell's `free` taken immediately before an attempt reads 90–330 MB higher than the number the gate then
+prints. That looks like the runner counting its own footprint against the floor, and against a shortfall
+of 55 MB on the closest attempt it would be most of the gap.
+
+It is not. A `--dry` run does the whole discovery — 39 directories, 411 test files, 56 chunks — and
+available memory dipped from **5601 MB to 5592**: nine megabytes, sampled five times a second
+throughout. So the runner's own cost is noise, moving the check before discovery would buy nothing, and
+the 90–330 MB is other agents allocating between the two readings.
+
+Which is the same conclusion the section above reaches from a different direction: the number moves
+because the machine is shared, not because of anything the gate does to itself.
+
 ## Why this is a decision and not a fix
 
 **The floor exists for a real failure.** `issues/system/0142` is a suite killed at the parallel pass
