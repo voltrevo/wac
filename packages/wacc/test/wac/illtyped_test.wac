@@ -373,6 +373,38 @@ export string test_a_component_tag_and_its_construction_agree() {
  * Unknown is what this checker is silent about, which is what a refused declaration should leave.
  * A local already did this; the module-level constant is a separate walk and did not.
  */
+/**
+ * **A comparison whose operands disagree is not a `bool` — it is nothing.**
+ *
+ * `return x != y;` for an `i32` and a `u32` drew *"expected i32, found bool"* beside the operand
+ * complaint: the return rule was told the refused comparison had a type, and complained about it. The
+ * reference draws only the operand one.
+ *
+ * Fifteen programs of `mutateCheck.test.ts`'s *"we report more diagnostics than the reference"* queue
+ * were this one family — that queue is printed rather than asserted, so it is a list of work rather
+ * than a tolerance, and this is the head of it coming off.
+ *
+ * The controls are the two ways this could over-reach: a literal operand keeps its `bool`, because a
+ * literal answers unknown and the condition wants *both* sides known; and a well-typed comparison is
+ * silent. `is` is a different node, so identity between a struct and its parent never came through
+ * here.
+ */
+export string test_a_mismatched_comparison_has_no_type() {
+  T t = T.create();
+  i32[] mixed = dumpTypeErrors("export i32 f() { i32 x = 1; u32 y = 1; return x != y; }\n".toBytes());
+  t.eqI32(mixed.len() / 3, 1, "one fault, and this many diagnostics");
+  if (mixed.len() >= 3) { t.eqI32(mixed[0], 4, "the code — `errOperandMismatch`"); }
+
+  // A literal operand: the comparison still has a type, so the return is still checked.
+  i32[] lit = dumpTypeErrors("export i32 f() { i32 x = 1; return x != 1; }\n".toBytes());
+  t.eqI32(lit.len() / 3, 1, "a bool returned from an i32 function, and this many diagnostics");
+
+  // And a comparison that is fine, in a slot that wants what it gives.
+  i32[] fine = dumpTypeErrors("export bool f() { i32 x = 1; i32 y = 2; return x != y; }\n".toBytes());
+  t.eqI32(fine.len() / 3, 0, "refused a well-typed comparison");
+  return t.report();
+}
+
 export string test_a_const_of_type_void_is_one_diagnostic() {
   T t = T.create();
   i32[] d = dumpTypeErrors("const void A = 1;\nexport i32 g() { return 0; }\n".toBytes());

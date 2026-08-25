@@ -3144,8 +3144,24 @@ export string typeOfExpr(C c, Expr e) {
      */
     case Binary(op, left, right): {
       i32 bk = tokenKind(c, op);
-      if (bk == kEq() || bk == kNe() || bk == kLt() || bk == kLe() || bk == kGt() || bk == kGe() ||
-          bk == kAndAnd() || bk == kOrOr()) {
+      if (bk == kEq() || bk == kNe() || bk == kLt() || bk == kLe() || bk == kGt() || bk == kGe()) {
+        // **A comparison whose operands disagree has no type**, so whatever it sits in has nothing to
+        // be wrong about. `export i32 f() { i32 x = 1; u32 y = 1; return x != y; }` drew *"expected
+        // i32, found bool"* beside the operand complaint, and the reference draws only the operand
+        // one — the comparison it just refused is not a `bool`, it is nothing. Fifteen programs of
+        // the mutation sweep's "we report more diagnostics than the reference" queue are this.
+        //
+        // The condition mirrors the rule that reports it: both sides known and different. A literal
+        // answers unknown here and keeps the `bool`, which is what makes `x != 1` unaffected; and
+        // every differing pair that *is* legal goes through another node — `is` for identity, which
+        // is not a `Binary` at all. Measured: `u8` against `i32`, `i32` against `i64`, `f32` against
+        // `f64` and a struct against its parent are all refused already.
+        string cl = typeOfExpr(c, left);
+        string cr = typeOfExpr(c, right);
+        if (cl != typeNone() && cr != typeNone() && cl != cr) { return typeNone(); }
+        return "bool";
+      }
+      if (bk == kAndAnd() || bk == kOrOr()) {
         return "bool";
       }
       // **A string or bool literal is not polymorphic, so it does have a type to offer.** The
