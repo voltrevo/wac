@@ -367,7 +367,15 @@ string[] sources() {
       "export i32 f(bool c) { P a = P(7); P? b = null; E e = c ? E.A : E.B; " +
       "P? r = match (e) { case A: a, else: b }; return r is null ? 0 : r!.x; } " +
       "export i32 g(bool c) { P a = P(7); P? b = null; E e = c ? E.A : E.B; " +
-      "P? r = match (e) { case A: b, else: a }; return r is null ? 0 : r!.x; }");
+      "P? r = match (e) { case A: b, else: a }; return r is null ? 0 : r!.x; }",
+    // **An `else` arm written *before* a `case`**, which the checker accepts and nothing ran. The
+    // question is whether a leading `else` swallows the arm after it — a `br_table` is built from the
+    // arms, and "the default is whichever one is spelled `else`" and "the default is the last arm" are
+    // the same sentence until an `else` is not last. Both compilers answer 2 for `A` and 1 for `B`, so
+    // it is the first: `case A` still wins its own variant. Found while walking the match rules for
+    // positions; the ordering is not stated anywhere and the two agreeing is the whole evidence.
+    "enum E { A, B } i32 pick(E e) { match (e) { else: { return 1; } case A: { return 2; } } return 0; } " +
+      "export i32 f() { return pick(E.A); } export i32 g() { return pick(E.B); }");
 }
 
 /** The calls, aligned with `sources()`. */
@@ -645,7 +653,9 @@ string[] calls() {
     "f;g",
     "f true;f false;g true;g false",
     "f true;f false;g true;g false",
-    "f true;f false;g true;g false");
+    "f true;f false;g true;g false",
+    // The leading-`else` match: `f` is the cased variant and `g` is the one the `else` catches.
+    "f;g");
 }
 
 /** The declared return type of `name` in `src`, or `""`. */
