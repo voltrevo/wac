@@ -320,3 +320,31 @@ command*. Thirty-six rows now, fifteen of them exiting 0.
 `covdump` and `ctcompare` are next and are bigger: `covdump` has the named-export sweep and its own
 world, `ctcompare` compares two journals with path-split detection. The reader they both need is
 written.
+
+## `covdump` cannot follow yet — 2026-08-25
+
+Written, measured, reverted. The command itself is thirty lines against `packages/wac/src/counters.wac`
+and its five shapes all answered correctly by hand — the table, a named export, a sweep (`twice:3`
+takes the true branch three times where one call takes it once), a bad case count exiting 2, and a
+mistyped name reported *after* the counters. Then `tools/wac/covdump_test.wac` failed on the case that
+exists for this: a module built `--allow-read` must print `READ OK`, and through `Cli.load` it printed
+nothing, because `main` traps before it logs.
+
+`issues/system/0263c` is why: **a loaded module cannot use `Cli` at all.** Every method traps with no
+message, `cli.argCount()` included, and the grant mask makes no difference. Reverted rather than
+shipped with a hole, because the native command could do this — it runs the module with the world its
+manifest declares, which is `issues/system/0221`'s whole point.
+
+**Two things I got wrong on the way, both worth keeping.** First, I claimed the manifest-less capability
+was unnecessary — "every test that feeds these commands builds with `wac build`" — having checked two of
+the three test files. `packages/wacc/test/wac/coverage_test.wac` calls `emitFilesCovered` and writes the
+bytes, deliberately, because its subject is the library. So `counters.wac` synthesises a manifest for
+such a module instead, in the compiler's own code, using `sigsWithCounters` — which keeps
+`issues/system/0243c`'s rule that the platform boundary learns nothing about coverage.
+
+Second, I passed the covdump command line's grants to `load`. The rule is the module's *own* declared
+grants, which `runprog.wac`'s `declaredGrants` already computes for `wac prog.wasm`: passing the
+caller's would hand a module more than it asked for whenever the command had been built with more,
+which `runprog.wac` names as the one outcome that would be a hole rather than a difference.
+
+So the reader is in place and the command is thirty lines away, behind one host defect.

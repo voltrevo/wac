@@ -133,7 +133,7 @@ export i32 grantsBefore(Cli cli, i32 argc, string entry) {
  *
  * `packages/json` is already in this program's graph through `wacpkg`, so this costs a call.
  */
-i32 declaredGrants(u8[] wasm) {
+export i32 declaredGrants(u8[] wasm) {
   string text = manifestIn(wasm);
   if (text == "") { return -1; }
   JsonValue? doc = parse(text.toBytes());
